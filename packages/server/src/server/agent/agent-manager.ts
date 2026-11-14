@@ -1,3 +1,4 @@
+import type { AgentSessionConfigChange, AgentConfigInitialization } from "./agent-sdk-types.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -349,6 +350,70 @@ interface ProviderEnabledFlag {
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
+
+type InitialConfigChangeResult =
+  | { status: "applied"; initialization: AgentConfigInitialization }
+  | { status: "partial"; error: unknown };
+
+interface InitialPersistenceInput {
+  session: AgentSession;
+  original: AgentPersistenceHandle;
+  initialization: InitialConfigChangeResult | undefined;
+}
+
+function persistenceAfterInitialConfig({
+  session,
+  original,
+  initialization,
+}: InitialPersistenceInput): AgentPersistenceHandle {
+  if (!initialization) return original;
+  // Configuration can rotate the resume token before registration installs event listeners.
+  return session.describePersistence() ?? original;
+}
+
+function completeInitialConfigChange({
+  result,
+  onConfigApplied,
+}: {
+  result: InitialConfigChangeResult | undefined;
+  onConfigApplied: AgentResumeSessionOptions["onConfigApplied"] | undefined;
+}): void {
+  if (!result) return;
+  if (result.status === "partial") throw result.error;
+  onConfigApplied?.(result.initialization);
+}
+
+interface StoredConfigChange {
+  agentId: string;
+  record: StoredAgentRecord | null;
+  change: AgentSessionConfigChange | undefined;
+}
+
+interface CreateStoredAgentInput {
+  agentId: string;
+  overrides?: AgentSessionConfigChange;
+  onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"];
+}
+
+function assertUnarchivedConfigChange({ agentId, record, change }: StoredConfigChange): void {
+  if (change && record?.archivedAt) throw new Error(`Agent is archived: ${agentId}`);
+}
+
+function normalizeConfigSelection(value: string | null | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function normalizeInitialConfigChange(
+  change: AgentSessionConfigChange | undefined,
+): AgentSessionConfigChange | undefined {
+  if (!change) return;
+  const normalized = { ...change };
+  if ("model" in change) normalized.model = normalizeConfigSelection(change.model) ?? undefined;
+  if ("thinkingOptionId" in change) {
+    normalized.thinkingOptionId = normalizeConfigSelection(change.thinkingOptionId) ?? undefined;
+  }
+  return normalized;
+}
 
 export interface CreateAgentOptions {
   labels?: Record<string, string>;
@@ -1496,12 +1561,17 @@ export class AgentManager {
    * from the record as it is when the lane reaches it. A write queued ahead (`setMetadata`,
    * `setLabels`) is in that record; one queued behind applies to the live agent.
    */
-  createAgentFromRecord(agentId: string): Promise<ManagedAgent> {
+  createAgentFromRecord({
+    agentId,
+    overrides,
+    onConfigApplied,
+  }: CreateStoredAgentInput): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "createAgentFromRecord");
     return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(resolvedAgentId, async () => {
         const record = await this.requireRegistry().get(resolvedAgentId);
         if (!record) throw new AgentNotFoundError(resolvedAgentId);
+        assertUnarchivedConfigChange({ agentId: resolvedAgentId, record, change: overrides });
         const config = buildSessionConfig(record, {
           validProviders: this.getRegisteredProviderIds(),
         });
@@ -1510,14 +1580,20 @@ export class AgentManager {
             `Agent ${resolvedAgentId} references unavailable provider '${record.provider}'`,
           );
         }
-        return this.createAgentInternal(config, resolvedAgentId, {
-          labels: record.labels,
-          metadata: record.metadata,
-          workspaceId: record.workspaceId,
-          owner: record.owner,
-          background: record.background,
-          env: record.launchEnv,
-        });
+        return this.createAgentInternal(
+          config,
+          resolvedAgentId,
+          {
+            labels: record.labels,
+            metadata: record.metadata,
+            workspaceId: record.workspaceId,
+            owner: record.owner,
+            background: record.background,
+            env: record.launchEnv,
+          },
+          overrides,
+          onConfigApplied,
+        );
       }),
     );
   }
@@ -1526,8 +1602,11 @@ export class AgentManager {
     config: AgentSessionConfig,
     resolvedAgentId: string,
     options: CreateAgentOptions,
+    configChange?: AgentSessionConfigChange,
+    onConfigApplied?: AgentResumeSessionOptions["onConfigApplied"],
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    configChange = normalizeInitialConfigChange(configChange);
     config = this.withConvertedOptions(config);
     if (this.pluginLifecycle && !config.internal) {
       const sent = exposeFeatureValuesToHook(config);
@@ -1576,9 +1655,14 @@ export class AgentManager {
       },
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const createOptions = this.buildCreateSessionOptions(options);
+    const createOptions = { ...this.buildCreateSessionOptions(options), configChange };
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
+    const initialization = await this.applyInitialConfigChange({
+      session,
+      config: storedConfig,
+      change: configChange,
+    });
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1596,6 +1680,7 @@ export class AgentManager {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
     }
+    completeInitialConfigChange({ result: initialization, onConfigApplied });
     return agent;
   }
 
@@ -1676,8 +1761,18 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    assertUnarchivedConfigChange({
+      agentId: resolvedAgentId,
+      record,
+      change: resumeOptions?.configChange,
+    });
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
-    const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
+    const configChange = normalizeInitialConfigChange(resumeOptions?.configChange);
+    const currentResumeOptions = {
+      ...resumeOptions,
+      purpose,
+      configChange,
+    } satisfies AgentResumeSessionOptions;
 
     const launchEnv = record?.launchEnv;
     const workspaceId = resolveResumeWorkspaceId({ options, record });
@@ -1718,18 +1813,122 @@ export class AgentManager {
       currentResumeOptions,
     );
     if (purpose === "history") this.historySessions.add(session);
+    const initialization = await this.applyInitialConfigChange({
+      session,
+      config: storedConfig,
+      change: configChange,
+    });
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
+    const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
       ...options,
       // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
       // it has saved a newer record, the one the open hooks saw.
       ...(record ? { metadata: record.metadata } : {}),
+      // Explicit settings are activity, unlike an ordinary restore. Advance from
+      // the lane's record so queued metadata cannot make the new settings look stale.
+      ...(initialization && record
+        ? { updatedAt: new Date(this.nextStoredUpdatedAt(record)) }
+        : {}),
       workspaceId,
       launchEnv,
-      persistence: handle,
+      persistence: persistenceAfterInitialConfig({ session, original: handle, initialization }),
       restoring: true,
+      runtimeInfo: purpose === "history" ? record?.runtimeInfo : undefined,
     });
+    completeInitialConfigChange({
+      result: initialization,
+      onConfigApplied: resumeOptions?.onConfigApplied,
+    });
+    return agent;
+  }
+
+  private async applyInitialConfigChange({
+    session,
+    config,
+    change,
+  }: {
+    session: AgentSession;
+    config: AgentSessionConfig;
+    change?: AgentSessionConfigChange;
+  }): Promise<InitialConfigChangeResult | undefined> {
+    if (!change) return;
+    let notice: AgentProviderNotice | null = null;
+    let completedSteps = 0;
+    let phase: "setter" | "readback" = "setter";
+    try {
+      if ("model" in change) {
+        const model = change.model ?? null;
+        const selection = await session.setModel?.(model);
+        phase = "readback";
+        await this.readInitialThinking({ session, config, fallback: config.thinkingOptionId });
+        let effectiveModel = model;
+        if (model !== null && selection) effectiveModel = selection.model;
+        config.model = effectiveModel ?? undefined;
+        completedSteps++;
+      }
+      if (change.modeId !== undefined) {
+        phase = "setter";
+        notice = (await session.setMode?.(change.modeId)) ?? null;
+        phase = "readback";
+        config.modeId = (await session.getCurrentMode()) ?? change.modeId;
+        await this.readInitialThinking({ session, config, fallback: config.thinkingOptionId });
+        completedSteps++;
+      }
+      if ("thinkingOptionId" in change) {
+        phase = "setter";
+        const thinkingNotice = await session.setThinkingOption?.(change.thinkingOptionId ?? null);
+        phase = "readback";
+        await this.readInitialThinking({ session, config, fallback: change.thinkingOptionId });
+        notice ??= thinkingNotice ?? null;
+      }
+      return { status: "applied", initialization: { notice } };
+    } catch (error) {
+      return this.handleInitialConfigFailure({ session, error, phase, completedSteps });
+    }
+  }
+
+  private async readInitialThinking({
+    session,
+    config,
+    fallback,
+  }: {
+    session: AgentSession;
+    config: AgentSessionConfig;
+    fallback: string | undefined;
+  }): Promise<void> {
+    const runtimeInfo = await session.getRuntimeInfo();
+    let thinking = fallback;
+    if (runtimeInfo.thinkingOptionId !== undefined)
+      thinking = runtimeInfo.thinkingOptionId ?? undefined;
+    config.thinkingOptionId = thinking;
+  }
+
+  private async handleInitialConfigFailure({
+    session,
+    error,
+    phase,
+    completedSteps,
+  }: {
+    session: AgentSession;
+    error: unknown;
+    phase: "setter" | "readback";
+    completedSteps: number;
+  }): Promise<InitialConfigChangeResult> {
+    // Startup preparation is not an applied step. Only a later setter rejection on
+    // a still-readable session can publish the successful, nontransactional prefix.
+    if (phase === "setter" && completedSteps > 0) {
+      try {
+        await session.getRuntimeInfo();
+        await session.getCurrentMode();
+        return { status: "partial", error };
+      } catch (readbackError) {
+        await this.closeUnregisteredSession(session);
+        throw readbackError;
+      }
+    }
+    await this.closeUnregisteredSession(session);
+    throw error;
   }
 
   importProviderSession(input: {
@@ -4291,6 +4490,7 @@ export class AgentManager {
        * while the provider was opening.
        */
       launchedOptions: ProviderOptions;
+      runtimeInfo?: AgentRuntimeInfo;
       restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
@@ -4334,6 +4534,8 @@ export class AgentManager {
         background: options?.background === true,
         options,
       });
+
+      managed.runtimeInfo = options.runtimeInfo;
 
       // Read history before publishing the agent: a provider failure must leave the
       // session unregistered so the registration catch closes it.
@@ -4803,6 +5005,11 @@ export class AgentManager {
    * mode from it, so leaving it stale silently downgrades the mode on resume.
    */
   private applyObservedMode(agent: ActiveManagedAgent, modeId: string | null): void {
+    // History adapters skip saved overrides; their default mode is not a user change.
+    if (this.historySessions.has(agent.session)) {
+      agent.currentModeId = agent.config.modeId ?? null;
+      return;
+    }
     agent.currentModeId = modeId;
     if (modeId != null) {
       agent.config.modeId = modeId;
@@ -4841,6 +5048,8 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     options?: { emit?: boolean },
   ): Promise<void> {
+    // A history reader's defaults do not describe the last interactive runtime.
+    if (this.historySessions.has(agent.session)) return;
     try {
       const newInfo = await agent.session.getRuntimeInfo();
       const changed =
@@ -5211,37 +5420,9 @@ export class AgentManager {
         this.emitState(agent);
         return undefined;
       case "mode_changed":
-        this.applyObservedMode(agent, event.currentModeId);
-        agent.availableModes = event.availableModes;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
       case "model_changed":
-        agent.runtimeInfo = event.runtimeInfo;
-        if (!agent.persistence && event.runtimeInfo.sessionId) {
-          agent.persistence = normalizePersistenceForConfig(
-            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
-            agent.config,
-          );
-        }
-        this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
       case "thinking_option_changed":
-        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
-        if (agent.runtimeInfo) {
-          agent.runtimeInfo = {
-            ...agent.runtimeInfo,
-            thinkingOptionId: event.thinkingOptionId,
-          };
-        }
-        flags.shouldDispatchEvent = false;
-        this.emitState(agent);
-        return undefined;
+        return this.onStreamRuntimeSettingsChanged(agent, event, flags);
       case "options_changed":
         this.onStreamOptionsChanged({ agent, patch: event.patch, flags });
         return undefined;
@@ -5285,6 +5466,51 @@ export class AgentManager {
         this.onStreamPermissionResolved({ agent, event, options, flags });
         return undefined;
       default:
+        return undefined;
+    }
+  }
+
+  private onStreamRuntimeSettingsChanged(
+    agent: ActiveManagedAgent,
+    event: Extract<
+      AgentStreamEvent,
+      { type: "mode_changed" | "model_changed" | "thinking_option_changed" }
+    >,
+    flags: StreamEventFlags,
+  ): undefined {
+    if (this.historySessions.has(agent.session)) return undefined;
+    switch (event.type) {
+      case "mode_changed":
+        this.applyObservedMode(agent, event.currentModeId);
+        agent.availableModes = event.availableModes;
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = { ...agent.runtimeInfo, modeId: event.currentModeId };
+        }
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
+        return undefined;
+      case "model_changed":
+        agent.runtimeInfo = event.runtimeInfo;
+        if (!agent.persistence && event.runtimeInfo.sessionId) {
+          agent.persistence = normalizePersistenceForConfig(
+            { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },
+            agent.config,
+          );
+        }
+        this.applyObservedMode(agent, event.runtimeInfo.modeId ?? agent.currentModeId);
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
+        return undefined;
+      case "thinking_option_changed":
+        agent.config.thinkingOptionId = event.thinkingOptionId ?? undefined;
+        if (agent.runtimeInfo) {
+          agent.runtimeInfo = {
+            ...agent.runtimeInfo,
+            thinkingOptionId: event.thinkingOptionId,
+          };
+        }
+        flags.shouldDispatchEvent = false;
+        this.emitState(agent);
         return undefined;
     }
   }

@@ -1,10 +1,11 @@
-import type { SessionInfo, PermissionRuleset } from "@opencode/client";
+import type { SessionInfo, PermissionRuleset, ModelRef } from "@opencode/client";
 import type { V2Api } from "./api.js";
 
 import type {
   AgentLaunchContext,
   AgentOptionControl,
   AgentSessionConfig,
+  AgentSessionConfigChange,
 } from "../../../agent-sdk-types.js";
 
 import { OpenCodeProviderOptionsSchema, buildOpenCodePermissionRules } from "../options.js";
@@ -39,23 +40,51 @@ function nativePermissionAction(action: string): string {
   if (action === "task") return "subagent";
   return action;
 }
-export async function applyResumeOverrides(
-  client: V2Api,
-  info: SessionInfo,
-  overrides?: Partial<AgentSessionConfig>,
-) {
-  if (overrides?.modeId) {
-    await client.session.switchAgent({
-      sessionID: info.id,
-      agent: overrides.modeId,
-    });
+export async function reconcileSavedVariant({
+  client,
+  location,
+  model,
+}: {
+  client: V2Api;
+  location: { directory: string };
+  model: ModelRef;
+}): Promise<ModelRef> {
+  if (!model.variant) return model;
+  const catalog = await client.model.list({ location });
+  const target = catalog.data.find(
+    (entry) => entry.providerID === model.providerID && entry.id === model.id,
+  );
+  if (target && !target.variants.some((entry) => entry.id === model.variant)) {
+    return { providerID: model.providerID, id: model.id };
+  }
+  return model;
+}
+
+export async function applyResumeOverrides({
+  client,
+  info,
+  overrides = {},
+  change,
+}: {
+  client: V2Api;
+  info: SessionInfo;
+  overrides?: Partial<AgentSessionConfig>;
+  change?: AgentSessionConfigChange;
+}) {
+  if (overrides.modeId && change?.modeId === undefined) {
+    await client.session.switchAgent({ sessionID: info.id, agent: overrides.modeId });
     info.agent = overrides.modeId;
   }
-  if (overrides?.model || overrides?.thinkingOptionId !== undefined) {
-    const model = overrides.model
-      ? modelRef(overrides.model, overrides.thinkingOptionId ?? info.model?.variant)
-      : info.model && { ...info.model, variant: overrides.thinkingOptionId };
+  if (change && "model" in change) return;
+  const changingThinking = change && "thinkingOptionId" in change;
+  if (overrides.model || (!changingThinking && overrides.thinkingOptionId !== undefined)) {
+    const thinking = overrides.thinkingOptionId ?? info.model?.variant;
+    let model = overrides.model
+      ? modelRef(overrides.model, thinking)
+      : info.model && { ...info.model, variant: thinking };
     if (!model) throw new Error("Select an OpenCode model before changing its variant");
+    if (changingThinking)
+      model = await reconcileSavedVariant({ client, location: info.location, model });
     await client.session.switchModel({ sessionID: info.id, model });
     info.model = model;
   }

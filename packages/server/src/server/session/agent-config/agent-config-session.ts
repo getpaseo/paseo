@@ -2,7 +2,11 @@ import type pino from "pino";
 import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
-import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
+import type {
+  AgentProviderNotice,
+  AgentSessionConfigChange,
+  AgentConfigInitialization,
+} from "../../agent/agent-sdk-types.js";
 import type { ProviderOptionsPatch } from "../../agent/option-controls.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
@@ -26,7 +30,10 @@ export interface AgentConfigSessionHost {
  * thinking yield a provider notice; model and options do not.
  */
 export interface AgentConfigOperations {
-  ensureLoaded(agentId: string): Promise<void>;
+  ensureLoaded(
+    agentId: string,
+    overrides?: AgentSessionConfigChange,
+  ): Promise<AgentConfigInitialization | void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
   setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
@@ -43,12 +50,15 @@ export interface AgentConfigSessionOptions {
 }
 
 interface ConfigChange {
+  configOverrides?: AgentSessionConfigChange;
   agentId: string;
   requestId: string;
   logLabel: string;
   logFields: Record<string, unknown>;
   failureText: string;
-  run: () => Promise<AgentProviderNotice | null | undefined>;
+  run: (
+    initialization?: AgentConfigInitialization,
+  ) => Promise<AgentProviderNotice | null | undefined>;
   emitResponse: (payload: AgentActionResponsePayload) => void;
 }
 
@@ -95,7 +105,9 @@ export class AgentConfigSession {
       logLabel: "set_agent_model_request",
       logFields: { agentId, modelId, requestId },
       failureText: "Failed to set agent model",
-      run: async () => {
+      configOverrides: { model: modelId ?? undefined },
+      run: async (initialization) => {
+        if (initialization) return initialization.notice;
         await this.operations.setModel(agentId, modelId);
         return undefined;
       },
@@ -132,7 +144,11 @@ export class AgentConfigSession {
       logLabel: "set_agent_thinking_request",
       logFields: { agentId, thinkingOptionId, requestId },
       failureText: "Failed to set agent thinking option",
-      run: () => this.operations.setThinking(agentId, thinkingOptionId),
+      configOverrides: { thinkingOptionId: thinkingOptionId ?? undefined },
+      run: async (initialization) =>
+        initialization
+          ? initialization.notice
+          : this.operations.setThinking(agentId, thinkingOptionId),
       emitResponse: (payload) => this.host.emit({ type: "set_agent_thinking_response", payload }),
     });
   }
@@ -141,13 +157,31 @@ export class AgentConfigSession {
     msg: Extract<SessionInboundMessage, { type: "agent.config.apply.request" }>,
   ): Promise<void> {
     const { agentId, config, requestId } = msg;
+    const changesModel = config.modelId !== undefined;
+    const changesThinking = config.thinkingOptionId !== undefined;
+    const configOverrides =
+      changesModel || changesThinking
+        ? {
+            ...(changesModel ? { model: config.modelId ?? undefined } : {}),
+            ...(config.modeId !== undefined ? { modeId: config.modeId } : {}),
+            ...(changesThinking ? { thinkingOptionId: config.thinkingOptionId ?? undefined } : {}),
+          }
+        : undefined;
     return this.applyConfigChange({
       agentId,
       requestId,
       logLabel: "agent.config.apply.request",
       logFields: { agentId, requestId, config },
       failureText: "Failed to apply agent config",
-      run: () => this.applyBundle(agentId, config),
+      configOverrides,
+      run: (initialization) =>
+        this.applyBundle(
+          agentId,
+          initialization
+            ? { options: config.options, featureValues: config.featureValues }
+            : config,
+          initialization?.notice,
+        ),
       emitResponse: (payload) => this.host.emit({ type: "agent.config.apply.response", payload }),
     });
   }
@@ -161,9 +195,9 @@ export class AgentConfigSession {
    * This is not a transaction. A step that rejects aborts the rest, and steps
    * that already applied stay applied — provider setters validate against the
    * agent's live model, so a bundle that omits `modelId` can have its mode land
-   * and its feature rejected. Nothing is hidden by that: every AgentManager
-   * setter emits agent state before returning, so what applied is already
-   * streamed to the client alongside the rejected response and the error frame.
+   * and its feature rejected. Loaded setters emit state before returning. When
+   * opening a closed agent, a readable successful prefix is registered before
+   * the later setter's rejection is returned to the client.
    *
    * Rolling back would re-invoke the setters that just failed, most often
    * against a session that is already gone. Pre-flight validation would restate
@@ -175,8 +209,9 @@ export class AgentConfigSession {
   private async applyBundle(
     agentId: string,
     config: AgentConfigApply,
+    initialNotice?: AgentProviderNotice | null,
   ): Promise<AgentProviderNotice | null> {
-    let notice: AgentProviderNotice | null = null;
+    let notice: AgentProviderNotice | null = initialNotice ?? null;
 
     if (config.modelId !== undefined) {
       await this.operations.setModel(agentId, config.modelId);
@@ -205,8 +240,8 @@ export class AgentConfigSession {
     this.logger.info(logFields, `session: ${logLabel}`);
 
     try {
-      await this.operations.ensureLoaded(agentId);
-      const notice = await run();
+      const initialization = await this.operations.ensureLoaded(agentId, change.configOverrides);
+      const notice = await run(initialization ?? undefined);
       this.logger.info(logFields, `session: ${logLabel} success`);
       emitResponse({ requestId, agentId, accepted: true, error: null, notice });
     } catch (error) {

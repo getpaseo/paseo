@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -15,11 +15,13 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
-import { CodexAppServerAgentSession } from "./codex-app-server-agent.js";
+import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
 } from "./codex/test-utils/fake-app-server.js";
+import { asInternals } from "../../test-utils/class-mocks.js";
+import { ensureUnarchivedAgentLoaded } from "../agent-loading.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 
 const CODEX_PROVIDER = "codex";
@@ -986,5 +988,280 @@ describe("Codex app-server provider controls", () => {
         mode: "plan",
       }),
     });
+  });
+});
+
+describe("closed Codex startup model recovery", () => {
+  test.each([
+    { resume: false, model: "gpt-5.4", requested: "gpt-5.4" },
+    { resume: true, model: "gpt-5.4", requested: "gpt-5.4" },
+    { resume: false, model: undefined, requested: undefined },
+    { resume: true, model: undefined, requested: undefined },
+    { resume: false, model: undefined, requested: "   " },
+    { resume: true, model: undefined, requested: "   " },
+  ])(
+    "repairs a removed model before startup (resume=$resume, model=$requested)",
+    async ({ resume, model, requested }) => {
+      const workdir = mkdtempSync(join(tmpdir(), "codex-startup-repair-"));
+      const logger = createTestLogger();
+      const appServers: FakeCodexAppServer[] = [];
+      const provider = new CodexAppServerAgentClient(logger, undefined, {
+        appServerProcess: {
+          resolvePrefix: async () => ({ command: "codex", args: [] }),
+          spawn: () => {
+            const server = createFakeCodexAppServer({
+              "thread/start": (params) => {
+                if (params.model === "removed-model") throw new Error("removed model");
+                return { thread: { id: "repaired-thread" } };
+              },
+            });
+            appServers.push(server);
+            return server.child;
+          },
+        },
+      });
+      const internals = asInternals<{
+        goalsEnabledPromise: Promise<boolean>;
+        autoReviewEnabledPromise: Promise<boolean>;
+      }>(provider);
+      internals.goalsEnabledPromise = Promise.resolve(false);
+      internals.autoReviewEnabledPromise = Promise.resolve(false);
+      const client: AgentClient = {
+        provider: "codex",
+        capabilities: provider.capabilities,
+        isAvailable: async () => true,
+        fetchCatalog: async () => ({ models: [], modes: [] }),
+        createSession: (...args) => provider.createSession(...args),
+        resumeSession: (...args) => provider.resumeSession(...args),
+      };
+      const storage = new AgentStorage(join(workdir, "agents"), logger);
+      const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+      const id = "00000000-0000-4000-8000-0000000000c7";
+      const now = new Date().toISOString();
+      await storage.upsert({
+        id,
+        provider: "codex",
+        cwd: workdir,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: null,
+        config: { model: "removed-model", thinkingOptionId: "high" },
+        ...(resume ? { persistence: { provider: "codex", sessionId: "saved-thread" } } : {}),
+      });
+      try {
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: { model: requested },
+        });
+        await manager.flush();
+        expect(manager.getAgent(id)?.config.model).toBe(model);
+        expect((await storage.get(id))?.config?.model).toBe(model);
+        const startup = appServers
+          .flatMap((server) => server.requests())
+          .filter(
+            (request) => request.method === "thread/start" || request.method === "thread/resume",
+          );
+        expect(startup).toHaveLength(1);
+        expect(startup[0].params).not.toHaveProperty("model", "removed-model");
+        await manager.closeAgent(id);
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(id)?.config.model).toBe(model);
+      } finally {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        for (const server of appServers) server.assertNoErrors();
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+interface CodexFeatureFlags {
+  goalsEnabledPromise: Promise<boolean>;
+  autoReviewEnabledPromise: Promise<boolean>;
+}
+
+async function acceptInitialTierChange(load: () => Promise<unknown>): Promise<void> {
+  await load();
+}
+
+async function rejectLaterModeChange(load: () => Promise<unknown>): Promise<void> {
+  await expect(load()).rejects.toThrow(/mode/i);
+}
+
+describe.each([
+  { entry: "create", persistence: undefined },
+  { entry: "resume", persistence: { provider: "codex", sessionId: "saved-thread" } },
+])("closed Codex initial service tier ($entry)", ({ persistence }) => {
+  test.each([
+    {
+      label: "unsupported tier",
+      change: { model: "target-plain" },
+      tier: "default",
+      assertLoad: acceptInitialTierChange,
+    },
+    {
+      label: "supported tier",
+      change: { model: "target-fast" },
+      tier: "priority",
+      assertLoad: acceptInitialTierChange,
+    },
+    {
+      label: "mode rejection after accepted model",
+      change: { model: "target-plain", modeId: "invalid-mode", thinkingOptionId: "low" },
+      tier: "default",
+      assertLoad: rejectLaterModeChange,
+    },
+  ])("persists $label through registration and reopening", async ({ change, tier, assertLoad }) => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-initial-tier-"));
+    const logger = createTestLogger();
+    const appServers: FakeCodexAppServer[] = [];
+    const sessions: AgentSession[] = [];
+    const provider = new CodexAppServerAgentClient(logger, undefined, {
+      appServerProcess: {
+        resolvePrefix: async () => ({ command: "codex", args: [] }),
+        spawn: () => {
+          const server = createFakeCodexAppServer({
+            "model/list": () => ({
+              data: [
+                {
+                  id: "saved-fast",
+                  isDefault: false,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+                },
+                {
+                  id: "target-fast",
+                  isDefault: false,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [{ id: "priority", name: "Fast", description: "Faster" }],
+                },
+                {
+                  id: "target-plain",
+                  isDefault: true,
+                  defaultReasoningEffort: "high",
+                  serviceTiers: [],
+                },
+              ],
+            }),
+            "thread/start": () => ({ thread: { id: "tier-thread" } }),
+          });
+          appServers.push(server);
+          return server.child;
+        },
+      },
+    });
+    const internals = asInternals<CodexFeatureFlags>(provider);
+    internals.goalsEnabledPromise = Promise.resolve(false);
+    internals.autoReviewEnabledPromise = Promise.resolve(false);
+    const client: AgentClient = {
+      provider: "codex",
+      capabilities: provider.capabilities,
+      isAvailable: async () => true,
+      fetchCatalog: async () => ({ models: [], modes: [] }),
+      createSession: async (...args) => {
+        const session = await provider.createSession(...args);
+        sessions.push(session);
+        return session;
+      },
+      resumeSession: async (...args) => {
+        const session = await provider.resumeSession(...args);
+        sessions.push(session);
+        return session;
+      },
+    };
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const publishedTiers: unknown[] = [];
+    manager.subscribe((event) => {
+      if (event.type === "agent_state")
+        publishedTiers.push(event.agent.effectiveOptions?.service_tier);
+    });
+    const id = "00000000-0000-4000-8000-000000000c12";
+    const now = new Date().toISOString();
+    try {
+      await storage.upsert({
+        id,
+        provider: "codex",
+        cwd: workdir,
+        createdAt: now,
+        updatedAt: now,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: null,
+        persistence,
+        config: {
+          model: "saved-fast",
+          thinkingOptionId: "high",
+          providerOptions: { service_tier: "priority", plan_mode: false },
+        },
+      });
+      await assertLoad(() =>
+        ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+          configOverrides: change,
+        }),
+      );
+      await manager.flush();
+      expect((await storage.get(id))?.config).toMatchObject({
+        model: change.model,
+        thinkingOptionId: "high",
+        providerOptions: { service_tier: tier, plan_mode: false },
+      });
+      expect(manager.getAgent(id)?.config.providerOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(manager.getAgent(id)?.effectiveOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(new Set(publishedTiers)).toEqual(new Set([tier]));
+      expect(manager.getAgent(id)?.runtimeInfo?.model).toBe(change.model);
+      await sessions.at(-1)!.startTurn("check native tier");
+      await expect(appServers.at(-1)!.waitForTurnStart()).resolves.toMatchObject({
+        model: change.model,
+        serviceTier: tier,
+      });
+      await manager.setAgentModel(id, "saved-fast");
+      await manager.closeAgent(id);
+      await manager.flush();
+      await ensureUnarchivedAgentLoaded(id, {
+        agentManager: manager,
+        agentStorage: storage,
+        logger,
+      });
+      await manager.flush();
+      expect((await storage.get(id))?.config?.providerOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      expect(manager.getAgent(id)?.effectiveOptions).toEqual({
+        service_tier: tier,
+        plan_mode: false,
+      });
+      await sessions.at(-1)!.startTurn("check reopened tier");
+      await expect(appServers.at(-1)!.waitForTurnStart()).resolves.toMatchObject({
+        model: "saved-fast",
+        serviceTier: tier,
+      });
+    } finally {
+      await manager.closeAgent(id);
+      await manager.flush();
+      await storage.flush();
+      for (const server of appServers) server.assertNoErrors();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 });

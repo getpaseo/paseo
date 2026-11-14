@@ -1,3 +1,4 @@
+import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import type {
   ProviderEvent,
   ProviderInput,
   ProviderRegistration,
+  ProviderConfigState,
 } from "@getpaseo/plugin/server/provider";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
@@ -2763,4 +2765,752 @@ test("plugin provider import launches with runtime MCP servers and returns only 
   } finally {
     await registry.shutdown();
   }
+});
+
+function emitStartupHistory({
+  input,
+  emit,
+}: {
+  input: Extract<ProviderInput, { type: "session.open" }>;
+  emit: (event: ProviderEvent) => void;
+}): void {
+  if (input.history !== "replay") return;
+  emit({
+    type: "timeline.item",
+    sessionId: input.sessionId,
+    item: { type: "assistant_message", id: "prefix-history", text: "Saved prefix history" },
+  });
+}
+
+describe.each([false, true])("closed plugin startup repair (resume=%s)", (resume) => {
+  async function fixture({
+    savedThinking = "high",
+    globalThinking = false,
+    unknownThinking = false,
+    catalogFailure = false,
+    rotatePersistence = false,
+  }: {
+    savedThinking?: string;
+    globalThinking?: boolean;
+    unknownThinking?: boolean;
+    catalogFailure?: boolean;
+    rotatePersistence?: boolean;
+  } = {}) {
+    const root = await mkdtemp(join(tmpdir(), "plugin-startup-repair-"));
+    const states = new Map<string, ProviderConfigState>();
+    let token = "root";
+    function rejectSupersededToken({
+      input,
+      emit,
+    }: {
+      input: Extract<ProviderInput, { type: "session.open" }>;
+      emit: (event: ProviderEvent) => void;
+    }): boolean {
+      if (!rotatePersistence || !input.persistence) return false;
+      if ((input.persistence.data as { token: string }).token === token) return false;
+      emit({
+        type: "request.failed",
+        requestId: input.requestId,
+        error: { message: "Superseded persistence token" },
+      });
+      return true;
+    }
+    function rotateToken({
+      sessionId,
+      emit,
+    }: {
+      sessionId: string;
+      emit: (event: ProviderEvent) => void;
+    }): void {
+      if (!rotatePersistence) return;
+      token += "-next";
+      emit({
+        type: "session.persistence",
+        sessionId,
+        persistence: { version: 1, data: { token } },
+      });
+    }
+    const thinkingOptions = ["low", "medium", "high"].map((id) => ({ id, label: id }));
+    const modelThinking = globalThinking || unknownThinking ? undefined : thinkingOptions;
+    let catalogThinking: typeof thinkingOptions | undefined = globalThinking
+      ? thinkingOptions
+      : [{ id: "off", label: "Old global option" }];
+    if (unknownThinking) catalogThinking = undefined;
+    function emitCatalog({
+      input,
+      emit,
+    }: {
+      input: Extract<ProviderInput, { type: "catalog" }>;
+      emit: (event: ProviderEvent) => void;
+    }): void {
+      if (catalogFailure) {
+        emit({
+          type: "request.failed",
+          requestId: input.requestId,
+          error: { message: "catalog unavailable" },
+        });
+        return;
+      }
+      emit({
+        type: "catalog",
+        requestId: input.requestId,
+        catalog: {
+          models: [{ id: "plugin-model", label: "Plugin model", thinkingOptions: modelThinking }],
+          modes: [{ id: "build", label: "Build" }],
+          thinkingOptions: catalogThinking,
+          defaultModel: "plugin-model",
+          defaultMode: "build",
+          defaultThinkingOption: "medium",
+        },
+      });
+    }
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type === "catalog") {
+          emitCatalog({ input, emit });
+          return true;
+        }
+        if (input.type === "session.open") {
+          if (rejectSupersededToken({ input, emit })) return true;
+          if (input.config.model && input.config.model !== "plugin-model") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: `Model ${input.config.model} was removed` },
+            });
+            return true;
+          }
+          if (input.config.thinkingOption === "off") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Thinking option off was removed for this model" },
+            });
+            return true;
+          }
+          const state: ProviderConfigState = {
+            model: input.config.model ?? "plugin-model",
+            mode: input.config.mode ?? "build",
+            thinkingOption: input.config.thinkingOption ?? "medium",
+            models: [{ id: "plugin-model", label: "Plugin model", thinkingOptions }],
+            modes: [{ id: "build", label: "Build" }],
+            thinkingOptions,
+            settings: [],
+          };
+          states.set(input.sessionId, state);
+          emit({
+            type: "session.opened",
+            requestId: input.requestId,
+            sessionId: input.sessionId,
+            capabilities: CAPABILITIES,
+            restoration: "core",
+            persistence: { version: 1, data: { token } },
+            cwd: input.config.cwd,
+          });
+          emitStartupHistory({ input, emit });
+          emit({ type: "session.config", sessionId: input.sessionId, config: state });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+          return true;
+        }
+        if (input.type === "session.configure") {
+          const state = states.get(input.sessionId);
+          if (!state) throw new Error("Expected open plugin session");
+          if (input.changes.mode === "invalid-mode" || input.changes.model === "invalid-model") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Invalid model or mode" },
+            });
+            return true;
+          }
+          if (input.changes.thinkingOption === "off") {
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Thinking option off was removed for this model" },
+            });
+            return true;
+          }
+          const next = {
+            ...state,
+            model:
+              input.changes.model === null ? "plugin-model" : (input.changes.model ?? state.model),
+            mode: input.changes.mode ?? state.mode,
+            thinkingOption:
+              input.changes.thinkingOption === null
+                ? "medium"
+                : (input.changes.thinkingOption ?? state.thinkingOption),
+          };
+          states.set(input.sessionId, next);
+          rotateToken({ sessionId: input.sessionId, emit });
+          emit({ type: "session.config", sessionId: input.sessionId, config: next });
+          emit({ type: "request.completed", requestId: input.requestId });
+          return true;
+        }
+        return false;
+      },
+    });
+    const logger = createTestLogger();
+    const plugins = new PluginAgentClientRegistry(logger);
+    plugins.replace([harness.registration]);
+    const storage = new AgentStorage(join(root, "agents"), logger);
+    const manager = new AgentManager({ clients: plugins.clients(), registry: storage, logger });
+    const id = "00000000-0000-4000-8000-0000000000f5";
+    const now = new Date().toISOString();
+    await storage.upsert({
+      id,
+      provider: harness.registration.id,
+      cwd: root,
+      createdAt: now,
+      updatedAt: now,
+      labels: {},
+      archivedAt: null,
+      lastStatus: "closed",
+      config: { model: "removed-model", thinkingOptionId: savedThinking },
+      ...(resume
+        ? {
+            persistence: {
+              provider: harness.registration.id,
+              sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+            },
+          }
+        : {}),
+    });
+    return {
+      root,
+      expectedHistory: resume ? ["Saved prefix history"] : [],
+      harness,
+      manager,
+      storage,
+      id,
+      logger,
+      cleanup: async () => {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        await plugins.shutdown();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test.each([
+    { label: "complete change", modeId: undefined, outcome: "applied" },
+    { label: "successful prefix", modeId: "invalid-mode", outcome: "Invalid model or mode" },
+  ])("retains rotated persistence after a $label", async ({ modeId, outcome }) => {
+    const f = await fixture({ rotatePersistence: true });
+    try {
+      const result = await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+        configOverrides: { model: "plugin-model", modeId },
+      }).then(
+        () => "applied",
+        (error: Error) => error.message,
+      );
+      expect(result).toBe(outcome);
+      await f.manager.flush();
+      const persistence = f.manager.getAgent(f.id)?.persistence;
+      const storedPersistence = (await f.storage.get(f.id))?.persistence;
+      await f.manager.closeAgent(f.id);
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe("plugin-model");
+      expect(persistence).toMatchObject({
+        sessionId: 'plugin:{"version":1,"data":{"token":"root-next"}}',
+      });
+      expect(storedPersistence).toEqual(persistence);
+      const opens = f.harness.inputs.filter((input) => input.type === "session.open");
+      expect(opens.at(-1)).toMatchObject({
+        persistence: { version: 1, data: { token: "root-next" } },
+      });
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test.each([
+    { purpose: "interactive" as const, archivedAt: null, patch: {} },
+    {
+      purpose: "history" as const,
+      archivedAt: "2026-11-10T00:00:00.000Z",
+      patch: {
+        persistence: {
+          provider: "plugin-direct",
+          sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+        },
+      },
+    },
+  ])(
+    "keeps the original token when $purpose opening applies no settings",
+    async ({ purpose, archivedAt, patch }) => {
+      const f = await fixture({ rotatePersistence: true });
+      try {
+        const original = await f.storage.get(f.id);
+        if (!original) throw new Error("Expected stored plugin record");
+        await f.storage.upsert({
+          ...original,
+          ...patch,
+          archivedAt,
+          config: { ...original.config, model: "plugin-model" },
+        });
+        await ensureAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          purpose,
+        });
+        await f.manager.flush();
+        expect(f.harness.inputs.filter((input) => input.type === "session.configure")).toEqual([]);
+        expect((await f.storage.get(f.id))?.archivedAt).toBe(archivedAt);
+        expect((await f.storage.get(f.id))?.persistence?.sessionId).toBe(
+          'plugin:{"version":1,"data":{"token":"root"}}',
+        );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("a rejected first configuration step does not publish a rotated handle", async () => {
+    const f = await fixture({ rotatePersistence: true });
+    try {
+      const record = await f.storage.get(f.id);
+      if (!record) throw new Error("Expected stored plugin record");
+      await f.storage.upsert({ ...record, config: { ...record.config, model: "plugin-model" } });
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { thinkingOptionId: "off" },
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
+      expect(f.harness.inputs.filter((input) => input.type === "session.configure")).toEqual([
+        expect.objectContaining({ changes: { thinkingOption: "off" } }),
+      ]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test.each([
+    { savedThinking: "high", requested: "low", expected: "high" },
+    { savedThinking: "high", requested: undefined, expected: "high" },
+    { savedThinking: "off", requested: "low", expected: "medium" },
+    { savedThinking: "off", requested: undefined, expected: "medium" },
+  ])(
+    "a rejected mode preserves the validated prefix ($savedThinking, $requested)",
+    async ({ savedThinking, requested, expected }) => {
+      const f = await fixture({ savedThinking });
+      try {
+        await expect(
+          ensureUnarchivedAgentLoaded(f.id, {
+            agentManager: f.manager,
+            agentStorage: f.storage,
+            logger: f.logger,
+            configOverrides: {
+              model: "plugin-model",
+              modeId: "invalid-mode",
+              thinkingOptionId: requested,
+            },
+          }),
+        ).rejects.toThrow("Invalid model or mode");
+        await f.manager.flush();
+        expect(
+          f.manager
+            .getTimeline(f.id)
+            .flatMap((item) => (item.type === "assistant_message" ? [item.text] : [])),
+        ).toEqual(f.expectedHistory);
+        expect(
+          f.harness.inputs
+            .filter((input) => input.type === "session.configure")
+            .map((input) => input.changes),
+        ).toEqual([{ model: "plugin-model" }, { mode: "invalid-mode" }]);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+          model: "plugin-model",
+          modeId: "build",
+          thinkingOptionId: expected,
+        });
+        expect((await f.storage.get(f.id))?.config).toMatchObject({
+          model: "plugin-model",
+          thinkingOptionId: expected,
+        });
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe(expected);
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test.each([
+    {
+      label: "supported high",
+      savedThinking: "high",
+      change: { model: "plugin-model" },
+      model: "plugin-model",
+      thinking: "high",
+      startupThinking: "high",
+      changes: [{ model: "plugin-model" }],
+    },
+    {
+      label: "explicit low",
+      savedThinking: "off",
+      change: { model: "plugin-model", thinkingOptionId: "low" },
+      model: "plugin-model",
+      thinking: "low",
+      startupThinking: undefined,
+      changes: [{ model: "plugin-model" }, { thinkingOption: "low" }],
+    },
+    {
+      label: "explicit null",
+      savedThinking: "off",
+      change: { model: "plugin-model", thinkingOptionId: undefined },
+      model: "plugin-model",
+      thinking: "medium",
+      startupThinking: undefined,
+      changes: [{ model: "plugin-model" }, { thinkingOption: null }],
+    },
+    {
+      label: "model default",
+      savedThinking: "high",
+      change: { model: undefined },
+      model: undefined,
+      thinking: "high",
+      startupThinking: "high",
+      changes: [{ model: null }],
+    },
+  ])(
+    "opens $label before a removed model blocks startup and reopens",
+    async ({ change, model, thinking, startupThinking, changes, savedThinking }) => {
+      const f = await fixture({ savedThinking });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: change,
+        });
+        await f.manager.flush();
+        expect((await f.storage.get(f.id))?.config?.model).toBe(model);
+        const open = f.harness.inputs.find((input) => input.type === "session.open");
+        if (open?.type !== "session.open") throw new Error("Expected session.open");
+        expect(open.config.model).toBe(model);
+        expect(open.config.thinkingOption).toBe(startupThinking);
+        expect(
+          f.harness.inputs
+            .filter((input) => input.type === "session.configure")
+            .map((input) => input.changes),
+        ).toEqual(changes);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe(thinking);
+        const beforeReopen = (await f.storage.get(f.id))?.config;
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe("plugin-model");
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe(
+          beforeReopen?.thinkingOptionId,
+        );
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test.each([
+    { globalThinking: false, model: "plugin-model" },
+    { globalThinking: true, model: "plugin-model" },
+    { globalThinking: false, model: undefined },
+    { globalThinking: true, model: undefined },
+  ])(
+    "reconciles unsupported saved off using target catalog (global=$globalThinking, model=$model)",
+    async ({ globalThinking, model }) => {
+      const f = await fixture({ savedThinking: "off", globalThinking });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model },
+        });
+        await f.manager.flush();
+        const open = f.harness.inputs.find((input) => input.type === "session.open");
+        if (open?.type !== "session.open") throw new Error("Expected session.open");
+        expect(open.config.thinkingOption).toBeUndefined();
+        expect(
+          f.harness.inputs
+            .filter((input) => input.type === "session.configure")
+            .map((input) => input.changes),
+        ).toEqual([{ model: model ?? null }]);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("medium");
+        expect((await f.storage.get(f.id))?.config?.model).toBe(model);
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("medium");
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("medium");
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("medium");
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("catalog failure rejects model-only repair before opening or changing storage", async () => {
+    const f = await fixture({ savedThinking: "off", catalogFailure: true });
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "plugin-model" },
+        }),
+      ).rejects.toThrow("catalog unavailable");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs.filter(
+          (input) => input.type === "session.open" || input.type === "session.configure",
+        ),
+      ).toEqual([]);
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("preserves saved high when the catalog does not specify thinking choices", async () => {
+    const f = await fixture({ unknownThinking: true });
+    try {
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+        configOverrides: { model: "plugin-model" },
+      });
+      await f.manager.flush();
+      expect(f.harness.inputs.find((input) => input.type === "session.open")).toMatchObject({
+        config: { thinkingOption: "high" },
+      });
+      expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe("high");
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("high");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("rejects explicit unsupported thinking instead of reconciling the requested value", async () => {
+    const f = await fixture();
+    try {
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "plugin-model", modeId: "build", thinkingOptionId: "off" },
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs
+          .filter((input) => input.type === "session.configure")
+          .map((input) => input.changes),
+      ).toEqual([{ model: "plugin-model" }, { mode: "build" }, { thinkingOption: "off" }]);
+      expect((await f.storage.get(f.id))?.config).toMatchObject({
+        model: "plugin-model",
+        modeId: "build",
+        thinkingOptionId: "high",
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+        model: "plugin-model",
+        modeId: "build",
+        thinkingOptionId: "high",
+      });
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a thinking-only repair persists a readable mode prefix when thinking rejects", async () => {
+    const f = await fixture({ savedThinking: "off" });
+    try {
+      const record = await f.storage.get(f.id);
+      expect(record).not.toBeNull();
+      await f.storage.upsert({ ...record!, config: { ...record?.config, model: "plugin-model" } });
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { modeId: "build", thinkingOptionId: "off" },
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs
+          .filter((input) => input.type === "session.configure")
+          .map((input) => input.changes),
+      ).toEqual([{ mode: "build" }, { thinkingOption: "off" }]);
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+        model: "plugin-model",
+        modeId: "build",
+        thinkingOptionId: "medium",
+      });
+      expect((await f.storage.get(f.id))?.config).toMatchObject({
+        model: "plugin-model",
+        modeId: "build",
+        thinkingOptionId: "medium",
+      });
+      await f.manager.closeAgent(f.id);
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("medium");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("invalid replacement leaves stored preference and public runtime unchanged", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: { model: "invalid-model" },
+        }),
+      ).rejects.toThrow("invalid-model");
+      await f.manager.flush();
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a rejected native model setter leaves the repaired runtime and storage unchanged", async () => {
+    const f = await fixture();
+    try {
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+        configOverrides: { model: "plugin-model" },
+      });
+      await f.manager.flush();
+      const original = await f.storage.get(f.id);
+      const runtime = f.manager.getAgent(f.id)?.runtimeInfo;
+      await expect(f.manager.setAgentModel(f.id, "invalid-model")).rejects.toThrow(
+        "Invalid model or mode",
+      );
+      await f.manager.flush();
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+      expect(f.manager.getAgent(f.id)?.config.model).toBe("plugin-model");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("mode rejection publishes only the model-induced thinking reconciliation", async () => {
+    const f = await fixture({ savedThinking: "off" });
+    try {
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+          configOverrides: {
+            model: "plugin-model",
+            modeId: "invalid-mode",
+            thinkingOptionId: "low",
+          },
+        }),
+      ).rejects.toThrow("Invalid model or mode");
+      await f.manager.flush();
+      expect(
+        f.harness.inputs
+          .filter((input) => input.type === "session.configure")
+          .map((input) => input.changes),
+      ).toEqual([{ model: "plugin-model" }, { mode: "invalid-mode" }]);
+      expect((await f.storage.get(f.id))?.config).toMatchObject({
+        model: "plugin-model",
+        thinkingOptionId: "medium",
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+        model: "plugin-model",
+        modeId: "build",
+        thinkingOptionId: "medium",
+      });
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("ordinary startup rejects unsupported saved thinking without a model mutation", async () => {
+    const f = await fixture({ savedThinking: "off" });
+    try {
+      const record = await f.storage.get(f.id);
+      if (!record) throw new Error("Expected stored plugin agent");
+      await f.storage.upsert({ ...record, config: { ...record.config, model: "plugin-model" } });
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        }),
+      ).rejects.toThrow("Thinking option off was removed for this model");
+      await f.manager.flush();
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("ordinary startup still rejects the removed preference", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await expect(
+        ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        }),
+      ).rejects.toThrow("removed-model");
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
 });

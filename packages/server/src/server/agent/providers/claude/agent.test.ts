@@ -1,3 +1,8 @@
+import {
+  pauseAgentInitialization,
+  pauseArchiveWrite,
+} from "../../../test-utils/agent-initialization.js";
+import type { AgentConfigInitialization } from "../../agent-sdk-types.js";
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -19,7 +24,9 @@ import {
   toClaudeSdkMcpConfig,
 } from "./agent.js";
 import { AgentManager } from "../../agent-manager.js";
-import { ensureAgentLoaded } from "../../agent-loading.js";
+import { ensureUnarchivedAgentLoaded, ensureAgentLoaded } from "../../agent-loading.js";
+import { AgentConfigSession } from "../../../session/agent-config/agent-config-session.js";
+import type { SessionOutboundMessage } from "../../../messages.js";
 import { AgentStorage } from "../../agent-storage.js";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import { claudeProjectDirSync } from "./project-dir.js";
@@ -716,6 +723,7 @@ describe("ClaudeAgentSession features", () => {
       return: queryReturn,
       applyFlagSettings: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
+      setPermissionMode: vi.fn(async () => undefined),
       getContextUsage: vi.fn(async () => undefined),
       [Symbol.asyncIterator](): AsyncIterator<SDKMessage, void> {
         return {
@@ -732,6 +740,14 @@ describe("ClaudeAgentSession features", () => {
       return queryMock;
     });
     return { queryFactory, queryMock, launches };
+  }
+
+  function launchedModel(launch: { options: Record<string, unknown> }): unknown {
+    return launch.options.model;
+  }
+
+  function rejectCandidateStartup(): never {
+    throw new Error("Candidate unavailable");
   }
 
   function createStreamingQueryMock() {
@@ -1701,6 +1717,27 @@ describe("ClaudeAgentSession features", () => {
     ).rejects.toThrow("Thinking option 'off' is not available for model 'claude-fable-5'");
   });
 
+  test("rejects an ordinary resume with unsupported saved thinking", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    await expect(
+      client.resumeSession(
+        { provider: "claude", sessionId: "saved-thread" },
+        {
+          provider: "claude",
+          cwd: process.cwd(),
+          model: "claude-sonnet-5-5",
+          thinkingOptionId: "off",
+        },
+      ),
+    ).rejects.toThrow("Thinking option 'off' is not available for model 'claude-sonnet-5-5'");
+    expect(queryFactory).not.toHaveBeenCalled();
+  });
+
   test("returns a next-turn notice when changing Claude thinking during an active turn", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1932,6 +1969,650 @@ describe("ClaudeAgentSession features", () => {
 
     await session.close();
   });
+
+  async function createClosedClaudeModelChange({
+    savedThinking = "off",
+    resumeSaved = true,
+    prepareSession = () => {},
+  }: {
+    savedThinking?: string;
+    resumeSaved?: boolean;
+    prepareSession?: (session: AgentSession) => void;
+  } = {}) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-model-recovery-"));
+    const { queryFactory, queryMock, launches } = createQueryMock();
+    const launch = queryFactory.getMockImplementation();
+    if (!launch) throw new Error("Expected query factory");
+    queryFactory.mockImplementation((input) => {
+      if (input.options.model === "claude-sonnet-5") throw new Error("Saved model was removed");
+      return launch(input);
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const thinkingChanges: Array<string | null> = [];
+    const sessions: AgentSession[] = [];
+    const instrument = (session: AgentSession) => {
+      sessions.push(session);
+      const setThinking = session.setThinkingOption?.bind(session);
+      if (!setThinking) throw new Error("Expected Claude thinking setter");
+      session.setThinkingOption = async (value) => {
+        thinkingChanges.push(value);
+        return setThinking(value);
+      };
+      prepareSession(session);
+      return session;
+    };
+    const resume = client.resumeSession.bind(client);
+    client.resumeSession = async (...args) => instrument(await resume(...args));
+    const create = client.createSession.bind(client);
+    client.createSession = async (...args) => instrument(await create(...args));
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({ clients: { claude: client }, registry: storage, logger });
+    const id = "00000000-0000-4000-8000-0000000000f2";
+    const now = new Date().toISOString();
+    const messages: SessionOutboundMessage[] = [];
+    const configSession = new AgentConfigSession({
+      host: { emit: (message) => messages.push(message) },
+      operations: {
+        ensureLoaded: async (agentId, configOverrides) => {
+          let initialization: AgentConfigInitialization | undefined;
+          await ensureUnarchivedAgentLoaded(agentId, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+            configOverrides,
+            onConfigApplied: (result) => {
+              initialization = result;
+            },
+          });
+          return initialization;
+        },
+        setModel: (agentId, modelId) => manager.setAgentModel(agentId, modelId),
+        setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
+        setMode: (agentId, value) => manager.setAgentMode(agentId, value),
+        setOptions: (agentId, value) => manager.setAgentOptions(agentId, value),
+      },
+      logger,
+    });
+    await storage.upsert({
+      id,
+      provider: "claude",
+      cwd: root,
+      createdAt: now,
+      updatedAt: now,
+      labels: {},
+      lastStatus: "closed",
+      archivedAt: null,
+      config: { model: "claude-sonnet-5", thinkingOptionId: savedThinking },
+      ...(resumeSaved
+        ? {
+            persistence: {
+              provider: "claude",
+              sessionId: "saved-model-recovery",
+              metadata: { cwd: root },
+            },
+          }
+        : {}),
+    });
+    return {
+      id,
+      manager,
+      storage,
+      queryMock,
+      queryFactory,
+      sessions,
+      launches,
+      messages,
+      configSession,
+      thinkingChanges,
+      cleanup: async () => {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        await fs.rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  describe.each([false, true])("closed Claude startup recovery (resume=%s)", (resume) => {
+    test.each([
+      {
+        label: "supported high",
+        saved: "high",
+        config: { modelId: "claude-sonnet-5-5" },
+        model: "claude-sonnet-5-5",
+        thinking: "high",
+        setters: [],
+      },
+      {
+        label: "unsupported off",
+        saved: "off",
+        config: { modelId: "claude-sonnet-5-5" },
+        model: "claude-sonnet-5-5",
+        thinking: "medium",
+        setters: [],
+      },
+      {
+        label: "explicit low",
+        saved: "off",
+        config: { modelId: "claude-sonnet-5-5", thinkingOptionId: "low" },
+        model: "claude-sonnet-5-5",
+        thinking: "low",
+        setters: ["low"],
+      },
+      {
+        label: "explicit null",
+        saved: "off",
+        config: { modelId: "claude-sonnet-5-5", thinkingOptionId: null },
+        model: "claude-sonnet-5-5",
+        thinking: undefined,
+        setters: [null],
+      },
+      {
+        label: "model default",
+        saved: "high",
+        config: { modelId: null },
+        model: undefined,
+        thinking: "high",
+        setters: [],
+      },
+    ])("persists $label and reopens", async ({ saved, config, model, thinking, setters }) => {
+      const fixture = await createClosedClaudeModelChange({
+        savedThinking: saved,
+        resumeSaved: resume,
+      });
+      const { id, manager, storage, configSession, messages, queryMock } = fixture;
+      try {
+        await configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: id,
+          requestId: "startup-repair",
+          config,
+        });
+        await manager.flush();
+        expect(messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith(model);
+        expect(fixture.thinkingChanges).toEqual(setters);
+        expect(fixture.launches[0]?.options.model).toBe(model);
+        expect((await storage.get(id))?.config?.model).toBe(model);
+        expect((await storage.get(id))?.config?.thinkingOptionId).toBe(thinking);
+        expect(manager.getAgent(id)?.runtimeInfo?.thinkingOptionId).toBe(thinking ?? null);
+        await manager.closeAgent(id);
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(id)?.config.model).toBe(model ?? "claude-opus-5-5");
+        expect(manager.getAgent(id)?.config.thinkingOptionId).toBe(thinking);
+        expect(manager.getAgent(id)?.runtimeInfo?.thinkingOptionId).toBe(thinking ?? null);
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+  });
+
+  test.each([false, true])(
+    "accepts a closed Claude model change before saving (resume=%s)",
+    async (resume) => {
+      const fixture = await createClosedClaudeModelChange({ resumeSaved: resume });
+      const { id, manager, storage, queryMock, messages, configSession } = fixture;
+      try {
+        await configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: id,
+          requestId: "model-repair",
+          config: { modelId: "claude-sonnet-5-5", thinkingOptionId: null },
+        });
+        await manager.flush();
+        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+        expect((await storage.get(id))?.config?.model).toBe("claude-sonnet-5-5");
+        expect(fixture.thinkingChanges).toEqual([null]);
+        expect((await storage.get(id))?.config?.thinkingOptionId).toBeUndefined();
+        await manager.closeAgent(id);
+        await ensureUnarchivedAgentLoaded(id, {
+          agentManager: manager,
+          agentStorage: storage,
+          logger,
+        });
+        expect(manager.getAgent(id)?.config.model).toBe("claude-sonnet-5-5");
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.each([false, true])(
+    "rejects a closed Claude model change without saving it (resume=%s)",
+    async (resume) => {
+      const fixture = await createClosedClaudeModelChange({ resumeSaved: resume });
+      const { id, manager, storage, queryMock, messages, configSession } = fixture;
+      queryMock.setModel.mockRejectedValue(new Error("SDK rejected model"));
+      try {
+        const original = await storage.get(id);
+        await configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: id,
+          requestId: "model-repair",
+          config: { modelId: "claude-sonnet-5-5", thinkingOptionId: null },
+        });
+        await manager.flush();
+        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "SDK rejected model" },
+        });
+        expect(await storage.get(id)).toEqual(original);
+        expect(manager.getAgent(id)).toBeNull();
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  describe.each([false, true])("closed Claude rejected bundle prefix (resume=%s)", (resume) => {
+    test.each([
+      { saved: "high", requested: "low", thinking: "high" },
+      { saved: "high", requested: null, thinking: "high" },
+      { saved: "off", requested: "low", thinking: "medium" },
+      { saved: "off", requested: null, thinking: "medium" },
+    ])(
+      "keeps the canonical model and reconciled $saved thinking before mode rejects ($requested)",
+      async ({ saved, requested, thinking }) => {
+        const fixture = await createClosedClaudeModelChange({
+          savedThinking: saved,
+          resumeSaved: resume,
+        });
+        const { id, manager, storage, queryMock, messages, configSession } = fixture;
+        try {
+          await configSession.handleAgentConfigApplyRequest({
+            type: "agent.config.apply.request",
+            agentId: id,
+            requestId: "mode-reject",
+            config: {
+              modelId: " claude-sonnet-5-5 ",
+              modeId: "invalid-mode",
+              thinkingOptionId: requested,
+              options: { fast_mode: true },
+            },
+          });
+          await manager.flush();
+          expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+          expect(messages.at(-1)).toMatchObject({
+            payload: { accepted: false, error: expect.stringContaining("mode") },
+          });
+          expect(fixture.thinkingChanges).toEqual([]);
+          expect(queryMock.applyFlagSettings).not.toHaveBeenCalled();
+          expect((await storage.get(id))?.config).toMatchObject({
+            model: "claude-sonnet-5-5",
+            modeId: "default",
+            thinkingOptionId: thinking,
+          });
+          expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+            model: "claude-sonnet-5-5",
+            modeId: "default",
+            thinkingOptionId: thinking,
+          });
+          await manager.closeAgent(id);
+          await ensureUnarchivedAgentLoaded(id, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+          });
+          expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+            model: "claude-sonnet-5-5",
+            thinkingOptionId: thinking,
+          });
+        } finally {
+          await fixture.cleanup();
+        }
+      },
+    );
+
+    test("preserves model and mode when the later thinking setter rejects", async () => {
+      const fixture = await createClosedClaudeModelChange({
+        savedThinking: "high",
+        resumeSaved: resume,
+      });
+      const { id, manager, storage, queryMock, messages, configSession } = fixture;
+      try {
+        await configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: id,
+          requestId: "thinking-reject",
+          config: {
+            modelId: "claude-sonnet-5-5",
+            modeId: "plan",
+            thinkingOptionId: "invalid-thinking",
+            options: { fast_mode: true },
+          },
+        });
+        await manager.flush();
+        expect(messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: expect.stringContaining("thinking") },
+        });
+        expect(queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(queryMock.setPermissionMode).toHaveBeenCalledExactlyOnceWith("plan");
+        expect(fixture.thinkingChanges).toEqual(["invalid-thinking"]);
+        expect((await storage.get(id))?.config).toMatchObject({
+          model: "claude-sonnet-5-5",
+          modeId: "plan",
+          thinkingOptionId: "high",
+        });
+        expect(manager.getAgent(id)?.runtimeInfo).toMatchObject({
+          model: "claude-sonnet-5-5",
+          modeId: "plan",
+          thinkingOptionId: "high",
+        });
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+  });
+
+  test.each([false, true])(
+    "a failed runtime readback never publishes a model prefix (resume=%s)",
+    async (resume) => {
+      const fixture = await createClosedClaudeModelChange({
+        resumeSaved: resume,
+        prepareSession: (session) => {
+          vi.spyOn(session, "getRuntimeInfo").mockRejectedValue(
+            new Error("Runtime readback unavailable"),
+          );
+        },
+      });
+      try {
+        const original = await fixture.storage.get(fixture.id);
+        await fixture.configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: fixture.id,
+          requestId: "readback",
+          config: { modelId: "claude-sonnet-5-5", modeId: "invalid-mode" },
+        });
+        expect(fixture.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Runtime readback unavailable" },
+        });
+        expect(fixture.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(fixture.manager.getAgent(fixture.id)).toBeNull();
+        expect(await fixture.storage.get(fixture.id)).toEqual(original);
+      } finally {
+        await fixture.cleanup();
+      }
+    },
+  );
+
+  test.each([false, true])(
+    "a waiting mutation does not inherit another request's rejected replacement (resume=%s)",
+    async (resume) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        const record = await f.storage.get(f.id);
+        expect(record).not.toBeNull();
+        await f.storage.upsert({
+          ...record!,
+          config: { ...record.config, model: "claude-opus-5" },
+        });
+        const initialization = pauseAgentInitialization(f.manager);
+        f.queryMock.setModel.mockRejectedValueOnce(new Error("Invalid first replacement"));
+        const first = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "invalid-first",
+          modelId: "claude-sonnet-5-5",
+        });
+        await initialization.entered;
+        const waiting = initialization.waitForNextLoad();
+        const second = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "valid-second",
+          modelId: "claude-opus-5-5",
+        });
+        await waiting;
+        initialization.release();
+        await Promise.all([first, second]);
+        expect(
+          f.messages.find((message) => message.payload?.requestId === "valid-second"),
+        ).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel.mock.calls).toEqual([
+          ["claude-sonnet-5-5"],
+          ["claude-opus-5-5"],
+        ]);
+        expect((await f.storage.get(f.id))?.config?.model).toBe("claude-opus-5-5");
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("an existing query rejects a model without being replaced or changing accepted state", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5",
+      thinkingOptionId: "high",
+      providerOptions: { fast_mode: true },
+    });
+    try {
+      await session.setModel?.("claude-opus-5");
+      const previous = await session.getRuntimeInfo();
+      queryMock.setModel.mockRejectedValueOnce(new Error("Live replacement rejected"));
+      await expect(session.setModel?.("claude-sonnet-5-5")).rejects.toThrow(
+        "Live replacement rejected",
+      );
+      expect(await session.getRuntimeInfo()).toEqual(previous);
+      expect(queryFactory).toHaveBeenCalledTimes(1);
+      expect(queryMock.close).not.toHaveBeenCalled();
+      expect(queryMock.return).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    { label: "complete change", modeId: undefined, accepted: true },
+    { label: "successful prefix", modeId: "invalid-mode", accepted: false },
+  ])("publishes a resumed $label after queued metadata", async ({ modeId, accepted }) => {
+    const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: true });
+    const initialization = pauseAgentInitialization(f.manager);
+    const published: Array<{ model: string | undefined; updatedAt: number }> = [];
+    const unsubscribe = f.manager.subscribe((event) => {
+      if (event.type === "agent_state") {
+        published.push({
+          model: event.agent.config.model,
+          updatedAt: event.agent.updatedAt.getTime(),
+        });
+      }
+    });
+    try {
+      const repair = f.configSession.handleAgentConfigApplyRequest({
+        type: "agent.config.apply.request",
+        agentId: f.id,
+        requestId: "timestamp-repair",
+        config: { modelId: "claude-sonnet-5-5", modeId },
+      });
+      await initialization.entered;
+      await f.manager.setMetadata(f.id, { note: "queued metadata" });
+      const metadata = await f.storage.get(f.id);
+      const metadataTime = Date.parse(metadata!.updatedAt);
+      initialization.release();
+      await repair;
+      await f.manager.flush();
+      expect(f.messages.at(-1)).toMatchObject({ payload: { accepted } });
+      expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+      const selected = published.filter((event) => event.model === "claude-sonnet-5-5");
+      expect(selected.length).toBeGreaterThan(0);
+      expect(selected.every((event) => event.updatedAt > metadataTime)).toBe(true);
+      const stored = await f.storage.get(f.id);
+      expect(stored?.metadata).toEqual({ note: "queued metadata" });
+      expect(Date.parse(stored!.updatedAt)).toBeGreaterThan(metadataTime);
+    } finally {
+      initialization.release();
+      unsubscribe();
+      await f.cleanup();
+    }
+  });
+
+  describe.each([false, true])("plain-first lazy Claude model repair (resume=%s)", (resume) => {
+    test.each([
+      { label: "replacement", modelId: "claude-sonnet-5-5", expected: "claude-sonnet-5-5" },
+      { label: "default", modelId: null, expected: undefined },
+    ])("validates $label before launching a saved removed model", async ({ modelId, expected }) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      const initialization = pauseAgentInitialization(f.manager);
+      try {
+        const ordinary = ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await initialization.entered;
+        const waiting = initialization.waitForNextLoad();
+        const repair = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "plain-first",
+          modelId,
+        });
+        await waiting;
+        initialization.release();
+        await Promise.all([ordinary, repair]);
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith(expected);
+        expect(f.launches.map(launchedModel)).toEqual([expected]);
+        expect((await f.storage.get(f.id))?.config?.model).toBe(expected);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe(expected ?? null);
+      } finally {
+        initialization.release();
+        await f.cleanup();
+      }
+    });
+
+    test("a failed candidate startup leaves the lazy session retryable", async () => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await f.manager.flush();
+        const stored = await f.storage.get(f.id);
+        const runtime = structuredClone(f.manager.getAgent(f.id)?.runtimeInfo);
+        const providerRuntime = await f.sessions[0].getRuntimeInfo();
+        const persistence = structuredClone(f.sessions[0].describePersistence());
+        f.queryFactory.mockImplementationOnce(rejectCandidateStartup);
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "reject-startup",
+          modelId: "claude-sonnet-5-5",
+        });
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Candidate unavailable" },
+        });
+        expect(f.queryMock.setModel).not.toHaveBeenCalled();
+        expect(await f.storage.get(f.id)).toEqual(stored);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+        expect(await f.sessions[0].getRuntimeInfo()).toEqual(providerRuntime);
+        expect(f.sessions[0].describePersistence()).toEqual(persistence);
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "retry-startup",
+          modelId: "claude-sonnet-5-5",
+        });
+        expect(f.messages.at(-1)).toMatchObject({ payload: { accepted: true } });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+      } finally {
+        await f.cleanup();
+      }
+    });
+
+    test("a rejected lazy replacement leaves accepted state intact and retires its query", async () => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      try {
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger,
+        });
+        await f.manager.flush();
+        const stored = await f.storage.get(f.id);
+        const runtime = structuredClone(f.manager.getAgent(f.id)?.runtimeInfo);
+        const providerRuntime = await f.sessions[0].getRuntimeInfo();
+        const persistence = structuredClone(f.sessions[0].describePersistence());
+        f.queryMock.setModel.mockRejectedValueOnce(new Error("Replacement unavailable"));
+        await f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "reject-lazy",
+          modelId: "claude-sonnet-5-5",
+        });
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: "Replacement unavailable" },
+        });
+        expect(f.queryMock.setModel).toHaveBeenCalledExactlyOnceWith("claude-sonnet-5-5");
+        expect(f.queryMock.close).toHaveBeenCalledTimes(1);
+        expect(f.queryMock.return).toHaveBeenCalledTimes(1);
+        expect(await f.storage.get(f.id)).toEqual(stored);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo).toEqual(runtime);
+        expect(await f.sessions[0].getRuntimeInfo()).toEqual(providerRuntime);
+        expect(f.sessions[0].describePersistence()).toEqual(persistence);
+      } finally {
+        await f.cleanup();
+      }
+    });
+  });
+
+  test.each([false, true])(
+    "archival wins before a queued configuration repair (resume=%s)",
+    async (resume) => {
+      const f = await createClosedClaudeModelChange({ savedThinking: "high", resumeSaved: resume });
+      const archiveWrite = pauseArchiveWrite(f.storage);
+      const initialization = pauseAgentInitialization(f.manager);
+      try {
+        const repair = f.configSession.handleSetAgentModelRequest({
+          type: "set_agent_model_request",
+          agentId: f.id,
+          requestId: "archive-race",
+          modelId: "claude-sonnet-5-5",
+        });
+        await initialization.entered;
+        const archival = f.manager.archiveSnapshot(f.id, "2026-11-10T00:00:00.000Z");
+        await archiveWrite.entered;
+        initialization.release();
+        await initialization.queued;
+        archiveWrite.release();
+        const archived = await archival;
+        await repair;
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({
+          payload: { accepted: false, error: `Agent is archived: ${f.id}` },
+        });
+        expect((await f.storage.get(f.id))?.config).toEqual(archived.config);
+        expect(f.launches).toEqual([]);
+        expect(f.queryMock.setModel).not.toHaveBeenCalled();
+        expect(f.manager.getAgent(f.id)).toBeNull();
+      } finally {
+        initialization.release();
+        archiveWrite.release();
+        await f.cleanup();
+      }
+    },
+  );
 
   test("fast mode survives a daemon restart through the stored providerOptions", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "claude-fast-restart-"));

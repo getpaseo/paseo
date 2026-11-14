@@ -4,6 +4,7 @@ import type {
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
   AgentPersistenceHandle,
   FetchCatalogOptions,
   ProviderRefreshContext,
@@ -149,9 +150,10 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
     const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {

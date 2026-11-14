@@ -43,7 +43,18 @@ test("loads archived records for history and active records with the interactive
       options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> => {
       resumeOptions.push(options);
-      return await baseClient.resumeSession(handle, overrides, launchContext);
+      const session = await baseClient.resumeSession(handle, overrides, launchContext);
+      // History adapters may report their default without applying the saved overrides.
+      if (options?.purpose === "history") {
+        session.getCurrentMode = async () => "default";
+        session.getRuntimeInfo = async () => ({
+          provider: "codex",
+          sessionId: handle.sessionId,
+          model: "reader-default",
+          thinkingOptionId: null,
+        });
+      }
+      return session;
     },
     fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
     isAvailable: async () => await baseClient.isAvailable(),
@@ -58,10 +69,22 @@ test("loads archived records for history and active records with the interactive
   const activeId = "00000000-0000-4000-8000-000000000302";
 
   try {
-    const archived = await manager.createAgent({ provider: "codex", cwd: root }, archivedId, {
-      workspaceId: "workspace-archived",
-    });
+    const archived = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: root,
+        modeId: "plan",
+        model: "saved-model",
+        thinkingOptionId: "high",
+      },
+      archivedId,
+      {
+        workspaceId: "workspace-archived",
+      },
+    );
     await manager.archiveAgent(archived.id);
+    const savedRuntimeInfo = (await storage.get(archived.id))?.runtimeInfo;
+    expect(savedRuntimeInfo?.model).toBe("saved-model");
 
     const active = await manager.createAgent({ provider: "codex", cwd: root }, activeId, {
       workspaceId: "workspace-active",
@@ -72,6 +95,14 @@ test("loads archived records for history and active records with the interactive
     await ensureAgentLoaded(active.id, { agentManager: manager, agentStorage: storage, logger });
 
     expect(resumeOptions).toEqual([{ purpose: "history" }, { purpose: "interactive" }]);
+    expect(manager.getAgent(archived.id)?.config.modeId).toBe("plan");
+    expect(manager.getAgent(archived.id)?.currentModeId).toBe("plan");
+    expect(manager.getAgent(archived.id)?.runtimeInfo).toEqual(savedRuntimeInfo);
+    expect((await storage.get(archived.id))?.runtimeInfo).toEqual(savedRuntimeInfo);
+    await manager.closeAgent(archived.id);
+    await manager.flush();
+    expect((await storage.get(archived.id))?.lastModeId).toBe("plan");
+    expect((await storage.get(archived.id))?.runtimeInfo).toEqual(savedRuntimeInfo);
   } finally {
     await Promise.all([
       manager.closeAgent(archivedId).catch(() => undefined),

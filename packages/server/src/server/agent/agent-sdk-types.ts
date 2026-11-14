@@ -649,6 +649,8 @@ export interface AgentLaunchContext {
 }
 
 export interface AgentCreateSessionOptions {
+  /** Settings to reconcile while reopening a record that has no provider handle. */
+  configChange?: AgentSessionConfigChange;
   /**
    * Whether the provider should leave a durable native session behind.
    * Defaults to true. Providers that cannot honor false should no-op.
@@ -665,7 +667,19 @@ export interface AgentCreateSessionOptions {
 export type AgentResumePurpose = "interactive" | "history";
 
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
+export type AgentSessionConfigChange = Pick<
+  AgentSessionConfig,
+  "model" | "modeId" | "thinkingOptionId"
+>;
+
+export interface AgentConfigInitialization {
+  notice: AgentProviderNotice | null;
+}
+
 export interface AgentResumeSessionOptions {
+  onConfigApplied?: (result: AgentConfigInitialization) => void;
+  /** Explicit settings mutation to validate before the resumed session is registered. */
+  configChange?: AgentSessionConfigChange;
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: AgentResumePurpose;
   /** See AgentCreateSessionOptions.configuredModelIds. */

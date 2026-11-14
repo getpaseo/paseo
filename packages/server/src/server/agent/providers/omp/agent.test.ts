@@ -1,6 +1,12 @@
+import { AgentManager } from "../../agent-manager.js";
+import { AgentStorage } from "../../agent-storage.js";
+import { ensureUnarchivedAgentLoaded } from "../../agent-loading.js";
+import { AgentConfigSession } from "../../../session/agent-config/agent-config-session.js";
+import type { AgentConfigInitialization } from "../../agent-sdk-types.js";
+import type { SessionOutboundMessage } from "../../../messages.js";
 import { describe, expect, onTestFinished, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm as removeRepairRoot } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -1854,4 +1860,230 @@ test("closing OMP during image conversion rejects its pending start", async () =
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.close();
   await rejected;
+});
+
+describe.each([false, true])("closed omp startup recovery (resume=%s)", (resume) => {
+  async function fixture() {
+    const root = await mkdtemp(path.join(tmpdir(), "omp-startup-repair-"));
+    const logger = createTestLogger();
+    const runtime = new FakeOmp();
+    runtime.removeModel("test/removed-model");
+    runtime.removeModel("test/invalid-model");
+    const defaultModel = { provider: "test", id: "default", name: "Default", reasoning: true };
+    const replacement = { ...defaultModel, id: "replacement" };
+    const startSession = runtime.startSession.bind(runtime);
+    runtime.startSession = async (input) => {
+      runtime.queueSessionSetup((session) => {
+        const launch = runtime.recordedLaunches.at(-1);
+        session.state = {
+          ...session.state,
+          model: launch?.model === "test/replacement" ? replacement : defaultModel,
+          thinkingLevel: launch?.thinkingOptionId === "high" ? "high" : "medium",
+        };
+        session.models = [defaultModel, replacement];
+        session.setModelResult = replacement;
+        const setThinking = session.setThinkingLevel.bind(session);
+        session.setThinkingLevel = async (level) => {
+          await setThinking(level);
+          session.state = { ...session.state, thinkingLevel: level === "low" ? "low" : "medium" };
+        };
+      });
+      return startSession(input);
+    };
+    const client = new OmpAgentClient({ logger, runtime });
+    const storage = new AgentStorage(path.join(root, "agents"), logger);
+    const manager = new AgentManager({ clients: { omp: client }, registry: storage, logger });
+    const id = "00000000-0000-4000-8000-0000000000f4";
+    const now = new Date().toISOString();
+    await storage.upsert({
+      id,
+      provider: "omp",
+      cwd: root,
+      createdAt: now,
+      updatedAt: now,
+      labels: {},
+      lastStatus: "closed",
+      archivedAt: null,
+      config: { model: "test/removed-model", thinkingOptionId: "high" },
+      ...(resume
+        ? {
+            persistence: {
+              provider: "omp",
+              sessionId: "saved",
+              nativeHandle: path.join(root, "saved-session"),
+              metadata: { cwd: root, model: "test/removed-model", thinkingOptionId: "high" },
+            },
+          }
+        : {}),
+    });
+    const messages: SessionOutboundMessage[] = [];
+    const configSession = new AgentConfigSession({
+      host: { emit: (message) => messages.push(message) },
+      logger,
+      operations: {
+        ensureLoaded: async (agentId, configOverrides) => {
+          let initialization: AgentConfigInitialization | undefined;
+          await ensureUnarchivedAgentLoaded(agentId, {
+            agentManager: manager,
+            agentStorage: storage,
+            logger,
+            configOverrides,
+            onConfigApplied: (result) => {
+              initialization = result;
+            },
+          });
+          return initialization;
+        },
+        setModel: (agentId, value) => manager.setAgentModel(agentId, value),
+        setThinking: (agentId, value) => manager.setAgentThinkingOption(agentId, value),
+        setMode: (agentId, value) => manager.setAgentMode(agentId, value),
+        setOptions: (agentId, value) => manager.setAgentOptions(agentId, value),
+      },
+    });
+    return {
+      root,
+      runtime,
+      manager,
+      storage,
+      id,
+      configSession,
+      messages,
+      logger,
+      cleanup: async () => {
+        await manager.closeAgent(id);
+        await manager.flush();
+        await storage.flush();
+        await removeRepairRoot(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  test.each([
+    {
+      label: "supported high",
+      config: { modelId: "test/replacement" },
+      model: "test/replacement",
+      thinking: "high",
+      startupThinking: "high",
+      thinkingCalls: [],
+      modelCalls: 1,
+    },
+    {
+      label: "explicit low",
+      config: { modelId: "test/replacement", thinkingOptionId: "low" },
+      model: "test/replacement",
+      thinking: "low",
+      startupThinking: "high",
+      thinkingCalls: ["low"],
+      modelCalls: 1,
+    },
+    {
+      label: "explicit null",
+      config: { modelId: "test/replacement", thinkingOptionId: null },
+      model: "test/replacement",
+      thinking: "medium",
+      startupThinking: "high",
+      thinkingCalls: ["medium"],
+      modelCalls: 1,
+    },
+    {
+      label: "model default",
+      config: { modelId: null },
+      model: undefined,
+      thinking: "high",
+      startupThinking: "high",
+      thinkingCalls: [],
+      modelCalls: 0,
+    },
+  ])(
+    "repairs $label and reopens",
+    async ({ config, model, thinking, startupThinking, thinkingCalls, modelCalls }) => {
+      const f = await fixture();
+      try {
+        await f.configSession.handleAgentConfigApplyRequest({
+          type: "agent.config.apply.request",
+          agentId: f.id,
+          requestId: "repair",
+          config,
+        });
+        await f.manager.flush();
+        expect(f.messages.at(-1)).toMatchObject({ payload: { accepted: true, error: null } });
+        expect(f.runtime.recordedLaunches[0]?.thinkingOptionId).toBe(startupThinking);
+        expect(f.runtime.latestSession().setThinkingLevelRequests).toEqual(thinkingCalls);
+        expect(f.runtime.latestSession().setModelRequests).toHaveLength(modelCalls);
+        expect(f.manager.getAgent(f.id)?.config.model).toBe(model);
+        expect((await f.storage.get(f.id))?.config?.model).toBe(model);
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe(thinking);
+        const beforeReopen = (await f.storage.get(f.id))?.config?.thinkingOptionId;
+        await f.manager.closeAgent(f.id);
+        await ensureUnarchivedAgentLoaded(f.id, {
+          agentManager: f.manager,
+          agentStorage: f.storage,
+          logger: f.logger,
+        });
+        expect(f.manager.getAgent(f.id)?.runtimeInfo?.model).toBe(model ?? "test/default");
+        expect((await f.storage.get(f.id))?.config?.thinkingOptionId).toBe(beforeReopen);
+      } finally {
+        await f.cleanup();
+      }
+    },
+  );
+
+  test("rejects an invalid replacement without publishing or saving", async () => {
+    const f = await fixture();
+    try {
+      const original = await f.storage.get(f.id);
+      await f.configSession.handleSetAgentModelRequest({
+        type: "set_agent_model_request",
+        agentId: f.id,
+        requestId: "invalid",
+        modelId: "test/invalid-model",
+      });
+      await f.manager.flush();
+      expect(f.messages.at(-1)).toMatchObject({
+        payload: { accepted: false, error: expect.stringContaining("invalid-model") },
+      });
+      expect(await f.storage.get(f.id)).toEqual(original);
+      expect(f.manager.getAgent(f.id)).toBeNull();
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("preserves a valid model prefix when mode rejects before requested thinking", async () => {
+    const f = await fixture();
+    try {
+      await f.configSession.handleAgentConfigApplyRequest({
+        type: "agent.config.apply.request",
+        agentId: f.id,
+        requestId: "mode-order",
+        config: { modelId: "test/replacement", modeId: "invalid-mode", thinkingOptionId: "low" },
+      });
+      await f.manager.flush();
+      expect(f.messages.at(-1)).toMatchObject({
+        payload: { accepted: false, error: expect.stringContaining("mode") },
+      });
+      expect(f.runtime.latestSession().setModelRequests).toEqual([
+        { provider: "test", modelId: "replacement" },
+      ]);
+      expect(f.runtime.latestSession().setThinkingLevelRequests).toEqual([]);
+      expect((await f.storage.get(f.id))?.config).toMatchObject({
+        model: "test/replacement",
+        thinkingOptionId: "high",
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo).toMatchObject({
+        model: "test/replacement",
+        thinkingOptionId: "high",
+      });
+      await f.manager.closeAgent(f.id);
+      await ensureUnarchivedAgentLoaded(f.id, {
+        agentManager: f.manager,
+        agentStorage: f.storage,
+        logger: f.logger,
+      });
+      expect(f.manager.getAgent(f.id)?.runtimeInfo?.thinkingOptionId).toBe("high");
+    } finally {
+      await f.cleanup();
+    }
+  });
 });

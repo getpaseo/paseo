@@ -4892,6 +4892,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.isServiceTierAvailable(requested)) return;
     this.requestedServiceTier = "default";
     this.providerOptions = { ...this.providerOptions, service_tier: "default" };
+    // Initial model changes can run before registration subscribes to option events.
+    this.openOptionsPatch = { ...this.openOptionsPatch, service_tier: "default" };
     this.emitEvent({
       type: "options_changed",
       provider: CODEX_PROVIDER,

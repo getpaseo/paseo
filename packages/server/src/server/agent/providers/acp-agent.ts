@@ -90,6 +90,7 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type AgentSessionConfigChange,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -544,6 +545,7 @@ interface ACPAgentSessionOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   handle?: AgentPersistenceHandle;
   resumePurpose?: AgentResumePurpose;
+  reconcileSavedThinking?: boolean;
   configuredModelIds?: readonly string[];
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1026,9 +1028,13 @@ export class ACPAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     this.assertProvider(config);
-    const providerOptions = ACPProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const { startupConfig, reconcileSavedThinking } = this.prepareInitialConfigChange(
+      options?.configChange,
+    );
+    const openedConfig = { ...config, ...startupConfig };
+    const providerOptions = ACPProviderOptionsSchema.parse(openedConfig.providerOptions ?? {});
     const session = new ACPAgentSession(
-      { ...config, provider: this.provider },
+      { ...openedConfig, provider: this.provider },
       {
         provider: this.provider,
         usageProvider: this.usageProvider,
@@ -1053,6 +1059,7 @@ export class ACPAgentClient implements AgentClient {
             providerOptions.supportsMcpServers ?? this.capabilities.supportsMcpServers,
         },
         configuredModelIds: options?.configuredModelIds,
+        reconcileSavedThinking,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
@@ -1062,6 +1069,20 @@ export class ACPAgentClient implements AgentClient {
     );
     await session.initializeNewSession();
     return session;
+  }
+
+  private prepareInitialConfigChange(change?: AgentSessionConfigChange) {
+    const changesModel = change !== undefined && "model" in change;
+    const changesThinking = change !== undefined && "thinkingOptionId" in change;
+    return {
+      // Retain an advertised saved choice while deferring the requested thinking step.
+      // Custom writers own their thinking contract and cannot use ACP choices to reconcile.
+      startupConfig: {
+        ...(changesModel ? { model: change.model } : {}),
+        ...(changesThinking && this.thinkingOptionWriter ? { thinkingOptionId: undefined } : {}),
+      },
+      reconcileSavedThinking: changesModel || changesThinking,
+    };
   }
 
   async resumeSession(
@@ -1080,9 +1101,13 @@ export class ACPAgentClient implements AgentClient {
       throw new Error(`${this.provider} resume requires the original working directory`);
     }
 
+    const { startupConfig, reconcileSavedThinking } = this.prepareInitialConfigChange(
+      options?.configChange,
+    );
     const mergedConfig: AgentSessionConfig = {
       ...storedConfig,
       ...overrides,
+      ...startupConfig,
       provider: this.provider,
       cwd,
     };
@@ -1112,6 +1137,7 @@ export class ACPAgentClient implements AgentClient {
       },
       handle,
       resumePurpose: options?.purpose,
+      reconcileSavedThinking,
       configuredModelIds: options?.configuredModelIds,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -1779,6 +1805,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
   private readonly resumePurpose: AgentResumePurpose;
+  private readonly reconcileSavedThinking: boolean;
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -1846,6 +1873,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     this.initialHandle = options.handle;
     this.resumePurpose = options.resumePurpose ?? "interactive";
+    this.reconcileSavedThinking = options.reconcileSavedThinking ?? false;
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
     this.currentModel = config.model ?? null;
@@ -1943,10 +1971,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
-      await this.applyConfiguredOverrides();
-
       if (this.resumePurpose === "history") {
+        // History replay never runs a turn, so stored mode/model choices are not
+        // applied: a model that is no longer offered must not block opening it.
         await this.releaseHistoryRuntime();
+      } else {
+        await this.applyConfiguredOverrides();
       }
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
@@ -2344,13 +2374,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (selection.hasAvailableModels && !selection.availableModel) {
-      this.warnInvalidSelection(
-        modelId,
-        `is not a valid ${this.provider} model. Available options: ${this.availableModels
+      throw new Error(
+        `Model '${modelId}' is not a valid ${this.provider} model. Available options: ${this.availableModels
           ?.map((model) => model.modelId)
           .join(", ")}`,
       );
-      return;
     }
 
     if (
@@ -2358,10 +2386,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       typeof this.connection.unstable_setSessionModel === "function"
     ) {
       try {
-        await this.connection.unstable_setSessionModel({
-          sessionId: this.sessionId,
-          modelId,
-        });
+        const { connection, sessionId } = this;
+        await this.runACPRequest(() => connection.unstable_setSessionModel({ sessionId, modelId }));
         this.currentModel = modelId;
         this.pushEvent({
           type: "model_changed",
@@ -2369,8 +2395,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           runtimeInfo: this.runtimeInfo(),
         });
         return;
-      } catch {
-        // Fall through to config option path.
+      } catch (error) {
+        if (!isACPError(error) || error.code !== -32601) {
+          throw error;
+        }
+        // Agents may expose model selection only through session config options.
       }
     }
 
@@ -2379,15 +2408,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(this.modelSelectionUnavailableMessage());
     }
     if (!selection.configChoice) {
-      this.warnInvalidSelection(
-        modelId,
-        `is not a valid ${this.provider} model config option. Available options: ${flattenSelectOptions(
+      throw new Error(
+        `Model '${modelId}' is not a valid ${this.provider} model config option. Available options: ${flattenSelectOptions(
           modelOption.options,
         )
           .map((option) => option.value)
           .join(", ")}`,
       );
-      return;
     }
 
     const { connection, sessionId } = this;
@@ -3140,6 +3167,19 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return this.inOptionsTransaction(() => this.writeConfiguredOverrides());
   }
 
+  private resolveConfiguredThinking(): string | undefined {
+    const value = this.config.thinkingOptionId;
+    if (!this.reconcileSavedThinking || this.thinkingOptionWriter) return value;
+    // A repair retains the saved preference when the opening model still offers it.
+    const option = findSelectConfigOption({
+      configOptions: this.configOptions,
+      category: "thought_level",
+    });
+    const supported =
+      option && flattenSelectOptions(option.options).some((choice) => choice.value === value);
+    return supported ? value : undefined;
+  }
+
   private async writeConfiguredOverrides(): Promise<void> {
     const configuredModeId = this.config.modeId;
     if (configuredModeId && configuredModeId !== this.currentMode) {
@@ -3149,24 +3189,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const configuredModelId = this.config.model;
     let switchedModel = false;
     if (configuredModelId && configuredModelId !== this.currentModel) {
-      try {
-        await this.setModelWithSelection({
-          modelId: configuredModelId,
-          selection: this.resolveModelSelection(configuredModelId),
-        });
-        switchedModel = true;
-      } catch (error) {
-        if (!this.isModelSelectionUnavailableError(error)) {
-          throw error;
-        }
-        this.logger.warn(
-          { value: configuredModelId },
-          `${this.provider} does not expose ACP model selection; using provider default model`,
-        );
-      }
+      await this.setModelWithSelection({
+        modelId: configuredModelId,
+        selection: this.resolveModelSelection(configuredModelId),
+      });
+      switchedModel = true;
     }
-    if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
-      await this.setThinkingOption(this.config.thinkingOptionId);
+    const configuredThinking = this.resolveConfiguredThinking();
+    if (configuredThinking && configuredThinking !== this.thinkingOptionId) {
+      await this.setThinkingOption(configuredThinking);
     }
     const configuredFeatureValues = this.config.providerOptions ?? {};
     for (const featureOption of this.configFeatureOptions) {
@@ -3215,10 +3246,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private modelSelectionUnavailableMessage(): string {
     return `${this.provider} does not expose ACP model selection`;
-  }
-
-  private isModelSelectionUnavailableError(error: unknown): boolean {
-    return error instanceof Error && error.message === this.modelSelectionUnavailableMessage();
   }
 
   private featureUnavailableMessage(featureId: string): string {
