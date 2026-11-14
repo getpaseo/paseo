@@ -1,4 +1,5 @@
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
 import { createInterface } from "node:readline";
 
 const args = process.argv.slice(2);
@@ -84,11 +85,54 @@ lines.on("line", (line) => {
   const ordinal = (turns.get(name) || 0) % count;
   turns.set(name, ordinal + 1);
   let resultCount = 0;
+  const emitted = [];
   for (const frame of frames) {
-    if (resultCount === ordinal) emit(frame);
+    if (resultCount === ordinal) {
+      emitted.push(frame);
+      emit(frame);
+    }
     if (frame.event === "result") resultCount += 1;
   }
+  appendTranscript(conversationId, text, emitted);
 });
+
+function appendTranscript(id, userText, frames) {
+  const home = process.env.HOME;
+  const result = frames.find((frame) => frame.event === "result")?.result;
+  if (!home || !result) return;
+  const dir = path.join(
+    home,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    id,
+    ".system_generated",
+    "logs",
+  );
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "transcript_full.jsonl");
+  const existingLines = existsSync(file)
+    ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).length
+    : 0;
+  const baseIndex = existingLines * 2;
+  const userStep = {
+    step_index: baseIndex,
+    source: "USER_EXPLICIT",
+    type: "USER_INPUT",
+    status: "DONE",
+    created_at: "2026-11-02T16:27:03Z",
+    content: `<USER_REQUEST>\n${userText}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-11-02T16:27:03Z.\n</ADDITIONAL_METADATA>`,
+  };
+  const assistantStep = {
+    step_index: baseIndex + 2,
+    source: "MODEL",
+    type: "PLANNER_RESPONSE",
+    status: "DONE",
+    created_at: "2026-11-02T16:27:04Z",
+    ...(result.response ? { content: result.response } : {}),
+  };
+  appendFileSync(file, `${JSON.stringify(userStep)}\n${JSON.stringify(assistantStep)}\n`);
+}
 process.on("SIGINT", () => {
   record({ signal: "SIGINT" });
   if (process.env.AGY_TEST_IGNORE_SIGNALS === "yes") return;

@@ -101,7 +101,7 @@ function createConnection(
         });
         sessions.set(input.sessionId, opened);
         try {
-          await opened.open(input.requestId, negotiated);
+          await opened.open(input.requestId, negotiated, input.history);
         } catch (error) {
           sessions.delete(input.sessionId);
           await opened.close();

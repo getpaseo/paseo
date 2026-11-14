@@ -14,11 +14,19 @@ import type {
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
-import { toolItem } from "./timeline.js";
+import { readTranscriptHistory, toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
 const persistenceSchema = z
-  .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
+  .object({
+    version: z.literal(1),
+    data: z
+      .object({
+        conversationId: z.string().min(1),
+        systemPrompt: z.string().min(1).nullable().optional(),
+      })
+      .strict(),
+  })
   .strict();
 interface Turn {
   id: string;
@@ -47,21 +55,38 @@ export class Session {
   private state: State = { type: "dormant" };
   private config: ProviderSessionConfig;
   private conversationId: string | null;
+  private readonly appliedSystemPrompt: string | null;
   private firstMessage: boolean;
   private readonly promptFiles = new PromptFiles();
   private readonly reportedDenials = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {
     this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
-    this.conversationId = options.persistence
-      ? persistenceSchema.parse(options.persistence).data.conversationId
-      : null;
+    const persisted = options.persistence ? persistenceSchema.parse(options.persistence) : null;
+    this.conversationId = persisted ? persisted.data.conversationId : null;
+    this.appliedSystemPrompt =
+      persisted && persisted.data.systemPrompt !== undefined
+        ? persisted.data.systemPrompt
+        : (this.config.systemPrompt ?? null);
     this.firstMessage = this.conversationId === null;
     validateSelection(this.config, options.catalog());
   }
 
-  async open(requestId: string, capabilities: readonly string[]): Promise<void> {
+  async open(
+    requestId: string,
+    capabilities: readonly string[],
+    history: "replay" | "skip",
+  ): Promise<void> {
+    const resuming = !this.firstMessage;
     await this.ensureDriver();
+    const replayed =
+      resuming && history === "replay" && this.conversationId !== null
+        ? await readTranscriptHistory({
+            conversationId: this.conversationId,
+            env: { ...this.options.launch.env, ...this.config.env },
+            systemPrompt: this.appliedSystemPrompt ?? undefined,
+          })
+        : [];
     this.emit({
       type: "session.opened",
       requestId,
@@ -72,6 +97,7 @@ export class Session {
       cwd: this.config.cwd,
       title: this.config.title,
     });
+    for (const entry of replayed) this.item(entry.item, entry.timestamp);
     this.publishFullAccessNotice();
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
@@ -348,7 +374,13 @@ export class Session {
 
   private persistence(): ProviderPersistence {
     if (this.conversationId === null) throw new AntigravityError("Antigravity has no conversation");
-    return { version: 1, data: { conversationId: this.conversationId } };
+    return {
+      version: 1,
+      data: {
+        conversationId: this.conversationId,
+        systemPrompt: this.appliedSystemPrompt,
+      },
+    };
   }
 
   private publishConfig(): void {
@@ -365,8 +397,13 @@ export class Session {
       },
     });
   }
-  private item(item: ProviderTimelineItem): void {
-    this.emit({ type: "timeline.item", sessionId: this.options.id, item });
+  private item(item: ProviderTimelineItem, timestamp?: string): void {
+    this.emit({
+      type: "timeline.item",
+      sessionId: this.options.id,
+      item,
+      ...(timestamp ? { timestamp } : {}),
+    });
   }
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
