@@ -342,6 +342,8 @@ function UpdateRunRow({
             style={styles.output}
             contentContainerStyle={styles.outputContent}
             onContentSizeChange={followOutput}
+            // Android scrolls a ScrollView nested in the provider sheet only with this flag.
+            nestedScrollEnabled
           >
             {update?.truncated ? (
               <Text style={styles.outputNote}>
