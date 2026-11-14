@@ -86,6 +86,7 @@ interface FakeAgentSessionOptions {
   onInterrupt?: () => void;
   beforeSetMode?: (modeId: string) => Promise<void>;
   historyEvents?: readonly AgentStreamEvent[];
+  createPermissionId?: () => string;
 }
 
 export interface TestAgentClientOptions {
@@ -99,6 +100,7 @@ export interface TestAgentClientOptions {
   beforeSetMode?: (modeId: string) => Promise<void>;
   supportsMcpServers?: boolean;
   historyEvents?: readonly AgentStreamEvent[];
+  createPermissionId?: () => string;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -376,6 +378,7 @@ class FakeAgentSession implements AgentSession {
   private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
   private readonly beforeTurnComplete: ((prompt: AgentPromptInput) => Promise<void>) | undefined;
   private readonly historyEvents: readonly AgentStreamEvent[] | undefined;
+  private readonly createPermissionId: () => string;
 
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
@@ -393,6 +396,7 @@ class FakeAgentSession implements AgentSession {
     this.onStartTurn = options.onStartTurn;
     this.beforeTurnComplete = options.beforeTurnComplete;
     this.historyEvents = options.historyEvents;
+    this.createPermissionId = options.createPermissionId ?? randomUUID;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -601,7 +605,7 @@ class FakeAgentSession implements AgentSession {
     input?: Record<string, unknown>;
   }): Promise<{ denied: boolean; interrupted: boolean }> {
     const request: AgentPermissionRequest = {
-      id: randomUUID(),
+      id: this.createPermissionId(),
       provider: this.providerName,
       name: tool.name,
       kind: "tool",
@@ -1271,6 +1275,7 @@ class FakeAgentClient implements AgentClient {
       onInterrupt: this.options.onInterrupt,
       beforeSetMode: this.options.beforeSetMode,
       historyEvents: this.options.historyEvents,
+      createPermissionId: this.options.createPermissionId,
     });
   }
 
@@ -1302,6 +1307,7 @@ class FakeAgentClient implements AgentClient {
       onInterrupt: this.options.onInterrupt,
       beforeSetMode: this.options.beforeSetMode,
       historyEvents: this.options.historyEvents,
+      createPermissionId: this.options.createPermissionId,
     });
   }
 
