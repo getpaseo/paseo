@@ -2454,6 +2454,14 @@ export const ja: TranslationResources = {
           "外観、プロバイダー、プロジェクト、スマートフォンのペアリングをもう一度設定します",
         action: "セットアップを再表示",
       },
+      browserHomePage: {
+        title: "ホームページ",
+        label: "新しいタブのページ",
+        description:
+          "空のブラウザタブはこの URL を開きます。空欄にするとデフォルトのページを使用します。",
+        accessibilityLabel: "ブラウザのホームページ URL",
+        invalid: "有効な http または https の URL を入力してください。",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
