@@ -8224,6 +8224,49 @@ describe("Codex denied plan approvals", () => {
 });
 
 describe("Codex interactive resume startup", () => {
+  test("keeps an autonomous command started during resume out of background work until settlement", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/resume": () => {
+        appServer.startsTurn({ threadId: "saved-thread", turnId: "autonomous-turn" });
+        appServer.startsTerminalCommand({
+          threadId: "saved-thread",
+          turnId: "autonomous-turn",
+          itemId: "resumed-command",
+          processId: "123",
+          command: "sleep 120",
+        });
+        return { thread: { id: "saved-thread" } };
+      },
+      "thread/read": () => ({ thread: { turns: [] } }),
+      "thread/backgroundTerminals/list": () => ({
+        data: [{ itemId: "resumed-command", processId: "123", command: "sleep 120" }],
+        nextCursor: null,
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "full-access" }),
+      { sessionId: "saved-thread" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.connect();
+      await expect.poll(() => latestBackgroundWork(events)?.items).toEqual([]);
+      appServer.completeTurn({ threadId: "saved-thread" });
+      await expect
+        .poll(() => latestBackgroundWork(events)?.items)
+        .toMatchObject([{ command: "sleep 120" }]);
+      expect(
+        events.filter((event) => event.type === "background_work" && event.items?.length),
+      ).toHaveLength(1);
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  });
+
   test("delivers an autonomous turn that starts during resume to the first subscriber", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/interrupt": () => ({}),

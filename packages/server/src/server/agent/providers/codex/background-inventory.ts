@@ -6,13 +6,27 @@ type InventoryEvent = Extract<AgentStreamEvent, { type: "background_work" }>;
 interface Client {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
 }
+interface ForegroundCommands {
+  items: Set<string>;
+  processes: Set<string>;
+}
+interface CommandStartedInput {
+  thread: string;
+  itemId: string | null;
+  processId?: string;
+}
+interface ReadInventoriesInput {
+  client: Client;
+  threads: readonly string[];
+  foreground: ReadonlyMap<string, ForegroundCommands>;
+}
 
 export class CodexBackgroundInventory {
   private generation = 0;
   private client: Client | null = null;
   private thread: string | null = null;
   private readonly threads = new Set<string>();
-  private readonly foreground = new Map<string, { items: Set<string>; processes: Set<string> }>();
+  private readonly foreground = new Map<string, ForegroundCommands>();
   private origins = new Map<string, { threadId: string; processId: string }>();
   private pending = false;
   private dirty = false;
@@ -107,7 +121,7 @@ export class CodexBackgroundInventory {
     if (!this.foreground.has(thread))
       this.foreground.set(thread, { items: new Set(), processes: new Set() });
   }
-  commandStarted(thread: string, itemId: string | null, processId?: string) {
+  commandStarted({ thread, itemId, processId }: CommandStartedInput) {
     let turn = this.foreground.get(thread);
     if (!turn) {
       turn = { items: new Set(), processes: new Set() };
@@ -133,11 +147,11 @@ export class CodexBackgroundInventory {
     void (async () => {
       let failed = false;
       try {
-        const { items, origins, activeThreads } = await readInventories(
+        const { items, origins, activeThreads } = await readInventories({
           client,
           threads,
-          this.foreground,
-        );
+          foreground: this.foreground,
+        });
         if (generation !== this.generation || this.dirty) return;
         this.origins = origins;
         this.threads.clear();
@@ -173,11 +187,7 @@ export class CodexBackgroundInventory {
   }
 }
 
-async function readInventories(
-  client: Client,
-  threads: string[],
-  foreground: ReadonlyMap<string, { items: ReadonlySet<string>; processes: ReadonlySet<string> }>,
-) {
+async function readInventories({ client, threads, foreground }: ReadInventoriesInput) {
   const items: NonNullable<InventoryEvent["items"]> = [];
   const origins = new Map<string, { threadId: string; processId: string }>();
   const activeThreads = new Set<string>();
