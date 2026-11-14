@@ -305,6 +305,24 @@ export function toolFailureMessage(result: OmpToolResult): string {
   return "Tool call failed";
 }
 
+export function getOmpToolStatus(input: {
+  toolCall: OmpTrackedToolCall;
+  result: OmpToolResult;
+  isError: boolean;
+}): "completed" | "failed" | "canceled" {
+  const { toolCall, result, isError } = input;
+  const content = result && typeof result !== "string" ? result.content : undefined;
+  const aborted =
+    isError &&
+    toolCall.toolName === "bash" &&
+    content?.length === 1 &&
+    content[0].type === "text" &&
+    "text" in content[0] &&
+    content[0].text === "Command aborted";
+  if (aborted) return "canceled";
+  return isOmpToolFailure(toolCall, result, isError) ? "failed" : "completed";
+}
+
 export function isOmpToolFailure(
   toolCall: OmpTrackedToolCall,
   result: OmpToolResult,

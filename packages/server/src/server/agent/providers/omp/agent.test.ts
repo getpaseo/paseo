@@ -951,6 +951,63 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test.each([
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Command aborted" }],
+      isError: true,
+      status: "canceled",
+      error: null,
+    },
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Command exited with code 1" }],
+      isError: true,
+      status: "failed",
+      error: "Command exited with code 1",
+    },
+    {
+      toolName: "bash",
+      content: [{ type: "text", text: "Output contains Command aborted" }],
+      isError: true,
+      status: "failed",
+      error: "Output contains Command aborted",
+    },
+    {
+      toolName: "read",
+      content: [{ type: "text", text: "Command aborted" }],
+      isError: true,
+      status: "failed",
+      error: "Command aborted",
+    },
+  ] satisfies Array<{
+    toolName: string;
+    content: Extract<OmpAgentMessage, { role: "toolResult" }>["content"];
+    isError: boolean;
+    status: string;
+    error: string | null;
+  }>)(
+    "classifies live $toolName result $content with isError=$isError as $status",
+    async ({ toolName, content, isError, status, error }) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      omp.emit({
+        type: "tool_execution_start",
+        toolCallId: "shell-result",
+        toolName,
+        args: { command: "sleep 90", path: "example.txt" },
+      });
+      omp.emit({
+        type: "tool_execution_end",
+        toolCallId: "shell-result",
+        toolName,
+        result: { content, details: {} },
+        isError,
+      });
+      expect(omp.timeline().at(-1)).toMatchObject({ type: "tool_call", status, error });
+    },
+  );
+
   test("shows a concise error for a failed tool while keeping shell output", async () => {
     const omp = new OmpHarness();
     await omp.start();
