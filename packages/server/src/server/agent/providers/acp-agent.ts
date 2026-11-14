@@ -2399,13 +2399,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         value: modelId,
       }),
     );
-    this.currentModel = this.applyConfigOptionResponse({
+    const selectedModel = this.applyConfigOptionResponse({
       response,
       configId: modelOption.id,
       category: "model",
       requestedValue: modelId,
       label: "model",
     });
+    this.currentModel = this.combinedModelId() ?? selectedModel;
     this.reportFeatureChanges(before);
     this.pushEvent({
       type: "model_changed",
@@ -2465,6 +2466,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       provider: this.provider,
       thinkingOptionId: this.thinkingOptionId,
     });
+    const model = this.combinedModelId();
+    if (model && model !== this.currentModel) {
+      this.currentModel = model;
+      this.pushEvent({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: this.runtimeInfo(),
+      });
+    }
+  }
+
+  // Some agents list combined "<model>-<level>" ids in their model state while their config
+  // options split the same choice into a model select and a thought_level select. Writing
+  // either select changes the combined model the agent runs, and the agent does not report a
+  // new currentModelId, so the id is rebuilt from the selects when the agent lists it.
+  private combinedModelId(): string | null {
+    const model = deriveCurrentConfigValue(this.configOptions, "model");
+    const level = deriveCurrentConfigValue(this.configOptions, "thought_level");
+    if (!model || !level) {
+      return null;
+    }
+    const combined = `${model}-${level}`;
+    return this.availableModels?.some(({ modelId }) => modelId === combined) ? combined : null;
   }
 
   /**
@@ -3121,7 +3145,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     this.availableModels = transformed.models?.availableModels ?? null;
     this.currentModel =
-      transformed.models?.currentModelId ?? deriveCurrentConfigValue(this.configOptions, "model");
+      transformed.models?.currentModelId ??
+      this.combinedModelId() ??
+      deriveCurrentConfigValue(this.configOptions, "model");
     this.thinkingOptionId =
       deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
   }
@@ -3436,7 +3462,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptions = this.transformConfigOptions(update.configOptions);
     const modeInfo = this.modesFromConfig();
     const nextMode = modeInfo.currentModeId;
-    const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
+    const nextModel =
+      this.combinedModelId() ?? deriveCurrentConfigValue(this.configOptions, "model");
     const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
 
     this.availableModes = modeInfo.modes;
