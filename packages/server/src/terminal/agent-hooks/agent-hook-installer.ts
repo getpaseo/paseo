@@ -30,7 +30,8 @@ export type AgentHookInstallStrategy<TConfig> =
 
 interface AgentHookInstallStrategyBase {
   kind: "config-file" | "plugin-file";
-  configDir: string;
+  // A function replaces the default home/XDG + env override lookup for agents with richer precedence.
+  configDir: string | ((input: { env: NodeJS.ProcessEnv; homeDir: string }) => string);
   configDirBase?: "home" | "xdg-config";
   configFile: string;
   configDirEnvOverride?: string;
@@ -207,6 +208,11 @@ function resolveConfiguredDirectory<TConfig>(input: {
   env: NodeJS.ProcessEnv;
   homeDir: string;
 }): string {
+  const { configDir } = input.install;
+  if (typeof configDir === "function") {
+    return configDir(input);
+  }
+
   const overrideName = input.install.configDirEnvOverride;
   const override = overrideName ? input.env[overrideName] : undefined;
   if (override) {
@@ -214,10 +220,10 @@ function resolveConfiguredDirectory<TConfig>(input: {
   }
 
   if (input.install.configDirBase === "xdg-config") {
-    return path.join(resolveXdgConfigHome(input), input.install.configDir);
+    return path.join(resolveXdgConfigHome(input), configDir);
   }
 
-  return path.join(input.homeDir, input.install.configDir);
+  return path.join(input.homeDir, configDir);
 }
 
 function resolveXdgConfigHome(input: { env: NodeJS.ProcessEnv; homeDir: string }): string {

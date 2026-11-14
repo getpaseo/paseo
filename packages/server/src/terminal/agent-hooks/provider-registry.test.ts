@@ -44,6 +44,7 @@ describe("terminal agent hook provider registry", () => {
     const badClaudeConfigDir = join(root, "not-a-directory");
     const codexHome = join(root, "codex");
     const opencodeConfigDir = join(root, "opencode");
+    const ompAgentDir = join(root, "omp");
     const logger = createWarningLogger();
     writeFileSync(badClaudeConfigDir, "");
 
@@ -52,6 +53,7 @@ describe("terminal agent hook provider registry", () => {
         CLAUDE_CONFIG_DIR: badClaudeConfigDir,
         CODEX_HOME: codexHome,
         OPENCODE_CONFIG_DIR: opencodeConfigDir,
+        PI_CODING_AGENT_DIR: ompAgentDir,
       },
       homeDir: join(root, "home"),
       logger,
@@ -60,6 +62,7 @@ describe("terminal agent hook provider registry", () => {
     expect(results.map((result) => result.configPath)).toEqual([
       join(codexHome, "hooks.json"),
       join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"),
+      join(ompAgentDir, "hooks", "post", "paseo-terminal-activity.js"),
     ]);
     expect(existsSync(join(codexHome, "hooks.json"))).toBe(true);
     expect(existsSync(join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"))).toBe(true);
