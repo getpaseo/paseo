@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import { useWindowDimensions } from "react-native";
-import type { TopBand, WindowLayout } from "./model";
+import { resolveStatusBarTapsReachHeader, type TopBand, type WindowLayout } from "./model";
 
 export const WindowLayoutContext = createContext<WindowLayout | null>(null);
 
@@ -20,4 +20,9 @@ export function useWindowLayout(): WindowLayout | null {
 /** The top band beside the system's status region, or null where the window has none. */
 export function useTopBand(): TopBand | null {
   return useContext(TopBandContext);
+}
+
+/** True where a tap on the compact header also counts as a status bar tap. */
+export function useStatusBarTapsReachHeader(): boolean {
+  return resolveStatusBarTapsReachHeader(useWindowLayout(), useTopBand());
 }

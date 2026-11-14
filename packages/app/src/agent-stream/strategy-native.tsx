@@ -57,6 +57,7 @@ import {
 import { useHistoryStartPagination } from "./use-history-start-pagination";
 import { nativeHistoryStartGeometry } from "./native-history-start-geometry";
 import { useStreamTopOverlayInset } from "./top-overlay";
+import { useStatusBarTapsReachHeader } from "@/window-layout";
 import {
   createHistoryStartSettleScheduler,
   type HistoryStartSettleScheduler,
@@ -427,6 +428,9 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     [pinsEnd],
   );
   const topOverlayInset = useStreamTopOverlayInset();
+  // Where a tap on the header counts as a status bar tap, opening the sidebar would scroll the chat
+  // to its start.
+  const scrollsToTop = !useStatusBarTapsReachHeader();
   // No keyboard inset: one committed after the keyboard settles moves every row when the end pin is
   // not holding the offset (docs/agent-stream-disclosure.md).
   const listContentContainerStyle = useMemo(
@@ -748,6 +752,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         automaticallyAdjustContentInsets={false}
         automaticallyAdjustsScrollIndicatorInsets={false}
         contentInsetAdjustmentBehavior="never"
+        scrollsToTop={scrollsToTop}
         style={[listStyle, { opacity: historyStartPaginationState.visible ? 1 : 0 }]}
         onLayout={handleListLayout}
         onScroll={handleScroll}
