@@ -814,8 +814,11 @@ export interface PluginTimelineStreamItem {
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */
   sourceId?: string;
-  /** The original row kind, retained by projection for turn folding. */
-  sourceKind?: StreamItem["kind"];
+  /**
+   * Kind of the agent stream item this plugin item was projected from. Absent for
+   * plugin items that do not replace a native item.
+   */
+  sourceKind?: PluginTimelineSourceKind;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
@@ -844,6 +847,8 @@ export interface TurnSummaryItem {
   expanded: boolean;
   tools: OverviewSummary;
 }
+
+export type PluginTimelineSourceKind = Exclude<StreamItem["kind"], "plugin">;
 
 export interface TodoEntry {
   text: string;
