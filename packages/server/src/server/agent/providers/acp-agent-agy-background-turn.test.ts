@@ -1188,4 +1188,147 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
     expect(summarizeEvents(events)).toEqual([]);
     expect(await session.canStopRuntime()).toBe(false);
   });
+
+  test("ask_question on DONE PLANNER_RESPONSE completes turn immediately without waiting for GENERIC result or PreInvocation hook-state", async () => {
+    const { session, brainDir, sessionId, events, answer, writeTranscript } = createHarness();
+    const logsDir = path.join(brainDir, sessionId, ".system_generated", "logs");
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+
+    writeTranscript([
+      { step_index: 1, type: "USER_INPUT", status: "DONE", created_at: nowIso, content: "plan" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        tool_calls: [{ id: "call-bg", name: "run_command", args: '{"CommandLine":"scan"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        created_at: nowIso,
+        content: `Tool is running as a background task with task id: ${sessionId}/task-3`,
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        content: "Scanning...",
+        tool_calls: [],
+      },
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: nowIso,
+        content: `[Message] timestamp=${nowIso} sender=${sessionId}/task-3 content=Task id "${sessionId}/task-3" finished`,
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        created_at: nowIso,
+        thinking: "Need user decision on 3 boundaries.",
+        content: "Please confirm the 3 boundaries below:",
+        tool_calls: [
+          {
+            id: "call-ask",
+            name: "ask_question",
+            args: '{"questions":[{"question":"Which threshold?","options":["1000","2000"]}]}',
+          },
+        ],
+      },
+    ]);
+    // PreInvocation remains on disk because ask_question pauses before Stop fires.
+    writeFileSync(
+      path.join(logsDir, "hook-state.json"),
+      JSON.stringify({
+        conversationId: sessionId,
+        event: "PreInvocation",
+        fullyIdle: false,
+        ts: nowMs,
+      }),
+      "utf8",
+    );
+
+    await session.startTurn("plan");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual([
+      "reasoning:Need user decision on 3 boundaries.",
+      "assistant:Please confirm the 3 boundaries below:",
+      "turn_completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("send_message to a subagent holds end_turn until the subagent replies via SYSTEM_MESSAGE", async () => {
+    const { session, events, answer, writeTranscript } = createHarness();
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "re-review changes" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "send-1",
+            name: "send_message",
+            args: '{"Recipient":"subagent-uuid-99","Message":"Please re-verify"}',
+          },
+        ],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        content: 'Message sent to "subagent-uuid-99"',
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Waiting for reviewer subagent to re-verify.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("re-review changes");
+    await answer({ stopReason: "end_turn" });
+
+    expect(summarizeEvents(events)).toEqual([]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    writeTranscript([
+      ...baseRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-15T02:00:00.000Z",
+        content:
+          "[Message] timestamp=2026-11-15T02:00:00Z sender=subagent-uuid-99 content=LGTM, all checks pass.",
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Reviewer confirmed all checks pass.",
+        tool_calls: [],
+      },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual([
+      "assistant:Reviewer confirmed all checks pass.",
+      "turn_completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
 });

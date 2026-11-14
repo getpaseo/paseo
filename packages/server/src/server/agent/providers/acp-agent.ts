@@ -759,6 +759,24 @@ function advanceAntigravityToolCursor({
   return nextToolCursor;
 }
 
+function getAntigravityNonAskQuestionToolCalls(
+  toolCalls: readonly AntigravityTranscriptToolCall[] | undefined,
+): readonly AntigravityTranscriptToolCall[] {
+  if (!Array.isArray(toolCalls)) {
+    return [];
+  }
+  return toolCalls.filter((toolCall) => toolCall.name !== "ask_question");
+}
+
+function isAntigravityAskQuestionRow(row: AntigravityTranscriptRow | undefined): boolean {
+  return (
+    row?.type === "PLANNER_RESPONSE" &&
+    row.status === "DONE" &&
+    Array.isArray(row.tool_calls) &&
+    row.tool_calls.some((toolCall) => toolCall.name === "ask_question")
+  );
+}
+
 function advanceAntigravityHistoryCursor({
   row,
   deliveredHistory,
@@ -768,7 +786,7 @@ function advanceAntigravityHistoryCursor({
   deliveredHistory: AntigravityDeliveredHistory;
   cursor: AntigravityHistoryCursor;
 }): AntigravityHistoryCursor | null {
-  const toolCalls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
+  const toolCalls = getAntigravityNonAskQuestionToolCalls(row.tool_calls);
   if (!row.thinking && !row.content && toolCalls.length === 0) {
     return null;
   }
@@ -809,7 +827,7 @@ function computePreWakeupHistoryCursor({
       continue;
     }
     const row = resolveAntigravityFullRow({ row: candidate, fullRows });
-    const toolCalls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
+    const toolCalls = getAntigravityNonAskQuestionToolCalls(row.tool_calls);
     cursor = {
       textCursor:
         advanceAntigravityTextCursor({
@@ -863,7 +881,7 @@ function seedAntigravitySyncedStepIndex({
     if (candidate.type !== "PLANNER_RESPONSE" || candidate.status !== "DONE") {
       break;
     }
-    const toolCalls = Array.isArray(candidate.tool_calls) ? candidate.tool_calls : [];
+    const toolCalls = getAntigravityNonAskQuestionToolCalls(candidate.tool_calls);
     const genericResults = collectAntigravityToolResults({
       rows,
       startIndex: index + 1,
@@ -1036,17 +1054,22 @@ function isAntigravitySubagentRowActive({
   lastUserIndex: number;
 }): boolean {
   const content = rows[index]?.content ?? "";
-  if (!content.includes("Created the following subagent:")) {
+  if (
+    !content.includes("Created the following subagent:") &&
+    !content.includes('Message sent to "')
+  ) {
     return false;
   }
   const parentRow = findParentAntigravityPlannerRow({ rows, index, lastUserIndex });
   if (
     !Array.isArray(parentRow?.tool_calls) ||
-    !parentRow.tool_calls.some((toolCall) => toolCall.name === "invoke_subagent")
+    !parentRow.tool_calls.some(
+      (toolCall) => toolCall.name === "invoke_subagent" || toolCall.name === "send_message",
+    )
   ) {
     return false;
   }
-  const subagentMatch = content.match(/conversationId":\s*"([^"]+)"/u);
+  const subagentMatch = content.match(/(?:conversationId":\s*|Message sent to )"([^"]+)"/u);
   if (!subagentMatch) {
     return false;
   }
@@ -1073,7 +1096,7 @@ function hasIncompletePlannerToolCalls({
     if (row.status !== "DONE") {
       return true;
     }
-    const expectedCount = Array.isArray(row.tool_calls) ? row.tool_calls.length : 0;
+    const expectedCount = getAntigravityNonAskQuestionToolCalls(row.tool_calls).length;
     if (
       expectedCount > 0 &&
       !collectAntigravityToolResults({
@@ -1117,7 +1140,7 @@ function isAntigravityHookStateBusy({
   hookState: AntigravityHookState | null;
   lastRow: AntigravityTranscriptRow | undefined;
 }): boolean {
-  if (!hookState || typeof hookState.ts !== "number") {
+  if (!hookState || typeof hookState.ts !== "number" || isAntigravityAskQuestionRow(lastRow)) {
     return false;
   }
   const lastRowTimestampMs = lastRow?.created_at ? Date.parse(lastRow.created_at) : Number.NaN;
@@ -1127,7 +1150,7 @@ function isAntigravityHookStateBusy({
   if (!isFresh) {
     return false;
   }
-  return hookState.fullyIdle === false || hookState.event === "PreInvocation";
+  return hookState.event === "Stop" && hookState.fullyIdle === false;
 }
 
 function isAntigravityWakeupMidStep({
@@ -1137,10 +1160,10 @@ function isAntigravityWakeupMidStep({
   lastRow: AntigravityTranscriptRow | undefined;
   hookState: AntigravityHookState | null;
 }): boolean {
-  if (!lastRow) {
+  if (!lastRow || isAntigravityAskQuestionRow(lastRow)) {
     return false;
   }
-  const toolCalls = Array.isArray(lastRow.tool_calls) ? lastRow.tool_calls : [];
+  const toolCalls = getAntigravityNonAskQuestionToolCalls(lastRow.tool_calls);
   if (lastRow.type === "PLANNER_RESPONSE" && lastRow.status === "DONE" && toolCalls.length === 0) {
     return false;
   }
@@ -1178,8 +1201,11 @@ async function hasActiveAntigravityBackgroundWork({
   if (lastUserIndex < 0) {
     return false;
   }
-  const hookState = await readAntigravityHookState(logsDir, logger);
   const lastRow = rows[rows.length - 1];
+  if (isAntigravityAskQuestionRow(lastRow)) {
+    return false;
+  }
+  const hookState = await readAntigravityHookState(logsDir, logger);
   if (isAntigravityHookStateBusy({ hookState, lastRow })) {
     return true;
   }
@@ -4596,7 +4622,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.antigravityReplayQueue.push({ kind: "thought", remainingText: row.thinking });
       this.deliverTranslatedEvents([this.wrapTimeline({ type: "reasoning", text: row.thinking })]);
     }
-    const toolCalls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
+    const toolCalls = getAntigravityNonAskQuestionToolCalls(row.tool_calls);
     for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
       const toolCall = toolCalls[callIndex]!;
       const parsedArgs = parseAntigravityToolArgs(toolCall.args);
@@ -4669,7 +4695,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (candidate.type !== "PLANNER_RESPONSE" || candidate.status !== "DONE") {
         break;
       }
-      const toolCalls = Array.isArray(candidate.tool_calls) ? candidate.tool_calls : [];
+      const toolCalls = getAntigravityNonAskQuestionToolCalls(candidate.tool_calls);
       const genericResults = collectAntigravityToolResults({
         rows,
         startIndex: index + 1,
