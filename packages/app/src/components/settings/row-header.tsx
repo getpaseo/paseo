@@ -148,7 +148,8 @@ export function SettingsRowHeader({
 
 /**
  * The hint with its status mark. The line keeps the hint's own height in every status, so a row
- * does not move when its value arrives or its work starts.
+ * does not move when its value arrives or its work starts. A long error is cut to the line; the
+ * row's detail says it in full.
  */
 function RowHintLine({
   hint,
@@ -179,7 +180,7 @@ function RowHintLine({
       ) : (
         <View style={styles.errorDot} />
       )}
-      <Text style={textStyle} numberOfLines={2}>
+      <Text style={textStyle} numberOfLines={1}>
         {hint}
       </Text>
     </View>
