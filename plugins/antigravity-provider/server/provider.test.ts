@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,7 @@ async function harness(env: Record<string, string> = {}) {
   const launch: ProviderLaunch = {
     command: process.execPath,
     args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
+    env: { AGY_TEST_LOG: log, HOME: cwd, USERPROFILE: cwd, ...env },
   };
   const connection = await provider.connect({
     versions: [1],
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -508,21 +512,64 @@ it("defers model and mode changes until the next prompt, then respawns with vali
   );
 });
 
-it("resumes after connection close without replay or another system prefix", async () => {
+it("replays saved messages when reopening a conversation and sends no old prompts", async () => {
   const first = await harness();
   await first.open();
   await first.completed(await first.prompt("HELLO"));
   const persistence = first.persistence();
   await first.connection.close();
-  const second = await harness();
+  const second = await harness({ HOME: first.cwd, USERPROFILE: first.cwd });
+  const { conversationId } = persistence.data as { conversationId: string };
+  const directory = path.join(
+    first.cwd,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(directory, { recursive: true });
+  const created_at = "2026-11-14T14:20:05Z";
+  const records = [
+    {
+      step_index: 0,
+      created_at,
+      type: "USER_INPUT",
+      content:
+        "<USER_REQUEST>\nSYSTEM PREFIX\n\nHELLO\n</USER_REQUEST>\n<ADDITIONAL_METADATA>private metadata</ADDITIONAL_METADATA>",
+    },
+    { step_index: 1, created_at, type: "GENERIC", content: "internal tool output" },
+    { step_index: 2, created_at, type: "PLANNER_RESPONSE", content: "Original reply" },
+  ];
+  await writeFile(
+    path.join(directory, "transcript.jsonl"),
+    records.map((row) => JSON.stringify(row)).join("\n"),
+  );
   await second.open(persistence);
-  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: created_at,
+      item: { type: "user_message", id: "history:0", text: "HELLO" },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: created_at,
+      item: { type: "assistant_message", id: "history:2", text: "Original reply" },
+    },
+  ]);
   await second.completed(await second.prompt("RESUME"));
   expect(
     (await second.records())
       .filter((entry) => entry.input)
       .map((entry) => entry.input.message.content),
   ).toEqual(["RESUME"]);
+  const skip = await harness({ HOME: first.cwd, USERPROFILE: first.cwd });
+  await skip.open(persistence, "s", "skip");
+  expect(skip.events.filter((event) => event.type === "timeline.item")).toEqual([]);
 });
 
 it.each(["auth", "exit", "stderr"])(

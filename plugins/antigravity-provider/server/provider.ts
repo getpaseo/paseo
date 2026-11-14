@@ -101,7 +101,11 @@ function createConnection(
         });
         sessions.set(input.sessionId, opened);
         try {
-          await opened.open(input.requestId, negotiated);
+          await opened.open({
+            requestId: input.requestId,
+            capabilities: negotiated,
+            history: input.history,
+          });
         } catch (error) {
           sessions.delete(input.sessionId);
           await opened.close();
