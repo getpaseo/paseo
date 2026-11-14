@@ -134,14 +134,14 @@ export const SpeechTtsConfigSchema = z.discriminatedUnion("provider", [
     .strict(),
 ]);
 
-const FeatureDictationSchema = z
+export const FeatureDictationSchema = z
   .object({
     enabled: z.boolean().optional(),
     stt: SpeechSttConfigSchema.optional(),
   })
   .strict();
 
-const FeatureVoiceModeSchema = z
+export const FeatureVoiceModeSchema = z
   .object({
     enabled: z.boolean().optional(),
     llm: z
@@ -177,7 +177,7 @@ const StructuredGenerationProviderConfigSchema = z
   })
   .strict();
 
-const AgentMetadataGenerationSchema = z
+export const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
   })

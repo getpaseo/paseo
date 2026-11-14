@@ -74,6 +74,19 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("config export and import need daemon administration, not read access", () => {
+    const reader = new SessionAuthorization(["daemon.read"]);
+    const manager = new SessionAuthorization(["daemon.manage"]);
+    for (const type of [
+      "daemon.config.export.request",
+      "daemon.config.import.preview.request",
+      "daemon.config.import.apply.request",
+    ] as const) {
+      expect(reader.allowsInbound(inboundMessage(type))).toBe(false);
+      expect(manager.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+  });
+
   test("Hub can operate ordinary agents and recover workspaces without daemon administration", () => {
     const authorization = new SessionAuthorization(["hub.execute"]);
     for (const type of [

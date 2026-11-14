@@ -567,6 +567,7 @@ export interface SessionOptions {
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
+  configTransfer?: import("./config-transfer/index.js").ConfigTransfer;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -807,6 +808,7 @@ export class Session {
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
+  private readonly configTransfer: SessionOptions["configTransfer"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
@@ -910,6 +912,7 @@ export class Session {
       daemonConfigStore,
       pluginRuntime,
       orchestrationSkills,
+      configTransfer,
       stt,
       sttLanguage,
       tts,
@@ -963,6 +966,7 @@ export class Session {
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.configTransfer = configTransfer;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -2674,6 +2678,46 @@ export class Session {
     }
   }
 
+  private dispatchConfigTransferMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    const transfer = this.configTransfer;
+    if (!transfer) return undefined;
+    switch (msg.type) {
+      case "daemon.config.export.request":
+        return transfer.exportDocument().then((document) => {
+          this.emit({
+            type: "daemon.config.export.response",
+            payload: { requestId: msg.requestId, document },
+          });
+          return undefined;
+        });
+      case "daemon.config.import.preview.request":
+        return transfer.previewImport(msg.document).then((preview) => {
+          this.emit({
+            type: "daemon.config.import.preview.response",
+            payload: { requestId: msg.requestId, ...preview },
+          });
+          return undefined;
+        });
+      case "daemon.config.import.apply.request":
+        return transfer
+          .applyImport({
+            document: msg.document,
+            sections: msg.sections,
+            plugins: msg.plugins,
+            enablePlugins: msg.enablePlugins,
+          })
+          .then((outcome) => {
+            this.emit({
+              type: "daemon.config.import.apply.response",
+              payload: { requestId: msg.requestId, ...outcome },
+            });
+            return undefined;
+          });
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchOrchestrationSkillsMessage(
     msg: SessionInboundMessage,
   ): Promise<void> | undefined {
@@ -3244,7 +3288,7 @@ export class Session {
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
-        return undefined;
+        return this.dispatchConfigTransferMessage(msg);
     }
   }
 
