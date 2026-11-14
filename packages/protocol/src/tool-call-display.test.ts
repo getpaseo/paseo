@@ -117,6 +117,44 @@ describe("shared tool-call display mapping", () => {
     });
   });
 
+  it("uses a titled plain_text detail as the row title", () => {
+    const display = buildToolCallDisplayModel({
+      name: "execute",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "hzmcp.memory__write_note",
+        title: "hzmcp.memory__write_note",
+        icon: "wrench",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "hzmcp.memory__write_note",
+    });
+  });
+
+  it("shows the detail summary next to a titled plain_text row", () => {
+    const display = buildToolCallDisplayModel({
+      name: "execute",
+      status: "completed",
+      error: null,
+      detail: {
+        type: "plain_text",
+        label: "searxng.searxng_web_search",
+        title: "searxng.searxng_web_search",
+        summary: "paseo default model",
+        icon: "wrench",
+      },
+    });
+
+    expect(display).toEqual({
+      displayName: "searxng.searxng_web_search",
+      summary: "paseo default model",
+    });
+  });
+
   it("uses the command as terminal interaction summary when available", () => {
     const display = buildToolCallDisplayModel({
       name: "terminal",
