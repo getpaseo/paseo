@@ -74,11 +74,14 @@ export function MobilePanelOverlay({
     () => [
       docked ? styles.dockedPanel : styles.panel,
       !docked && positionedPanelStyle,
-      !docked && { width },
+      // The right panel fills its frame, which the workspace sizes to its own viewport. A folded
+      // iPhone's vertical bar makes that narrower than the window, so a window-wide panel would
+      // overflow the frame's leading edge.
+      !docked && isLeft && { width },
       panelStyle,
       sidebarAnimatedStyle,
     ],
-    [docked, panelStyle, positionedPanelStyle, sidebarAnimatedStyle, width],
+    [docked, isLeft, panelStyle, positionedPanelStyle, sidebarAnimatedStyle, width],
   );
   let overlayPointerEvents: "auto" | "box-none" | "none";
   if (!isWeb) {
@@ -149,6 +152,7 @@ const styles = StyleSheet.create({
     left: 0,
   },
   rightPanel: {
+    left: 0,
     right: 0,
   },
 });
