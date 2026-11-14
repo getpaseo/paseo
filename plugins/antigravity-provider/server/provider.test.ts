@@ -39,15 +39,20 @@ afterEach(async () => {
   );
 });
 
-async function harness(env: Record<string, string> = {}) {
+async function harness(
+  env: Record<string, string> = {},
+  customLaunch?: (cwd: string) => Promise<ProviderLaunch> | ProviderLaunch,
+) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-test-"));
   temporary.push(cwd);
   const log = path.join(cwd, "argv.ndjson");
-  const launch: ProviderLaunch = {
-    command: process.execPath,
-    args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
-  };
+  const launch: ProviderLaunch = customLaunch
+    ? await customLaunch(cwd)
+    : {
+        command: process.execPath,
+        args: [fake, "--launch-prefix"],
+        env: { AGY_TEST_LOG: log, ...env },
+      };
   const connection = await provider.connect({
     versions: [1],
     capabilities: PROVIDER_CAPABILITIES,
@@ -140,6 +145,15 @@ async function harness(env: Record<string, string> = {}) {
       throw new Error("Missing persistence");
     return opened.persistence;
   }
+  async function catalog(requestId = "catalog") {
+    await request({ type: "catalog", requestId });
+    const event = events.find(
+      (candidate): candidate is Extract<ProviderEvent, { type: "catalog" }> =>
+        candidate.type === "catalog" && candidate.requestId === requestId,
+    );
+    if (!event) throw new Error("Missing catalog");
+    return event;
+  }
   return {
     connection,
     events,
@@ -147,6 +161,7 @@ async function harness(env: Record<string, string> = {}) {
     cwd,
     wait,
     request,
+    catalog,
     open,
     prompt,
     message,
@@ -586,15 +601,72 @@ describe("discovery", () => {
       (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
     ).toHaveLength(2);
   });
-  it.each(["1.1.15", "1.2.12", "1.2.13"])("accepts driver-capable version %s", async (version) => {
-    const h = await harness({ AGY_TEST_VERSION: version });
+  it.each(["1.1.15", "1.2.12", "1.2.13", "1.5.9"])(
+    "accepts driver-capable version %s",
+    async (version) => {
+      const h = await harness({ AGY_TEST_VERSION: version });
+      expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+    },
+  );
+
+  it("parses agy 1.5.9 catalog including Gemini 4 Hydrogen variants", async () => {
+    const models = [
+      "gemini-4-argon-medium\tGemini 4 Argon (Medium)",
+      "gemini-4-argon-high\tGemini 4 Argon (High)",
+      "gemini-4-argon-low\tGemini 4 Argon (Low)",
+      "gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)",
+      "gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)",
+      "gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)",
+      "gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)",
+      "gemini-pro-orchestrator-g1-pro\tOrchestrator (Argon)",
+      "gemini-3.8-flash-high\tGemini 3.8 Flash (High)",
+      "gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)",
+      "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)",
+      "claude-opus-5-5-low\tClaude Opus 5.5 (Low)",
+      "claude-opus-5-5-medium\tClaude Opus 5.5 (Medium)",
+      "claude-opus-5-5-high\tClaude Opus 5.5 (High)",
+      "claude-sonnet-5-5-low\tClaude Sonnet 5.5 (Low)",
+      "claude-sonnet-5-5-medium\tClaude Sonnet 5.5 (Medium)",
+      "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)",
+      "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)",
+    ].join("\n");
+    const h = await harness({}, async (cwd) => {
+      const probeScript = path.join(cwd, "agy-159.mjs");
+      await writeFile(
+        probeScript,
+        [
+          "const arg = process.argv[2];",
+          'if (arg === "--version") { process.stdout.write("1.5.9\\n"); process.exit(0); }',
+          `if (arg === "models") { process.stdout.write(${JSON.stringify(`${models}\n`)}); process.exit(0); }`,
+          "process.exit(1);",
+        ].join("\n"),
+      );
+      return { command: process.execPath, args: [probeScript], env: {} };
+    });
+
     expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+
+    const event = await h.catalog("catalog-159");
+
+    expect(event).toMatchObject({
+      type: "catalog",
+      catalog: {
+        models: expect.arrayContaining([
+          { id: "gemini-4-hydrogen-low", label: "Gemini 4 Hydrogen (Low)" },
+          { id: "gemini-4-hydrogen-medium", label: "Gemini 4 Hydrogen (Medium)" },
+          { id: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (High)" },
+          { id: "gemini-4-hydrogen-xhigh", label: "Gemini 4 Hydrogen (XHigh)" },
+        ]),
+        thinkingOptions: [],
+        defaultMode: "full-access",
+      },
+    });
+    expect(event.catalog.models).toHaveLength(18);
   });
 
   it("parses tab-separated catalog and exposes only full access without thinking options", async () => {
     const h = await harness();
-    await h.request({ type: "catalog", requestId: "catalog" });
-    const event = h.events[0];
+    const event = await h.catalog();
     expect(event).toMatchObject({
       type: "catalog",
       catalog: {
@@ -605,7 +677,6 @@ describe("discovery", () => {
         defaultMode: "full-access",
       },
     });
-    if (event.type !== "catalog") throw new Error("Missing catalog");
     expect(event.catalog.models).toHaveLength(11);
     expect(event.catalog.modes).toEqual([
       {

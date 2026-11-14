@@ -1,0 +1,759 @@
+import { describe, expect, test, vi } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ProviderLaunch, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
+import contribute from "../index.server.js";
+import { createAntigravityProvider } from "./provider.js";
+import { accountKey, defaultUsageRunner, Usage } from "./usage.js";
+
+const fakeAgy = fileURLToPath(new URL("../test/agy.mjs", import.meta.url));
+
+const sampleAgyUsageJson = JSON.stringify({
+  conversation_id: "",
+  status: "SUCCESS",
+  response: "Gemini Models\tWeekly Limit Remaining\t98%\t2026-11-01T09:42:13Z\n",
+  duration_seconds: 0,
+  num_turns: 0,
+  usage: {
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+  },
+  command: {
+    name: "usage",
+    data: {
+      description: "Limits description",
+      groups: [
+        {
+          name: "Gemini Models",
+          description: "Models within this group: Gemini 4 Hydrogen, Gemini 3.8 Flash",
+          buckets: [
+            {
+              id: "gemini-weekly",
+              name: "Weekly Limit Remaining",
+              window: "weekly",
+              remaining_fraction: 0.9785,
+              reset_time: "2026-11-01T09:42:13Z",
+            },
+            {
+              id: "gemini-5h",
+              name: "Five Hour Limit Remaining",
+              window: "5h",
+              remaining_fraction: 0.9,
+              reset_time: "2026-10-26T02:21:56Z",
+            },
+          ],
+        },
+        {
+          name: "Claude and GPT models",
+          description: "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+          buckets: [
+            {
+              id: "3p-weekly",
+              name: "Weekly Limit Remaining",
+              window: "weekly",
+              remaining_fraction: 1,
+              reset_time: "2026-11-01T21:28:07Z",
+            },
+            {
+              id: "3p-5h",
+              name: "Five Hour Limit Remaining",
+              window: "5h",
+              disabled: true,
+              remaining_fraction: 1,
+              reset_time: "2026-10-26T02:28:07Z",
+            },
+          ],
+        },
+        {
+          name: "Gemini 4 Argon",
+          description: "Argon quota description",
+          buckets: [
+            {
+              id: "gemini-argon-wtu-weekly",
+              name: "Gemini 4 Argon Weekly Limit",
+              window: "weekly",
+              remaining_fraction: 0,
+              reset_time: "2026-10-26T12:48:38Z",
+            },
+          ],
+        },
+      ],
+    },
+  },
+});
+
+function antigravityConfigHome(): string {
+  const home = mkdtempSync(path.join(tmpdir(), "antigravity-usage-"));
+  mkdirSync(path.join(home, ".gemini", "antigravity-cli"), { recursive: true });
+  return home;
+}
+
+describe("Antigravity Usage", () => {
+  test("accountKey derives stable hash from launch environment", () => {
+    const key1 = accountKey({ HOME: "/home/user1" });
+    const key2 = accountKey({ HOME: "/home/user1" });
+    const key3 = accountKey({ HOME: "/home/user2" });
+    const keyCustom = accountKey({
+      HOME: "/home/user1",
+      ANTIGRAVITY_HOME: "/custom/gemini/antigravity-cli",
+    });
+
+    expect(key1).toBe(key2);
+    expect(key1).not.toBe(key3);
+    expect(key1).not.toBe(keyCustom);
+    expect(typeof key1).toBe("string");
+    expect(key1.length).toBeGreaterThan(0);
+  });
+
+  test("Usage registration exposes Antigravity metadata", () => {
+    const usage = new Usage();
+    const registration = usage.registration();
+
+    expect(registration.id).toBe("antigravity");
+    expect(registration.label).toBe("Antigravity");
+    expect(registration.icon).toBe("icon.svg");
+  });
+
+  test("Usage falls back to a config-directory account in global discovery", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(
+        async () => sampleAgyUsageJson,
+        () => ({ HOME: home }),
+      );
+      const source = usage.registration();
+
+      const key = accountKey({ HOME: home });
+      expect(await source.discover({ kind: "global" })).toEqual([
+        { key, label: "Antigravity", input: { account: key } },
+      ]);
+
+      // The placeholder launch is fetchable before any provider snapshot has run.
+      const report = await source.fetch({ account: key });
+      expect(report.status).toBe("available");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage replaces the config-directory fallback once the provider launch is remembered", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(undefined, () => ({ HOME: home }));
+      const source = usage.registration();
+
+      const fallbackKey = accountKey({ HOME: home });
+      expect((await source.discover({ kind: "global" })).map((account) => account.key)).toEqual([
+        fallbackKey,
+      ]);
+
+      const launch: ProviderLaunch = {
+        command: "/usr/local/bin/agy",
+        args: ["--profile", "work"],
+        env: { HOME: "/home/resolved-user" },
+      };
+      const { account } = usage.remember(launch);
+      expect(account).not.toBe(fallbackKey);
+
+      expect(await source.discover({ kind: "global" })).toEqual([
+        { key: account, label: "Antigravity", input: { account } },
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage stops replacing the fallback key once the same account launch is remembered", async () => {
+    const home = antigravityConfigHome();
+    try {
+      const usage = new Usage(undefined, () => ({ HOME: home }));
+      const source = usage.registration();
+
+      // Engage the placeholder discovery, then remember real launches: first for the same
+      // default account, then an overridden one. Both real accounts must coexist instead of
+      // deleting each other.
+      await source.discover({ kind: "global" });
+      usage.remember({ command: "/usr/bin/agy", args: [], env: { HOME: home } });
+      const override = { HOME: home, ANTIGRAVITY_HOME: "/data/gemini/antigravity-cli" };
+      const { account: overrideAccount } = usage.remember({
+        command: "/usr/local/bin/agy",
+        args: [],
+        env: override,
+      });
+
+      const discovered = new Set(
+        (await source.discover({ kind: "global" })).map((entry) => entry.key),
+      );
+      expect(discovered.has(accountKey({ HOME: home }))).toBe(true);
+      expect(discovered.has(overrideAccount)).toBe(true);
+      expect(discovered.size).toBe(2);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage discovers nothing globally without a launch or an Antigravity config", async () => {
+    const usage = new Usage(undefined, () => ({ HOME: "/home/no-antigravity-user" }));
+    expect(await usage.registration().discover({ kind: "global" })).toEqual([]);
+  });
+
+  test("Usage discovers accounts for session scope", async () => {
+    const usage = new Usage();
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = {
+      command: "agy",
+      args: [],
+      env: { HOME: "/home/testuser" },
+    };
+    const { account } = usage.remember(launch);
+
+    // Matching provider
+    const sessionMatch = await source.discover({
+      kind: "session",
+      provider: "antigravity",
+      env: { HOME: "/home/testuser" },
+    });
+    expect(sessionMatch).toEqual([
+      {
+        key: account,
+        label: "Antigravity",
+        input: { account },
+      },
+    ]);
+
+    // Unrelated provider
+    const sessionMismatch = await source.discover({
+      kind: "session",
+      provider: "muse",
+      env: { HOME: "/home/testuser" },
+    });
+    expect(sessionMismatch).toEqual([]);
+  });
+
+  test("Usage.fetch executes runner and returns available usage report", async () => {
+    const runner = vi.fn(async (_launch: ProviderLaunch, _args: string[]) => sampleAgyUsageJson);
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = {
+      command: "agy",
+      args: ["--user-flag"],
+      env: { HOME: "/home/testuser" },
+    };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "available",
+      windows: [
+        {
+          id: "gemini-weekly",
+          label: "Gemini · Weekly",
+          shortLabel: "Gemini wk",
+          summary: true,
+          usedPct: 2,
+          remainingPct: 98,
+          resetsAt: "2026-11-01T09:42:13Z",
+          tone: "ok",
+        },
+        {
+          id: "gemini-5h",
+          label: "Gemini · 5h",
+          shortLabel: "Gemini 5h",
+          usedPct: 10,
+          remainingPct: 90,
+          resetsAt: "2026-10-26T02:21:56Z",
+          tone: "ok",
+        },
+        {
+          id: "claude-gpt-oss-weekly",
+          label: "Claude & GPT-OSS · Weekly",
+          shortLabel: "Claude/OSS wk",
+          summary: true,
+          usedPct: 0,
+          remainingPct: 100,
+          resetsAt: "2026-11-01T21:28:07Z",
+          tone: "ok",
+        },
+        {
+          id: "claude-gpt-oss-5h",
+          label: "Claude & GPT-OSS · 5h · Disabled",
+          shortLabel: "Claude/OSS 5h",
+          usedPct: null,
+          remainingPct: null,
+          resetsAt: null,
+          tone: "default",
+        },
+        {
+          id: "gemini-argon-weekly",
+          label: "Gemini 4 Argon · Weekly",
+          shortLabel: "Argon wk",
+          summary: true,
+          usedPct: 100,
+          remainingPct: 0,
+          resetsAt: "2026-10-26T12:48:38Z",
+          tone: "danger",
+        },
+      ],
+      details: [
+        {
+          id: "observed",
+          label: "Observed",
+          value: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  test("Usage.fetch maps camelCase bucket fields", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        status: "SUCCESS",
+        command: {
+          name: "usage",
+          data: {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    id: "gemini-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remainingFraction: 0.5,
+                    resetTime: "2026-11-02T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: { HOME: "/home/testuser" } };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "available",
+      windows: [
+        {
+          id: "gemini-weekly",
+          label: "Gemini · Weekly",
+          shortLabel: "Gemini wk",
+          summary: true,
+          usedPct: 50,
+          remainingPct: 50,
+          resetsAt: "2026-11-02T00:00:00Z",
+          tone: "ok",
+        },
+      ],
+      details: [{ id: "observed", label: "Observed", value: expect.any(String) }],
+    });
+  });
+
+  test("defaultUsageRunner drops session and print-conflicting options together with their values", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "antigravity-argv-"));
+    const log = path.join(directory, "argv.ndjson");
+    try {
+      const launch: ProviderLaunch = {
+        command: process.execPath,
+        args: [
+          fakeAgy,
+          "-p",
+          "ignored prompt",
+          "--print",
+          "also ignored",
+          "--prompt=ignored",
+          "--input-format",
+          "stream-json",
+          "--output-format",
+          "stream-json",
+          "--output-format=stream-json",
+          "--disable-slash-commands",
+          "-c",
+          "--continue",
+          "--conversation",
+          "conv-123",
+          "--conversation=conv-456",
+          "--effort",
+          "xhigh",
+          "--effort=max",
+          "--model",
+          "gemini-4-hydrogen-xhigh",
+          "--model=gemini-4-argon-high",
+          "--mode",
+          "auto",
+          "--mode=plan",
+          "-i",
+          "interactive",
+          "--prompt-interactive=interactive",
+          "--remote-agent",
+          "--remote-agent=true",
+          "--remote-control",
+          '--json-schema={"type":"object"}',
+          "--print-timeout",
+          "5s",
+          "--settings",
+          "/tmp/agy-settings.json",
+          "--add-dir",
+          "/tmp/workspace",
+          "--sandbox",
+        ],
+        // The fake CLI records its argv and exits, so the assertion sees what agy would receive.
+        env: { AGY_TEST_LOG: log, AGY_TEST_STARTUP: "exit" },
+      };
+
+      await expect(defaultUsageRunner(launch, [])).rejects.toThrow();
+
+      const record = JSON.parse(readFileSync(log, "utf8").trim().split("\n")[0] ?? "{}");
+      expect(record.args).toEqual([
+        "--settings",
+        "/tmp/agy-settings.json",
+        "--add-dir",
+        "/tmp/workspace",
+        "--sandbox",
+        "-p",
+        "/usage",
+        "--output-format",
+        "json",
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("Usage.fetch handles agy runner non-zero error", async () => {
+    const runner = vi.fn(async () => {
+      throw new Error("Command failed: agy process crashed");
+    });
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "error",
+      error: "Command failed: agy process crashed",
+    });
+  });
+
+  test("Usage.fetch returns rejected problem when unauthenticated", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        status: "ERROR",
+        response: "User is not authenticated. Please run agy and sign in.",
+      }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  test("Usage.fetch returns no_quota when agy returns empty groups", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        status: "SUCCESS",
+        command: { name: "usage", data: { groups: [] } },
+      }),
+    );
+    const usage = new Usage(runner, () => ({ HOME: "/home/unused-fallback" }));
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "no_quota",
+        detail: "No usage quota reported by agy",
+      },
+    });
+  });
+
+  test("Usage.fetch returns rejected problem for agy's real signed-out JSON", async () => {
+    // Captured from agy 1.4.12 on Linux with no login: response is empty and the reason
+    // lives in the error field.
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        conversation_id: "",
+        status: "ERROR",
+        response: "",
+        error: "authentication failed or timed out",
+        duration_seconds: 0,
+        num_turns: 0,
+        usage: { total_tokens: 0 },
+        finished_reason: "error",
+      }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  test("Usage.fetch returns rejected problem for agy's real signed-out stderr", async () => {
+    // Captured from agy 1.4.12 exiting non-zero: the sign-in guidance arrives on stderr and
+    // Node folds it into the error message.
+    const runner = vi.fn(async () => {
+      throw new Error(
+        "Command failed: agy -p /usage --output-format json\n" +
+          "Error: authentication required. Run 'agy' to log in, then retry.\n" +
+          "error: authentication failed or timed out\n",
+      );
+    });
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "unavailable",
+      problem: {
+        kind: "rejected",
+        status: 401,
+        refreshedBy: "agy",
+      },
+    });
+  });
+
+  test("Usage.fetch reports empty agy output", async () => {
+    const runner = vi.fn(async () => "  \n");
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Empty output from agy usage",
+    });
+  });
+
+  test("Usage.fetch reports unparsable agy output", async () => {
+    const runner = vi.fn(async () => "not-json");
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Failed to parse agy output: not-json",
+    });
+  });
+
+  test("Usage.fetch reports an unexpected agy response shape", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({ status: "SUCCESS", command: { data: { groups: "not-an-array" } } }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "Unexpected response format from agy usage",
+    });
+  });
+
+  test("Usage.fetch surfaces the failure agy reports", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({ status: "QUOTA_UNAVAILABLE", response: "quota backend unavailable" }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+
+    const launch: ProviderLaunch = { command: "agy", args: [], env: {} };
+    const { account } = usage.remember(launch);
+
+    expect(await source.fetch({ account })).toEqual({
+      status: "error",
+      error: "quota backend unavailable",
+    });
+  });
+
+  test("Usage.fetch throws for unknown account", async () => {
+    const usage = new Usage();
+    const source = usage.registration();
+
+    await expect(source.fetch({ account: "unknown-account" })).rejects.toThrow(
+      "Antigravity login no longer exists",
+    );
+  });
+
+  test("provider contribution registers both provider and usage source", () => {
+    let registeredProvider: ProviderRegistration | undefined;
+    let registeredUsage: UsageSourceRegistration | undefined;
+
+    const server = {
+      registerProvider(p: ProviderRegistration) {
+        registeredProvider = p;
+      },
+      registerUsageSource(u: UsageSourceRegistration) {
+        registeredUsage = u;
+      },
+    };
+
+    contribute(server);
+
+    expect(registeredProvider?.id).toBe("antigravity");
+    expect(registeredUsage?.id).toBe("antigravity");
+  });
+
+  test("createAntigravityProvider status() remembers the launch in usage", async () => {
+    const usage = new Usage(undefined, () => ({ HOME: "/home/no-antigravity-user" }));
+    const provider = createAntigravityProvider(usage);
+
+    // The fake CLI answers the version and catalog probes, so the test never touches a real agy.
+    const launch: ProviderLaunch = {
+      command: process.execPath,
+      args: [fakeAgy],
+      env: { HOME: "/home/probed-user" },
+    };
+
+    expect(await usage.registration().discover({ kind: "global" })).toEqual([]);
+
+    expect(await provider.status({ launch })).toEqual({ available: true });
+
+    const discovered = await usage.registration().discover({ kind: "global" });
+    expect(discovered.map((entry) => entry.key)).toEqual([accountKey(launch.env)]);
+  });
+
+  test("Usage.fetch maps live agy 1.5.9 Hydrogen, Claude/GPT, and Argon quota groups", async () => {
+    const runner = vi.fn(async () =>
+      JSON.stringify({
+        conversation_id: "",
+        status: "SUCCESS",
+        response: "",
+        duration_seconds: 0,
+        num_turns: 0,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          thinking_tokens: 0,
+          cache_read_tokens: 0,
+          total_tokens: 0,
+        },
+        command: {
+          name: "usage",
+          data: {
+            description: "Quota summary",
+            groups: [
+              {
+                name: "Gemini Models",
+                description: "Models within this group: Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                buckets: [
+                  {
+                    id: "gemini-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remaining_fraction: 0.98,
+                    reset_time: "2026-11-21T16:18:06Z",
+                  },
+                  {
+                    id: "gemini-5h",
+                    name: "Five Hour Limit Remaining",
+                    window: "5h",
+                    remaining_fraction: 0.92,
+                    reset_time: "2026-11-14T21:18:06Z",
+                  },
+                ],
+              },
+              {
+                name: "Claude and GPT models",
+                description:
+                  "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+                buckets: [
+                  {
+                    id: "3p-weekly",
+                    name: "Weekly Limit Remaining",
+                    window: "weekly",
+                    remaining_fraction: 1,
+                    reset_time: "2026-11-21T16:32:39Z",
+                  },
+                  {
+                    id: "3p-5h",
+                    name: "Five Hour Limit Remaining",
+                    window: "5h",
+                    remaining_fraction: 1,
+                    reset_time: "2026-11-14T21:32:39Z",
+                  },
+                ],
+              },
+              {
+                name: "Gemini 4 Argon",
+                description: "Separate Argon quota on paid Pro plans.",
+                buckets: [
+                  {
+                    id: "gemini-argon-wtu-weekly",
+                    name: "Gemini 4 Argon Weekly Limit",
+                    window: "weekly",
+                    remaining_fraction: 0.998,
+                    reset_time: "2026-11-21T16:25:47Z",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const usage = new Usage(runner);
+    const source = usage.registration();
+    const { account } = usage.remember({ command: "agy", args: [], env: {} });
+
+    const report = await source.fetch({ account });
+    expect(report).toEqual({
+      status: "available",
+      windows: [
+        expect.objectContaining({ id: "gemini-weekly", usedPct: 2, summary: true }),
+        expect.objectContaining({ id: "gemini-5h", usedPct: 8 }),
+        expect.objectContaining({ id: "claude-gpt-oss-weekly", usedPct: 0, summary: true }),
+        expect.objectContaining({ id: "claude-gpt-oss-5h", usedPct: 0 }),
+        expect.objectContaining({ id: "gemini-argon-weekly", usedPct: 0, summary: true }),
+      ],
+      details: [{ id: "observed", label: "Observed", value: expect.any(String) }],
+    });
+  });
+});
