@@ -520,6 +520,11 @@ export async function findAcpCatalogProvider(page: Page, providerName: string): 
 export async function installAcpCatalogProvider(page: Page, providerName: string): Promise<void> {
   await findAcpCatalogProvider(page, providerName);
   await page.getByRole("button", { name: `Add ${providerName}`, exact: true }).click();
+  // The sheet closes once the add is done. Adding probes the new provider, which can outlast an
+  // assertion's default wait.
+  await expect(page.getByRole("textbox", { name: "Search providers" })).toHaveCount(0, {
+    timeout: 60_000,
+  });
 }
 
 /** Adding opens the new provider's page; its row waits in the list behind it. */
