@@ -2,7 +2,7 @@ import { createElement, type ElementType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
-const testTheme = {
+const pinnedTheme = {
   colorScheme: "light",
   colors: {
     syntax: lightHighlightColors,
@@ -85,6 +85,14 @@ const testTheme = {
       elevation: 8,
     },
   },
+};
+
+// Tokens a test does not pin come from the real light theme, so a style or `uniProps` mapping
+// that reads one (the markdown renderer reads `colors.terminal`) gets a value instead of crashing.
+const testTheme = {
+  ...lightTheme,
+  ...pinnedTheme,
+  colors: { ...lightTheme.colors, ...pinnedTheme.colors },
 };
 
 type StyleFactory<T> = (theme: typeof testTheme) => T;
