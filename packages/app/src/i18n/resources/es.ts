@@ -506,6 +506,8 @@ export const es: TranslationResources = {
       copyRelativePath: "Copiar ruta relativa",
       revealIn: "Mostrar en {{target}}",
       download: "Descargar",
+      share: "Compartir",
+      openWith: "Abrir con…",
       addToChat: "Añadir al chat",
       moreActions: "Más acciones",
       newFile: "Nuevo archivo",
@@ -2059,6 +2061,8 @@ export const es: TranslationResources = {
     failed: "No se pudo descargar el archivo.",
     shareFile: "compartir archivo",
     shareFileNamed: "Compartir{{fileName}}",
+    noAppToOpen: "Ninguna app de este dispositivo puede abrir {{fileName}}.",
+    notificationChannel: "Descargas",
   },
   menu: {
     backdrop: "Fondo del menú",
