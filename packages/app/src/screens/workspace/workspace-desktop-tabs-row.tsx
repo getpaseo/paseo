@@ -1657,8 +1657,13 @@ const styles = StyleSheet.create((theme) => ({
   tabsScrollFitContent: {
     flex: 1,
   },
+  // The row sits on the Electron titlebar drag region, which swallows wheel events over the
+  // gaps between chips. Opt the whole viewport out so scrolling never stalls between tabs.
+  // Mark the viewport, not the content: Electron does not clip app-region rects to scroll
+  // viewports, so a no-drag rect on the overflowing content would cover chrome beyond it.
   tabsScrollOverflow: {
     flex: 1,
+    ...(isWeb ? { WebkitAppRegion: "no-drag" } : null),
   },
   tabsContent: {
     flexDirection: "row",
