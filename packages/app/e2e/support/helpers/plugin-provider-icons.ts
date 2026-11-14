@@ -106,10 +106,12 @@ export async function verifyProviderSettings({
   await test.step("provider settings render the registered icon", async () => {
     await openSettings(page);
     await openSettingsHostSection(page, getServerId(), "providers");
-    await expectProviderIcon(
-      page.getByRole("button", { name: "Direct provider example provider details", exact: true }),
-      iconPaths,
-    );
+    // The row's button lies under its content, so the icon is in the row, beside the button.
+    const opener = page.getByRole("button", {
+      name: "Direct provider example provider details",
+      exact: true,
+    });
+    await expectProviderIcon(page.getByTestId(/^provider-row-/).filter({ has: opener }), iconPaths);
     await capture(page, testInfo, "provider-settings");
     await page.getByTestId("settings-back-to-workspace").click();
   });

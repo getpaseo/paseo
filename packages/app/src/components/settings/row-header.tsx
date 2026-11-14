@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react-native";
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Text, View, type AccessibilityState, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ControlSizeProvider } from "@/components/ui/control-size";
@@ -15,8 +15,6 @@ import { useSettingsRowLayout, type SettingsRowLayout } from "./row-density";
 const ThemedChevron = withUnistyles(ChevronRight);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const hoveredIconColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-
-type HoverState = PressableStateCallbackType & { hovered?: boolean };
 
 /**
  * What the hint reports beyond its words: work under way (a leading spinner), a fault (a leading
@@ -55,6 +53,12 @@ export interface SettingsRowHeaderProps {
  * The pressable line shared by settings rows that lead somewhere: a label, an optional summary and
  * a trailing chevron. A collapsible row turns the chevron down; a row that opens a sheet keeps it
  * pointing right.
+ *
+ * The press target is a button laid under the row's content rather than wrapped around it, so a
+ * control in the row is the button's sibling: a switch inside a button is invalid markup, and keys
+ * pressed on the switch would also press the row. Everything drawn over the button lets presses
+ * through to it and stays out of the accessibility tree, where the button's label names the row.
+ * Hover is tracked on the row itself, so it holds while the pointer is over the control.
  */
 export function SettingsRowHeader({
   label,
@@ -74,77 +78,94 @@ export function SettingsRowHeader({
   testID,
 }: SettingsRowHeaderProps) {
   const layout = useSettingsRowLayout();
-  const rowStyle = useCallback(
-    ({ hovered, pressed }: HoverState) => [
-      layout.row,
-      !disabled && hovered && styles.hovered,
+  const [pointerOver, setPointerOver] = useState(false);
+  const handlePointerEnter = useCallback(() => setPointerOver(true), []);
+  const handlePointerLeave = useCallback(() => setPointerOver(false), []);
+  const hovered = pointerOver && !disabled;
+  const rowStyle = useMemo(() => [layout.row, hovered && styles.hovered], [hovered, layout]);
+  const pressTargetStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.pressTarget,
       !disabled && pressed && styles.pressed,
     ],
-    [disabled, layout],
+    [disabled],
   );
   const chevronStyle = useMemo(
     () => [styles.chevron, expanded && styles.chevronExpanded],
     [expanded],
   );
   return (
-    <PressHighlight
-      {...webAccessibilityProps}
-      accessibilityRole={external ? "link" : "button"}
-      accessibilityLabel={accessibilityLabel ?? (summary ? `${label}, ${summary}` : label)}
-      accessibilityState={accessibilityState}
-      disabled={disabled}
-      onPress={onPress}
+    <View
       style={rowStyle}
-      highlightStyle={styles.pressed}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
       testID={testID}
     >
-      {({ hovered }: HoverState) => (
-        <>
-          {leading ? <View style={styles.leading}>{leading}</View> : null}
-          <View style={settingsStyles.rowContent}>
-            {labelAccessory ? (
-              <View style={styles.labelRow}>
-                <Text style={layout.title}>{label}</Text>
-                {labelAccessory}
-              </View>
-            ) : (
-              <Text style={layout.title}>{label}</Text>
-            )}
-            {hintStatus ? (
-              <RowHintLine hint={hint} status={hintStatus} hintStyle={layout.hint} />
-            ) : null}
-            {hint && !hintStatus ? <Text style={layout.hint}>{hint}</Text> : null}
+      <PressHighlight
+        {...webAccessibilityProps}
+        accessibilityRole={external ? "link" : "button"}
+        accessibilityLabel={accessibilityLabel ?? (summary ? `${label}, ${summary}` : label)}
+        accessibilityState={accessibilityState}
+        disabled={disabled}
+        onPress={onPress}
+        style={pressTargetStyle}
+        highlightStyle={styles.pressed}
+      />
+      {leading ? (
+        <View style={[styles.leading, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+          {leading}
+        </View>
+      ) : null}
+      <View style={[settingsStyles.rowContent, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+        {labelAccessory ? (
+          <View style={styles.labelRow}>
+            <Text style={layout.title}>{label}</Text>
+            {labelAccessory}
           </View>
-          {control ? (
-            <View style={styles.control}>
-              <ControlSizeProvider size={layout.controlSize}>{control}</ControlSizeProvider>
-            </View>
-          ) : null}
-          {external ? (
-            // Drawn the same as a section header's docs link, so the two read as one thing.
-            <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel>
-          ) : (
-            <>
-              {summary ? (
-                <Text style={styles.summary} numberOfLines={1}>
-                  {summary}
-                </Text>
-              ) : null}
-              {disabled ? null : (
-                <View style={chevronStyle}>
-                  <ThemedChevron
-                    size={ICON_SIZE.sm}
-                    uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
-                  />
-                </View>
-              )}
-            </>
-          )}
-        </>
-      )}
-    </PressHighlight>
+        ) : (
+          <Text style={layout.title}>{label}</Text>
+        )}
+        {hintStatus ? (
+          <RowHintLine hint={hint} status={hintStatus} hintStyle={layout.hint} />
+        ) : null}
+        {hint && !hintStatus ? <Text style={layout.hint}>{hint}</Text> : null}
+      </View>
+      {control ? (
+        <View style={styles.control}>
+          <ControlSizeProvider size={layout.controlSize}>{control}</ControlSizeProvider>
+        </View>
+      ) : null}
+      <View style={[styles.trailing, styles.passThrough]} {...HIDDEN_FROM_ASSISTIVE_TECH}>
+        {external ? (
+          // Drawn the same as a section header's docs link, so the two read as one thing.
+          <ExternalLinkLabel hovered={hovered}>{summary}</ExternalLinkLabel>
+        ) : (
+          <>
+            {summary ? (
+              <Text style={styles.summary} numberOfLines={1}>
+                {summary}
+              </Text>
+            ) : null}
+            {disabled ? null : (
+              <View style={chevronStyle}>
+                <ThemedChevron
+                  size={ICON_SIZE.sm}
+                  uniProps={hovered ? hoveredIconColorMapping : mutedIconColorMapping}
+                />
+              </View>
+            )}
+          </>
+        )}
+      </View>
+    </View>
   );
 }
+
+const HIDDEN_FROM_ASSISTIVE_TECH = {
+  accessibilityElementsHidden: true,
+  importantForAccessibility: "no-hide-descendants",
+  "aria-hidden": true,
+} as const;
 
 /**
  * The hint with its status mark. The line keeps the hint's own height in every status, so a row
@@ -200,6 +221,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   control: {
     marginRight: theme.spacing[3],
+  },
+  // The button under the row's content; it fills the row, padding included.
+  pressTarget: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  passThrough: {
+    pointerEvents: "none",
+  },
+  trailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
   },
   hintLine: {
     flexDirection: "row",
