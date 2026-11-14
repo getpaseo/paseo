@@ -5066,6 +5066,85 @@ describe("ForgeService", () => {
     }
   });
 
+  it.each(["feature", "123"])(
+    "finds the user's own fork PR for branch %s on an Enterprise fork clone",
+    async (branch) => {
+      vi.useRealTimers();
+      const cwd = mkdtempSync(join(tmpdir(), "github-enterprise-own-fork-pr-"));
+      try {
+        execFileSync("git", ["init", "-q", cwd]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "origin",
+          "https://github.acme.internal/me/repo.git",
+        ]);
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "remote",
+          "add",
+          "upstream",
+          "https://github.acme.internal/acme/repo.git",
+        ]);
+        const pullRequest = JSON.parse(
+          currentPullRequestJson({
+            number: 7,
+            url: "https://github.acme.internal/acme/repo/pull/7",
+            headRefName: branch,
+            headRepositoryOwner: { login: "me" },
+          }),
+        );
+        const runner: GitHubCommandRunner = async (args) => {
+          if (args[0] === "api") {
+            if (args[1] === "graphql") {
+              return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+            }
+            const ownPulls =
+              args[1]?.startsWith("repos/acme/repo/pulls?") &&
+              args[1].includes(`head=me%3A${branch}`);
+            return { stdout: JSON.stringify(ownPulls ? [{ number: 7 }] : []), stderr: "" };
+          }
+          if (args[0] === "repo") {
+            const fork = args[2] === "me/repo" || args[2] === "github.acme.internal/me/repo";
+            return {
+              stdout: JSON.stringify({
+                owner: { login: fork ? "me" : "acme" },
+                name: "repo",
+                parent: fork ? { owner: { login: "acme" }, name: "repo" } : null,
+              }),
+              stderr: "",
+            };
+          }
+          if (args[1] === "view" && args[2] === "7") {
+            return { stdout: JSON.stringify(pullRequest), stderr: "" };
+          }
+          if (args[1] === "view") {
+            throw Object.assign(new Error("gh failed"), {
+              stderr: `no pull requests found for branch "${branch}"`,
+            });
+          }
+          return { stdout: "[]", stderr: "" };
+        };
+        const service = createGitHubService({
+          ttlMs: 0,
+          runner,
+          resolveGhPath: async () => "/usr/bin/gh",
+          resolveRepoHost: async () => "github.acme.internal",
+        });
+
+        await expect(
+          service.getCurrentPullRequestStatus({ cwd, headRef: branch }),
+        ).resolves.toMatchObject({ number: 7, repoOwner: "acme" });
+        service.dispose?.();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("uses the selected Enterprise default repository for PR and issue lookups despite Git rewrites", async () => {
     vi.useRealTimers();
     const cwd = mkdtempSync(join(tmpdir(), "github-service-default-repo-"));

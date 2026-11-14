@@ -1368,10 +1368,27 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     });
   }
 
-  async function runPullRequestMerge(
-    args: string[],
-    input: { cwd: string; prNumber: number; status?: PullRequestCommandStatus | null },
-  ): Promise<void> {
+  // gh names the repository from the cwd when Paseo does not. On Enterprise
+  // Paseo names it, so parent discovery must ask about origin itself: a branch
+  // that tracks origin carries no head owner, and its PR lives in origin's
+  // parent under origin's owner.
+  async function resolveCurrentPullRequestRepositories(
+    cwd: string,
+  ): Promise<{ explicitRepo: boolean; originRepository?: string }> {
+    if ((await resolveRepoHostCached(cwd)) === null) {
+      return { explicitRepo: false };
+    }
+    const originRepository = await deps.resolveOriginRepository(cwd);
+    return { explicitRepo: true, ...(originRepository ? { originRepository } : {}) };
+  }
+
+  async function runPullRequestMerge({
+    args,
+    input,
+  }: {
+    args: string[];
+    input: { cwd: string; prNumber: number; status?: PullRequestCommandStatus | null };
+  }): Promise<void> {
     const host = await resolveRepoHostCached(input.cwd);
     let effectiveArgs = args;
     if (host) {
@@ -2213,7 +2230,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headRef: input.headRef,
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
-            explicitRepo: (await resolveRepoHostCached(input.cwd)) !== null,
+            ...(await resolveCurrentPullRequestRepositories(input.cwd)),
             run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
@@ -2559,25 +2576,28 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
     async mergePullRequest(input) {
       assertDirectPullRequestMergeReady(input);
-      await runPullRequestMerge(
-        ["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`],
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), `--${input.mergeMethod}`],
         input,
-      );
+      });
       return { success: true };
     },
 
     async enablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeEnableReady(input);
-      await runPullRequestMerge(
-        ["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`],
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), "--auto", `--${input.mergeMethod}`],
         input,
-      );
+      });
       return { success: true };
     },
 
     async disablePullRequestAutoMerge(input) {
       assertPullRequestAutoMergeDisableReady(input);
-      await runPullRequestMerge(["pr", "merge", String(input.prNumber), "--disable-auto"], input);
+      await runPullRequestMerge({
+        args: ["pr", "merge", String(input.prNumber), "--disable-auto"],
+        input,
+      });
       return { success: true };
     },
 
@@ -3063,6 +3083,7 @@ async function resolveCurrentPullRequestView(options: {
   headSha?: string;
   headRepositoryOwner?: string;
   explicitRepo?: boolean;
+  originRepository?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
   const viewCandidate = await tryCurrentPullRequestBranchView(options);
@@ -3081,7 +3102,11 @@ async function resolveCurrentPullRequestView(options: {
   let headRepositoryOwner = options.headRepositoryOwner;
 
   if (!headRepositoryOwner) {
-    const repo = await getGitHubRepoView(options);
+    const repo = await getGitHubRepoView({
+      cwd: options.cwd,
+      repo: options.originRepository,
+      run: options.run,
+    });
     const forkOwner = repo?.owner?.login;
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
