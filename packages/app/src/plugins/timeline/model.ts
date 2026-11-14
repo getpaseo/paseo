@@ -9,6 +9,7 @@ import type { InstalledPlugin } from "../types";
 export interface InstalledPluginTimelineItem extends PluginTimelineItem {
   id: string;
   pluginId: string;
+  nativeTurnFooter?: boolean;
 }
 
 export interface TimelineItemTransformInput {
@@ -68,7 +69,10 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
       throw new Error(`transformed timeline item ${kind} data must be JSON-compatible`);
     }
   }
-  return { items: items as PluginTimelineItem[] };
+  return {
+    items: items as PluginTimelineItem[],
+    ...(Reflect.get(value, "nativeTurnFooter") === true ? { nativeTurnFooter: true } : {}),
+  };
 }
 
 export function transformTimelineItem(
@@ -85,14 +89,22 @@ export function transformTimelineItem(
         const output = transform({ item: input.item, phase: input.phase });
         if (output === undefined) continue;
         const parsed = parseTransformResult(output);
-        return parsed.items.map((transformedItem, index) => ({
-          type: "plugin",
-          id: transformedItem.id ?? `${input.sourceId}/${index}`,
-          kind: transformedItem.kind,
-          version: transformedItem.version,
-          data: JSON.parse(JSON.stringify(transformedItem.data)) as PluginTimelineData,
-          pluginId: plugin.id,
-        }));
+        const nativeTurnFooter =
+          parsed.nativeTurnFooter &&
+          parsed.items.length === 1 &&
+          input.item.type === "assistant_message";
+        return parsed.items.map((transformedItem, index) => {
+          const item: InstalledPluginTimelineItem = {
+            type: "plugin",
+            id: transformedItem.id ?? `${input.sourceId}/${index}`,
+            kind: transformedItem.kind,
+            version: transformedItem.version,
+            data: JSON.parse(JSON.stringify(transformedItem.data)) as PluginTimelineData,
+            pluginId: plugin.id,
+          };
+          if (nativeTurnFooter) item.nativeTurnFooter = true;
+          return item;
+        });
       } catch (error) {
         console.warn(
           `[Plugins] Timeline transformer failed: ${plugin.id}/${transformer.id}`,

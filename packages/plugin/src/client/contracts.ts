@@ -338,6 +338,8 @@ export type PluginTimelineTransformerContribution<
 
 export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
   agentId: string;
+  /** The host owns the original assistant message's turn footer. */
+  nativeTurnFooter?: boolean;
   item: {
     type: "plugin";
     kind: string;
