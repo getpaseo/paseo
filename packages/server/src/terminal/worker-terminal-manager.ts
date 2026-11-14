@@ -20,6 +20,7 @@ import type {
 import { resolvePaseoCliExecutablePath } from "./paseo-cli-path.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { connectTerminalWorker, type TerminalWorkerConnection } from "./terminal-worker-client.js";
+import { TerminalWorkerConnectionClosedError } from "./terminal-worker-errors.js";
 import { launchTerminalWorker } from "./terminal-worker-launch.js";
 import { identifyTerminalWorker } from "./terminal-worker-ownership.js";
 import { createTerminalWorkerProcessInspector } from "./terminal-worker-processes.js";
@@ -60,6 +61,8 @@ import type {
 } from "./terminal-worker-protocol.js";
 
 const REQUEST_TIMEOUT_MS = 10000;
+// How long a caller that saw its worker socket close waits for the manager to reconnect it.
+const RECONNECT_WAIT_TIMEOUT_MS = 10_000;
 
 type RequiredWorkerTerminalInfo = WorkerTerminalInfo & { workspaceId: string };
 
@@ -118,6 +121,8 @@ interface WorkerTerminalManagerOptions {
   // The kill path. The daemon passes the reaper, which verifies every program is gone; the
   // default asks the connected worker to shut down.
   closeTerminals?: () => Promise<void>;
+  /** Records worker connection loss and recovery; the cause lives in the worker's own log. */
+  logger?: Logger;
 }
 
 /** The daemon's terminal manager: its terminals live in a worker that can outlive it. */
@@ -631,12 +636,27 @@ export function createWorkerTerminalManager(
     connection.on("close", () => {
       if (worker !== connection) return;
       workerDisconnected = true;
-      rejectPendingRequests(new Error("Terminal worker connection closed"));
+      const closedWithPendingRequests = pendingRequests.size;
+      rejectPendingRequests(new TerminalWorkerConnectionClosedError());
       const reconnect = managerOptions.reconnect;
+      managerOptions.logger?.warn(
+        {
+          workerPid: worker.workerPid,
+          pendingRequests: closedWithPendingRequests,
+          willReconnect: !detached && reconnect !== undefined,
+          ...connection.closeDetails,
+        },
+        "Terminal worker connection closed",
+      );
       if (!detached && reconnect) {
         reconnecting = (async () => {
+          const startedAt = Date.now();
           const recovered = await reconnect();
           if (!recovered) {
+            managerOptions.logger?.warn(
+              { workerPid: worker.workerPid, afterMs: Date.now() - startedAt },
+              "Terminal worker did not reconnect; retiring its terminals",
+            );
             for (const terminalId of Array.from(recordsById.keys())) {
               handleTerminalExitEvent({
                 type: "terminalExit",
@@ -654,6 +674,10 @@ export function createWorkerTerminalManager(
           workerDisconnected = false;
           attachWorker();
           await adoptTerminals();
+          managerOptions.logger?.info(
+            { workerPid: worker.workerPid, afterMs: Date.now() - startedAt },
+            "Terminal worker reconnected",
+          );
           // Output emitted without a controller is retained in the worker's screen. Existing
           // streams must fetch that screen before applying further live output.
           for (const record of recordsById.values()) {
@@ -788,6 +812,28 @@ export function createWorkerTerminalManager(
   }
 
   return {
+    async waitForTerminalWorker(): Promise<boolean> {
+      // The close handler schedules recovery before it rejects pending requests, so a caller
+      // that saw a closed-connection error waits for that same recovery instead of polling. A
+      // recovery that loses its own connection schedules the next one; that is waited out too,
+      // but never longer than the deadline: a flapping worker must end the caller's stream.
+      const deadline = Date.now() + RECONNECT_WAIT_TIMEOUT_MS;
+      const recovered = async (): Promise<boolean> => {
+        while (true) {
+          const recovery = reconnecting;
+          if (recovery === null) return true;
+          const remainingMs = deadline - Date.now();
+          if (remainingMs <= 0) return false;
+          if (
+            await Promise.race([recovery.then(() => false), delay(remainingMs).then(() => true)])
+          ) {
+            return false;
+          }
+        }
+      };
+      return (await recovered()) && !detached && !workerDisconnected && worker.connected;
+    },
+
     async getTerminals(
       cwd: string,
       options?: { workspaceId?: string },
@@ -1183,6 +1229,7 @@ export async function startWorkerTerminalManager(
     const manager = createWorkerTerminalManager({
       worker: connection,
       reconnect,
+      logger,
       ...(options.requestTimeoutMs === undefined
         ? {}
         : { requestTimeoutMs: options.requestTimeoutMs }),

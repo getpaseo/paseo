@@ -61,6 +61,7 @@ import {
   listTerminalWorkerRecords,
   readTerminalWorkerRecord,
   terminalWorkerDirectory,
+  terminalWorkerLogPath,
   terminalWorkerRecordPath,
   writeTerminalWorkerRecord,
   writeTerminalCleanupRecord,
@@ -75,6 +76,7 @@ import {
   TerminalWorkerIncompatibleError,
 } from "./terminal-worker-pool.js";
 import { connectTerminalWorker } from "./terminal-worker-client.js";
+import type { TerminalWorkerConnection } from "./terminal-worker-client.js";
 import { launchTerminalWorker, TerminalWorkerLaunchError } from "./terminal-worker-launch.js";
 import { currentBootId } from "../server/pid-lock.js";
 import { spawn } from "node:child_process";
@@ -325,6 +327,10 @@ it("reconnects a live worker without replacing terminal sessions or processes", 
     secret: before!.secret,
   });
   await waitForCondition(() => !competitor.connected, 10000);
+  // The worker's own log names why it closed the daemon's controller socket.
+  expect(readFileSync(terminalWorkerLogPath(paseoHome), "utf8")).toContain(
+    '"event":"controller-replaced"',
+  );
   await waitForCondition(async () => {
     try {
       return (await readReplay(manager!, terminal.id)) !== null;
@@ -343,6 +349,218 @@ it("reconnects a live worker without replacing terminal sessions or processes", 
   terminal.send({ type: "input", data: "reconnected\r" });
   await waitForCondition(() => output.join("").includes("echo:reconnected"), 10000);
 }, 30000);
+
+// A worker connection the test owns, so it can drop the daemon's socket at a chosen moment and
+// decide whether the worker comes back.
+async function startDroppableWorkerManager(input: {
+  paseoHome: string;
+  reconnect: (record: TerminalWorkerRecord) => Promise<TerminalWorkerConnection | null>;
+  logger?: pino.Logger;
+}): Promise<{
+  manager: DaemonTerminalManager;
+  connection: TerminalWorkerConnection;
+  record: TerminalWorkerRecord;
+  reconnectCount: () => number;
+}> {
+  const launched = await launchTerminalWorker({
+    paseoHome: input.paseoHome,
+    paseoVersion: "0.0.0-test",
+  });
+  const connection = await connectTerminalWorker({
+    socketPath: launched.record.socketPath,
+    secret: launched.record.secret,
+  });
+  let reconnects = 0;
+  const workerManager = createWorkerTerminalManager({
+    worker: connection,
+    reconnect: () => {
+      reconnects += 1;
+      return input.reconnect(launched.record);
+    },
+    ...(input.logger ? { logger: input.logger } : {}),
+  });
+  await workerManager.adoptTerminals();
+  return {
+    manager: workerManager,
+    connection,
+    record: launched.record,
+    reconnectCount: () => reconnects,
+  };
+}
+
+// A terminal whose snapshot is far larger than one socket read, so the pull is still in flight
+// when the test drops the connection on its first chunk.
+async function createSnapshotTerminal(target: DaemonTerminalManager, cwd: string) {
+  const session = trackTerminal(
+    await target.createTerminal({
+      workspaceId: "ws-snapshot-drop",
+      cwd,
+      rows: 10,
+      cols: 1000,
+      ...nodeTerminalCommand(`
+        const line = "S".repeat(999);
+        for (let i = 0; i < 1200; i++) process.stdout.write(line + "\\r\\n");
+        process.stdout.write("SNAPSHOT-END\\r\\n");
+        process.stdin.on("data", (chunk) => process.stdout.write("ECHO:" + chunk));
+        setInterval(() => {}, 1000);
+      `),
+    }),
+  );
+  await waitForCondition(
+    async () =>
+      (await target.captureTerminal(session.id, { start: -5 })).lines.some((row) =>
+        row.includes("SNAPSHOT-END"),
+      ),
+    20000,
+  );
+  return session;
+}
+
+// Interrupts the first snapshot pull while its request is in flight and records how each pull
+// ended. The request is sent before the interruption, so the daemon's close handler rejects it;
+// the daemon's own close log proves it was still pending.
+function interruptFirstSnapshotPull(target: DaemonTerminalManager, interrupt: () => void) {
+  const original = target.replayTerminal.bind(target);
+  const outcomes: string[] = [];
+  target.replayTerminal = async (id, options, sink) => {
+    const call = original(id, options, sink);
+    if (outcomes.length === 0) interrupt();
+    try {
+      const result = await call;
+      outcomes.push("resolved");
+      return result;
+    } catch (error) {
+      outcomes.push(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  };
+  return outcomes;
+}
+
+function parseDaemonLog(lines: string[]): Array<Record<string, unknown>> {
+  return lines
+    .join("")
+    .split("\n")
+    .filter((entry) => entry.trim().length > 0)
+    .map((entry) => JSON.parse(entry) as Record<string, unknown>);
+}
+
+it("pulls the snapshot again after a worker reconnect instead of ending the stream", async () => {
+  const paseoHome = createTemporaryHome();
+  const daemonLog: string[] = [];
+  const {
+    manager: workerManager,
+    connection,
+    reconnectCount,
+  } = await startDroppableWorkerManager({
+    paseoHome,
+    logger: pino({ level: "info" }, { write: (chunk: string) => void daemonLog.push(chunk) }),
+    reconnect: (record) =>
+      connectTerminalWorker({ socketPath: record.socketPath, secret: record.secret }),
+  });
+  manager = workerManager;
+  const session = await createSnapshotTerminal(workerManager, paseoHome);
+  const viewers = terminalViewers(workerManager, session.id);
+  const desktop = {};
+  // The worker survives: only the daemon's socket goes away.
+  const outcomes = interruptFirstSnapshotPull(workerManager, () => connection.disconnect());
+
+  try {
+    await viewers.attach(desktop, "desktop", {
+      mode: "visible-snapshot",
+      scrollbackLines: 2000,
+    });
+    await waitForCondition(
+      () => viewers.replayed(desktop) || viewers.ended(desktop).length > 0,
+      20000,
+    );
+
+    // The client never sees the drop: no stream exit, and the snapshot still arrives.
+    expect(viewers.ended(desktop)).toEqual([]);
+    expect(viewers.replayed(desktop)).toBe(true);
+    expect(outcomes.at(-1)).toBe("resolved");
+    expect(reconnectCount()).toBe(1);
+
+    // The daemon closed the socket with the snapshot request still pending, so the snapshot the
+    // client got above can only be the retried one.
+    const closed = parseDaemonLog(daemonLog).filter(
+      (entry) => entry.msg === "Terminal worker connection closed",
+    );
+    expect(closed).toHaveLength(1);
+    // The daemon did not end this socket; the worker's side went away mid-request.
+    expect(closed[0]).toMatchObject({ willReconnect: true, initiatedByUs: true });
+    expect(closed[0]!.pendingRequests).toBeGreaterThanOrEqual(1);
+    expect(
+      parseDaemonLog(daemonLog).some((entry) => entry.msg === "Terminal worker reconnected"),
+    ).toBe(true);
+
+    // Exactly one complete snapshot: no duplicate replay frames from the interrupted attempt.
+    const opcodes = viewers.frames
+      .filter((row) => row.source === desktop)
+      .map((row) => row.frame.opcode);
+    expect(opcodes.filter((opcode) => opcode === TerminalStreamOpcode.ReplayBegin)).toHaveLength(1);
+    expect(opcodes.filter((opcode) => opcode === TerminalStreamOpcode.ReplayEnd)).toHaveLength(1);
+    const replayText = viewers.replayText(desktop);
+    expect(replayText.match(/SNAPSHOT-END/g)).toHaveLength(1);
+    expect(replayText.match(/S{999}/g)!.length).toBeGreaterThan(500);
+
+    // The recovered stream keeps streaming live output.
+    session.send({ type: "input", data: "AFTER-RECONNECT\r" });
+    await waitForCondition(() => viewers.text(desktop).includes("ECHO:AFTER-RECONNECT"), 10000);
+    expect(workerManager.getTerminal(session.id)).toBe(session);
+  } finally {
+    viewers.finish();
+    await viewers.delivery.close();
+  }
+}, 60000);
+
+it("ends the stream once with an error when the worker does not come back", async () => {
+  const paseoHome = createTemporaryHome();
+  const daemonLog: string[] = [];
+  const {
+    manager: workerManager,
+    connection,
+    record,
+  } = await startDroppableWorkerManager({
+    paseoHome,
+    logger: pino({ level: "warn" }, { write: (chunk: string) => void daemonLog.push(chunk) }),
+    reconnect: () => Promise.resolve(null),
+  });
+  manager = workerManager;
+  const session = await createSnapshotTerminal(workerManager, paseoHome);
+  const viewers = terminalViewers(workerManager, session.id);
+  const desktop = {};
+  // A worker that never comes back: its process is gone before a reconnect could succeed.
+  const outcomes = interruptFirstSnapshotPull(workerManager, () => {
+    connection.disconnect();
+    process.kill(record.pid, "SIGKILL");
+  });
+
+  try {
+    await viewers.attach(desktop, "desktop", {
+      mode: "visible-snapshot",
+      scrollbackLines: 2000,
+    });
+    await waitForCondition(() => viewers.ended(desktop).length > 0, 20000);
+    expect(outcomes).toEqual(["Terminal worker connection closed"]);
+    // The worker is confirmed gone, so no retry can succeed: the stream ends once.
+    await waitForCondition(() => workerManager.getTerminal(session.id) === undefined, 10000);
+    expect(viewers.ended(desktop)).toHaveLength(1);
+    expect(viewers.ended(desktop)[0]!.message).toMatchObject({
+      type: "terminal_stream_exit",
+      payload: { terminalId: session.id, error: "Terminal worker connection closed" },
+    });
+    expect(viewers.replayText(desktop)).toBe("");
+    expect(
+      parseDaemonLog(daemonLog).filter(
+        (entry) => entry.msg === "Terminal worker connection closed",
+      ),
+    ).toHaveLength(1);
+  } finally {
+    viewers.finish();
+    await viewers.delivery.close();
+  }
+}, 60000);
 
 it.each(["detach", "closeTerminals"] as const)(
   "does not replace a failed worker during %s",
@@ -2121,6 +2339,14 @@ function terminalViewers(
     text(source: object) {
       return frames
         .filter((row) => row.source === source && row.frame.opcode === TerminalStreamOpcode.Output)
+        .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
+        .join("");
+    },
+    replayText(source: object) {
+      return frames
+        .filter(
+          (row) => row.source === source && row.frame.opcode === TerminalStreamOpcode.ReplayData,
+        )
         .map((row) => Buffer.from(row.frame.payload).toString("utf8"))
         .join("");
     },
