@@ -61,9 +61,8 @@ export function DiagnosticSheet({
   }, [visible, fetchDiagnostic]);
 
   const handleRefresh = useCallback(() => {
-    if (loading) return;
     void fetchDiagnostic();
-  }, [fetchDiagnostic, loading]);
+  }, [fetchDiagnostic]);
   const handleCopy = useCallback(() => {
     if (!diagnostic) return;
     void Clipboard.setStringAsync(diagnostic)
@@ -79,11 +78,13 @@ export function DiagnosticSheet({
           <SheetHeaderIconButton
             icon={Copy}
             onPress={handleCopy}
+            disabled={!diagnostic}
             accessibilityLabel={t("settings.providers.diagnostic.copyAccessibility")}
           />
           <SheetHeaderIconButton
             icon={RotateCw}
             onPress={handleRefresh}
+            loading={loading}
             accessibilityLabel={
               loading
                 ? t("settings.providers.diagnostic.refreshingAccessibility")
@@ -93,7 +94,7 @@ export function DiagnosticSheet({
         </View>
       ),
     }),
-    [handleCopy, handleRefresh, loading, t],
+    [diagnostic, handleCopy, handleRefresh, loading, t],
   );
 
   let body: React.ReactNode;

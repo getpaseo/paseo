@@ -23,6 +23,7 @@ import {
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollView } from "@/components/ui/scroll-view";
 import { isWeb } from "@/constants/platform";
 import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
@@ -73,6 +74,7 @@ export interface SheetHeader {
 const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFill };
 const NATIVE_DIALOG_SNAP_POINTS = ["100%"];
+const HEADER_ICON_SIZE = 16;
 
 const styles = StyleSheet.create((theme) => ({
   nativeDialogSurface: {
@@ -136,6 +138,15 @@ const styles = StyleSheet.create((theme) => ({
   closeButton: {
     padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
+  },
+  headerIconButtonInactive: {
+    opacity: theme.opacity[50],
+  },
+  headerIconBox: {
+    width: HEADER_ICON_SIZE,
+    height: HEADER_ICON_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
   },
   // Without a header the close button floats over the card's top-right corner.
   floatingClose: {
@@ -345,31 +356,55 @@ function SheetContent({ style, children }: { style: StyleProp<ViewStyle>; childr
 
 /**
  * An icon action in a sheet header's trailing rail, drawn like the Close button so a header's
- * actions line up with it at one size. Pass it through `SheetHeader.actions`.
+ * actions line up with it at one size. Pass it through `SheetHeader.actions`. Like `Button`, a
+ * loading action shows a spinner in place of its icon and, like a disabled one, is dimmed and
+ * cannot be pressed.
  */
 export function SheetHeaderIconButton({
   icon: Icon,
   accessibilityLabel,
   onPress,
+  loading = false,
+  disabled = false,
   testID,
 }: {
   icon: LucideIcon;
   accessibilityLabel: string;
   onPress: () => void;
+  loading?: boolean;
+  disabled?: boolean;
   testID?: string;
 }) {
   const { theme } = useUnistyles();
+  const inactive = disabled || loading;
+  const style = useMemo(
+    () => [styles.closeButton, inactive && styles.headerIconButtonInactive],
+    [inactive],
+  );
+  const accessibilityState = useMemo(
+    () => ({ disabled: inactive, busy: loading }),
+    [inactive, loading],
+  );
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      style={styles.closeButton}
+      accessibilityState={accessibilityState}
+      disabled={inactive}
+      style={style}
       onPress={onPress}
       testID={testID}
     >
-      {({ pressed }) => (
-        <Icon size={16} color={pressed ? theme.colors.foreground : theme.colors.foregroundMuted} />
-      )}
+      {({ pressed }) => {
+        const color = pressed ? theme.colors.foreground : theme.colors.foregroundMuted;
+        if (!loading) return <Icon size={HEADER_ICON_SIZE} color={color} />;
+        // The spinner sits in the icon's box, so the header does not move while it runs.
+        return (
+          <View style={styles.headerIconBox}>
+            <LoadingSpinner size={HEADER_ICON_SIZE} color={color} />
+          </View>
+        );
+      }}
     </Pressable>
   );
 }

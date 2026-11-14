@@ -1,9 +1,7 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
-import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { resolveProviderLabel } from "@/utils/provider-definitions";
-import { ProviderDetail } from "./provider-detail";
+import { ProviderDetail, useProviderDetail } from "./provider-detail";
 import { ProviderGlyph } from "./provider-glyph";
 import { OVERLAY_SHEET_FRAME, type ProviderSheetFrame } from "./sheet-frame";
 
@@ -22,8 +20,8 @@ export function ProviderDetailSheet({
   frame?: ProviderSheetFrame;
 }) {
   const { t } = useTranslation();
-  const { entries } = useProvidersSnapshot(serverId);
-  const label = resolveProviderLabel(provider, entries);
+  const detail = useProviderDetail(serverId, provider, onClose);
+  const label = detail.label;
   const header = useMemo<SheetHeader>(
     () => ({
       title: label,
@@ -48,7 +46,7 @@ export function ProviderDetailSheet({
       desktopHeight={frame.desktopHeight}
       testID="provider-settings-sheet"
     >
-      <ProviderDetail serverId={serverId} provider={provider} onRemoved={onClose} />
+      <ProviderDetail serverId={serverId} detail={detail} />
     </AdaptiveModalSheet>
   );
 }

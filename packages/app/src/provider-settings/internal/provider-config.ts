@@ -21,9 +21,13 @@ export interface ProviderConfigActions {
   setEnabled: (providerId: string, enabled: boolean) => void;
   /** Config owns the provider, so Remove can delete it. */
   canRemove: (entry: ProviderEntry) => boolean;
-  removingProviderId: string | null;
+  /**
+   * The provider being removed, as it was when the user confirmed. It stays set once the removal
+   * succeeds, because whatever shows the provider closes next and keeps showing it until then.
+   */
+  removing: ProviderEntry | null;
   /** Asks first; resolves true once the provider is gone from config. */
-  remove: (providerId: string, providerLabel: string) => Promise<boolean>;
+  remove: (entry: ProviderEntry, providerLabel: string) => Promise<boolean>;
   /** The catalog provider being written to config. */
   addingProviderId: string | null;
   /** Writes a catalog provider to config and probes it; resolves true once it is listed. */
@@ -38,7 +42,7 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
   const { refresh } = useProvidersSnapshot(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
-  const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<ProviderEntry | null>(null);
   const removingRef = useRef<string | null>(null);
   const [addingProviderId, setAddingProviderId] = useState<string | null>(null);
   const addingRef = useRef<string | null>(null);
@@ -76,10 +80,9 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
   );
 
   const remove = useCallback(
-    async (providerId: string, providerLabel: string) => {
+    async (entry: ProviderEntry, providerLabel: string) => {
       if (removingRef.current) return false;
-      removingRef.current = providerId;
-      setRemovingProviderId(providerId);
+      removingRef.current = entry.provider;
       try {
         const confirmed = await confirmDialog({
           title: t("settings.providers.remove.confirmTitle", { name: providerLabel }),
@@ -88,17 +91,18 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
           destructive: true,
         });
         if (!confirmed) return false;
-        await patchConfig({ removeProviders: [providerId] });
+        setRemoving(entry);
+        await patchConfig({ removeProviders: [entry.provider] });
         return true;
       } catch (error) {
+        setRemoving(null);
         Alert.alert(
           t("settings.providers.remove.errorTitle"),
           error instanceof Error ? error.message : String(error),
         );
         return false;
       } finally {
-        if (removingRef.current === providerId) removingRef.current = null;
-        setRemovingProviderId((current) => (current === providerId ? null : current));
+        removingRef.current = null;
       }
     },
     [patchConfig, t],
@@ -132,7 +136,7 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
     togglingProviderId,
     setEnabled,
     canRemove,
-    removingProviderId,
+    removing,
     remove,
     addingProviderId,
     add,
