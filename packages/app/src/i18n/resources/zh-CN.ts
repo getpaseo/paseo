@@ -174,6 +174,7 @@ export const zhCN: TranslationResources = {
       openImage: "打开图片附件",
       removeImage: "移除图片附件",
       removeFile: "Remove file attachment",
+      fileUploadFailed: "文件上传失败。请重试或移除。",
       openGithub: "打开 {{kind}} {{number}}",
       removeGithub: "移除 {{kind}} {{number}}",
       element: "元素",

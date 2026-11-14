@@ -58,6 +58,7 @@ import {
   Paperclip,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
+import { File } from "expo-file-system";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import {
   AgentControls,
@@ -81,6 +82,7 @@ import {
   type MessageInputRef,
 } from "./input/input";
 import type { ImageAttachment, MessagePayload, TextReplacement } from "./types";
+import { pendingFilePillLabel, type PendingFileAttachment } from "./attachments/pending-file";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { DraftCommandTarget } from "@/agent-commands";
 import { encodeImages } from "@/utils/encode-images";
@@ -88,6 +90,7 @@ import { focusWithRetries } from "@/utils/web-focus";
 import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
+  disposeUploadedFileSource,
   editQueuedComposerMessage,
   findForgeItemByOption,
   isAttachmentSelectedForForgeItem,
@@ -331,15 +334,13 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   );
 }
 
-interface PendingFileAttachment {
-  id: number;
-  file: SelectedFile;
-}
-
 interface RenderAttachmentTrayArgs {
   serverId: string;
   selectedAttachments: ComposerAttachment[];
   pendingFiles: PendingFileAttachment[];
+  retryFile: (entry: PendingFileAttachment) => void;
+  removePendingFile: (entry: PendingFileAttachment) => void;
+  retryLabel: string;
   isComposerLocked: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
@@ -347,6 +348,7 @@ interface RenderAttachmentTrayArgs {
     openImage: string;
     removeImage: string;
     removeFile: string;
+    uploadFailedFile: string;
     openGithub: (kind: string, numberLabel: string) => string;
     removeGithub: (kind: string, numberLabel: string) => string;
   };
@@ -376,16 +378,58 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           labels,
         }),
       )}
-      {pendingFiles.map(({ id, file }) => (
-        <AttachmentFrame key={id} testID="composer-pending-file-attachment">
-          <AttachmentLabel
-            icon={pendingFilePillIcon}
-            title={file.fileName}
-            subtitle={getFileTypeLabel(file.fileName) ?? ""}
+      {pendingFiles.map((entry) => {
+        const label = pendingFilePillLabel(entry, labels.uploadFailedFile);
+        if (!entry.failed) {
+          return (
+            <AttachmentFrame key={entry.id} testID="composer-pending-file-attachment">
+              <AttachmentLabel
+                icon={pendingFilePillIcon}
+                title={label.title}
+                subtitle={label.subtitle}
+              />
+            </AttachmentFrame>
+          );
+        }
+        return (
+          <FailedFileAttachment
+            key={entry.id}
+            entry={entry}
+            retryFile={args.retryFile}
+            removePendingFile={args.removePendingFile}
+            title={label.title}
+            subtitle={label.subtitle}
+            retryLabel={args.retryLabel}
+            removeLabel={labels.removeFile}
           />
-        </AttachmentFrame>
-      ))}
+        );
+      })}
     </View>
+  );
+}
+
+function FailedFileAttachment(props: {
+  entry: PendingFileAttachment;
+  retryFile: (entry: PendingFileAttachment) => void;
+  removePendingFile: (entry: PendingFileAttachment) => void;
+  title: string;
+  subtitle: string;
+  retryLabel: string;
+  removeLabel: string;
+}) {
+  const { retryFile, removePendingFile, entry } = props;
+  const retry = useCallback(() => retryFile(entry), [retryFile, entry]);
+  const remove = useCallback(() => removePendingFile(entry), [removePendingFile, entry]);
+  return (
+    <AttachmentPill
+      testID="composer-failed-file-attachment"
+      onOpen={retry}
+      onRemove={remove}
+      openAccessibilityLabel={props.retryLabel}
+      removeAccessibilityLabel={props.removeLabel}
+    >
+      <AttachmentLabel title={props.title} subtitle={props.subtitle} />
+    </AttachmentPill>
   );
 }
 
@@ -1406,7 +1450,7 @@ function ComposerContentImpl({
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([]);
   const nextPendingFileId = useRef(0);
-  const isUploadingFile = pendingFiles.length > 0;
+  const isUploadingFile = pendingFiles.some((file) => !file.failed);
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
   const editingSession = useComposerEditingSession(inputMode, providedEditingSession);
   const isFullscreen = useComposerFullscreen(editingSession);
@@ -1890,11 +1934,74 @@ function ComposerContentImpl({
     }
   }, [addImages, t]);
 
-  const handleNativePasteImages = useCallback(
+  const uploadPendingFile = useCallback(
+    async (entry: PendingFileAttachment) => {
+      setPendingFiles((pending) =>
+        pending.map((file) => (file.id === entry.id ? { ...file, failed: false } : file)),
+      );
+      try {
+        if (!client || !isConnected) throw new Error(t("composer.errors.daemonClientDisconnected"));
+        const uploaded = await uploadFileAttachments({ client, files: [entry.file] });
+        addFiles(uploaded);
+        setPendingFiles((pending) => pending.filter((file) => file.id !== entry.id));
+      } catch (error) {
+        console.error("[Composer] Failed to upload file:", entry.file.fileName, error);
+        setPendingFiles((pending) =>
+          pending.map((file) => (file.id === entry.id ? { ...file, failed: true } : file)),
+        );
+      }
+    },
+    [addFiles, client, isConnected, t],
+  );
+
+  const removePendingFile = useCallback((entry: PendingFileAttachment) => {
+    setPendingFiles((pending) => pending.filter((file) => file.id !== entry.id));
+    void disposeUploadedFileSource(entry.file);
+  }, []);
+
+  const uploadSelectedFiles = useCallback(
+    async (files: SelectedFile[]) => {
+      const entries = files.map((file) => ({
+        id: nextPendingFileId.current++,
+        file,
+        failed: false,
+      }));
+      setPendingFiles((pending) => [...pending, ...entries]);
+      for (const entry of entries) await uploadPendingFile(entry);
+    },
+    [uploadPendingFile],
+  );
+
+  const handlePasteText = useCallback(
+    (file: SelectedFile) => {
+      void uploadSelectedFiles([file]);
+    },
+    [uploadSelectedFiles],
+  );
+
+  const handleNativePasteFiles = useCallback(
     (files: readonly NativePastedFile[]) => {
+      const textFiles = files.filter((file) => file.type === "text/plain");
+      if (textFiles.length > 0) {
+        void uploadSelectedFiles(
+          textFiles.map((file) => {
+            const source = new File(file.uri);
+            return {
+              fileName: file.fileName,
+              mimeType: file.type,
+              readBytes: () => source.bytes(),
+              dispose: () => {
+                source.delete();
+              },
+            };
+          }),
+        );
+      }
+      const images = files.filter((file) => file.type !== "text/plain");
+      if (images.length === 0) return;
       setPendingNativeImagePastes((pending) => pending + 1);
       void pickAndPersistImages({
-        pickImages: async () => normalizeNativePastedImages(files),
+        pickImages: async () => normalizeNativePastedImages(images),
         persister: composerImageAttachmentPersister,
       })
         .then((newImages) => {
@@ -1911,32 +2018,7 @@ function ComposerContentImpl({
           setPendingNativeImagePastes((pending) => Math.max(0, pending - 1));
         });
     },
-    [addImages, t],
-  );
-
-  const uploadSelectedFiles = useCallback(
-    async (files: SelectedFile[]) => {
-      if (files.length === 0) return;
-      if (!client) {
-        toastErrorRef.current(t("composer.errors.daemonClientDisconnected"));
-        return;
-      }
-
-      const placeholders = files.map((file) => ({ id: nextPendingFileId.current++, file }));
-      setPendingFiles((pending) => [...pending, ...placeholders]);
-      try {
-        const uploaded = await uploadFileAttachments({ client, files });
-        addFiles(uploaded);
-      } catch (error) {
-        console.error("[Composer] Failed to upload file:", error);
-        toastErrorRef.current(
-          error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
-        );
-      } finally {
-        setPendingFiles((pending) => pending.filter((entry) => !placeholders.includes(entry)));
-      }
-    },
-    [addFiles, client, t],
+    [addImages, t, uploadSelectedFiles],
   );
 
   const handlePickFile = useCallback(async () => {
@@ -2449,6 +2531,9 @@ function ComposerContentImpl({
         serverId,
         selectedAttachments,
         pendingFiles,
+        retryFile: uploadPendingFile,
+        removePendingFile,
+        retryLabel: t("common.actions.retry"),
         isComposerLocked,
         handleOpenAttachment,
         handleRemoveAttachment,
@@ -2456,6 +2541,7 @@ function ComposerContentImpl({
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
           removeFile: t("composer.attachments.removeFile"),
+          uploadFailedFile: t("composer.attachments.fileUploadFailed"),
           openGithub: (kind: string, numberLabel: string) =>
             t("composer.attachments.openGithub", { kind, number: numberLabel }),
           removeGithub: (kind: string, numberLabel: string) =>
@@ -2469,6 +2555,8 @@ function ComposerContentImpl({
       serverId,
       selectedAttachments,
       pendingFiles,
+      uploadPendingFile,
+      removePendingFile,
       t,
     ],
   );
@@ -2510,7 +2598,9 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && isForgeResolving);
+    isSubmitLoadingVisible ||
+    pendingFiles.length > 0 ||
+    (waitForForgeAutoAttachOnSubmit && isForgeResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2603,7 +2693,8 @@ function ComposerContentImpl({
                   attachmentMenuItems={attachmentMenuItems}
                   onAttachButtonRef={handleAttachButtonRef}
                   onAddImages={addImages}
-                  onPasteImages={handleNativePasteImages}
+                  onPasteImages={handleNativePasteFiles}
+                  onPasteText={handlePasteText}
                   client={client}
                   isReadyForDictation={isDictationReady}
                   placeholder={messagePlaceholder}

@@ -174,6 +174,7 @@ export const ko: TranslationResources = {
       openImage: "이미지 첨부 열기",
       removeImage: "이미지 첨부 제거",
       removeFile: "파일 첨부 제거",
+      fileUploadFailed: "파일 업로드에 실패했습니다. 다시 시도하거나 제거하세요.",
       openGithub: "{{kind}} {{number}} 열기",
       removeGithub: "{{kind}} {{number}} 제거",
       element: "요소",

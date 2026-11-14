@@ -175,6 +175,7 @@ export const es: TranslationResources = {
       openImage: "Abrir imagen adjunta",
       removeImage: "Quitar imagen adjunta",
       removeFile: "Remove file attachment",
+      fileUploadFailed: "No se pudo subir el archivo. Reintenta o quítalo.",
       openGithub: "Abrir {{kind}} {{number}}",
       removeGithub: "Quitar {{kind}} {{number}}",
       element: "Elemento",
