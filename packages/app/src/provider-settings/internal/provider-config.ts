@@ -1,10 +1,16 @@
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert } from "react-native";
+import { useToast } from "@/contexts/toast-api-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { getAcpProviderCatalog } from "@/hooks/use-acp-provider-catalog";
-import type { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { useHostFeature } from "@/runtime/host-features";
+import {
+  buildAcpProviderConfigPatch,
+  getAcpProviderCatalog,
+  type AcpProviderCatalogItem,
+} from "@/hooks/use-acp-provider-catalog";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { selectHostFeature, useHostFeature } from "@/runtime/host-features";
+import { useSessionStore } from "@/stores/session-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 export type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -18,16 +24,24 @@ export interface ProviderConfigActions {
   removingProviderId: string | null;
   /** Asks first; resolves true once the provider is gone from config. */
   remove: (providerId: string, providerLabel: string) => Promise<boolean>;
+  /** The catalog provider being written to config. */
+  addingProviderId: string | null;
+  /** Writes a catalog provider to config and probes it; resolves true once it is listed. */
+  add: (entry: AcpProviderCatalogItem) => Promise<boolean>;
 }
 
-/** Writes a provider's Enabled flag and removes config-owned providers. */
+/** Writes a provider's Enabled flag, adds catalog providers and removes config-owned ones. */
 export function useProviderConfigActions(serverId: string): ProviderConfigActions {
   const { t } = useTranslation();
+  const toast = useToast();
   const { config, patchConfig } = useDaemonConfig(serverId);
+  const { refresh } = useProvidersSnapshot(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
   const [togglingProviderId, setTogglingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
   const removingRef = useRef<string | null>(null);
+  const [addingProviderId, setAddingProviderId] = useState<string | null>(null);
+  const addingRef = useRef<string | null>(null);
 
   const setEnabled = useCallback(
     (providerId: string, enabled: boolean) => {
@@ -90,5 +104,37 @@ export function useProviderConfigActions(serverId: string): ProviderConfigAction
     [patchConfig, t],
   );
 
-  return { togglingProviderId, setEnabled, canRemove, removingProviderId, remove };
+  const add = useCallback(
+    async (entry: AcpProviderCatalogItem) => {
+      if (addingRef.current) return false;
+      addingRef.current = entry.id;
+      setAddingProviderId(entry.id);
+      try {
+        await patchConfig(
+          buildAcpProviderConfigPatch(entry, (feature) =>
+            selectHostFeature(useSessionStore.getState(), serverId, feature),
+          ),
+        );
+        await refresh([entry.id]);
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+        return false;
+      } finally {
+        if (addingRef.current === entry.id) addingRef.current = null;
+        setAddingProviderId((current) => (current === entry.id ? null : current));
+      }
+    },
+    [patchConfig, refresh, serverId, toast],
+  );
+
+  return {
+    togglingProviderId,
+    setEnabled,
+    canRemove,
+    removingProviderId,
+    remove,
+    addingProviderId,
+    add,
+  };
 }

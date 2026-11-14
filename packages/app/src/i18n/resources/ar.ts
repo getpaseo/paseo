@@ -3097,6 +3097,10 @@ export const ar: TranslationResources = {
     providers: {
       title: "مقدمي الخدمات",
       addProvider: "إضافة مزود",
+      list: {
+        add: "مزود",
+        updatingTo: "جارٍ التحديث إلى {{version}}...",
+      },
       detail: {
         backToProviders: "العودة إلى المزودين",
         enabled: "مفعّل",

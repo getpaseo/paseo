@@ -30,6 +30,8 @@ export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
 export { SettingsDetailRow } from "./detail-row";
+export type { SettingsRowHintStatus } from "./row-header";
+export { SettingsAddRow } from "./add-row";
 export { SettingsBackLink, SettingsDetailHeader } from "./detail-header";
 export { SettingsInfoTip } from "./headings/settings-info-tip";
 export { MenuSettingsRows } from "./row-density";
@@ -37,6 +39,8 @@ export { MenuSettingsRows } from "./row-density";
 /** What app screens can add to a plugin-facing row: an accessory beside the label, such as an info tip. */
 interface AppRowExtras {
   labelAccessory?: ReactNode;
+  /** An icon before the label, such as the thing the row is about. */
+  leading?: ReactNode;
 }
 
 interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
@@ -60,6 +64,7 @@ export function SettingsCard({ children, testID }: { children: ReactNode; testID
 
 export function SettingsRow({
   label,
+  leading,
   labelAccessory,
   hint,
   error,
@@ -72,6 +77,7 @@ export function SettingsRow({
   const accessoryTitleStyle = useMemo(() => [layout.title, styles.accessoryLabel], [layout]);
   return (
     <View style={rowStyle} testID={testID}>
+      {leading ? <View style={styles.leading}>{leading}</View> : null}
       <View style={styles.label}>
         {labelAccessory ? (
           <View style={styles.labelRow}>
@@ -210,6 +216,8 @@ export function SettingsAction({ actionLabel, onPress, disabled, ...row }: Setti
 
 const styles = StyleSheet.create((theme) => ({
   compactRow: { flexWrap: "wrap", gap: theme.spacing[3] },
+  // The same leading slot as `SettingsRowHeader`, so icons and labels share rails across row kinds.
+  leading: { marginRight: theme.spacing[3], alignItems: "center", justifyContent: "center" },
   label: { flexGrow: 1, flexShrink: 1, flexBasis: 160, marginRight: theme.spacing[3] },
   labelRow: {
     flexDirection: "row",

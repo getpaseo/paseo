@@ -3133,6 +3133,10 @@ export const fr: TranslationResources = {
     providers: {
       title: "Fournisseurs",
       addProvider: "Ajouter un fournisseur",
+      list: {
+        add: "Fournisseur",
+        updatingTo: "Mise à jour vers {{version}}…",
+      },
       detail: {
         backToProviders: "Retour aux fournisseurs",
         enabled: "Activé",

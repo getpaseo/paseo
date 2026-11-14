@@ -6,7 +6,9 @@ import { getServerId } from "../support/helpers/server-id";
 import {
   expectProviderInstalledInSettings,
   installAcpCatalogProvider,
-  openAddProviderArea,
+  leaveProviderDetail,
+  openAddProvider,
+  openProviderDetail,
   openSettingsHost,
   openSettingsHostSection,
 } from "../support/helpers/settings";
@@ -62,7 +64,7 @@ async function clickRemoveProviderAndAcceptWarning(page: Page): Promise<Dialog> 
     expect(dialog.message()).toContain("This deletes the provider entry from config.json.");
     void dialog.accept();
   });
-  await page.getByTestId(`provider-remove-${CUSTOM_PROVIDER.id}`).click();
+  await page.getByTestId("provider-remove").click();
   if (!warning) {
     throw new Error("Expected a provider removal confirmation dialog, but none was shown.");
   }
@@ -84,15 +86,21 @@ test.describe("provider removal", () => {
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
 
-      await expect(page.getByTestId("provider-actions-claude")).toHaveCount(0);
-      await openAddProviderArea(page);
+      // A built-in provider has no Danger zone.
+      await openProviderDetail(page, "Claude");
+      await expect(page.getByTestId("provider-remove")).toHaveCount(0);
+      await leaveProviderDetail(page);
+
+      await openAddProvider(page);
       await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
       await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);
       await expectProviderSource(client, "custom");
 
-      await page.getByTestId(`provider-actions-${CUSTOM_PROVIDER.id}`).click();
-      await expect(page.getByTestId(`provider-remove-${CUSTOM_PROVIDER.id}`)).toBeVisible();
+      await openProviderDetail(page, CUSTOM_PROVIDER.name);
+      await expect(page.getByTestId("provider-remove")).toBeVisible();
       await clickRemoveProviderAndAcceptWarning(page);
+      // Removing leaves the provider's page for the list.
+      await expect(page.getByTestId("provider-list")).toBeVisible();
 
       await expect(
         page.getByRole("button", {
@@ -130,7 +138,9 @@ test.describe("provider removal", () => {
           exact: true,
         });
         await expect(pluginProviderRow).toBeVisible();
-        await expect(page.getByTestId(`provider-actions-${PLUGIN_PROVIDER.id}`)).toHaveCount(0);
+        await openProviderDetail(page, PLUGIN_PROVIDER.name);
+        await expect(page.getByTestId("provider-remove")).toHaveCount(0);
+        await leaveProviderDetail(page);
 
         // The provider survives a removeProviders patch pointed at it: the
         // plugin, not config.json, owns the definition.

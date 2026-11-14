@@ -5,7 +5,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getServerId } from "../support/helpers/server-id";
 import {
   findAcpCatalogProvider,
-  openAddProviderArea,
+  openAddProvider,
   openSettingsHost,
   openSettingsHostSection,
 } from "../support/helpers/settings";
@@ -15,7 +15,7 @@ async function openProviderCatalog(page: Page) {
   await openSettings(page);
   await openSettingsHost(page, getServerId());
   await openSettingsHostSection(page, getServerId(), "providers");
-  await openAddProviderArea(page);
+  await openAddProvider(page);
 }
 
 async function expectProviderArtwork(
@@ -25,11 +25,11 @@ async function expectProviderArtwork(
   name: string,
 ) {
   await findAcpCatalogProvider(page, name);
-  // Catalog tiles have no semantic role; scope artwork to the named provider's tile.
-  const icon = page.getByTestId(`provider-catalog-tile-${id}`).locator("svg").first();
+  // Catalog rows have no semantic role of their own; scope artwork to the named provider's row.
+  const icon = page.getByTestId(`provider-catalog-row-${id}`).locator("svg").first();
   await expect(icon).toBeVisible();
-  // Provider artwork is 24px; the generic PackagePlus fallback is 20px.
-  await expect.soft(icon).toHaveAttribute("width", "24");
+  // Artwork draws at the provider list's icon size, so the catalog and the list share a rail.
+  await expect.soft(icon).toHaveAttribute("width", "16");
   const expectedPaths = await page.evaluate((xml) => {
     const document = new DOMParser().parseFromString(xml, "image/svg+xml");
     return Array.from(document.querySelectorAll("path"), (path) => path.getAttribute("d")!);

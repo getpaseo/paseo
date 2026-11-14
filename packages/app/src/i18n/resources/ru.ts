@@ -3118,6 +3118,10 @@ export const ru: TranslationResources = {
     providers: {
       title: "Провайдеры",
       addProvider: "Добавить провайдера",
+      list: {
+        add: "Провайдер",
+        updatingTo: "Обновление до {{version}}...",
+      },
       detail: {
         backToProviders: "Назад к провайдерам",
         enabled: "Включён",
