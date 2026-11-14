@@ -20,6 +20,7 @@ import type {
   DraggableListScrollViewProps,
   DraggableRenderItemInfo,
 } from "./draggable-list.types";
+import { orderDroppedItems } from "./draggable-list-drop-order";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -43,6 +44,9 @@ const NATIVE_DRAG_HANDLE_PROPS: DraggableListDragHandleProps = {};
 const AnimatedGestureScrollView = createAnimatedComponent(GestureScrollView);
 
 const ScrollViewRefContext = createContext<AnimatedRef | null>(null);
+
+// True inside a row of another DraggableList, e.g. the workspaces inside a project block.
+const NestedListContext = createContext(false);
 
 export function DraggableListScrollView({
   children,
@@ -80,6 +84,7 @@ export function DraggableList<T>({
   useDragHandle = false,
 }: DraggableListProps<T>) {
   const scrollViewRef = useContext(ScrollViewRefContext);
+  const nested = useContext(NestedListContext);
   const dragHandleProps = useDragHandle ? NATIVE_DRAG_HANDLE_PROPS : undefined;
 
   const renderGridItem = useCallback<SortableGridRenderItem<T>>(
@@ -95,10 +100,10 @@ export function DraggableList<T>({
   );
 
   const handleDragEnd = useCallback(
-    ({ data: reorderedData }: SortableGridDragEndParams<T>) => {
-      onDragEnd(reorderedData);
+    ({ indexToKey }: SortableGridDragEndParams<T>) => {
+      onDragEnd(orderDroppedItems({ data, keyExtractor, indexToKey }));
     },
-    [onDragEnd],
+    [data, keyExtractor, onDragEnd],
   );
 
   return (
@@ -114,8 +119,11 @@ export function DraggableList<T>({
         dragActivationFailOffset={DRAG_ACTIVATION_FAIL_OFFSET_PX}
         scrollableRef={scrollViewRef ?? undefined}
         autoScrollEnabled={scrollViewRef !== null}
-        // Clamped to the single column's width, so a dragged row moves only vertically.
-        overDrag="vertical"
+        // Clamped to the single column's width, so a dragged row moves only vertically. A nested
+        // list also stays inside its row: its lifted row would draw under the rows that follow.
+        overDrag={nested ? "none" : "vertical"}
+        // The lifted row keeps the point where the finger grabbed it.
+        enableActiveItemSnap={false}
         // Rows animate only while a drag reorders them. Otherwise a project expanding or
         // collapsing would slide the rows below over its rows, and added rows would fade in.
         itemsLayoutTransitionMode="reorder"
@@ -153,5 +161,9 @@ function DraggableListItem<T>({
       }
     },
   );
-  return renderItem({ item, index, isActive: active, dragHandleProps });
+  return (
+    <NestedListContext.Provider value={true}>
+      {renderItem({ item, index, isActive: active, dragHandleProps })}
+    </NestedListContext.Provider>
+  );
 }
