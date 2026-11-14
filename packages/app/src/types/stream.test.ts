@@ -9,6 +9,7 @@ import {
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
+  replaceWithCanonicalStream,
   streamTimelineItemIdentity,
   type AgentToolCallItem,
   type StreamItem,
@@ -479,7 +480,7 @@ describe("stream reducer tool call idempotency", () => {
     assert.deepStrictEqual(merged, incoming);
   });
 
-  it("returns the same state array when status, error, detail, and metadata are identical", () => {
+  it("returns the same state array when lifecycle time, status, error, detail, and metadata are identical", () => {
     const callId = "idempotent-tool-call";
     const initialState = reduceStreamUpdate(
       [],
@@ -516,7 +517,7 @@ describe("stream reducer tool call idempotency", () => {
           paneId: "%1",
         },
       }),
-      new Date("2025-01-01T12:00:01Z"),
+      new Date("2025-01-01T12:00:00Z"),
     );
 
     assert.strictEqual(nextState, initialState);
@@ -631,6 +632,107 @@ describe("stream reducer tool call idempotency", () => {
 });
 
 describe("stream reducer canonical tool calls", () => {
+  it.each([
+    ["first", "second"],
+    ["second", "first"],
+  ])("keeps tool arrival timestamps when %s completes before %s", (firstDone, lastDone) => {
+    let tail: StreamItem[] = [];
+    let head: StreamItem[] = [];
+    const updates: Parameters<typeof hydrateStreamState>[0] = [];
+    const applyTool = (callId: string, status: CanonicalToolStatus, at: number, seq: number) => {
+      const update = {
+        event: canonicalToolTimeline({
+          provider: "codex",
+          callId,
+          name: "read_file",
+          status,
+          detail: { type: "read", filePath: `/tmp/${callId}.png`, content: status },
+        }),
+        timestamp: new Date(at),
+        timelineCursor: { epoch: "tool-arrivals", seq },
+      };
+      updates.push(update);
+      const result = applyStreamEvent({ tail, head, ...update });
+      tail = result.tail;
+      head = result.head;
+    };
+    applyTool("first", "running", 1000, 1);
+    applyTool("second", "running", 1001, 2);
+    const arrivals = tail.map((item) => item.timestamp);
+    const ids = tail.map((item) => item.id);
+
+    applyTool(firstDone, "completed", 1002, 3);
+    expect(tail.map((item) => item.timestamp)).toEqual(arrivals);
+    expect(tail.map((item) => item.id)).toEqual(ids);
+    expect(findToolByCallId(tail, firstDone)).toMatchObject({
+      timelineCursor: { epoch: "tool-arrivals", seq: 3 },
+      latestTimestamp: new Date(1002),
+      payload: { data: { status: "completed", detail: { content: "completed" } } },
+    });
+
+    applyTool(lastDone, "completed", 1003, 4);
+    expect(tail.map((item) => item.timestamp)).toEqual(arrivals);
+    expect(tail.map((item) => item.id)).toEqual(ids);
+    expect(findToolByCallId(tail, lastDone)).toMatchObject({
+      timelineCursor: { epoch: "tool-arrivals", seq: 4 },
+      latestTimestamp: new Date(1003),
+      payload: { data: { status: "completed", detail: { content: "completed" } } },
+    });
+    expect(head).toEqual([]);
+    expect(hydrateStreamState(updates, { source: "canonical" })).toEqual(tail);
+  });
+
+  it("advances lifecycle timing for unchanged tool payloads without regressing on older replay", () => {
+    const event = canonicalToolTimeline({
+      provider: "claude",
+      callId: "read",
+      name: "Read",
+      status: "running",
+      detail: { type: "read", filePath: "/tmp/read.txt" },
+    });
+    const initial = reduceStreamUpdate([], event, new Date(1000));
+    const later = reduceStreamUpdate(initial, event, new Date(60000));
+    expect(later).not.toBe(initial);
+    expect(later[0]).toMatchObject({ timestamp: new Date(1000), latestTimestamp: new Date(60000) });
+    expect(reduceStreamUpdate(later, event, new Date(2000), { source: "canonical" })).toBe(later);
+  });
+
+  it("preserves retained tool lifecycle timing when replacing canonical history", () => {
+    const event = canonicalToolTimeline({
+      provider: "claude",
+      callId: "read",
+      name: "Read",
+      status: "running",
+      detail: { type: "read", filePath: "/tmp/read.txt" },
+    });
+    const start = { event, timestamp: new Date(1000), timelineCursor: { epoch: "epoch", seq: 1 } };
+    const canonical = hydrateStreamState([start]);
+    const retained = hydrateStreamState([
+      start,
+      {
+        event: canonicalToolTimeline({
+          provider: "claude",
+          callId: "read",
+          name: "Read",
+          status: "canceled",
+          detail: { type: "read", filePath: "/tmp/read.txt" },
+        }),
+        timestamp: new Date(60000),
+        timelineCursor: { epoch: "epoch", seq: 3 },
+      },
+    ]);
+    const result = replaceWithCanonicalStream({
+      canonical,
+      previousTail: [],
+      previousHead: retained,
+      sendingClientMessageIds: [],
+      preserveContinuity: true,
+      canonicalCoverage: { epoch: "epoch", endSeq: 1 },
+    });
+    expect(result.head).toEqual([]);
+    expect(result.tail).toEqual(retained);
+  });
+
   it("keeps repeated call ids in different turns as distinct timeline rows", () => {
     const callId = "tool-reused-across-turns";
     const state = hydrateStreamState([
