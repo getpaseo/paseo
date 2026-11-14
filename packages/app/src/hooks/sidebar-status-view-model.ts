@@ -28,6 +28,11 @@ export function buildStatusGroups(
   workspaces: SidebarWorkspaceEntry[],
   projectNamesByViewKey: Map<string, string>,
   t: TFunction,
+  /**
+   * Latest status time of workspaces nested under a parent, keyed by the parent's workspace key.
+   * The parent stays in its own bucket; this only moves it within that bucket.
+   */
+  childStatusEnteredAtByParent?: ReadonlyMap<string, number>,
 ): StatusGroup[] {
   const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
 
@@ -47,7 +52,9 @@ export function buildStatusGroups(
     const rows = bucketRows.get(bucket);
     if (!rows || rows.length === 0) continue;
 
-    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
+    rows.sort((a, b) =>
+      compareStatusRows(a, b, projectNamesByViewKey, childStatusEnteredAtByParent),
+    );
     groups.push({ bucket, label: getStatusBucketLabel(bucket, t), rows });
   }
 
@@ -58,9 +65,10 @@ function compareStatusRows(
   a: SidebarWorkspaceEntry,
   b: SidebarWorkspaceEntry,
   projectNamesByViewKey: Map<string, string>,
+  childStatusEnteredAtByParent?: ReadonlyMap<string, number>,
 ): number {
-  const aTime = a.statusEnteredAt?.getTime() ?? null;
-  const bTime = b.statusEnteredAt?.getTime() ?? null;
+  const aTime = statusSortTime(a, childStatusEnteredAtByParent);
+  const bTime = statusSortTime(b, childStatusEnteredAtByParent);
 
   if (aTime !== null && bTime !== null) {
     if (aTime !== bTime) return bTime - aTime;
@@ -79,6 +87,17 @@ function compareStatusRows(
   if (nameCmp !== 0) return nameCmp;
 
   return a.workspaceKey.localeCompare(b.workspaceKey);
+}
+
+function statusSortTime(
+  workspace: SidebarWorkspaceEntry,
+  childStatusEnteredAtByParent: ReadonlyMap<string, number> | undefined,
+): number | null {
+  const own = workspace.statusEnteredAt?.getTime() ?? null;
+  const child = childStatusEnteredAtByParent?.get(workspace.workspaceKey);
+  if (child === undefined) return own;
+  if (own === null) return child;
+  return Math.max(own, child);
 }
 
 export function buildStatusShortcutIndex(groups: StatusGroup[]): Map<string, number> {

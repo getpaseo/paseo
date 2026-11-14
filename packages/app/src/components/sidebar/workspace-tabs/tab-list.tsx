@@ -1,0 +1,1095 @@
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import { Text, View, type PressableStateCallbackType } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import { mapLayout } from "@/components/ui/control-geometry";
+import { isNative, isWeb } from "@/constants/platform";
+import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { queryClient } from "@/data/query-client";
+import { useFilePanelOpenWithMenu } from "@/file-panels";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
+import { useWorkspaceTabActions } from "@/screens/workspace/use-workspace-tab-actions";
+import { useWorkspaceTabClose } from "@/screens/workspace/use-workspace-tab-close";
+import {
+  useWorkspaceTabRename,
+  WorkspaceTabRenameModal,
+} from "@/screens/workspace/use-workspace-tab-rename";
+import { buildWorkspaceTabActionEntries } from "@/screens/workspace/workspace-tab-menu";
+import { MobileTabTrailingAccessory } from "@/screens/workspace/workspace-tab-trailing-accessory";
+import { ensurePanelsRegistered } from "@/panels/register-panels";
+import { density, densityIconBox } from "@/styles/density";
+import {
+  navigateToWorkspace,
+  useActiveWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
+import {
+  WorkspaceTabIcon,
+  WorkspaceTabPresentationResolver,
+  type WorkspaceTabPresentation,
+} from "@/screens/workspace/workspace-tab-presentation";
+import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { useSettings } from "@/hooks/use-settings";
+import { useSessionStore } from "@/stores/session-store";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
+import { collectAllTabs, type WorkspaceLayout } from "@/stores/workspace-layout-actions";
+import { useWorkspaceLayoutStore, type SheetTab } from "@/stores/workspace-layout-store";
+import { usePanelStore } from "@/stores/panel-store";
+import { useSubagentCount, useSubagentsForParent, type SubagentRow } from "@/subagents/select";
+import { useArchiveSubagent } from "@/subagents/use-archive-subagent";
+import { useDetachSubagent } from "@/subagents/use-detach-subagent";
+import type { WorkspaceTabMenuEntry } from "@/screens/workspace/workspace-tab-menu";
+import { useSubagentRowPresentation } from "@/subagents/track";
+import { useAgentFactsLine } from "@/panels/agent-facts-line";
+import { selectPrHintFromStatus } from "@/git/pr-hint";
+import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import {
+  selectWorkspaceServiceSummary,
+  WorkspaceMetaRow,
+} from "@/components/sidebar/workspace-meta-row";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
+import { SidebarCountDisclosure, SidebarNoticeDot } from "./disclosure";
+import { subagentRowNotice } from "./subagent-notice";
+import {
+  toggleSidebarTabSubagents,
+  useIsSidebarTabSubagentsExpanded,
+  useIsSidebarWorkspaceTabsExpanded,
+} from "./expansion";
+import {
+  resolveSidebarWorkspaceTabsDisclosure,
+  isSubagentTarget,
+  selectHoldingWorkspaceId,
+  summarizeSidebarWorkspaceTabs,
+} from "./model";
+import { useNestedSubagentTabIds, useSidebarWorkspaceTabs } from "./use-workspace-tabs";
+import { useSubagentDisclosureNotice, useSubagentRowNotice } from "./use-subagent-notice";
+import { getStatusBucketLabel } from "@/hooks/sidebar-status-view-model";
+import { orderSidebarSubagentRows, sidebarSubagentSortTime } from "./nested-sort";
+import { useAgentSortClocks, useWorkspaceSortClocks } from "./sort-clocks";
+
+interface SidebarWorkspaceTabsProps {
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  /** Status-group rows indent from their header, so their tabs do too. */
+  inStatusGroup?: boolean;
+}
+
+/** The open tabs of a workspace, under its sidebar row while the row is expanded. */
+export function SidebarWorkspaceTabs(props: SidebarWorkspaceTabsProps) {
+  const expanded = useIsSidebarWorkspaceTabsExpanded(props.workspaceKey);
+  if (!expanded) return null;
+  return <SidebarWorkspaceTabList {...props} />;
+}
+
+function SidebarWorkspaceTabList({
+  serverId,
+  workspaceId,
+  workspaceKey,
+  inStatusGroup = false,
+}: SidebarWorkspaceTabsProps) {
+  // The registry is filled by the workspace screen, and the sidebar can render first: a cold
+  // load of /open-project or Settings with saved tabs would otherwise throw in the resolver.
+  ensurePanelsRegistered();
+  const sidebarTabs = useSidebarWorkspaceTabs(serverId, workspaceId);
+  const { tabs, activeTabId } = sidebarTabs;
+  const { soleAgentId } = summarizeSidebarWorkspaceTabs(sidebarTabs);
+  const soleTabSubagentCount = useSubagentCount(serverId, soleAgentId);
+  const disclosure = resolveSidebarWorkspaceTabsDisclosure({
+    tabCount: tabs.length,
+    soleTabSubagentCount,
+  });
+  const activeTarget = tabs.find((tab) => tab.tabId === activeTabId)?.target ?? null;
+  const tabActions = useWorkspaceTabActions(serverId);
+  const { closeTabById } = useWorkspaceTabClose({
+    serverId,
+    workspaceId,
+    onTabClosed: ignoreTabClosed,
+  });
+  const rename = useSidebarWorkspaceTabRename(serverId, workspaceId);
+  const menuActions = useMemo<SidebarWorkspaceTabMenuActions>(
+    () => ({
+      onCopyResumeCommand: tabActions.copyResumeCommand,
+      onCopyAgentId: tabActions.copyAgentId,
+      onCopyTerminalId: tabActions.copyTerminalId,
+      onCopyFilePath: tabActions.copyFilePath,
+      onReloadAgent: tabActions.reloadAgent,
+      onRenameTab: rename.handleRenameTab,
+      onCloseTab: closeTabById,
+    }),
+    [tabActions, rename.handleRenameTab, closeTabById],
+  );
+  // A subagent's own tab is listed under its parent's tab rather than beside it.
+  const nestedTabIds = useNestedSubagentTabIds(serverId, tabs);
+  const topLevelTabs = useMemo(
+    () => (nestedTabIds.size === 0 ? tabs : tabs.filter((tab) => !nestedTabIds.has(tab.tabId))),
+    [nestedTabIds, tabs],
+  );
+  // The disclosure leaves with the second-to-last tab, unless that tab has subagents; the list
+  // goes with it, and comes back expanded when the disclosure does.
+  if (disclosure.kind === "none") return null;
+  const soleTab = tabs[0];
+  const listStyle = inStatusGroup ? styles.listInStatusGroup : styles.list;
+  const renameModal = (
+    <WorkspaceTabRenameModal
+      renamingTab={rename.renamingTab}
+      onSubmit={rename.handleRenameModalSubmit}
+      onClose={rename.handleRenameModalClose}
+    />
+  );
+
+  // The workspace row already opened this list. The lone tab stays in it so its menu (copy,
+  // reload, close) remains reachable, and its subagents stay listed under that row.
+  if (disclosure.kind === "subagents" && soleTab && soleAgentId) {
+    return (
+      <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
+        <WorkspaceTabPresentationResolver
+          tab={soleTab}
+          serverId={serverId}
+          workspaceId={workspaceId}
+        >
+          {(presentation) => (
+            <SidebarWorkspaceTabRow
+              tab={soleTab}
+              presentation={presentation}
+              active={soleTab.tabId === activeTabId}
+              serverId={serverId}
+              workspaceId={workspaceId}
+              workspaceKey={workspaceKey}
+              menuActions={menuActions}
+            />
+          )}
+        </WorkspaceTabPresentationResolver>
+        <View style={styles.subagentList}>
+          <SidebarSoleAgentSubagents
+            parentTabId={soleTab.tabId}
+            agentId={soleAgentId}
+            activeTarget={activeTarget}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            workspaceKey={workspaceKey}
+            menuActions={menuActions}
+          />
+        </View>
+        {renameModal}
+      </View>
+    );
+  }
+
+  return (
+    <View style={listStyle} testID={`sidebar-workspace-tabs-${workspaceKey}`}>
+      {topLevelTabs.map((tab) => (
+        <WorkspaceTabPresentationResolver
+          key={tab.key}
+          tab={tab}
+          serverId={serverId}
+          workspaceId={workspaceId}
+        >
+          {(presentation) =>
+            tab.target.kind === "agent" ? (
+              <SidebarAgentTabEntry
+                tab={tab}
+                agentId={tab.target.agentId}
+                presentation={presentation}
+                active={tab.tabId === activeTabId}
+                activeTarget={activeTarget}
+                serverId={serverId}
+                workspaceId={workspaceId}
+                workspaceKey={workspaceKey}
+                menuActions={menuActions}
+              />
+            ) : (
+              <SidebarWorkspaceTabRow
+                tab={tab}
+                presentation={presentation}
+                active={tab.tabId === activeTabId}
+                serverId={serverId}
+                workspaceId={workspaceId}
+                workspaceKey={workspaceKey}
+                menuActions={menuActions}
+              />
+            )
+          }
+        </WorkspaceTabPresentationResolver>
+      ))}
+      {renameModal}
+    </View>
+  );
+}
+
+// The sidebar keeps no state per tab that a close would need to clear.
+function ignoreTabClosed(): void {}
+
+function entriesWithoutClose(entries: readonly WorkspaceTabMenuEntry[]): WorkspaceTabMenuEntry[] {
+  return entries.filter((entry) => entry.key !== "close" && entry.key !== "close-separator");
+}
+
+/**
+ * The workspace whose layout holds this agent's tab. The listing workspace wins; otherwise the
+ * agent's own workspace. Null when the tab is not open in either.
+ */
+function useWorkspaceIdHoldingAgentTab(
+  serverId: string,
+  listingWorkspaceId: string,
+  agentId: string,
+): string | null {
+  const tabId = buildDeterministicWorkspaceTabId({ kind: "agent", agentId });
+  const ownWorkspaceId = useSessionStore((state) => {
+    const session = state.sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    return agent?.workspaceId ?? null;
+  });
+  return useWorkspaceLayoutStore((state) =>
+    selectHoldingWorkspaceId(listingWorkspaceId, ownWorkspaceId, (workspaceId) =>
+      workspaceHoldsTab(
+        state.layoutByWorkspace,
+        state.sheetsByWorkspace,
+        buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+        tabId,
+      ),
+    ),
+  );
+}
+
+function workspaceHoldsTab(
+  layoutByWorkspace: Record<string, WorkspaceLayout>,
+  sheetsByWorkspace: Record<string, readonly SheetTab[]>,
+  workspaceKey: string | null,
+  tabId: string,
+): boolean {
+  if (!workspaceKey) return false;
+  const sheets = sheetsByWorkspace[workspaceKey];
+  if (sheets?.some((sheet) => sheet.tab.tabId === tabId)) return true;
+  const layout = layoutByWorkspace[workspaceKey];
+  if (!layout) return false;
+  return collectAllTabs(layout.root).some((tab) => tab.tabId === tabId);
+}
+
+type SidebarWorkspaceTabMenuActions = Omit<
+  Parameters<typeof buildWorkspaceTabActionEntries>[0],
+  "tab" | "menuTestIDBase" | "labels"
+>;
+
+/** Rename reads the terminal's current title from the list its tab's descriptor fetched. */
+function useSidebarWorkspaceTabRename(serverId: string, workspaceId: string) {
+  const client = useHostRuntimeClient(serverId);
+  const workspaceDirectory = useWorkspaceDirectory(serverId, workspaceId);
+  const terminalsQueryKey = useMemo(
+    () => buildTerminalsQueryKey(serverId, workspaceDirectory, workspaceId),
+    [serverId, workspaceDirectory, workspaceId],
+  );
+  const getTerminals = useCallback(
+    () => queryClient.getQueryData<ListTerminalsResponse["payload"]>(terminalsQueryKey),
+    [terminalsQueryKey],
+  );
+  return useWorkspaceTabRename({
+    client,
+    normalizedServerId: serverId,
+    queryClient,
+    getTerminals,
+    terminalsQueryKey,
+  });
+}
+
+/**
+ * Opens the workspace on this tab. The tab is revealed by id rather than passed as a navigation
+ * target: a target re-resolves placement and can open a compact sheet beside the tab that is
+ * already there, while the id names the very tab the row lists — the same reveal the compact
+ * tab switcher makes. Revealing after navigating also picks the panel: the explorer for its own
+ * tabs on compact, the workspace otherwise, which closes the mobile menu.
+ */
+function openWorkspaceTab(input: { serverId: string; workspaceId: string; tabId: string }): void {
+  navigateToWorkspace({ serverId: input.serverId, workspaceId: input.workspaceId });
+  const layoutKey = buildWorkspaceTabPersistenceKey(input);
+  if (layoutKey) revealWorkspaceTab(layoutKey, input.tabId);
+}
+
+function SidebarWorkspaceTabRow({
+  tab,
+  presentation,
+  active,
+  serverId,
+  workspaceId,
+  workspaceKey,
+  menuActions,
+  trailing,
+}: {
+  tab: WorkspaceTabDescriptor;
+  presentation: WorkspaceTabPresentation;
+  active: boolean;
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  menuActions: SidebarWorkspaceTabMenuActions;
+  /** Beside the row's pressable, before the menu, so a button there presses on its own. */
+  trailing?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  const handlePress = useCallback(
+    () => openWorkspaceTab({ serverId, workspaceId, tabId: tab.tabId }),
+    [serverId, workspaceId, tab.tabId],
+  );
+  const accessibilityState = useMemo(() => ({ selected: active }), [active]);
+  const label =
+    presentation.titleState === "loading" ? t("workspace.tabs.loading") : presentation.label;
+  const menuTestIDBase = `sidebar-workspace-tab-menu-${workspaceKey}-${tab.tabId}`;
+  const menuEntries = useMemo(
+    () => buildWorkspaceTabActionEntries({ ...menuActions, tab, menuTestIDBase }),
+    [menuActions, tab, menuTestIDBase],
+  );
+  const openWith = useFilePanelOpenWithMenu(
+    { serverId, workspaceId, tabId: tab.tabId },
+    menuTestIDBase,
+  );
+  // Hover-revealed on pointer; touch has no hover, so the menu is always there. It hides by
+  // opacity rather than unmounting, so an open menu keeps its trigger when the pointer leaves.
+  const showMenu = isHovered || isNative || isCompact;
+  const emphasized = active || isHovered;
+  return (
+    <View
+      style={isHovered ? styles.tabRowHovered : styles.tabRow}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      <PressHighlight
+        style={styles.tabRowPress}
+        highlightStyle={styles.rowPressed}
+        onPress={handlePress}
+        accessibilityRole={isWeb ? undefined : "button"}
+        accessibilityState={accessibilityState}
+        aria-selected={active}
+        accessibilityLabel={label}
+        testID={`sidebar-workspace-tab-${workspaceKey}-${tab.tabId}`}
+      >
+        <View style={styles.iconSlot}>
+          <WorkspaceTabIcon
+            presentation={presentation}
+            active={emphasized}
+            backdrop={isHovered ? "surfaceSidebarHover" : "surfaceSidebar"}
+          />
+        </View>
+        <Text numberOfLines={1} style={emphasized ? styles.labelEmphasized : styles.label}>
+          {label}
+        </Text>
+        {presentation.modified ? (
+          <View style={styles.modifiedDot} accessibilityLabel={t("workspace.tabs.modified")} />
+        ) : null}
+      </PressHighlight>
+      {trailing}
+      <View
+        style={showMenu ? styles.menuSlot : styles.menuSlotHidden}
+        pointerEvents={showMenu ? "auto" : "none"}
+      >
+        <MobileTabTrailingAccessory
+          menuTestIDBase={menuTestIDBase}
+          presentationLabel={label}
+          menuEntries={menuEntries}
+          openWith={openWith}
+        />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The subagent track is oldest first. The sidebar's Created and Last prompt sorts are newest
+ * first, including a nested workspace's own clock. Manual keeps the track order.
+ */
+function useSidebarOrderedSubagentRows(
+  rows: readonly SubagentRow[],
+  serverId: string,
+  workspaceId: string,
+): readonly SubagentRow[] {
+  const sort = useSidebarViewStore((state) => state.workspaceSort);
+  const agents = useAgentSortClocks();
+  const workspaces = useWorkspaceSortClocks();
+  const listingWorkspaceKey = `${serverId}:${workspaceId}`;
+  return useMemo(
+    () =>
+      orderSidebarSubagentRows(rows, sort, (row) =>
+        sidebarSubagentSortTime({ row, sort, listingWorkspaceKey, agents, workspaces }),
+      ),
+    [agents, listingWorkspaceKey, rows, sort, workspaces],
+  );
+}
+
+/**
+ * An agent tab, with its subagents behind a disclosure of their own: the same children the
+ * agent's subagents track lists, one level deep. Each opened child shows its own track.
+ */
+interface SidebarSubagentRowsProps {
+  rows: readonly SubagentRow[];
+  parentAgentId: string;
+  activeTarget: WorkspaceTabTarget | null;
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  parentTabId: string;
+  openInSidePane: OpenInSidePanePreferences;
+  menuActions: SidebarWorkspaceTabMenuActions;
+}
+
+function SidebarSubagentRows({ rows, activeTarget, ...rowProps }: SidebarSubagentRowsProps) {
+  return (
+    <>
+      {rows.map((row) => (
+        <SidebarSubagentRow
+          key={row.kind === "paseo" ? `${row.address.serverId}:${row.id}` : row.id}
+          row={row}
+          active={isSubagentTarget(activeTarget, row)}
+          {...rowProps}
+        />
+      ))}
+    </>
+  );
+}
+
+/** A workspace whose only tab is an agent lists that agent's subagents as its own rows. */
+function SidebarSoleAgentSubagents({
+  agentId,
+  ...props
+}: Omit<SidebarSubagentRowsProps, "rows" | "openInSidePane" | "parentAgentId"> & {
+  agentId: string;
+}) {
+  const trackRows = useSubagentsForParent({ serverId: props.serverId, parentAgentId: agentId });
+  const rows = useSidebarOrderedSubagentRows(trackRows, props.serverId, props.workspaceId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  return (
+    <SidebarSubagentRows
+      rows={rows}
+      parentAgentId={agentId}
+      openInSidePane={openInSidePane}
+      {...props}
+    />
+  );
+}
+
+function SidebarAgentTabEntry({
+  tab,
+  agentId,
+  presentation,
+  active,
+  activeTarget,
+  serverId,
+  workspaceId,
+  workspaceKey,
+  menuActions,
+}: {
+  tab: WorkspaceTabDescriptor;
+  agentId: string;
+  presentation: WorkspaceTabPresentation;
+  active: boolean;
+  activeTarget: WorkspaceTabTarget | null;
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  menuActions: SidebarWorkspaceTabMenuActions;
+}) {
+  const { t } = useTranslation();
+  const trackRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
+  const rows = useSidebarOrderedSubagentRows(trackRows, serverId, workspaceId);
+  const parentAgentIds = useMemo(() => [agentId], [agentId]);
+  const notice = useSubagentDisclosureNotice(serverId, workspaceId, parentAgentIds);
+  const expanded = useIsSidebarTabSubagentsExpanded(workspaceKey, tab.tabId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const handleToggle = useCallback(
+    () => toggleSidebarTabSubagents(workspaceKey, tab.tabId),
+    [workspaceKey, tab.tabId],
+  );
+  const hasSubagents = rows.length > 0;
+  // A focused child tab sits under this row rather than at the top level, so while the list is
+  // collapsed the parent carries its highlight; expanded, the child's own row does.
+  const childActive = useMemo(
+    () => !expanded && rows.some((row) => isSubagentTarget(activeTarget, row)),
+    [activeTarget, expanded, rows],
+  );
+  const trailing = useMemo(
+    () =>
+      hasSubagents ? (
+        <SidebarCountDisclosure
+          variant="tab"
+          count={rows.length}
+          expanded={expanded}
+          notice={notice}
+          onPress={handleToggle}
+          accessibilityLabel={
+            expanded
+              ? t("sidebar.workspace.actions.hideSubagents")
+              : t("sidebar.workspace.actions.showSubagents")
+          }
+          testID={`sidebar-workspace-tab-subagents-disclosure-${workspaceKey}-${tab.tabId}`}
+        />
+      ) : null,
+    [expanded, handleToggle, hasSubagents, notice, rows.length, t, tab.tabId, workspaceKey],
+  );
+  return (
+    <>
+      <SidebarWorkspaceTabRow
+        tab={tab}
+        presentation={presentation}
+        active={active || childActive}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        workspaceKey={workspaceKey}
+        menuActions={menuActions}
+        trailing={trailing}
+      />
+      {expanded && hasSubagents ? (
+        <View
+          style={styles.subagentList}
+          testID={`sidebar-workspace-tab-subagents-${workspaceKey}-${tab.tabId}`}
+        >
+          <SidebarSubagentRows
+            rows={rows}
+            parentAgentId={agentId}
+            activeTarget={activeTarget}
+            serverId={serverId}
+            workspaceId={workspaceId}
+            workspaceKey={workspaceKey}
+            parentTabId={tab.tabId}
+            openInSidePane={openInSidePane}
+            menuActions={menuActions}
+          />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Opens a subagent the way its parent's track does, from outside the workspace. The parent tab is
+ * revealed first so the child lands in the parent's pane, or in a sheet over the parent on
+ * compact. A sheet reveals itself without picking the panel, so the mobile menu is closed here.
+ * A Paseo subagent that lives in another workspace or host opens there instead.
+ */
+function openSidebarSubagent(input: {
+  serverId: string;
+  workspaceId: string;
+  parentTabId: string;
+  row: SubagentRow;
+  openInSidePane: OpenInSidePanePreferences;
+}): void {
+  const { serverId, workspaceId, parentTabId, row } = input;
+  if (row.kind === "paseo") {
+    const { serverId: targetServerId, agentId } = row.address;
+    const session = useSessionStore.getState().sessions[targetServerId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+    if (targetServerId !== serverId || (agent?.workspaceId && agent.workspaceId !== workspaceId)) {
+      navigateToAgent(row.address);
+      return;
+    }
+  }
+  const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  if (!workspaceKey) return;
+  navigateToWorkspace({ serverId, workspaceId });
+  revealWorkspaceTab(workspaceKey, parentTabId);
+  const target: WorkspaceTabTarget =
+    row.kind === "paseo"
+      ? { kind: "agent", agentId: row.id }
+      : { kind: "provider_subagent", parentAgentId: row.parentAgentId, subagentId: row.id };
+  openPreferredWorkspaceTarget({
+    workspaceKey,
+    target,
+    source: "subagents",
+    preferences: input.openInSidePane,
+    parentTabId,
+  });
+  if (useWorkspaceLayoutStore.getState().layoutMode === "compact") {
+    usePanelStore.getState().showMobileAgent();
+  }
+}
+
+function SidebarSubagentRow({
+  row,
+  parentAgentId,
+  active,
+  serverId,
+  workspaceId,
+  workspaceKey,
+  parentTabId,
+  openInSidePane,
+  menuActions,
+}: {
+  row: SubagentRow;
+  parentAgentId: string;
+  active: boolean;
+  serverId: string;
+  workspaceId: string;
+  workspaceKey: string;
+  parentTabId: string;
+  openInSidePane: OpenInSidePanePreferences;
+  menuActions: SidebarWorkspaceTabMenuActions;
+}) {
+  const { t } = useTranslation();
+  const rowServerId = row.kind === "paseo" ? row.address.serverId : serverId;
+  const presentation = useSubagentRowPresentation(row, rowServerId);
+  const label =
+    presentation.titleState === "loading" ? t("common.states.loading") : presentation.label;
+  // Provider subagents only ever mark a failure, which their icon already shows.
+  const notice = subagentRowNotice(
+    useSubagentRowNotice({
+      serverId,
+      workspaceId,
+      parentAgentId,
+      childServerId: rowServerId,
+      childId: row.kind === "paseo" ? row.id : "",
+    }),
+  );
+  const accessibilityLabel = notice ? `${label}, ${getStatusBucketLabel(notice, t)}` : label;
+  const handlePress = useCallback(
+    () => openSidebarSubagent({ serverId, workspaceId, parentTabId, row, openInSidePane }),
+    [serverId, workspaceId, parentTabId, row, openInSidePane],
+  );
+  const ownWorkspace = useSubagentOwnWorkspace(row, serverId, workspaceId);
+  // A child in its own workspace opens there, and that workspace's row nests under this one, so
+  // the row is where the sidebar shows you are in it.
+  const activeWorkspace = useActiveWorkspaceSelection();
+  const inOwnWorkspace =
+    ownWorkspace !== null &&
+    activeWorkspace?.serverId === rowServerId &&
+    activeWorkspace.workspaceId === ownWorkspace.id;
+  const highlighted = active || inOwnWorkspace;
+  const accessibilityState = useMemo(() => ({ selected: highlighted }), [highlighted]);
+  const renderContent = useCallback(
+    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
+      const emphasized = highlighted || hovered;
+      return (
+        <>
+          <View style={styles.subagentIconSlot}>
+            <WorkspaceTabIcon
+              presentation={presentation}
+              active={emphasized}
+              backdrop={hovered ? "surfaceSidebarHover" : "surfaceSidebar"}
+            />
+          </View>
+          <View style={styles.subagentText}>
+            <View style={styles.subagentTitleLine}>
+              <Text
+                numberOfLines={1}
+                style={emphasized ? styles.subagentLabelEmphasized : styles.subagentLabel}
+              >
+                {label}
+              </Text>
+              {notice ? (
+                <SidebarNoticeDot
+                  notice={notice}
+                  placement="inline"
+                  testID={`sidebar-workspace-subagent-notice-${workspaceKey}-${row.id}`}
+                />
+              ) : null}
+            </View>
+            {row.kind === "paseo" ? (
+              <PaseoSubagentFacts serverId={rowServerId} agentId={row.id} />
+            ) : (
+              <SubagentFacts text={presentation.subtitle} />
+            )}
+            {ownWorkspace ? (
+              <SubagentWorkspaceMeta serverId={rowServerId} workspace={ownWorkspace} />
+            ) : null}
+          </View>
+        </>
+      );
+    },
+    [
+      highlighted,
+      label,
+      notice,
+      presentation,
+      row.kind,
+      row.id,
+      rowServerId,
+      ownWorkspace,
+      workspaceKey,
+    ],
+  );
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
+  // Same rule as a tab row's menu: hover-revealed on pointer, always there on touch.
+  const showMenu = isHovered || isNative || isCompact;
+  const menu =
+    row.kind === "paseo" && rowServerId === serverId ? (
+      <SidebarSubagentMenu
+        agentId={row.id}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        label={label}
+        menuTestIDBase={`sidebar-workspace-subagent-menu-${workspaceKey}-${row.id}`}
+        menuActions={menuActions}
+        visible={showMenu}
+      />
+    ) : null;
+  return (
+    <View
+      style={styles.subagentRowWithMenu}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
+    >
+      <PressHighlight
+        style={subagentRowStyle}
+        highlightStyle={styles.rowPressed}
+        onPress={handlePress}
+        accessibilityRole={isWeb ? undefined : "button"}
+        accessibilityState={accessibilityState}
+        aria-selected={highlighted}
+        accessibilityLabel={accessibilityLabel}
+        testID={`sidebar-workspace-subagent-${workspaceKey}-${row.id}`}
+      >
+        {renderContent}
+      </PressHighlight>
+      {menu}
+    </View>
+  );
+}
+
+/**
+ * The subagent's own actions, which its workspace row's kebab no longer offers once the
+ * workspace nests: the agent tab's copy, rename and reload rows, then the subagents track's
+ * detach and archive. Each asks for confirmation through the same dialog the track uses.
+ */
+function SidebarSubagentMenu({
+  agentId,
+  serverId,
+  workspaceId,
+  label,
+  menuTestIDBase,
+  menuActions,
+  visible,
+}: {
+  agentId: string;
+  serverId: string;
+  workspaceId: string;
+  label: string;
+  menuTestIDBase: string;
+  menuActions: SidebarWorkspaceTabMenuActions;
+  /** Hides by opacity, so an open menu keeps its trigger when the pointer leaves. */
+  visible: boolean;
+}) {
+  const { t } = useTranslation();
+  const archiveSubagent = useArchiveSubagent();
+  const detachSubagent = useDetachSubagent();
+  const canDetach = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
+  );
+  // The listing workspace's close looks in that layout only. A subagent whose tab lives in
+  // its own workspace closes there; with no open tab, Close is left out.
+  const holdingWorkspaceId = useWorkspaceIdHoldingAgentTab(serverId, workspaceId, agentId);
+  const { closeTabById } = useWorkspaceTabClose({
+    serverId,
+    workspaceId: holdingWorkspaceId ?? workspaceId,
+    onTabClosed: ignoreTabClosed,
+  });
+  const entries = useMemo<WorkspaceTabMenuEntry[]>(() => {
+    const tabId = buildDeterministicWorkspaceTabId({ kind: "agent", agentId });
+    const tab: WorkspaceTabDescriptor = {
+      key: tabId,
+      tabId,
+      kind: "agent",
+      target: { kind: "agent", agentId },
+    };
+    const address = { serverId, agentId };
+    const lifecycle: WorkspaceTabMenuEntry[] = [];
+    if (canDetach) {
+      lifecycle.push({
+        kind: "item",
+        key: "detach-subagent",
+        label: t("subagents.detachTooltip"),
+        icon: "unlink",
+        testID: `${menuTestIDBase}-detach`,
+        onSelect: () => detachSubagent(address),
+      });
+    }
+    lifecycle.push({
+      kind: "item",
+      key: "archive-subagent",
+      label: t("subagents.archiveTooltip"),
+      icon: "archive",
+      destructive: true,
+      testID: `${menuTestIDBase}-archive`,
+      onSelect: () => archiveSubagent(address),
+    });
+    const tabActions = holdingWorkspaceId
+      ? { ...menuActions, onCloseTab: closeTabById }
+      : menuActions;
+    const tabEntries = buildWorkspaceTabActionEntries({ ...tabActions, tab, menuTestIDBase });
+    return [
+      ...(holdingWorkspaceId ? tabEntries : entriesWithoutClose(tabEntries)),
+      { kind: "separator", key: "subagent-lifecycle-separator" },
+      ...lifecycle,
+    ];
+  }, [
+    agentId,
+    archiveSubagent,
+    canDetach,
+    closeTabById,
+    detachSubagent,
+    holdingWorkspaceId,
+    menuActions,
+    menuTestIDBase,
+    serverId,
+    t,
+  ]);
+  return (
+    <View
+      style={visible ? styles.subagentMenuSlot : styles.subagentMenuSlotHidden}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <MobileTabTrailingAccessory
+        menuTestIDBase={menuTestIDBase}
+        presentationLabel={label}
+        menuEntries={entries}
+      />
+    </View>
+  );
+}
+
+/**
+ * The workspace a Paseo subagent runs in when it is not its parent's. Such a child has its own
+ * branch, change request, CI and services, which is what its workspace row says at the top level;
+ * a child sharing its parent's workspace would only repeat the parent's line.
+ */
+function useSubagentOwnWorkspace(
+  row: SubagentRow,
+  parentServerId: string,
+  parentWorkspaceId: string,
+): WorkspaceDescriptor | null {
+  const address = row.kind === "paseo" ? row.address : null;
+  return useSessionStore((state) => {
+    if (!address) return null;
+    const session = state.sessions[address.serverId];
+    const agent =
+      session?.agents.get(address.agentId) ?? session?.agentDetails.get(address.agentId);
+    const workspaceId = agent?.workspaceId;
+    if (!workspaceId) return null;
+    if (address.serverId === parentServerId && workspaceId === parentWorkspaceId) return null;
+    return session?.workspaces.get(workspaceId) ?? null;
+  });
+}
+
+function normalizeBranch(branch: string | null | undefined): string | null {
+  const trimmed = branch?.trim();
+  return !trimmed || trimmed === "HEAD" ? null : trimmed;
+}
+
+/** The meta line the subagent's own workspace row shows: branch, change request, CI, service. */
+function SubagentWorkspaceMeta({
+  serverId,
+  workspace,
+}: {
+  serverId: string;
+  workspace: WorkspaceDescriptor;
+}) {
+  const prHint = useMemo(
+    () => selectPrHintFromStatus(workspace.githubRuntime?.pullRequest, workspace.forge),
+    [workspace.githubRuntime?.pullRequest, workspace.forge],
+  );
+  // Workspace rows leave services to pointer layouts, where the line has room for them.
+  const serviceSummary = useMemo(
+    () => (isNative ? null : selectWorkspaceServiceSummary(workspace.scripts)),
+    [workspace.scripts],
+  );
+  const labels = useWorkspaceLabelDefinitions(serverId, workspace.labels);
+  return (
+    <WorkspaceMetaRow
+      currentBranch={normalizeBranch(workspace.gitRuntime?.currentBranch)}
+      projectName={null}
+      hostBadge={null}
+      prHint={prHint}
+      serviceSummary={serviceSummary}
+      labels={labels}
+    />
+  );
+}
+
+/** The model and thinking line the subagents track shows under a Paseo child. */
+function PaseoSubagentFacts({ serverId, agentId }: { serverId: string; agentId: string }) {
+  return <SubagentFacts text={useAgentFactsLine(serverId, agentId)} />;
+}
+
+function SubagentFacts({ text }: { text: string | null }) {
+  if (!text) return null;
+  return (
+    <Text numberOfLines={1} style={styles.facts}>
+      {text}
+    </Text>
+  );
+}
+
+function subagentRowStyle({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.row, styles.subagentRow, hovered && styles.rowHovered];
+}
+
+const ICON_SIZE = 14;
+
+const styles = StyleSheet.create((theme) => {
+  // The workspace row's leading padding, status slot and gap: tab icons start on the rail the
+  // workspace title starts on.
+  const titleRail = mapLayout(
+    densityIconBox("md"),
+    (statusSlot) => theme.spacing[2] + statusSlot + theme.spacing[2],
+  );
+  const statusGroupTitleRail = mapLayout(
+    titleRail,
+    // `rowIndented` replaces the row's leading padding rather than adding to it: one step more.
+    (rail) => rail + theme.spacing[2],
+  );
+  return {
+    list: {
+      paddingLeft: titleRail,
+      marginBottom: theme.spacing[1],
+    },
+    listInStatusGroup: {
+      paddingLeft: statusGroupTitleRail,
+      marginBottom: theme.spacing[1],
+    },
+    row: {
+      minHeight: density.tightRowHeight,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingHorizontal: theme.spacing[2],
+      // The hover fill reaches back past the rail by the row's own padding, so the icon ink
+      // stays on the title rail.
+      marginLeft: -theme.spacing[2],
+      borderRadius: theme.borderRadius.lg,
+      userSelect: "none",
+    },
+    // A tab row is a plain View that tracks hover (docs/hover.md) around its press area, the
+    // subagent disclosure and the menu. The fill reaches back past the rail by the press area's
+    // own padding, so the icon ink stays on the title rail.
+    tabRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[1],
+      marginLeft: -theme.spacing[2],
+      borderRadius: theme.borderRadius.lg,
+    },
+    tabRowHovered: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[1],
+      marginLeft: -theme.spacing[2],
+      borderRadius: theme.borderRadius.lg,
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    tabRowPress: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: density.tightRowHeight,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+      paddingHorizontal: theme.spacing[2],
+      borderRadius: theme.borderRadius.lg,
+      userSelect: "none",
+    },
+    menuSlot: {
+      paddingRight: theme.spacing[1],
+    },
+    menuSlotHidden: {
+      paddingRight: theme.spacing[1],
+      opacity: 0,
+    },
+    // Children start on the parent tab's label rail: past its icon slot and gap.
+    subagentList: {
+      paddingLeft: ICON_SIZE + theme.spacing[2],
+    },
+    // Title over facts over the workspace line, like a workspace row; the icon stays on the
+    // title line.
+    subagentRow: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: "flex-start",
+      paddingVertical: theme.spacing[1],
+    },
+    subagentRowWithMenu: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: theme.spacing[1],
+    },
+    // The kebab sits on the title line, like the workspace row's.
+    subagentMenuSlot: {
+      paddingTop: theme.spacing[1],
+      paddingRight: theme.spacing[1],
+    },
+    subagentMenuSlotHidden: {
+      paddingTop: theme.spacing[1],
+      paddingRight: theme.spacing[1],
+      opacity: 0,
+    },
+    subagentIconSlot: {
+      width: ICON_SIZE,
+      minHeight: 20,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    subagentText: {
+      flex: 1,
+      minWidth: 0,
+    },
+    // The label shrinks before the dot does, so a long task name still shows its mark.
+    subagentTitleLine: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: theme.spacing[2],
+    },
+    subagentLabel: {
+      flexShrink: 1,
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foregroundMuted,
+    },
+    subagentLabelEmphasized: {
+      flexShrink: 1,
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foreground,
+    },
+    facts: {
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foregroundMuted,
+    },
+    rowHovered: {
+      backgroundColor: theme.colors.surfaceSidebarHover,
+    },
+    rowPressed: {
+      backgroundColor: theme.colors.surface2,
+    },
+    iconSlot: {
+      width: ICON_SIZE,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    label: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foregroundMuted,
+    },
+    labelEmphasized: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: theme.fontSize.sm,
+      color: theme.colors.foreground,
+    },
+    modifiedDot: {
+      width: 8,
+      height: 8,
+      borderRadius: theme.borderRadius.full,
+      backgroundColor: theme.colors.foregroundMuted,
+    },
+  };
+});

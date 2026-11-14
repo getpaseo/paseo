@@ -1221,6 +1221,7 @@ export const ru: TranslationResources = {
     },
     display: {
       showBackground: "Показать фоновые пространства",
+      nestSubagentWorkspaces: "Вкладывать рабочие пространства субагентов",
       trigger: "Настройки отображения",
       heading: "Отображение",
       sort: {
@@ -1369,6 +1370,10 @@ export const ru: TranslationResources = {
         unpin: "Открепить",
         archive: "Архивировать",
         archiveWorkspace: "Архивировать рабочее пространство",
+        showTabs: "Показать вкладки",
+        hideTabs: "Скрыть вкладки",
+        showSubagents: "Показать субагентов",
+        hideSubagents: "Скрыть субагентов",
         hideFromSidebar: "Скрыть на боковой панели",
         archiving: "Архивирование...",
         hiding: "Скрытие...",

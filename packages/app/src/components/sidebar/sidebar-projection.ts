@@ -46,6 +46,10 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  /**
+   * Latest status time of workspaces nested under a parent. The parent stays in its own bucket.
+   */
+  childStatusEnteredAtByParent?: ReadonlyMap<string, number>;
   t: TFunction;
 }
 
@@ -102,7 +106,12 @@ function buildWorkspaceGroups(
       return [];
     case "status":
       return statusWorkspaceGroups(
-        buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey, input.t),
+        buildStatusGroups(
+          unpinnedWorkspaces,
+          input.projectNamesByViewKey,
+          input.t,
+          input.childStatusEnteredAtByParent,
+        ),
       );
   }
 }

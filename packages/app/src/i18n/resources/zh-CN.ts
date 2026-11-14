@@ -1196,6 +1196,7 @@ export const zhCN: TranslationResources = {
     },
     display: {
       showBackground: "显示后台工作区",
+      nestSubagentWorkspaces: "嵌套 subagent 工作区",
       trigger: "显示偏好",
       heading: "显示",
       sort: {
@@ -1341,6 +1342,10 @@ export const zhCN: TranslationResources = {
         unpin: "取消置顶",
         archive: "归档",
         archiveWorkspace: "归档工作区",
+        showTabs: "显示标签页",
+        hideTabs: "隐藏标签页",
+        showSubagents: "显示 subagent",
+        hideSubagents: "隐藏 subagent",
         hideFromSidebar: "从侧边栏隐藏",
         archiving: "正在归档...",
         hiding: "正在隐藏...",

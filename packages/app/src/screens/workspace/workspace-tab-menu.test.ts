@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceDesktopTabActions,
+  buildWorkspaceTabActionEntries,
   buildWorkspaceTabMenuEntries,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
@@ -365,5 +366,77 @@ describe("buildWorkspaceTabMenuEntries", () => {
       .find((entry) => entry.kind === "separator");
     expect(agentSeparator?.key).toBe("rename-separator");
     expect(terminalSeparator?.key).toBe("rename-separator");
+  });
+});
+
+describe("buildWorkspaceTabActionEntries", () => {
+  function actionEntries(
+    tab: WorkspaceTabDescriptor,
+    handlers: { onReloadAgent?: () => void; onCloseTab?: (tabId: string) => void } = {},
+  ) {
+    return buildWorkspaceTabActionEntries({
+      tab,
+      menuTestIDBase: "sidebar-tab",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: handlers.onReloadAgent ?? vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: handlers.onCloseTab ?? vi.fn(),
+    });
+  }
+
+  function select(entries: ReturnType<typeof actionEntries>, key: string) {
+    const entry = entries.find((candidate) => candidate.key === key);
+    if (entry?.kind !== "item") throw new Error(`No item ${key}`);
+    entry.onSelect();
+  }
+
+  it("offers an agent's own actions and Close, without the neighbour close rows", () => {
+    const onReloadAgent = vi.fn();
+    const onCloseTab = vi.fn();
+    const entries = actionEntries(createAgentTab(), { onReloadAgent, onCloseTab });
+
+    expect(entries.map((entry) => (entry.kind === "item" ? entry.label : entry.kind))).toEqual([
+      "Copy resume command",
+      "Copy agent id",
+      "Rename",
+      "separator",
+      "Reload agent",
+      "separator",
+      "Close",
+    ]);
+    select(entries, "reload-agent");
+    select(entries, "close");
+    expect(onReloadAgent).toHaveBeenCalledWith("agent-123");
+    expect(onCloseTab).toHaveBeenCalledWith("agent_123");
+  });
+
+  it("keeps a file's Open with slot after copying its path", () => {
+    const entries = actionEntries({
+      key: "file_a",
+      tabId: "file_a",
+      kind: "file",
+      target: { kind: "file", path: "src/a.ts" },
+    });
+
+    expect(entries.map((entry) => entry.key)).toEqual([
+      "copy-file-path",
+      "file-panel-open-with",
+      "close-separator",
+      "close",
+    ]);
+  });
+
+  it("offers only Close for a tab with no actions of its own", () => {
+    const entries = actionEntries({
+      key: "new_tab_1",
+      tabId: "new_tab_1",
+      kind: "new_tab",
+      target: { kind: "new_tab" },
+    });
+
+    expect(entries.map((entry) => entry.key)).toEqual(["close"]);
   });
 });

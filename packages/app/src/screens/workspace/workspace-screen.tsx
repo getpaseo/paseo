@@ -2,7 +2,6 @@ import {
   AdaptiveWorkspaceChrome,
   type WorkspaceCompactHeaderTabs,
 } from "./adaptive-workspace-chrome";
-import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
@@ -139,10 +138,10 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useWorkspaceArchiveUndoRunning } from "@/workspace/archive-undo";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { createWorkspaceBrowser } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
-import { buildProviderCommand } from "@/utils/provider-command-templates";
+import { useWorkspaceTabActions } from "@/screens/workspace/use-workspace-tab-actions";
+import { useWorkspaceTabClose } from "@/screens/workspace/use-workspace-tab-close";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
@@ -454,33 +453,6 @@ export const WorkspaceScreen = memo(function WorkspaceScreen({
     />
   );
 });
-
-interface UseCloseTabsResult {
-  closingTabIds: Set<string>;
-  closeTab: (tabId: string, action: () => Promise<void>) => Promise<void>;
-}
-
-function useCloseTabs(): UseCloseTabsResult {
-  const pendingRef = useRef(new Set<string>());
-  const [closingTabIds, setClosingTabIds] = useState<Set<string>>(EMPTY_SET);
-
-  const closeTab = useCallback(async (tabId: string, action: () => Promise<void>) => {
-    const normalized = tabId.trim();
-    if (!normalized || pendingRef.current.has(normalized)) {
-      return;
-    }
-    pendingRef.current.add(normalized);
-    setClosingTabIds(new Set(pendingRef.current));
-    try {
-      await action();
-    } finally {
-      pendingRef.current.delete(normalized);
-      setClosingTabIds(new Set(pendingRef.current));
-    }
-  }, []);
-
-  return { closingTabIds, closeTab };
-}
 
 interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
@@ -1226,14 +1198,11 @@ function WorkspaceScreenContent({
     createTerminal,
     handleScriptTerminalStarted,
     handleViewScriptTerminal,
-    invalidateTerminals,
-    killMutation: killTerminalMutation,
     knownTerminalIds,
     liveTerminalIds,
     pendingCreateInput: pendingTerminalCreateInput,
     query: terminalsQuery,
     queryKey: terminalsQueryKey,
-    removeTerminalFromCache,
     standaloneTerminalIds,
   } = useWorkspaceTerminals({
     client,
@@ -1384,12 +1353,9 @@ function WorkspaceScreenContent({
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
-  const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const sheets = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.sheetsByWorkspace[persistenceKey] ?? NO_SHEETS) : NO_SHEETS,
   );
-  const unpinWorkspaceAgent = useWorkspaceLayoutStore((state) => state.unpinAgent);
-  const hideWorkspaceAgent = useWorkspaceLayoutStore((state) => state.hideAgent);
   const setWorkspaceTabState = useWorkspaceLayoutStore((state) => state.setTabState);
   const reconcileWorkspaceTabs = useWorkspaceLayoutStore((state) => state.reconcileTabs);
   const splitWorkspacePane = useWorkspaceLayoutStore((state) => state.splitPane);
@@ -1414,31 +1380,20 @@ function WorkspaceScreenContent({
     persistenceKey ? (state.hiddenAgentIdsByWorkspace[persistenceKey] ?? EMPTY_SET) : EMPTY_SET,
   );
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
-  const { closingTabIds, closeTab } = useCloseTabs();
-  const closeWorkspaceTabWithCleanup = useCallback(
-    function closeWorkspaceTabWithCleanup(input: {
-      tabId: string;
-      target?: WorkspaceTabTarget | null;
-    }) {
-      const normalizedTabId = trimNonEmpty(input.tabId);
-      if (!normalizedTabId || !persistenceKey) {
-        return;
-      }
-
-      if (input.target?.kind === "agent") {
-        unpinWorkspaceAgent(persistenceKey, input.target.agentId);
-        hideWorkspaceAgent(persistenceKey, input.target.agentId);
-      }
-      if (input.target?.kind === "browser") {
-        const { browserId } = input.target;
-        useBrowserStore.getState().removeBrowser(browserId);
-        removeResidentBrowserWebview(browserId);
-        void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
-      }
-      closeWorkspaceTab(persistenceKey, normalizedTabId);
-    },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
-  );
+  const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
+  const handleTabClosed = useCallback((tabId: string) => {
+    setHoveredCloseTabKey((current) => (current === tabId ? null : current));
+  }, []);
+  const {
+    closeTabById: handleCloseTabById,
+    runTabClose: closeTab,
+    closeWorkspaceTabWithCleanup,
+    closingTabIds,
+  } = useWorkspaceTabClose({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    onTabClosed: handleTabClosed,
+  });
 
   const focusedPaneTabState = useMemo(
     () =>
@@ -1776,13 +1731,14 @@ function WorkspaceScreenContent({
     handleOpenFileFromChat(request.location, parentTabId);
   });
 
-  const [hoveredCloseTabKey, setHoveredCloseTabKey] = useState<string | null>(null);
+  const terminalsData = terminalsQuery.data;
+  const getTerminalsData = useCallback(() => terminalsData, [terminalsData]);
   const { handleRenameTab, renamingTab, handleRenameModalSubmit, handleRenameModalClose } =
     useWorkspaceTabRename({
       client,
       normalizedServerId,
       queryClient,
-      terminalsData: terminalsQuery.data,
+      getTerminals: getTerminalsData,
       terminalsQueryKey,
     });
 
@@ -1952,291 +1908,13 @@ function WorkspaceScreenContent({
     [persistenceKey, splitWorkspacePaneEmpty],
   );
 
-  const killTerminalAsync = killTerminalMutation.mutateAsync;
-
-  const handleCloseTerminalTab = useCallback(
-    async (input: { tabId: string; terminalId: string }) => {
-      const { tabId, terminalId } = input;
-      await closeTab(tabId, async () => {
-        const confirmed = await confirmDialog({
-          title: t("workspace.tabs.confirmations.closeTerminalTitle"),
-          message: t("workspace.tabs.confirmations.closeTerminalMessage"),
-          confirmLabel: t("workspace.tabs.confirmations.close"),
-          cancelLabel: t("workspace.tabs.confirmations.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) {
-          return;
-        }
-
-        removeTerminalFromCache(terminalId);
-        setHoveredCloseTabKey((current) => (current === tabId ? null : current));
-        if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
-            tabId,
-            target: { kind: "terminal", terminalId },
-          });
-        }
-
-        void killTerminalAsync(terminalId).catch(invalidateTerminals);
-      });
-    },
-    [
-      closeTab,
-      closeWorkspaceTabWithCleanup,
-      invalidateTerminals,
-      killTerminalAsync,
-      persistenceKey,
-      removeTerminalFromCache,
-      t,
-    ],
-  );
-
-  const handleCloseAgentTab = useCallback(
-    async (input: { tabId: string; agentId: string }) => {
-      const { tabId, agentId } = input;
-      await closeTab(tabId, async () => {
-        if (!normalizedServerId) {
-          return;
-        }
-
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-        let closePolicy = resolveCloseAgentTabPolicy(agent);
-        const isRunning = agent?.status === "running";
-
-        if (isRunning && closePolicy.kind === "archive-on-close") {
-          const confirmed = await confirmDialog({
-            title: t("workspace.tabs.confirmations.archiveRunningAgentTitle"),
-            message: t("workspace.tabs.confirmations.archiveRunningAgentMessage"),
-            confirmLabel: t("workspace.tabs.confirmations.archive"),
-            cancelLabel: t("workspace.tabs.confirmations.cancel"),
-            destructive: true,
-          });
-          if (!confirmed) {
-            return;
-          }
-        }
-
-        if (closePolicy.kind === "layout-only") {
-          const sessionClient = useSessionStore.getState().sessions[normalizedServerId]?.client;
-          if (!sessionClient) {
-            toast.error(t("common.errors.daemonClientUnavailable"));
-            return;
-          }
-          try {
-            const clientId = await getOrCreateClientId();
-            await sessionClient.updateAgent(agentId, {
-              labels: { [getOpenAgentTabLabel(clientId)]: "false" },
-            });
-            const latestAgent =
-              useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-            closePolicy = resolveCloseAgentTabPolicy(latestAgent);
-          } catch (error) {
-            console.error("[WorkspaceScreen] Failed to close subagent tab", { error, agentId });
-            toast.error(t("workspace.tabs.toasts.failedToCloseAgent"));
-            return;
-          }
-        }
-
-        setHoveredCloseTabKey((current) => (current === tabId ? null : current));
-        if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
-            tabId,
-            target: { kind: "agent", agentId },
-          });
-        }
-
-        if (closePolicy.kind === "layout-only") {
-          return;
-        }
-
-        // Errors (e.g. timeout) are handled by the mutation's onSettled callback
-        void archiveAgent({ serverId: normalizedServerId, agentId }).catch(() => {});
-      });
-    },
-    [
-      archiveAgent,
-      closeTab,
-      closeWorkspaceTabWithCleanup,
-      normalizedServerId,
-      persistenceKey,
-      t,
-      toast,
-    ],
-  );
-
-  const handleClosePassiveTab = useCallback(
-    function handleClosePassiveTab(input: { tabId: string; target?: WorkspaceTabTarget | null }) {
-      setHoveredCloseTabKey((current) => (current === input.tabId ? null : current));
-      if (persistenceKey) {
-        closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
-      }
-    },
-    [closeWorkspaceTabWithCleanup, persistenceKey],
-  );
-
-  const confirmDiscardModifiedTab = useCallback(
-    async (tabId: string): Promise<boolean> => {
-      const attributes = getPanelInstanceAttributes({
-        serverId: normalizedServerId,
-        workspaceId: normalizedWorkspaceId,
-        tabId,
-      });
-      if (!attributes.modified) return true;
-      const resumePendingSave = attributes.suspendPendingSave?.();
-      const confirmed = await confirmDialog({
-        title: t("workspace.tabs.confirmations.unsavedTitle"),
-        message: t("workspace.tabs.confirmations.unsavedMessage"),
-        confirmLabel: t("workspace.tabs.confirmations.closeWithoutSaving"),
-        cancelLabel: t("workspace.tabs.confirmations.cancel"),
-        destructive: true,
-      });
-      if (!confirmed) resumePendingSave?.();
-      return confirmed;
-    },
-    [normalizedServerId, normalizedWorkspaceId, t],
-  );
-
-  const handleCloseTabById = useCallback(
-    async (tabId: string) => {
-      if (persistenceKey && sheets.some((sheet) => sheet.tab.tabId === tabId)) {
-        if (await confirmDiscardModifiedTab(tabId)) {
-          closeWorkspaceTab(persistenceKey, tabId);
-        }
-        return;
-      }
-      const tab = allTabDescriptorsById.get(tabId);
-      if (!tab) {
-        return;
-      }
-      if (!(await confirmDiscardModifiedTab(tabId))) {
-        return;
-      }
-      if (tab.target.kind === "terminal") {
-        await handleCloseTerminalTab({ tabId, terminalId: tab.target.terminalId });
-        return;
-      }
-      if (tab.target.kind === "agent") {
-        await handleCloseAgentTab({ tabId, agentId: tab.target.agentId });
-        return;
-      }
-      handleClosePassiveTab({ tabId, target: tab.target });
-    },
-    [
-      allTabDescriptorsById,
-      closeWorkspaceTab,
-      confirmDiscardModifiedTab,
-      handleCloseAgentTab,
-      handleClosePassiveTab,
-      handleCloseTerminalTab,
-      persistenceKey,
-      sheets,
-    ],
-  );
-
-  const handleCopyAgentId = useCallback(
-    async (agentId: string) => {
-      if (!agentId) return;
-      try {
-        await Clipboard.setStringAsync(agentId);
-        toast.copied(t("workspace.tabs.toasts.agentIdCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-      }
-    },
-    [toast, t],
-  );
-
-  const handleCopyTerminalId = useCallback(
-    async (terminalId: string) => {
-      if (!terminalId) return;
-      try {
-        await Clipboard.setStringAsync(terminalId);
-        toast.copied(t("workspace.tabs.toasts.terminalIdCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-      }
-    },
-    [toast, t],
-  );
-
-  const handleCopyFilePath = useCallback(
-    async (path: string) => {
-      if (!path) return;
-      try {
-        await Clipboard.setStringAsync(path);
-        toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-      }
-    },
-    [toast, t],
-  );
-
-  const handleCopyResumeCommand = useCallback(
-    async (agentId: string) => {
-      if (!agentId) return;
-      const agent =
-        useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-      const providerSessionId =
-        agent?.runtimeInfo?.sessionId ?? agent?.persistence?.sessionId ?? null;
-      if (!agent || !providerSessionId) {
-        toast.error(t("workspace.tabs.toasts.resumeIdUnavailable"));
-        return;
-      }
-
-      const command =
-        buildProviderCommand({
-          provider: agent.provider,
-          id: "resume",
-          sessionId: providerSessionId,
-        }) ?? null;
-      if (!command) {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
-        return;
-      }
-      try {
-        await Clipboard.setStringAsync(command);
-        toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
-      }
-    },
-    [normalizedServerId, toast, t],
-  );
-
-  const handleReloadAgent = useCallback(
-    async (agentId: string) => {
-      if (!client || !isConnected) {
-        toast.error(t("workspace.terminal.hostDisconnected"));
-        return;
-      }
-
-      toast.show(t("workspace.tabs.toasts.reloadingAgent"), { durationMs: null });
-      try {
-        await client.refreshAgent(agentId);
-        // Send the existing cursor so the server detects the new epoch and
-        // returns reset:true. Without a cursor, the server returns reset:false
-        // and the client takes the incremental path, where new-epoch rows are
-        // dropped against the stale cursor.
-        const sessionState = useSessionStore.getState().sessions[normalizedServerId];
-        const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
-        await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
-          ...planTimelineTailFetch(),
-          ...(currentCursor
-            ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
-            : {}),
-        });
-        toast.show(t("workspace.tabs.toasts.reloadedAgent"), { variant: "success" });
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : t("workspace.tabs.toasts.failedToReloadAgent"),
-        );
-      }
-    },
-    [client, isConnected, normalizedServerId, toast, t],
-  );
+  const {
+    copyAgentId: handleCopyAgentId,
+    copyTerminalId: handleCopyTerminalId,
+    copyFilePath: handleCopyFilePath,
+    copyResumeCommand: handleCopyResumeCommand,
+    reloadAgent: handleReloadAgent,
+  } = useWorkspaceTabActions(normalizedServerId);
 
   const handleCopyWorkspacePath = useCallback(async () => {
     if (!workspaceDirectory) {

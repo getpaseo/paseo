@@ -393,6 +393,14 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           >
             {t("sidebar.display.showBackground")}
           </MenuItem>
+          <MenuItem
+            selected={preferences.nestSubagentWorkspaces}
+            closeOnSelect={false}
+            onSelect={preferences.toggleNestSubagentWorkspaces}
+            testID="sidebar-display-nest-subagent-workspaces"
+          >
+            {t("sidebar.display.nestSubagentWorkspaces")}
+          </MenuItem>
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />

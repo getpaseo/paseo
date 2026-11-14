@@ -1217,6 +1217,7 @@ export const ja: TranslationResources = {
     },
     display: {
       showBackground: "バックグラウンドを表示",
+      nestSubagentWorkspaces: "サブエージェントのワークスペースをまとめる",
       trigger: "表示設定",
       heading: "表示",
       sort: {
@@ -1365,6 +1366,10 @@ export const ja: TranslationResources = {
         unpin: "固定解除",
         archive: "アーカイブ",
         archiveWorkspace: "ワークスペースをアーカイブ",
+        showTabs: "タブを表示",
+        hideTabs: "タブを非表示",
+        showSubagents: "サブエージェントを表示",
+        hideSubagents: "サブエージェントを非表示",
         hideFromSidebar: "サイドバーから非表示",
         archiving: "アーカイブ中...",
         hiding: "非表示にしています...",
