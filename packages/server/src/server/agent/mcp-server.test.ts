@@ -12,8 +12,12 @@ import { type PromptDispatchDisposition } from "./agent-prompt.js";
 import { parseAgentMessage, parseAgentMessages } from "./agent-messages/index.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -22,7 +26,10 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { createAgentMcpServer as createAgentMcpServerWithDependencies } from "./mcp-server.js";
+import {
+  createAgentMcpServer as createAgentMcpServerWithDependencies,
+  normalizeMcpProtocolVersionHeader,
+} from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -995,6 +1002,129 @@ describe("Paseo tool timeline presentation", () => {
     } finally {
       await client.close();
       await server.close();
+    }
+  });
+});
+
+describe("MCP protocol version negotiation over HTTP", () => {
+  // Mirrors the daemon route: a fresh stateless session per request.
+  async function handleAgentMcpRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    options: { normalize: boolean },
+  ) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(chunk as Buffer);
+    }
+    const body: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (options.normalize) {
+      normalizeMcpProtocolVersionHeader(req);
+    }
+    const server = await createAgentMcpServer({
+      agentManager: new BoundaryAgentManagerFake() as AgentManager,
+      agentStorage: new BoundaryAgentStorageFake() as AgentStorage,
+      providerSnapshotManager:
+        new BoundaryProviderSnapshotManagerFake() as unknown as ProviderSnapshotManager,
+      logger: createTestLogger(),
+    });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableDnsRebindingProtection: false,
+    });
+    await server.connect(transport);
+    res.on("close", () => {
+      void transport.close();
+      void server.close();
+    });
+    await transport.handleRequest(req, res, body);
+  }
+
+  async function startAgentMcpHttpServer(options: { normalize: boolean }) {
+    const httpServer = createServer((req, res) => {
+      void handleAgentMcpRequest(req, res, options).catch(() => res.destroy());
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const address = httpServer.address() as AddressInfo;
+    const close = () =>
+      new Promise<void>((resolve, reject) => {
+        httpServer.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    return { url: `http://127.0.0.1:${address.port}/mcp/agents`, close };
+  }
+
+  interface McpResponse {
+    status: number;
+    result?: { protocolVersion?: string; tools?: unknown[] };
+  }
+
+  async function postMcp(url: string, body: unknown): Promise<McpResponse> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": "2026-07-28",
+      },
+      body: JSON.stringify(body),
+    });
+    if (response.status !== 200) {
+      return { status: response.status };
+    }
+    const text = await response.text();
+    const dataLine = text.split("\n").find((line) => line.startsWith("data:"));
+    const payload = dataLine ? dataLine.slice("data:".length).trim() : text;
+    const message = z.object({ result: z.unknown().optional() }).parse(JSON.parse(payload));
+    return { status: response.status, result: message.result as McpResponse["result"] };
+  }
+
+  it("accepts a newer client protocol version on initialize and later requests", async () => {
+    const httpServer = await startAgentMcpHttpServer({ normalize: true });
+    try {
+      const initialize = await postMcp(httpServer.url, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2026-07-28",
+          capabilities: {},
+          clientInfo: { name: "claude-code", version: "2.1.322" },
+        },
+      });
+      expect(initialize.status).toBe(200);
+      expect(initialize.result?.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
+
+      const listTools = await postMcp(httpServer.url, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: {},
+      });
+      expect(listTools.status).toBe(200);
+      expect(listTools.result?.tools?.length).toBeGreaterThan(0);
+    } finally {
+      await httpServer.close();
+    }
+  });
+
+  it("rejects the same unknown header without normalisation", async () => {
+    const httpServer = await startAgentMcpHttpServer({ normalize: false });
+    try {
+      const listTools = await postMcp(httpServer.url, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      });
+      expect(listTools.status).toBe(400);
+    } finally {
+      await httpServer.close();
     }
   });
 });
