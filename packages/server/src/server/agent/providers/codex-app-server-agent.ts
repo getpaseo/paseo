@@ -3827,6 +3827,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       throw this.createClosedError();
     }
     this.client = client;
+    // Resume can emit autonomous commands before connection setup finishes. Their
+    // ownership must live for the whole connection, including startup notifications.
+    this.background.start({ client, thread: null });
     client.setUnexpectedTerminationHandler((error) => {
       this.pendingNotifications = this.queueUnexpectedTermination(error);
     });
@@ -3854,7 +3857,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connectionState = "connected";
-      this.background.start({ client, thread: this.currentThreadId });
+      this.background.changed(this.currentThreadId);
     } catch (error) {
       try {
         if (this.client === client) {
@@ -5944,15 +5947,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       this.settleStreamRetry({ status: "completed" });
     }
-    if (
-      parsed.kind === "turn_completed" ||
-      parsed.kind === "exec_command_started" ||
+    this.observeBackgroundWork(parsed);
+    await this.dispatchParsedNotification(parsed);
+  }
+
+  private observeBackgroundWork(parsed: ParsedCodexNotification): void {
+    const backgroundThread = getCodexNotificationThreadId(parsed) ?? this.currentThreadId;
+    if (backgroundThread && parsed.kind === "turn_started")
+      this.background.turnStarted(backgroundThread);
+    else if (backgroundThread && parsed.kind === "turn_completed")
+      this.background.turnSettled(backgroundThread);
+    else if (backgroundThread && parsed.kind === "exec_command_started")
+      this.background.commandStarted({ thread: backgroundThread, itemId: parsed.callId });
+    else if (
+      backgroundThread &&
+      parsed.kind === "item_started" &&
+      normalizeCodexThreadItemType(parsed.item.type) === "commandExecution"
+    )
+      this.background.commandStarted({
+        thread: backgroundThread,
+        itemId: parsed.item.id ?? null,
+        processId: typeof parsed.item.processId === "string" ? parsed.item.processId : undefined,
+      });
+    else if (
       parsed.kind === "exec_command_completed" ||
       ((parsed.kind === "item_started" || parsed.kind === "item_completed") &&
         normalizeCodexThreadItemType(parsed.item.type) === "commandExecution")
     )
       this.background.changed(this.currentThreadId);
-    await this.dispatchParsedNotification(parsed);
   }
 
   private async dispatchSubAgentNotification(
