@@ -212,8 +212,12 @@ export function ToastViewport({
   const topOffset =
     placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
-  const content = (
-    <View
+  // Keep the bottom anchor and its contents together while the native exit retains the view.
+  const content = toast ? (
+    <Animated.View
+      key={toast.id}
+      entering={toastEntering}
+      exiting={toastExiting}
       style={
         placement === "sidebar" ? styles.sidebarContainer : styles.container(placement, topOffset)
       }
@@ -225,20 +229,16 @@ export function ToastViewport({
         pointerEvents="box-none"
         collapsable={false}
       >
-        {toast ? (
-          <Animated.View
-            entering={toastEntering}
-            exiting={toastExiting}
-            style={animatedStyles.surface}
-            testID={toast.testID ?? "app-toast"}
-            accessibilityRole="alert"
-          >
-            <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
-          </Animated.View>
-        ) : null}
+        <View
+          style={animatedStyles.surface}
+          testID={toast.testID ?? "app-toast"}
+          accessibilityRole="alert"
+        >
+          <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
+        </View>
       </View>
-    </View>
-  );
+    </Animated.View>
+  ) : null;
 
   if (placement === "app-shell" && isWeb && typeof document !== "undefined") {
     return createPortal(content, getOverlayRoot());
