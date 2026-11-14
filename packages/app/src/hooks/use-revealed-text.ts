@@ -40,7 +40,7 @@ export function useRevealedText(text: string, phase: MarkdownPhase): string {
       }
     };
 
-    if (!pacingSupported || phase !== "streaming") {
+    if (!pacingSupported) {
       settle();
       return;
     }
@@ -81,7 +81,10 @@ export function useRevealedText(text: string, phase: MarkdownPhase): string {
     };
   }, [text, pacingSupported, phase]);
 
+  const revealInProgress = !isTextRevealSettled(stateRef.current);
   return pacingSupported
-    ? visibleRevealedText(stateRef.current, { streaming: phase === "streaming" })
+    ? visibleRevealedText(stateRef.current, {
+        streaming: phase === "streaming" || revealInProgress,
+      })
     : text;
 }
