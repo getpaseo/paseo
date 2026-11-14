@@ -28,6 +28,7 @@ export type ScheduleTarget =
         modeId?: string;
         model?: string;
         thinkingOptionId?: string;
+        archiveOnFinish?: boolean;
         title?: string | null;
         providerOptions?: Record<string, unknown>;
       };
@@ -139,6 +140,7 @@ export interface UpdateScheduleNewAgentConfig {
   model?: string | null;
   modeId?: string | null;
   cwd?: string;
+  archiveOnFinish?: boolean;
 }
 
 export interface UpdateScheduleInput {

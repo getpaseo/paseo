@@ -96,6 +96,16 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
+  it("offers archive on finish when creating and updating schedules", () => {
+    const schedule = createCli().commands.find((command) => command.name() === "schedule");
+
+    for (const name of ["create", "update"]) {
+      const help = schedule?.commands.find((command) => command.name() === name)?.helpInformation();
+      expect(help).toContain("--archive-on-finish");
+      expect(help).toContain("--no-archive-on-finish");
+    }
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
