@@ -2209,7 +2209,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed, remoteNames);
+          return toPullRequestCheckoutTarget({ parsed, remoteNames });
         },
       });
     },
@@ -3112,10 +3112,13 @@ async function findCurrentPullRequestViewMatch(options: {
 // Bare `gh pr view` picks the PR from the branch's tracking config. Named
 // repositories lose that, so a same-repository PR whose head is not the
 // checkout's commit must not shadow the user's fork PR on the same branch.
-function isViewMatchForCheckout(
-  viewMatch: ResolvedPullRequestCandidate,
-  checkout: { explicitRepo?: boolean; headRepositoryOwner?: string; headSha?: string },
-): boolean {
+function isViewMatchForCheckout({
+  viewMatch,
+  checkout,
+}: {
+  viewMatch: ResolvedPullRequestCandidate;
+  checkout: { explicitRepo?: boolean; headRepositoryOwner?: string; headSha?: string };
+}): boolean {
   return (
     !checkout.explicitRepo ||
     checkout.headRepositoryOwner !== undefined ||
@@ -3134,7 +3137,10 @@ async function resolveCurrentPullRequestView(options: {
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
   const viewMatch = await findCurrentPullRequestViewMatch(options);
-  if (viewMatch?.status.state === "open" && isViewMatchForCheckout(viewMatch, options)) {
+  if (
+    viewMatch?.status.state === "open" &&
+    isViewMatchForCheckout({ viewMatch, checkout: options })
+  ) {
     return viewMatch.status;
   }
 
@@ -3810,10 +3816,13 @@ function normalizeRepositorySummary(repository: {
   };
 }
 
-function toPullRequestCheckoutTarget(
-  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
-  remoteNames: string[],
-): PullRequestCheckoutTarget {
+function toPullRequestCheckoutTarget({
+  parsed,
+  remoteNames,
+}: {
+  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>;
+  remoteNames: string[];
+}): PullRequestCheckoutTarget {
   const pullRequest = parsed.data.repository.pullRequest;
   if (!pullRequest) {
     throw new Error("Pull request not found");
