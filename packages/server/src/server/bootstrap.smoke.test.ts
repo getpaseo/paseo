@@ -239,7 +239,9 @@ describe("paseo daemon bootstrap", () => {
       const beforeMcp = await fetch(`http://127.0.0.1:${target.port}/mcp/agents`, {
         method: "POST",
       });
-      expect(beforeMcp.status).toBe(406);
+      // Any answer from the agent MCP handler proves the route is live; the handler
+      // rejects a body-less POST as an unsupported media type.
+      expect(beforeMcp.status).toBe(415);
       const beforeProxyReload = await httpGetWithHost(target.port, proxyHost, "/", {
         "x-forwarded-proto": "https",
       });
