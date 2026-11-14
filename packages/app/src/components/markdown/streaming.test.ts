@@ -68,4 +68,44 @@ describe("native streaming Markdown", () => {
     }
     expect(previous).toBeGreaterThan(1000);
   }, 15000);
+
+  it("keeps an open display equation in the tail while it is the last block", () => {
+    // The equation's closing $$ has not streamed in; the block is still
+    // mutable and belongs to the tail.
+    expect(splitStreamingMarkdown("Intro.\n\n$$ a\n\n", true)).toEqual({
+      head: "Intro.\n\n",
+      tail: "$$ a\n\n",
+    });
+  });
+
+  it("keeps a closed display equation in the head once it is complete", () => {
+    expect(splitStreamingMarkdown("Intro.\n\n$$ a $$\n\nMore.\n", true).head).toBe(
+      "Intro.\n\n$$ a $$\n\n",
+    );
+  });
+
+  it("pulls an open display equation back out of the head when a later block completes", () => {
+    // The $$ block is a complete paragraph, but its equation is open. It must
+    // not freeze in the head as a literal $$; the next complete block after it
+    // is what earns the head the earlier blocks.
+    const split = splitStreamingMarkdown("Intro.\n\n$$ a\n\nMore.\n", true);
+    expect(split.head).toBe("Intro.\n\n");
+    expect(split.tail).toBe("$$ a\n\nMore.\n");
+  });
+
+  it("never retreats or loses source across every prefix of streaming math", () => {
+    const source =
+      "Intro $x^2$ done.\n\n$$\na = b\n c = d\n$$\n\nAfter $y$ and $$ z $$ blocks.\n\n$$ open";
+    let previous = 0;
+    for (let end = 0; end <= source.length; end++) {
+      const text = source.slice(0, end);
+      const { head, tail } = splitStreamingMarkdown(text, true);
+      expect(head.length, `prefix ${end}`).toBeGreaterThanOrEqual(previous);
+      expect(head + tail).toBe(text);
+      previous = head.length;
+    }
+    // The finished head still holds both completed blocks; only the trailing
+    // block and its unfinished open equation stay mutable.
+    expect(previous).toBeGreaterThan(30);
+  });
 });

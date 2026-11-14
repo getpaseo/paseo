@@ -711,6 +711,11 @@ it.each([
       backgroundColor: theme.colors.surface2,
       borderColor: "transparent",
     });
+    expect(style.math).toMatchObject({
+      color: theme.colors.foreground,
+      backgroundColor: theme.colors.surface1,
+    });
+    expect(style.inlineMath).toMatchObject({ color: theme.colors.foreground });
     expect(style.link?.color).toBe(theme.colors.accentBright);
     expect(style.linkVariants?.["^(?!https?://).+"]).toEqual({
       color: theme.colors.accentBright,
@@ -930,6 +935,32 @@ it("normalizes a large HTML table into one block per row", () => {
   expect(rendered.split("\n\n")).toHaveLength(rows);
   expect(rendered.startsWith(`${cell} ${cell}`)).toBe(true);
   expect(rendered.endsWith(`${cell} ${cell}`)).toBe(true);
+});
+
+describe("HTML cleanup with math enabled", () => {
+  it("keeps tags inside an inline math span untouched", () => {
+    expect(normalizeMarkdownHtml("Costs $x<y>z$ today")).toBe("Costs $x<y>z$ today");
+  });
+
+  it("keeps tags inside a display math span untouched", () => {
+    const source = "Before.\n\n$$\na<b>\nc=d\n$$\n\nAfter.";
+    expect(normalizeMarkdownHtml(source)).toBe(source);
+  });
+
+  it("still normalizes tags outside math spans", () => {
+    expect(normalizeMarkdownHtml("Costs $x<y>z$ and <b>bold</b>")).toBe(
+      "Costs $x<y>z$ and **bold**",
+    );
+  });
+
+  it("still normalizes tags in code-looking dollar text", () => {
+    // No math span: the second $ is not a closer, so <y> is ordinary HTML.
+    expect(normalizeMarkdownHtml("Costs $5 and <y>z</y>")).toBe("Costs $5 and z");
+  });
+
+  it("keeps comments inside math spans and drops them outside", () => {
+    expect(normalizeMarkdownHtml("$a<!-- c -->b$ <!-- d -->")).toBe("$a<!-- c -->b$ ");
+  });
 });
 
 it.each([
