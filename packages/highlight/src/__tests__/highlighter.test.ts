@@ -66,6 +66,34 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights diff code with addition and deletion styles", () => {
+    const code = [
+      "--- a/app.py",
+      "+++ b/app.py",
+      "@@ -1,2 +1,2 @@",
+      " print('hello')",
+      "-old = 1",
+      "+new = 2",
+    ].join("\n");
+    const result = highlightCode(code, "changes.diff");
+
+    expect(result).toHaveLength(6);
+
+    // File header lines: - prefix → deletion, + prefix → addition.
+    expect(result[0][0]).toEqual({ text: "--- a/app.py", style: "diffDeletion" });
+    expect(result[1][0]).toEqual({ text: "+++ b/app.py", style: "diffAddition" });
+
+    // Hunk header → meta.
+    expect(result[2][0]).toEqual({ text: "@@ -1,2 +1,2 @@", style: "meta" });
+
+    // Context line: no diff token, unstyled.
+    expect(result[3]).toEqual([{ text: " print('hello')", style: null }]);
+
+    // Removed and added lines.
+    expect(result[4][0]).toEqual({ text: "-old = 1", style: "diffDeletion" });
+    expect(result[5][0]).toEqual({ text: "+new = 2", style: "diffAddition" });
+  });
+
   it("highlights C# code", () => {
     const code = 'class Greeter {\n    string message = "hello";\n}';
     const result = highlightCode(code, "test.cs");
