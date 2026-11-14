@@ -51,6 +51,7 @@ import {
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { readConfiguredProviderIcon } from "./provider-icon.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -122,6 +123,7 @@ export interface ProviderSnapshotManagerOptions {
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
   openCodeBridge?: OpenCodeBridge;
+  readProviderIcon?: (iconPath: string) => Promise<string>;
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -234,6 +236,7 @@ interface ProviderSnapshotTarget {
 }
 
 export class ProviderSnapshotManager {
+  private readonly configuredIcons = new Map<AgentProvider, { path: string; svg?: string }>();
   private readonly catalogs = new Map<string, Map<AgentProvider, ProviderCatalog>>();
   private readonly targets = new Map<string, Target>();
   private readonly events = new EventEmitter();
@@ -254,6 +257,7 @@ export class ProviderSnapshotManager {
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
   private pluginProvidersSettled = false;
+  private readonly readProviderIcon: (iconPath: string) => Promise<string>;
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
@@ -265,6 +269,7 @@ export class ProviderSnapshotManager {
     this.openCodeBridge = options.openCodeBridge;
     this.isDev = options.isDev === true;
     this.extraClients = options.extraClients ?? {};
+    this.readProviderIcon = options.readProviderIcon ?? readConfiguredProviderIcon;
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
     this.baseProviderOverrides = options.providerOverrides;
@@ -281,6 +286,7 @@ export class ProviderSnapshotManager {
       ...this.extraClients,
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+    this.refreshConfiguredIcons();
   }
 
   getSnapshot(cwd?: string): ProviderSnapshot {
@@ -652,6 +658,7 @@ export class ProviderSnapshotManager {
     }
     this.generation = generation;
     this.providerClients = clients;
+    this.refreshConfiguredIcons();
     this.warnUnknownProviderOverrides();
     for (const [key, catalogs] of this.catalogs) {
       for (const provider of changed) catalogs.delete(provider);
@@ -1076,6 +1083,49 @@ export class ProviderSnapshotManager {
     }
   }
 
+  private refreshConfiguredIcons(): void {
+    for (const [provider, icon] of this.configuredIcons) {
+      if (
+        !this.generation.definitions[provider] ||
+        !this.providerOverrides?.[provider]?.icon ||
+        !icon.svg
+      ) {
+        this.configuredIcons.delete(provider);
+      }
+    }
+    for (const provider of this.generation.order) {
+      const iconPath = this.providerOverrides?.[provider]?.icon;
+      if (!iconPath || this.configuredIcons.get(provider)?.path === iconPath) continue;
+      const current: { path: string; svg?: string } = { path: iconPath };
+      this.configuredIcons.set(provider, current);
+      void this.readProviderIcon(iconPath).then(
+        (svg) => {
+          if (this.destroyed || this.configuredIcons.get(provider) !== current) return;
+          current.svg = svg;
+          this.publishTargets(this.targets.keys());
+          return undefined;
+        },
+        (error: unknown) => {
+          if (this.destroyed || this.configuredIcons.get(provider) !== current) return;
+          this.configuredIcons.delete(provider);
+          this.logger.warn(
+            { provider, icon: iconPath, err: error },
+            "Ignoring invalid provider icon",
+          );
+        },
+      );
+    }
+  }
+
+  private withConfiguredIcon(
+    provider: AgentProvider,
+    record: ProviderSnapshotRecord,
+  ): ProviderSnapshotRecord {
+    const svg = this.configuredIcons.get(provider)?.svg;
+    if (!svg || record.entry.iconSvg === svg) return record;
+    return identifyEntry({ ...record.entry, iconSvg: svg });
+  }
+
   private publishTargets(cwds: Iterable<string>): void {
     if (this.destroyed) return;
     const transitions: ProviderSnapshotTransition[] = [];
@@ -1086,7 +1136,10 @@ export class ProviderSnapshotManager {
         const result = binding?.key
           ? this.catalogs.get(binding.key)?.get(provider)?.result
           : undefined;
-        return binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial;
+        return this.withConfiguredIcon(
+          provider,
+          binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial,
+        );
       });
       const previous = target.snapshot;
       if (sameSnapshotRecords(previous.records, records)) continue;
@@ -1115,8 +1168,11 @@ export class ProviderSnapshotManager {
         bindings: new Map(),
         snapshot: {
           cwd,
-          records: this.generation.order.map(
-            (provider) => this.generation.providerStates.get(provider)!.initial,
+          records: this.generation.order.map((provider) =>
+            this.withConfiguredIcon(
+              provider,
+              this.generation.providerStates.get(provider)!.initial,
+            ),
           ),
         },
       };

@@ -28,6 +28,11 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("custom-claude-profile")).toEqual({ kind: "bot" });
   });
 
+  it("uses a configured icon for a built-in provider", () => {
+    const svg = '<svg viewBox="0 0 24 24" />';
+    expect(resolveProviderIconName("codex", svg)).toEqual({ kind: "svg", svg });
+  });
+
   it("resolves a snapshot SVG for a custom provider", () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
 

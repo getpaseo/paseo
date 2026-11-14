@@ -1,6 +1,7 @@
 import pino from "pino";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import type {
   ProviderEvent,
@@ -1488,6 +1489,69 @@ describe("ProviderSnapshotManager public surface", () => {
       expect(inheriting).toEqual({ modeId: "base", providerOptions: { auto_accept: true } });
     } finally {
       manager.destroy();
+    }
+  });
+});
+
+describe("configured provider icons", () => {
+  test("publishes the newest icon and clears it when removed", async () => {
+    let finishFirst!: (svg: string) => void;
+    const first = new Promise<string>((complete) => {
+      finishFirst = complete;
+    });
+    const provider = { extends: "codex", label: "Custom", icon: "first.svg" };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { custom: provider },
+      readProviderIcon: (path) =>
+        path === "first.svg" ? first : Promise.resolve('<svg id="second" />'),
+    });
+    const icon = () =>
+      manager.getSnapshot("/tmp/icon-test").records.find(({ entry }) => entry.provider === "custom")
+        ?.entry.iconSvg;
+    try {
+      expect(icon()).toBeUndefined();
+      manager.applyMutableProviderConfig(
+        { custom: { ...provider, icon: "second.svg" } },
+        { replace: true },
+      );
+      await vi.waitFor(() => expect(icon()).toBe('<svg id="second" />'));
+      finishFirst('<svg id="first" />');
+      await first;
+      await Promise.resolve();
+      expect(icon()).toBe('<svg id="second" />');
+      manager.applyMutableProviderConfig(
+        { custom: { extends: "codex", label: "Custom" } },
+        { replace: true },
+      );
+      expect(icon()).toBeUndefined();
+    } finally {
+      finishFirst('<svg id="first" />');
+      manager.destroy();
+    }
+  });
+
+  test("reads real SVG icon from disk and retries after fixing an initially missing icon", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "provider-icon-test-"));
+    const iconFile = join(dir, "custom.svg");
+    const validSvg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="blue"/></svg>';
+    const provider = { extends: "codex", label: "Custom", icon: iconFile };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { custom: provider },
+    });
+    const icon = () =>
+      manager.getSnapshot("/tmp/icon-test").records.find(({ entry }) => entry.provider === "custom")
+        ?.entry.iconSvg;
+    try {
+      expect(icon()).toBeUndefined();
+      writeFileSync(iconFile, validSvg, "utf8");
+      manager.applyMutableProviderConfig({ custom: provider }, { replace: true });
+      await vi.waitFor(() => expect(icon()).toBe(validSvg));
+    } finally {
+      manager.destroy();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
