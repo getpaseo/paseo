@@ -839,23 +839,24 @@ export function deriveModelDefinitionsFromACP(
   models: SessionModelState | null | undefined,
   configOptions?: SessionConfigOption[] | null,
 ): AgentModelDefinition[] {
+  const sessionThinking = deriveSessionThinking(configOptions);
+
   if (models?.availableModels?.length) {
     return models.availableModels.map((model) => {
+      const isDefault = model.modelId === models.currentModelId;
       const thinking = deriveACPModelThinking({
-        modelId: model.modelId,
-        isCurrent: model.modelId === models.currentModelId,
         metadata: model._meta,
-        configOptions,
+        isDefault,
+        sessionThinking,
       });
       return {
         provider,
         id: model.modelId,
         label: model.name,
         description: model.description ?? undefined,
-        isDefault: model.modelId === models.currentModelId,
+        isDefault,
         thinkingOptions: thinking.thinkingOptions,
         defaultThinkingOptionId: thinking.defaultThinkingOptionId,
-        metadata: thinking.metadata,
       };
     });
   }
@@ -863,10 +864,9 @@ export function deriveModelDefinitionsFromACP(
   const modelOptions = deriveSelectorOptions(configOptions, "model");
   return modelOptions.map((option) => {
     const thinking = deriveACPModelThinking({
-      modelId: option.id,
-      isCurrent: option.isDefault === true,
       metadata: option.metadata,
-      configOptions,
+      isDefault: option.isDefault === true,
+      sessionThinking,
     });
     return {
       provider,
@@ -876,11 +876,19 @@ export function deriveModelDefinitionsFromACP(
       isDefault: option.isDefault,
       thinkingOptions: thinking.thinkingOptions,
       defaultThinkingOptionId: thinking.defaultThinkingOptionId,
-      metadata: thinking.metadata,
+      metadata: option.metadata,
     };
   });
 }
 
+type ACPModelThinking = Pick<AgentModelDefinition, "thinkingOptions" | "defaultThinkingOptionId">;
+
+const NO_THINKING: ACPModelThinking = {
+  thinkingOptions: undefined,
+  defaultThinkingOptionId: undefined,
+};
+
+// Some ACP agents describe each model's reasoning levels in the model's `_meta`.
 const ACPModelReasoningSchema = z.object({
   supportsReasoningEffort: z.boolean().optional(),
   reasoningEffort: z.string().min(1).nullish(),
@@ -897,108 +905,57 @@ const ACPModelReasoningSchema = z.object({
     .optional(),
 });
 
-interface ACPModelThinkingInput {
-  modelId: string;
-  isCurrent: boolean;
-  metadata?: Record<string, unknown> | null;
-  configOptions: SessionConfigOption[] | null | undefined;
-}
-
-type ACPModelThinking = Pick<
-  AgentModelDefinition,
-  "thinkingOptions" | "defaultThinkingOptionId" | "metadata"
->;
-
-function deriveACPModelThinking(input: ACPModelThinkingInput): ACPModelThinking {
-  const { metadata, isCurrent } = input;
-  const sessionOptions = deriveACPSelectedModelThinking(input);
-  const noOptions = {
-    thinkingOptions: undefined,
-    defaultThinkingOptionId: undefined,
-    metadata: metadata ?? undefined,
-  };
-  // _meta is an extension boundary. Do not trust its shape or infer an effort table
-  // from supportsReasoningEffort alone.
-  const parsed = ACPModelReasoningSchema.safeParse(metadata ?? {});
-  if (!parsed.success) {
-    return unconfirmedACPModelThinking(input);
-  }
-  const { reasoningEfforts, reasoningEffort, supportsReasoningEffort } = parsed.data;
-  if (reasoningEfforts?.length === 0) {
-    return supportsReasoningEffort === true ? unconfirmedACPModelThinking(input) : noOptions;
-  }
-  if (supportsReasoningEffort === false) {
-    return reasoningEfforts?.length ? unconfirmedACPModelThinking(input) : noOptions;
-  }
-  if (reasoningEfforts?.length) {
-    const sessionEffort = sessionOptions?.defaultThinkingOptionId;
-    const thinking = deriveACPReasoningOptions(reasoningEfforts, sessionEffort ?? reasoningEffort);
-    return thinking ? { ...noOptions, ...thinking } : unconfirmedACPModelThinking(input);
-  }
-  if (sessionOptions) {
-    const hasThinkingOptions = sessionOptions.thinkingOptions !== undefined;
-    if (hasThinkingOptions || supportsReasoningEffort !== true) {
-      return { ...noOptions, ...sessionOptions };
-    }
-  }
-  if (supportsReasoningEffort === true || isCurrent) {
-    return unconfirmedACPModelThinking(input);
-  }
-  // Without per-model metadata, session config describes only the selected model.
-  return noOptions;
-}
-
-function deriveACPSelectedModelThinking({
-  modelId,
-  isCurrent,
-  configOptions,
-}: ACPModelThinkingInput): ACPModelThinking | null {
-  if (!isCurrent) {
-    return null;
-  }
-  const modelSelector = findSelectConfigOption({ configOptions, category: "model" });
-  if (modelSelector && modelSelector.currentValue !== modelId) {
-    return null;
-  }
+function deriveSessionThinking(
+  configOptions: SessionConfigOption[] | null | undefined,
+): ACPModelThinking {
   const thinkingOptions = deriveSelectorOptions(configOptions, "thought_level");
+  if (thinkingOptions.length === 0) {
+    return NO_THINKING;
+  }
   return {
-    thinkingOptions: thinkingOptions.length > 0 ? thinkingOptions : undefined,
+    thinkingOptions,
     defaultThinkingOptionId: thinkingOptions.find((option) => option.isDefault)?.id,
   };
 }
 
-function unconfirmedACPModelThinking({
-  modelId,
-  metadata,
-}: ACPModelThinkingInput): ACPModelThinking {
-  const diagnostic = `Cannot confirm thinking options for ACP model "${modelId}": no valid per-model reasoning options were reported.`;
-  const existingError = metadata?.thinkingOptionsError;
-  const thinkingOptionsError =
-    typeof existingError === "string" ? `${existingError} ${diagnostic}` : diagnostic;
-  return {
-    thinkingOptions: undefined,
-    defaultThinkingOptionId: undefined,
-    metadata: { ...metadata, thinkingOptionsError },
-  };
-}
-
-function deriveACPReasoningOptions(
-  reasoningEfforts: NonNullable<z.infer<typeof ACPModelReasoningSchema>["reasoningEfforts"]>,
-  currentEffort: string | null | undefined,
-): ACPModelThinking | null {
-  const ids = reasoningEfforts.map((effort) => effort.value ?? effort.id);
-  const markedDefault = reasoningEfforts.find((effort) => effort.default);
-  const defaultThinkingOptionId = currentEffort ?? markedDefault?.value ?? markedDefault?.id;
-  const invalidDefault = defaultThinkingOptionId && !ids.includes(defaultThinkingOptionId);
-  if (invalidDefault || new Set(ids).size !== ids.length) {
-    return null;
+// A model's own reasoning metadata describes that model. A model that reports none
+// keeps the session's thought_level options, which describe the startup model.
+function deriveACPModelThinking(input: {
+  metadata: Record<string, unknown> | null | undefined;
+  isDefault: boolean;
+  sessionThinking: ACPModelThinking;
+}): ACPModelThinking {
+  const { metadata, isDefault, sessionThinking } = input;
+  const parsed = ACPModelReasoningSchema.safeParse(metadata ?? {});
+  if (!parsed.success) {
+    return sessionThinking;
   }
+  const { supportsReasoningEffort, reasoningEffort, reasoningEfforts } = parsed.data;
+  if (supportsReasoningEffort === false || reasoningEfforts?.length === 0) {
+    return NO_THINKING;
+  }
+  if (!reasoningEfforts) {
+    return sessionThinking;
+  }
+
+  const ids = reasoningEfforts.map((effort) => effort.value ?? effort.id);
+  if (new Set(ids).size !== ids.length) {
+    return sessionThinking;
+  }
+  const markedDefault = reasoningEfforts.find((effort) => effort.default);
+  const defaultCandidates = [
+    isDefault ? sessionThinking.defaultThinkingOptionId : undefined,
+    reasoningEffort,
+    markedDefault ? (markedDefault.value ?? markedDefault.id) : undefined,
+  ];
+  const defaultThinkingOptionId =
+    defaultCandidates.find((id) => id && ids.includes(id)) ?? undefined;
   return {
-    thinkingOptions: reasoningEfforts.map((effort) => ({
-      id: effort.value ?? effort.id,
+    thinkingOptions: reasoningEfforts.map((effort, index) => ({
+      id: ids[index],
       label: effort.label,
       description: effort.description ?? undefined,
-      isDefault: (effort.value ?? effort.id) === defaultThinkingOptionId,
+      isDefault: ids[index] === defaultThinkingOptionId,
     })),
     defaultThinkingOptionId,
   };
