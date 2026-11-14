@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactElement } from "react";
+import { useMemo, type ReactElement } from "react";
 import {
   DndContext,
   closestCenter,
@@ -61,11 +61,6 @@ function SortableItem<T>({
     isDragging,
   } = useSortable({ id, disabled, data: itemData });
 
-  const drag = useCallback(() => {
-    // dnd-kit handles drag initiation via listeners
-    // This is a no-op but matches the mobile API
-  }, []);
-
   // External DnD contexts render their own insertion affordance, so keep the
   // tab row static and let the DragOverlay carry the moving chip.
   const baseTransform = externalDndContext
@@ -89,7 +84,6 @@ function SortableItem<T>({
   const info: DraggableRenderItemInfo<T> = {
     item,
     index,
-    drag,
     isActive: activeId === id,
     dragHandleProps: useDragHandle
       ? {

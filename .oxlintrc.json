@@ -418,7 +418,6 @@
         "packages/app/src/components/context-window-meter.tsx",
         "packages/app/src/components/dictation-controls.tsx",
         "packages/app/src/components/download-toast.tsx",
-        "packages/app/src/components/draggable-list.native.tsx",
         "packages/app/src/components/headers/back-header.tsx",
         "packages/app/src/components/headers/screen-header.tsx",
         "packages/app/src/components/host-status-dot.tsx",

@@ -7,8 +7,9 @@ import { test } from "node:test";
 
 const script = path.resolve("scripts", "postinstall-patches.mjs");
 const bin = path.resolve("node_modules", ".bin");
-const packageName = "react-native-draggable-flatlist";
-const patchFile = `${packageName}+4.0.3.patch`;
+const packageName = "react-native-gesture-handler";
+const packageVersion = "2.32.0";
+const patchFile = `${packageName}+${packageVersion}.patch`;
 
 for (const platform of ["ios", "android"]) {
   test(`patched Markdown ships ${platform} props generated from its native specs`, () => {
@@ -54,7 +55,7 @@ function createCheckout() {
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(
     path.join(packageDir, "package.json"),
-    JSON.stringify({ name: packageName, version: "4.0.3" }),
+    JSON.stringify({ name: packageName, version: packageVersion }),
   );
   writeFileSync(path.join(packageDir, "index.js"), "export const value = 1;\n");
   mkdirSync(path.join(root, "patches"));

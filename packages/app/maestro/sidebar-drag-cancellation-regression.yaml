@@ -49,29 +49,22 @@ appId: ${PASEO_MAESTRO_APP_ID}
     above:
       text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
 
-# Horizontal intent after the lift belongs to panel close. It must cancel the
-# drag without committing another reorder or leaving the outer list locked.
+# Horizontal movement after the lift stays with the lifted row: the panel does
+# not close, the drop commits no reorder, and the outer list stays scrollable.
 - swipe:
     from:
       text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
     direction: LEFT
     duration: 20000
-- assertNotVisible:
+- assertVisible:
     id: "sidebar-project-list"
-
-- tapOn:
-    id: "menu-button"
-- extendedWaitUntil:
-    visible:
-      id: "sidebar-project-list"
-    timeout: 10000
 - assertVisible:
     text: ".*${PASEO_MAESTRO_DRAG_B_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_B_NAME}, Project actions"
     above:
       text: ".*${PASEO_MAESTRO_DRAG_A_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_A_NAME}, Project actions"
 
-# Reaching a fixture at the bottom proves the nestable outer scroll was
-# unlocked by cancellation.
+# Reaching a fixture at the bottom proves the outer scroll still works after
+# the horizontal drag.
 - scrollUntilVisible:
     element:
       text: ".*${PASEO_MAESTRO_DRAG_Z_NAME}, Create a new workspace for ${PASEO_MAESTRO_DRAG_Z_NAME}, Project actions"
@@ -92,7 +85,7 @@ appId: ${PASEO_MAESTRO_APP_ID}
     visibilityPercentage: 50
     centerElement: true
 
-# A real reorder after cancellation proves the list is not merely scrollable;
+# A real reorder after the horizontal drag proves the list is not merely scrollable;
 # its drag recognizer and semantic order update both recovered.
 - swipe:
     from:

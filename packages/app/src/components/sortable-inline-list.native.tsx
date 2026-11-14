@@ -40,7 +40,6 @@ function SortableInlineListItem<T>({
   const info: DraggableRenderItemInfo<T> = {
     item,
     index,
-    drag: () => {},
     isActive: false,
   };
   return renderItem(info);

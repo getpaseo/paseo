@@ -669,7 +669,6 @@ function MobileSidebar({
                 onAddProject={handleOpenProject}
                 onImportSession={handleImportSession}
                 parentGestureRef={closeGestureRef}
-                dragGestureHostActive={active}
                 listHeaderComponent={workspacesSectionHeaderElement}
               />
             )}
@@ -871,7 +870,6 @@ function DesktopSidebar({
                   onImportSession={handleImportSession}
                   onWorkspacePress={closeSidebar}
                   parentGestureRef={closeGestureRef}
-                  dragGestureHostActive={active}
                   listHeaderComponent={workspacesSectionHeaderElement}
                 />
               )}

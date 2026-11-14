@@ -18,9 +18,9 @@ maestro test packages/app/maestro/ios-sidebar-close-regression.yaml --udid <simu
 
 `test-sidebar-drag-cancellation-ios.sh` creates three temporary projects and
 uses real native slow swipes to cover successful reorder, a second touch during
-the drop spring, horizontal close cancellation, outer-list scroll recovery, and
-a subsequent reorder. The harness removes its daemon projects and local fixture
-directories on exit.
+the drop spring, a horizontal swipe after the lift that keeps the panel open
+and the order unchanged, outer-list scroll recovery, and a subsequent reorder.
+The harness removes its daemon projects and local fixture directories on exit.
 
 Start the debug dev client against the intended Metro server, then run:
 

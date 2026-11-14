@@ -1,23 +1,12 @@
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
-import {
-  memo,
-  useCallback,
-  useMemo,
-  useState,
-  type MutableRefObject,
-  type ReactNode,
-  type Ref,
-} from "react";
+import { memo, useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import {
   View,
   Text,
-  ScrollView,
   type GestureResponderEvent,
   type PressableStateCallbackType,
 } from "react-native";
-import { NestableScrollContainer } from "react-native-draggable-flatlist";
-import type { GestureType } from "react-native-gesture-handler";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -77,9 +66,14 @@ import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-heade
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
-import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
+import {
+  DraggableList,
+  DraggableListHandle,
+  DraggableListScrollView,
+  type DraggableRenderItemInfo,
+} from "@/components/draggable-list";
 import type { DraggableListDragHandleProps } from "@/components/draggable-list.types";
-import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
+import { useRowPressGuard } from "@/components/sidebar/use-row-press-guard";
 
 // Themed icon wrappers
 const mutedGroupIconProps = densityIconProps("sm", (theme) => ({
@@ -126,8 +120,6 @@ interface StatusWorkspaceListProps {
   listHeaderComponent?: ReactNode;
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty?: boolean;
-  parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostActive?: boolean;
 }
 
 export function SidebarStatusWorkspaceList({
@@ -143,8 +135,6 @@ export function SidebarStatusWorkspaceList({
   onPinnedWorkspaceReorder,
   listHeaderComponent,
   sidebarFilterEmpty = false,
-  parentGestureRef,
-  dragGestureHostActive,
 }: StatusWorkspaceListProps) {
   const { t } = useTranslation();
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
@@ -170,7 +160,6 @@ export function SidebarStatusWorkspaceList({
     (
       workspace: SidebarWorkspaceEntry,
       input?: {
-        drag?: () => void;
         isDragging?: boolean;
         dragHandleProps?: DraggableListDragHandleProps;
       },
@@ -189,7 +178,6 @@ export function SidebarStatusWorkspaceList({
         canPin={supportsPinningByServerId.get(workspace.serverId) === true}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onWorkspacePress={onWorkspacePress}
-        drag={input?.drag}
         isDragging={input?.isDragging}
         dragHandleProps={input?.dragHandleProps}
       />
@@ -207,12 +195,10 @@ export function SidebarStatusWorkspaceList({
   const renderPinnedWorkspace = useCallback(
     ({
       item: workspace,
-      drag,
       isActive,
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspaceEntry>) =>
       renderPinnedWorkspaceRow(workspace, {
-        drag,
         isDragging: isActive,
         dragHandleProps,
       }),
@@ -237,11 +223,7 @@ export function SidebarStatusWorkspaceList({
                 keyExtractor={statusWorkspaceKeyExtractor}
                 renderItem={renderPinnedWorkspace}
                 onDragEnd={onPinnedWorkspaceReorder}
-                scrollEnabled={false}
                 useDragHandle
-                nestable={platformIsNative}
-                simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostActive}
               />
               {canTogglePinnedWorkspaces ? (
                 <SidebarGroupToggleRow
@@ -275,25 +257,14 @@ export function SidebarStatusWorkspaceList({
 
   return (
     <View style={styles.container}>
-      {platformIsNative ? (
-        <NestableScrollContainer
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          testID="sidebar-status-list-scroll"
-        >
-          {content}
-        </NestableScrollContainer>
-      ) : (
-        <ScrollView
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          testID="sidebar-status-list-scroll"
-        >
-          {content}
-        </ScrollView>
-      )}
+      <DraggableListScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        testID="sidebar-status-list-scroll"
+      >
+        {content}
+      </DraggableListScrollView>
     </View>
   );
 }
@@ -543,7 +514,6 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
   inStatusGroup = true,
-  drag,
   isDragging = false,
   dragHandleProps,
 }: {
@@ -562,7 +532,6 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
    */
   inStatusGroup?: boolean;
   onWorkspacePress?: () => void;
-  drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
@@ -590,7 +559,6 @@ const StatusWorkspaceRow = memo(function StatusWorkspaceRow({
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       inStatusGroup={inStatusGroup}
       onPress={handlePress}
-      drag={drag}
       isDragging={isDragging}
       dragHandleProps={dragHandleProps}
     />
@@ -610,7 +578,6 @@ function StatusWorkspaceRowWithMenu({
   reserveIdleStatusIndicatorSpace = true,
   inStatusGroup = true,
   onPress,
-  drag,
   isDragging = false,
   dragHandleProps,
 }: {
@@ -630,7 +597,6 @@ function StatusWorkspaceRowWithMenu({
    */
   inStatusGroup?: boolean;
   onPress: () => void;
-  drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }) {
@@ -735,7 +701,6 @@ function StatusWorkspaceRowWithMenu({
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
         inStatusGroup={inStatusGroup}
-        drag={drag}
         isDragging={isDragging}
         dragHandleProps={dragHandleProps}
       />
@@ -771,26 +736,20 @@ interface StatusWorkspaceRowInnerProps {
   reserveIdleStatusIndicatorSpace?: boolean;
   /** Pinned rows are flat under their own header; status-group rows indent from theirs. */
   inStatusGroup?: boolean;
-  drag?: () => void;
   isDragging?: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
 function StatusWorkspaceRowInner(props: StatusWorkspaceRowInnerProps) {
-  if (props.drag) {
-    return <DraggableStatusWorkspaceRowInner {...props} drag={props.drag} />;
+  if (props.dragHandleProps) {
+    return <DraggableStatusWorkspaceRowInner {...props} />;
   }
   return <StatusWorkspaceRowInnerContent {...props} />;
 }
 
-function DraggableStatusWorkspaceRowInner(
-  props: StatusWorkspaceRowInnerProps & { drag: () => void },
-) {
-  const dragInteraction = useLongPressDragInteraction({
-    drag: props.drag,
-    menuController: null,
-  });
-  return <StatusWorkspaceRowInnerContent {...props} dragInteraction={dragInteraction} />;
+function DraggableStatusWorkspaceRowInner(props: StatusWorkspaceRowInnerProps) {
+  const pressGuard = useRowPressGuard();
+  return <StatusWorkspaceRowInnerContent {...props} pressGuard={pressGuard} />;
 }
 
 function StatusWorkspaceRowInnerContent({
@@ -820,9 +779,9 @@ function StatusWorkspaceRowInnerContent({
   inStatusGroup = true,
   isDragging = false,
   dragHandleProps,
-  dragInteraction,
+  pressGuard,
 }: StatusWorkspaceRowInnerProps & {
-  dragInteraction?: ReturnType<typeof useLongPressDragInteraction>;
+  pressGuard?: ReturnType<typeof useRowPressGuard>;
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
@@ -840,17 +799,16 @@ function StatusWorkspaceRowInnerContent({
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
   const isEditingTitle = titleEditor !== null;
-  const didLongPressRef = dragInteraction?.didLongPressRef;
-  const startDragPress = dragInteraction?.handlePressIn;
-  const moveDragPress = dragInteraction?.handleTouchMove;
-  const endDragPress = dragInteraction?.handlePressOut;
+  const consumeMovedPress = pressGuard?.consumeMovedPress;
+  const startDragPress = pressGuard?.handlePressIn;
+  const moveDragPress = pressGuard?.handleTouchMove;
+  const endDragPress = pressGuard?.handlePressOut;
   const handlePress = useCallback(() => {
-    if (didLongPressRef?.current) {
-      didLongPressRef.current = false;
+    if (consumeMovedPress?.()) {
       return;
     }
     onPress();
-  }, [didLongPressRef, onPress]);
+  }, [consumeMovedPress, onPress]);
   const handlePressIn = useCallback(
     (event: GestureResponderEvent) => {
       setIsPressed(true);
@@ -895,87 +853,89 @@ function StatusWorkspaceRowInnerContent({
         });
         const backdrop = getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered });
         return (
-          <View
-            {...dragAttributes}
-            {...(isEditingTitle ? null : dragHandleProps?.listeners)}
-            ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
-            style={styles.workspaceRowContainer}
-            {...hoverHandlers}
-          >
-            <SidebarWorkspaceContextMenu
-              contextMenuOpen={contextMenuOpen}
-              onContextMenuOpenChange={onContextMenuOpenChange}
-              workspace={workspace}
-              leadingProjectName={projectName}
-              hostBadgeLabel={hostBadge?.label}
-              serviceSummary={serviceSummary}
-              workspaceKey={workspace.workspaceKey}
-              onCopyPath={onCopyPath}
-              onCopyBranchName={onCopyBranchName}
-              onRename={onRename}
-              onMarkAsRead={onMarkAsRead}
-              onMarkAsUnread={onMarkAsUnread}
-              onArchive={onArchive}
-              archiveLabel={archiveLabel}
-              archiveStatus={archiveStatus}
-              archivePendingLabel={archivePendingLabel}
-              archiveShortcutKeys={archiveShortcutKeys}
-              isPinned={isPinned}
-              onTogglePin={onTogglePin}
-              openInFileManagerPath={workspace.workspaceDirectory}
-              disabled={isArchiving}
-              enabled={!isEditingTitle}
-              accessibilityRole="button"
-              accessibilityState={accessibilityState}
-              style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowPressed}
-              onPressIn={isEditingTitle ? undefined : handlePressIn}
-              onTouchMove={isEditingTitle ? undefined : moveDragPress}
-              onPressOut={isEditingTitle ? undefined : handlePressOut}
-              onPress={isEditingTitle ? undefined : handlePress}
-              testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+          <DraggableListHandle dragHandleProps={isEditingTitle ? undefined : dragHandleProps}>
+            <View
+              {...dragAttributes}
+              {...(isEditingTitle ? null : dragHandleProps?.listeners)}
+              ref={dragHandleProps?.setActivatorNodeRef as unknown as Ref<View>}
+              style={styles.workspaceRowContainer}
+              {...hoverHandlers}
             >
-              <SidebarWorkspaceRowContent
+              <SidebarWorkspaceContextMenu
+                contextMenuOpen={contextMenuOpen}
+                onContextMenuOpenChange={onContextMenuOpenChange}
                 workspace={workspace}
-                hostBadge={hostBadge}
                 leadingProjectName={projectName}
-                leadingProjectIconDataUri={projectIconDataUri}
+                hostBadgeLabel={hostBadge?.label}
                 serviceSummary={serviceSummary}
-                backdrop={backdrop}
-                isHovered={isHovered}
-                isLoading={isArchiving}
-                shortcutNumber={shortcutNumber}
-                showShortcutBadge={showShortcutBadge}
-                reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
-                titleEditor={titleEditor}
+                workspaceKey={workspace.workspaceKey}
+                onCopyPath={onCopyPath}
+                onCopyBranchName={onCopyBranchName}
+                onRename={onRename}
+                onMarkAsRead={onMarkAsRead}
+                onMarkAsUnread={onMarkAsUnread}
+                onArchive={onArchive}
+                archiveLabel={archiveLabel}
+                archiveStatus={archiveStatus}
+                archivePendingLabel={archivePendingLabel}
+                archiveShortcutKeys={archiveShortcutKeys}
+                isPinned={isPinned}
+                onTogglePin={onTogglePin}
+                openInFileManagerPath={workspace.workspaceDirectory}
+                disabled={isArchiving}
+                enabled={!isEditingTitle}
+                accessibilityRole="button"
+                accessibilityState={accessibilityState}
+                style={workspaceRowStyle}
+                highlightStyle={styles.workspaceRowPressed}
+                onPressIn={isEditingTitle ? undefined : handlePressIn}
+                onTouchMove={isEditingTitle ? undefined : moveDragPress}
+                onPressOut={isEditingTitle ? undefined : handlePressOut}
+                onPress={isEditingTitle ? undefined : handlePress}
+                testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
               >
-                {renderSlot ? (
-                  <StatusWorkspaceActionSlot
-                    workspace={workspace}
-                    backdrop={backdrop}
-                    trailing={trailing}
-                    trailingPresentation={trailingPresentation}
-                    showKebab={showKebabInSlot}
-                    showArchiveButton={showArchiveButton}
-                    showScrim={showScrim}
-                    reserveSlotWidth={reserveSlotWidth}
-                    isPinned={isPinned}
-                    onTogglePin={onTogglePin}
-                    onCopyPath={onCopyPath}
-                    onCopyBranchName={onCopyBranchName}
-                    onRename={onRename}
-                    onMarkAsRead={onMarkAsRead}
-                    onMarkAsUnread={onMarkAsUnread}
-                    onArchive={onArchive}
-                    archiveLabel={archiveLabel}
-                    archiveStatus={archiveStatus}
-                    archivePendingLabel={archivePendingLabel}
-                    archiveShortcutKeys={archiveShortcutKeys}
-                  />
-                ) : null}
-              </SidebarWorkspaceRowContent>
-            </SidebarWorkspaceContextMenu>
-          </View>
+                <SidebarWorkspaceRowContent
+                  workspace={workspace}
+                  hostBadge={hostBadge}
+                  leadingProjectName={projectName}
+                  leadingProjectIconDataUri={projectIconDataUri}
+                  serviceSummary={serviceSummary}
+                  backdrop={backdrop}
+                  isHovered={isHovered}
+                  isLoading={isArchiving}
+                  shortcutNumber={shortcutNumber}
+                  showShortcutBadge={showShortcutBadge}
+                  reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                  titleEditor={titleEditor}
+                >
+                  {renderSlot ? (
+                    <StatusWorkspaceActionSlot
+                      workspace={workspace}
+                      backdrop={backdrop}
+                      trailing={trailing}
+                      trailingPresentation={trailingPresentation}
+                      showKebab={showKebabInSlot}
+                      showArchiveButton={showArchiveButton}
+                      showScrim={showScrim}
+                      reserveSlotWidth={reserveSlotWidth}
+                      isPinned={isPinned}
+                      onTogglePin={onTogglePin}
+                      onCopyPath={onCopyPath}
+                      onCopyBranchName={onCopyBranchName}
+                      onRename={onRename}
+                      onMarkAsRead={onMarkAsRead}
+                      onMarkAsUnread={onMarkAsUnread}
+                      onArchive={onArchive}
+                      archiveLabel={archiveLabel}
+                      archiveStatus={archiveStatus}
+                      archivePendingLabel={archivePendingLabel}
+                      archiveShortcutKeys={archiveShortcutKeys}
+                    />
+                  ) : null}
+                </SidebarWorkspaceRowContent>
+              </SidebarWorkspaceContextMenu>
+            </View>
+          </DraggableListHandle>
         );
       }}
     </SidebarWorkspaceRowFrame>

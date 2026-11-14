@@ -1,133 +1,152 @@
-import { RefreshControl } from "react-native";
-import { useCallback, useMemo, useState } from "react";
-import DraggableFlatList, {
-  NestableDraggableFlatList,
-  type RenderItemParams,
-} from "react-native-draggable-flatlist";
-import { useUnistyles } from "react-native-unistyles";
-import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
+import { createContext, useCallback, useContext, useState, type ReactElement } from "react";
+import { View } from "react-native";
+import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
+import {
+  createAnimatedComponent,
+  useAnimatedReaction,
+  useAnimatedRef,
+  type AnimatedRef,
+} from "react-native-reanimated";
+import Sortable, {
+  useItemContext,
+  type SortableGridDragEndParams,
+  type SortableGridRenderItem,
+} from "react-native-sortables";
+import { scheduleOnRN } from "react-native-worklets";
+import type {
+  DraggableListDragHandleProps,
+  DraggableListHandleProps,
+  DraggableListProps,
+  DraggableListScrollViewProps,
+  DraggableRenderItemInfo,
+} from "./draggable-list.types";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
-const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
+// Sortables places every row with UI-thread offsets, so the reorder commit never moves a row by
+// itself. Lists that position rows by React child order plus a held drag translate paint one
+// frame of new order + old translate when the reorder commits.
+//
+// Render lists inside `DraggableListScrollView` so a dragged row autoscrolls it.
+//
+// A drag interrupted by the system (app backgrounded, incoming call) commits the order it
+// previewed: sortables ends a cancelled drag through the same `onDragEnd` as a release.
+
+// A row lifts after a still hold. Moving first fails the drag, so the touch scrolls the list or
+// swipes the panel instead.
+const DRAG_ACTIVATION_DELAY_MS = 180;
+const DRAG_ACTIVATION_FAIL_OFFSET_PX = 4;
+
+// Native handles carry no props; their presence marks the row as the handle.
+const NATIVE_DRAG_HANDLE_PROPS: DraggableListDragHandleProps = {};
+
+const AnimatedGestureScrollView = createAnimatedComponent(GestureScrollView);
+
+const ScrollViewRefContext = createContext<AnimatedRef | null>(null);
+
+export function DraggableListScrollView({
+  children,
+  simultaneousGestureRef,
+  ...scrollViewProps
+}: DraggableListScrollViewProps) {
+  const scrollViewRef = useAnimatedRef();
+  return (
+    <AnimatedGestureScrollView
+      {...scrollViewProps}
+      ref={scrollViewRef}
+      simultaneousHandlers={simultaneousGestureRef}
+    >
+      <ScrollViewRefContext.Provider value={scrollViewRef}>
+        {children}
+      </ScrollViewRefContext.Provider>
+    </AnimatedGestureScrollView>
+  );
+}
+
+export function DraggableListHandle({ children, dragHandleProps }: DraggableListHandleProps) {
+  if (!dragHandleProps) {
+    return children;
+  }
+  return <Sortable.Handle>{children}</Sortable.Handle>;
+}
 
 export function DraggableList<T>({
   data,
   keyExtractor,
   renderItem,
   onDragEnd,
-  style,
   containerStyle,
-  contentContainerStyle,
   testID,
-  ListFooterComponent,
-  ListHeaderComponent,
-  ListEmptyComponent,
-  showsVerticalScrollIndicator = true,
-  scrollEnabled = true,
-  useDragHandle: _useDragHandle = false,
-  refreshing,
-  onRefresh,
-  extraData,
-  simultaneousGestureRef,
-  gestureHostPresented,
-  waitFor,
-  onDragBegin: onDragBeginProp,
-  nestable = false,
+  useDragHandle = false,
 }: DraggableListProps<T>) {
-  const { theme } = useUnistyles();
-  const [isDragging, setIsDragging] = useState(false);
+  const scrollViewRef = useContext(ScrollViewRefContext);
+  const dragHandleProps = useDragHandle ? NATIVE_DRAG_HANDLE_PROPS : undefined;
 
-  // Pass the ref directly to DraggableFlatList - it handles gesture
-  // coordination internally for nestable lists.
-  const simultaneousHandlers = useMemo(
-    () => (simultaneousGestureRef ? [simultaneousGestureRef] : undefined),
-    [simultaneousGestureRef],
-  );
-
-  const refreshColors = useMemo(
-    () => [theme.colors.foregroundMuted],
-    [theme.colors.foregroundMuted],
-  );
-
-  const handleRenderItem = useCallback(
-    ({ item, drag, isActive, getIndex }: RenderItemParams<T>) => {
-      const index = getIndex() ?? 0;
-      const info: DraggableRenderItemInfo<T> = {
-        item,
-        index,
-        drag,
-        isActive,
-      };
-      return renderItem(info);
-    },
-    [renderItem],
+  const renderGridItem = useCallback<SortableGridRenderItem<T>>(
+    ({ item, index }) => (
+      <DraggableListItem
+        item={item}
+        index={index}
+        renderItem={renderItem}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [dragHandleProps, renderItem],
   );
 
   const handleDragEnd = useCallback(
-    ({ data: newData }: { data: T[] }) => {
-      setIsDragging(false);
-      onDragEnd(newData);
+    ({ data: reorderedData }: SortableGridDragEndParams<T>) => {
+      onDragEnd(reorderedData);
     },
     [onDragEnd],
   );
 
-  const handleDragBegin = useCallback(() => {
-    setIsDragging(true);
-    onDragBeginProp?.();
-  }, [onDragBeginProp]);
-
-  const handleRelease = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const showRefreshControl = Boolean(onRefresh) && (!isDragging || Boolean(refreshing));
-  const resolvedContainerStyle =
-    containerStyle ?? (scrollEnabled ? SCROLL_ENABLED_FLEX_STYLE : undefined);
-  const shouldShowRefreshControl = showRefreshControl && !nestable;
-  const ListComponent: typeof DraggableFlatList = (
-    nestable ? (NestableDraggableFlatList as unknown) : DraggableFlatList
-  ) as typeof DraggableFlatList;
-
-  const refreshControl = useMemo(
-    () =>
-      shouldShowRefreshControl ? (
-        <RefreshControl
-          refreshing={refreshing ?? false}
-          onRefresh={onRefresh}
-          tintColor={theme.colors.foregroundMuted}
-          colors={refreshColors}
-        />
-      ) : undefined,
-    [shouldShowRefreshControl, refreshing, onRefresh, theme.colors.foregroundMuted, refreshColors],
-  );
-
   return (
-    <ListComponent
-      testID={testID}
-      data={data}
-      keyExtractor={keyExtractor}
-      renderItem={handleRenderItem}
-      onDragEnd={handleDragEnd}
-      style={style}
-      containerStyle={resolvedContainerStyle}
-      contentContainerStyle={contentContainerStyle}
-      ListFooterComponent={ListFooterComponent}
-      ListHeaderComponent={ListHeaderComponent}
-      ListEmptyComponent={ListEmptyComponent}
-      showsVerticalScrollIndicator={showsVerticalScrollIndicator}
-      scrollEnabled={scrollEnabled}
-      extraData={extraData}
-      simultaneousHandlers={simultaneousHandlers}
-      dragGestureHostPresented={gestureHostPresented}
-      // Higher activation distance reduces accidental drag capture while nested
-      // lists are inside a scroll container.
-      activationDistance={20}
-      onDragBegin={handleDragBegin}
-      onRelease={handleRelease}
-      // @ts-ignore - waitFor is supported by RNGH FlatList but missing from DraggableFlatList types
-      waitFor={waitFor}
-      refreshControl={refreshControl}
-    />
+    <View testID={testID} style={containerStyle}>
+      <Sortable.Grid
+        columns={1}
+        data={data}
+        keyExtractor={keyExtractor}
+        renderItem={renderGridItem}
+        onDragEnd={handleDragEnd}
+        customHandle={useDragHandle}
+        dragActivationDelay={DRAG_ACTIVATION_DELAY_MS}
+        dragActivationFailOffset={DRAG_ACTIVATION_FAIL_OFFSET_PX}
+        scrollableRef={scrollViewRef ?? undefined}
+        autoScrollEnabled={scrollViewRef !== null}
+        // Clamped to the single column's width, so a dragged row moves only vertically.
+        overDrag="vertical"
+        // Rows style themselves from `isActive`; the other rows stay as they are.
+        activeItemScale={1}
+        activeItemShadowOpacity={0}
+        inactiveItemOpacity={1}
+        inactiveItemScale={1}
+        hapticsEnabled
+      />
+    </View>
   );
+}
+
+function DraggableListItem<T>({
+  item,
+  index,
+  renderItem,
+  dragHandleProps,
+}: {
+  item: T;
+  index: number;
+  renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
+  dragHandleProps: DraggableListDragHandleProps | undefined;
+}) {
+  const { isActive } = useItemContext();
+  const [active, setActive] = useState(false);
+  useAnimatedReaction(
+    () => isActive.value,
+    (next, previous) => {
+      if (previous !== null && next !== previous) {
+        scheduleOnRN(setActive, next);
+      }
+    },
+  );
+  return renderItem({ item, index, isActive: active, dragHandleProps });
 }
