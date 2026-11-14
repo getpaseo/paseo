@@ -835,40 +835,50 @@ describe("ForgeService", () => {
   });
 
   it("loads pull request checkout target details through GraphQL", async () => {
-    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
-    const service = createGitHubService({
-      runner: runner.runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-      now: () => 100,
-    });
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-checkout-target-"));
+    execFileSync("git", ["init", "-q", cwd]);
+    execFileSync("git", [
+      "-C",
+      cwd,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/getpaseo/paseo.git",
+    ]);
+    try {
+      const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        now: () => 100,
+      });
 
-    await expect(
-      service.getPullRequestCheckoutTarget?.({ cwd: "/repo", number: 526 }),
-    ).resolves.toEqual({
-      number: 526,
-      baseRefName: "main",
-      headRefName: "main",
-      checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/526/head" },
-        { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
-      ],
-      headOwnerLogin: "therainisme",
-      headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
-      headRepositoryUrl: "https://github.com/therainisme/paseo",
-      isCrossRepository: true,
-      headRefKind: "branch",
-    });
+      await expect(service.getPullRequestCheckoutTarget?.({ cwd, number: 526 })).resolves.toEqual({
+        number: 526,
+        baseRefName: "main",
+        headRefName: "main",
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+        headOwnerLogin: "therainisme",
+        headRepositorySshUrl: "git@github.com:therainisme/paseo.git",
+        headRepositoryUrl: "https://github.com/therainisme/paseo",
+        isCrossRepository: true,
+        headRefKind: "branch",
+      });
 
-    expect(runner.calls).toHaveLength(2);
-    expect(runner.calls[0]).toEqual({
-      cwd: "/repo",
-      args: ["repo", "view", "--json", "owner,name,parent"],
-    });
-    expect(runner.calls[1]?.cwd).toBe("/repo");
-    expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
-    expect(runner.calls[1]?.args).toContain("owner=getpaseo");
-    expect(runner.calls[1]?.args).toContain("name=paseo");
-    expect(runner.calls[1]?.args).toContain("number=526");
+      expect(runner.calls).toHaveLength(2);
+      expect(runner.calls[0]).toEqual({
+        cwd,
+        args: ["repo", "view", "--json", "owner,name,parent"],
+      });
+      expect(runner.calls[1]?.cwd).toBe(cwd);
+      expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
+      expect(runner.calls[1]?.args).toContain("owner=getpaseo");
+      expect(runner.calls[1]?.args).toContain("name=paseo");
+      expect(runner.calls[1]?.args).toContain("number=526");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
@@ -1217,6 +1227,81 @@ describe("ForgeService", () => {
     expect(runner.calls).toHaveLength(3);
     expect(statusesA).toHaveLength(2);
     expect(statusesA[1]).toEqual(expect.objectContaining({ number: 41, checksStatus: "success" }));
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("keeps frozen PR checks separate for matching repositories on different hosts", async () => {
+    let now = 0;
+    const calls: RunnerCall[] = [];
+    const runner: GitHubCommandRunner = async (args, options) => {
+      calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+      const host = options.envOverlay?.GH_HOST;
+      if (args[3]?.includes("PaseoBatchPullRequestChecks")) {
+        return {
+          stdout: batchPollStatusJson({
+            t0: batchPollChecksAliasJson([
+              {
+                __typename: "StatusContext",
+                context: "ci",
+                state: host === "a.example" ? "SUCCESS" : "FAILURE",
+              },
+            ]),
+          }),
+          stderr: "",
+        };
+      }
+      return {
+        stdout: batchPollStatusJson({
+          t0: batchPollRepositoryJson([
+            batchPollPrNodeJson({ url: `https://${host}/acme/widgets/pull/42` }),
+          ]),
+        }),
+        stderr: "",
+      };
+    };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/ws-a" ? "a.example" : "b.example"),
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+    const statusesA: Array<CurrentPullRequestStatus | null> = [];
+    const statusesB: Array<CurrentPullRequestStatus | null> = [];
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      onStatus: (status) => statusesA.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(statusesA).toEqual([expect.objectContaining({ checksStatus: "success" })]);
+
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-a",
+      onStatus: (status) => statusesB.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(statusesB).toEqual([expect.objectContaining({ checksStatus: "failure" })]);
+
+    now = EXPECTED_GITHUB_SLOW_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+    expect(statusesA).toHaveLength(2);
+    expect(statusesB).toHaveLength(2);
+    expect(statusesA.at(-1)).toEqual(expect.objectContaining({ checksStatus: "success" }));
+    expect(statusesB.at(-1)).toEqual(expect.objectContaining({ checksStatus: "failure" }));
+    expect(
+      calls
+        .filter((call) => call.args[3]?.includes("PaseoBatchPullRequestChecks"))
+        .map((call) => call.envOverlay?.GH_HOST),
+    ).toEqual(["a.example", "b.example"]);
 
     subscriptionA?.unsubscribe();
     subscriptionB?.unsubscribe();
@@ -4801,6 +4886,402 @@ describe("ForgeService", () => {
     expect(runner.calls[1]?.envOverlay).toMatchObject({ GH_HOST: "github.acme.internal" });
   });
 
+  it("uses the selected Enterprise default repository for PR and issue lookups despite Git rewrites", async () => {
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-service-default-repo-"));
+    try {
+      execFileSync("git", ["init", "-q", cwd]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "origin",
+        "https://github.acme.internal/fork/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "github",
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        "url.https://git.acme.internal/mirrors/.insteadOf",
+        "https://github.acme.internal/",
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.github.gh-resolved", "base"]);
+      const calls: RunnerCall[] = [];
+      const runner: GitHubCommandRunner = async (args, options) => {
+        calls.push({ args, cwd: options.cwd, envOverlay: options.envOverlay });
+        if (args[0] === "repo") {
+          return {
+            stdout: JSON.stringify({
+              owner: { login: args.includes("github.acme.internal/acme/repo") ? "acme" : "fork" },
+              name: "repo",
+            }),
+            stderr: "",
+          };
+        }
+        if (args[0] === "api") {
+          return { stdout: pullRequestCheckoutTargetJson(), stderr: "" };
+        }
+        const repo = args[args.indexOf("--repo") + 1];
+        const title = repo === "github.acme.internal/acme/repo" ? "upstream" : "fork";
+        const list = args[0] === "issue" ? issueJson(title) : pullRequestJson(title);
+        return {
+          stdout: args[1] === "view" ? JSON.stringify(JSON.parse(list)[0]) : list,
+          stderr: "",
+        };
+      };
+      const service = createGitHubService({
+        ttlMs: 0,
+        runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+      expect(await service.listPullRequests({ cwd })).toEqual([
+        expect.objectContaining({ title: "upstream" }),
+      ]);
+      expect(await service.listIssues({ cwd })).toEqual([
+        expect.objectContaining({ title: "upstream" }),
+      ]);
+      expect(await service.getPullRequest({ cwd, number: 123 })).toEqual(
+        expect.objectContaining({ title: "upstream" }),
+      );
+      expect(calls.map((call) => call.envOverlay?.GH_HOST)).toEqual([
+        "github.acme.internal",
+        "github.acme.internal",
+        "github.acme.internal",
+      ]);
+      expect(
+        (await service.getPullRequestCheckoutTarget({ cwd, number: 526 })).checkoutRefs,
+      ).toEqual([{ remoteName: "github", remoteRef: "refs/pull/526/head" }]);
+      expect(calls[3]?.args).toContain("github.acme.internal/acme/repo");
+      expect(calls[4]?.args).toContain("owner=acme");
+      execFileSync("git", ["-C", cwd, "config", "--unset", "remote.github.gh-resolved"]);
+      expect(await service.listPullRequests({ cwd, query: "implicit" })).toEqual([
+        expect.objectContaining({ title: "upstream" }),
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.origin.gh-resolved", "acme/repo"]);
+      expect(await service.listPullRequests({ cwd, query: "parent" })).toEqual([
+        expect.objectContaining({ title: "upstream" }),
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.origin.gh-resolved", "base"]);
+      expect(await service.listPullRequests({ cwd, query: "changed" })).toEqual([
+        expect.objectContaining({ title: "fork" }),
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.origin.gh-resolved", "missing/repo"]);
+      const missingRepoRunner: GitHubCommandRunner = async () => ({
+        stdout: JSON.stringify({ owner: { login: "missing" }, name: "repo" }),
+        stderr: "",
+      });
+      const missingRepoService = createGitHubService({
+        runner: missingRepoRunner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+      await expect(
+        missingRepoService.getPullRequestCheckoutTarget({ cwd, number: 526 }),
+      ).rejects.toThrow("No Git remote matches github.acme.internal/missing/repo");
+      missingRepoService.dispose?.();
+      service.dispose?.();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("fetches the selected repository's PR when origin has the same PR number", async () => {
+    vi.useRealTimers();
+    const root = mkdtempSync(join(tmpdir(), "github-checkout-duplicate-pr-"));
+    const cwd = join(root, "workspace");
+    const origin = join(root, "origin.git");
+    const base = join(root, "base.git");
+    try {
+      execFileSync("git", ["init", "-q", cwd]);
+      execFileSync("git", ["init", "-q", "--bare", origin]);
+      execFileSync("git", ["init", "-q", "--bare", base]);
+      const commit = (message: string) => {
+        execFileSync("git", [
+          "-C",
+          cwd,
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-qm",
+          message,
+        ]);
+        return execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      };
+      const forkSha = commit("fork PR");
+      const baseSha = commit("base PR");
+      execFileSync("git", ["-C", cwd, "push", "-q", origin, `${forkSha}:refs/pull/526/head`]);
+      execFileSync("git", ["-C", cwd, "push", "-q", base, `${baseSha}:refs/pull/526/head`]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "origin",
+        "https://github.acme.internal/fork/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "github",
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      execFileSync("git", ["-C", cwd, "config", "remote.github.gh-resolved", "base"]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        `url.file://${origin}.insteadOf`,
+        "https://github.acme.internal/fork/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        `url.file://${base}.insteadOf`,
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      const runner = createRunner([
+        JSON.stringify({ owner: { login: "acme" }, name: "repo" }),
+        pullRequestCheckoutTargetJson(),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+      const target = await service.getPullRequestCheckoutTarget({ cwd, number: 526 });
+      expect(target.checkoutRefs).toEqual([
+        { remoteName: "github", remoteRef: "refs/pull/526/head" },
+      ]);
+      const ref = target.checkoutRefs?.[0];
+      if (!ref?.remoteName) throw new Error("Missing checkout remote");
+      execFileSync("git", ["-C", cwd, "fetch", "-q", ref.remoteName, ref.remoteRef]);
+      expect(
+        execFileSync("git", ["-C", cwd, "rev-parse", "FETCH_HEAD"], { encoding: "utf8" }).trim(),
+      ).toBe(baseSha);
+      expect(baseSha).not.toBe(forkSha);
+      service.dispose?.();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("selects the original Enterprise repository for PR lookup when Git rewrites remotes", async () => {
+    const runner = createRunner([currentPullRequestJson()]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
+
+    expect(runner.calls[0]).toMatchObject({
+      args: [
+        "pr",
+        "view",
+        "feature/fork",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+        "--repo",
+        "github.acme.internal/acme/repo",
+      ],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
+  it("finds an Enterprise PR for a numeric branch without treating it as a PR number", async () => {
+    const runner = createRunner([
+      JSON.stringify([
+        JSON.parse(
+          currentPullRequestJson({
+            number: 42,
+            url: "https://github.acme.internal/acme/repo/pull/42",
+            headRefName: "123",
+            headRepositoryOwner: { login: "acme" },
+          }),
+        ),
+      ]),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "123",
+        headRepositoryOwner: "acme",
+      }),
+    ).resolves.toMatchObject({ number: 42, headRefName: "123", repoOwner: "acme" });
+    expect(runner.calls[0]).toMatchObject({
+      args: [
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--head",
+        "123",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+        "--repo",
+        "github.acme.internal/acme/repo",
+      ],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
+  it("returns no Enterprise PR for a numeric branch with no matches", async () => {
+    const runner = createRunner(["[]"]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "acme/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "123",
+        headRepositoryOwner: "acme",
+      }),
+    ).resolves.toBeNull();
+    expect(runner.calls.map((call) => call.args.slice(0, 2))).toEqual([["pr", "list"]]);
+  });
+
+  it("finds an Enterprise fork PR for a numeric branch in its parent repository", async () => {
+    const runner = createRunner([
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "repo",
+        parent: { owner: { login: "parentOwner" }, name: "repo" },
+      }),
+      JSON.stringify([{ number: 42 }]),
+      currentPullRequestJson({
+        number: 42,
+        url: "https://github.acme.internal/parentOwner/repo/pull/42",
+        headRefName: "123",
+        headRepositoryOwner: { login: "forkOwner" },
+      }),
+      currentPullRequestGithubFactsJson(),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "forkOwner/repo",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "123" }),
+    ).resolves.toMatchObject({ number: 42, headRefName: "123", repoOwner: "parentOwner" });
+    expect(runner.calls[1]?.args).toEqual([
+      "api",
+      "repos/parentOwner/repo/pulls?state=all&per_page=100&head=forkOwner%3A123",
+    ]);
+    expect(runner.calls[2]).toMatchObject({
+      args: ["pr", "view", "42", "--repo", "parentOwner/repo", "--json", CURRENT_PR_STATUS_FIELDS],
+      envOverlay: { GH_HOST: "github.acme.internal" },
+    });
+  });
+
+  it("merges an Enterprise fork PR in its base repository", async () => {
+    const runner = createRunner([""]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => "github.acme.internal",
+      resolveRepoSlug: async () => "fork/repo",
+    });
+
+    await service.mergePullRequest({
+      cwd: "/repo",
+      prNumber: 42,
+      mergeMethod: "squash",
+      status: createCurrentPullRequestStatus({
+        url: "https://github.acme.internal/upstream/repo/pull/42",
+        forgeSpecific: githubStatusFacts(),
+      }),
+    });
+    expect(runner.calls[0]?.args).toEqual([
+      "pr",
+      "merge",
+      "42",
+      "--squash",
+      "--repo",
+      "github.acme.internal/upstream/repo",
+    ]);
+  });
+
+  it.skipIf(isPlatform("win32"))(
+    "authenticates and creates a PR on the configured Enterprise host when Git rewrites origin",
+    async () => {
+      vi.useRealTimers();
+      const fixture = createFakeGitHubCliFixture({
+        remoteUrl: "https://github.acme.internal/acme/repo.git",
+        authStatusSucceeds: true,
+      });
+      try {
+        execFileSync("git", [
+          "-C",
+          fixture.cwd,
+          "config",
+          "url.https://git.acme.internal/mirrors/.insteadOf",
+          "https://github.acme.internal/",
+        ]);
+        expect(
+          execFileSync("git", ["-C", fixture.cwd, "remote", "get-url", "origin"], {
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("https://git.acme.internal/mirrors/acme/repo.git");
+        const service = createGitHubService();
+
+        await expect(service.isAuthenticated({ cwd: fixture.cwd })).resolves.toBe(true);
+        await expect(
+          service.createPullRequest({
+            cwd: fixture.cwd,
+            title: "Add thing",
+            head: "feature",
+            base: "main",
+          }),
+        ).resolves.toEqual({ url: "https://github.acme.internal/acme/repo/pull/7", number: 7 });
+
+        expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
+          expect.arrayContaining([
+            "auth status --hostname github.acme.internal|",
+            "auth status --hostname github.acme.internal|github.acme.internal",
+            "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
+          ]),
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
   it.skipIf(isPlatform("win32"))(
     "routes default gh calls to GitHub Enterprise only after host auth succeeds",
     async () => {
@@ -4824,7 +5305,6 @@ describe("ForgeService", () => {
         expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
           expect.arrayContaining([
             "auth status --hostname github.acme.internal|",
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
@@ -4869,7 +5349,6 @@ describe("ForgeService", () => {
         ).toHaveLength(2);
         expect(log).toEqual(
           expect.arrayContaining([
-            "repo view --json owner,name,parent|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
