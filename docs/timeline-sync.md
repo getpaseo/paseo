@@ -49,9 +49,17 @@ Large unbounded timeline responses can exceed relay frame limits, so catch-up us
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
-responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
-recovery is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"` its end cursor. If
+the daemon responds with `hasNewer: true`, the app immediately fetches the next page from
+`endCursor`. Gap recovery is complete only when `hasNewer: false`.
+
+A chat that was empty when it last caught up has no end cursor to compare a live row against. Such a
+row starts coverage only if it is the epoch's first row, seq 1. A later row means the chat missed the
+rows before it, such as a prompt sent while the app was offline, so the app drops it and recovers
+after seq 0. Coverage started at that later row would make the resume page look already applied, and
+the chat and its replica cache would keep only the end of the reply. A recovery that waits behind a
+running catch-up starts after whatever that catch-up applied, because the app applies a forward page
+row by row and an older cursor repeats rows.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 

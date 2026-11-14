@@ -1,5 +1,6 @@
 import {
   planTimelineCatchUpAfter,
+  planTimelineCatchUpPastApplied,
   planTimelineResumeFetch,
   type ProjectedTimelineForwardFetchPlan,
 } from "./timeline-sync-plan";
@@ -819,7 +820,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       ensureCacheLoaded(agentId);
       return;
     }
-    const nextRequest = request ?? planTimelineResumeFetch(ports.readCursor(agentId));
+    const applied = ports.readCursor(agentId);
+    const nextRequest = request
+      ? planTimelineCatchUpPastApplied(request, applied)
+      : planTimelineResumeFetch(applied);
     const current = catchUps.get(agentId);
     const decision = decideCatchUp({ current, request: nextRequest, supersede });
     if (decision === "keep-and-park") {

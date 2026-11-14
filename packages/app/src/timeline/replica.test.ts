@@ -6,6 +6,7 @@ import {
   type SqliteValue,
 } from "@/runtime/replica-cache/row-store-sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import {
@@ -17,6 +18,8 @@ import {
 } from "@/stores/session-store";
 import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
+import type { AgentStreamReducerEvent } from "./session-stream-reducers";
+import type { ProjectedTimelineForwardFetchPlan } from "./timeline-sync-plan";
 import { reduceTurnLiveness, type TurnLivenessTransition } from "./turn-liveness";
 import {
   createTimelineReplica,
@@ -1376,6 +1379,318 @@ describe("create handoff lifetime", () => {
     expect(createHandoff()).toBeUndefined();
     release();
     owner.dispose();
+  });
+});
+
+describe("a chat that was empty when it went offline", () => {
+  const EPOCH = "epoch-1";
+  const PROMPT = "stream through a reconnect";
+  const THOUGHT = "Thinking before the reply.";
+  const TURN_ID = "turn-1";
+  const TIMESTAMP = "2026-10-31T10:00:00.000Z";
+
+  /** The daemon's timeline: one row per flushed chunk, read back as projected pages. */
+  class DaemonTimeline {
+    private readonly rows: Array<{ seq: number; item: AgentTimelineItem }> = [];
+
+    record(timelineItem: AgentTimelineItem): AgentStreamReducerEvent {
+      const seq = this.rows.length + 1;
+      this.rows.push({ seq, item: timelineItem });
+      return {
+        event: { type: "timeline", provider: "mock", turnId: TURN_ID, item: timelineItem },
+        seq,
+        epoch: EPOCH,
+        timestamp: new Date(TIMESTAMP),
+      };
+    }
+
+    page(request: ProjectedTimelineForwardFetchPlan): TimelineResponsePayload {
+      const maxSeq = this.rows.at(-1)?.seq ?? 0;
+      const after = request.direction === "after" ? request.cursor.seq : 0;
+      const entries = this.projected().filter((entry) => entry.seqEnd > after);
+      const first = entries[0];
+      const startSeq = request.direction === "after" ? after + 1 : first?.seqStart;
+      return {
+        requestId: `${request.direction}-${after}`,
+        agentId: AGENT_ID,
+        agent: null,
+        direction: request.direction,
+        projection: "projected",
+        reset: false,
+        epoch: EPOCH,
+        window: { minSeq: this.rows[0]?.seq ?? 0, maxSeq, nextSeq: maxSeq + 1 },
+        startCursor: first && startSeq !== undefined ? { epoch: EPOCH, seq: startSeq } : null,
+        endCursor: first ? { epoch: EPOCH, seq: maxSeq } : null,
+        entries,
+        error: null,
+        hasNewer: false,
+        hasOlder: after > 0,
+        staleCursor: false,
+        gap: false,
+      };
+    }
+
+    /** Contiguous reply and thought chunks read back as one row, like the daemon's projection. */
+    private projected(): TimelineResponsePayload["entries"] {
+      const entries: TimelineResponsePayload["entries"] = [];
+      for (const { seq, item: row } of this.rows) {
+        const previous = entries.at(-1);
+        const continues =
+          previous !== undefined &&
+          ((row.type === "assistant_message" &&
+            previous.item.type === "assistant_message" &&
+            previous.item.messageId === row.messageId) ||
+            (row.type === "reasoning" && previous.item.type === "reasoning"));
+        if (
+          continues &&
+          (previous.item.type === "assistant_message" || previous.item.type === "reasoning") &&
+          (row.type === "assistant_message" || row.type === "reasoning")
+        ) {
+          previous.item = { ...previous.item, text: `${previous.item.text}${row.text}` };
+          previous.seqEnd = seq;
+          previous.sourceSeqRanges = [{ startSeq: previous.seqStart, endSeq: seq }];
+          previous.collapsed = [
+            row.type === "assistant_message" ? "assistant_merge" : "reasoning_merge",
+          ];
+          continue;
+        }
+        entries.push({
+          provider: "mock",
+          item: row,
+          timestamp: TIMESTAMP,
+          seqStart: seq,
+          seqEnd: seq,
+          sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+          collapsed: [],
+          turnId: TURN_ID,
+        });
+      }
+      return entries;
+    }
+  }
+
+  interface PendingFetch {
+    request: ProjectedTimelineForwardFetchPlan;
+    /** Delivers a page the way the host runtime does: queued live chunks first, then the page. */
+    deliver(page: TimelineResponsePayload): void;
+  }
+
+  function openChat(storage: TimelineReplicaStorage) {
+    const fetches: PendingFetch[] = [];
+    const errors: unknown[] = [];
+    const fetch = (request: ProjectedTimelineForwardFetchPlan) =>
+      new Promise<{ hasNewer: boolean; endCursor: { epoch: string; seq: number } | null }>(
+        (resolve) => {
+          fetches.push({
+            request,
+            deliver: (page) => {
+              owner.flushStreamAgent(AGENT_ID);
+              owner.applyTimelineResponse(page);
+              resolve({ hasNewer: page.hasNewer, endCursor: page.endCursor });
+            },
+          });
+        },
+      );
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage,
+      prepareAgent: async () => undefined,
+    });
+    const owner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      applyTurnLiveness: () => undefined,
+      ports: {
+        canCheckFreshness: () => true,
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: (agentId) => {
+          const timeline = selectAgentTimelineState(
+            useSessionStore.getState().sessions[SERVER_ID],
+            agentId,
+          );
+          return timeline.status === "synced" && timeline.range
+            ? { epoch: timeline.range.epoch, endSeq: timeline.range.endSeq }
+            : undefined;
+        },
+        fetchPage: (_agentId, request) => fetch(request),
+        fetchLatestTail: () =>
+          fetch({ direction: "tail", limit: 40, projection: "projected", wholeTurns: true }),
+        reportError: (error) => errors.push(error),
+      },
+    });
+    owner.setConnected(true);
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    return {
+      owner,
+      async nextFetch(): Promise<PendingFetch> {
+        await expect.poll(() => fetches.length).toBeGreaterThan(0);
+        return fetches.shift()!;
+      },
+      live(event: AgentStreamReducerEvent): void {
+        owner.applyStreamEvent(AGENT_ID, event);
+        owner.flushStreamAgent(AGENT_ID);
+      },
+      /** Answers every catch-up the chat still asks for until it reports itself current. */
+      async settle(daemon: DaemonTimeline): Promise<void> {
+        for (let turn = 0; turn < 20; turn += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(errors).toEqual([]);
+          const next = fetches.shift();
+          if (next) next.deliver(daemon.page(next.request));
+          else if (owner.getAgentTimelineStatus(AGENT_ID) === "ready") return;
+        }
+        throw new Error("The chat never caught up");
+      },
+    };
+  }
+
+  function rows(): Array<{ kind: StreamItem["kind"]; text: string }> {
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    return [
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ].map((entry) => ({
+      kind: entry.kind,
+      text: "text" in entry && typeof entry.text === "string" ? entry.text : "",
+    }));
+  }
+
+  const reply = (words: number) =>
+    Array.from({ length: words }, (_unused, index) => `word${index}`).join(" ");
+  const chunk = (index: number) => `${index === 0 ? "" : " "}word${index}`;
+  const replyChunk = (index: number): AgentTimelineItem => ({
+    type: "assistant_message",
+    text: chunk(index),
+    messageId: "reply-1",
+  });
+
+  /**
+   * Opens the chat while its timeline is empty, then drops the connection while the prompt,
+   * an optional thought and the first three reply chunks are recorded.
+   */
+  async function goOfflineWhileTheReplyStarts(input: {
+    reasoning: boolean;
+    storage: TimelineReplicaStorage;
+  }) {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const daemon = new DaemonTimeline();
+    const chat = openChat(input.storage);
+    const opened = await chat.nextFetch();
+    opened.deliver(daemon.page(opened.request));
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toEqual({ status: "synced", items: [], range: null, older: "none", newer: "none" });
+
+    chat.owner.setConnected(false);
+    daemon.record({ type: "user_message", text: PROMPT, messageId: "prompt-1" });
+    if (input.reasoning) daemon.record({ type: "reasoning", text: THOUGHT });
+    for (const index of [0, 1, 2]) daemon.record(replyChunk(index));
+    chat.owner.setConnected(true);
+    const catchUp = await chat.nextFetch();
+    return { daemon, chat, catchUp };
+  }
+
+  function expectedRows(reasoning: boolean, words: number) {
+    return [
+      { kind: "user_message", text: PROMPT },
+      ...(reasoning ? [{ kind: "thought", text: THOUGHT }] : []),
+      { kind: "assistant_message", text: reply(words) },
+    ];
+  }
+
+  /** A saved range that starts after the prompt claims history the chat never received. */
+  function expectCoverageFromTheFirstRow(commits: CachedTimeline[]): void {
+    expect(commits.map((commit) => commit.range?.startSeq ?? 1)).toEqual(commits.map(() => 1));
+  }
+
+  it.each([true, false])(
+    "keeps the prompt and the whole reply when live chunks arrive before a page that holds them (reasoning=%s)",
+    async (reasoning) => {
+      const commits: CachedTimeline[] = [];
+      const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+        reasoning,
+        storage: {
+          readTimeline: async () => undefined,
+          commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+        },
+      });
+      try {
+        chat.live(daemon.record(replyChunk(3)));
+        chat.live(daemon.record(replyChunk(4)));
+        catchUp.deliver(daemon.page(catchUp.request));
+        chat.live(daemon.record(replyChunk(5)));
+        await chat.settle(daemon);
+
+        expect(rows()).toEqual(expectedRows(reasoning, 6));
+        expectCoverageFromTheFirstRow(commits);
+      } finally {
+        chat.owner.dispose();
+      }
+
+      // The saved chat paints the same rows after a reload.
+      const saved = commits.at(-1);
+      useSessionStore.getState().clearSession(SERVER_ID);
+      useSessionStore.getState().initializeSession(SERVER_ID, null);
+      const reopened = createOwner({
+        readTimeline: async () => saved,
+        commitTimeline: () => undefined,
+      });
+      try {
+        reopened.replaceVisibleAgentIds("test", [AGENT_ID]);
+        await expect.poll(rows).toEqual(expectedRows(reasoning, 6));
+      } finally {
+        reopened.dispose();
+      }
+    },
+  );
+
+  it("keeps the prompt when the page already holds a chunk the chat has not seen live", async () => {
+    const commits: CachedTimeline[] = [];
+    const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+      reasoning: true,
+      storage: {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+    });
+    try {
+      chat.live(daemon.record(replyChunk(3)));
+      const notYetLive = daemon.record(replyChunk(4));
+      catchUp.deliver(daemon.page(catchUp.request));
+      chat.live(notYetLive);
+      chat.live(daemon.record(replyChunk(5)));
+      await chat.settle(daemon);
+
+      expect(rows()).toEqual(expectedRows(true, 6));
+      expectCoverageFromTheFirstRow(commits);
+    } finally {
+      chat.owner.dispose();
+    }
+  });
+
+  it("finishes the reply when its last chunks arrive while an older page is in flight", async () => {
+    const commits: CachedTimeline[] = [];
+    const { daemon, chat, catchUp } = await goOfflineWhileTheReplyStarts({
+      reasoning: true,
+      storage: {
+        readTimeline: async () => undefined,
+        commitTimeline: (_serverId, _agentId, timeline) => commits.push(timeline),
+      },
+    });
+    try {
+      const olderPage = daemon.page(catchUp.request);
+      chat.live(daemon.record(replyChunk(3)));
+      chat.live(daemon.record(replyChunk(4)));
+      catchUp.deliver(olderPage);
+      await chat.settle(daemon);
+
+      expect(rows()).toEqual(expectedRows(true, 5));
+      expectCoverageFromTheFirstRow(commits);
+    } finally {
+      chat.owner.dispose();
+    }
   });
 });
 
