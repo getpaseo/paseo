@@ -2677,6 +2677,11 @@ export const ru: TranslationResources = {
         contentWidthAccessibility: "Ширина содержимого в пикселях",
         reset: "Сбросить",
         resetAccessibility: "Сбросить ширину содержимого",
+        tabPlacement: "Расположение вкладок",
+        tabPlacementHint: "Расположение вкладок в рабочем пространстве на широких экранах",
+        tabPlacementTop: "Горизонтально (сверху)",
+        tabPlacementLeft: "Вертикально (слева)",
+        tabPlacementAccessibility: "Расположение вкладок: {{value}}",
       },
       syntax: {
         title: "Синтаксис",

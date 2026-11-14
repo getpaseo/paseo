@@ -2602,6 +2602,11 @@ export const zhCN: TranslationResources = {
         contentWidthAccessibility: "内容宽度（像素）",
         reset: "重置",
         resetAccessibility: "将内容宽度重置为默认值",
+        tabPlacement: "标签位置",
+        tabPlacementHint: "宽屏上工作区内标签的位置",
+        tabPlacementTop: "水平（顶部）",
+        tabPlacementLeft: "垂直（左侧）",
+        tabPlacementAccessibility: "标签位置：{{value}}",
       },
       syntax: {
         title: "语法",

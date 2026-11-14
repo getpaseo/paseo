@@ -18,7 +18,11 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { computeTabDropPreview, type TabDropPreview } from "./split-container-tab-drop-preview";
+import {
+  computeTabDropPreview,
+  type TabDropPreview,
+  type TabRailAxis,
+} from "./split-container-tab-drop-preview";
 import { resolveSplitDropPosition, type SplitDropZoneHover } from "./split-drop-zone";
 import { getWorkspacePaneDescriptors } from "@/screens/workspace/workspace-pane-state";
 import {
@@ -40,6 +44,7 @@ interface WorkspaceTabDragData {
   kind: "workspace-tab";
   paneId: string;
   tabId: string;
+  axis: TabRailAxis;
 }
 
 interface SplitPaneDropData {
@@ -102,14 +107,9 @@ function computeTabOverDropPreview(input: {
     overPaneId: overData.paneId,
     overTabId: overData.tabId,
     targetTabs,
-    activeRect: {
-      left: rects.translatedRect.left,
-      width: rects.translatedRect.width,
-    },
-    overRect: {
-      left: rects.overRect.left,
-      width: rects.overRect.width,
-    },
+    axis: overData.axis,
+    activeRect: rects.translatedRect,
+    overRect: rects.overRect,
   });
 }
 

@@ -28,6 +28,7 @@ import {
   sanitizeFontFamily,
   useAppSettings,
   type AppSettings,
+  type TabRailPlacement,
 } from "@/hooks/use-settings";
 import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
 import { isNative } from "@/constants/platform";
@@ -238,6 +239,71 @@ function ContentWidthRow({ value, onChange }: ContentWidthRowProps) {
   );
 }
 
+const TAB_RAIL_PLACEMENTS: readonly TabRailPlacement[] = ["top", "left"];
+
+function tabRailPlacementLabel(t: TFunction, placement: TabRailPlacement): string {
+  return placement === "left"
+    ? t("settings.appearance.layout.tabPlacementLeft")
+    : t("settings.appearance.layout.tabPlacementTop");
+}
+
+interface TabPlacementMenuItemProps {
+  placement: TabRailPlacement;
+  selected: boolean;
+  onChange: (placement: TabRailPlacement) => void;
+}
+
+function TabPlacementMenuItem({ placement, selected, onChange }: TabPlacementMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(placement);
+  }, [onChange, placement]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {tabRailPlacementLabel(t, placement)}
+    </DropdownMenuItem>
+  );
+}
+
+interface TabPlacementRowProps {
+  value: TabRailPlacement;
+  onChange: (placement: TabRailPlacement) => void;
+}
+
+function TabPlacementRow({ value, onChange }: TabPlacementRowProps) {
+  const { t } = useTranslation();
+  const selectedLabel = tabRailPlacementLabel(t, value);
+  return (
+    <View style={styles.rowWithBorder}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.layout.tabPlacement")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.layout.tabPlacementHint")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityLabel={t("settings.appearance.layout.tabPlacementAccessibility", {
+            value: selectedLabel,
+          })}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {TAB_RAIL_PLACEMENTS.map((placement) => (
+            <TabPlacementMenuItem
+              key={placement}
+              placement={placement}
+              selected={value === placement}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Syntax highlight theme picker (commits immediately)
 // ---------------------------------------------------------------------------
@@ -336,6 +402,13 @@ export function AppearanceSection() {
   const handleContentMaxWidthChange = useCallback(
     (contentMaxWidth: AppSettings["contentMaxWidth"]) => {
       void updateSettings({ contentMaxWidth });
+    },
+    [updateSettings],
+  );
+
+  const handleTabRailPlacementChange = useCallback(
+    (tabRailPlacement: TabRailPlacement) => {
+      void updateSettings({ tabRailPlacement });
     },
     [updateSettings],
   );
@@ -507,6 +580,10 @@ export function AppearanceSection() {
           <ContentWidthRow
             value={settings.contentMaxWidth}
             onChange={handleContentMaxWidthChange}
+          />
+          <TabPlacementRow
+            value={settings.tabRailPlacement}
+            onChange={handleTabRailPlacementChange}
           />
         </View>
       </SettingsSection>

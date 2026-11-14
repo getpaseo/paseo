@@ -173,7 +173,7 @@ On a narrow window using the wide layout, app navigation yields when the remaini
 
 Electron window controls are top-corner obstructions, not a compact-layout condition. Rendered surfaces declare which top corners they physically occupy; only those corners receive clearance. Full-window overlays redeclare both corners. A focused split pane owns both corners; if focus restoration temporarily exposes the full split tree, the split boundary reserves one top strip instead of assigning a control rectangle to an arbitrarily narrow leaf.
 
-Windows and Linux controls are fixed window chrome, outside scrolling header content. A tab rail that reaches them ends at their obstruction and shows the shared overflow fade. On macOS, the Explorer toggle occupies a fixed top-right window slot so opening and closing Explorer does not move the pointer target.
+Windows and Linux controls are fixed window chrome, outside scrolling header content. A tab rail that reaches them ends at their obstruction and shows the shared overflow fade. A tab rail placed on the left of its pane never reaches them, so a focused pane reserves the top strip instead. On macOS, the Explorer toggle occupies a fixed top-right window slot so opening and closing Explorer does not move the pointer target.
 
 Each window edge has one safe-area owner. `WindowLayoutProvider` publishes the bottom inset that every surface reads through `useSafeAreaInsets()`: on iOS 27.1 and later it is UIKit's bottom-bar clearance, which refines the rectangular home-indicator inset to the screen's corners, and elsewhere the system inset. Surfaces apply that value once and never stack their own spacing under it; `WindowLayoutSurface` owns the horizontal insets the same way.
 

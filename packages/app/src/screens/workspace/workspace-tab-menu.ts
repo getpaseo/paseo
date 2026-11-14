@@ -1,3 +1,4 @@
+import type { TabRailAxis } from "@/components/split-container-tab-drop-preview";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { i18n } from "@/i18n/i18next";
 import { encodeFilePathForPathSegment, encodeWorkspaceIdForPathSegment } from "@/utils/host-routes";
@@ -88,6 +89,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
 
 interface BuildWorkspaceDesktopTabActionsInput {
   tab: WorkspaceTabDescriptor;
+  axis: TabRailAxis;
   index: number;
   tabCount: number;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
@@ -334,7 +336,9 @@ export function buildWorkspaceDesktopTabActions(
   return {
     contextMenuTestId,
     menuEntries: buildWorkspaceTabMenuEntries({
-      surface: "desktop",
+      // A column stacks its tabs like the mobile tab switcher, so it takes the same above/below
+      // wording for the tabs before and after this one.
+      surface: input.axis === "vertical" ? "mobile" : "desktop",
       tab: input.tab,
       index: input.index,
       tabCount: input.tabCount,
