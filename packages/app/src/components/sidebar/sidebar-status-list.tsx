@@ -155,13 +155,20 @@ export function SidebarStatusWorkspaceList({
   const togglePinnedCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.togglePinnedCollapsed,
   );
+  const [pinnedWorkspacesExpanded, setPinnedWorkspacesExpanded] = useState(false);
+  const togglePinnedWorkspacesExpanded = useCallback(
+    () => setPinnedWorkspacesExpanded((current) => !current),
+    [],
+  );
   const {
     leadingItem: leadingPinnedWorkspace,
     visibleItems: visiblePinnedWorkspaces,
-    expanded: pinnedWorkspacesExpanded,
     canToggle: canTogglePinnedWorkspaces,
-    toggleExpanded: togglePinnedWorkspacesExpanded,
-  } = useLimitedSidebarGroup({ items: pinnedWorkspaces, selection: activeWorkspaceSelection });
+  } = useLimitedSidebarGroup({
+    items: pinnedWorkspaces,
+    selection: activeWorkspaceSelection,
+    expanded: pinnedWorkspacesExpanded,
+  });
 
   const statusShortcutIndex = showShortcutBadges
     ? shortcutIndexByWorkspaceKey
@@ -366,15 +373,19 @@ function StatusGroupRows({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
+  const [workspacesExpanded, setWorkspacesExpanded] = useState(false);
+  const toggleWorkspacesExpanded = useCallback(
+    () => setWorkspacesExpanded((current) => !current),
+    [],
+  );
   const {
     leadingItem: leadingWorkspace,
     visibleItems: visibleWorkspaces,
-    expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
-    toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup({
     items: group.rows,
     selection: activeWorkspaceSelection,
+    expanded: workspacesExpanded,
     policy: STATUS_GROUP_VISIBILITY,
   });
 
