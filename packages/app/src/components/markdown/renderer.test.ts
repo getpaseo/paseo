@@ -38,6 +38,77 @@ it("resolves authored root-relative links only when the target is a known comman
   expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
 });
 
+describe("CJK emphasis flanking", () => {
+  const flags = { latexMath: false };
+  it("renders a bold CJK label without spaces after its punctuation", async () => {
+    const source = "**Obsidian：**决定去哪找、哪些文件算更新包、应该加载哪个版本。";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Strong", children: [{ type: "Text", content: "Obsidian：" }] },
+      { type: "Text", content: "决定去哪找、哪些文件算更新包、应该加载哪个版本。" },
+    ]);
+  });
+  it.each(["前**「中文」**后", "前*「日本語。」*后", "前**（한국어）**后"])(
+    "keeps letter-bounded emphasis after punctuation literal, as CommonMark: %s",
+    async (source) => {
+      const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+      const content = tree.children?.[0]?.children;
+      expect(content?.some((node) => node.type === "Strong" || node.type === "Emphasis")).toBe(
+        false,
+      );
+      function nodeText(node: ASTNode): string {
+        return node.content ?? node.children?.map(nodeText).join("") ?? "";
+      }
+      expect(content?.map(nodeText).join("")).toBe(source);
+    },
+  );
+  it.each([
+    "\\*\\*Obsidian：\\*\\*决定",
+    "before**word:**after",
+    "前__「中文」__后",
+    "** 中文 **",
+    "unfinished **「中文」",
+  ])("keeps escaped, unfinished and non-CJK delimiters literal: %s", async (source) => {
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Text", content: source.replace(/\\([*=])/g, "$1") },
+    ]);
+  });
+  it("keeps emphasis delimiters literal in code", async () => {
+    const source = "`**Obsidian：**决定`";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), flags);
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Code", children: [{ type: "Text", content: "**Obsidian：**决定" }] },
+    ]);
+  });
+  it("renders highlight spans with nested emphasis and code", async () => {
+    const source = "==**重要：**请读 `file.ts`==";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      latexMath: false,
+      highlight: true,
+    });
+    expect(tree.children?.[0]?.children).toEqual([
+      {
+        type: "Highlight",
+        children: [
+          { type: "Strong", children: [{ type: "Text", content: "重要：" }] },
+          { type: "Text", content: "请读 " },
+          { type: "Code", children: [{ type: "Text", content: "file.ts" }] },
+        ],
+      },
+    ]);
+  });
+  it("keeps highlight delimiters literal in code", async () => {
+    const tree = await parseMarkdown(prepareMarkdownSource("`==高亮==`").render(), {
+      latexMath: false,
+      highlight: true,
+    });
+    expect(tree.children?.[0]?.children).toEqual([
+      { type: "Code", children: [{ type: "Text", content: "==高亮==" }] },
+    ]);
+  });
+});
+
 describe("shared Markdown source adaptation", () => {
   it("keeps paragraphs, fences and quotes together for the library", () => {
     const source = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
@@ -678,6 +749,10 @@ describe("shared Markdown theme colours", () => {
       markerColor: theme.colors.foregroundMuted,
     });
     expect(style.h6?.color).toBe(theme.colors.foregroundMuted);
+    expect(style.highlight).toEqual({
+      color: theme.colors.foreground,
+      backgroundColor: theme.colors.statusWarningTint,
+    });
     expect(style.taskList).toMatchObject({
       checkedTextColor: theme.colors.foregroundMuted,
       checkedColor: theme.colors.accent,

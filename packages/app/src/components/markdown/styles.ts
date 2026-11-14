@@ -40,6 +40,7 @@ export function createMarkdownStyles(
       h4: heading(1.1),
       h5: heading(1),
       h6: { ...heading(1), color: theme.colors.foregroundMuted },
+      highlight: { color: paragraph.color, backgroundColor: theme.colors.statusWarningTint },
       list: {
         ...paragraph,
         bulletColor: theme.colors.foregroundMuted,

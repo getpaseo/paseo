@@ -23,7 +23,7 @@ import { useMarkdownSource, type MarkdownImageContext } from "./images";
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
-const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
+const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true, highlight: true };
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
