@@ -460,7 +460,7 @@ interface ProviderInstallation {
 
 | Member            | Called                                                       | Deadline | Answer kept                                      |
 | ----------------- | ------------------------------------------------------------ | -------- | ------------------------------------------------ |
-| `inspect`         | When provider settings open                                  | 20 s     | 30 s                                             |
+| `inspect`         | When the provider list or a provider's page shows            | 20 s     | 30 s                                             |
 | `checkForUpdates` | After `inspect` answers `installed`                          | 25 s     | 1 hour for `current` or `available`, else 30 s   |
 | `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
 

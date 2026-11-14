@@ -265,7 +265,7 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ## Installation and updates
 
-The **Installation** section of provider settings reads `AgentClient.installation`. Built-ins set
+The provider list and the **Installation** section of a provider's page read `AgentClient.installation`. Built-ins set
 it on the client; plugins set `ProviderRegistration.installation`, which the plugin bridge maps to
 the same interface. `ProviderInstallations` in `packages/server/src/server/agent/provider-installation/`
 owns deadlines, caching and the one running update per provider, so a provider only answers.
@@ -283,8 +283,9 @@ Declare only what the vendor offers:
   `runUpdateCommand`. Paseo adds no verification, signature check or rollback, so the update does
   exactly what the same command does in a terminal.
 
-The three calls are separate because they cost differently. `inspect` runs whenever someone opens
-provider settings, with a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
+The three calls are separate because they cost differently. `inspect` runs for every provider
+whenever the provider list shows, because each row states its version; a provider's page shares the
+row's request. It has a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
 network, so the app asks only after `inspect` reports the CLI installed, and a conclusive answer
 holds for an hour while `inspect` reports the same version string. Report every part of the version
 the check compares, such as Muse's build, or a CLI updated outside Paseo keeps its stale answer. `update` runs for minutes, streams output, and is aborted only when the daemon
