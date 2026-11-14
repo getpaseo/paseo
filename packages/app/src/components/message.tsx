@@ -1227,7 +1227,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     [occurrenceKey, revealedMessage.length],
   );
 
-  const measureMessage = useStableEvent((event: import("react-native").LayoutChangeEvent) => {
+  const measureMessage = useStableEvent((event: LayoutChangeEvent) => {
     setAssistantMessageHeight({ markdown: revealedMessage, ...event.nativeEvent.layout });
   });
   return (
@@ -1235,7 +1235,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       testID="assistant-message"
       dataSet={revealDataSet}
       style={assistantContainerStyle}
-      onLayout={measureMessage}
+      // Only the web virtualization strategy reads measured markdown heights
+      // (`estimateStreamItemHeight`, chosen by `platform: isWeb ? "web" : "native"`), and each write
+      // hashes the whole markdown. Native has no reader, so it does not register the callback at all.
+      onLayout={isNative ? undefined : measureMessage}
     >
       <MarkdownRenderer
         text={revealedMessage}
