@@ -69,6 +69,52 @@ describe("buildWorkspaceStructureProjects", () => {
     });
   });
 
+  test("does not inspect Git link facts when no local links are saved", () => {
+    const candidate = workspace("ws-a", "prj_a", "/a/app");
+    let gitFactReads = 0;
+    Object.defineProperties(candidate, {
+      gitRuntime: {
+        enumerable: true,
+        get() {
+          gitFactReads += 1;
+          return { remoteUrl: "https://github.com/acme/app.git" };
+        },
+      },
+      project: {
+        enumerable: true,
+        get() {
+          gitFactReads += 1;
+          return {
+            projectKey: "legacy-key",
+            projectName: "acme/app",
+            checkout: {
+              cwd: "/a/app",
+              isGit: true,
+              currentBranch: "main",
+              remoteUrl: null,
+              worktreeRoot: "/a/app",
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          };
+        },
+      },
+    });
+
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [project({ id: "prj_a", key: "host:a", root: "/a/app" })],
+          workspaces: [candidate],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(gitFactReads).toBe(0);
+  });
+
   test("keeps two clones with the same key on one host separate", () => {
     const key = "remote:github.com/acme/app";
     const result = buildWorkspaceStructureProjects({
@@ -148,6 +194,81 @@ describe("buildWorkspaceStructureProjects", () => {
     expect(result).toHaveLength(2);
     expect(result.map((item) => item.projectKey)).toEqual([null, null]);
     expect(new Set(result.map((item) => item.viewKey)).size).toBe(2);
+  });
+
+  test("uses a verified device-local link without changing daemon project keys", () => {
+    const projectA = project({ id: "prj_a", key: "host:a", root: "/repos/app/packages/web" });
+    const projectB = project({ id: "prj_b", key: "host:b", root: "/work/app/packages/web" });
+    const linkableWorkspace = (input: {
+      id: string;
+      project: ProjectDescriptor;
+      worktreeRoot: string;
+      remoteUrl: string;
+    }): WorkspaceDescriptor => ({
+      ...workspace(input.id, input.project.projectId, input.project.projectRootPath),
+      gitRuntime: { remoteUrl: input.remoteUrl },
+      project: {
+        projectKey: "legacy-placement-key",
+        projectName: "acme/app",
+        checkout: {
+          cwd: input.project.projectRootPath,
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: input.worktreeRoot,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [projectA],
+          workspaces: [
+            linkableWorkspace({
+              id: "ws-a",
+              project: projectA,
+              worktreeRoot: "/repos/app",
+              remoteUrl: "git@github.com:acme/app.git",
+            }),
+          ],
+        },
+        {
+          serverId: "host-b",
+          projects: [projectB],
+          workspaces: [
+            linkableWorkspace({
+              id: "ws-b",
+              project: projectB,
+              worktreeRoot: "/work/app",
+              remoteUrl: "https://github.com/acme/app.git",
+            }),
+          ],
+        },
+      ],
+      localProjectLinks: [
+        {
+          id: "local-link",
+          members: [
+            { serverId: "host-a", projectId: "prj_a" },
+            { serverId: "host-b", projectId: "prj_b" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      projectKey: null,
+      hosts: [
+        { serverId: "host-a", projectId: "prj_a" },
+        { serverId: "host-b", projectId: "prj_b" },
+      ],
+    });
   });
 
   test("keeps opaque project keys separate from placement view keys", () => {

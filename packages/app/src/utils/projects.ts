@@ -1,6 +1,7 @@
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import type { HostProjectListItem } from "@/projects/host-project-model";
 import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
+import type { LocalProjectLink } from "@/projects/local-project-links";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 
 export interface WorkspaceSummary {
@@ -53,6 +54,9 @@ export interface ProjectHost {
 
 export interface BuildProjectsInput {
   hosts: ProjectHost[];
+  localProjectLinks?: Iterable<LocalProjectLink>;
+  hydratedProjectLinkServerIds?: Iterable<string>;
+  unhydratedProjectLinkServerIds?: Iterable<string>;
 }
 
 export interface BuildProjectsResult {
@@ -120,13 +124,21 @@ function findProjectMetadata(
   return null;
 }
 
-function buildHostProjectEntries(hosts: ProjectHost[]): HostProjectListItem[] {
+function buildHostProjectEntries(input: {
+  hosts: ProjectHost[];
+  localProjectLinks?: Iterable<LocalProjectLink>;
+  hydratedProjectLinkServerIds?: Iterable<string>;
+  unhydratedProjectLinkServerIds?: Iterable<string>;
+}): HostProjectListItem[] {
   return buildWorkspaceStructureProjects({
-    sessions: hosts.map((host) => ({
+    sessions: input.hosts.map((host) => ({
       serverId: host.serverId,
       projects: host.projects,
       workspaces: host.workspaces,
     })),
+    localProjectLinks: input.localProjectLinks,
+    hydratedProjectLinkServerIds: input.hydratedProjectLinkServerIds,
+    unhydratedProjectLinkServerIds: input.unhydratedProjectLinkServerIds,
   });
 }
 
@@ -277,7 +289,7 @@ function attachHostWorkspaces(
 
 export function buildProjects(input: BuildProjectsInput): BuildProjectsResult {
   const groups = new Map<string, ProjectGroup>();
-  const projectEntries = buildHostProjectEntries(input.hosts);
+  const projectEntries = buildHostProjectEntries(input);
 
   for (const host of input.hosts) {
     const hostProjects = projectEntries.filter((project) =>
