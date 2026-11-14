@@ -41,7 +41,7 @@ class FakeHost implements TerminalFilePasteTarget {
   }
 }
 
-function createQueue() {
+function createQueue(options: { resolveMaxFileBytes?: () => number } = {}) {
   const events = { uploading: [] as boolean[], uploaded: 0, failures: [] as string[] };
   const queue = new TerminalFilePasteQueue({
     onUploadingChange: (uploading) => {
@@ -53,6 +53,7 @@ function createQueue() {
     onFailure: (error) => {
       events.failures.push(error instanceof Error ? error.message : String(error));
     },
+    resolveMaxFileBytes: options.resolveMaxFileBytes,
   });
   return { queue, events, host: new FakeHost() };
 }
@@ -136,6 +137,16 @@ describe("terminal file paste queue", () => {
     await settle();
 
     expect(events.failures).toEqual(["unreadable", "big.png exceeds the upload limit"]);
+    expect(host.uploads).toEqual([]);
+  });
+
+  it("honors a host-advertised upload limit", async () => {
+    const { queue, host, events } = createQueue({ resolveMaxFileBytes: () => 2 });
+
+    queue.add(Promise.resolve(file("a.png")), host);
+    await settle();
+
+    expect(events.failures).toEqual(["a.png exceeds the upload limit"]);
     expect(host.uploads).toEqual([]);
   });
 

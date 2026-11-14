@@ -228,6 +228,13 @@ export const MutableDaemonConfigSchema = z
         maxProcessConcurrency: z.number().int().positive(),
       })
       .optional(),
+    // COMPAT(uploadsLimit): added in v0.16.0, keep optional while old daemons are supported.
+    // Clients fall back to their built-in upload limit when absent.
+    uploads: z
+      .object({
+        maxFileBytes: z.number().int().positive(),
+      })
+      .optional(),
     app: z.object({ baseUrl: z.string() }).optional(),
     catalogRefreshTimeoutMs: z.number().int().positive().optional(),
     // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.

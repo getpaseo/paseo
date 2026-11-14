@@ -10,7 +10,10 @@ export interface TerminalFile {
 
 /** A file over the upload limit; the pane words it for the user. */
 export class TerminalFileTooLargeError extends Error {
-  constructor(readonly fileName: string) {
+  constructor(
+    readonly fileName: string,
+    readonly limitBytes: number,
+  ) {
     super(`${fileName} exceeds the upload limit`);
   }
 }
@@ -26,6 +29,8 @@ interface TerminalFilePasteEvents {
   onUploadingChange(uploading: boolean): void;
   onUploaded(): void;
   onFailure(error: unknown): void;
+  /** Host-advertised upload cap; defaults to FILE_UPLOAD_MAX_BYTES. */
+  resolveMaxFileBytes?(): number;
 }
 
 /**
@@ -69,8 +74,9 @@ export class TerminalFilePasteQueue {
       if (!file || !isCurrent()) {
         return;
       }
-      if (file.bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
-        throw new TerminalFileTooLargeError(file.fileName);
+      const maxFileBytes = this.events.resolveMaxFileBytes?.() ?? FILE_UPLOAD_MAX_BYTES;
+      if (file.bytes.byteLength > maxFileBytes) {
+        throw new TerminalFileTooLargeError(file.fileName, maxFileBytes);
       }
       this.setUploading(true);
       const path = await target.upload({ ...file, fileName: toShellSafeFileName(file.fileName) });

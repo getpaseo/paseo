@@ -274,6 +274,17 @@ export const PersistedConfigSchema = z
           .strict()
           .optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
+        uploads: z
+          .object({
+            maxFileBytes: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe("Largest file clients may upload to this daemon, in bytes."),
+          })
+          .strict()
+          .optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),
         terminalProfiles: z.array(TerminalProfileSchema).optional(),
