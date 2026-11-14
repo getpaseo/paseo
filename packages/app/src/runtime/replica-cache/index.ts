@@ -1,4 +1,5 @@
 import { findMountedWindowStart } from "@/agent-stream/history-window";
+import { normalizeTimelineReplay } from "./normalize-timeline-replay";
 import { z } from "zod";
 import {
   AgentStatusSchema,
@@ -1062,7 +1063,7 @@ export class ReplicaCache {
     try {
       const stored = parseStoredPayload(StoredTimelineSchema, row.payload);
       if (stored.agentId !== agentId) return undefined;
-      return deserializeTimeline(stored) ?? undefined;
+      return normalizeTimelineReplay(deserializeTimeline(stored) ?? undefined);
     } catch {
       await this.deleteInvalidRow(row);
       return undefined;
