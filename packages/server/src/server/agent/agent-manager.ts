@@ -883,6 +883,7 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private shuttingDown = false;
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -977,6 +978,15 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  /**
+   * Marks the daemon as stopping. Call it before shutdown yields to the event loop: a stop
+   * signal can reach provider runtimes in the same process group at the same moment, and their
+   * exits arrive while shutdown is still awaiting earlier steps.
+   */
+  beginShutdown(): void {
+    this.shuttingDown = true;
   }
 
   prepareForShutdown(): void {
@@ -5264,6 +5274,7 @@ export class AgentManager {
           isForegroundEvent,
           terminalDisposition,
           options,
+          flags,
         });
       case "turn_canceled":
         this.onStreamTurnCanceled({
@@ -5387,8 +5398,10 @@ export class AgentManager {
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
     options: { fromHistory?: boolean } | undefined;
+    flags: StreamEventFlags;
   }): Promise<void> {
-    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options, flags } =
+      params;
     this.logger.warn(
       {
         agentId: agent.id,
@@ -5405,6 +5418,21 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
+    if (
+      this.shuttingDown &&
+      !options?.fromHistory &&
+      !isForegroundEvent &&
+      !agent.activeForegroundTurnId
+    ) {
+      // Shutdown stops every provider runtime anyway. A runtime that dies first, for example
+      // from a stop signal sent to the whole process group, did not fail the agent's work.
+      flags.shouldDispatchEvent = false;
+      this.logger.info(
+        { agentId: agent.id, provider: agent.provider, turnId: eventTurnId, error: event.error },
+        "Provider runtime exited during daemon shutdown; not marking the agent failed",
+      );
+      return;
+    }
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
