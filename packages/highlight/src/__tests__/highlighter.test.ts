@@ -66,6 +66,25 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights Kotlin code", () => {
+    const code = 'class Greeter {\n  val message: String = "hello"\n}';
+    const result = highlightCode(code, "test.kt");
+
+    expect(result).toHaveLength(3);
+
+    const classToken = result[0].find((t) => t.text === "class");
+    expect(classToken?.style).toBe("keyword");
+
+    const valToken = result[1].find((t) => t.text === "val");
+    expect(valToken?.style).toBe("keyword");
+
+    const typeToken = result[1].find((t) => t.text === "String");
+    expect(typeToken?.style).toBe("type");
+
+    const stringToken = result[1].find((t) => t.text.includes("hello"));
+    expect(stringToken?.style).toBe("string");
+  });
+
   it("highlights C# code", () => {
     const code = 'class Greeter {\n    string message = "hello";\n}';
     const result = highlightCode(code, "test.cs");
