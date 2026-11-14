@@ -1060,6 +1060,37 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   );
   await expect(appendPromise).resolves.toEqual({ seq: 8, epoch: "epoch-sdk" });
 
+  const subagentsPromise = agent.providerSubagents.list();
+  const subagentsRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(subagentsRequest).toMatchObject({
+    type: "agent.provider_subagents.list.request",
+    parentAgentId: "agent_sdk",
+  });
+  const subagent = {
+    id: "task-1",
+    parentAgentId: "agent_sdk",
+    parentSubagentId: null,
+    provider: "claude",
+    title: "Explore",
+    description: null,
+    status: "running",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    toolCallId: null,
+  };
+  ws.message(
+    sessionMessage({
+      type: "agent.provider_subagents.list.response",
+      payload: {
+        requestId: subagentsRequest.requestId,
+        parentAgentId: "agent_sdk",
+        subagents: [subagent],
+        error: null,
+      },
+    }),
+  );
+  await expect(subagentsPromise).resolves.toEqual([subagent]);
+
   const archivePromise = agent.archive();
   const archiveRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(archiveRequest).toMatchObject({
