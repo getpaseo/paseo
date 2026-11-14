@@ -180,6 +180,19 @@ describe("combined model selector data", () => {
     ).toEqual(["codex"]);
   });
 
+  it("keeps a saved choice whose provider is not installed, labelled Unavailable", () => {
+    const providers = buildSelectableProviderSelectorProviders(
+      [
+        snapshotEntry({ provider: "codex", label: "Codex" }),
+        snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+      ],
+      true,
+      "gemini",
+    );
+    expect(providers.map((provider) => provider.id)).toEqual(["codex", "gemini"]);
+    expect(providers[1].modelSelection).toEqual({ kind: "error", message: "Unavailable" });
+  });
+
   it("keeps an agent's own provider in its selector when that provider is not installed", () => {
     expect(
       buildSelectorProvider(

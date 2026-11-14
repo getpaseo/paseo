@@ -156,13 +156,20 @@ export function buildSelectorProvider(
   };
 }
 
-/** The providers a user can pick a model from: enabled, and installed or still being probed. */
+/**
+ * The providers a user can pick a model from: enabled, and installed or still being probed. The
+ * provider of a choice already saved stays whatever its state, so the selector still names it.
+ */
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
   isConnected = true,
+  selectedProvider: string | null = null,
 ): ProviderSelectorProvider[] {
   return (entries ?? [])
-    .filter((entry) => entry.enabled && entry.status !== "unavailable")
+    .filter(
+      (entry) =>
+        entry.provider === selectedProvider || (entry.enabled && entry.status !== "unavailable"),
+    )
     .map((entry) => buildSelectorProvider(entry, isConnected));
 }
 
