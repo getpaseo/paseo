@@ -53,6 +53,13 @@ export class CodexAppServerResponseTooLargeError extends Error {
 // Codex serializes a response with `id` first, so its head names the request.
 const OVERSIZED_RESPONSE_HEAD = /^\{"id":(\d+),"result":/;
 
+export class CodexAppServerRequestTimeoutError extends Error {
+  constructor(readonly method: string) {
+    super(`Codex app-server request timed out for ${method}`);
+    this.name = "CodexAppServerRequestTimeoutError";
+  }
+}
+
 export class CodexAppServerRpcError extends Error {
   constructor(
     message: string,
@@ -314,7 +321,7 @@ export class CodexAppServerClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`Codex app-server request timed out for ${method}`));
+        reject(new CodexAppServerRequestTimeoutError(method));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
     });

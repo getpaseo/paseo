@@ -88,6 +88,7 @@ import {
 import {
   CodexAppServerClient,
   CodexAppServerRpcError,
+  CodexAppServerRequestTimeoutError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
   type CodexThreadForkParams,
@@ -292,6 +293,13 @@ const CODEX_MODES: AgentMode[] = [
 ];
 
 const DEFAULT_CODEX_MODE_ID = "auto";
+
+interface IdentifiedCodexInterrupt {
+  client: CodexAppServerClient;
+  threadId: string;
+  turnId: string;
+  foregroundTurnId: string | null;
+}
 
 interface CodexAppServerClientLike {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
@@ -3619,6 +3627,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     cancelRequested: boolean;
   } | null = null;
   private client: CodexAppServerClient | null = null;
+  private interruptRecoveryClient: CodexAppServerClient | null = null;
   private readonly background = new CodexBackgroundInventory((event) => this.emitEvent(event));
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -5270,6 +5279,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
+    if (this.interruptRecoveryClient) {
+      await this.retireInterruptedClient(this.interruptRecoveryClient);
+      return;
+    }
     const pendingStart = this.pendingForegroundStart;
     if (pendingStart) {
       pendingStart.cancelRequested = true;
@@ -5305,6 +5318,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     const client = this.client;
     const threadId = this.currentThreadId;
+    await this.interruptIdentifiedTurn({ client, threadId, turnId, foregroundTurnId });
+  }
+
+  private async interruptIdentifiedTurn({
+    client,
+    threadId,
+    turnId,
+    foregroundTurnId,
+  }: IdentifiedCodexInterrupt): Promise<void> {
     const interruptRequest = client.request(
       "turn/interrupt",
       {
@@ -5325,6 +5347,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       await interruptRequest;
     } catch (error) {
+      if (error instanceof CodexAppServerRequestTimeoutError) {
+        await this.pendingNotifications;
+        const capturedForegroundEnded =
+          foregroundTurnId === null || this.activeForegroundTurnId !== foregroundTurnId;
+        const capturedTurnEnded = this.currentTurnId !== turnId && capturedForegroundEnded;
+        if (capturedTurnEnded) return;
+        this.interruptRecoveryClient = client;
+        await this.retireInterruptedClient(client);
+        return;
+      }
       if (!isCodexAlreadyIdleInterrupt(error)) {
         throw error;
       }
@@ -5334,6 +5366,35 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification?.resolve(null);
       this.pendingForegroundTurnIdentification = null;
     }
+  }
+
+  private async retireInterruptedClient(client: CodexAppServerClient): Promise<void> {
+    this.logger.warn(
+      this.traceContext(),
+      "Codex interrupt timed out; retiring its app-server before recovery",
+    );
+    // dispose rejects unless the old process reports exit, including after SIGKILL.
+    // Retain the client and turn on failure so another Stop can retry termination.
+    await client.dispose();
+    await this.pendingNotifications;
+    this.background.stop();
+    this.clearPendingPermissions();
+    this.dismissInterruptedAsyncQuestions();
+    for (const [callId, state] of this.subAgentCallsByCallId) {
+      if (state.toolCall.status === "running") this.emitSubAgentActivityUpdate(callId, "canceled");
+    }
+    this.pendingSubAgentNotificationsByThreadId.clear();
+    this.terminalProcessIdsByTurnId.clear();
+    this.settleStreamRetry({ status: "canceled" });
+    this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    this.activeForegroundTurnId = null;
+    this.activeClientMessageId = null;
+    this.currentTurnId = null;
+    this.pendingForegroundTurnIdentification?.resolve(null);
+    this.pendingForegroundTurnIdentification = null;
+    this.client = null;
+    this.interruptRecoveryClient = null;
+    this.connectionState = "disconnected";
   }
 
   stopBackgroundWork(id: string): Promise<void> {
