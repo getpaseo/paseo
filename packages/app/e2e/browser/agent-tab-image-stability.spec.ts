@@ -146,6 +146,36 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await expectAgentReadyToInterrupt(page);
 });
 
+test("opens a remote Markdown image whose URL needs normalization", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Remote image with a mixed-case host",
+    fileName: "remote.png",
+    width: 240,
+    height: 160,
+  });
+  const delivery = await serveDelayedImage(path.join(workspace.repoPath, image.relativePath));
+  const url = delivery.url.replace("127.0.0.1", "LOCALHOST");
+  try {
+    delivery.release();
+    const agent = await createSettledMockAgent(workspace, "Remote image lightbox");
+    await emitSettledAssistantImage(workspace.client, agent, image, url);
+    await openAssistantImageTimeline(page, agent);
+    const rendered = page.getByRole("button", { name: image.alt }).first();
+    await expect(rendered).toHaveJSProperty("naturalWidth", image.width);
+    await rendered.click();
+    await expect(page.getByTestId("attachment-lightbox-canvas")).toBeVisible();
+    await page.getByTestId("zoomable-viewport-toolbar").hover();
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await page.getByRole("button", { name: "Close image", exact: true }).click();
+    await expect(page.getByTestId("attachment-lightbox-image")).toHaveCount(0);
+  } finally {
+    await delivery.close();
+  }
+});
+
 test("reloading a timeline reserves image height without a load-time scroll jump", async ({
   imageWorkspace: workspace,
   page,

@@ -1,0 +1,11 @@
+context platform=ios timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"image-file-preview-canvas\"" 10000
+wait "role=button label=\"Zoom in\"" 10000
+press "role=button label=\"Zoom in\""
+wait "role=button label=\"Reset view\" enabled=true" 10000
+press "role=button label=\"Reset view\""
+wait "role=button label=\"Reset view\" enabled=false" 10000
+close
