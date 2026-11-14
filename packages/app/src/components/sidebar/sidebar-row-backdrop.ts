@@ -12,16 +12,17 @@ import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
  */
 export function getSidebarRowBackdrop({
   isDragging = false,
-  isPressed = false,
+  isHighlighted = false,
   selected = false,
   isHovered = false,
 }: {
   isDragging?: boolean;
-  isPressed?: boolean;
+  /** The press highlight is painting the row's pressed fill. */
+  isHighlighted?: boolean;
   selected?: boolean;
   isHovered?: boolean;
 }): SidebarSurfaceBackdrop {
-  if (isDragging || isPressed) return "surface2";
+  if (isDragging || isHighlighted) return "surface2";
   if (selected) return "surfaceSidebarSelected";
   if (isHovered) return "surfaceSidebarHover";
   return "surfaceSidebar";
