@@ -1,4 +1,4 @@
-import { createElement, type ElementType } from "react";
+import { createElement, type ComponentType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
@@ -153,17 +153,23 @@ export const StyleSheet = {
 
 type UniPropsMapping = (theme: typeof testTheme, runtime: object) => Record<string, unknown>;
 
-/** Applies `uniProps` with the test theme, the way Unistyles maps theme values onto props. */
-export const withUnistyles = <T>(Component: T): T => {
-  function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
-    // Explicit props win over mapped ones, as in Unistyles' `deepMergeObjects(mappings, uniProps, props)`.
-    return createElement(Component as ElementType, {
+/**
+ * Like the real HOC, the theme-derived props go under the caller's own props, so a themed
+ * control (the switch track, for one) gets real colors in a browser test.
+ */
+export function withUnistyles<P extends object>(
+  Component: ComponentType<P>,
+  mappings?: (theme: typeof testTheme, runtime: typeof UnistylesRuntime) => Partial<P>,
+): ComponentType<P> {
+  return function WithTestTheme({ uniProps, ...props }: P & { uniProps?: UniPropsMapping }) {
+    const themed = mappings ? mappings(testTheme, UnistylesRuntime) : {};
+    return createElement(Component, {
+      ...themed,
       ...(uniProps ? uniProps(testTheme, {}) : {}),
       ...props,
-    });
-  }
-  return ThemedComponent as T;
-};
+    } as P);
+  };
+}
 
 export const useUnistyles = () => ({
   theme: testTheme,
