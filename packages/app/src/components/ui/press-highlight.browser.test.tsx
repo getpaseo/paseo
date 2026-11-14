@@ -137,3 +137,21 @@ it("keeps the caller's border and press handlers on the Android ripple row", asy
   fireEvent.mouseUp(row, { button: 0 });
   await waitFor(() => expect(presses.calls).toEqual(["in", "out"]));
 });
+
+it("paints and reports nothing on web without a pressed fill, such as a row being renamed", () => {
+  const highlights = recordHighlights();
+  const { getByTestId } = render(
+    <WebPressHighlight
+      testID="row"
+      style={rowStyle}
+      onHighlightChange={highlights.record}
+      onPress={onPress}
+    />,
+  );
+  const row = getByTestId("row");
+
+  fireEvent.mouseDown(row, { button: 0 });
+  expect(getComputedStyle(row).backgroundColor).toBe("rgb(255, 255, 255)");
+  fireEvent.mouseUp(row, { button: 0 });
+  expect(highlights.calls).toEqual([]);
+});

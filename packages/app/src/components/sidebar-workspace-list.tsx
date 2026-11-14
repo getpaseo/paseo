@@ -1147,7 +1147,7 @@ function WorkspaceRowInner({
               accessibilityRole="button"
               accessibilityState={accessibilityState}
               style={workspaceRowStyle}
-              highlightStyle={styles.workspaceRowPressed}
+              highlightStyle={isEditingTitle ? undefined : styles.workspaceRowPressed}
               onHighlightChange={setIsHighlighted}
               onPressIn={isEditingTitle ? undefined : interaction.handlePressIn}
               onTouchMove={isEditingTitle ? undefined : interaction.handleTouchMove}
