@@ -611,6 +611,63 @@ function resolveTerminalKeyToken({ key, literal, preamble }: TerminalKeyTokenInp
   );
 }
 
+const sharedAgentDirectories = new WeakMap<
+  AgentManager,
+  {
+    registry: NonNullable<PaseoToolHostDependencies["workspaceRegistry"]>;
+    directory: AgentDirectory;
+  }
+>();
+
+/** Registered provider ids, rebuilt only when the registered set changes. */
+function createRegisteredProviderIds(
+  providerSnapshotManager: Pick<ProviderSnapshotManager, "listRegisteredProviderIds">,
+): () => Set<AgentProvider> {
+  let cachedKey: string | null = null;
+  let cached: Set<AgentProvider> = new Set();
+  return () => {
+    const ids = providerSnapshotManager.listRegisteredProviderIds();
+    const key = ids.join("\u0000");
+    if (key !== cachedKey) {
+      cachedKey = key;
+      cached = new Set(ids);
+    }
+    return cached;
+  };
+}
+
+/**
+ * One agent directory per daemon: `list_agents` reads through it instead of rebuilding the
+ * projection dependencies (and the registered-provider set) on every call.
+ */
+function sharedAgentDirectory(options: PaseoToolHostDependencies): AgentDirectory {
+  const registry = options.workspaceRegistry;
+  if (!registry) throw new Error("Workspace registry is not configured");
+  const cached = sharedAgentDirectories.get(options.agentManager);
+  if (cached?.registry === registry) {
+    return cached.directory;
+  }
+  const { agentManager, agentStorage, providerSnapshotManager, logger } = options;
+  const directoryLogger = logger.child({ module: "agent", component: "agent-directory-tools" });
+  const validProviderIds = createRegisteredProviderIds(providerSnapshotManager);
+  const directory = new AgentDirectory({
+    manager: agentManager,
+    storage: agentStorage,
+    workspaces: registry,
+    projectLive: (snapshot) =>
+      serializeSnapshotWithMetadata(agentStorage, snapshot, directoryLogger),
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, validProviderIds(), (provider, own) =>
+        agentManager.effectiveOptionsFor(provider, own),
+      ),
+    isProviderVisible: () => true,
+    isStoredProviderAvailable: (record) =>
+      isStoredAgentProviderAvailable(record, validProviderIds()),
+  });
+  sharedAgentDirectories.set(agentManager, { registry, directory });
+  return directory;
+}
+
 export function createPaseoToolCatalog(options: PaseoToolHostDependencies): PaseoToolCatalog {
   return createToolCatalog(options, options.callerAgentId ? "agent" : "top-level");
 }
@@ -2180,28 +2237,8 @@ function createToolCatalog(
     }) => {
       const callerCwd = callerAgentId ? resolveCallerAgent()?.cwd : undefined;
       const requestedCwd = cwd?.trim() ? expandUserPath(cwd) : callerCwd;
-      if (!options.workspaceRegistry) throw new Error("Workspace registry is not configured");
-      const directory = new AgentDirectory({
-        manager: agentManager,
-        storage: agentStorage,
-        workspaces: options.workspaceRegistry,
-        projectLive: (snapshot) =>
-          serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
-        projectStored: (record) =>
-          buildStoredAgentPayload(
-            record,
-            new Set(providerSnapshotManager.listRegisteredProviderIds()),
-            (provider, own) => agentManager.effectiveOptionsFor(provider, own),
-          ),
-        isProviderVisible: () => true,
-        isStoredProviderAvailable: (record) =>
-          isStoredAgentProviderAvailable(
-            record,
-            new Set(providerSnapshotManager.listRegisteredProviderIds()),
-          ),
-      });
       const agents = selectAgentListItems(
-        await directory.list({ includeBackground, includeArchived }),
+        await sharedAgentDirectory(options).list({ includeBackground, includeArchived }),
         { cwd: requestedCwd, statuses, sinceHours, limit },
       );
 

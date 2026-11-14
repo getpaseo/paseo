@@ -1,7 +1,11 @@
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
-import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
+import {
+  AgentDirectory,
+  type AgentDirectoryCandidate,
+  type BackgroundVisibility,
+} from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
 import {
@@ -63,7 +67,7 @@ import {
   encodePluginOutputFrame,
   PluginFrameOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
-import { CursorError } from "./pagination/cursor.js";
+import { CursorError, type CursorSortValue } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { matchesAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
@@ -409,6 +413,75 @@ type FetchAgentsResponsePayload = Extract<
 type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
+
+/** One discovery candidate with the sort values the pager needs, computed before projection. */
+interface FetchAgentsSortItem {
+  candidate: AgentDirectoryCandidate;
+  values: Record<string, CursorSortValue>;
+}
+
+function candidateId(candidate: AgentDirectoryCandidate): string {
+  return candidate.kind === "live" ? candidate.agent.id : candidate.record.id;
+}
+
+function candidateWorkspaceId(candidate: AgentDirectoryCandidate): string | undefined {
+  return candidate.kind === "live" ? candidate.agent.workspaceId : candidate.record.workspaceId;
+}
+
+function candidateArchivedAt(candidate: AgentDirectoryCandidate): string | null {
+  return candidate.record?.archivedAt ?? null;
+}
+
+function agentStatusPriority(agent: AgentSnapshotPayload): number {
+  return getAgentStatusPriority({
+    status: agent.status,
+    pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+    requiresAttention: agent.requiresAttention,
+    attentionReason: agent.attentionReason ?? null,
+    backgroundWork: agent.backgroundWork,
+  });
+}
+
+/**
+ * Sort values derived from stored fields, matching what the projected payload would report.
+ * `status_priority` is the one key that can need live state: only live agents are projected for
+ * it, and a stored record answers it from its own lastStatus/attention fields.
+ */
+function candidateSortValue(params: {
+  candidate: AgentDirectoryCandidate;
+  key: FetchAgentsRequestSort["key"];
+  liveStatusPriority: Map<string, number> | null;
+}): CursorSortValue {
+  const { candidate, key, liveStatusPriority } = params;
+  if (candidate.kind === "live") {
+    switch (key) {
+      case "status_priority":
+        return liveStatusPriority?.get(candidate.agent.id) ?? 0;
+      case "created_at":
+        return Date.parse(candidate.agent.createdAt.toISOString());
+      case "updated_at":
+        return Date.parse(candidate.agent.updatedAt.toISOString());
+      case "title":
+        return candidate.record?.title?.toLocaleLowerCase() ?? "";
+    }
+  }
+  const record = candidate.record;
+  switch (key) {
+    case "status_priority":
+      return getAgentStatusPriority({
+        status: record.lastStatus,
+        requiresAttention: record.requiresAttention,
+        attentionReason: record.attentionReason ?? null,
+      });
+    case "created_at":
+      return Date.parse(new Date(record.createdAt).toISOString());
+    case "updated_at":
+      return Date.parse(new Date(resolveStoredAgentUpdatedAt(record)).toISOString());
+    case "title":
+      return record.title?.toLocaleLowerCase() ?? "";
+  }
+}
+
 type CreateAgentRequestMessage = Extract<SessionInboundMessage, { type: "create_agent_request" }>;
 
 interface ResolvedSessionCreateAgentIntent {
@@ -5737,6 +5810,13 @@ export class Session {
     return this.agentDirectory.list(filter);
   }
 
+  /** Discovery matches without projection, for reads that only project their page. */
+  private listAgentCandidates(
+    filter?: Parameters<AgentDirectory["listCandidates"]>[0],
+  ): Promise<AgentDirectoryCandidate[]> {
+    return this.agentDirectory.listCandidates(filter);
+  }
+
   private async resolveAgentIdentifier(
     identifier: string,
   ): Promise<{ ok: true; agentId: string } | { ok: false; notFound: boolean; error: string }> {
@@ -5894,24 +5974,28 @@ export class Session {
   }
 
   private async collectFetchAgentsEntries(params: {
-    candidates: AgentSnapshotPayload[];
+    candidates: AgentDirectoryCandidate[];
     limit: number;
     getPlacement: (workspaceId: string | undefined) => Promise<ProjectPlacementPayload | null>;
     filter: AgentUpdatesFilter | undefined;
     search?: string;
+    projectAgent: (candidate: AgentDirectoryCandidate) => Promise<AgentSnapshotPayload>;
   }): Promise<FetchAgentsResponseEntry[]> {
-    const { candidates, limit, getPlacement, filter, search } = params;
+    const { candidates, limit, getPlacement, filter, search, projectAgent } = params;
     const matchedEntries: FetchAgentsResponseEntry[] = [];
     const batchSize = 25;
-    for (
-      let start = 0;
-      start < candidates.length && matchedEntries.length <= limit;
-      start += batchSize
-    ) {
-      const batch = candidates.slice(start, start + batchSize);
+    let start = 0;
+    while (start < candidates.length && matchedEntries.length <= limit) {
+      // Placement, filter and search all read the projected payload, so candidates are still
+      // projected batch by batch until the page is full. A batch never projects past the one
+      // extra entry the pager needs to answer `hasMore`.
+      const needed = limit + 1 - matchedEntries.length;
+      const batch = candidates.slice(start, start + Math.min(batchSize, needed));
+      start += batch.length;
       const batchEntries = await Promise.all(
-        batch.map(async (agent) => {
-          const project = await getPlacement(agent.workspaceId);
+        batch.map(async (candidate) => {
+          const agent = await projectAgent(candidate);
+          const project = await getPlacement(candidateWorkspaceId(candidate));
           return project ? { agent, project } : null;
         }),
       );
@@ -5964,9 +6048,9 @@ export class Session {
         ? { ...request.filter, includeArchived: true }
         : request.filter;
     const scope = request.type === "fetch_agents_request" ? request.scope : undefined;
-    const sort = this.agentsPager.normalizeSort(request.sort);
+    const sort = this.agentsCandidatePager.normalizeSort(request.sort);
 
-    let agents = await this.listAgentPayloads({
+    let candidates = await this.listAgentCandidates({
       labels: filter?.labels,
       includeArchived: filter?.includeArchived,
       includeBackground: backgroundVisibility,
@@ -5975,12 +6059,14 @@ export class Session {
     const activePlacementsByWorkspaceId =
       scope === "active" ? await this.buildActiveProjectPlacementsByWorkspaceId() : null;
     if (activePlacementsByWorkspaceId) {
-      agents = agents.filter(
-        (agent) =>
-          !agent.archivedAt &&
-          agent.workspaceId != null &&
-          activePlacementsByWorkspaceId.has(agent.workspaceId),
-      );
+      candidates = candidates.filter((candidate) => {
+        const workspaceId = candidateWorkspaceId(candidate);
+        return (
+          !candidateArchivedAt(candidate) &&
+          workspaceId != null &&
+          activePlacementsByWorkspaceId.has(workspaceId)
+        );
+      });
     }
 
     const placementByWorkspaceId = new Map<string, Promise<ProjectPlacementPayload | null>>();
@@ -6003,32 +6089,44 @@ export class Session {
     };
 
     const search = agentDirectorySearchQuery(request);
-    let candidates = [...agents];
-    candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
+    // Live agents are the small side of the directory: a sort on live state (status_priority)
+    // projects only them, and paging reuses that projection instead of projecting twice.
+    const liveProjections = new Map<string, AgentSnapshotPayload>();
+    const projectAgent = (candidate: AgentDirectoryCandidate) =>
+      candidate.kind === "live"
+        ? this.projectLiveCandidate({ candidate, cache: liveProjections })
+        : Promise.resolve(this.buildStoredAgentPayload(candidate.record));
+    let sortItems = await this.buildFetchAgentsSortItems({ candidates, sort, projectAgent });
+    sortItems.sort((left, right) => this.agentsCandidatePager.compare(left, right, sort));
     const cursorToken = request.page?.cursor;
     if (cursorToken) {
       const cursor = this.decodeAgentCursor(cursorToken, sort);
-      candidates = candidates.filter(
-        (agent) => this.agentsPager.compareWithCursor(agent, cursor, sort) > 0,
+      sortItems = sortItems.filter(
+        (item) => this.agentsCandidatePager.compareWithCursor(item, cursor, sort) > 0,
       );
     }
 
     const limit = request.page?.limit ?? 200;
 
+    const sortItemById = new Map(sortItems.map((item) => [candidateId(item.candidate), item]));
     const matchedEntries = await this.collectFetchAgentsEntries({
-      candidates,
+      candidates: sortItems.map((item) => item.candidate),
       limit,
       getPlacement,
       filter,
       search,
+      projectAgent,
     });
 
     const pagedEntries = matchedEntries.slice(0, limit);
     const hasMore = matchedEntries.length > limit;
-    const nextCursor =
+    // Encode the sort values the page was ordered by, not a re-read payload: a live agent can
+    // change between discovery and projection, and the cursor must match its place in the order.
+    const lastItem =
       hasMore && pagedEntries.length > 0
-        ? this.agentsPager.encode(pagedEntries[pagedEntries.length - 1].agent, sort)
-        : null;
+        ? sortItemById.get(pagedEntries[pagedEntries.length - 1].agent.id)
+        : undefined;
+    const nextCursor = lastItem ? this.agentsCandidatePager.encode(lastItem, sort) : null;
 
     return {
       entries: pagedEntries,
@@ -6040,37 +6138,65 @@ export class Session {
     };
   }
 
-  private readonly agentsPager = new SortablePager<
-    AgentSnapshotPayload,
+  /** Sort values are read once before projection; they order the pages and encode the cursor. */
+  private readonly agentsCandidatePager = new SortablePager<
+    FetchAgentsSortItem,
     FetchAgentsRequestSort["key"]
   >({
     validKeys: FETCH_AGENTS_SORT_KEYS,
     defaultSort: [{ key: "updated_at", direction: "desc" }],
     label: "fetch_agents",
-    getId: (agent) => agent.id,
-    getSortValue: (agent, key): number | string => {
-      switch (key) {
-        case "status_priority":
-          return getAgentStatusPriority({
-            status: agent.status,
-            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
-            requiresAttention: agent.requiresAttention,
-            attentionReason: agent.attentionReason ?? null,
-            backgroundWork: agent.backgroundWork,
-          });
-        case "created_at":
-          return Date.parse(agent.createdAt);
-        case "updated_at":
-          return Date.parse(agent.updatedAt);
-        case "title":
-          return agent.title?.toLocaleLowerCase() ?? "";
-      }
-    },
+    getId: (item) => candidateId(item.candidate),
+    getSortValue: (item, key) => item.values[key] ?? null,
   });
+
+  private projectLiveCandidate(params: {
+    candidate: Extract<AgentDirectoryCandidate, { kind: "live" }>;
+    cache: Map<string, AgentSnapshotPayload>;
+  }): Promise<AgentSnapshotPayload> {
+    const { candidate, cache } = params;
+    const cached = cache.get(candidate.agent.id);
+    if (cached) return Promise.resolve(cached);
+    return this.agentDirectory.project(candidate).then((payload) => {
+      cache.set(candidate.agent.id, payload);
+      return payload;
+    });
+  }
+
+  private async buildFetchAgentsSortItems(params: {
+    candidates: AgentDirectoryCandidate[];
+    sort: SortSpec<FetchAgentsRequestSort["key"]>[];
+    projectAgent: (candidate: AgentDirectoryCandidate) => Promise<AgentSnapshotPayload>;
+  }): Promise<FetchAgentsSortItem[]> {
+    const { candidates, sort, projectAgent } = params;
+    const liveStatusPriority = sort.some((spec) => spec.key === "status_priority")
+      ? new Map(
+          await Promise.all(
+            candidates
+              .filter((candidate) => candidate.kind === "live")
+              .map(
+                async (candidate): Promise<[string, number]> => [
+                  candidateId(candidate),
+                  agentStatusPriority(await projectAgent(candidate)),
+                ],
+              ),
+          ),
+        )
+      : null;
+    return candidates.map((candidate) => ({
+      candidate,
+      values: Object.fromEntries(
+        sort.map((spec) => [
+          spec.key,
+          candidateSortValue({ candidate, key: spec.key, liveStatusPriority }),
+        ]),
+      ),
+    }));
+  }
 
   private decodeAgentCursor(token: string, sort: SortSpec<FetchAgentsRequestSort["key"]>[]) {
     try {
-      return this.agentsPager.decode(token, sort);
+      return this.agentsCandidatePager.decode(token, sort);
     } catch (error) {
       if (error instanceof CursorError) {
         throw new SessionRequestError("invalid_cursor", error.message);
