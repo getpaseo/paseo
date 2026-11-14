@@ -259,6 +259,33 @@ describe("workspace ranking", () => {
     }
   });
 
+  it("ranks a word match on a workspace's name above a newer one that matches only inside a word", () => {
+    const rank = createWorkspaceRanker();
+    const authService = workspace({
+      id: "auth-service",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    const oauthRefactor = workspace({
+      id: "oauth-refactor",
+      activityAt: new Date("2026-10-17T00:00:00Z"),
+      agents: [agent("agent-auth", "Auth flow fix")],
+    });
+    const authRows = rank([oauthRefactor, authService], "auth");
+    expect(authRows.map((row) => row.id)).toEqual(["auth-service", "oauth-refactor"]);
+    // The row that matched through its agent says so.
+    expect(authRows[1]?.matchedAgent?.title).toBe("Auth flow fix");
+
+    const fixLogin = workspace({ id: "fix-login", activityAt: new Date("2026-10-17T00:00:00Z") });
+    const prefixedThing = workspace({
+      id: "prefixed-thing",
+      activityAt: new Date("2026-10-01T00:00:00Z"),
+      agents: [agent("agent-fix", "Fix")],
+    });
+    const fixRows = rank([prefixedThing, fixLogin], "fix");
+    expect(fixRows.map((row) => row.id)).toEqual(["fix-login", "prefixed-thing"]);
+    expect(fixRows[1]?.matchedAgent?.title).toBe("Fix");
+  });
+
   it("opens the matched agent's tab, and the workspace otherwise", () => {
     const opened: string[] = [];
     const row = workspace({

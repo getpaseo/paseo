@@ -1,7 +1,9 @@
 import {
   compareMatchScores,
+  type MatchClass,
   type MatchScore,
   scoreTextFields,
+  textFieldsMatchClass,
 } from "@getpaseo/protocol/search/text-match";
 import type { CommandCenterContribution } from "./contributions";
 import type { CommandCenterListMetrics } from "./list-metrics";
@@ -170,18 +172,12 @@ export function scoreSearchFields(
   return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
 }
 
-/**
- * Every query token appears in some field as a run of adjacent characters, so none was found
- * only by scattering it across a word ("login" in "long-input"). A row that matches only that
- * way matched loosely.
- */
-export function matchesSearchFieldsContiguously(
+/** How closely the query matched the fields; see `MatchClass`. Null when it does not match. */
+export function searchFieldsMatchClass(
   query: string,
   fields: CommandCenterSearchFields,
-): boolean {
-  return (
-    scoreTextFields(query, [...fields.visible, ...fields.hidden], { subsequence: false }) !== null
-  );
+): MatchClass | null {
+  return textFieldsMatchClass(query, [...fields.visible, ...fields.hidden]);
 }
 
 /** Join non-empty subtitle parts with " · ", dropping null/undefined/empty. */
