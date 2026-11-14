@@ -114,6 +114,16 @@ New worktrees are created under `$PASEO_HOME/worktrees` by default. To place new
 
 Relative paths are resolved against `PASEO_HOME`. Existing worktrees remain where they are; changing this setting only changes where Paseo creates and discovers Paseo-managed worktrees going forward.
 
+## File uploads
+
+Clients cap each uploaded file at 50 MiB by default. A daemon can raise or lower that cap for every client that connects to it:
+
+```json
+{ "daemon": { "uploads": { "maxFileBytes": 104857600 } } }
+```
+
+The value is bytes. Daemons that omit it advertise nothing and clients keep their 50 MiB default. Changes apply on config reload; large uploads still share the WebSocket message budget of the connection.
+
 ## Voice
 
 Voice is configured through `features.dictation` and `features.voiceMode`. Provider credentials and options live inline at `features.dictation.stt`, `features.voiceMode.stt`, and `features.voiceMode.tts`.

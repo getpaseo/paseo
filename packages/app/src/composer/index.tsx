@@ -120,6 +120,8 @@ import {
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
 } from "@/runtime/host-runtime";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { resolveUploadMaxFileBytes } from "@/attachments/upload-limit";
 import {
   deleteAttachments,
   persistAttachmentFromBlob,
@@ -1312,6 +1314,7 @@ function ComposerContentImpl({
   const mode = resolveComposerInputMode(inputMode);
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
+  const { config: daemonConfig } = useDaemonConfig(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const agentDirectoryStatus = useHostRuntimeAgentDirectoryStatus(serverId);
   const toast = useToast();
@@ -1925,7 +1928,11 @@ function ComposerContentImpl({
       const placeholders = files.map((file) => ({ id: nextPendingFileId.current++, file }));
       setPendingFiles((pending) => [...pending, ...placeholders]);
       try {
-        const uploaded = await uploadFileAttachments({ client, files });
+        const uploaded = await uploadFileAttachments({
+          client,
+          files,
+          maxFileBytes: resolveUploadMaxFileBytes(daemonConfig),
+        });
         addFiles(uploaded);
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
@@ -1936,7 +1943,7 @@ function ComposerContentImpl({
         setPendingFiles((pending) => pending.filter((entry) => !placeholders.includes(entry)));
       }
     },
-    [addFiles, client, t],
+    [addFiles, client, daemonConfig, t],
   );
 
   const handlePickFile = useCallback(async () => {
