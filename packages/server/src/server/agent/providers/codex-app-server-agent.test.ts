@@ -8463,6 +8463,22 @@ test("Codex runtime safety queries live terminals and retains unsupported app se
     await expect.poll(() => session.canStopRuntime()).toBe(true);
     response = { data: [{ processId: "shell-1" }], nextCursor: null };
     expect(await session.canStopRuntime()).toBe(false);
+    response = { processIds: ["legacy-shell-1"] };
+    expect(await session.canStopRuntime()).toBe(false);
+    response = { processIds: [] };
+    expect(await session.canStopRuntime()).toBe(true);
+    response = { data: [], nextCursor: null, processIds: ["legacy-shell-1"] };
+    expect(await session.canStopRuntime()).toBe(false);
+    response = { data: [], nextCursor: "next" };
+    expect(await session.canStopRuntime()).toBe(false);
+    for (const invalid of [
+      { processIds: [42] },
+      { data: [] },
+      { data: [], nextCursor: null, processIds: [42] },
+    ]) {
+      response = invalid;
+      await expect(session.canStopRuntime()).rejects.toThrow();
+    }
     response = {};
     await expect(session.canStopRuntime()).rejects.toThrow();
     response = { __jsonRpcError: { code: -32601, message: "Method not found" } };

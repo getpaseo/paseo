@@ -5360,10 +5360,26 @@ export class CodexAppServerAgentSession implements AgentSession {
       .parse(await this.client.request("thread/loaded/list", {}, 10_000));
     const threadIds = new Set([this.currentThreadId, ...loaded.data]);
     for (const threadId of threadIds) {
+      // Older compatible app servers return processIds instead of a paginated inventory.
+      // Validate both shapes and retain the runtime if either reports live work.
       const response = z
-        .object({ data: z.array(z.unknown()), nextCursor: z.string().nullable() })
+        .object({
+          data: z.array(z.unknown()).optional(),
+          nextCursor: z.string().nullable().optional(),
+          processIds: z.array(z.string()).optional(),
+        })
+        .refine(
+          (value) =>
+            value.processIds !== undefined ||
+            (value.data !== undefined && value.nextCursor !== undefined),
+        )
         .parse(await this.client.request("thread/backgroundTerminals/list", { threadId }, 10_000));
-      if (response.data.length > 0 || response.nextCursor !== null) return false;
+      if (
+        (response.data?.length ?? 0) > 0 ||
+        (response.processIds?.length ?? 0) > 0 ||
+        (response.nextCursor !== undefined && response.nextCursor !== null)
+      )
+        return false;
     }
     return !this.client.hasPendingRequests();
   }
