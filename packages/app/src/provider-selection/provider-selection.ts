@@ -143,20 +143,27 @@ export function buildProviderSelectorProviders(input: {
   }));
 }
 
+/** One provider in a selector, whatever its state. */
+export function buildSelectorProvider(
+  entry: ProviderSnapshotEntry,
+  isConnected = true,
+): ProviderSelectorProvider {
+  const label = entry.label ?? entry.provider;
+  return {
+    id: entry.provider,
+    label,
+    modelSelection: buildEntryModelSelection(entry, label, isConnected),
+  };
+}
+
+/** The providers a user can pick a model from: enabled, and installed or still being probed. */
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
   isConnected = true,
 ): ProviderSelectorProvider[] {
   return (entries ?? [])
-    .filter((entry) => entry.enabled)
-    .map((entry) => {
-      const label = entry.label ?? entry.provider;
-      return {
-        id: entry.provider,
-        label,
-        modelSelection: buildEntryModelSelection(entry, label, isConnected),
-      };
-    });
+    .filter((entry) => entry.enabled && entry.status !== "unavailable")
+    .map((entry) => buildSelectorProvider(entry, isConnected));
 }
 
 export function getProviderModelRows(
