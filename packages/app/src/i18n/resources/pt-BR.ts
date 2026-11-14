@@ -2459,6 +2459,14 @@ export const ptBR: TranslationResources = {
     general: {
       title: "Geral",
       sending: "Envio",
+      addProject: {
+        title: "Adicionar projeto",
+        browseStart: "O seletor de pastas abre em",
+        browseStartLastUsed: "A última pasta em que você navegou",
+        choose: "Escolher...",
+        reset: "Redefinir",
+        chooseFailed: "Não foi possível abrir o seletor de pastas.",
+      },
       setup: {
         label: "Configuração inicial",
         description: "Rever aparência, provedores, projetos e pareamento do celular",

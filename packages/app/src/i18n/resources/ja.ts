@@ -2448,6 +2448,14 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      addProject: {
+        title: "プロジェクトを追加",
+        browseStart: "フォルダ選択の開始場所",
+        browseStartLastUsed: "最後に参照したフォルダ",
+        choose: "選択...",
+        reset: "リセット",
+        chooseFailed: "フォルダ選択を開けませんでした。",
+      },
       setup: {
         label: "初回セットアップ",
         description:

@@ -2462,6 +2462,14 @@ export const ru: TranslationResources = {
     general: {
       title: "Основные",
       sending: "Отправка",
+      addProject: {
+        title: "Добавить проект",
+        browseStart: "Выбор папки открывается в",
+        browseStartLastUsed: "Последняя папка, из которой вы выбирали",
+        choose: "Выбрать...",
+        reset: "Сбросить",
+        chooseFailed: "Не удалось открыть выбор папки.",
+      },
       setup: {
         label: "Первоначальная настройка",
         description: "Снова пройти оформление, провайдеры, проекты и привязку телефона",

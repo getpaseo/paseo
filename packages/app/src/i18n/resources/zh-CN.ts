@@ -2401,6 +2401,14 @@ export const zhCN: TranslationResources = {
     general: {
       title: "通用",
       sending: "发送",
+      addProject: {
+        title: "添加 project",
+        browseStart: "文件夹选择器打开位置",
+        browseStartLastUsed: "上次浏览的文件夹",
+        choose: "选择...",
+        reset: "重置",
+        chooseFailed: "无法打开文件夹选择器。",
+      },
       setup: {
         label: "首次设置",
         description: "重新设置外观、提供方、项目和手机配对",

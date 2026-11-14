@@ -650,6 +650,7 @@ describe("loadSettingsFromStorage", () => {
         releaseChannel: "beta",
         notifications: { playSound: true },
         daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+        projects: { defaultBrowseDirectory: null, lastBrowseDirectory: null },
       },
     });
     const deps = makeDeps({

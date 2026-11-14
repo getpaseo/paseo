@@ -2552,6 +2552,14 @@ export const en = {
     general: {
       title: "General",
       sending: "Sending",
+      addProject: {
+        title: "Add project",
+        browseStart: "Browse opens in",
+        browseStartLastUsed: "The folder you last browsed from",
+        choose: "Choose...",
+        reset: "Reset",
+        chooseFailed: "Couldn't open the folder picker.",
+      },
       setup: {
         label: "First-run setup",
         description: "Walk through appearance, providers, projects and phone pairing again",

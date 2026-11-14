@@ -39,6 +39,10 @@ const DEFAULT_DESKTOP: DesktopSettings = {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,
   },
+  projects: {
+    defaultBrowseDirectory: null,
+    lastBrowseDirectory: null,
+  },
 };
 
 export function createFakeDesktopBridge(

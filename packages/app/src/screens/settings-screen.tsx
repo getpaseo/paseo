@@ -49,6 +49,7 @@ import { HostStatusDot } from "@/components/host-status-dot";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { OpenLocationSection } from "@/screens/settings/open-location/open-location-section";
+import { AddProjectSection } from "@/screens/settings/add-project-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
 import { ChatSection } from "@/screens/settings/chat/chat-section";
 import { SidebarNavSection } from "@/screens/settings/sidebar/sidebar-nav-section";
@@ -1315,6 +1316,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
               <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
               <SendingSection />
               {isDesktopApp ? <OpenLocationSection /> : null}
+              {isDesktopApp ? <AddProjectSection /> : null}
             </>
           );
         case "diagnostics":
