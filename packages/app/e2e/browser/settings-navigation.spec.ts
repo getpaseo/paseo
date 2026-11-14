@@ -14,12 +14,17 @@ import {
   revealSettingsSidebarSection,
   expectSettingsSidebarScrollSettled,
   scrollSettingsSidebarUp,
-  changeSettingsInterfaceFontSize,
   selectSettingsHostSectionsRapidly,
   expectSettingsSidebarScrollOffset,
   scrollSettingsDetailDown,
   expectSettingsDetailScrollOffset,
   openSettingsSection,
+  changeSettingsSyntaxTheme,
+  revealSettingsSyntaxTheme,
+  expectSettingsSyntaxColorChanged,
+  changeSettingsTypography,
+  normalizeSettingsFontSizes,
+  changeSettingsInterfaceFontSizeKeepingSidebarPosition,
   expectSettingsHeader,
   openAddHostFlow,
   selectHostConnectionType,
@@ -84,13 +89,32 @@ test.describe("Settings sidebar scroll position", () => {
     await expectSettingsSidebarScrollOffset(page, 0);
   });
 
-  test("keeps the sidebar position through interface font changes", async ({ page }) => {
+  test("updates appearance without losing the detail scroll or form edits", async ({ page }) => {
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsSection(page, "appearance");
-    const offset = await scrollSettingsSidebarToEnd(page);
-    await changeSettingsInterfaceFontSize(page, 20);
-    await expectSettingsSidebarScrollOffset(page, offset);
+    const { offset, keywordColor } = await revealSettingsSyntaxTheme(page);
+    await changeSettingsSyntaxTheme(page, "Dracula");
+    await expectSettingsDetailScrollOffset(page, offset);
+    await expectSettingsSyntaxColorChanged(page, keywordColor);
+    await changeSettingsTypography(page);
+  });
+
+  test("shows normalized font sizes after committing out-of-range and empty values", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    await normalizeSettingsFontSizes(page);
+  });
+
+  test("keeps the sidebar context through interface font changes", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "appearance");
+    await scrollSettingsSidebarToEnd(page);
+    const offset = await changeSettingsInterfaceFontSizeKeepingSidebarPosition(page, 20);
     await openSettingsHostSection(page, getServerId(), "providers");
     await expectSettingsSidebarScrollOffset(page, offset);
   });

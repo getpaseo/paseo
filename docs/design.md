@@ -44,6 +44,8 @@ Foreground is for the thing being acted on: row titles, section headings, the se
 
 `foregroundExtraMuted` is reserved for passive chrome that must sit behind muted text, such as an always-visible window control. Use the solid token instead of lowering SVG opacity; per-path opacity makes overlapping icon strokes render unevenly. Interactive hover and pressed states return to `foreground`.
 
+A theme states places and identity; `packages/app/src/styles/derive-colors.ts` derives their relationships. Sidebar hover and selected fills step from the sidebar toward the foreground. For plugin themes, passive text on those states derives against the actual state surface; page tertiary text is a separate relationship. Explicit plugin semantic overrides take precedence over derived defaults. Built-in themes retain their chosen passive text. `packages/app/src/styles/theme-contrast.test.ts` checks the built-in and representative plugin palettes against contrast floors.
+
 Accent is the one CTA per surface. A `<Button variant="default">` filled with `accent` appears at most once on a page. Most pages have zero — settings is mostly toggles and text, the workspace pane is mostly content, the chat composer is the input itself.
 
 Destructive is a color, not a click. Restart-daemon and remove-host are `<Button variant="outline">` in the row trailing slot; the destructive surface only appears inside the `confirmDialog` (`packages/app/src/screens/settings/host-page.tsx:541-547`). Workspace archive opens a confirm dialog before any red appears (`packages/app/src/components/sidebar-workspace-list.tsx`). Red appears after the user has indicated intent.

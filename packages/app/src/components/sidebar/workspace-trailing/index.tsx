@@ -7,6 +7,7 @@ import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list"
 import { useAppSettings } from "@/hooks/use-settings";
 import type { SidebarWorkspaceTrailing } from "@/hooks/use-settings";
 import { useCompactTimeAgo, useCompactTimeUntil } from "@/hooks/use-time-ago";
+import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 
 export type { SidebarWorkspaceTrailing };
 
@@ -43,9 +44,11 @@ export function hasSidebarWorkspaceTrailing({
 export function SidebarWorkspaceTrailingContent({
   workspace,
   trailing,
+  backdrop,
 }: {
   workspace: SidebarWorkspaceEntry;
   trailing: SidebarWorkspaceTrailing;
+  backdrop: SidebarSurfaceBackdrop;
 }) {
   if (trailing === "diff" && workspace.diffStat) {
     return (
@@ -54,21 +57,35 @@ export function SidebarWorkspaceTrailingContent({
   }
   // A pending wake is the next thing that will happen to an idle row, so it takes the slot.
   if (trailing === "timestamp" && workspace.nextWakeAt) {
-    return <WorkspaceWakeCountdown wakeAt={workspace.nextWakeAt} />;
+    return <WorkspaceWakeCountdown wakeAt={workspace.nextWakeAt} backdrop={backdrop} />;
   }
   if (trailing === "timestamp" && workspace.statusEnteredAt) {
-    return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} />;
+    return <WorkspaceTimestamp enteredAt={workspace.statusEnteredAt} backdrop={backdrop} />;
   }
   return null;
 }
 
 /** Its own component for the same reason as `WorkspaceTimestamp`: the tick stops here. */
-function WorkspaceWakeCountdown({ wakeAt }: { wakeAt: string }) {
+function WorkspaceWakeCountdown({
+  wakeAt,
+  backdrop,
+}: {
+  wakeAt: string;
+  backdrop: SidebarSurfaceBackdrop;
+}) {
   const { t } = useTranslation();
   const date = useMemo(() => new Date(wakeAt), [wakeAt]);
   const label = useCompactTimeUntil(date);
   return (
-    <Text style={styles.timestamp} numberOfLines={1} testID="sidebar-workspace-wake-countdown">
+    <Text
+      style={[
+        styles.timestamp,
+        backdrop === "surfaceSidebarHover" && styles.hovered,
+        backdrop === "surfaceSidebarSelected" && styles.selected,
+      ]}
+      numberOfLines={1}
+      testID="sidebar-workspace-wake-countdown"
+    >
       {t("sidebar.workspace.status.wakesIn", { time: label })}
     </Text>
   );
@@ -79,10 +96,24 @@ function WorkspaceWakeCountdown({ wakeAt }: { wakeAt: string }) {
  * re-renders the component that owns it — keeping that component down to a single `<Text>` is
  * what stops a minute tick from reaching the row, the list, or the diff stat next door.
  */
-function WorkspaceTimestamp({ enteredAt }: { enteredAt: Date }) {
+function WorkspaceTimestamp({
+  enteredAt,
+  backdrop,
+}: {
+  enteredAt: Date;
+  backdrop: SidebarSurfaceBackdrop;
+}) {
   const label = useCompactTimeAgo(enteredAt);
   return (
-    <Text style={styles.timestamp} numberOfLines={1} testID="sidebar-workspace-timestamp">
+    <Text
+      style={[
+        styles.timestamp,
+        backdrop === "surfaceSidebarHover" && styles.hovered,
+        backdrop === "surfaceSidebarSelected" && styles.selected,
+      ]}
+      numberOfLines={1}
+      testID="sidebar-workspace-timestamp"
+    >
       {label}
     </Text>
   );
@@ -100,4 +131,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
     flexShrink: 0,
   },
+  hovered: { color: theme.colors.foregroundSidebarHover },
+  selected: { color: theme.colors.foregroundSidebarSelected },
 }));

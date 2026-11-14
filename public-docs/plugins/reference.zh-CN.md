@@ -1109,6 +1109,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1117,16 +1123,26 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色                   | 用作                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `background`           | 应用、工作区和终端的背景                                        |
+| `foreground`           | 主要文字、终端前景色和光标                                      |
+| `raised`               | 卡片和弹出框                                                    |
+| `control`              | 输入框、次要填充，以及未设置 `sidebar` 时浅色主题的侧边栏       |
+| `border`               | 边框                                                            |
+| `accent`               | 按钮、选中和焦点。可选；省略时使用 `foreground`。               |
+| `mutedForeground`      | 次要文字                                                        |
+| `ring`                 | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
+| `sidebar`              | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
+| `sidebarHover`         | 可选的侧边栏行悬停背景                                          |
+| `sidebarSelected`      | 可选的侧边栏行选中背景                                          |
+| `surface3`             | 可选的消息气泡、次要按钮和芯片中性填充                          |
+| `surface4`             | 可选的轨道和其他状态的较强中性填充                              |
+| `foregroundExtraMuted` | 可选的三级文字颜色，包括侧边栏时间戳                            |
+
+可选覆盖颜色按原值使用。省略的状态、填充和三级文字颜色分别由调色板推导。覆盖颜色时，请确保它与对应的背景或文字有足够对比度。
+
+`sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 

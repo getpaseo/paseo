@@ -1331,6 +1331,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1341,16 +1347,29 @@ Every color is a hex string; anything else fails to load. Paseo expands the pale
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Color                  | Becomes                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `background`           | App, workspace, and terminal background                                        |
+| `foreground`           | Primary text, terminal foreground and cursor                                   |
+| `raised`               | Cards and popovers                                                             |
+| `control`              | Inputs, secondary fills, and the light-theme sidebar unless `sidebar` is set   |
+| `border`               | Borders                                                                        |
+| `accent`               | Buttons, selection, and focus. Optional; `foreground` if omitted.              |
+| `mutedForeground`      | Secondary text                                                                 |
+| `ring`                 | The keyboard focus outline on web, and terminal bright black                   |
+| `sidebar`              | Sidebar background. Optional; `background` in dark themes, `control` in light. |
+| `sidebarHover`         | Optional hovered sidebar row background.                                       |
+| `sidebarSelected`      | Optional selected sidebar row background.                                      |
+| `surface3`             | Optional neutral fill for message bubbles, secondary buttons, and chips.       |
+| `surface4`             | Optional stronger neutral fill for tracks and other states.                    |
+| `foregroundExtraMuted` | Optional tertiary text, including sidebar timestamps.                          |
+
+Each optional override is used exactly as given. Omitted state, fill, and tertiary colors are derived
+independently from the palette. When you override a color, choose it for readable contrast with the
+surfaces or text it accompanies.
+
+`sidebar` and the five overrides require Paseo 0.16.0 or later. Older apps reject a theme with an unknown color, and the
+plugin's other contributions fail to load with it, so raise `requirements.paseo` when you use any of them.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
