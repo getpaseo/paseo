@@ -1,6 +1,9 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useSessionStore } from "@/stores/session-store";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import { router } from "expo-router";
+import { buildNewWorkspaceRoute } from "@/utils/host-routes";
+import { usePanelStore } from "@/stores/panel-store";
 import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -16,6 +19,10 @@ export function usePluginHostNavigation(
     () =>
       createPluginHostNavigation(serverId, {
         browserAvailable: getIsElectron(),
+        openNewWorkspace: (input) => {
+          usePanelStore.getState().showMobileAgent();
+          router.push(buildNewWorkspaceRoute(input));
+        },
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,
         createBrowser: createWorkspaceBrowser,
