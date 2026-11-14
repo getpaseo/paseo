@@ -2706,11 +2706,14 @@ describe("Codex app-server provider", () => {
         turnId: "turn-next",
         itemId: "new",
         processId: "12",
-        command: "echo hello",
+        command: "sleep 99",
       });
       await vi.waitFor(() =>
         expect(hasBackgroundListRequest(appServer, "forked-thread")).toBe(true),
       );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(latestBackgroundWork(events)).toMatchObject({ items: [{ command: "sleep 180" }] });
+      appServer.completeTurn({ threadId: "forked-thread" });
       await vi.waitFor(() =>
         expect(latestBackgroundWork(events)).toMatchObject({
           items: [{ command: "sleep 180" }, { command: "sleep 99" }],
@@ -8311,6 +8314,93 @@ describe("Codex interactive resume startup", () => {
     },
   );
 });
+
+test.each([true, false])(
+  "Codex background work excludes a live turn's commands (inventory item IDs: %s)",
+  async (itemIds) => {
+    let terminals = [{ itemId: "earlier", processId: "1", command: "sleep 180" }];
+    const appServer = createFakeCodexAppServer({
+      "thread/backgroundTerminals/list": () => ({
+        data: terminals.map(({ itemId, ...row }) => (itemIds ? { ...row, itemId } : row)),
+        nextCursor: null,
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    try {
+      await session.startTurn("first");
+      await appServer.waitForTurnStart();
+      appServer.completeTurn();
+      await expect
+        .poll(() => latestBackgroundWork(events)?.items)
+        .toMatchObject([{ command: "sleep 180" }]);
+      await session.startTurn("git status");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "second" });
+      terminals = [...terminals, { itemId: "status", processId: "2", command: "git status" }];
+      const before = appServer.requests().length;
+      appServer.startsTerminalCommand({
+        threadId: "thread-1",
+        turnId: "second",
+        itemId: "status",
+        processId: itemIds ? undefined : "2",
+        command: "git status",
+      });
+      await expect
+        .poll(() =>
+          appServer
+            .requests()
+            .slice(before)
+            .some((request) => request.method === "thread/backgroundTerminals/list"),
+        )
+        .toBe(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(latestBackgroundWork(events)?.items).toMatchObject([{ command: "sleep 180" }]);
+      terminals = terminals.filter((row) => row.itemId !== "status");
+      appServer.completesCommand({
+        threadId: "thread-1",
+        callId: "status",
+        command: "git status",
+        output: "clean",
+      });
+      terminals.push({ itemId: "server", processId: "3", command: "npm run dev" });
+      appServer.startsTerminalCommand({
+        threadId: "thread-1",
+        turnId: "second",
+        itemId: "server",
+        processId: itemIds ? undefined : "3",
+        command: "npm run dev",
+      });
+      // A process surviving settlement becomes background work even if its item has not completed.
+      appServer.completeTurn();
+      await expect
+        .poll(() => latestBackgroundWork(events)?.items)
+        .toMatchObject([{ command: "sleep 180" }, { command: "npm run dev" }]);
+      expect(
+        events
+          .filter((event) => event.type === "background_work")
+          .flatMap((event) => event.items ?? [])
+          .some((item) => item.command === "git status"),
+      ).toBe(false);
+      terminals = [];
+      appServer.completesCommand({
+        threadId: "thread-1",
+        callId: "server",
+        command: "npm run dev",
+        output: "exited",
+      });
+      await expect.poll(() => latestBackgroundWork(events)?.items).toEqual([]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 test("Codex runtime safety queries live terminals and retains unsupported app servers", async () => {
   let response: unknown = { data: [], nextCursor: null };

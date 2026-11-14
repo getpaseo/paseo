@@ -5944,15 +5944,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       this.settleStreamRetry({ status: "completed" });
     }
-    if (
-      parsed.kind === "turn_completed" ||
-      parsed.kind === "exec_command_started" ||
+    this.observeBackgroundWork(parsed);
+    await this.dispatchParsedNotification(parsed);
+  }
+
+  private observeBackgroundWork(parsed: ParsedCodexNotification): void {
+    const backgroundThread = getCodexNotificationThreadId(parsed) ?? this.currentThreadId;
+    if (backgroundThread && parsed.kind === "turn_started")
+      this.background.turnStarted(backgroundThread);
+    else if (backgroundThread && parsed.kind === "turn_completed")
+      this.background.turnSettled(backgroundThread);
+    else if (backgroundThread && parsed.kind === "exec_command_started")
+      this.background.commandStarted(backgroundThread, parsed.callId);
+    else if (
+      backgroundThread &&
+      parsed.kind === "item_started" &&
+      normalizeCodexThreadItemType(parsed.item.type) === "commandExecution"
+    )
+      this.background.commandStarted(
+        backgroundThread,
+        parsed.item.id ?? null,
+        typeof parsed.item.processId === "string" ? parsed.item.processId : undefined,
+      );
+    else if (
       parsed.kind === "exec_command_completed" ||
       ((parsed.kind === "item_started" || parsed.kind === "item_completed") &&
         normalizeCodexThreadItemType(parsed.item.type) === "commandExecution")
     )
       this.background.changed(this.currentThreadId);
-    await this.dispatchParsedNotification(parsed);
   }
 
   private async dispatchSubAgentNotification(
