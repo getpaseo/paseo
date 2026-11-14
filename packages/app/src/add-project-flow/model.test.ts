@@ -28,6 +28,7 @@ const HOST: AddProjectHost = {
   canAddProject: true,
   canBrowse: true,
   canCloneGithubRepositories: true,
+  canNameClonedRepositories: true,
   canSearchGithubRepositories: true,
   canCreateDirectory: true,
 };

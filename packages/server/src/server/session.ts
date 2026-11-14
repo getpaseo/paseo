@@ -306,6 +306,7 @@ import {
   createProjectDirectory,
   ProjectDirectoryRequestError,
 } from "./project-directory-service.js";
+import { resolveCloneDirectoryName } from "./project-clone-directory.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
@@ -7714,7 +7715,13 @@ export class Session {
       });
       normalizedRepo = repo.displayName;
       const targetParent = resolve(expandTilde(request.targetDirectory.trim()));
-      checkoutPath = resolve(targetParent, repo.name);
+      checkoutPath = resolve(
+        targetParent,
+        resolveCloneDirectoryName({
+          repositoryName: repo.name,
+          directoryName: request.directoryName,
+        }),
+      );
       if (!this.isPathWithinRoot(targetParent, checkoutPath)) {
         throw new Error("Resolved checkout path must stay inside the target directory");
       }

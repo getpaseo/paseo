@@ -4769,6 +4769,58 @@ test("creates and registers a project directory through the dotted RPC", async (
   });
 });
 
+test("sends a GitHub clone directory name only when one is given", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  // The requests stay pending; the client rejects them when the test closes it.
+  const named = client.cloneGithubProject(
+    {
+      repo: "vitejs/devtools",
+      targetDirectory: "~/dev",
+      cloneProtocol: "https",
+      directoryName: "vite-devtools",
+    },
+    "req-clone-named",
+  );
+  const unnamed = client.cloneGithubProject(
+    { repo: "vitejs/devtools", targetDirectory: "~/dev", cloneProtocol: "https" },
+    "req-clone-default",
+  );
+  named.catch(() => undefined);
+  unnamed.catch(() => undefined);
+
+  expect(mock.sent.map(parseSentFrame)).toEqual([
+    {
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      targetDirectory: "~/dev",
+      cloneProtocol: "https",
+      directoryName: "vite-devtools",
+      requestId: "req-clone-named",
+    },
+    {
+      type: "project.github.clone.request",
+      repo: "vitejs/devtools",
+      targetDirectory: "~/dev",
+      cloneProtocol: "https",
+      requestId: "req-clone-default",
+    },
+  ]);
+});
+
 test("sends first-agent prompt context with workspace.create.request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

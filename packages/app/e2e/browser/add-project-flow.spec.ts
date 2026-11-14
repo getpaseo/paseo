@@ -11,6 +11,7 @@ import {
   addProjectFlowInput,
   addProjectFlowMethod,
   chooseAddProjectMethod,
+  confirmAddProjectName,
   expectAddProjectPage,
   expectNewWorkspaceForAddedProject,
   expectAddProjectResultVisible,
@@ -305,6 +306,7 @@ test.describe("Add Project command-center flow", () => {
       timeout: 30_000,
     });
     await page.keyboard.press("Enter");
+    await confirmAddProjectName(page);
 
     const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
     projectPickerFixture.rememberProjectId(projectId);
@@ -315,6 +317,36 @@ test.describe("Add Project command-center flow", () => {
       projectPath: projectPickerFixture.projectPath,
     });
     await expectProjectHasNoWorkspaces(projectId);
+  });
+
+  test("names an existing folder while adding it", async ({ page, projectPickerFixture }) => {
+    const projectName = `named-${randomUUID().slice(0, 8)}`;
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+    await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
+    await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName, {
+      timeout: 30_000,
+    });
+    await page.keyboard.press("Enter");
+
+    await expectAddProjectPage(page, "project-name");
+    await expect(addProjectFlowInput(page)).toHaveValue(projectPickerFixture.projectName);
+    await addProjectFlowBack(page).click();
+    await expectAddProjectPage(page, "directory-search");
+    await page.keyboard.press("Enter");
+    await expectAddProjectPage(page, "project-name");
+    await addProjectFlowInput(page).fill(projectName);
+    await page.keyboard.press("Enter");
+
+    const projectId = await expectOpenedProject(page, projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
   });
 
   test("keyboard navigation keeps the selected row inside the visible results", async ({
@@ -357,6 +389,7 @@ test.describe("Add Project command-center flow", () => {
       await navigateAddProjectResults(page, "ArrowDown", 12);
       await expectAddProjectResultVisible(page, rowPath(11));
       await page.keyboard.press("Enter");
+      await confirmAddProjectName(page);
       projectId = await expectOpenedProject(page, "scroll-probe-11");
       await expectNewWorkspaceForAddedProject(page, {
         serverId: getServerId(),
@@ -465,6 +498,7 @@ test.describe("Compact Add project context", () => {
     await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
     await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName);
     await page.keyboard.press("Enter");
+    await confirmAddProjectName(page);
     const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
     projectPickerFixture.rememberProjectId(projectId);
     await expectNewWorkspaceForAddedProject(page, {
