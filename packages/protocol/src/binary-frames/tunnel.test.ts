@@ -16,7 +16,7 @@ describe("tunnel frames", () => {
       target: { atyp: 3, address: "intranet", port: 8080 },
     } as const;
     const bytes = new Uint8Array([
-      0x22, 1, 115, 1, 116, 3, 8, 105, 110, 116, 114, 97, 110, 101, 116, 0x1f, 0x90,
+      0x34, 1, 115, 1, 116, 3, 8, 105, 110, 116, 114, 97, 110, 101, 116, 0x1f, 0x90,
     ]);
     expect(encodeTunnelFrame(frame)).toEqual(bytes);
     expect(decodeTunnelFrame(bytes)).toEqual(frame);
@@ -61,7 +61,7 @@ describe("tunnel codec boundaries", () => {
         opcode: TunnelOpcode.WindowUpdate,
         credit: 0x010203,
       }),
-    ).toEqual(new Uint8Array([0x24, 1, 115, 1, 116, 0, 1, 2, 3]));
+    ).toEqual(new Uint8Array([0x36, 1, 115, 1, 116, 0, 1, 2, 3]));
   });
 
   it.each(Object.values(TunnelCloseReason))("preserves close reason %i", (reason) => {
@@ -176,39 +176,39 @@ describe("tunnel codec boundaries", () => {
 
   it.each([
     [],
-    [0x23],
-    [0x23, 0, 1, 116],
-    [0x23, 255, 115, 1, 116],
-    [0x23, 1, 115],
-    [0x23, 1, 115, 0],
-    [0x23, 1, 115, 2, 116],
-    [0x23, 1, 0xff, 1, 116],
-    [0x23, 1, 115, 1, 0xff],
-    [0x23, 2, 0xc0, 0xaf, 1, 116],
+    [0x35],
+    [0x35, 0, 1, 116],
+    [0x35, 255, 115, 1, 116],
+    [0x35, 1, 115],
+    [0x35, 1, 115, 0],
+    [0x35, 1, 115, 2, 116],
+    [0x35, 1, 0xff, 1, 116],
+    [0x35, 1, 115, 1, 0xff],
+    [0x35, 2, 0xc0, 0xaf, 1, 116],
   ])("rejects malformed headers %j", (...bytes) => {
     expect(decodeTunnelFrame(new Uint8Array(bytes))).toBeNull();
   });
 
   it.each([
-    [0x22, 2, 127, 0, 0, 1, 0, 80], // unknown atyp
-    [0x22, 1, 127, 0, 0, 1, 0], // truncated port
-    [0x22, 1, 127, 0, 0, 1, 0, 0], // zero port
-    [0x22, 1, 127, 0, 0, 1, 0, 80, 1], // trailing address data
-    [0x22, 4, 0, 0, 1, 0, 80], // truncated IPv6
-    [0x22, 3, 0, 0, 80], // empty domain
-    [0x22, 3, 2, 97, 0, 80], // truncated domain
-    [0x22, 3, 1, 0xff, 0, 80], // malformed domain UTF-8
-    [0x22, 3, 1, 0, 0, 80], // NUL domain
-    [0x23, 1],
-    [0x20],
-    [0x21],
-    [0x21, 9],
-    [0x21, 0, 0],
-    [0x24, 0, 0, 0],
-    [0x24, 0, 0, 0, 1, 0],
-    [0x24, 0, 0, 0, 0],
-    [0x25],
-    [0x2f],
+    [TunnelOpcode.Open, 2, 127, 0, 0, 1, 0, 80], // unknown atyp
+    [TunnelOpcode.Open, 1, 127, 0, 0, 1, 0], // truncated port
+    [TunnelOpcode.Open, 1, 127, 0, 0, 1, 0, 0], // zero port
+    [TunnelOpcode.Open, 1, 127, 0, 0, 1, 0, 80, 1], // trailing address data
+    [TunnelOpcode.Open, 4, 0, 0, 1, 0, 80], // truncated IPv6
+    [TunnelOpcode.Open, 3, 0, 0, 80], // empty domain
+    [TunnelOpcode.Open, 3, 2, 97, 0, 80], // truncated domain
+    [TunnelOpcode.Open, 3, 1, 0xff, 0, 80], // malformed domain UTF-8
+    [TunnelOpcode.Open, 3, 1, 0, 0, 80], // NUL domain
+    [TunnelOpcode.Connected, 1],
+    [TunnelOpcode.Data],
+    [TunnelOpcode.Close],
+    [TunnelOpcode.Close, 9],
+    [TunnelOpcode.Close, 0, 0],
+    [TunnelOpcode.WindowUpdate, 0, 0, 0],
+    [TunnelOpcode.WindowUpdate, 0, 0, 0, 1, 0],
+    [TunnelOpcode.WindowUpdate, 0, 0, 0, 0],
+    [0x37],
+    [0x3f],
     [0xff],
   ])("rejects malformed body or opcode %j", (opcode, ...body) => {
     expect(decodeTunnelFrame(new Uint8Array([opcode, 1, 115, 1, 116, ...body]))).toBeNull();
@@ -216,7 +216,7 @@ describe("tunnel codec boundaries", () => {
 
   it("accepts received data larger than the default RPC limit", () => {
     const bytes = new Uint8Array(5 + 65537);
-    bytes.set([0x20, 1, 115, 1, 116]);
+    bytes.set([TunnelOpcode.Data, 1, 115, 1, 116]);
     expect(decodeTunnelFrame(bytes)).toEqual({
       opcode: TunnelOpcode.Data,
       subscriptionId: "s",
@@ -229,7 +229,7 @@ describe("tunnel codec boundaries", () => {
     { body: [0, 4, 0, 1], credit: 262145 },
     { body: [255, 255, 255, 255], credit: 0xffffffff },
   ])("accepts received u32 credit $credit beyond the default window", ({ body, credit }) => {
-    const bytes = new Uint8Array([0x24, 1, 115, 1, 116, ...body]);
+    const bytes = new Uint8Array([0x36, 1, 115, 1, 116, ...body]);
     expect(decodeTunnelFrame(bytes)).toEqual({
       opcode: TunnelOpcode.WindowUpdate,
       subscriptionId: "s",

@@ -7393,7 +7393,7 @@ export class DaemonClient {
         "invalid_response",
         "Network tunnel close response did not match the subscription",
       );
-  }
+    }
   }
 
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
@@ -7678,7 +7678,7 @@ export class DaemonClient {
     }
 
     const opcode = rawBytes[0];
-    if (opcode >= TunnelOpcode.Data && opcode <= 0x2f) {
+    if (opcode >= TunnelOpcode.Data && opcode <= TunnelOpcode.WindowUpdate) {
       // A malformed frame or unknown subscription drops the transport and reconnects: ownership
       // cannot be trusted, so the bad frame cannot be isolated (late frames for recently closed
       // streams are ignored).
@@ -8059,12 +8059,7 @@ export class DaemonClient {
       this.config.providerSnapshots !== "wire",
     );
 
-    if (consumerMessage.type === "network.tunnel.closed") {
-      this.networkTunnels.daemonClosed(
-        consumerMessage.payload.subscriptionId,
-        consumerMessage.payload.reason,
-      );
-    }
+    this.handleNetworkTunnelClosed(consumerMessage);
 
     if (consumerMessage.type === "status") {
       const serverInfo = parseServerInfoStatusPayload(consumerMessage.payload);
@@ -8129,6 +8124,11 @@ export class DaemonClient {
     }
     this.resolveWaiters(consumerMessage);
     this.owned.receive(consumerMessage);
+  }
+
+  private handleNetworkTunnelClosed(message: SessionOutboundMessage): void {
+    if (message.type !== "network.tunnel.closed") return;
+    this.networkTunnels.daemonClosed(message.payload.subscriptionId, message.payload.reason);
   }
 
   private resolveWaiters(msg: SessionOutboundMessage): void {

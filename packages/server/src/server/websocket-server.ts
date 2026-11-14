@@ -2024,7 +2024,6 @@ export class VoiceAssistantWebSocketServer {
       hostname: getHostName(),
       version: this.daemonVersion,
       sourceId: session.getHostSourceId(),
-      sourceId: session.getHostSourceId(),
       // Source-less callers publish through the session, which projects permissions per socket.
       permissions: ws ? session.permissionsForSource(ws) : session.getPermissions(),
       // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.

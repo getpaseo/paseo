@@ -1,9 +1,10 @@
 export const TunnelOpcode = {
-  Data: 0x20,
-  Close: 0x21,
-  Open: 0x22,
-  Connected: 0x23,
-  WindowUpdate: 0x24,
+  // 0x20–0x2f are plugin frames, 0x30 is host routing, and 0x31 wraps chunked transport.
+  Data: 0x32,
+  Close: 0x33,
+  Open: 0x34,
+  Connected: 0x35,
+  WindowUpdate: 0x36,
 } as const;
 
 export const TunnelCloseReason = {
