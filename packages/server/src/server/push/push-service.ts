@@ -22,19 +22,27 @@ interface ExpoPushTicket {
 }
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-const MAX_BATCH_SIZE = 100;
+const EXPO_PUSH_REQUEST_CONCURRENCY = 4;
+
+export interface PushServiceOptions {
+  logger: pino.Logger;
+  revokeToken: (token: string) => void;
+  request?: typeof fetch;
+}
 
 /**
  * Service for sending Expo push notifications.
- * Handles batching and invalid token removal.
+ * Handles delivery and invalid token removal.
  */
 export class PushService {
   private readonly logger: pino.Logger;
   private readonly revokeToken: (token: string) => void;
+  private readonly request: typeof fetch;
 
-  constructor(logger: pino.Logger, revokeToken: (token: string) => void) {
-    this.logger = logger.child({ component: "push-service" });
-    this.revokeToken = revokeToken;
+  constructor(options: PushServiceOptions) {
+    this.logger = options.logger.child({ component: "push-service" });
+    this.revokeToken = options.revokeToken;
+    this.request = options.request ?? fetch;
   }
 
   async sendPush(tokens: string[], payload: PushPayload): Promise<void> {
@@ -50,18 +58,18 @@ export class PushService {
       sound: "default",
     }));
 
-    // Batch tokens (max 100 per request per Expo limits)
-    const batches: ExpoPushMessage[][] = [];
-    for (let i = 0; i < messages.length; i += MAX_BATCH_SIZE) {
-      batches.push(messages.slice(i, i + MAX_BATCH_SIZE));
+    // Tokens are opaque and can belong to different Expo projects. Mixing projects
+    // in one request makes Expo reject every notification in that request.
+    // allSettled: one rejected request must not skip the tokens still in flight.
+    for (let offset = 0; offset < messages.length; offset += EXPO_PUSH_REQUEST_CONCURRENCY) {
+      const inFlight = messages.slice(offset, offset + EXPO_PUSH_REQUEST_CONCURRENCY);
+      await Promise.allSettled(inFlight.map((message) => this.sendBatch([message])));
     }
-
-    await Promise.all(batches.map((batch) => this.sendBatch(batch)));
   }
 
   private async sendBatch(messages: ExpoPushMessage[]): Promise<void> {
     try {
-      const response = await fetch(EXPO_PUSH_URL, {
+      const response = await this.request(EXPO_PUSH_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
