@@ -5457,6 +5457,199 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test.each([
+    { observations: ["completed"], expected: "completed" },
+    { observations: ["failed"], expected: "failed" },
+    { observations: ["interrupted"], expected: "canceled" },
+    { observations: ["running"], expected: "running" },
+    { observations: ["completed", "notFound"], expected: "completed" },
+    { observations: ["completed", "running"], expected: "running" },
+    { observations: ["completed", "pendingInit"], expected: "running" },
+  ])("restores child status $expected from $observations", async ({ observations, expected }) => {
+    const session = createSession();
+    const items = [
+      {
+        type: "collabAgentToolCall",
+        id: "persisted-spawn",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Inspect a regression.",
+        receiverThreadIds: ["child-thread"],
+        agentsStates: { "child-thread": { status: "pendingInit" } },
+      },
+      ...observations.map((status, index) => ({
+        type: "collabAgentToolCall",
+        id: `persisted-observation-${index}`,
+        tool: "wait",
+        status: "completed",
+        prompt: null,
+        receiverThreadIds: ["child-thread"],
+        agentsStates: { "child-thread": { status } },
+      })),
+    ];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") return {};
+        const isParent =
+          typeof params === "object" &&
+          params !== null &&
+          "threadId" in params &&
+          params.threadId === "test-thread";
+        return { thread: { turns: [{ items: isParent ? items : [] }] } };
+      }),
+    };
+
+    const history = await Array.fromAsync(session.streamHistory());
+    const descriptors = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(descriptors).toEqual([
+      expect.objectContaining({ id: "child-thread", status: expected }),
+    ]);
+    expect(history).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ callId: "persisted-spawn", status: expected }),
+      }),
+    );
+  });
+
+  test.each([
+    ["completed", ["finished-child", "running-child"]],
+    ["completed", ["running-child", "finished-child"]],
+    ["failed", ["finished-child", "running-child"]],
+    ["failed", ["running-child", "finished-child"]],
+  ])(
+    "restores each persisted child independently of a %s observation in %s order",
+    async (observationStatus, receiverThreadIds) => {
+      const session = createSession();
+      const items = [
+        {
+          type: "collabAgentToolCall",
+          id: "shared-spawn",
+          tool: "spawnAgent",
+          status: "completed",
+          receiverThreadIds,
+          agentsStates: {
+            "finished-child": { status: "pendingInit" },
+            "running-child": { status: "running" },
+          },
+        },
+        {
+          type: "collabAgentToolCall",
+          id: "finished-observation",
+          tool: "closeAgent",
+          status: observationStatus,
+          prompt: null,
+          receiverThreadIds: ["finished-child"],
+          agentsStates: { "finished-child": { status: "completed" } },
+        },
+      ];
+      session.client = {
+        request: vi.fn(async (method: string, params: unknown) => {
+          if (method !== "thread/read") return {};
+          const isParent =
+            typeof params === "object" &&
+            params !== null &&
+            "threadId" in params &&
+            params.threadId === "test-thread";
+          return { thread: { turns: [{ items: isParent ? items : [] }] } };
+        }),
+      };
+
+      const history = await Array.fromAsync(session.streamHistory());
+      const descriptors = history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+      );
+      expect(descriptors).toHaveLength(2);
+      expect(descriptors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "finished-child", status: "completed" }),
+          expect.objectContaining({ id: "running-child", status: "running" }),
+        ]),
+      );
+      expect(history).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ callId: "shared-spawn", status: "running" }),
+        }),
+      );
+      const liveEvents: AgentStreamEvent[] = [];
+      session.subscribe((event) => liveEvents.push(event));
+      await asInternals(session).handleNotification("item/agentMessage/delta", {
+        threadId: "running-child",
+        itemId: "child-message",
+        delta: "Still working",
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "running-child",
+            status: "running",
+          }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "running",
+          }),
+        }),
+      );
+      liveEvents.length = 0;
+      await asInternals(session).handleNotification("turn/completed", {
+        threadId: "running-child",
+        turn: { id: "child-turn", status: "failed", error: null },
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({ type: "upsert", id: "running-child", status: "failed" }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "failed",
+          }),
+        }),
+      );
+      liveEvents.length = 0;
+      await asInternals(session).handleNotification("turn/started", {
+        threadId: "finished-child",
+        turn: { id: "reopened-turn" },
+      });
+      expect(liveEvents).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "finished-child",
+            status: "running",
+          }),
+        }),
+      );
+      expect(liveEvents).not.toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "upsert",
+            id: "running-child",
+            status: "running",
+          }),
+        }),
+      );
+    },
+  );
+
   test("retains native turn ids from persisted user messages", async () => {
     const session = createSession();
     session.client = {
