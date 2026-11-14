@@ -51,7 +51,7 @@ function layoutFor(placement: RowPlacement): SettingsRowLayout {
       };
     case "card":
       return {
-        row: settingsStyles.row,
+        row: [settingsStyles.row, styles.cardRow],
         title: settingsStyles.rowTitle,
         hint: settingsStyles.rowHint,
         controlSize: "md",
@@ -66,6 +66,11 @@ export function useSettingsRowLayout(): SettingsRowLayout {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // Every card row is as tall as one holding an `md` control, so a list whose rows have a switch
+  // or a button only on some of them keeps one row height.
+  cardRow: {
+    minHeight: mapLayout(CONTROL_HEIGHTS.md, (height) => height + theme.spacing[4] * 2),
+  },
   // Every nested row is as tall as one holding an `sm` control, so rows with and without a
   // trailing button line up.
   nestedRow: {

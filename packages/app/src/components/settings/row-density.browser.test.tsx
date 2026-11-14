@@ -26,6 +26,7 @@ function mountRows() {
             Download
           </Button>
         </SettingsRow>
+        <SettingsRow label="Card row without a button" testID="card-row-without-button" />
         <SettingsCollapsibleRow label="Group" defaultExpanded testID="group">
           <SettingsRow label="Nested with a button" testID="nested-with-button">
             <Button variant="outline" testID="nested-button">
@@ -64,6 +65,13 @@ describe("settings row density", () => {
     expect(heightOf("nested-with-button")).toBe(heightOf("nested-without-button"));
     expect(heightOf("nested-with-button")).toBeLessThan(heightOf("card-row"));
     expect(heightOf("group-toggle")).toBeGreaterThan(heightOf("nested-without-button"));
+  });
+
+  it("lines up card rows with and without a control", () => {
+    mountRows();
+
+    expect(heightOf("card-row-without-button")).toBe(heightOf("card-row"));
+    expect(heightOf("group-toggle")).toBe(heightOf("card-row"));
   });
 
   it("sizes nested text and controls one step below card rows", () => {
