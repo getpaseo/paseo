@@ -1226,6 +1226,7 @@ export function mergeAgentToolCallItem(
 
 interface AppendAgentToolCallInput {
   state: StreamItem[];
+  hydrationIndex?: Map<string, number>;
   data: AgentToolCallData;
   timestamp: Date;
   turnId?: string;
@@ -1233,9 +1234,11 @@ interface AppendAgentToolCallInput {
 }
 
 function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
-  const { state, data, timestamp, turnId, timelineCursor } = input;
+  const { state, data, timestamp, turnId, timelineCursor, hydrationIndex } = input;
   const identity = agentToolCallIdentity({ callId: data.callId, turnId });
-  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
+  const existingIndex = hydrationIndex
+    ? (hydrationIndex.get(identity) ?? -1)
+    : findExistingTimelineIdentityIndex(state, identity);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
@@ -1257,7 +1260,7 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
       return state;
     }
 
-    const next = [...state];
+    const next = hydrationIndex ? state : [...state];
     next[existingIndex] = merged;
     return next;
   }
@@ -1277,6 +1280,11 @@ function appendAgentToolCall(input: AppendAgentToolCallInput): StreamItem[] {
     },
   };
 
+  if (hydrationIndex) {
+    hydrationIndex.set(identity, state.length);
+    state.push(item);
+    return state;
+  }
   return [...state, item];
 }
 
@@ -1434,6 +1442,7 @@ function reduceTimelineToolCall(
   >,
   timestamp: Date,
   timelineCursor?: TimelinePosition,
+  hydrationIndex?: Map<string, number>,
 ): StreamItem[] {
   const normalizedToolName = item.name
     .trim()
@@ -1478,6 +1487,7 @@ function reduceTimelineToolCall(
 
   return appendAgentToolCall({
     state,
+    hydrationIndex,
     data: {
       provider: event.provider,
       callId: item.callId,
@@ -1707,9 +1717,33 @@ export function hydrateStreamState(
   }>,
   options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
-  const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
-    return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
-  }, []);
+  let hydrated: StreamItem[] = [];
+  let toolCallIndex: Map<string, number> | null = null;
+  for (const { event, timestamp, timelineCursor } of events) {
+    if (event.type !== "timeline" || event.item.type !== "tool_call") {
+      hydrated = reduceStreamUpdate(hydrated, event, timestamp, { ...options, timelineCursor });
+      toolCallIndex = null;
+      continue;
+    }
+
+    // Hydration owns this array: consecutive tool updates can share an index and append in place.
+    if (!toolCallIndex) {
+      hydrated = finalizeActiveThoughts(hydrated);
+      toolCallIndex = new Map();
+      for (const [index, item] of hydrated.entries()) {
+        const identity = streamTimelineItemIdentity(item);
+        if (identity !== null && !toolCallIndex.has(identity)) toolCallIndex.set(identity, index);
+      }
+    }
+    const next = applyTimelineTurnId(
+      hydrated,
+      reduceTimelineToolCall(hydrated, event, event.item, timestamp, timelineCursor, toolCallIndex),
+      event,
+    );
+    // Todo tools can write other row kinds through the ordinary immutable reducer.
+    if (next !== hydrated) toolCallIndex = null;
+    hydrated = next;
+  }
 
   return finalizeActiveThoughts(hydrated);
 }
