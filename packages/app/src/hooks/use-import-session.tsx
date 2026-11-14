@@ -79,6 +79,7 @@ export function useImportSession({
     open,
     sheet: (
       <ImportSessionSheet
+        key={importServerId}
         visible={isSheetOpen}
         client={client}
         serverId={importServerId}
