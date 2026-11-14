@@ -39,6 +39,88 @@ it("resolves authored root-relative links only when the target is a known comman
 });
 
 describe("shared Markdown source adaptation", () => {
+  it("keeps HTML line breaks inside their Markdown table cells", async () => {
+    const source =
+      "| A | B |\n|---|---|\n| 1 | first<br/>second |\n| 2 | first<br />second |\n| 3 | first<br>second |";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const rows: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "TableRow") rows.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(rows).toHaveLength(4);
+    const text = (node: ASTNode): string =>
+      (node.content ?? "") + (node.children?.map(text).join("") ?? "");
+    expect(rows.map((row) => row.children?.map(text))).toEqual([
+      ["A", "B"],
+      ["1", "first \u2028second"],
+      ["2", "first \u2028second"],
+      ["3", "first \u2028second"],
+    ]);
+  });
+  it("keeps table breaks inside a details wrapper without a blank line", async () => {
+    const source =
+      "<details><summary>Results</summary>\n| A | B |\n|---|---|\n| 1 | first<br>second |\n</details>";
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const tables: ASTNode[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Table") tables.push(node);
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(tables).toHaveLength(1);
+    expect(tables[0].attributes?.bodyRowCount).toBe("1");
+    expect(tables[0].children?.[1]?.children?.[0]?.children?.[1]?.children).toEqual([
+      { type: "Text", content: "first \u2028second" },
+    ]);
+  });
+  it.each([
+    ["src/first.ts", "src/second.ts"],
+    ["https://example.com/first", "src/second.ts"],
+    ["https://example.com/first", "https://example.com/second"],
+  ])("keeps %s and %s separate across a table break", async (first, second) => {
+    const prepared = prepareMarkdownSource(
+      `| A | B |\n|---|---|\n| 1 | ${first}<br>${second} |`,
+      "/repo",
+    );
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { hardSoftBreaks: true, latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const links: string[] = [];
+    const collect = (node: ASTNode) => {
+      if (node.type === "Link") links.push(String(node.attributes?.url));
+      node.children?.forEach(collect);
+    };
+    collect(tree);
+    expect(links).toEqual([first, second]);
+  });
+  it.each([
+    ["| A<br>B | C |\n|---|---|\n| x | y |", "| A \u2028B | C |\n|---|---|\n| x | y |"],
+    [
+      "> | A | B |\n> |---|---|\n> | x | first<br>second |",
+      "> | A | B |\n> |---|---|\n> | x | first \u2028second |",
+    ],
+    [
+      "| A | B |\n|---|---|\n| `<br>` | **first<br><BR />second** |",
+      "| A | B |\n|---|---|\n| `<br>` | **first \u2028 \u2028second** |",
+    ],
+    [
+      "| A | B |\n|---|---|\n| x | \\<br> &lt;br&gt; |",
+      "| A | B |\n|---|---|\n| x | \\<br> &lt;br&gt; |",
+    ],
+    ["Not a table | first<br>second", "Not a table | first  \nsecond"],
+  ])("normalizes table breaks without changing literal tags: %s", (source, expected) => {
+    expect(normalizeMarkdownHtml(source)).toBe(expected);
+  });
   it("keeps paragraphs, fences and quotes together for the library", () => {
     const source = "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst n = 1;\n```\n\n> Quote";
     expect(prepareMarkdownSource(source).render()).toBe(source);
