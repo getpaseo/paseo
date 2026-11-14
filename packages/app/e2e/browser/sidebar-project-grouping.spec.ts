@@ -427,7 +427,7 @@ test.describe("Sidebar project grouping", () => {
     await openProjectsSettings(page, getServerId());
 
     await expect(page.getByTestId("project-links-banner")).toBeVisible();
-    await page.getByTestId("project-links-review").click();
+    await page.getByRole("button", { name: "Review links", exact: true }).click();
 
     const sheet = page.getByTestId("project-links-sheet");
     await expect(sheet).toBeVisible();
@@ -464,7 +464,7 @@ test.describe("Sidebar project grouping", () => {
 
     await expect(page.getByText("No projects yet", { exact: true })).toBeVisible();
     await expect(page.getByTestId("project-links-banner")).toBeVisible();
-    await page.getByTestId("project-links-review").click();
+    await page.getByRole("button", { name: "Review links", exact: true }).click();
 
     const sheet = page.getByTestId("project-links-sheet");
     await expect(sheet).toBeVisible();
