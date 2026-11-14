@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeNotificationPlan,
+  isAttentionReasonMuted,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
   PRESENCE_THRESHOLD_MS,
@@ -230,5 +231,21 @@ describe("isPushEligibleAttentionReason", () => {
     expect(isPushEligibleAttentionReason("finished")).toBe(true);
     expect(isPushEligibleAttentionReason("permission")).toBe(true);
     expect(isPushEligibleAttentionReason("error")).toBe(false);
+  });
+});
+
+describe("isAttentionReasonMuted", () => {
+  it("mutes only finished attention when finished notifications are off", () => {
+    const off = { agentFinishedNotifications: false };
+    expect(isAttentionReasonMuted("finished", off)).toBe(true);
+    expect(isAttentionReasonMuted("permission", off)).toBe(false);
+    expect(isAttentionReasonMuted("error", off)).toBe(false);
+    expect(isAttentionReasonMuted("needs_input", off)).toBe(false);
+  });
+
+  it("mutes nothing when finished notifications are on", () => {
+    const on = { agentFinishedNotifications: true };
+    expect(isAttentionReasonMuted("finished", on)).toBe(false);
+    expect(isAttentionReasonMuted("permission", on)).toBe(false);
   });
 });

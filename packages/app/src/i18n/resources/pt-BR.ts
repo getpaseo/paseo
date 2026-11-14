@@ -2369,6 +2369,7 @@ export const ptBR: TranslationResources = {
       projects: "Projetos",
       connections: "Conexões",
       agents: "Agentes",
+      notifications: "Notificações",
       metadata: "Metadados",
       voice: "Voz",
       workspaces: "Workspaces",
@@ -2911,6 +2912,16 @@ export const ptBR: TranslationResources = {
           title: "Liberar agentes ociosos",
           hint: "Libera memória após uma hora de inatividade.",
           info: "Encerra o processo do agente e mantém a conversa. Envie uma mensagem para retomar.\n\nTrabalho ativo, notificações pendentes e verificações de segurança do provedor impedem a limpeza.",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "Notificar quando um agente terminar",
+          hint: "Desative para ser notificado só quando um agente precisar de permissão ou de uma resposta",
+          accessibilityLabel: "Notificar quando um agente terminar",
+          updateFailed: "Não foi possível atualizar as notificações",
+          saving: "Salvando…",
+          loadFailed: "Não foi possível carregar a configuração de notificações deste host",
         },
       },
       workspaces: {

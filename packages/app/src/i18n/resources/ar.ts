@@ -2371,6 +2371,7 @@ export const ar: TranslationResources = {
       projects: "المشاريع",
       connections: "اتصالات",
       agents: "Agents",
+      notifications: "الإشعارات",
       metadata: "البيانات الوصفية",
       voice: "الصوت",
       workspaces: "Workspaces",
@@ -2905,6 +2906,16 @@ export const ar: TranslationResources = {
           title: "تحرير الوكلاء الخاملين",
           hint: "تحرير الذاكرة بعد ساعة من الخمول.",
           info: "يوقف عملية الوكيل مع الاحتفاظ بمحادثته. أرسل رسالة لاستئنافها.\n\nيمنع العمل النشط والإشعارات المعلّقة وفحوصات أمان المزوّد عملية التنظيف.",
+        },
+      },
+      notifications: {
+        agentFinished: {
+          title: "الإشعار عند انتهاء الوكيل",
+          hint: "أوقف هذا الخيار لتلقي الإشعارات فقط عندما يحتاج الوكيل إلى إذن أو إدخال",
+          accessibilityLabel: "الإشعار عند انتهاء الوكيل",
+          updateFailed: "تعذر تحديث الإشعارات",
+          saving: "جارٍ الحفظ…",
+          loadFailed: "تعذر تحميل إعداد الإشعارات لهذا المضيف",
         },
       },
       workspaces: {
