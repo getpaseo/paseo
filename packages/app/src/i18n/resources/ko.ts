@@ -336,6 +336,8 @@ export const ko: TranslationResources = {
       viewDiagram: "다이어그램 보기",
     },
     actions: {
+      copyQuote: "인용문 복사",
+      copyFailed: "복사 실패",
       copyCode: "코드 복사",
       copyTurn: "턴 복사",
       copyMessage: "메시지 복사",

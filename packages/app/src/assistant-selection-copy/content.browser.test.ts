@@ -1,5 +1,187 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createAssistantSelectionClipboardContent } from "./content.web";
+import React from "react";
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/dom";
+import { EnrichedMarkdownText, type BlockquoteRendererProps } from "react-native-enriched-markdown";
+import { userEvent } from "vitest/browser";
+import { I18nextProvider } from "react-i18next";
+import { i18n as testI18n } from "@/i18n/i18next";
+import { WebBlockquote } from "@/components/markdown/quote-block.web";
+import type { MarkdownClipboardEnvironment } from "@/utils/rich-clipboard";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createAssistantSelectionClipboardContent,
+  markdownFromElementContents,
+} from "./content.web";
+import { MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE } from "./markup";
+
+describe("quote body copy", () => {
+  it("copies formatted quote contents without the outer quote or controls", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<p>Before</p><blockquote><p>Hello <strong>team</strong>.</p><ul><li><a href="https://example.com/pr">Review</a></li></ul><blockquote><p>Nested</p></blockquote><button data-paseo-markdown-ignore="true">Copy quote</button></blockquote><p>After</p>';
+    const quote = fixtureElement(host, "blockquote");
+    expect(markdownFromElementContents(quote)).toBe(
+      "Hello **team**.\n\n- [Review](https://example.com/pr)\n\n> Nested",
+    );
+    expect(quote.querySelector("button")?.textContent).toBe("Copy quote");
+  });
+  it("preserves custom code markup, ordered list starts and original image sources", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div data-paseo-markdown-image-sources=\'{"blob:preview":"assets/shot.png"}\'><blockquote><ol start="3"><li>Third</li><li>Fourth</li></ol><div data-paseo-markdown-tag="pre" data-paseo-markdown-language="ts"><span data-paseo-markdown-tag="code">const x = 1;</span><button data-paseo-markdown-ignore="true">Copy code</button></div><p><img src="blob:preview" alt="Screenshot"></p></blockquote></div>';
+    expect(markdownFromElementContents(fixtureElement(host, "blockquote"))).toBe(
+      "3. Third\n4. Fourth\n\n```ts\nconst x = 1;\n```\n\n![Screenshot](assets/shot.png)",
+    );
+  });
+  it("copies adjacent blocks independently and ignores an empty quote's controls", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<blockquote><p>First</p></blockquote><blockquote><p>Second</p></blockquote><blockquote><button data-paseo-markdown-ignore="true">Copy quote</button></blockquote>';
+    expect(markdownFromElementContents(fixtureElement(host, "blockquote", 0))).toBe("First");
+    expect(markdownFromElementContents(fixtureElement(host, "blockquote", 1))).toBe("Second");
+    expect(markdownFromElementContents(fixtureElement(host, "blockquote", 2))).toBe("");
+  });
+  it("copies a rendered Mermaid diagram from the original fence source", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<blockquote><p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid" style="display: contents"><div data-testid="mermaid-viewport"><svg aria-label="diagram"></svg></div></div><p>After</p></blockquote>`;
+    expect(markdownFromElementContents(fixtureElement(host, "blockquote"))).toBe(
+      "Before\n\n```mermaid\ngraph TD; A-->B\n```\n\nAfter",
+    );
+  });
+  it("does not duplicate a visible Mermaid source fence", () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<blockquote><p>Before</p><div ${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}="graph TD; A-->B" data-paseo-markdown-language="mermaid" style="display: contents"><div data-paseo-markdown-tag="pre" data-paseo-markdown-language="mermaid"><span data-paseo-markdown-tag="code">graph TD; A-->B</span><button data-paseo-markdown-ignore="true">Copy code</button></div><div data-testid="mermaid-viewport"><svg aria-label="diagram"></svg></div></div><p>After</p></blockquote>`;
+    const markdown = markdownFromElementContents(fixtureElement(host, "blockquote"));
+    expect(markdown).toBe("Before\n\n```mermaid\ngraph TD; A-->B\n```\n\nAfter");
+    expect(markdown.match(/```mermaid/g)).toHaveLength(1);
+  });
+});
+
+describe("rendered quote copy", () => {
+  let root: Root | undefined;
+  let host: HTMLDivElement;
+  let clipboardEnvironment: MarkdownClipboardEnvironment | undefined;
+
+  afterEach(() => {
+    if (root) {
+      flushSync(() => root!.unmount());
+    }
+    root = undefined;
+    host?.remove();
+    clipboardEnvironment = undefined;
+  });
+
+  function StableBlockquote(props: BlockquoteRendererProps) {
+    return React.createElement(WebBlockquote, {
+      ...props,
+      ...(clipboardEnvironment ? { clipboardEnvironment } : {}),
+    });
+  }
+
+  function renderQuote(markdown: string, environment?: MarkdownClipboardEnvironment) {
+    if (!root) {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+    }
+    clipboardEnvironment = environment;
+    flushSync(() =>
+      root!.render(
+        React.createElement(
+          I18nextProvider,
+          { i18n: testI18n },
+          React.createElement(EnrichedMarkdownText, {
+            markdown,
+            md4cFlags: { latexMath: false },
+            markdownStyle: { paragraph: { marginBottom: 16 } },
+            renderers: { blockquote: StableBlockquote },
+          }),
+        ),
+      ),
+    );
+  }
+
+  function quoteButtons(): HTMLElement[] {
+    return within(host).getAllByRole("button", { name: "Copy quote" });
+  }
+
+  function createRecordingEnvironment(result: () => Promise<unknown>) {
+    const plainTexts: string[] = [];
+    const environment = {
+      richWriter: null,
+      writePlainText: async (text: string) => {
+        plainTexts.push(text);
+        return result();
+      },
+    } satisfies MarkdownClipboardEnvironment;
+    return { environment, plainTexts };
+  }
+
+  it("copies the current quote body and nested quote independently", async () => {
+    const clipboard = createRecordingEnvironment(async () => true);
+    renderQuote("> First draft", clipboard.environment);
+    await vi.waitFor(() =>
+      expect(within(host).getByText("First draft").textContent).toBe("First draft"),
+    );
+    const firstQuote = fixtureElement(host, "blockquote");
+    const firstButton = within(firstQuote).getByRole("button", {
+      name: "Copy quote",
+    });
+
+    renderQuote("> Updated **draft**\n>\n> > Nested reply", clipboard.environment);
+    await vi.waitFor(() => expect(host.textContent).toContain("Updated"));
+    const updatedQuote = fixtureElement(host, "blockquote");
+    expect(updatedQuote).toBe(firstQuote);
+    expect(updatedQuote.contains(firstButton)).toBe(true);
+    expect(firstQuote.textContent).toContain("Updated");
+    const controls = within(updatedQuote).getAllByRole("button", {
+      name: "Copy quote",
+    });
+    expect(controls[0]).toBe(firstButton);
+    const nested = controls[1]!;
+
+    firstButton.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(clipboard.plainTexts).toHaveLength(1));
+    expect(clipboard.plainTexts[0]).toBe("Updated **draft**\n\n> Nested reply");
+
+    nested.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(clipboard.plainTexts).toHaveLength(2));
+    expect(clipboard.plainTexts[1]).toBe("Nested reply");
+  });
+
+  it("turns a false clipboard result into a visible failure and retries", async () => {
+    let allowWrite = false;
+    const clipboard = createRecordingEnvironment(async () => allowWrite);
+    renderQuote("> Draft", clipboard.environment);
+    await vi.waitFor(() => expect(within(host).getByText("Draft").textContent).toBe("Draft"));
+
+    const button = quoteButtons()[0]!;
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(within(host).getByRole("alert").textContent).toContain("Copy failed"),
+    );
+    expect(within(host).queryByRole("button", { name: "Copied" })).toBeNull();
+
+    allowWrite = true;
+    await userEvent.click(within(host).getByRole("button", { name: "Retry" }));
+    await vi.waitFor(() => expect(within(host).queryByRole("alert")).toBeNull());
+    await vi.waitFor(() =>
+      expect(within(host).getByRole("button", { name: "Copied" }).getAttribute("aria-label")).toBe(
+        "Copied",
+      ),
+    );
+  });
+
+  it("keeps the final quote paragraph free of a trailing block gap", async () => {
+    renderQuote("> First\n>\n> Last\n\nOutside");
+    await vi.waitFor(() => expect(within(host).getByText("Last").textContent).toBe("Last"));
+    expect(getComputedStyle(within(host).getByText("Last")).marginBottom).toBe("0px");
+  });
+});
 
 const fixture = `
   <div data-testid="assistant-message">

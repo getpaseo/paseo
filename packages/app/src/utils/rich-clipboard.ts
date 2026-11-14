@@ -68,7 +68,7 @@ export function createCodeClipboardContent(
 export async function writeMarkdownToRichClipboard(
   markdown: string,
   environment: MarkdownClipboardEnvironment,
-): Promise<void> {
+): Promise<boolean> {
   if (environment.richWriter?.supportsHtml()) {
     const content = createMarkdownClipboardContent(markdown);
     try {
@@ -76,12 +76,14 @@ export async function writeMarkdownToRichClipboard(
         "text/plain": new Blob([content.plainText], { type: "text/plain" }),
         "text/html": new Blob([content.html], { type: "text/html" }),
       });
-      return;
+      return true;
     } catch {
       // Fall through to the plain-text path. Some webviews expose rich clipboard
       // APIs but deny writes depending on focus, permissions, or browser policy.
     }
   }
 
-  await environment.writePlainText(markdown);
+  // Expo can report failed writes by resolving false instead of rejecting.
+  const written = await environment.writePlainText(markdown);
+  return written !== false;
 }

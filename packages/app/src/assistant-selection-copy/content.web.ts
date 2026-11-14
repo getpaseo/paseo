@@ -9,6 +9,7 @@ import {
   MARKDOWN_COPY_IMAGE_SOURCES_ATTRIBUTE,
   MARKDOWN_COPY_ALIGN_ATTRIBUTE,
   MARKDOWN_COPY_ALT_ATTRIBUTE,
+  MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE,
   MARKDOWN_COPY_IGNORE_ATTRIBUTE,
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
@@ -90,6 +91,37 @@ turndown.addRule("compactListItem", {
     return `${node.getAttribute("value")}. ${item}\n`;
   },
 });
+
+/**
+ * Rendered blocks that replace their source in the DOM (Mermaid) carry the original
+ * fence in an attribute. Replace the whole cloned region so a visible source block
+ * and its diagram cannot produce two fences.
+ */
+function normalizeFenceSourceRegions(container: Element): void {
+  for (const region of container.querySelectorAll(`[${MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE}]`)) {
+    const source = region.getAttribute(MARKDOWN_COPY_FENCE_SOURCE_ATTRIBUTE);
+    if (source === null) continue;
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    const language = region.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
+    if (language) code.className = `language-${language}`;
+    code.textContent = source;
+    pre.append(code);
+    region.replaceWith(pre);
+  }
+}
+
+/** Copy a complete block's body without its enclosing semantic wrapper. */
+export function markdownFromElementContents(element: Element): string {
+  const container = document.createElement("div");
+  container.append(...Array.from(element.childNodes, (child) => child.cloneNode(true)));
+  const originals = element.querySelectorAll("*");
+  const copies = container.querySelectorAll("*");
+  originals.forEach((original, index) => copySemanticAttributes(original, copies[index]!));
+  normalizeFenceSourceRegions(container);
+  restoreMarkdownElements(container);
+  return turndown.turndown(container.innerHTML).trim();
+}
 
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,

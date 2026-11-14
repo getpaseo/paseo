@@ -340,6 +340,8 @@ export const fr: TranslationResources = {
       viewDiagram: "Afficher le diagramme",
     },
     actions: {
+      copyQuote: "Copier la citation",
+      copyFailed: "Échec de la copie",
       copyCode: "Copier le code",
       copyTurn: "Copier l’échange",
       copyMessage: "Copier le message",

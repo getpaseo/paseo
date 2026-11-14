@@ -555,7 +555,6 @@
         "packages/app/src/components/download-toast.tsx",
         "packages/app/src/components/file-explorer-pane.tsx",
         "packages/app/src/components/headers/back-header.tsx",
-        "packages/app/src/components/highlighted-code-block.tsx",
         "packages/app/src/components/hosts/host-filter.tsx",
         "packages/app/src/components/hosts/host-picker.tsx",
         "packages/app/src/components/import-session-sheet.tsx",
