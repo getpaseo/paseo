@@ -162,9 +162,9 @@ export function buildSelectorProvider(
  */
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
-  isConnected = true,
-  selectedProvider: string | null = null,
+  options: { isConnected?: boolean; selectedProvider?: string | null } = {},
 ): ProviderSelectorProvider[] {
+  const { isConnected = true, selectedProvider = null } = options;
   return (entries ?? [])
     .filter(
       (entry) =>

@@ -22,7 +22,7 @@ describe("combined model selector data", () => {
         snapshotEntry({ provider: "waiting", status: "loading", models: [] }),
         snapshotEntry({ provider: "codex", status: "ready", models: [codexModel] }),
       ],
-      false,
+      { isConnected: false },
     );
     expect(providers[0].modelSelection).toEqual({
       kind: "error",
@@ -186,8 +186,7 @@ describe("combined model selector data", () => {
         snapshotEntry({ provider: "codex", label: "Codex" }),
         snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
       ],
-      true,
-      "gemini",
+      { selectedProvider: "gemini" },
     );
     expect(providers.map((provider) => provider.id)).toEqual(["codex", "gemini"]);
     expect(providers[1].modelSelection).toEqual({ kind: "error", message: "Unavailable" });
