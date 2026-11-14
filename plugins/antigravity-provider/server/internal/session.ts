@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type {
   ProviderCatalog,
@@ -20,11 +22,13 @@ import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 const persistenceSchema = z
   .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
   .strict();
+const DEFAULT_TURN_IDLE_MS = 5 * 60_000;
 interface Turn {
   id: string;
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
+  childLogs: Set<string>;
   usage: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
 }
 type State =
@@ -50,6 +54,7 @@ export class Session {
   private firstMessage: boolean;
   private readonly promptFiles = new PromptFiles();
   private readonly reportedDenials = new Map<string, number>();
+  private watchdog: NodeJS.Timeout | undefined;
 
   constructor(private readonly options: SessionOptions) {
     this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
@@ -93,9 +98,11 @@ export class Session {
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
+      childLogs: new Set(),
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     };
     this.state = { type: "running", driver, turn };
+    this.armWatchdog();
     this.emit({
       type: "session.prompt_result",
       sessionId: this.options.id,
@@ -148,6 +155,7 @@ export class Session {
   async interrupt(): Promise<void> {
     if (this.state.type !== "running") return;
     const { driver, turn } = this.state;
+    this.clearWatchdog();
     this.state = { type: "stopping", driver };
     await driver.stop("interrupt");
     this.finishTools(turn, "canceled");
@@ -162,6 +170,7 @@ export class Session {
 
   async close(): Promise<void> {
     const state = this.state;
+    this.clearWatchdog();
     this.state = { type: "closed" };
     try {
       if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
@@ -240,11 +249,13 @@ export class Session {
   private accept(frame: Frame): void {
     if (this.state.type !== "running") return;
     const { turn, driver } = this.state;
+    this.armWatchdog();
     if (frame.event === "step_update") {
       this.acceptStep(frame.step_update, turn);
       return;
     }
     if (frame.event !== "result") return;
+    this.clearWatchdog();
     const result = frame.result;
     const denied = takeNewDenials(result.denied_actions, this.reportedDenials);
     if (denied.length > 0) {
@@ -302,6 +313,11 @@ export class Session {
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {
+      if (step.step_type === "subagent") {
+        for (const child of step.subagent_info?.subagents ?? []) {
+          if (child.log_uri.startsWith("file:")) turn.childLogs.add(child.log_uri);
+        }
+      }
       const item = toolItem(step, id);
       turn.tools.set(id, item);
       this.item(item);
@@ -311,6 +327,7 @@ export class Session {
   private failTurn(error: AntigravityError): void {
     const state = this.state;
     if (state.type !== "running" && state.type !== "idle") return;
+    this.clearWatchdog();
     this.retire(state.driver);
     if (state.type === "running") {
       this.finishTools(state.turn, "failed");
@@ -327,6 +344,65 @@ export class Session {
         sessionId: this.options.id,
         error: { message: error.message, code: error.code },
       });
+  }
+
+  // agy retries a model call that hits RESOURCE_EXHAUSTED (individual quota) without ending the
+  // turn with a result frame, so silence is the signal Paseo can observe.
+  private armWatchdog(): void {
+    this.clearWatchdog();
+    const raw = Number(this.options.launch.env?.PASEO_ANTIGRAVITY_TURN_IDLE_MS);
+    const idleMs = raw > 0 ? raw : DEFAULT_TURN_IDLE_MS;
+    this.watchdog = setTimeout(() => this.onWatchdog(idleMs), idleMs);
+    this.watchdog.unref();
+  }
+
+  private clearWatchdog(): void {
+    clearTimeout(this.watchdog);
+    this.watchdog = undefined;
+  }
+
+  private onWatchdog(idleMs: number): void {
+    if (this.state.type !== "running") return;
+    const turn = this.state.turn;
+    // A running tool legitimately stays quiet; only a silent model call is suspect.
+    if ([...turn.tools.values()].some((item) => item.status === "running")) {
+      this.armWatchdog();
+      return;
+    }
+    void this.failIfIdle(turn, idleMs);
+  }
+
+  private async failIfIdle(turn: Turn, idleMs: number): Promise<void> {
+    const watchdog = this.watchdog;
+    const childActive = await this.childActive(turn, idleMs);
+    // A frame replaces the timer while stat() is pending, invalidating this idle window.
+    if (this.watchdog !== watchdog) return;
+    if (this.state.type !== "running" || this.state.turn !== turn) return;
+    if (childActive) {
+      this.armWatchdog();
+      return;
+    }
+    this.failTurn(
+      new AntigravityError(
+        `Antigravity produced no output for ${Math.round(idleMs / 1000)}s. Its model quota may be exhausted and it is retrying; check the reset time with agy, then retry.`,
+        "TURN_STALLED",
+      ),
+    );
+  }
+
+  // invoke_subagent reports DONE before the child finishes, so the parent can stay quiet while a
+  // child works and no frames arrive. A child transcript written recently means real work.
+  private async childActive(turn: Turn, idleMs: number): Promise<boolean> {
+    const cutoff = Date.now() - idleMs;
+    for (const log of turn.childLogs) {
+      try {
+        const { mtimeMs } = await stat(fileURLToPath(log));
+        if (mtimeMs > cutoff) return true;
+      } catch {
+        // A missing or unreadable transcript says nothing about the child; treat it as idle.
+      }
+    }
+    return false;
   }
 
   private retire(driver: Driver): void {
