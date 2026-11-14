@@ -4995,6 +4995,77 @@ describe("ForgeService", () => {
     }
   });
 
+  it("finds a checked-out same-repository upstream PR on an Enterprise fork clone", async () => {
+    vi.useRealTimers();
+    const cwd = mkdtempSync(join(tmpdir(), "github-enterprise-upstream-same-repo-"));
+    try {
+      execFileSync("git", ["init", "-q", cwd]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "origin",
+        "https://github.acme.internal/me/repo.git",
+      ]);
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "remote",
+        "add",
+        "upstream",
+        "https://github.acme.internal/acme/repo.git",
+      ]);
+      const pullRequest = JSON.parse(
+        currentPullRequestJson({
+          url: "https://github.acme.internal/acme/repo/pull/42",
+          headRefName: "feature",
+          headRepositoryOwner: { login: "acme" },
+        }),
+      );
+      const runner: GitHubCommandRunner = async (args) => {
+        if (args[0] === "api") {
+          if (args[1] === "graphql") {
+            return { stdout: currentPullRequestGithubFactsJson(), stderr: "" };
+          }
+          return { stdout: "[]", stderr: "" };
+        }
+        if (args[0] === "repo") {
+          const fork = args[2] === "github.acme.internal/me/repo";
+          return {
+            stdout: JSON.stringify({
+              owner: { login: fork ? "me" : "acme" },
+              name: "repo",
+              parent: fork ? { owner: { login: "acme" }, name: "repo" } : null,
+            }),
+            stderr: "",
+          };
+        }
+        const inUpstream = args[args.indexOf("--repo") + 1] === "github.acme.internal/acme/repo";
+        if (args[1] === "view") {
+          if (inUpstream) return { stdout: JSON.stringify(pullRequest), stderr: "" };
+          throw Object.assign(new Error("gh failed"), {
+            stderr: 'no pull requests found for branch "feature"',
+          });
+        }
+        return { stdout: JSON.stringify(inUpstream ? [pullRequest] : []), stderr: "" };
+      };
+      const service = createGitHubService({
+        ttlMs: 0,
+        runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
+
+      await expect(
+        service.getCurrentPullRequestStatus({ cwd, headRef: "feature" }),
+      ).resolves.toMatchObject({ number: 42, repoOwner: "acme" });
+      service.dispose?.();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("uses the selected Enterprise default repository for PR and issue lookups despite Git rewrites", async () => {
     vi.useRealTimers();
     const cwd = mkdtempSync(join(tmpdir(), "github-service-default-repo-"));
@@ -5197,28 +5268,39 @@ describe("ForgeService", () => {
   });
 
   it("selects the original Enterprise repository for PR lookup when Git rewrites remotes", async () => {
-    const runner = createRunner([currentPullRequestJson()]);
-    const service = createGitHubService({
-      runner: runner.runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-      resolveRepoHost: async () => "github.acme.internal",
-      resolveRepoSlug: async () => "acme/repo",
-    });
+    const cwd = createEnterpriseOriginRepo();
+    try {
+      execFileSync("git", [
+        "-C",
+        cwd,
+        "config",
+        "url.https://proxy.acme.internal/.insteadOf",
+        "https://github.acme.internal/",
+      ]);
+      const runner = createRunner([currentPullRequestJson()]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => "github.acme.internal",
+      });
 
-    await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" });
+      await service.getCurrentPullRequestStatus({ cwd, headRef: "feature/fork" });
 
-    expect(runner.calls[0]).toMatchObject({
-      args: [
-        "pr",
-        "view",
-        "feature/fork",
-        "--json",
-        CURRENT_PR_STATUS_FIELDS,
-        "--repo",
-        "github.acme.internal/acme/repo",
-      ],
-      envOverlay: { GH_HOST: "github.acme.internal" },
-    });
+      expect(runner.calls[0]).toMatchObject({
+        args: [
+          "pr",
+          "view",
+          "feature/fork",
+          "--json",
+          CURRENT_PR_STATUS_FIELDS,
+          "--repo",
+          "github.acme.internal/acme/repo",
+        ],
+        envOverlay: { GH_HOST: "github.acme.internal" },
+      });
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("finds an Enterprise PR for a numeric branch without treating it as a PR number", async () => {

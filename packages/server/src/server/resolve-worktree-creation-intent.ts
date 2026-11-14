@@ -194,10 +194,9 @@ async function resolvePrCheckoutIntent(
   const trackOriginHead =
     !checkoutTarget.isCrossRepository &&
     checkoutTarget.headRefKind !== "pull-ref" &&
-    (deps.forge !== "github" ||
-      (checkoutTarget.checkoutRefs ?? defaultRefs).some(
-        (ref) => (ref.remoteName ?? "origin") === "origin",
-      ));
+    (checkoutTarget.checkoutRefs ?? defaultRefs).some(
+      (ref) => (ref.remoteName ?? "origin") === "origin",
+    );
 
   return {
     kind: "checkout-change-request",

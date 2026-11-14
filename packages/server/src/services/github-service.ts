@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   isGitHubHost,
   parseGitHubRemoteIdentity,
+  parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -971,10 +972,6 @@ export interface GitHubCommandRunnerOptions {
   envOverlay?: Record<string, string>;
 }
 
-interface GitHubRunOptions extends GitHubCommandRunnerOptions {
-  useDefaultRepository?: boolean;
-}
-
 export interface GitHubCommandResult {
   stdout: string;
   stderr: string;
@@ -1329,27 +1326,23 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       : { settled: false, value: null };
   }
 
-  async function run(args: string[], runOptions: GitHubRunOptions): Promise<string> {
+  async function run(args: string[], runOptions: GitHubCommandRunnerOptions): Promise<string> {
     const ghPath = await deps.resolveGhPath();
     if (!ghPath) {
       throw new GitHubCliMissingError();
     }
-    // Git may rewrite the transport URL to a proxy host. Preserve the original
-    // Enterprise host and repository when invoking gh instead of asking gh to
-    // infer them from the rewritten URL.
+    // Git may rewrite the transport URL to a proxy host. gh would then infer the
+    // wrong host and repository, so name the repository gh would select from
+    // the configured remote URLs instead.
     const host = await resolveRepoHostCached(runOptions.cwd);
-    let slug =
+    const slug =
       host && ["pr", "issue", "repo"].includes(args[0] ?? "")
-        ? await resolveRepoSlugCached(runOptions.cwd)
+        ? await resolveGitHubDefaultRepoSlug({ cwd: runOptions.cwd, host })
         : null;
-    if (host && slug && runOptions.useDefaultRepository) {
-      slug = (await resolveGitHubDefaultRepoSlug({ cwd: runOptions.cwd, host })) ?? slug;
-    }
     const effectiveArgs = selectGitHubCommandRepository({ args, host, slug });
-    const { useDefaultRepository: _useDefaultRepository, ...runnerOptions } = runOptions;
     const effectiveOptions: GitHubCommandRunnerOptions = host
-      ? { ...runnerOptions, envOverlay: { ...runnerOptions.envOverlay, GH_HOST: host } }
-      : runnerOptions;
+      ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
+      : runOptions;
     try {
       const result = await deps.runner(effectiveArgs, effectiveOptions);
       return result.stdout.trim();
@@ -1363,7 +1356,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
   async function runGhJson<T>(
     args: string[],
-    runOptions: GitHubRunOptions,
+    runOptions: GitHubCommandRunnerOptions,
     schema: z.ZodType<T>,
     emptyFallback: string,
   ): Promise<T> {
@@ -2087,7 +2080,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "--limit",
               String(input.limit ?? 20),
             ],
-            { cwd: input.cwd, useDefaultRepository: true },
+            { cwd: input.cwd },
             z.array(GitHubPullRequestSummarySchema),
             "[]",
           );
@@ -2114,7 +2107,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "--limit",
               String(input.limit ?? 20),
             ],
-            { cwd: input.cwd, useDefaultRepository: true },
+            { cwd: input.cwd },
             z.array(GitHubIssueSummarySchema),
             "[]",
           );
@@ -2138,7 +2131,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "--json",
               "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
             ],
-            { cwd: input.cwd, useDefaultRepository: true },
+            { cwd: input.cwd },
             GitHubPullRequestSummarySchema,
             "{}",
           );
@@ -2169,7 +2162,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args: { number: input.number },
         readOptions: input,
         load: async () => {
-          const repo = await getGitHubRepoView({ cwd: input.cwd, run, useDefaultRepository: true });
+          const repo = await getGitHubRepoView({ cwd: input.cwd, run });
           const owner = repo?.owner?.login;
           const name = repo?.name;
           if (!owner || !name) {
@@ -2221,10 +2214,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             headSha: input.headSha,
             headRepositoryOwner: input.headRepositoryOwner,
             explicitRepo: (await resolveRepoHostCached(input.cwd)) !== null,
-            // The head owner tells this PR apart from other forks' PRs on the
-            // same branch, so look it up where gh would by default: an
-            // upstream remote's repository before a fork origin's.
-            run: input.headRepositoryOwner ? withDefaultRepository(run) : run,
+            run,
           });
           return addCurrentPullRequestGithubFacts({ cwd: input.cwd, status, run });
         },
@@ -3067,12 +3057,6 @@ async function tryCurrentPullRequestBranchView(options: {
   });
 }
 
-function withDefaultRepository(
-  run: (args: string[], options: GitHubRunOptions) => Promise<string>,
-): (args: string[], options: GitHubCommandRunnerOptions) => Promise<string> {
-  return (args, options) => run(args, { ...options, useDefaultRepository: true });
-}
-
 async function resolveCurrentPullRequestView(options: {
   cwd: string;
   headRef: string;
@@ -3385,14 +3369,20 @@ async function resolveGitHubDefaultRepoSlug({
 }): Promise<string | null> {
   // `gh repo set-default` stores either "base" or an owner/name in the remote's
   // gh-resolved config. Read the raw URLs because `git remote` applies rewrites.
-  const { stdout } = await runGitCommand(
-    ["config", "--null", "--get-regexp", "^remote\\..*\\.(gh-resolved|url)$"],
-    {
-      cwd,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
-    },
-  );
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(
+      ["config", "--null", "--get-regexp", "^remote\\..*\\.(gh-resolved|url)$"],
+      {
+        cwd,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+        acceptExitCodes: [0, 1],
+      },
+    ));
+  } catch {
+    return null;
+  }
   const config = new Map<string, string>();
   for (const entry of stdout.split("\0")) {
     const separator = entry.indexOf("\n");
@@ -3436,8 +3426,7 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
   } catch {
     return null;
   }
-  const location = parseGitRemoteLocation(stdout.trim());
-  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
+  return parseGitHubRemoteUrl(stdout.trim())?.repo ?? null;
 }
 
 async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> {
@@ -3459,8 +3448,7 @@ interface GitHubRepoViewOptions {
   cwd: string;
   /** owner/name to ask about; `gh` picks the default repository for the directory when absent. */
   repo?: string;
-  useDefaultRepository?: boolean;
-  run: (args: string[], options: GitHubRunOptions) => Promise<string>;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }
 
 async function readGitHubRepoView(
@@ -3475,7 +3463,6 @@ async function readGitHubRepoView(
   ];
   const stdout = await options.run(args, {
     cwd: options.cwd,
-    useDefaultRepository: options.useDefaultRepository,
   });
   return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
     args,
