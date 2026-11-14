@@ -99,11 +99,15 @@ async function callWorkspaceCreation({
   worktreeSlug: string;
   input: { cwd: string; agent?: CreateWorkspaceRequestOptions["agent"] };
 }) {
+  const retainedSlug =
+    creationMethod === "create_worktree"
+      ? await draftCreations.worktreeSlug({ serverId, draftId: creationId, proposed: worktreeSlug })
+      : undefined;
   const request: CreateWorkspaceRequestOptions = {
     agent: input.agent,
     source:
       creationMethod === "create_worktree"
-        ? { kind: "worktree", cwd: input.cwd, worktreeSlug }
+        ? { kind: "worktree", cwd: input.cwd, worktreeSlug: retainedSlug }
         : { kind: "directory", path: input.cwd },
   };
   return draftCreations.submit({

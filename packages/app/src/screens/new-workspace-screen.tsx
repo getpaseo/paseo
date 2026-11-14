@@ -307,6 +307,13 @@ async function createMultiplicityWorkspace(input: {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
+  const worktreeSlug = isWorktree
+    ? await draftCreations.worktreeSlug({
+        serverId: input.serverId,
+        draftId: input.idempotencyKey,
+        proposed: input.worktreeSlug,
+      })
+    : undefined;
   const firstAgentContext = buildFirstAgentContext({
     prompt: input.prompt,
     attachments: input.attachments,
@@ -318,7 +325,7 @@ async function createMultiplicityWorkspace(input: {
           kind: "worktree",
           cwd: input.sourceDirectory,
           projectId,
-          worktreeSlug: input.worktreeSlug,
+          worktreeSlug,
           ...input.checkoutRequest,
           ...(input.branchName && startsNewBranch(input.checkoutRequest)
             ? { branchName: input.branchName }

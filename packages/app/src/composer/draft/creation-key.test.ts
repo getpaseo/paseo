@@ -31,8 +31,15 @@ describe("draftCreationKey", () => {
   });
 });
 
-function creationsFor(disk: Parameters<typeof createDraftCreations>[0]) {
-  return createDraftCreations(disk, () => "Check the previous start before creating another.");
+class NotSentError extends Error {}
+
+function creationsFor(disk: Parameters<typeof createDraftCreations>[0]["storage"]) {
+  return createDraftCreations({
+    storage: disk,
+    outcomeUnknownMessage: () => "Check the previous start before creating another.",
+    isNotSent: (error) => error instanceof NotSentError,
+    onPersistenceError: () => {},
+  });
 }
 
 function storage() {
@@ -89,7 +96,7 @@ describe("draft creation retry admission", () => {
     const retried = await creations.submit({
       ...scope,
       kind: "agent",
-      request,
+      request: { ...request, initialPrompt: "Edited after storage recovered" },
       send: async () => {
         starts++;
         return "started";
@@ -97,6 +104,139 @@ describe("draft creation retry admission", () => {
     });
     expect(retried).toBe("started");
     expect(starts).toBe(1);
+  });
+
+  it("restores admission when a storage rejection occurred after committing the pending record", async () => {
+    const disk = storage();
+    let failOnce = true;
+    const creations = creationsFor({
+      getItem: disk.getItem,
+      setItem: async (key, value) => {
+        await disk.setItem(key, value);
+        if (failOnce) {
+          failOnce = false;
+          throw new Error("Write acknowledgement lost");
+        }
+      },
+    });
+    await expect(
+      creations.submit({
+        ...scope,
+        kind: "agent",
+        request,
+        send: async () => {
+          throw new Error("Must not send");
+        },
+      }),
+    ).rejects.toThrow("Write acknowledgement lost");
+    const result = await creationsFor(disk).submit({
+      ...scope,
+      kind: "agent",
+      request: { ...request, initialPrompt: "Edited after admission failed" },
+      send: async () => "created",
+    });
+    expect(result).toBe("created");
+  });
+
+  it("keeps a successful host result when later checkpoints fail, independently of other drafts", async () => {
+    const disk = storage();
+    const counts = new Map<string, number>();
+    const creations = creationsFor({
+      getItem: disk.getItem,
+      setItem: async (key, value) => {
+        const count = (counts.get(key) ?? 0) + 1;
+        counts.set(key, count);
+        if (count === 2) throw new Error("Checkpoint unavailable");
+        await disk.setItem(key, value);
+      },
+    });
+    const results = await Promise.all([
+      creations.submit({
+        ...scope,
+        kind: "agent",
+        request,
+        send: async ({ idempotencyKey, onEvent }) => {
+          onEvent({
+            ...failure({ kind: "agent", idempotencyKey, unknown: false }),
+            phase: "completed",
+            error: null,
+          });
+          return "created-agent";
+        },
+      }),
+      creations.submit({
+        ...scope,
+        draftId: "other-draft",
+        kind: "agent",
+        request,
+        send: async () => "other-created-agent",
+      }),
+    ]);
+    expect(results).toEqual(["created-agent", "other-created-agent"]);
+    await expect(
+      creationsFor(disk).submit({
+        ...scope,
+        kind: "agent",
+        request: { ...request, initialPrompt: "Edited after reload" },
+        send: async () => "must-not-create",
+      }),
+    ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+  });
+
+  it.each(["agent", "workspace"] as const)(
+    "rolls back local %s preflight failures across reload",
+    async (kind) => {
+      const disk = storage();
+      await expect(
+        creationsFor(disk).submit({
+          ...scope,
+          kind,
+          request: { ...request, metadata: { plugin: true } },
+          send: async () => {
+            throw new NotSentError("Update the host to use metadata.");
+          },
+        }),
+      ).rejects.toThrow("Update the host to use metadata.");
+      const result = await creationsFor(disk).submit({
+        ...scope,
+        kind,
+        request,
+        send: async () => "created-after-correction",
+      });
+      expect(result).toBe("created-after-correction");
+    },
+  );
+
+  it("replays an unchanged worktree creation after remount with its original generated slug", async () => {
+    const disk = storage();
+    const original = creationsFor(disk);
+    const slug = await original.worktreeSlug({ ...scope, proposed: "original-worktree" });
+    const firstRequest = { source: { kind: "worktree", cwd: "/repo", worktreeSlug: slug } };
+    let firstKey = "";
+    await expect(
+      original.submit({
+        ...scope,
+        kind: "workspace",
+        request: firstRequest,
+        send: async ({ idempotencyKey }) => {
+          firstKey = idempotencyKey;
+          throw new Error("Request timed out");
+        },
+      }),
+    ).rejects.toThrow("Request timed out");
+    const remounted = creationsFor(disk);
+    const retained = await remounted.worktreeSlug({
+      ...scope,
+      proposed: "newly-generated-worktree",
+    });
+    expect(retained).toBe("original-worktree");
+    const key = await remounted.submit({
+      ...scope,
+      kind: "workspace",
+      request: { source: { kind: "worktree", cwd: "/repo", worktreeSlug: retained } },
+      send: async ({ idempotencyKey }) => idempotencyKey,
+    });
+    expect(key).toBe(firstKey);
   });
 
   it.each(["agent", "workspace"] as const)(
