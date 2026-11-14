@@ -226,6 +226,73 @@ describe("native browser IPC", () => {
     );
   });
 
+  test("captures while JavaScript waits even when a viewport command is queued behind it", async () => {
+    const { guest, call } = fixture();
+    const running = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const send = guest.debugger.sendCommand.getMockImplementation()!;
+    guest.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === "Runtime.evaluate") {
+        started.resolve();
+        return running.promise;
+      }
+      return send(method, params);
+    });
+    const evaluating = call("command", { method: "Runtime.evaluate" });
+    await started.promise;
+    const params = { width: 800, height: 600, deviceScaleFactor: 1, mobile: false };
+    const emulating = call("command", { method: "Emulation.setDeviceMetricsOverride", params });
+    let frame: unknown = null;
+    const capturing = call("frame").then((result) => {
+      frame = result;
+      return result;
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(frame).toMatchObject({ width: 1280, height: 960, capturedAt: 10000 });
+      expect(guest.debugger.sendCommand).not.toHaveBeenCalledWith(
+        "Emulation.setDeviceMetricsOverride",
+        params,
+      );
+    } finally {
+      running.resolve({ result: { value: "done" } });
+      await Promise.all([evaluating, emulating, capturing]);
+    }
+  });
+
+  test("waits for an active viewport change before reading screenshot metrics", async () => {
+    const { guest, call } = fixture();
+    const changing = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const send = guest.debugger.sendCommand.getMockImplementation()!;
+    guest.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === "Emulation.setDeviceMetricsOverride") {
+        started.resolve();
+        return changing.promise;
+      }
+      return send(method, params);
+    });
+    const emulating = call("command", {
+      method: "Emulation.setDeviceMetricsOverride",
+      params: {
+        width: 800,
+        height: 600,
+        deviceScaleFactor: 1,
+        mobile: false,
+      },
+    });
+    await started.promise;
+    const capturing = call("frame");
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(guest.debugger.sendCommand).not.toHaveBeenCalledWith("Page.getLayoutMetrics");
+    } finally {
+      changing.resolve({});
+      await emulating;
+      await expect(capturing).resolves.toMatchObject({ width: 1280, height: 960 });
+    }
+  });
+
   test("restricts browser-wide commands and maps cookies and permissions to the registered guest", async () => {
     const { guest, call } = fixture();
     await expect(call("command", { method: "Browser.close" })).rejects.toThrow(

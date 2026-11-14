@@ -5,6 +5,7 @@ import {
 } from "@getpaseo/protocol/browser-native";
 import type { WebContents, NativeImage } from "electron";
 import type { NativeBrowserEvent, NativeBrowserFrame } from "@getpaseo/protocol/browser-native";
+import { CdpSessionQueue } from "./cdp-session-queue.js";
 
 export interface NativeBrowserContents extends Pick<
   WebContents,
@@ -28,6 +29,7 @@ export interface NativeBrowserBridgeDependencies {
 
 interface Capture {
   tail: Promise<unknown>;
+  viewportQueue: CdpSessionQueue;
   events: NativeBrowserEvent[];
   bytes: number;
   dropped: number;
@@ -109,6 +111,7 @@ function observe(contents: NativeBrowserContents): Capture {
   if (existing) return existing;
   const capture: Capture = {
     tail: Promise.resolve(),
+    viewportQueue: new CdpSessionQueue(),
     events: [],
     bytes: 0,
     dropped: 0,
@@ -372,12 +375,11 @@ export function registerNativeBrowserBridgeIpc(
       // screenshot rather than relabeling an old paint with a new timestamp.
       if (!capture.stillTask && Date.now() - capture.lastStillAttemptAt >= 1000) {
         capture.lastStillAttemptAt = Date.now();
-        capture.stillTask = capture.tail
-          .then(() => captureStillFrame(contents, capture, dependencies.images))
+        capture.stillTask = capture.viewportQueue
+          .run(() => captureStillFrame(contents, capture, dependencies.images))
           .finally(() => {
             capture.stillTask = null;
           });
-        capture.tail = capture.stillTask.catch(() => undefined);
       }
       if (capture.stillTask) await capture.stillTask;
     }
@@ -433,7 +435,12 @@ export function registerNativeBrowserBridgeIpc(
       return contents.debugger.sendCommand(method, params);
     };
     if (unblockers.has(method)) return execute();
-    const pending = capture.tail.then(execute);
+    const pending = capture.tail.then(() => {
+      if (method.startsWith("Emulation.") || method === "Page.captureScreenshot") {
+        return capture.viewportQueue.run(execute);
+      }
+      return execute();
+    });
     capture.tail = pending.catch(() => undefined);
     return pending;
   });

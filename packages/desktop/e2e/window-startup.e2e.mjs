@@ -121,6 +121,34 @@ async function launchBackgroundBrowser() {
         await native("command", { method: "Emulation.clearDeviceMetricsOverride" });
         return { reported: { width: frame.width, height: frame.height }, encoded: image.getSize() };
       };
+      global.captureWhilePaused = async () => {
+        await native("command", { method: "Debugger.enable" });
+        const evaluating = native("command", { method: "Runtime.evaluate", params: { expression: "debugger; 42" } });
+        let deadline;
+        try {
+          let paused = false;
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const result = await native("events", { method: "Debugger.paused" });
+            if (result.events.length) { paused = true; break; }
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          if (!paused) throw new Error("Guest did not pause");
+          await new Promise(resolve => setTimeout(resolve, 1600));
+          const frame = await Promise.race([
+            native("frame"),
+            new Promise((_, reject) => {
+              deadline = setTimeout(() => reject(new Error("Frame blocked by paused JavaScript")), 2000);
+            }),
+          ]);
+          const events = await native("events", { method: "Debugger.resumed" });
+          return { captured: Boolean(frame), resumedBeforeCapture: events.events.length > 0 };
+        } finally {
+          clearTimeout(deadline);
+          await native("command", { method: "Debugger.resume" });
+          await evaluating;
+          await native("command", { method: "Debugger.disable" });
+        }
+      };
       global.backgroundReady = true;
     });
   `,
@@ -171,6 +199,11 @@ try {
   console.log(
     "Native quiet-page capture bounds high-DPI JPEG pixels and reports encoded dimensions",
   );
+  expect(await desktop.evaluate(() => global.captureWhilePaused())).toEqual({
+    captured: true,
+    resumedBeforeCapture: false,
+  });
+  console.log("Native frames remain available while guest JavaScript is paused at a breakpoint");
 } finally {
   await desktop?.close();
   await rm(root, { recursive: true, force: true });
