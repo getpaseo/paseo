@@ -200,6 +200,41 @@ Register this package before React Native's core package through its Expo config
 Android builds use the prebuilt `react-android` library, so patching Java under `node_modules` does
 not change the shipped scroll view. Keep this behavior in the app's compiled native module.
 
+## Refresh rate
+
+On OPPO, OnePlus and realme devices, `modules/paseo-refresh-rate` sets the window's
+`preferredRefreshRate` to the display's highest mode at the current resolution whenever the activity
+enters the foreground. Other devices keep the system's own policy, which already gives apps the
+panel's peak.
+
+ColorOS picks each window's refresh rate in its own service from a per-package table. A package it
+does not list gets a 60 Hz window request, and DisplayModeDirector turns that into a render range of
+`[0, 60]`, so SurfaceFlinger's touch boost stops at 60 Hz too. On an OPPO Pad (OPD2501, ColorOS 16)
+Paseo rendered every scroll at 16.7 ms while System Settings, which the table lists, got 120 Hz.
+
+What the policy reads:
+
+- `View.setRequestedFrameRate` and `SurfaceControl.Transaction.setFrameRate`, on a `SurfaceView` or
+  on a child layer of the window, reach SurfaceFlinger and stay under the 60 Hz range.
+- `preferredDisplayModeId` and `preferredRefreshRate` are honoured and measured the same. The module
+  uses `preferredRefreshRate` because it asks for a rate, not a display mode, so it never ties the
+  window to a resolution.
+
+The request raises the ceiling only. A static screen still drops to the idle rate, the same as it
+does for System Settings, so the panel is not pinned at 120 Hz while the app sits open.
+
+To check it on a device:
+
+```bash
+adb shell dumpsys oplusscreenmode | grep -A2 "Refresh rate changing"   # ColorOS decision per window
+adb shell dumpsys SurfaceFlinger | grep -A1 "^Pacesetter Display"     # renderRate actually in use
+```
+
+`mActiveSfDisplayMode` in `dumpsys display` can report 120 Hz while SurfaceFlinger renders at 60, so
+read `renderRate`. Compare frame gaps from `dumpsys gfxinfo <package> framestats` read while a
+swipe is still running; frames captured after the finger lifts are at the idle rate whatever the
+request.
+
 ## F-Droid / source-only Android builds
 
 F-Droid builds should set `PASEO_FDROID_BUILD=1` when running Expo prebuild:
