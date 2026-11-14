@@ -492,6 +492,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
     });
 
+    const handlePluginOpenFile = useStableEvent((location: WorkspaceFileLocation) => {
+      handleInlinePathPress({ raw: location.path, ...location }, "preferred");
+    });
+
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundary }) => {
         await forkAgent({
@@ -943,7 +947,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           case "plugin":
             return (
-              <PluginTimelineItemView agentId={agentId} item={item} serverId={resolvedServerId} />
+              <PluginTimelineItemView
+                agentId={agentId}
+                item={item}
+                serverId={resolvedServerId}
+                openFile={handlePluginOpenFile}
+              />
             );
 
           default:
@@ -955,6 +964,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderToolCallItem,
+        handlePluginOpenFile,
         setTurnExpanded,
         resolvedServerId,
       ],
