@@ -5,7 +5,7 @@ import {
 import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import compareVersions from "semver/functions/compare.js";
@@ -21,7 +21,7 @@ import {
 } from "@getpaseo/protocol/messages";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
-import { readPluginManifest, type PluginManifest } from "./manifest.js";
+import { parsePluginManifest, readPluginManifest, type PluginManifest } from "./manifest.js";
 import {
   acquireNpm,
   isNpmSource,
@@ -189,7 +189,8 @@ export class ManagedPluginSources {
         const commit = await resolveRequestedRef(sourceRoot, input.ref);
         if (target?.kind === "git" && commit !== target.commit)
           throw new Error("Git target changed since review");
-        await checkout(sourceRoot, commit);
+        await configureGitFiles({ checkoutRoot: sourceRoot, commit, pluginPath, remote });
+        await checkout({ checkoutRoot: sourceRoot, commit, remote });
         record = { kind: "git", remote };
       }
       const directory = path.resolve(sourceRoot, pluginPath);
@@ -489,7 +490,7 @@ function assertPluginPath(checkoutRoot: string, directory: string): void {
   }
 }
 
-async function clone(remote: string, checkoutRoot: string): Promise<void> {
+function gitRemote(remote: string) {
   const publicRemote = redactRemoteCredentials(remote);
   const cloneRemote = publicRemote === remote ? remote : "https://paseo.invalid/plugin.git";
   const envOverlay =
@@ -501,12 +502,23 @@ async function clone(remote: string, checkoutRoot: string): Promise<void> {
           GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
           GIT_CONFIG_VALUE_0: cloneRemote,
         };
+  return { cloneRemote, envOverlay };
+}
+
+async function clone(remote: string, checkoutRoot: string): Promise<void> {
+  const { cloneRemote, envOverlay } = gitRemote(remote);
   try {
-    await runGitCommand(["clone", "--no-checkout", "--", cloneRemote, checkoutRoot], {
-      cwd: path.dirname(checkoutRoot),
-      envOverlay,
-      timeout: GIT_TIMEOUT_MS,
-    });
+    // A blobless clone keeps every commit and ref for revision lookups, and checkout fetches
+    // only the files of the chosen commit. A full clone of a plugin repository with large
+    // assets in its history can outlast GIT_TIMEOUT_MS on an ordinary connection.
+    await runGitCommand(
+      ["clone", "--no-checkout", "--filter=blob:none", "--", cloneRemote, checkoutRoot],
+      {
+        cwd: path.dirname(checkoutRoot),
+        envOverlay,
+        timeout: GIT_TIMEOUT_MS,
+      },
+    );
   } catch (error) {
     throw redactRemoteError(error, remote);
   }
@@ -532,17 +544,80 @@ function redactRemoteError(error: unknown, remote: string): Error {
   return new Error(message);
 }
 
-async function checkout(checkoutRoot: string, commit: string): Promise<void> {
-  await runGitCommand(["checkout", "--detach", commit], {
-    cwd: checkoutRoot,
-    envOverlay: GIT_ENV,
-    timeout: GIT_TIMEOUT_MS,
-  });
-  await runGitCommand(["submodule", "update", "--init", "--recursive"], {
-    cwd: checkoutRoot,
-    envOverlay: GIT_ENV,
-    timeout: GIT_TIMEOUT_MS,
-  });
+async function checkout({
+  checkoutRoot,
+  commit,
+  remote,
+}: {
+  checkoutRoot: string;
+  commit: string;
+  remote: string;
+}): Promise<void> {
+  const { envOverlay } = gitRemote(remote);
+  try {
+    await runGitCommand(["checkout", "--detach", commit], {
+      cwd: checkoutRoot,
+      envOverlay,
+      timeout: GIT_TIMEOUT_MS,
+    });
+    await runGitCommand(["submodule", "update", "--init", "--recursive"], {
+      cwd: checkoutRoot,
+      envOverlay,
+      timeout: GIT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    throw redactRemoteError(error, remote);
+  }
+}
+
+async function configureGitFiles({
+  checkoutRoot,
+  commit,
+  pluginPath,
+  remote,
+}: {
+  checkoutRoot: string;
+  commit: string;
+  pluginPath: string;
+  remote: string;
+}): Promise<void> {
+  const { envOverlay } = gitRemote(remote);
+  const relativePlugin = pluginPath.split(path.sep).join("/");
+  const manifestPath = path.posix.join(relativePlugin, "paseo-plugin.json");
+  const options = { cwd: checkoutRoot, envOverlay, timeout: GIT_TIMEOUT_MS };
+  try {
+    const manifestEntry = await runGitCommand(
+      ["ls-tree", "-z", commit, "--", `:(literal)${manifestPath}`],
+      options,
+    );
+    // Symlinked manifests and manifests inside submodules need the normal checkout first.
+    if (!/^100(?:644|755) blob /.test(manifestEntry.stdout)) return;
+    const { stdout } = await runGitCommand(["show", `${commit}:${manifestPath}`], options);
+    const manifest = parsePluginManifest(stdout);
+    if (!manifest.gitFiles) return;
+    const paths = manifest.gitFiles.map((entry) => path.posix.join(relativePlugin, entry));
+    if (paths.some((entry) => /[\r\n]/.test(entry)))
+      throw new Error("Git plugin installation paths cannot contain newlines");
+    for (const entry of paths) {
+      const found = await runGitCommand(
+        ["ls-tree", "-z", commit, "--", `:(literal)${entry}`],
+        options,
+      );
+      if (!found.stdout) throw new Error(`Git plugin installation path does not exist: ${entry}`);
+    }
+    const escapePattern = (entry: string) => entry.replace(/[\\*?[\]!#]/g, "\\$&");
+    const patterns = [manifestPath, ".gitmodules", ...paths].map(
+      (entry) => `/${escapePattern(entry)}`,
+    );
+    await runGitCommand(["config", "core.sparseCheckout", "true"], options);
+    await runGitCommand(["config", "core.sparseCheckoutCone", "false"], options);
+    await writeFile(
+      path.join(checkoutRoot, ".git", "info", "sparse-checkout"),
+      `${patterns.join("\n")}\n`,
+    );
+  } catch (error) {
+    throw redactRemoteError(error, remote);
+  }
 }
 
 async function resolveRequestedRef(
@@ -563,17 +638,7 @@ async function resolveRequestedRef(
 async function resolveRemoteCommit(remote: string, cwd: string, ref?: string): Promise<string> {
   if (ref?.startsWith("-")) throw new Error("Plugin Git ref cannot start with '-'");
   if (ref && /^[0-9a-f]{40,64}$/.test(ref)) return ref;
-  const publicRemote = redactRemoteCredentials(remote);
-  const cloneRemote = publicRemote === remote ? remote : "https://paseo.invalid/plugin.git";
-  const envOverlay =
-    cloneRemote === remote
-      ? GIT_ENV
-      : {
-          ...GIT_ENV,
-          GIT_CONFIG_COUNT: "1",
-          GIT_CONFIG_KEY_0: `url.${remote}.insteadOf`,
-          GIT_CONFIG_VALUE_0: cloneRemote,
-        };
+  const { cloneRemote, envOverlay } = gitRemote(remote);
   try {
     const names = ref
       ? [`refs/heads/${ref}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`, ref]

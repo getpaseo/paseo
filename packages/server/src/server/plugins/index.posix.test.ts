@@ -1004,6 +1004,66 @@ export default function contribute(server: PluginServerContext) {
     await service.stopAllPlugins();
   }, 30_000);
 
+  it("installs and updates a sparse Git plugin through build and real activation", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
+    roots.push(repository);
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+    await runGitCommand(["config", "uploadpack.allowFilter", "true"], { cwd: repository });
+    await mkdir(path.join(repository, "scripts"));
+    await mkdir(path.join(repository, "assets"));
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "sparse-plugin",
+        gitFiles: ["index.server.ts", "scripts", "assets"],
+        build: [[process.execPath, "scripts/prepare.cjs"]],
+      }),
+    );
+    await writeFile(
+      path.join(repository, "scripts", "prepare.cjs"),
+      'const fs = require("node:fs"); fs.mkdirSync("server", { recursive: true }); fs.writeFileSync("server/generated.ts", `export const value = ${JSON.stringify(fs.readFileSync("assets/value.txt", "utf8"))};`);',
+    );
+    await writeFile(path.join(repository, "assets", "value.txt"), "first");
+    await writeFile(
+      path.join(repository, "index.server.ts"),
+      'import { value } from "./server/generated"; export default function contribute() { if (!value) throw new Error("missing value"); return () => {}; }',
+    );
+    await writeFile(path.join(repository, "unused.txt"), "excluded");
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
+    const service = createService(home, {}, { managedSources: new ManagedPluginSources(home) });
+    try {
+      await service.start();
+      const installed = await service.installSource({ source: pathToFileURL(repository).href });
+      expect(await readFile(path.join(installed.path, "server/generated.ts"), "utf8")).toContain(
+        "first",
+      );
+      await expect(stat(path.join(installed.path, "unused.txt"))).rejects.toThrow();
+      expect(await service.listPlugins()).toMatchObject([
+        { id: "sparse-plugin", status: "running" },
+      ]);
+
+      await writeFile(path.join(repository, "assets", "value.txt"), "second");
+      await runGitCommand(["add", "-A"], { cwd: repository });
+      await runGitCommand(["commit", "-m", "update"], { cwd: repository });
+      await expect(applyReviewedUpdate(service, "sparse-plugin")).resolves.toEqual([
+        expect.objectContaining({ id: "sparse-plugin", outcome: "updated" }),
+      ]);
+      const plugins = await service.listPlugins();
+      expect(plugins).toMatchObject([{ id: "sparse-plugin", status: "running" }]);
+      expect(await readFile(path.join(plugins[0]!.path, "server/generated.ts"), "utf8")).toContain(
+        "second",
+      );
+      await expect(stat(path.join(plugins[0]!.path, "unused.txt"))).rejects.toThrow();
+    } finally {
+      await service.stopAllPlugins();
+    }
+  }, 30_000);
+
   it("activates an update when the enabled plugin previously failed to start", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

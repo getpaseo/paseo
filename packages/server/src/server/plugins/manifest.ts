@@ -22,6 +22,24 @@ const PluginAssetPathSchema = z
       value.split("/").at(-1) !== ".",
     "Expected a relative file path inside the plugin package",
   );
+const GitInstallPathSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) =>
+      value === value.trim() &&
+      !/[\\:*?[\]\p{Cc}]/u.test(value) &&
+      value
+        .split("/")
+        .every(
+          (segment) =>
+            segment !== "" &&
+            segment !== "." &&
+            segment !== ".." &&
+            segment.toLowerCase() !== ".git",
+        ),
+    "Expected a literal relative file or directory path inside the plugin package",
+  );
 const PluginManifestSchema = z.object({
   id: PluginIdSchema,
   name: z.string().trim().min(1).optional(),
@@ -34,15 +52,20 @@ const PluginManifestSchema = z.object({
   // A misspelled requirement must not silently disable compatibility checks.
   requirements: PluginRequirementsSchema.strict().optional(),
   build: z.array(PluginBuildCommandSchema).min(1).optional(),
+  gitFiles: z.array(GitInstallPathSchema).min(1).optional(),
 });
 
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+
+export function parsePluginManifest(contents: string): PluginManifest {
+  const manifest = PluginManifestSchema.parse(JSON.parse(contents));
+  validatePluginRequirements(manifest.requirements);
+  return manifest;
+}
 
 export async function readPluginManifest(directory: string): Promise<PluginManifest> {
   const manifestPath = path.join(directory, MANIFEST_FILENAME);
   const info = await stat(manifestPath).catch(() => null);
   if (!info?.isFile()) throw new Error(`Plugin manifest is missing: ${manifestPath}`);
-  const manifest = PluginManifestSchema.parse(JSON.parse(await readFile(manifestPath, "utf8")));
-  validatePluginRequirements(manifest.requirements);
-  return manifest;
+  return parsePluginManifest(await readFile(manifestPath, "utf8"));
 }
