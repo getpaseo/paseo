@@ -1,7 +1,10 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildSshArgs,
   createLocalTransportManager,
+  createOwnedLocalTransportRegistry,
+  type LocalTransportManager,
   LOCAL_TRANSPORT_SETUP_TIMEOUT_MS,
   parseTransportTarget,
   resolveSshFailureDetail,
@@ -202,3 +205,136 @@ describe("local transport session lifecycle", () => {
     expect(events).toEqual([]);
   });
 });
+
+describe("transport ownership", () => {
+  it("isolates identical session IDs and cleans up only the exiting renderer", async () => {
+    const first = createOwner();
+    const second = createOwner();
+    const endpoints = [createEndpoint(), createEndpoint()];
+    const sockets = [createConnectingSocket(), createConnectingSocket()];
+    const managers: LocalTransportManager[] = [];
+    const registry = createOwnedLocalTransportRegistry((emitEvent) => {
+      const index = managers.length;
+      const manager = createLocalTransportManager({
+        resolveEndpoint: async () => endpoints[index],
+        createWebSocket: () => sockets[index],
+        scheduleTimeout: () => () => undefined,
+        emitEvent,
+      });
+      managers.push(manager);
+      return manager;
+    });
+    registry.open(first, SESSION_INPUT);
+    await Promise.resolve();
+    registry.open(second, SESSION_INPUT);
+    await Promise.resolve();
+    first.emit("render-process-gone");
+    await expect(
+      registry.send(first, { sessionId: SESSION_INPUT.sessionId, text: "foreign" }),
+    ).rejects.toThrow("session not found");
+    expect(endpoints[0].close).toHaveBeenCalledTimes(1);
+    expect(endpoints[1].close).not.toHaveBeenCalled();
+    registry.closeAll();
+    expect(endpoints[1].close).toHaveBeenCalledTimes(1);
+    expect(first.listenerCount("destroyed")).toBe(0);
+    expect(second.listenerCount("render-process-gone")).toBe(0);
+  });
+
+  it("sends events only to the initiating owner and ignores obsolete renderer events", () => {
+    const first = createOwner();
+    const second = createOwner();
+    const emitters: Array<(payload: TransportEventPayload) => void> = [];
+    const managers: LocalTransportManager[] = [];
+    const registry = createOwnedLocalTransportRegistry((emitEvent) => {
+      emitters.push(emitEvent);
+      const manager = createIdleManager();
+      managers.push(manager);
+      return manager;
+    });
+    registry.open(first, SESSION_INPUT);
+    registry.open(second, SESSION_INPUT);
+    const payload: TransportEventPayload = {
+      sessionId: SESSION_INPUT.sessionId,
+      kind: "message",
+      text: "",
+    };
+    emitters[0](payload);
+    expect(first.send).toHaveBeenCalledWith("paseo:event:local-daemon-transport-event", payload);
+    expect(second.send).not.toHaveBeenCalled();
+    registry.close(second, SESSION_INPUT.sessionId);
+    expect(managers[0].close).not.toHaveBeenCalled();
+    expect(managers[1].close).toHaveBeenCalledWith(SESSION_INPUT.sessionId);
+    first.emit("render-process-gone");
+    registry.open(first, SESSION_INPUT);
+    emitters[0](payload);
+    expect(first.send).toHaveBeenCalledTimes(1);
+    emitters[2](payload);
+    expect(first.send).toHaveBeenCalledTimes(2);
+    registry.closeAll();
+    expect(managers.map((manager) => vi.mocked(manager.closeAll).mock.calls.length)).toEqual([
+      1, 1, 1,
+    ]);
+  });
+
+  it("closes endpoints resolving after owner destruction without creating a socket", async () => {
+    const owner = createOwner();
+    const endpoint = createEndpoint();
+    let finish!: (endpoint: TransportEndpoint) => void;
+    const promise = new Promise<TransportEndpoint>((resolve) => {
+      finish = resolve;
+    });
+    const socket = createConnectingSocket();
+    const harness = createManagerHarness(() => promise, [socket]);
+    const registry = createOwnedLocalTransportRegistry(() => harness.manager);
+    registry.open(owner, SESSION_INPUT);
+    owner.emit("destroyed");
+    finish(endpoint);
+    await Promise.resolve();
+    expect(endpoint.close).toHaveBeenCalledTimes(1);
+    expect(harness.createWebSocket).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+  });
+
+  it("retains sessions across SPA/subframe navigation and closes them when the main document commits", async () => {
+    const owner = createOwner();
+    const endpoint = createEndpoint();
+    const socket = createConnectingSocket();
+    const harness = createManagerHarness(async () => endpoint, [socket]);
+    const registry = createOwnedLocalTransportRegistry(() => harness.manager);
+    registry.open(owner, SESSION_INPUT);
+    await Promise.resolve();
+    owner.emit("did-start-navigation", {}, "/workspace#chat", true, true);
+    owner.emit("did-navigate-in-page", {}, "/workspace#chat", true);
+    owner.emit("did-start-navigation", {}, "/iframe", false, false);
+    owner.emit("did-frame-navigate", {}, "/iframe", 200, "OK", false);
+    owner.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "/offline", true);
+    expect(endpoint.close).not.toHaveBeenCalled();
+    owner.emit("did-navigate", {}, "/workspace", 200, "OK");
+    expect(endpoint.close).toHaveBeenCalledTimes(1);
+    expect(owner.listenerCount("did-navigate")).toBe(0);
+    expect(owner.listenerCount("destroyed")).toBe(0);
+  });
+
+  it("rejects missing or destroyed IPC owners before allocating a manager", () => {
+    const createManager = vi.fn();
+    const registry = createOwnedLocalTransportRegistry(createManager);
+    expect(() => registry.open(undefined, SESSION_INPUT)).toThrow("live renderer owner");
+    expect(() =>
+      registry.open(Object.assign(createOwner(), { isDestroyed: () => true }), SESSION_INPUT),
+    ).toThrow("live renderer owner");
+    expect(createManager).not.toHaveBeenCalled();
+  });
+});
+
+function createOwner() {
+  return Object.assign(new EventEmitter(), { isDestroyed: () => false, send: vi.fn() });
+}
+
+function createIdleManager(): LocalTransportManager {
+  return {
+    open: vi.fn(),
+    send: vi.fn(async () => undefined),
+    close: vi.fn(),
+    closeAll: vi.fn(),
+  };
+}
