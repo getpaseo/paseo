@@ -65,6 +65,7 @@ The button is `<Button>` (`packages/app/src/components/ui/button.tsx`). It has f
 Header and toolbar controls use `interactionHighlight` for hovered, pressed, open, and selected
 backgrounds. It is a translucent semantic fill so the same control works over the main surface and
 the sidebar. Apply it as `backgroundColor`; setting `opacity` on the control also fades its content.
+Landscape workspace Git menus use the shared borderless icon chrome. Changes-pane menus keep their framed trigger; full split buttons keep their primary action and caret.
 
 `destructive` is filled with `destructive`. It only appears inside a confirm. The button on the page is `outline`; the destructive button is the confirm button inside the dialog.
 
@@ -166,6 +167,8 @@ The settings shell (`packages/app/src/screens/settings-screen.tsx`) and the proj
 The branching is one `useIsCompactFormFactor()` check at the top of the screen component. The list and the detail are the same components in both layouts; only the framing changes.
 
 The workspace screen (`packages/app/src/screens/workspace/workspace-screen.tsx`) follows a different but parallel rule: tabs collapse on compact, panes split on desktop. The sidebar (`packages/app/src/components/left-sidebar.tsx`) is overlaid on compact and pinned on desktop.
+
+Portrait workspace chrome follows the upstream compact/full layout. Duo's landscape layout with a trailing system bar keeps the single-row header: tabs start after the content-sized title, not at the opposite edge, and the project caption uses the interface-scaled `xs` tier. When the natural tab track cannot fit, the picker occupies the trailing slot. This landscape presentation does not change the 500pt content threshold.
 
 On a narrow window using the wide layout, app navigation yields when the remaining width cannot accommodate the content topology. Settings prefers a 720px split (320px list + 400px detail); its list shrinks first to keep forms readable without reducing the detail below 400px. Explorer reserves at least 240px plus a 360px workspace. These are local space budgets, not compact breakpoints. The app sidebar shrinks from its preferred 320px toward a 200px minimum to leave a 400px center target; its preferred width fits at 720px. Temporary width clamps are render-only; widening restores the user's saved sidebar widths.
 

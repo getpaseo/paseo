@@ -1,13 +1,15 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { StyleSheet, View, type NativeSyntheticEvent, type ViewProps } from "react-native";
+import { StyleSheet, type NativeSyntheticEvent, type ViewProps } from "react-native";
 import { requireNativeViewManager } from "expo-modules-core";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppWindowFrameContext } from "@/hooks/app-window-frame-context";
 import { TopBandContext, WindowLayoutContext, useWindowLayout } from "./context";
 import { resolveSafeAreaInsets, resolveTopBand, type WindowLayout } from "./model";
 
 export { useWindowLayout } from "./context";
 export { WindowLayoutActions, WindowLayoutActionsHost } from "./actions";
 export { WindowLayoutSurface, WindowLayoutDivisionGap } from "./surface";
+export { WindowLayoutTopInset } from "./top-inset";
 export { useTopBand } from "./context";
 export {
   resolveDesktopDivisionLayout,
@@ -20,7 +22,7 @@ const GeometryProbe = requireNativeViewManager<
   ViewProps & {
     onGeometryChange: (event: NativeSyntheticEvent<WindowLayout>) => void;
   }
->("PaseoWindowLayout");
+>("PaseoWindowLayout", "WindowLayoutView");
 
 export function WindowLayoutProvider({ children }: { children: ReactNode }) {
   const [geometry, setGeometry] = useState<WindowLayout | null>(null);
@@ -29,16 +31,13 @@ export function WindowLayoutProvider({ children }: { children: ReactNode }) {
     [],
   );
   return (
-    <WindowLayoutContext.Provider value={geometry}>
-      <View style={styles.root}>
-        <GeometryProbe
-          pointerEvents="none"
-          style={StyleSheet.absoluteFill}
-          onGeometryChange={onGeometryChange}
-        />
-        <WindowSafeAreaInsets>{children}</WindowSafeAreaInsets>
-      </View>
-    </WindowLayoutContext.Provider>
+    <AppWindowFrameContext.Provider value={geometry?.bounds ?? null}>
+      <WindowLayoutContext.Provider value={geometry}>
+        <GeometryProbe style={styles.root} onGeometryChange={onGeometryChange}>
+          <WindowSafeAreaInsets>{children}</WindowSafeAreaInsets>
+        </GeometryProbe>
+      </WindowLayoutContext.Provider>
+    </AppWindowFrameContext.Provider>
   );
 }
 

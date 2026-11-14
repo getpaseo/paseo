@@ -29,7 +29,18 @@ interface WindowChromeObstruction {
 
 export type WindowChromeCorner = "top-left" | "top-right";
 
-type WindowChromeSafeAreaStyle = { height: number } | { paddingLeft: number; paddingRight: number };
+interface WindowChromeInlinePadding {
+  paddingLeft: number;
+  paddingRight: number;
+}
+
+type WindowChromeSafeAreaStyle = { height: number } | WindowChromeInlinePadding;
+
+interface WindowChromeSafeAreaInput {
+  obstruction: WindowChromeObstruction;
+  corners: WindowChromeCorners;
+  placement: WindowChromeSafeAreaPlacement;
+}
 
 const EMPTY_OBSTRUCTION: WindowChromeObstruction = { topLeft: null, topRight: null };
 const WindowChromeContext = createContext<WindowChromeObstruction>(EMPTY_OBSTRUCTION);
@@ -132,11 +143,15 @@ export function resolveWindowChromeObstruction(input: {
   };
 }
 
-export function resolveWindowChromeSafeArea(input: {
-  obstruction: WindowChromeObstruction;
-  corners: WindowChromeCorners;
-  placement: WindowChromeSafeAreaPlacement;
-}): WindowChromeSafeAreaStyle {
+export function resolveWindowChromeSafeArea(
+  input: WindowChromeSafeAreaInput & { placement: "inline" },
+): WindowChromeInlinePadding;
+export function resolveWindowChromeSafeArea(
+  input: WindowChromeSafeAreaInput,
+): WindowChromeSafeAreaStyle;
+export function resolveWindowChromeSafeArea(
+  input: WindowChromeSafeAreaInput,
+): WindowChromeSafeAreaStyle {
   const ownsTopLeft = input.corners === "top-left" || input.corners === "both";
   const ownsTopRight = input.corners === "top-right" || input.corners === "both";
   const topLeft = ownsTopLeft ? input.obstruction.topLeft : null;
@@ -312,6 +327,15 @@ export function useHasOwnedWindowChromeObstruction(corner: WindowChromeCorner): 
   const obstruction = useContext(WindowChromeContext);
   const corners = useContext(WindowChromeCornersContext);
   return resolveHasOwnedWindowChromeObstruction({ obstruction, corners, corner });
+}
+
+export function useWindowChromeInlinePadding(): WindowChromeInlinePadding {
+  const obstruction = useContext(WindowChromeContext);
+  const corners = useContext(WindowChromeCornersContext);
+  return useMemo(
+    () => resolveWindowChromeSafeArea({ obstruction, corners, placement: "inline" }),
+    [obstruction, corners],
+  );
 }
 
 type WindowChromeSafeAreaProps = ViewProps & {

@@ -53,6 +53,10 @@ export interface PanelState {
   // Mobile: React's durable target plus the generation that owns it.
   mobilePanel: MobilePanelSelection;
 
+  // The presented layout, published before paint so header chrome can tell a docked
+  // sidebar from an overlay.
+  layout: PanelLayout;
+
   // Desktop: independent sidebar toggles
   desktop: DesktopSidebarState;
 
@@ -120,6 +124,8 @@ export const usePanelStore = create<PanelState>()(
     (set) => ({
       // Mobile always starts at agent view
       mobilePanel: { target: "agent", revision: 0 },
+
+      layout: { isCompact: false, leftSidebar: "hidden" },
 
       // Desktop defaults based on platform
       desktop: {
@@ -213,10 +219,10 @@ export const usePanelStore = create<PanelState>()(
         }),
 
       applyPanelLayout: (layout) =>
-        set((state) => {
-          const mobilePanel = reconcileMobilePanel(state.mobilePanel, layout);
-          return mobilePanel === state.mobilePanel ? state : { mobilePanel };
-        }),
+        set((state) => ({
+          layout,
+          mobilePanel: reconcileMobilePanel(state.mobilePanel, layout),
+        })),
 
       setExpandedPathsForWorkspace: (workspaceKey, paths) =>
         set((state) => {

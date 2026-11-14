@@ -16,7 +16,6 @@ import {
   ScrollView,
   StyleSheet as RNStyleSheet,
   Text,
-  useWindowDimensions,
   View,
   type LayoutChangeEvent,
 } from "react-native";
@@ -31,7 +30,14 @@ import {
   resolveDesktopSidebarInsetLeft,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
-import { useTopBand, useWindowLayout, resolveDesktopDivisionLayout } from "@/window-layout";
+import {
+  useTopBand,
+  useWindowLayout,
+  resolveDesktopDivisionLayout,
+  WindowLayoutTopInset,
+} from "@/window-layout";
+import { useAppWindowSize } from "@/hooks/use-app-window-size";
+import { usePublishSidebarResizeWidth } from "@/window-layout/sidebar-resize-geometry";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -135,13 +141,11 @@ interface SidebarLabels {
 
 interface MobileSidebarProps extends SidebarSharedProps {
   active: boolean;
-  insetsTop: number;
   insetsBottom: number;
   closeSidebar: () => void;
 }
 
 interface DesktopSidebarProps extends SidebarSharedProps {
-  insetsTop: number;
   active: boolean;
   overlay: boolean;
 }
@@ -262,18 +266,11 @@ export const LeftSidebar = memo(function LeftSidebar({
             {...sharedProps}
             {...handlers}
             active={active}
-            insetsTop={insets.top}
             insetsBottom={insets.bottom}
             closeSidebar={showMobileAgent}
           />
         ) : (
-          <DesktopSidebar
-            {...sharedProps}
-            {...handlers}
-            insetsTop={insets.top}
-            active={active}
-            overlay={desktopOverlay}
-          />
+          <DesktopSidebar {...sharedProps} {...handlers} active={active} overlay={desktopOverlay} />
         )}
       </RetainedPanelActivity>
       {importSessionSheet}
@@ -570,7 +567,6 @@ function MobileSidebar({
   labels,
   handleAddHost,
   handleOpenHostSettings,
-  insetsTop,
   insetsBottom,
   closeSidebar,
 }: MobileSidebarProps) {
@@ -597,11 +593,10 @@ function MobileSidebar({
 
   const mobileSidebarInsetStyle = useMemo(
     () => ({
-      paddingTop: insetsTop,
       paddingBottom: insetsBottom,
       backgroundColor: theme.colors.surfaceSidebar,
     }),
-    [insetsTop, insetsBottom, theme.colors.surfaceSidebar],
+    [insetsBottom, theme.colors.surfaceSidebar],
   );
 
   const navRows = (
@@ -619,6 +614,7 @@ function MobileSidebar({
       panelStyle={mobileSidebarInsetStyle}
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
+        <WindowLayoutTopInset />
         <WindowChromeSafeArea placement="below" />
         {platformIsNative ? (
           <GHScrollView
@@ -710,14 +706,13 @@ function DesktopSidebar({
   labels,
   handleAddHost,
   handleOpenHostSettings,
-  insetsTop,
   active,
   overlay,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
   const setSidebarWidth = usePanelStore((state) => state.setSidebarWidth);
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useAppWindowSize();
   const insets = useSafeAreaInsets();
   const viewportWidth = windowWidth - insets.left - insets.right;
   const divisionLayout = resolveDesktopDivisionLayout({
@@ -728,24 +723,50 @@ function DesktopSidebar({
     rightInset: insets.right,
   });
   const visibleSidebarWidth = useLeftPanelWidth();
+  const resizeEnabled = active && !overlay && divisionLayout === null;
+  const publishSidebarResizeWidth = usePublishSidebarResizeWidth();
+  const resizePublication = useMemo(
+    () => ({
+      active: false,
+      enabled: resizeEnabled,
+      width: visibleSidebarWidth,
+      publish: publishSidebarResizeWidth,
+    }),
+    [publishSidebarResizeWidth, resizeEnabled, visibleSidebarWidth],
+  );
+  const publishResizeWidth = useCallback(
+    (width: number | null) => {
+      if (resizePublication.active) resizePublication.publish(width);
+    },
+    [resizePublication],
+  );
 
   const closeSidebar = usePanelStore((state) => state.showMobileAgent);
   const { gesture: closeGesture, gestureRef: closeGestureRef } = useCloseAgentListGesture(overlay);
 
   const startWidth = useSharedValue(visibleSidebarWidth);
   const resizeWidth = useSharedValue(visibleSidebarWidth);
+  const resizing = useSharedValue(false);
   const [resizePressed, setResizePressed] = useState(false);
   const showResizeGrip = useCallback(() => setResizePressed(true), []);
   const hideResizeGrip = useCallback(() => setResizePressed(false), []);
 
   useEffect(() => {
-    resizeWidth.value = visibleSidebarWidth;
-  }, [resizeWidth, visibleSidebarWidth]);
+    resizePublication.active = resizePublication.enabled;
+    resizing.value = false;
+    resizeWidth.value = resizePublication.width;
+    setResizePressed(false);
+    return () => {
+      // Reject queued updates from the old allocation after clearing its sample.
+      resizePublication.active = false;
+      resizePublication.publish(null);
+    };
+  }, [resizePublication, resizeWidth, resizing]);
 
   const resizeGesture = useMemo(
     () =>
       Gesture.Pan()
-        .enabled(divisionLayout === null)
+        .enabled(resizeEnabled)
         .hitSlop({ left: 8, right: 8, top: 0, bottom: 0 })
         .onBegin(() => {
           scheduleOnRN(showResizeGrip);
@@ -756,27 +777,36 @@ function DesktopSidebar({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          resizing.value = true;
           startWidth.value = visibleSidebarWidth - event.translationX;
           resizeWidth.value = visibleSidebarWidth;
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onUpdate((event) => {
+          if (!resizing.value) return;
           // Dragging right (positive translationX) increases width
           const newWidth = startWidth.value + event.translationX;
           resizeWidth.value = resolveDesktopSidebarWidth({
             requestedWidth: newWidth,
             viewportWidth,
           });
+          runOnJS(publishResizeWidth)(resizeWidth.value);
         })
         .onEnd((_event, success) => {
-          if (success) runOnJS(setSidebarWidth)(resizeWidth.value);
+          if (success && resizing.value) runOnJS(setSidebarWidth)(resizeWidth.value);
         })
-        .onFinalize(() => {
+        .onFinalize((_event, success) => {
+          if (!success && resizing.value) resizeWidth.value = visibleSidebarWidth;
+          resizing.value = false;
+          runOnJS(publishResizeWidth)(null);
           scheduleOnRN(hideResizeGrip);
         }),
     [
-      divisionLayout,
+      resizeEnabled,
       hideResizeGrip,
+      publishResizeWidth,
       resizeWidth,
+      resizing,
       setSidebarWidth,
       showResizeGrip,
       startWidth,
@@ -800,12 +830,11 @@ function DesktopSidebar({
       styles.desktopSidebarBorder(divisionLayout !== null),
       {
         flex: 1,
-        paddingTop: insetsTop,
         paddingBottom: insets.bottom,
         paddingLeft: resolveDesktopSidebarInsetLeft({ overlay, safeAreaLeft: insets.left }),
       },
     ],
-    [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
+    [insets.bottom, insets.left, overlay, divisionLayout],
   );
   // Below the window controls' row, or in the top band's place, the first row starts flush.
   const inTopBand = useTopBand() !== null;
@@ -822,6 +851,7 @@ function DesktopSidebar({
     >
       <Animated.View style={desktopSidebarStyle}>
         <View style={desktopSidebarBorderStyle}>
+          <WindowLayoutTopInset />
           <View style={styles.sidebarDragArea}>
             {ownsTopLeft || DEV_BUILD_LABEL ? (
               <View style={styles.desktopChromeRow}>

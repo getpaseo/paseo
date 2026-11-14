@@ -55,6 +55,76 @@ describe("resolveSafeAreaInsets", () => {
     );
     expect(insets).toBe(systemInsets);
   });
+
+  it("holds portrait padding while an independent safe-area event reaches landscape first", () => {
+    const portrait = layout({
+      bounds: { x: 0, y: 0, width: 669, height: 951 },
+      insets: { top: 82, right: 0, bottom: 34, left: 0 },
+      bottomClearance: 26,
+      topBar: { x: 16, y: 26, width: 509, height: 44 },
+      occlusions: [{ x: 525, y: 0, width: 144, height: 82 }],
+    });
+    const landscapeInsets = { top: 0, right: 84, bottom: 34, left: 0 };
+    expect(resolveSafeAreaInsets(landscapeInsets, portrait)).toEqual({
+      top: 26,
+      right: 0,
+      bottom: 26,
+      left: 0,
+    });
+    expect(resolveTopBand(landscapeInsets.top, portrait)).toEqual({
+      top: 26,
+      trailingObstruction: { width: 144, height: 56 },
+    });
+  });
+
+  it("uses landscape padding and removes the top band before the safe-area provider catches up", () => {
+    const landscape = layout({
+      bounds: { x: 0, y: 0, width: 951, height: 669 },
+      insets: { top: 0, right: 84, bottom: 34, left: 0 },
+      verticalBarEdge: "trailing",
+      verticalBar: { x: 881, y: 124, width: 44, height: 511 },
+      bottomClearance: 26,
+      topBar: { x: 16, y: 26, width: 851, height: 44 },
+    });
+    const portraitInsets = { top: 82, right: 0, bottom: 34, left: 0 };
+    expect(resolveSafeAreaInsets(portraitInsets, landscape)).toEqual({
+      top: 0,
+      right: 84,
+      bottom: 26,
+      left: 0,
+    });
+    expect(resolveTopBand(portraitInsets.top, landscape)).toBeNull();
+  });
+
+  it("removes old landscape right padding as soon as portrait geometry arrives", () => {
+    const oldInsets = { top: 0, right: 84, bottom: 26, left: 0 };
+    const portrait = layout({
+      bounds: { x: 0, y: 0, width: 669, height: 951 },
+      insets: { top: 82, right: 0, bottom: 34, left: 0 },
+      bottomClearance: 26,
+    });
+    expect(resolveSafeAreaInsets(oldInsets, portrait)).toEqual({
+      top: 82,
+      right: 0,
+      bottom: 26,
+      left: 0,
+    });
+  });
+
+  it("moves an asymmetric inset between physical edges even without a bounds change", () => {
+    const oldInsets = { top: 0, right: 84, bottom: 26, left: 0 };
+    const leadingBar = layout({
+      insets: { top: 0, right: 0, bottom: 34, left: 84 },
+      verticalBarEdge: "leading",
+      bottomClearance: 0,
+    });
+    expect(resolveSafeAreaInsets(oldInsets, leadingBar)).toEqual({
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 84,
+    });
+  });
 });
 
 // Measured: iPhone Duo inner screen, portrait (669×951), iOS 27.1 simulator unfolded in

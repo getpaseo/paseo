@@ -53,7 +53,12 @@ import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
-import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
+import {
+  retainWorkspaceTabMeasuredWidth,
+  workspaceTabNaturalWidth,
+  type WorkspaceTabLayoutMetrics,
+  type WorkspaceTabLayoutResult,
+} from "@/screens/workspace/workspace-tab-layout";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -232,6 +237,7 @@ interface WorkspaceNewTabButtonProps {
   paneId?: string;
   shortcutKeys: ShortcutKey[][] | null;
   placement: "inline" | "toolbar";
+  visible?: boolean;
 }
 
 function WorkspaceNewTabButton({
@@ -242,9 +248,11 @@ function WorkspaceNewTabButton({
   paneId,
   shortcutKeys,
   placement,
+  visible = true,
 }: WorkspaceNewTabButtonProps) {
   const { t } = useTranslation();
   const tooltipText = t("workspace.tabs.actions.newTab");
+  if (!visible) return null;
   const menu = (
     <DropdownMenu>
       <ToolbarButton
@@ -267,6 +275,12 @@ function WorkspaceNewTabButton({
   );
 
   return placement === "inline" ? <View style={styles.inlineAddButton}>{menu}</View> : menu;
+}
+
+function resolveWorkspaceNewTabPlacement(embedded: boolean, overflow: boolean) {
+  if (embedded) return "inline";
+  if (overflow) return "toolbar";
+  return "scroll";
 }
 
 function WorkspacePaneToolbarActions({
@@ -490,11 +504,50 @@ interface WorkspaceTabLabelMeasurement {
   width: number;
 }
 
-const TabMeasurementCache = createContext<Map<string, WorkspaceTabLabelMeasurement> | null>(null);
+interface WorkspaceTabTrackState {
+  presentations: Map<string, WorkspaceTabPresentation>;
+  setPresentations: Dispatch<SetStateAction<Map<string, WorkspaceTabPresentation>>>;
+  labelMeasurements: Map<string, WorkspaceTabLabelMeasurement>;
+  setLabelMeasurements: Dispatch<SetStateAction<Map<string, WorkspaceTabLabelMeasurement>>>;
+  snapshot: WorkspaceTabTrackSnapshot | null;
+  setSnapshot: Dispatch<SetStateAction<WorkspaceTabTrackSnapshot | null>>;
+  addButtonWidth: number;
+  setAddButtonWidth: Dispatch<SetStateAction<number>>;
+}
+
+const WorkspaceTabTrackContext = createContext<WorkspaceTabTrackState | null>(null);
 
 export function WorkspaceTabMeasurementScope({ children }: { children: React.ReactNode }) {
-  const cache = useMemo(() => new Map<string, WorkspaceTabLabelMeasurement>(), []);
-  return <TabMeasurementCache.Provider value={cache}>{children}</TabMeasurementCache.Provider>;
+  const [presentations, setPresentations] = useState(
+    () => new Map<string, WorkspaceTabPresentation>(),
+  );
+  const [labelMeasurements, setLabelMeasurements] = useState(
+    () => new Map<string, WorkspaceTabLabelMeasurement>(),
+  );
+  const [snapshot, setSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
+  const [addButtonWidth, setAddButtonWidth] = useState(0);
+  const track = useMemo(
+    () => ({
+      presentations,
+      setPresentations,
+      labelMeasurements,
+      setLabelMeasurements,
+      snapshot,
+      setSnapshot,
+      addButtonWidth,
+      setAddButtonWidth,
+    }),
+    [presentations, labelMeasurements, snapshot, addButtonWidth],
+  );
+  return (
+    <WorkspaceTabTrackContext.Provider value={track}>{children}</WorkspaceTabTrackContext.Provider>
+  );
+}
+
+function useWorkspaceTabTrack() {
+  const track = useContext(WorkspaceTabTrackContext);
+  if (!track) throw new Error("Workspace tab track requires its measurement scope");
+  return track;
 }
 
 interface WorkspaceTabTrackSnapshot {
@@ -502,6 +555,46 @@ interface WorkspaceTabTrackSnapshot {
   tabs: ResolvedWorkspaceDesktopTabRowItem[];
   labels: WorkspaceTabLabel[];
   labelWidths: number[];
+}
+
+function InlineAddButtonMeasurement({
+  enabled,
+  onLayout,
+}: {
+  enabled: boolean;
+  onLayout: (event: LayoutChangeEvent) => void;
+}) {
+  return enabled ? (
+    <View style={styles.inlineAddButton} onLayout={onLayout}>
+      <View style={styles.inlineNewTabButton} />
+    </View>
+  ) : null;
+}
+
+function useWorkspaceTabNaturalWidth({
+  enabled,
+  snapshot,
+  signature,
+  addButtonWidth,
+  layout,
+  metrics,
+  onChange,
+}: {
+  enabled: boolean;
+  snapshot: WorkspaceTabTrackSnapshot | null;
+  signature: string;
+  addButtonWidth: number;
+  layout: WorkspaceTabLayoutResult;
+  metrics: WorkspaceTabLayoutMetrics;
+  onChange?: (width: number | null) => void;
+}) {
+  const naturalWidth =
+    enabled && snapshot?.signature === signature && addButtonWidth > 0
+      ? workspaceTabNaturalWidth(layout, metrics)
+      : null;
+  useLayoutEffect(() => {
+    if (enabled) onChange?.(naturalWidth);
+  }, [enabled, naturalWidth, onChange]);
 }
 
 function workspaceTabLabelSignature(labels: WorkspaceTabLabel[]): string {
@@ -532,6 +625,8 @@ function sameWidths(left: number[], right: number[]): boolean {
 
 export interface WorkspaceDesktopTabsRowProps {
   host?: PaneHost;
+  embedded?: boolean;
+  onNaturalWidthChange?: (width: number | null) => void;
   launchPurpose?: WorkspaceTabLaunchPurpose;
   paneId?: string;
   isFocused?: boolean;
@@ -1012,9 +1107,18 @@ export function useWorkspaceNewTabKeyboardAction({
 }
 
 export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
-  const [presentations, setPresentations] = useState(
-    () => new Map<string, WorkspaceTabPresentation>(),
+  const track = useContext(WorkspaceTabTrackContext);
+  return track ? (
+    <WorkspaceDesktopTabsRowContent {...props} />
+  ) : (
+    <WorkspaceTabMeasurementScope>
+      <WorkspaceDesktopTabsRowContent {...props} />
+    </WorkspaceTabMeasurementScope>
   );
+}
+
+function WorkspaceDesktopTabsRowContent(props: WorkspaceDesktopTabsRowProps) {
+  const { presentations, setPresentations } = useWorkspaceTabTrack();
   const handlePresentation = useCallback(
     (tabKey: string, presentation: WorkspaceTabPresentation) => {
       setPresentations((current) => {
@@ -1026,7 +1130,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
         return next;
       });
     },
-    [],
+    [setPresentations],
   );
   const currentTabKeys = useMemo(
     () => new Set(props.tabs.map((item) => item.tab.key)),
@@ -1044,7 +1148,7 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
       }
       return next;
     });
-  }, [currentTabKeys]);
+  }, [currentTabKeys, setPresentations]);
   const resolvedTabs = useMemo(
     () =>
       props.tabs.flatMap((item) => {
@@ -1053,10 +1157,19 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
       }),
     [presentations, props.tabs],
   );
+  const allTabsResolved = resolvedTabs.length === props.tabs.length;
+  const { onNaturalWidthChange } = props;
+  useLayoutEffect(() => {
+    if (!allTabsResolved) onNaturalWidthChange?.(null);
+  }, [allTabsResolved, onNaturalWidthChange]);
 
   return (
     <>
-      <ResolvedWorkspaceDesktopTabsRow {...props} tabs={resolvedTabs} />
+      <ResolvedWorkspaceDesktopTabsRow
+        {...props}
+        tabs={resolvedTabs}
+        onNaturalWidthChange={allTabsResolved ? onNaturalWidthChange : undefined}
+      />
       {props.tabs.map(({ tab }) => (
         <WorkspaceDesktopTabPresentationSlot
           key={`${tab.key}:${tab.kind}`}
@@ -1072,6 +1185,8 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
 
 function ResolvedWorkspaceDesktopTabsRow({
   host = "main",
+  embedded = false,
+  onNaturalWidthChange,
   launchPurpose = "primary",
   paneId,
   isFocused = false,
@@ -1111,15 +1226,21 @@ function ResolvedWorkspaceDesktopTabsRow({
   const [tabsContainerWidth, setTabsContainerWidth] = useState<number>(0);
   const tabsScrollRef = useRef<ScrollView>(null);
   const [exitFocusModeWidth, setExitFocusModeWidth] = useState<number>(0);
+  const {
+    labelMeasurements,
+    setLabelMeasurements,
+    snapshot: trackSnapshot,
+    setSnapshot: setTrackSnapshot,
+    addButtonWidth: inlineAddButtonWidth,
+    setAddButtonWidth: setInlineAddButtonWidth,
+  } = useWorkspaceTabTrack();
+  const measureInlineAddButton = useCallback(
+    (event: LayoutChangeEvent) => {
+      updateMeasuredWidth(setInlineAddButtonWidth, event);
+    },
+    [setInlineAddButtonWidth],
+  );
   const tabScrollBoundary = useHorizontalScrollBoundary();
-  const measurementCache = useContext(TabMeasurementCache);
-  const [labelMeasurements, setLabelMeasurements] = useState(() => new Map(measurementCache ?? []));
-  useLayoutEffect(() => {
-    if (!measurementCache) return;
-    measurementCache.clear();
-    for (const [key, value] of labelMeasurements) measurementCache.set(key, value);
-  }, [measurementCache, labelMeasurements]);
-  const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
 
   const handleTabsContainerLayout = useCallback((event: LayoutChangeEvent) => {
     updateMeasuredWidth(setTabsContainerWidth, event);
@@ -1131,10 +1252,13 @@ function ResolvedWorkspaceDesktopTabsRow({
 
   const layoutMetrics = useMemo(
     () => ({
-      rowHorizontalInset: 0,
+      // Each sortable slot contributes a half-gap at both outboard edges too.
+      rowHorizontalInset: embedded && tabs.length > 0 ? TAB_CHIP_GAP / 2 : 0,
       actionsReservedWidth: Math.max(
         0,
-        DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH +
+        (embedded && inlineAddButtonWidth > 0
+          ? inlineAddButtonWidth
+          : DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH) +
           (focusModeEnabled ? exitFocusModeWidth : 0) +
           (showPaneSplitActions ? PANE_SPLIT_ACTIONS_RESERVED_WIDTH : 0) +
           (showPaneMaximizeAction ? PANE_MAXIMIZE_ACTION_RESERVED_WIDTH : 0),
@@ -1148,7 +1272,15 @@ function ResolvedWorkspaceDesktopTabsRow({
       tabHorizontalPadding: TAB_CHIP_HORIZONTAL_PADDING,
       closeButtonWidth: TAB_CLOSE_BUTTON_RESERVED_WIDTH,
     }),
-    [exitFocusModeWidth, focusModeEnabled, showPaneMaximizeAction, showPaneSplitActions],
+    [
+      embedded,
+      tabs.length,
+      inlineAddButtonWidth,
+      exitFocusModeWidth,
+      focusModeEnabled,
+      showPaneMaximizeAction,
+      showPaneSplitActions,
+    ],
   );
 
   const panePanelKinds = useMemo(() => tabs.map(({ tab }) => tab.kind), [tabs]);
@@ -1209,11 +1341,8 @@ function ResolvedWorkspaceDesktopTabsRow({
       }
       return next;
     });
-  }, [currentTabLabelKeys]);
+  }, [currentTabLabelKeys, setLabelMeasurements]);
   const publishMeasuredTrack = useCallback(() => {
-    if (tabsContainerWidth <= 0) {
-      return;
-    }
     const labelWidths = completeWorkspaceTabLabelWidths(tabLabels, labelMeasurements);
     if (!labelWidths) {
       return;
@@ -1233,7 +1362,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         labelWidths,
       };
     });
-  }, [labelMeasurements, tabLabelSignature, tabLabels, tabs, tabsContainerWidth]);
+  }, [labelMeasurements, tabLabelSignature, tabLabels, tabs, setTrackSnapshot]);
 
   useLayoutEffect(() => {
     publishMeasuredTrack();
@@ -1255,7 +1384,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         return next;
       });
     },
-    [],
+    [setLabelMeasurements],
   );
 
   const displayedTabs = useMemo(() => {
@@ -1276,6 +1405,16 @@ function ResolvedWorkspaceDesktopTabsRow({
     viewportWidthOverride: tabsContainerWidth > 0 ? tabsContainerWidth : null,
     metrics: layoutMetrics,
     compact: isCompact,
+    preserveNaturalWidths: embedded,
+  });
+  useWorkspaceTabNaturalWidth({
+    enabled: embedded,
+    snapshot: trackSnapshot,
+    signature: tabLabelSignature,
+    addButtonWidth: inlineAddButtonWidth,
+    layout,
+    metrics: layoutMetrics,
+    onChange: onNaturalWidthChange,
   });
   // A scroll view keeps its offset when its content shrinks under the viewport, so a row that
   // stops scrolling would leave the tabs it had panned past out of view with no way back.
@@ -1400,10 +1539,18 @@ function ResolvedWorkspaceDesktopTabsRow({
     ],
     [layout.requiresHorizontalScrollFallback],
   );
+  const newTabPlacement = resolveWorkspaceNewTabPlacement(
+    embedded,
+    layout.requiresHorizontalScrollFallback,
+  );
 
   const row = (
     <View
-      style={[styles.tabsContainer, onSidebar && styles.tabsContainerSidebar]}
+      style={[
+        styles.tabsContainer,
+        onSidebar && styles.tabsContainerSidebar,
+        embedded && styles.tabsContainerEmbedded,
+      ]}
       testID="workspace-tabs-row"
       onLayout={handleTabsContainerLayout}
     >
@@ -1413,6 +1560,7 @@ function ResolvedWorkspaceDesktopTabsRow({
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
       >
+        <InlineAddButtonMeasurement enabled={embedded} onLayout={measureInlineAddButton} />
         {tabLabels.map(({ key, label }) => (
           <TabLabelMeasurement
             key={`${key}:${label}`}
@@ -1452,17 +1600,16 @@ function ResolvedWorkspaceDesktopTabsRow({
             getItemData={getTabDragData}
             renderItem={renderTab}
           />
-          {!layout.requiresHorizontalScrollFallback ? (
-            <WorkspaceNewTabButton
-              panePanelKinds={panePanelKinds}
-              host={host}
-              launchPurpose={launchPurpose}
-              placement="inline"
-              serverId={normalizedServerId}
-              paneId={paneId}
-              shortcutKeys={newTabKeys}
-            />
-          ) : null}
+          <WorkspaceNewTabButton
+            visible={newTabPlacement === "scroll"}
+            panePanelKinds={panePanelKinds}
+            host={host}
+            launchPurpose={launchPurpose}
+            placement="inline"
+            serverId={normalizedServerId}
+            paneId={paneId}
+            shortcutKeys={newTabKeys}
+          />
         </Animated.ScrollView>
         <HorizontalScrollBoundaryShades
           visible={layout.requiresHorizontalScrollFallback}
@@ -1472,11 +1619,23 @@ function ResolvedWorkspaceDesktopTabsRow({
           rightStyle={tabScrollBoundary.rightShadeStyle}
         />
       </View>
+      {/* Embedded rails already hug their track: keep + outside the scroller in both fit
+          and overflow states, rather than reparenting it after a viewport measurement. */}
+      <WorkspaceNewTabButton
+        visible={newTabPlacement === "inline"}
+        panePanelKinds={panePanelKinds}
+        host={host}
+        launchPurpose={launchPurpose}
+        placement="inline"
+        serverId={normalizedServerId}
+        paneId={paneId}
+        shortcutKeys={newTabKeys}
+      />
       <WorkspacePaneToolbarActions
         panePanelKinds={panePanelKinds}
         host={host}
         launchPurpose={launchPurpose}
-        showNewTabButton={layout.requiresHorizontalScrollFallback}
+        showNewTabButton={newTabPlacement === "toolbar"}
         showSplitActions={showPaneSplitActions}
         showMaximizeAction={showPaneMaximizeAction}
         paneMaximized={paneMaximized}
@@ -1642,6 +1801,11 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     overflow: "visible",
+  },
+  tabsContainerEmbedded: {
+    flex: 1,
+    borderBottomWidth: 0,
+    backgroundColor: "transparent",
   },
   tabsContainerSidebar: {
     backgroundColor: theme.colors.surfaceSidebar,

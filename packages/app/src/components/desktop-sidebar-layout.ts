@@ -1,4 +1,4 @@
-import { EXPLORER_WORKSPACE_MIN_WIDTH } from "@/components/explorer-sidebar-layout";
+import { resolveExplorerWorkspaceMinimumWidth } from "@/components/explorer-sidebar-layout";
 import { SETTINGS_DESKTOP_SPLIT_MIN_WIDTH } from "@/constants/layout";
 import {
   MAX_SIDEBAR_WIDTH,
@@ -98,9 +98,12 @@ export function resolveDesktopSidebarWidth(input: {
 export function resolveDesktopAppContentMinimum(input: {
   isSettingsRoute: boolean;
   explorerVisible?: boolean;
+  explorerSidebarWidth?: number;
 }): number {
   if (input.isSettingsRoute) return SETTINGS_DESKTOP_SPLIT_MIN_WIDTH;
-  return input.explorerVisible ? EXPLORER_WORKSPACE_MIN_WIDTH : 0;
+  return input.explorerVisible
+    ? resolveExplorerWorkspaceMinimumWidth(input.explorerSidebarWidth)
+    : 0;
 }
 
 export function canDesktopAppSidebarShare(input: {

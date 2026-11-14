@@ -26,6 +26,18 @@ close-gesture lifetime. Platform adapters own resizing and inset geometry.
 The host keeps three recently used tabs plus modified tabs; unmodified tabs beyond that budget
 can remount. Native retained content stays live, while web chat uses its existing deferred Freeze.
 
+On iOS, read window bounds, safe-area insets, and reserved regions from the same native snapshot
+through window-layout and `useAppWindowSize`. Sample after UIKit's layout transaction: a main-queue
+callback can still see new bounds with the previous safe area. Use `WindowLayoutTopInset` for the
+top clearance of headers and sidebars. Its native spacer reads the nearest layout root and updates
+Yoga without waiting for the workspace's JS render; applying `insets.top` in React can leave the old
+padding visible during rotation. Modals outside that root use their own context inset. Changes to
+the native probe or spacer require a client rebuild; a Metro reload cannot apply them.
+
+The shared sidebar toggle reserves extra rounded-corner clearance on touch layouts only while
+navigation is collapsed. When navigation is open, use the ordinary leading inset so workspace and
+other page headers stay aligned; pointer layouts keep their existing inset in both states.
+
 ## Sheets
 
 On compact layouts, files and subagents open in a sheet over the workspace, so the tab switcher
@@ -81,6 +93,14 @@ Ordinary leaf routes retain the stack appearance policy.
 The shell is outside the workspace split canvas so it divides the full workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
 never read or modify that width.
 
+Budget workspace headers against the shell's target allocation, including live navigation and
+Explorer resize widths. A retained native stack can report its previous docked frame for one layout
+pass, so its `onLayout` must not choose the first header presentation. Keep the top-clearance spacer,
+tab track presentations, label measurements, layout snapshot, and + width above the header branches.
+Recreating the native spacer when Explorer narrows the workspace can expose a zero-height first
+layout before its native height reaches Yoga. Header variants under that owner must not add another
+top inset. Pane tab strips without a workspace header and focus mode do not reserve header clearance.
+
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching workspace tab in Explorer. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
@@ -99,8 +119,11 @@ Explorer uses the shared workspace tab row and ordinary tab context menus. Files
 hide their close buttons through the panel manifest; close them from the tab context menu.
 Other tabs reveal the close control on hover. Compact layouts show no inline close on any tab,
 since a narrow X beside the label is easy to hit by accident; the long-press menu closes it.
-Compact tabs also keep their natural width and the rail scrolls as soon as they overflow, while
-pointer layouts shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+Compact and embedded landscape rails keep their natural width and scroll as soon as they overflow.
+Other pointer rails shrink tabs toward the clickable minimum first. A rail that scrolls never truncates.
+On Duo's landscape bar layout, the title and tabs share one row. The boxed picker depends on the
+available track width, not the tab count: a few natural-width tabs can stay inline below the usual
+scrolling-rail budget.
 The + menu opens compatible panels in the dock, including Agent and terminal profiles. Compact
 layouts omit Diff from it because compact Changes shows each file's diff inline.
 Web also supports dragging agents and terminals into Explorer.
@@ -114,9 +137,9 @@ workspace tabs, launcher, and panel host. Below 600 points the shell is the swip
 overlay; at 600 points and above it reserves width beside the workspace. Native docking keeps its
 touch resize handle. Full workspace splits remain a separate web-only capability.
 
-The dock reserves at least 240 points and the workspace 360. App navigation yields when it cannot
-share the remaining width with both. This keeps a portrait tablet from rendering three unusably
-narrow columns; widening restores navigation without changing its saved open state.
+Explorer keeps its preferred width and reserves at least 240 points, leaving 360 for the workspace.
+App navigation yields when it cannot share that allocation without narrowing Explorer. Widening
+restores navigation without changing its saved open state.
 
 Compact panel gestures own overlay visibility; the workspace layout owns its tab selection and
 contents on every platform. Explicit pane destinations bypass compact sheet placement, so choosing

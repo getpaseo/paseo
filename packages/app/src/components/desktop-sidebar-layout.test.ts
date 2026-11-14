@@ -39,6 +39,7 @@ describe("desktop sidebar layout", () => {
   it("shows the tab count only for the compact header selection", () => {
     expect(resolveWorkspaceBarActions("compact")).toEqual(["tab-count", "overflow", "explorer"]);
     expect(resolveWorkspaceBarActions("full")).toEqual(["overflow", "explorer"]);
+    expect(resolveWorkspaceBarActions("inline")).toEqual(["git", "overflow", "explorer"]);
   });
 
   it("allocates both panels around a live division without clamping to saved sidebar widths", () => {
@@ -222,24 +223,24 @@ describe("desktop sidebar layout", () => {
   });
 });
 
-it("reserves room for Explorer and the workspace before showing app navigation", () => {
+it("yields navigation rather than clamping Explorer when only its minimum width fits", () => {
   const contentMinimumWidth = resolveDesktopAppContentMinimum({
     isSettingsRoute: false,
     explorerVisible: true,
+    explorerSidebarWidth: 309,
   });
-  expect(contentMinimumWidth).toBe(600);
   expect(
     canDesktopAppSidebarShare({
       contentMinimumWidth,
-      requestedSidebarWidth: 320,
-      viewportWidth: 744,
+      requestedSidebarWidth: 203,
+      viewportWidth: 867,
     }),
   ).toBe(false);
   expect(
     canDesktopAppSidebarShare({
       contentMinimumWidth,
-      requestedSidebarWidth: 320,
-      viewportWidth: 951,
+      requestedSidebarWidth: 203,
+      viewportWidth: 872,
     }),
   ).toBe(true);
 });

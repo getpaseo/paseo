@@ -17,10 +17,12 @@ export function WorkspaceHeaderProjectRow({
   subtitle,
   isSubtitleDistinct,
   serverId,
+  size = "md",
 }: {
   subtitle: string;
   isSubtitleDistinct: boolean;
   serverId: string;
+  size?: "sm" | "md";
 }) {
   const isCompact = useIsCompactFormFactor();
   const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
@@ -31,11 +33,17 @@ export function WorkspaceHeaderProjectRow({
   return (
     <View style={styles.row}>
       {showProject ? (
-        <Text testID="workspace-header-subtitle" style={styles.project} numberOfLines={1}>
+        <Text
+          testID="workspace-header-subtitle"
+          style={[styles.project, size === "sm" && styles.small]}
+          numberOfLines={1}
+        >
           {subtitle}
         </Text>
       ) : null}
-      {showProject && hostBadge ? <Text style={styles.separator}>·</Text> : null}
+      {showProject && hostBadge ? (
+        <Text style={[styles.separator, size === "sm" && styles.small]}>·</Text>
+      ) : null}
       {hostBadge ? <HostBadge badge={hostBadge} /> : null}
     </View>
   );
@@ -59,6 +67,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     flexShrink: 1,
     minWidth: 0,
+  },
+  small: {
+    fontSize: theme.fontSize.xs,
+    lineHeight: theme.fontSize.xs * 1.25,
   },
   separator: {
     color: theme.colors.foregroundExtraMuted,
