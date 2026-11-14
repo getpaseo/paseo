@@ -41,14 +41,20 @@ export function FilePane({
   const connected = useSessionStore((state) => Boolean(state.sessions[serverId]?.client));
   const root = workspaceRoot.trim();
   const path = location.path.trim();
-  const downloadFile = useFileDownload({ serverId, workspaceId, workspaceRoot: root });
-  const handleDownload = useCallback(() => {
-    downloadFile({ fileName: path.split("/").pop() ?? path, path });
-  }, [downloadFile, path]);
   const target = useMemo(
     () => (path ? resolveFilePreviewReadTarget({ path, workspaceRoot: root }) : null),
     [path, root],
   );
+  const downloadFile = useFileDownload({
+    serverId,
+    workspaceId,
+    workspaceRoot: target?.cwd ?? root,
+  });
+  const handleDownload = useCallback(() => {
+    if (target) {
+      downloadFile({ fileName: path.split(/[\\/]/).pop() ?? path, path: target.path });
+    }
+  }, [downloadFile, path, target]);
   const absolutePath = useMemo(
     () => buildAbsoluteExplorerPath({ workspaceRoot: root, entryPath: path }),
     [path, root],
