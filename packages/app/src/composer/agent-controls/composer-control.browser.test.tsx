@@ -13,6 +13,8 @@ beforeEach(() => vi.stubGlobal("React", React));
 afterEach(cleanup);
 
 const base = { id: "x", title: "Context", icon: Scan };
+// The sheet lays its rows out in a column, which is what stretches a row across it.
+const SHEET_COLUMN = { display: "flex", flexDirection: "column", width: 382 } as const;
 
 type RecordingToast = ToastApi & { error: ReturnType<typeof vi.fn> };
 
@@ -90,6 +92,29 @@ describe("ComposerControls", () => {
   it("lists a toggle as On or Off in the sheet", () => {
     renderControls([{ ...base, type: "toggle", value: true, onChange: () => undefined }], "sheet");
     expect(screen.getByRole("button", { name: "Context" }).textContent).toContain("On");
+  });
+
+  it("gives a sheet row's value the row's width, so a short value is not truncated", () => {
+    const toast = createToast();
+    render(
+      <div style={SHEET_COLUMN}>
+        <Controls
+          items={[
+            {
+              ...base,
+              type: "select",
+              value: "full",
+              choices: [{ value: "full", label: "Full access" }],
+              onChange: () => undefined,
+            },
+          ]}
+          surface="sheet"
+          toast={toast}
+        />
+      </div>,
+    );
+    const value = screen.getByText("Full access");
+    expect(value.scrollWidth).toBeLessThanOrEqual(value.clientWidth);
   });
 
   it("reports a failed command the way a built-in control does, and frees the control", async () => {

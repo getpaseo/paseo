@@ -261,7 +261,7 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال بالمضيف",
+      reconnecting: "جارٍ إعادة الاتصال",
       updating: "جارٍ تحديث الرسائل",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل.",
       timelineSyncRetrying: "جارٍ إعادة المحاولة…",
@@ -1177,6 +1177,8 @@ export const ar: TranslationResources = {
     title: "ما الجديد",
     installed: "مثبّت",
     showMore: "عرض المزيد",
+    showAllChanges: "عرض كل التغييرات",
+    hideAllChanges: "إخفاء كل التغييرات",
     openWebsite: "سجل التغييرات الكامل",
     error: {
       title: "تعذّر تحميل سجل التغييرات",

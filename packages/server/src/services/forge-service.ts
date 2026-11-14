@@ -467,6 +467,13 @@ export interface ForgeService {
    * Others reject a cross-repo checkout that carries no refs.
    */
   supportsCrossRepoCheckoutWithoutRefs?: boolean;
+  /**
+   * Repository path that owns the issue and change-request numbers of the
+   * checkout's origin repository when that is a different repository, such as a
+   * fork's parent. Null when the origin owns its numbers. Adapters whose forge
+   * has no fork model omit it.
+   */
+  getReferenceRepository?(options: { cwd: string } & ForgeReadOptions): Promise<string | null>;
   getCurrentPullRequestStatus(
     options: {
       cwd: string;

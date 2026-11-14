@@ -1529,6 +1529,110 @@ test("does not replace a newer foreground turn after unavailable steer fallback 
   }
 });
 
+test("concurrent interrupting sends each start their own turn in order", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  try {
+    const prompts = ["first interrupt", "second interrupt", "third interrupt"];
+    await Promise.all(
+      prompts.map((prompt) =>
+        startAgentRun(manager, agentId, prompt, logger, {
+          replaceRunning: true,
+          activeTurnBehavior: "interrupt",
+          runOptions: { clientMessageId: prompt },
+        }),
+      ),
+    );
+    await manager.waitForAgentRunStart(agentId);
+    expect(session.startPrompts.slice(-3)).toEqual(prompts);
+    expect(manager.getAgent(agentId)?.activeForegroundTurnId).toBe(
+      `active-turn-${session.startCount}`,
+    );
+  } finally {
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop can cancel startup while an interrupting send waits behind it", async () => {
+  const entered = deferred<void>();
+  const release = deferred<void>();
+  class SlowStartSession extends SteeringTestSession {
+    starting = false;
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (prompt === "slow startup") {
+        this.starting = true;
+        entered.resolve();
+        await release.promise;
+        this.starting = false;
+      }
+      return super.startTurn(prompt);
+    }
+    override async interrupt(): Promise<void> {
+      if (this.starting) release.resolve();
+      await super.interrupt();
+    }
+  }
+  const session = new SlowStartSession({ provider: "codex", cwd: process.cwd() });
+  const { manager, agentId, workdir } = await startAndSteerThroughManager(session, "interrupt");
+  try {
+    await startAgentRun(manager, agentId, "slow startup", logger, { replaceRunning: true });
+    await entered.promise;
+    const replacement = startAgentRun(manager, agentId, "queued replacement", logger, {
+      replaceRunning: true,
+    });
+    void replacement.catch(() => undefined);
+    const stop = manager.cancelAgentRun(agentId);
+    await vi.waitFor(() => expect(session.interruptCount).toBe(3), { timeout: 1000 });
+    await stop;
+    await replacement;
+    await manager.waitForAgentRunStart(agentId);
+    expect(session.startPrompts.slice(-2)).toEqual(["slow startup", "queued replacement"]);
+  } finally {
+    release.resolve();
+    await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an interrupting send replaces a turn whose start never finishes", async () => {
+  class StalledStartSession extends SteeringTestSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      if (prompt === "stalled start") {
+        this.startPrompts.push(prompt);
+        return new Promise(() => {});
+      }
+      return super.startTurn(prompt);
+    }
+  }
+  const session = new StalledStartSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stalled-start-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await startAgentRun(manager, agent.id, "stalled start", logger, { replaceRunning: true });
+    await startAgentRun(manager, agent.id, "recovery", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "interrupt",
+    });
+    expect(session.startPrompts).toEqual(["stalled start", "recovery"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("steers a tracked autonomous turn without creating a replacement run", async () => {
   const session = new SteeringTestSession({ provider: "claude", cwd: process.cwd() });
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-steer-"));
@@ -13225,11 +13329,11 @@ test.each([
               provider: "codex",
               cwd: workdir,
               title: null,
+              background: false,
               metadata: {},
             },
             turnId: "hook-turn",
             outcome,
-            timeline: [],
           },
         },
       ]);
@@ -13511,6 +13615,9 @@ describe("agent options", () => {
     /** What the session says it ended up with after the next apply. */
     ended: Record<string, unknown> = {};
     openOptionsPatch: Record<string, unknown> = {};
+    runtimeModel: string | null = null;
+    /** The model the next apply moves the session to, as a provider's connection option does. */
+    movesModelTo: string | null = null;
 
     async applyOptions(options: ProviderOptions): Promise<Record<string, unknown>> {
       if (this.rejectWith) throw this.rejectWith;
@@ -13518,13 +13625,20 @@ describe("agent options", () => {
       this.applyGate = null;
       await gate;
       this.applied.push(options);
+      if (this.movesModelTo) this.runtimeModel = this.movesModelTo;
       return this.ended;
+    }
+
+    override async getRuntimeInfo() {
+      const info = await super.getRuntimeInfo();
+      return this.runtimeModel ? { ...info, model: this.runtimeModel } : info;
     }
   }
 
   class OptionsClient extends TestAgentClient {
     session: OptionsSession | null = null;
     openOptionsPatch: Record<string, unknown> = {};
+    runtimeModel: string | null = null;
 
     // Stands in for the `config.json` provider defaults the registry wrapper merges in.
     effectiveOptions(own: ProviderOptions | undefined): ProviderOptions {
@@ -13534,6 +13648,7 @@ describe("agent options", () => {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       this.session = new OptionsSession(config);
       this.session.openOptionsPatch = this.openOptionsPatch;
+      this.session.runtimeModel = this.runtimeModel;
       return this.session;
     }
   }
@@ -13541,14 +13656,21 @@ describe("agent options", () => {
   async function createOptionsAgent(
     providerOptions?: ProviderOptions,
     openOptionsPatch: Record<string, unknown> = {},
+    opened: { model?: string; runtimeModel?: string } = {},
   ) {
     const workdir = mkdtempSync(join(tmpdir(), "agent-manager-options-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const client = new OptionsClient();
     client.openOptionsPatch = openOptionsPatch;
+    client.runtimeModel = opened.runtimeModel ?? null;
     const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
     const agent = await manager.createAgent(
-      { provider: "codex", cwd: workdir, ...(providerOptions ? { providerOptions } : {}) },
+      {
+        provider: "codex",
+        cwd: workdir,
+        ...(opened.model ? { model: opened.model } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
+      },
       undefined,
       { workspaceId: undefined },
     );
@@ -13635,6 +13757,33 @@ describe("agent options", () => {
       web_search: true,
       service_tier: "fast",
     });
+  });
+
+  test("an option that moves the agent to another model reopens on that model", async () => {
+    const { manager, client, storage, agentId } = await createOptionsAgent(
+      undefined,
+      {},
+      { model: "first-connection-model" },
+    );
+    client.session!.movesModelTo = "second-connection-model";
+
+    await manager.setAgentOptions(agentId, { web_search: true });
+
+    expect(manager.getAgent(agentId)?.config.model).toBe("second-connection-model");
+    await manager.flush();
+    expect((await storage.get(agentId))?.config?.model).toBe("second-connection-model");
+  });
+
+  test("an option that leaves the model alone keeps the model the user chose", async () => {
+    const { manager, agentId } = await createOptionsAgent(
+      undefined,
+      {},
+      { model: "alias", runtimeModel: "canonical" },
+    );
+
+    await manager.setAgentOptions(agentId, { web_search: true });
+
+    expect(manager.getAgent(agentId)?.config.model).toBe("alias");
   });
 
   test("a patch key is resolved against the configured defaults, merging nested objects", async () => {
@@ -14236,6 +14385,36 @@ test("turns keep distinct identities across an idle runtime collection and resum
     expect(new Set(userTurnIds).size).toBe(2);
   } finally {
     await manager.closeAgent(manager.listAgents()[0]?.id ?? "missing").catch(() => undefined);
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("workspace archive preserves a loaded history agent stamp and stamps cascaded children", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "workspace-stamp-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+      workspaceId: undefined,
+    });
+    const stamp = "2026-11-09T00:00:00.000Z";
+    await manager.archiveAgent(parent.id, stamp);
+    expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
+    expect((await storage.get(child.id))?.archivedAt).toBe(stamp);
+    await ensureAgentLoaded(parent.id, { agentManager: manager, agentStorage: storage, logger });
+    await manager.archiveAgent(parent.id, "2026-11-09T01:00:00.000Z");
+    expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
+    expect((await storage.get(parent.id))?.updatedAt).toBe("2026-11-09T01:00:00.000Z");
+  } finally {
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }

@@ -257,7 +257,7 @@ export const en = {
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
-      reconnecting: "Reconnecting to host",
+      reconnecting: "Reconnecting",
       updating: "Updating messages",
       timelineSyncFailed: "Couldn't refresh agent history.",
       timelineSyncRetrying: "Retrying…",
@@ -1185,6 +1185,8 @@ export const en = {
     title: "What's new",
     installed: "Installed",
     showMore: "Show more",
+    showAllChanges: "Show all changes",
+    hideAllChanges: "Hide all changes",
     openWebsite: "Full changelog",
     error: {
       title: "Unable to load the changelog",

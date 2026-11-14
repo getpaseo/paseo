@@ -5,11 +5,9 @@ import {
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
-import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
-export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 export interface SessionsSnapshot {
@@ -320,16 +318,4 @@ export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | 
     return false;
   }
   return (state.sessions[serverId]?.workspaces?.size ?? 0) > 0;
-}
-
-export function selectWorkspaceStatusesForBadges(
-  state: SessionsSnapshot,
-): DesktopBadgeWorkspaceStatus[] {
-  const statuses: DesktopBadgeWorkspaceStatus[] = [];
-  for (const session of Object.values(state.sessions)) {
-    for (const workspace of session.workspaces.values()) {
-      statuses.push(workspace.status);
-    }
-  }
-  return statuses;
 }

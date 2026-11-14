@@ -261,7 +261,7 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重新连接主机",
+      reconnecting: "正在重新连接",
       updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
@@ -1169,6 +1169,8 @@ export const zhCN: TranslationResources = {
     title: "新功能",
     installed: "已安装",
     showMore: "显示更多",
+    showAllChanges: "显示全部变更",
+    hideAllChanges: "收起全部变更",
     openWebsite: "完整更新日志",
     error: {
       title: "无法加载更新日志",

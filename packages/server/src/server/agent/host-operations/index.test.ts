@@ -107,11 +107,17 @@ async function olderHost() {
   return { client, socket };
 }
 
-function resolverFor(client: DaemonClient, callerBackground: boolean) {
+interface Caller {
+  background: boolean;
+  provider: string;
+  currentModeId: string | null;
+}
+
+function resolverFor(client: DaemonClient, caller: Caller | null) {
   return createHostResolver({
     serverId: "origin",
-    callerAgentId: "caller",
-    caller: () => ({ background: callerBackground }),
+    callerAgentId: caller ? "caller" : undefined,
+    caller: () => caller,
     local: {} as HostOperations,
     hosts: () => ({
       directory: async () => ({ self: { serverId: "origin", label: "Origin" }, hosts: [] }),
@@ -119,6 +125,12 @@ function resolverFor(client: DaemonClient, callerBackground: boolean) {
     }),
   });
 }
+
+const visibleCodexCaller: Caller = {
+  background: false,
+  provider: "codex",
+  currentModeId: "full-access",
+};
 
 const createArgs = {
   workspaceId: workspace.id,
@@ -129,7 +141,7 @@ const createArgs = {
 
 test("a visible caller still creates agents on a host without background agents", async () => {
   const { client, socket } = await olderHost();
-  const creating = resolverFor(client, false).use("srv_older", (host) =>
+  const creating = resolverFor(client, visibleCodexCaller).use("srv_older", (host) =>
     host.createAgent(createArgs, {} as never),
   );
   creating.catch(() => {});
@@ -143,7 +155,37 @@ test("a background caller's remote child asks the host to update instead of turn
   const { client, socket } = await olderHost();
 
   await expect(
-    resolverFor(client, true).use("srv_older", (host) => host.createAgent(createArgs, {} as never)),
+    resolverFor(client, { ...visibleCodexCaller, background: true }).use("srv_older", (host) =>
+      host.createAgent(createArgs, {} as never),
+    ),
   ).rejects.toThrow("Update the host to use background agents.");
   expect(socket.requests.map((request) => request.type)).not.toContain("create_agent_request");
+});
+
+async function forwardedMode(caller: Caller | null, args: Record<string, unknown> = createArgs) {
+  const { client, socket } = await olderHost();
+  const creating = resolverFor(client, caller).use("srv_older", (host) =>
+    host.createAgent(args, {} as never),
+  );
+  creating.catch(() => {});
+  const request = (await socket.createRequest()) as { config: { modeId?: string } };
+  return request.config.modeId;
+}
+
+test("a remote child of the same provider starts in its caller's mode", async () => {
+  expect(await forwardedMode(visibleCodexCaller)).toBe("full-access");
+});
+
+test("an explicit mode wins over the caller's mode on a remote host", async () => {
+  expect(
+    await forwardedMode(visibleCodexCaller, { ...createArgs, settings: { modeId: "auto" } }),
+  ).toBe("auto");
+});
+
+test("a remote child of another provider leaves its mode to the host", async () => {
+  expect(await forwardedMode({ ...visibleCodexCaller, provider: "claude" })).toBeUndefined();
+});
+
+test("a remote create without a caller agent leaves its mode to the host", async () => {
+  expect(await forwardedMode(null)).toBeUndefined();
 });

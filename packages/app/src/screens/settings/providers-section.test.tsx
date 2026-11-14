@@ -8,29 +8,8 @@ import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 import { ToastApiProvider } from "@/contexts/toast-api-context";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
+const { snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
   () => ({
-    theme: {
-      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-      iconSize: { sm: 14, md: 20 },
-      fontSize: { xs: 11, sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      borderRadius: { lg: 8 },
-      opacity: { 50: 0.5 },
-      colors: {
-        surface1: "#111",
-        surface2: "#222",
-        surface3: "#333",
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        border: "#555",
-        accent: "#0a84ff",
-        statusSuccess: "#00ff00",
-        statusWarning: "#ff9500",
-        statusDanger: "#ff0000",
-        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
-      },
-    },
     snapshotState: {
       entries: undefined as ProviderSnapshotEntry[] | undefined,
       isLoading: false,
@@ -44,8 +23,8 @@ const { theme, snapshotState, configState, patchConfigMock, openProviderSettings
   }),
 );
 
-vi.mock("react-native", () => ({
-  Platform: { OS: "web" },
+vi.mock("react-native", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-native")>()),
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
     React.createElement("div", { "data-testid": testID }, children),
   Text: ({ children }: { children?: React.ReactNode }) =>
@@ -85,14 +64,6 @@ vi.mock("react-native", () => ({
       typeof children === "function" ? children({ pressed: false, hovered: false }) : children,
     ),
   ActivityIndicator: () => React.createElement("span", { "data-testid": "activity-indicator" }),
-}));
-
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) =>
-      typeof factory === "function" ? (factory as (t: typeof theme) => unknown)(theme) : factory,
-  },
-  useUnistyles: () => ({ theme, rt: { breakpoint: "md" } }),
 }));
 
 vi.mock("lucide-react-native", () => {

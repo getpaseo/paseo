@@ -157,12 +157,13 @@ function resolveAgentScreenSource(args: {
 
 function resolveCatchingUpUi(args: {
   hasOptimisticCreateContinuity: boolean;
+  isFreshnessCheckPending: boolean;
   isVisibilityCatchUpPending: boolean;
   hasHydratedHistoryBefore: boolean;
   hadInitialSyncFailure: boolean;
 }): "overlay" | "status" | "silent" {
   if (args.hasOptimisticCreateContinuity) return "silent";
-  if (args.hasHydratedHistoryBefore) return "status";
+  if (args.hasHydratedHistoryBefore) return args.isFreshnessCheckPending ? "silent" : "status";
   if (args.isVisibilityCatchUpPending) return "overlay";
   if (args.hadInitialSyncFailure) return "silent";
   return "overlay";
@@ -180,7 +181,11 @@ function resolveAgentScreenSync(args: {
   ) {
     return { status: "idle" };
   }
-  if (!input.isConnected && !input.isArchived) {
+  // A reconnected chat is not back until the daemon answers whether it is current.
+  if (
+    (!input.isConnected || input.visibilityCatchUpStatus === "reattaching") &&
+    !input.isArchived
+  ) {
     return { status: "reconnecting" };
   }
   if (input.missingAgentState.kind === "error") {
@@ -189,16 +194,16 @@ function resolveAgentScreenSync(args: {
   if (input.visibilityCatchUpStatus === "error" || input.visibilityCatchUpStatus === "retrying") {
     return { status: "sync_error", isRetrying: input.visibilityCatchUpStatus === "retrying" };
   }
-  if (
-    input.visibilityCatchUpStatus === "pending" ||
-    input.needsAuthoritativeSync ||
-    input.isHistorySyncing
-  ) {
+  const isFreshnessCheckPending = input.visibilityCatchUpStatus === "checking";
+  const isVisibilityCatchUpPending =
+    input.visibilityCatchUpStatus === "pending" || isFreshnessCheckPending;
+  if (isVisibilityCatchUpPending || input.needsAuthoritativeSync || input.isHistorySyncing) {
     return {
       status: "catching_up",
       ui: resolveCatchingUpUi({
         hasOptimisticCreateContinuity: hasOptimisticCreateContinuity(input),
-        isVisibilityCatchUpPending: input.visibilityCatchUpStatus === "pending",
+        isFreshnessCheckPending,
+        isVisibilityCatchUpPending,
         hasHydratedHistoryBefore: input.hasHydratedHistoryBefore,
         hadInitialSyncFailure,
       }),

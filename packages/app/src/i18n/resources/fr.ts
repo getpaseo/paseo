@@ -264,7 +264,7 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",
-      reconnecting: "Reconnexion à l’hôte…",
+      reconnecting: "Reconnexion…",
       updating: "Mise à jour des messages…",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
@@ -1206,6 +1206,8 @@ export const fr: TranslationResources = {
     title: "Nouveautés",
     installed: "Installée",
     showMore: "Afficher plus",
+    showAllChanges: "Afficher toutes les modifications",
+    hideAllChanges: "Masquer toutes les modifications",
     openWebsite: "Journal des modifications complet",
     error: {
       title: "Impossible de charger le journal des modifications",

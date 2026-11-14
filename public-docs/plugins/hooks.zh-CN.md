@@ -60,7 +60,7 @@ Paseo 只观察返回的 Promise，因此独立任务没有错误报告，也没
 | `agent.close.after`       | 否   | `{ agent }`                               |                                            |
 | `agent.archive.after`     | 否   | `{ agent, archivedAt }`                   |                                            |
 | `agent.turn.before`       | 否   | `{ agent, turnId }`                       |                                            |
-| `agent.turn.after`        | 否   | `{ agent, turnId, outcome, timeline }`    |                                            |
+| `agent.turn.after`        | 否   | `{ agent, turnId, outcome }`              |                                            |
 | `agent.permission.before` | 否   | `{ agent, request }`                      |                                            |
 | `agent.permission.after`  | 否   | `{ agent, requestId, resolution }`        |                                            |
 
@@ -74,6 +74,7 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
   metadata: Record<string, JsonValue>;
 }
 
@@ -94,6 +95,7 @@ type PluginTurnOutcome =
 
 | 字段         | 结构 / 含义                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------- |
+| `background` | [后台 Agent](#background-agents) 为 `true`                                               |
 | `turnId`     | Provider 报告的 `string` 或 `null`；在会话恢复后仍保持唯一                               |
 | `timeline`   | 已弃用，始终为 `[]`；通过 SDK 获取历史。                                                 |
 | `request`    | SDK 的 `AgentPermissionRequest`；`kind` 为 `tool`、`plan`、`question`、`mode` 或 `other` |
@@ -299,6 +301,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
   "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
@@ -313,6 +316,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | ------------- | -------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | 字符串或 `null`                                                                                          |
 | `title`       | 只读字符串或 `null`；创建时使用创建请求的标题，恢复时使用已保存的标题。                                  |
+| `background`  | 只读；[后台 Agent](#background-agents) 为 `true`。在创建时确定。                                         |
 | `labels`      | 只读的字符串映射；创建时使用创建请求的标签，恢复时使用已保存的标签。                                     |
 | `metadata`    | 只读的 JSON 映射；Agent 上已保存的[元数据](#metadata)。                                                  |
 | `tools`       | 可编辑的 `AgentToolDefinition[]`，仅包含此插件的工具。参阅[为 Agent 附加工具](#attach-tools-to-agents)。 |
@@ -344,7 +348,7 @@ server.addHook("agent.open.before", async ({ request }) => {
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -418,6 +422,7 @@ const agent = await paseo.agents.create({
 | Provider   | `request.provider === "codex"`               |
 | 工作区     | `request.workspaceId === "workspace-456"`    |
 | 单个 Agent | `request.agentId === chosenAgentId`          |
+| 后台 Agent | `request.background`                         |
 
 每个插件的 `request.tools` 都从空数组开始。同一插件中的后续回调会看到前面回调返回的工具；
 替换数组即可添加或移除工具。返回 `undefined` 会保留请求。`purpose: "history"` 时会忽略工具。
@@ -509,7 +514,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after {#agentturnafter}
 
-实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome, timeline }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。`timeline` 已弃用且始终为空；请按下面的示例通过 SDK 获取历史。
+实时轮次完成、失败或取消后触发，收到 `{ agent, turnId, outcome }`。`outcome.kind` 为 `completed`、`failed` 或 `canceled`。载荷不含历史。请从 Agent 的时间线读取本轮：`refetch({ direction: "tail", limit: 1, wholeTurns: true })` 会完整返回最近一轮，见下面的示例。只保留 `turnId` 等于 `event.turnId` 的条目：如果在读取前已有新一轮开始（例如另一个插件发送的后续消息），最近一轮就不再是本轮。此时过滤后的列表为空；`event.turnId` 为 `null` 时也为空。基于旧版 SDK 构建、仍读取 `event.timeline` 的插件只会拿到空数组。
 
 ### 在轮次结束时发送后续消息 {#send-a-follow-up-when-a-turn-ends}
 
@@ -526,8 +531,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -542,8 +548,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-该处理函数只获取最近 20 条时间线条目，不检查这一页之前的输出。插件需要更多历史时，请用 `cursor` 和 `direction` 继续翻页。
 
 这会用现有的 SDK 发送一条新消息。持续匹配会不断发送后续消息；需要时请在插件中添加次数限制或延迟。附件和工具的效果不会被重放。
 
@@ -606,7 +610,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
+## 后台 Agent {#background-agents}
+
 Agent 钩子不包括 daemon 的私有临时辅助 Agent。后台 Agent 和后台工作区中的 Agent 使用相同钩子。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 是不出现在标签页、列表和提醒中的辅助 Agent。对后台 Agent，每个钩子的 `agent.background` 以及 `agent.open.before` 请求的 `background` 都为 `true`，无需额外查询即可跳过它：
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` 在创建 Agent 时确定，钩子无法修改。在后台工作区中创建但没有传 `background: true` 的 Agent 读取到 `false`。早于 0.16.0 的主机不发送该字段，读取结果为 `undefined`。
 
 ## 顺序与返回值 {#ordering-and-returned-values}
 

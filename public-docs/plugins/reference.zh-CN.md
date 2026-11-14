@@ -705,6 +705,51 @@ function hideAlerts() {
 }
 ```
 
+### 工作区行徽章项 {#workspace-row-badge-items}
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` 在侧边栏每个工作区标题下方的那一行中添加一项，位于该行自带的各项（主机、拉取请求、检查、服务、标签）之后。`title` 和 `icon` 用于标注该项在侧边栏 **Show** 菜单中的开关，插件开关位于分隔线下方的独立分组中。各项默认可见。
+
+`Component` 为插件所在主机上的每个工作区行渲染一次，并接收 `PluginWorkspaceRowBadgeItemProps`：`theme`、`host`、`layout` 和 `workspaceId`。渲染 `@getpaseo/plugin/client/ui` 中的 `WorkspaceRowBadge`；工作区没有需要说明的内容时返回 `null`：
+
+| 属性                 | 含义                                                                  |
+| -------------------- | --------------------------------------------------------------------- |
+| `icon`               | 可选。任意[图标](#icons)形式，以该行的图标尺寸绘制。                  |
+| `label`              | 可选。一个简短的词。既没有 `icon` 也没有 `label` 的徽章不绘制。       |
+| `tone`               | `"muted"`（默认）、`"success"`、`"warning"`、`"danger"` 或 `"info"`。 |
+| `accessibilityLabel` | 默认为 `label`，其次是该项的 `title`。                                |
+
+该行不会在你的徽章周围添加分隔符，返回 `null` 不会留下空隙。可以渲染任意数量的徽章。每一行都会渲染该组件，所以请在各行之间共享一次查询，而不是为每个工作区单独获取：插件的 React Query 客户端由它在某台主机上的所有组件共享。
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+早于此 API 的应用没有 `addWorkspaceRowBadgeItem`；调用前请先检查它是否存在。
+
+参见[工作区行徽章示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges)。
+
 ## 宿主 UI {#host-ui}
 
 在客户端代码中从 `@getpaseo/plugin/client/ui` 导入由 Paseo 提供的 UI。下面的示例会打开一个受控的弹窗、渲染一个宿主图标，并用 toast 确认操作：
@@ -1064,6 +1109,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1072,16 +1123,26 @@ export default function contribute(client: PluginClientContext) {
 
 每种颜色都是十六进制字符串；其他格式会导致加载失败。Paseo 会把调色板扩展为内置深色主题所使用的完整令牌集合，因此贡献的主题无需逐一列出，就能覆盖面板、菜单、diff、状态颜色和终端。
 
-| 颜色              | 用作                                              |
-| ----------------- | ------------------------------------------------- |
-| `background`      | 应用、工作区和终端的背景                          |
-| `foreground`      | 主要文字、终端前景色和光标                        |
-| `raised`          | 卡片、弹出框和悬停的行                            |
-| `control`         | 输入框、次要填充以及浅色主题的侧边栏              |
-| `border`          | 边框以及最高层凸起表面的色调                      |
-| `accent`          | 按钮、选中和焦点。可选；省略时使用 `foreground`。 |
-| `mutedForeground` | 次要文字                                          |
-| `ring`            | 焦点环、滚动条以及终端的亮黑色                    |
+| 颜色                   | 用作                                                            |
+| ---------------------- | --------------------------------------------------------------- |
+| `background`           | 应用、工作区和终端的背景                                        |
+| `foreground`           | 主要文字、终端前景色和光标                                      |
+| `raised`               | 卡片和弹出框                                                    |
+| `control`              | 输入框、次要填充，以及未设置 `sidebar` 时浅色主题的侧边栏       |
+| `border`               | 边框                                                            |
+| `accent`               | 按钮、选中和焦点。可选；省略时使用 `foreground`。               |
+| `mutedForeground`      | 次要文字                                                        |
+| `ring`                 | Web 上的键盘焦点轮廓，以及终端的亮黑色                          |
+| `sidebar`              | 侧边栏背景。可选；深色主题默认为 `background`，浅色为 `control` |
+| `sidebarHover`         | 可选的侧边栏行悬停背景                                          |
+| `sidebarSelected`      | 可选的侧边栏行选中背景                                          |
+| `surface3`             | 可选的消息气泡、次要按钮和芯片中性填充                          |
+| `surface4`             | 可选的轨道和其他状态的较强中性填充                              |
+| `foregroundExtraMuted` | 可选的三级文字颜色，包括侧边栏时间戳                            |
+
+可选覆盖颜色按原值使用。省略的状态、填充和三级文字颜色分别由调色板推导。覆盖颜色时，请确保它与对应的背景或文字有足够对比度。
+
+`sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 
@@ -1331,6 +1392,8 @@ Agent 快照字段：
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO 时间戳                                                     |
 | `updatedAt`         | ISO 时间戳                                                     |
 | `lastActivityAt`    | ISO 时间戳                                                     |
@@ -1343,6 +1406,20 @@ Agent 快照字段：
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+
+`backgroundWork.count` 是 Agent 在回合结束后仍在运行的 shell 和监视器数量，没有时为 `0`。Agent 可能处于 `idle` 且 `attentionReason: "finished"`，同时这些工作仍在运行，因此请按插件的需要组合这些字段：
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // Agent 不可用。
+```
+
+要列出或停止这些工作本身，使用 [`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle)。
+
+[后台 Agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) 的 `background` 为 `true`，它是不出现在标签页、列表和提醒中的辅助 Agent，在创建时确定。后台工作区中的 Agent 除非本身以后台 Agent 创建，否则 `background` 为 `false`；要判断工作区，读取工作区自己的 `background`。`backgroundWork` 和 `background` 需要 Paseo 0.16.0 或更高版本。
 
 标签页的焦点、拆分、关闭、持久化、查询状态、API/RPC Provider 以及渲染错误边界都由 Paseo 负责。如果恢复的标签页所对应的插件、面板、上下文、工作区或 Agent 不可用，该标签页会保持打开并显示“不可用”消息，而不会让工作区崩溃。
 
@@ -1650,6 +1727,7 @@ export default function contribute(client: PluginClientContext) {
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `context`                                           | `"agent"` 表示运行中的 Agent，`"draft"` 表示工作区中的新 Agent，`"new-workspace"` 表示新建工作区界面。                                                                                                                                                       |
 | `prompt`、`setPrompt(text)`、`insertText(text)`     | 提示词。`insertText` 会替换选区，或在光标处插入。                                                                                                                                                                                                            |
+| `focus(options?)`                                   | 把光标放进这个 composer，准备输入，光标就位后完成。`selection: { start, end }` 放置光标或选中文本，为 `prompt` 中的偏移量，并限制在其长度内；省略时光标保持原位。参见[聚焦 composer](#focus-a-composer)。                                                    |
 | `attachments`、`addAttachment`、`removeAttachment`  | 来自[你自己的附件来源](#add-a-composer-attachment-source)的项目。其他插件和 Paseo 自身的附件不会列出。                                                                                                                                                       |
 | `agent.provider`、`model`、`mode`、`thinking`       | Agent 当前使用的配置，或草稿将要创建的配置。                                                                                                                                                                                                                 |
 | `agent.options`                                     | 当前生效的 Provider 选项，包含默认值。在草稿中：创建 Agent 时将使用的选项，包含你所做的修改。                                                                                                                                                                |
@@ -1669,9 +1747,26 @@ export default function contribute(client: PluginClientContext) {
 
 [Composer 控件示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)注册了一个 `Select`、两个 `Toggle`（其中一个写入 Provider 选项）和一个 `Action`，还有一个资源管理器面板和一个 Command Center 条目，它们按引用访问 composer。
 
+### 聚焦 composer {#focus-a-composer}
+
+`insertText` 和 `setPrompt` 不会移动光标。在它们之后调用 `focus()`，用户就可以继续输入：
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` 会选中提示词。
+
+你不需要知道用户在哪里。对于运行中 Agent 的 composer，当它不在屏幕上时，Paseo 会导航到该 Agent 的标签页或工作区，关闭手机上遮挡它的 Agent 列表或资源管理器面板，并把焦点移到该 Agent 的窗格，然后聚焦输入框。输入框已在屏幕上且其窗格已聚焦时，`focus()` 只放置光标。每个 composer 也会先关闭它在自身上方打开的面板、菜单、选择器和图片预览，例如手机上放置你的项的控件面板。手机会弹出键盘。
+
+composer 无法获得焦点时 `focus()` 会被拒绝：Agent 已归档、其 composer 未在 15 秒内出现在屏幕上，或输入框拒绝获得焦点（例如手机上正在听写时）。多次调用重叠时，由最后一次决定光标位置，之前的调用随其一起完成。按钮的 `onPress` 或命令中心项的 `onSelect` 返回被拒绝的 promise 时，会向用户显示错误提示。
+
+草稿和新建工作区 composer 只能从其中的项访问，所以 `focus()` 不会导航到它们。composer 在屏幕上时可用，用户已离开时会以 “The composer is not on screen.” 拒绝。锁定的 composer 接受聚焦。
+
 ### 按引用访问 composer {#reach-a-composer-by-reference}
 
-运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`，以及每个命令上下文中的 `composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent：
+运行中的 Agent 无论标签页是否打开，都有自己的 composer。任意插件组件中的 `useComposers(selector)`、每个命令上下文中的 `composers(selector)`，以及客户端上下文中的 `client.composers(selector)`，都会返回与 `useComposer()` 给 composer 项的相同的 `PluginComposer`，对象可以是你指定的 Agent，也可以是当前聚焦的 Agent。在不接收上下文的回调中（例如[胶囊的 `onPress`](#composer-pills)）使用 `client.composers`：
 
 ```tsx
 import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
@@ -1721,6 +1816,7 @@ export default function contribute(client: PluginClientContext) {
 - 运行中 Agent 的 composer 从不锁定。
 - `setProvider` 会被拒绝，与在 Agent 自己的 composer 内一样。
 - `setModel` 和 `setThinking` 不加检查地把值发给 Provider。Provider 拒绝的值会以 Provider 的消息拒绝。`model` 和 `thinking` 读取的是模型选择器此刻显示的值：在 Provider 的模型目录加载完成之前，是 Agent 上报或创建时使用的 id（可能是别名），加载完成后是目录中的 id。
+- `focus()` 会先让 composer 显示出来，如[上文所述](#focus-a-composer)。
 - 草稿和新建工作区界面不能按引用访问，只有其中的项能通过 `useComposer()` 访问其 composer。
 
 ## 新建工作区项 {#new-workspace-items}
@@ -1799,6 +1895,30 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+胶囊的 `onPress` 不接收参数。通过 [`client.composers`](#reach-a-composer-by-reference) 访问其 Agent 的 composer：
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },

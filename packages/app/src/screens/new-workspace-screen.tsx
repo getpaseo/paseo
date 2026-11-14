@@ -1,13 +1,11 @@
 import { useAddHost } from "@/hosts/add-host";
-import type {
-  CreateAgentRequestOptions,
-  CreateWorkspaceRequestOptions,
-} from "@getpaseo/client/internal/daemon-client";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -125,7 +123,6 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { retriedAgentRequest } from "./new-workspace/retry-agent-request";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -242,7 +239,6 @@ interface SubmitDraftInput {
   clearConsumedDraft: () => void;
   agentCreation?: {
     result: Promise<AgentSnapshotPayload>;
-    retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
   };
   serverId: string;
   draftKey: string;
@@ -470,13 +466,13 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
-  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
+  const execute = async (): Promise<AgentSnapshotPayload> => {
     const { agent } = await ensureWorkspace({
       cwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
-      agent: requestedAgent,
+      agent: initialAgent,
       onEvent: (snapshot) => {
         if (!snapshot.workspace || navigated) return;
         navigated = true;
@@ -515,11 +511,8 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     if (!agent) throw new Error("Workspace creation returned no agent");
     return agent;
   };
-  const agentCreation = {
-    result: Promise.resolve().then(() => execute()),
-    retry: (request: CreateAgentRequestOptions) =>
-      execute(retriedAgentRequest(initialAgent, request, cwd)),
-  };
+  // A retry after a failed agent start belongs to the ready workspace's draft, not to this creation.
+  const agentCreation = { result: Promise.resolve().then(() => execute()) };
   await agentCreation.result;
   if (outcome === "background") clearConsumedDraft();
   return outcome;
@@ -909,6 +902,7 @@ export function NewWorkspaceScreen({
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
+  const isScreenFocused = useIsFocused();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1544,7 +1538,7 @@ export function NewWorkspaceScreen({
       submitLabel={terminalSubmitLabel}
       agentId={draftKey}
       serverId={selectedServerId}
-      isPaneFocused={true}
+      isPaneFocused={isScreenFocused}
       onSubmitMessage={handleSubmitTerminalLaunch}
       allowEmptySubmit={true}
       submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
@@ -1568,7 +1562,7 @@ export function NewWorkspaceScreen({
       editingSession={composerEditing.chat}
       agentId={draftKey}
       serverId={selectedServerId}
-      isPaneFocused={true}
+      isPaneFocused={isScreenFocused}
       onSubmitMessage={handleSubmitNewWorkspace}
       allowEmptySubmit={true}
       submitButtonAccessibilityLabel={t("newWorkspace.create")}

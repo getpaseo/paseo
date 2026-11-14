@@ -62,7 +62,7 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 | `agent.close.after`       | no    | `{ agent }`                               |                                                |
 | `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                |
 | `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }`    |                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                |
 | `agent.permission.before` | no    | `{ agent, request }`                      |                                                |
 | `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                |
 
@@ -76,6 +76,7 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
   metadata: Record<string, JsonValue>;
 }
 
@@ -96,6 +97,7 @@ type PluginTurnOutcome =
 
 | Field        | Shape / meaning                                                                        |
 | ------------ | -------------------------------------------------------------------------------------- |
+| `background` | `true` for a [background agent](#background-agents)                                    |
 | `turnId`     | Provider-reported `string` or `null`; unique across resumed sessions                   |
 | `timeline`   | Deprecated, always `[]`; fetch history with the SDK.                                   |
 | `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other` |
@@ -303,6 +305,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
   "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
@@ -317,6 +320,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | String or `null`                                                                                                        |
 | `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
+| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                       |
 | `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
 | `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                      |
 | `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
@@ -350,7 +354,7 @@ the placeholder URL with your MCP endpoint:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -426,6 +430,7 @@ Select agents using any of the session-open request fields:
 | Provider         | `request.provider === "codex"`               |
 | Workspace        | `request.workspaceId === "workspace-456"`    |
 | Individual agent | `request.agentId === chosenAgentId`          |
+| Background agent | `request.background`                         |
 
 `request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
 callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
@@ -520,7 +525,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome, timeline }`. `outcome.kind` is `completed`, `failed`, or `canceled`. `timeline` is deprecated and always empty; fetch history through the SDK as below.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Keep the entries whose `turnId` equals `event.turnId`, because a turn that starts before your read, such as a follow-up another plugin sent, replaces this one as the latest. The filtered list is empty in that case, and when `event.turnId` is `null`. Plugins built against an older SDK that read `event.timeline` get an empty array.
 
 ### Send a follow-up when a turn ends
 
@@ -540,8 +545,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -556,9 +562,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-The handler fetches only the last 20 timeline items. Output before that page is not inspected.
-Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -623,7 +626,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
+## Background agents
+
 Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
+
+A [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) is a helper hidden from tabs, lists and attention. Every hook's `agent.background` and the `agent.open.before` request's `background` are `true` for one, so you can skip it without a lookup:
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` is fixed when the agent is created and a hook cannot change it. An agent created in a background workspace without `background: true` reads `false`. Hosts older than 0.16.0 omit the field, so it reads as `undefined`.
 
 ## Ordering and returned values
 

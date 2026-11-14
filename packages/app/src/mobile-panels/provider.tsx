@@ -157,6 +157,11 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const animateTransition = useCallback(
     (transition: MobilePanelTransition) => {
       "worklet";
+      if (transition.immediateTarget) {
+        cancelAnimation(position);
+        position.value = getMobilePanelAnchor(transition.immediateTarget);
+        return;
+      }
       if (!transition.animationTarget) {
         return;
       }
@@ -170,25 +175,27 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   );
 
   const applySelection = useCallback(
-    (selection: MobilePanelSelection) => {
+    (selection: MobilePanelSelection, immediate: boolean) => {
       "worklet";
       const currentState = motionState.value;
       const transition = transitionMobilePanel(currentState, {
         type: "command",
         selection,
+        immediate,
       });
       if (transition.state === currentState) {
         return;
       }
       motionState.value = transition.state;
       animateTransition(transition);
+      if (immediate) scheduleOnRN(publishActivePanel, selection.target, selection.revision);
     },
-    [animateTransition, motionState],
+    [animateTransition, motionState, publishActivePanel],
   );
 
   useEffect(() => {
-    return subscribeMobilePanelSelection((selection) => {
-      scheduleOnUI(applySelection, selection);
+    return subscribeMobilePanelSelection((selection, immediate) => {
+      scheduleOnUI(applySelection, selection, immediate);
     });
   }, [applySelection]);
 

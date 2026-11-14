@@ -772,6 +772,62 @@ describe("WorkspaceReconciliationService", () => {
     expect(projects.get("p1")?.kind).toBe("git");
   });
 
+  test("reads sibling checkouts a few at a time in the background Git lane", async () => {
+    const projectRoot = "/reconcile/fan-out/root";
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: projectRoot,
+        kind: "git",
+        displayName: "fan-out",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const siblingCwds = Array.from({ length: 40 }, (_, index) => `${projectRoot}-${index}`);
+    for (const [index, cwd] of siblingCwds.entries()) {
+      workspaces.set(
+        `w${index}`,
+        createPersistedWorkspaceRecord({
+          workspaceId: `w${index}`,
+          projectId: "p1",
+          cwd,
+          kind: "worktree",
+          displayName: `sibling-${index}`,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }),
+      );
+    }
+    const reads: Array<{ cwd: string; priority: string | undefined }> = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      inspectDirectory: async () => "directory",
+      workspaceGitService: {
+        async getCheckout(cwd, options) {
+          reads.push({ cwd, priority: options?.priority });
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          inFlight -= 1;
+          return createCheckout(cwd, { isGit: true, currentBranch: "main", worktreeRoot: cwd });
+        },
+      },
+    });
+
+    await service.runOnce();
+
+    expect(reads.map((read) => read.cwd).sort()).toEqual([projectRoot, ...siblingCwds].sort());
+    expect(new Set(reads.map((read) => read.priority))).toEqual(new Set(["background"]));
+    expect(maxInFlight).toBe(4);
+  });
+
   test("deduplicates equivalent project and workspace paths across legacy duplicate projects", async () => {
     const projectRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-global-root-")));
     const workspaceRoot = realpathSync(

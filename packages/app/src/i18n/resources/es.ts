@@ -263,7 +263,7 @@ export const es: TranslationResources = {
     states: {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",
-      reconnecting: "Reconectando al host",
+      reconnecting: "Reconectando",
       updating: "Actualizando mensajes",
       timelineSyncFailed: "No se pudo actualizar el historial del agente.",
       timelineSyncRetrying: "Reintentando…",
@@ -1213,6 +1213,8 @@ export const es: TranslationResources = {
     title: "Novedades",
     installed: "Instalada",
     showMore: "Mostrar más",
+    showAllChanges: "Mostrar todos los cambios",
+    hideAllChanges: "Ocultar todos los cambios",
     openWebsite: "Registro de cambios completo",
     error: {
       title: "No se pudo cargar el registro de cambios",

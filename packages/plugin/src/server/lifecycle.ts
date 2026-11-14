@@ -2,7 +2,6 @@ import type { AgentToolDefinition } from "./agent-tools.js";
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
-  AgentTimelineItem,
   AgentSessionConfig,
   JsonValue,
 } from "@getpaseo/protocol/agent-types";
@@ -71,6 +70,8 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   /** Data plugins stored on the agent. Paseo never reads a key. */
   metadata: Record<string, JsonValue>;
 }
@@ -83,6 +84,8 @@ export interface PluginSessionOpenRequest {
   reason: "create" | "resume" | "refresh" | "import";
   purpose: "interactive" | "history";
   readonly title: string | null;
+  /** A helper hidden from tabs, lists and attention. Fixed at creation. */
+  readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
   tools: AgentToolDefinition[];
@@ -100,12 +103,13 @@ export interface PluginHookEvents {
   "agent.turn.after": {
     agent: PluginHookAgent;
     turnId: string | null;
-    outcome: PluginTurnOutcome;
     /**
-     * @deprecated Always empty. Fetch history on demand with
-     * context.paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 20 }).
+     * The payload carries no history. Read the turn with
+     * `paseo.agents.ref(agent.id).timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true })`
+     * and keep the entries whose `turnId` equals this `turnId`. The result is empty when a newer turn
+     * started before the read, or when `turnId` is `null`.
      */
-    timeline: readonly AgentTimelineItem[];
+    outcome: PluginTurnOutcome;
   };
   "agent.permission.before": { agent: PluginHookAgent; request: AgentPermissionRequest };
   "agent.permission.after": {
@@ -134,7 +138,9 @@ export interface PluginHookRequests {
 
 /** What a hook may return. An omitted `metadata` stays as it was. */
 type PluginHookRequestResults = Omit<PluginHookRequests, "agent.open.before"> & {
-  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata"> & {
+  // Read-only fields added after the first SDK stay optional in a result; omitted means unchanged.
+  "agent.open.before": Omit<PluginSessionOpenRequest, "metadata" | "background"> & {
+    readonly background?: boolean;
     metadata?: Readonly<Record<string, JsonValue>>;
   };
 };
@@ -184,7 +190,7 @@ export interface PluginLifecycleRegistration {
     handler: (
       input: { request: PluginBeforeRequests[Name] },
       context: PluginHookContext,
-    ) => PluginBeforeRequests[Name] | void | Promise<PluginBeforeRequests[Name] | void>,
+    ) => PluginBeforeResults[Name] | void | Promise<PluginBeforeResults[Name] | void>,
   ): () => void;
 }
 
@@ -228,6 +234,9 @@ export type PluginLifecycleEvents = {
 };
 export type PluginBeforeRequests = {
   [Name in keyof typeof legacyRequests]: PluginHookRequests[(typeof legacyRequests)[Name]];
+};
+type PluginBeforeResults = {
+  [Name in keyof typeof legacyRequests]: PluginHookRequestResults[(typeof legacyRequests)[Name]];
 };
 
 /** @internal SDK adapter for the daemon's hook registry. */

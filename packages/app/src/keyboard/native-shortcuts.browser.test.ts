@@ -25,6 +25,7 @@ describe("DOM source adapter", () => {
       keyUp() {},
       blur() {},
       commandCenterOpen: () => false,
+      subscribeCommandCenter: () => () => {},
     });
     const event = new KeyboardEvent("keydown", {
       key: "j",

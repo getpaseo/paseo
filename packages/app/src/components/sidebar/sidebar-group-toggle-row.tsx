@@ -1,6 +1,7 @@
+import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View, type PressableStateCallbackType } from "react-native";
 import { ChevronDown, ChevronUp } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isWeb } from "@/constants/platform";

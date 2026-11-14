@@ -923,6 +923,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
+  /** Opaque. Changes whenever the accounts this agent reports usage for can change. */
+  usageScopeKey: z.string().optional(),
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
@@ -2087,10 +2089,16 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+// "current" means the daemon has this agent loaded, the epoch matches, and the cursor is at the head.
+// Anything else is "behind", including an agent the daemon has not loaded.
+export const TimelineFreshnessSchema = z.enum(["current", "behind"]);
+
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
   requestId: z.string(),
+  // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+  cursors: z.record(z.string(), AgentTimelineCursorSchema).optional(),
 });
 
 export const AgentForkContextRequestMessageSchema = z.object({
@@ -4065,6 +4073,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(hopliteProvider): added after v0.11.2, remove after 2027-04-15 once host floor includes the bundled adapter.
         hopliteProvider: z.boolean().optional(),
+        // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
+        fxProvider: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.8.0, remove gate after 2027-03-02.
@@ -4076,6 +4086,8 @@ export const ServerInfoStatusPayloadSchema = z
         forgeProviders: z.boolean().optional(),
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: z.boolean().optional(),
+        // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+        timelineFreshnessCheck: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
         providerOptionControls: z.boolean().optional(),
@@ -4316,6 +4328,22 @@ export const WorkspaceScriptPayloadSchema = z.object({
   terminalId: z.string().nullable().optional().default(null),
 });
 
+/**
+ * Where a workspace's forge is on the web, resolved by the daemon so every
+ * client builds the same links.
+ */
+export const ForgeWebSchema = z.object({
+  /** Web host of the forge: the SSH config alias resolved, cloud SSH hosts mapped to their web host. */
+  host: z.string(),
+  /**
+   * Repository path that owns issue and change-request numbers when it is not
+   * the origin repository, such as a fork's parent. Absent: the origin repository.
+   */
+  referenceRepository: z.string().optional(),
+});
+
+export type ForgeWeb = z.infer<typeof ForgeWebSchema>;
+
 const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
@@ -4452,6 +4480,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // until 2027-01-17; remove the consumer fallback once the supported daemon
     // floor is >= v0.2.0.
     forge: z.string().optional(),
+    // Absent from daemons older than v0.16.0; clients then derive links from the origin remote.
+    forgeWeb: ForgeWebSchema.optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
     syncSeq: z.number().int().positive().optional(),
@@ -5249,6 +5279,11 @@ export const SetAgentTimelineSubscriptionResponseMessageSchema = z.object({
     subscriptionId: z.string().optional(),
     agentIds: z.array(z.string()),
     requestId: z.string(),
+    // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+    timelines: z.record(z.string(), TimelineFreshnessSchema).optional(),
+    // The agent row for each chat answered "current", which gets no timeline fetch to carry it.
+    // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+    agents: z.record(z.string(), AgentSnapshotPayloadSchema).optional(),
   }),
 });
 
@@ -5680,6 +5715,7 @@ const CheckoutStatusCommonSchema = z.object({
   // upstream branch name is not necessarily currentBranch, so composing one is wrong.
   // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({

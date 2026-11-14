@@ -118,7 +118,7 @@ appear in the plugin catalog. Editing one in development requires a daemon resta
 Directory, Git, and npm installs cannot use a built-in ID.
 
 A provider registration with `requiresConfiguration: true` participates only while its ID exists
-under `agents.providers`. Hoplite uses this for catalog opt-in. Add writes `{ "enabled": true }`
+under `agents.providers`. Hoplite and fx use this for catalog opt-in. Add writes `{ "enabled": true }`
 without `extends`, so it selects the bundled adapter. Remove deletes the config entry; setting
 `enabled: false` keeps the entry. The bundled JavaScript still loads at startup, but an absent
 provider does not enter executable resolution or catalog discovery.
@@ -624,6 +624,21 @@ one section's order from built-ins, plugin groups, and the section's preference
   remembers under its own key. It shares header ids and the `plugin:<pluginId>:<id>` settings key
   with new-API items.
 
+## Contribute workspace row badge items
+
+The [public reference](../public-docs/plugins/reference.md#workspace-row-badge-items) owns the author API.
+The host lives in `packages/app/src/plugins/workspace-row-badge-items/`; `WorkspaceMetaRow` draws a host's
+items after its own.
+
+- Plugin items render with no wrapper view. The meta line spaces children with `gap`, so an empty
+  wrapper would leave a gap on rows the plugin has nothing to say about. That is also why
+  the row adds no separator around plugin items; a plugin renders its slot.
+- A row only renders items from plugins on its own host. The Show menu coalesces items across hosts
+  by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting, and places them in
+  their own group below a separator. A missing key is visible.
+- Previews (Settings > Host appearance) pass no `workspace` to `WorkspaceMetaRow`, so plugin items
+  stay off them.
+
 ## Contribute file panels
 
 Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a
@@ -711,6 +726,29 @@ implementations provide it:
 - A draft or New workspace screen's `composerModelFromHalves`, an adapter over the two contexts
   in `composer/session.tsx`: `Composer` provides `ComposerInput` (prompt, attachments),
   `DraftAgentControls` provides `ComposerAgent` (settings), and the adapter enforces the lock.
+
+`focus` differs per implementation on purpose. A running agent's model reveals the agent with
+`navigateToAgent` when `ComposerInput.isRevealed()` is false, and holds one pending request until an
+input that is revealed attaches. `isRevealed` is stricter than `isLive`: a compact overlay panel and
+an unfocused pane leave the input live but unable to take the keyboard, so the agent is revealed
+first, which also moves pane focus. `Composer` makes `revealed` part of `ComposerInput`, so a change
+re-runs `attachInput`, which is what tells the pending request the input is on screen. The draft
+half has nothing to navigate to and does not pull the user back to a draft they left, so it rejects
+when not revealed. Sheets, menus, pickers and modals the composer opens over itself do not count
+against `revealed`: `takeInputFocus` closes them through the `OverlayDismissalScope` in
+`components/ui/overlay-dismissal.tsx`, and places the cursor only after the commit that removes
+them. A web modal hands focus back to the button that opened it in that commit, so placing the
+cursor earlier loses it. The overlay primitives register while open: every controlled bottom
+sheet through `useIsolatedBottomSheetVisibility`, `AdaptiveModalSheet`'s desktop dialog, `MenuRoot`,
+`Combobox`, and `Modal` through its `onRequestClose`. Their close must close; a surface built on none
+of them must call `useDismissibleOverlay`. Overlapping requests share each overlay's close, and the
+latest request places the cursor while the earlier ones settle with it. A native input reports
+focus synchronously and refuses it while not editable, such as during dictation, so the native
+branch checks `isFocused()` instead of trusting the call. The agent panel opens the scope around its whole chat
+because the tracks above the composer render outside `Composer`, and the composer's own scope
+joins it. `toPluginComposer` clears the Command Center's focus restore, which would
+otherwise take the cursor back when the Command Center closes. Native `focus` opens the keyboard, so
+the app's web-only `focusInput` stays separate and plugins go through `takeInputFocus`.
 
 `ComposerAgent` stays for the built-in controls. Add a capability to the `ComposerModel`, both
 implementations and `toPluginComposer`; never branch on `context` in the host.

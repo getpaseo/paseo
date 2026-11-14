@@ -261,7 +261,7 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "호스트에 다시 연결하는 중",
+      reconnecting: "다시 연결하는 중",
       updating: "메시지 업데이트 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
@@ -1184,6 +1184,8 @@ export const ko: TranslationResources = {
     title: "새로운 소식",
     installed: "설치됨",
     showMore: "더 보기",
+    showAllChanges: "모든 변경 사항 보기",
+    hideAllChanges: "모든 변경 사항 숨기기",
     openWebsite: "전체 변경 내역",
     error: {
       title: "변경 내역을 불러오지 못했습니다",

@@ -263,7 +263,7 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
-      reconnecting: "Повторное подключение к хосту",
+      reconnecting: "Повторное подключение",
       updating: "Обновление сообщений",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
@@ -1194,6 +1194,8 @@ export const ru: TranslationResources = {
     title: "Что нового",
     installed: "Установлена",
     showMore: "Показать ещё",
+    showAllChanges: "Показать все изменения",
+    hideAllChanges: "Скрыть все изменения",
     openWebsite: "Полный список изменений",
     error: {
       title: "Не удалось загрузить список изменений",

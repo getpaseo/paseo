@@ -163,8 +163,14 @@ export default function contribute(server) {
   server.addHook("agent.turn.before", async (event) => {
     console.log(JSON.stringify({ hook: "agent.turn.before", event }));
   });
-  server.addHook("agent.turn.after", async (event) => {
-    console.log(JSON.stringify({ hook: "agent.turn.after", event }));
+  server.addHook("agent.turn.after", async (event, context) => {
+    const page = await context.paseo.agents
+      .ref(event.agent.id)
+      .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries
+      .filter((entry) => entry.turnId === event.turnId)
+      .map(({ item }) => item.type);
+    console.log(JSON.stringify({ hook: "agent.turn.after", event, turn }));
   });
   server.addHook("agent.permission.before", async (event, context) => {
     console.log(JSON.stringify({ hook: "agent.permission.before", event }));
@@ -220,6 +226,7 @@ export default function contribute(server) {
         {
           hook: "agent.turn.after",
           event: { outcome: { kind: "completed" }, timeline: [] },
+          turn: ["user_message", "tool_call"],
         },
         { hook: "agent.turn.before", event: { agent: { id: agent.id } } },
       ]);
@@ -316,6 +323,88 @@ export default function contribute(server) {
           metadata: { "linear.issue": { id: "ENG-123" }, "hook.added": true },
         },
       ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("hooks tell a background agent from a normal one", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-background-hooks-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "background-hooks",
+        requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+      }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  const log = (hook, agentId, background) =>
+    console.log(JSON.stringify({ hook, agentId, background }));
+  server.addHook("agent.open.before", async ({ request }) => {
+    log("agent.open.before", request.agentId, request.background);
+    return { ...request, background: request.background };
+  });
+  for (const hook of ["agent.create.after", "agent.turn.before", "agent.turn.after", "agent.archive.after"]) {
+    server.addHook(hook, async ({ agent }) => log(hook, agent.id, agent.background));
+  }
+  return () => {};
+}
+`,
+    );
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const workspace = await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+    });
+    const workspaceId = workspace.workspace!.id;
+    const helper = await client.createAgent({
+      provider: "claude",
+      cwd: directory,
+      workspaceId,
+      background: true,
+    });
+    const visible = await client.createAgent({ provider: "claude", cwd: directory, workspaceId });
+    expect(helper.background).toBe(true);
+    for (const agent of [helper, visible]) {
+      await client.sendMessage(agent.id, "hello");
+      await client.waitForFinish(agent.id, 10_000);
+      await client.archiveAgent(agent.id);
+    }
+    const hooks = [
+      "agent.open.before",
+      "agent.create.after",
+      "agent.turn.before",
+      "agent.turn.after",
+      "agent.archive.after",
+    ];
+    const seen = (logs: { message: string }[], agentId: string) =>
+      logs
+        .filter((entry) => entry.message.startsWith('{"hook":'))
+        .map((entry) => JSON.parse(entry.message))
+        .filter((entry) => entry.agentId === agentId)
+        .map(({ hook, background }) => ({ hook, background }));
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("background-hooks");
+        return {
+          helper: new Set(seen(logs, helper.id).map((entry) => JSON.stringify(entry))),
+          visible: new Set(seen(logs, visible.id).map((entry) => JSON.stringify(entry))),
+        };
+      })
+      .toEqual({
+        helper: new Set(hooks.map((hook) => JSON.stringify({ hook, background: true }))),
+        visible: new Set(hooks.map((hook) => JSON.stringify({ hook, background: false }))),
+      });
   } finally {
     await client.close();
     await daemon.close();

@@ -146,7 +146,9 @@ async function installPinRpcGate(
 }
 
 test.describe("Pin workspace shortcut", () => {
-  test("dispatches pin once and keeps project creation reachable", async ({ page }) => {
+  test("pins and unpins across sidebar collapse and keeps project creation reachable", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "pin-project-creation-",
       title: "Pinned workspace",
@@ -169,10 +171,26 @@ test.describe("Pin workspace shortcut", () => {
         await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
       });
 
-      await test.step("keeps the pinned project available to workspace creation", async () => {
+      await test.step("unpins the active workspace while the Pinned section is collapsed", async () => {
         await page.keyboard.press(PIN_SHORTCUT);
         await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
         expect(gate.sentCount()).toBe(3);
+
+        await page.getByTestId("sidebar-pinned-section-header").click();
+        await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(0, {
+          timeout: 10_000,
+        });
+
+        await page.keyboard.press(PIN_SHORTCUT);
+        await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
+        expect(gate.sentCount()).toBe(4);
+        await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(1);
+      });
+
+      await test.step("keeps the pinned project available to workspace creation", async () => {
+        await page.keyboard.press(PIN_SHORTCUT);
+        await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
+        expect(gate.sentCount()).toBe(5);
 
         await openNewWorkspaceComposer(page, workspace);
         await expectNewWorkspaceProjectSelected(page, workspace.projectDisplayName);
@@ -198,27 +216,6 @@ test.describe("Pin workspace shortcut", () => {
           `sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`,
         ),
       ).toBeVisible();
-    } finally {
-      await workspace.cleanup();
-    }
-  });
-
-  test("unpins the active workspace while the Pinned section is collapsed", async ({ page }) => {
-    const workspace = await seedWorkspace({ repoPrefix: "pin-shortcut-unpin-" });
-
-    try {
-      await gotoAppShell(page);
-      await openWorkspace(page, workspace.workspaceId);
-
-      await page.keyboard.press(PIN_SHORTCUT);
-      await expect(pinnedSection(page)).toBeVisible({ timeout: 10_000 });
-
-      await page.getByTestId("sidebar-pinned-section-header").click();
-      await expect(workspaceRow(page, workspace.workspaceId)).toHaveCount(0, { timeout: 10_000 });
-
-      await page.keyboard.press(PIN_SHORTCUT);
-
-      await expect(pinnedSection(page)).toHaveCount(0, { timeout: 10_000 });
     } finally {
       await workspace.cleanup();
     }

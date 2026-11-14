@@ -458,6 +458,7 @@ export class HubRelationshipHarness {
   private readonly claimedCliSockets = new Set<WebSocket>();
   private readonly promptsToFail = new Set<string>();
   private failNextSessionClose = false;
+  private failNextModeChange = false;
   private observedEnrollments = 0;
   private observedSockets = 0;
   private readonly codex: ControlledAgentClient;
@@ -473,6 +474,11 @@ export class HubRelationshipHarness {
           if (!this.failNextSessionClose) return;
           this.failNextSessionClose = false;
           throw new Error("Requested provider session close failure");
+        },
+        beforeSetMode: async () => {
+          if (!this.failNextModeChange) return;
+          this.failNextModeChange = false;
+          throw new Error("Requested provider mode change failure");
         },
         onStartTurn: (prompt) => {
           const promptText = typeof prompt === "string" ? prompt : JSON.stringify(prompt);
@@ -672,6 +678,10 @@ export class HubRelationshipHarness {
 
   failProviderPromptStart(prompt = "Create through the Hub"): void {
     this.promptsToFail.add(prompt);
+  }
+
+  failNextProviderModeChange(): void {
+    this.failNextModeChange = true;
   }
 
   failNextProviderSessionClose(): void {

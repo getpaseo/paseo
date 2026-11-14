@@ -1,6 +1,7 @@
+import { AppearanceText as Text } from "@/appearance/text";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Text, View, type TextStyle } from "react-native";
+import { View, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { isWeb } from "@/constants/platform";
