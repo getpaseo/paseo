@@ -449,6 +449,29 @@ it("returns to the best match in the frame results arrive while the list is scro
   expect([...new Set(recording.frames)]).toEqual([LIST_PADDING_AND_BORDER]);
 });
 
+/**
+ * The composer hands over a new list on every keystroke and every refetch, often holding the results
+ * it already showed. Starting over for those returned a list the user had scrolled to its rest.
+ */
+it("keeps its place when the same results arrive again", async () => {
+  const options = commandOptions("skill", 100);
+  render(<Screen visible={false} options={options} />);
+  render(<Screen visible options={options} />);
+  const popover = await waitForPopover();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  scrollerOf(popover).scrollTop = 400;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const scrolledAway = bestMatchAgainstPopoverBottom("/skill-1");
+  expect(scrolledAway).not.toBe(LIST_PADDING_AND_BORDER);
+
+  const recording = recordPaintedFrames(() => bestMatchAgainstPopoverBottom("/skill-1"));
+  await changeAndPaint(<Screen visible options={commandOptions("skill", 100)} />);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  recording.stop();
+
+  expect([...new Set(recording.frames)]).toEqual([scrolledAway]);
+});
+
 /** Whether the row is wholly inside the popover's box. */
 function isRowInView(label: string): boolean {
   const popover = rectOf("composer-autocomplete-popover");
