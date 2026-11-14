@@ -39,15 +39,20 @@ afterEach(async () => {
   );
 });
 
-async function harness(env: Record<string, string> = {}) {
+async function harness(
+  env: Record<string, string> = {},
+  customLaunch?: (cwd: string) => Promise<ProviderLaunch> | ProviderLaunch,
+) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-test-"));
   temporary.push(cwd);
   const log = path.join(cwd, "argv.ndjson");
-  const launch: ProviderLaunch = {
-    command: process.execPath,
-    args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
-  };
+  const launch: ProviderLaunch = customLaunch
+    ? await customLaunch(cwd)
+    : {
+        command: process.execPath,
+        args: [fake, "--launch-prefix"],
+        env: { AGY_TEST_LOG: log, ...env },
+      };
   const connection = await provider.connect({
     versions: [1],
     capabilities: PROVIDER_CAPABILITIES,
@@ -140,6 +145,15 @@ async function harness(env: Record<string, string> = {}) {
       throw new Error("Missing persistence");
     return opened.persistence;
   }
+  async function catalog(requestId = "catalog") {
+    await request({ type: "catalog", requestId });
+    const event = events.find(
+      (candidate): candidate is Extract<ProviderEvent, { type: "catalog" }> =>
+        candidate.type === "catalog" && candidate.requestId === requestId,
+    );
+    if (!event) throw new Error("Missing catalog");
+    return event;
+  }
   return {
     connection,
     events,
@@ -147,6 +161,7 @@ async function harness(env: Record<string, string> = {}) {
     cwd,
     wait,
     request,
+    catalog,
     open,
     prompt,
     message,
@@ -595,8 +610,6 @@ describe("discovery", () => {
   );
 
   it("parses agy 1.5.9 catalog including Gemini 4 Hydrogen variants", async () => {
-    const h = await harness();
-    const probeScript = path.join(h.cwd, "agy-159.mjs");
     const models = [
       "gemini-4-argon-medium\tGemini 4 Argon (Medium)",
       "gemini-4-argon-high\tGemini 4 Argon (High)",
@@ -617,27 +630,23 @@ describe("discovery", () => {
       "claude-sonnet-5-5-high\tClaude Sonnet 5.5 (High)",
       "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)",
     ].join("\n");
-    await writeFile(
-      probeScript,
-      [
-        "const arg = process.argv[2];",
-        'if (arg === "--version") { process.stdout.write("1.5.9\\n"); process.exit(0); }',
-        `if (arg === "models") { process.stdout.write(${JSON.stringify(`${models}\n`)}); process.exit(0); }`,
-        "process.exit(1);",
-      ].join("\n"),
-    );
+    const h = await harness({}, async (cwd) => {
+      const probeScript = path.join(cwd, "agy-159.mjs");
+      await writeFile(
+        probeScript,
+        [
+          "const arg = process.argv[2];",
+          'if (arg === "--version") { process.stdout.write("1.5.9\\n"); process.exit(0); }',
+          `if (arg === "models") { process.stdout.write(${JSON.stringify(`${models}\n`)}); process.exit(0); }`,
+          "process.exit(1);",
+        ].join("\n"),
+      );
+      return { command: process.execPath, args: [probeScript], env: {} };
+    });
 
-    const launch = { command: process.execPath, args: [probeScript], env: {} };
-    expect(await provider.status?.({ launch })).toEqual({ available: true });
+    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
 
-    const connection = await provider.connect({ versions: [1], capabilities: [], launch });
-    const event = await new Promise<unknown>((resolve, reject) => {
-      const unsubscribe = connection.onEvent((received) => {
-        unsubscribe();
-        resolve(received);
-      });
-      connection.send({ type: "catalog", requestId: "catalog-159" }).catch(reject);
-    }).finally(() => connection.close());
+    const event = await h.catalog("catalog-159");
 
     expect(event).toMatchObject({
       type: "catalog",
@@ -652,13 +661,12 @@ describe("discovery", () => {
         defaultMode: "full-access",
       },
     });
-    expect((event as { catalog: { models: unknown[] } }).catalog.models).toHaveLength(18);
+    expect(event.catalog.models).toHaveLength(18);
   });
 
   it("parses tab-separated catalog and exposes only full access without thinking options", async () => {
     const h = await harness();
-    await h.request({ type: "catalog", requestId: "catalog" });
-    const event = h.events[0];
+    const event = await h.catalog();
     expect(event).toMatchObject({
       type: "catalog",
       catalog: {
@@ -669,7 +677,6 @@ describe("discovery", () => {
         defaultMode: "full-access",
       },
     });
-    if (event.type !== "catalog") throw new Error("Missing catalog");
     expect(event.catalog.models).toHaveLength(11);
     expect(event.catalog.modes).toEqual([
       {
