@@ -30,6 +30,7 @@ const metrics = {
 describe("computeWorkspaceTabLayout", () => {
   it("keeps each tab at its natural content width when space is available", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 1200,
       tabLabelWidths: [56, 70, 49],
       metrics,
@@ -45,6 +46,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("lets short labels use their content width below the old 96px floor", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 300,
       tabLabelWidths: [29, 52],
       metrics: { ...metrics, actionsReservedWidth: 36 },
@@ -59,6 +61,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("sizes a single tab between the minimum and maximum from its content", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 1200,
       tabLabelWidths: [105],
       metrics,
@@ -71,6 +74,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("shrinks natural widths proportionally without crossing the clickable minimum", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 460,
       tabLabelWidths: [168, 84, 56],
       metrics,
@@ -85,6 +89,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("caps long tabs at the maximum width", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 1004,
       tabLabelWidths: [280, 280, 280, 280],
       metrics: {
@@ -103,6 +108,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("keeps every tab at the clickable minimum at the exact fit boundary", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 404,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
@@ -117,6 +123,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("scrolls at natural widths rather than shrinking below the clickable minimum", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 403,
       tabLabelWidths: [98, 98, 98, 98],
       metrics,
@@ -131,6 +138,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("keeps natural widths and no inline close on compact layouts while the tabs fit", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 600,
       tabLabelWidths: [56, 70, 49],
       metrics,
@@ -144,6 +152,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("scrolls compact layouts as soon as natural widths overflow instead of squeezing labels", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 460,
       tabLabelWidths: [168, 84, 56],
       metrics,
@@ -155,8 +164,85 @@ describe("computeWorkspaceTabLayout", () => {
     expect(result.items.every((item) => item.showLabel)).toBe(true);
   });
 
+  it("gives the selected tablet tab 240px before shrinking neighboring tabs", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 620,
+      tabLabelWidths: [400, 400, 400, 400],
+      metrics,
+      activeTab: { index: 2, maxWidth: 240 },
+    });
+
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(result.items.map((item) => item.width)).toEqual([77, 77, 240, 77]);
+  });
+
+  it("keeps the selected title wide when the row must scroll", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 500,
+      tabLabelWidths: [400, 400, 400, 400],
+      metrics,
+      activeTab: { index: 3, maxWidth: 240 },
+    });
+
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160, 240]);
+  });
+
+  it("moves the width budget with selection", () => {
+    for (const index of [0, 1, 2]) {
+      const result = computeWorkspaceTabLayout({
+        compact: false,
+        viewportWidth: 450,
+        tabLabelWidths: [400, 400, 400],
+        metrics,
+        activeTab: { index, maxWidth: 240 },
+      });
+      expect(result.items.map((item) => item.width)).toEqual(
+        [0, 1, 2].map((tabIndex) => (tabIndex === index ? 240 : 160)),
+      );
+    }
+  });
+
+  it("does not stretch a short selected title to the priority cap", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 600,
+      tabLabelWidths: [400, 30, 400],
+      metrics,
+      activeTab: { index: 1, maxWidth: 240 },
+    });
+    expect(result.items.map((item) => item.width)).toEqual([160, 64, 160]);
+  });
+
+  it("keeps the selected tab within a narrow pane's visible scroll area", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 300,
+      tabLabelWidths: [400, 400, 400],
+      metrics,
+      activeTab: { index: 1, maxWidth: 240 },
+    });
+    expect(result.requiresHorizontalScrollFallback).toBe(true);
+    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160]);
+  });
+
+  it("releases overflow after widening the tablet", () => {
+    const result = computeWorkspaceTabLayout({
+      compact: false,
+      viewportWidth: 900,
+      tabLabelWidths: [400, 400, 400, 400],
+      metrics,
+      activeTab: { index: 3, maxWidth: 240 },
+    });
+    expect(result.requiresHorizontalScrollFallback).toBe(false);
+    expect(result.items.map((item) => item.width)).toEqual([160, 160, 160, 240]);
+  });
+
   it("returns empty layout details when there are no tabs", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 1200,
       tabLabelWidths: [],
       metrics,
@@ -170,6 +256,7 @@ describe("computeWorkspaceTabLayout", () => {
 
   it("uses rendered label width rather than character count", () => {
     const result = computeWorkspaceTabLayout({
+      activeTab: null,
       viewportWidth: 1200,
       tabLabelWidths: [68, 104],
       metrics,
