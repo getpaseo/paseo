@@ -25,10 +25,15 @@ async function openSeededComposer(
     title: "Toolbar tone",
     model: "ten-second-stream",
   });
-  await openAgentRoute(page, agent);
-  await expectComposerVisible(page);
-  await expect(composerControl(page, readyTestId)).toBeVisible({ timeout: 30_000 });
-  return agent;
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await expect(composerControl(page, readyTestId)).toBeVisible({ timeout: 30_000 });
+    return agent;
+  } catch (error) {
+    await agent.cleanup();
+    throw error;
+  }
 }
 
 test.describe("Composer toolbar glyph tone", () => {
