@@ -53,6 +53,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  SteerResult,
   ImportProviderSessionInput,
   ImportProviderSessionContext,
   ResolveAgentDefaultModeInput,
@@ -1848,6 +1849,50 @@ interface ControlledInterruptFixture {
   cleanup(): Promise<void>;
 }
 
+/** Repeats one provider turn id; its terminal events are suppressed once finalized. */
+class ReusedTurnIdSession extends TestAgentSession {
+  override async startTurn(): Promise<{ turnId: string }> {
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: "reused-turn" });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId: "reused-turn" });
+    }, 0);
+    return { turnId: "reused-turn" };
+  }
+
+  override async interrupt(): Promise<void> {
+    // The provider acknowledges the interrupt but never reports the turn ending.
+  }
+}
+
+/** The steer admission never resolves and the turn never ends, like the production hang. */
+class HangingSteerSession extends TestAgentSession {
+  private readonly steerStarted = deferred<void>();
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    setTimeout(() => {
+      this.pushEvent({
+        type: "turn_started",
+        provider: this.provider,
+        turnId: "hanging-steer-turn",
+      });
+    }, 0);
+    return { turnId: "hanging-steer-turn" };
+  }
+
+  override async interrupt(): Promise<void> {
+    // The provider acknowledges the interrupt but never reports the turn ending.
+  }
+
+  async steerActiveTurn(): Promise<SteerResult> {
+    this.steerStarted.resolve();
+    return await new Promise<SteerResult>(() => {});
+  }
+
+  waitForSteerStart(): Promise<void> {
+    return this.steerStarted.promise;
+  }
+}
+
 async function createControlledInterruptFixture(options: {
   name: string;
   agentId: string;
@@ -3357,6 +3402,113 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
     });
   } finally {
     await fixture.cleanup();
+  }
+});
+
+test("cancel force-settles a run whose canceled turn was already finalized", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-finalized-turn-"));
+  const session = new ReusedTurnIdSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await drainAsyncGenerator(manager.streamAgent(agent.id, "first"));
+    expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle" });
+
+    // The provider reuses a turn id it already finalized: its terminal event is ignored, so the
+    // run stays tracked while the turn is gone — the production "agent_end but no turn end" state.
+    const events: AgentStreamEvent[] = [];
+    const second = manager.streamAgent(agent.id, "second");
+    const drained = (async () => {
+      for await (const event of second) events.push(event);
+    })();
+    await vi.waitFor(() =>
+      expect(manager.getAgent(agent.id)?.activeForegroundTurnId).toBe("reused-turn"),
+    );
+
+    // The interrupt resolves, but the provider never settles the turn. Cancel must still return.
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await drained;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_canceled", turnId: "reused-turn" }),
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+      pendingReplacement: false,
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("cancel and refresh proceed when a steer admission hangs and the turn never ends", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-hung-steer-"));
+  const session = new HangingSteerSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10, steerAdmissionMs: 10 },
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const events: AgentStreamEvent[] = [];
+    const run = manager.streamAgent(agent.id, "initial");
+    const drained = (async () => {
+      for await (const event of run) events.push(event);
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    // A steer the provider never answers pins the foreground mutation lane, so the cancel
+    // queued behind it never reaches the provider.
+    const steer = manager.steerAgentRun(agent.id, "steer").catch((error: unknown) => error);
+    await session.waitForSteerStart();
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await expect(steer).resolves.toBeInstanceOf(Error);
+    await drained;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_canceled", turnId: "hanging-steer-turn" }),
+    );
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+
+    // Everything that was queued behind the cancel must proceed now.
+    await expect(manager.reloadAgentSession(agent.id)).resolves.toBeTruthy();
+    await expect(manager.archiveAgent(agent.id)).resolves.toMatchObject({
+      archivedAt: expect.any(String),
+    });
+    agentId = null;
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 

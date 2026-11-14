@@ -94,6 +94,7 @@ import {
   AgentRunState,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
@@ -117,6 +118,10 @@ import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
+// A steer acknowledgement means "the provider queued the message", not "the turn finished",
+// so it must never take long. This bound keeps a provider that never answers the admission
+// from pinning the agent's foreground mutation lane (and every cancel/replace behind it).
+const STEER_ADMISSION_TIMEOUT_MS = 30_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
@@ -221,8 +226,8 @@ interface NormalizeConfigOptions {
   purpose?: AgentResumePurpose;
 }
 
-interface TimeoutOptions {
-  operation: Promise<void>;
+interface TimeoutOptions<T> {
+  operation: Promise<T>;
   timeoutMs: number;
   onLateError?: (error: unknown) => void;
 }
@@ -337,6 +342,17 @@ export interface ProviderAvailability {
 interface AgentManagerRescueTimeouts {
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
+  steerAdmissionMs?: number;
+}
+
+function resolveRescueTimeouts(
+  overrides: AgentManagerRescueTimeouts | undefined,
+): Required<AgentManagerRescueTimeouts> {
+  return {
+    reloadSessionCloseMs: overrides?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+    interruptSessionMs: overrides?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+    steerAdmissionMs: overrides?.steerAdmissionMs ?? STEER_ADMISSION_TIMEOUT_MS,
+  };
 }
 
 interface ProviderEnabledFlag {
@@ -899,12 +915,7 @@ export class AgentManager {
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
-    this.rescueTimeouts = {
-      reloadSessionCloseMs:
-        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
-      interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
-    };
+    this.rescueTimeouts = resolveRescueTimeouts(options.rescueTimeouts);
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -1997,22 +2008,25 @@ export class AgentManager {
     }
   }
 
-  private async waitWithTimeout(options: TimeoutOptions): Promise<TimeoutResult> {
+  private async waitWithTimeout<T>(
+    options: TimeoutOptions<T>,
+  ): Promise<T | "completed" | "timed_out"> {
     let didTimeOut = false;
     let timer: NodeJS.Timeout | null = null;
-    const operation = options.operation
-      .then((): TimeoutResult => "completed")
-      .catch((error) => {
-        if (didTimeOut) {
-          options.onLateError?.(error);
-          return "timed_out" as const;
-        }
-        throw error;
-      });
 
     try {
-      return await Promise.race([
-        operation,
+      const completed = options.operation.then(
+        (value): T | TimeoutResult => value,
+        (error) => {
+          if (didTimeOut) {
+            options.onLateError?.(error);
+            return "timed_out" as const;
+          }
+          throw error;
+        },
+      );
+      return await Promise.race<T | TimeoutResult>([
+        completed,
         new Promise<TimeoutResult>((resolvePromise) => {
           timer = setTimeout(() => {
             didTimeOut = true;
@@ -3530,7 +3544,33 @@ export class AgentManager {
       const barrier: SteerEventBarrier = { events: [] };
       this.steerEventBarriers.set(agent.id, barrier);
       try {
-        return await operation();
+        const admission = await this.waitWithTimeout({
+          operation: operation(),
+          timeoutMs: this.rescueTimeouts.steerAdmissionMs,
+          onLateError: (error) => {
+            this.logger.warn(
+              { err: error, agentId: agent.id, turnId: expectedTurnId },
+              "Steer admission failed after its timeout",
+            );
+          },
+        });
+        if (typeof admission === "string") {
+          // The provider never answered the steer admission. Report the unknown delivery
+          // instead of holding the foreground mutation lane (and every cancel/replace and
+          // refresh/archive queued behind it) until the process restarts.
+          this.logger.warn(
+            {
+              agentId: agent.id,
+              turnId: expectedTurnId,
+              timeoutMs: this.rescueTimeouts.steerAdmissionMs,
+            },
+            "Steer admission timed out; releasing the foreground mutation",
+          );
+          throw new Error(
+            `Timed out admitting steer for agent ${agent.id} after ${this.rescueTimeouts.steerAdmissionMs}ms`,
+          );
+        }
+        return admission;
       } finally {
         if (this.steerEventBarriers.get(agent.id) === barrier) {
           this.steerEventBarriers.delete(agent.id);
@@ -3538,7 +3578,7 @@ export class AgentManager {
         for (const event of barrier.events) {
           this.enqueueSessionEvent(agent.id, event);
         }
-        await this.drainSessionEvents(agent.id);
+        await this.drainSessionEventsBounded(agent.id, "steer admission");
       }
     });
   }
@@ -3839,29 +3879,38 @@ export class AgentManager {
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+      timeoutMs: this.rescueTimeouts.interruptSessionMs,
     });
 
     if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+      return { status: settlement === "timed_out" ? "refused" : "settled" };
     }
 
+    if (settlement === "timed_out") {
+      await this.forceCancelUnsettledRun(agent, run);
+    }
+
+    if (agent.pendingPermissions.size > 0) {
+      this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+    }
+    return { status: "settled" };
+  }
+
+  /**
+   * The provider acknowledged the interrupt but never reported its turn ending. Synthesize the
+   * canceled turn, then force-clear the run if even that does not settle it: a provider turn that
+   * will never end must not keep the tracked run, the mutation lane, or the agent lifecycle pinned.
+   */
+  private async forceCancelUnsettledRun(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<void> {
+    const agentId = agent.id;
     const runTurnId = this.runs.getTurnId(agentId);
-    if (settlement === "timed_out" && runTurnId) {
-      this.logger.warn(
-        { agentId, turnId: runTurnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: runTurnId,
-      });
-      await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
+    if (!runTurnId && run.kind === "foreground") {
+      // A turn that never started has no provider turn to cancel; just clear the run.
       this.logger.warn(
         { agentId, kind: run.kind },
         "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
@@ -3872,24 +3921,53 @@ export class AgentManager {
         this.touchUpdatedAt(agent);
         this.emitState(agent);
       }
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
+      return;
     }
 
-    if (agent.pendingPermissions.size > 0) {
-      this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
+    this.logger.warn(
+      { agentId, turnId: runTurnId ?? undefined, kind: run.kind },
+      "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
+    );
+    await this.dispatchSessionEvent(agent, {
+      type: "turn_canceled",
+      provider: agent.provider,
+      reason: "interrupted",
+      ...(runTurnId ? { turnId: runTurnId } : {}),
+    });
+    const settlement = await this.waitWithTimeout({
+      operation: run.settledPromise,
+      timeoutMs: this.rescueTimeouts.interruptSessionMs,
+      onLateError: (error) => {
+        this.logger.warn({ err: error, agentId }, "Canceled turn failed after the settle timeout");
+      },
+    });
+    if (settlement !== "timed_out") {
+      return;
+    }
+
+    // The canceled turn was already finalized (its provider event arrived, yet the run stayed
+    // tracked) or never reported at all. Release the run and the turn by hand; a late provider
+    // event for this turn is rejected as stale afterwards.
+    this.logger.warn(
+      { agentId, turnId: runTurnId ?? undefined, kind: run.kind },
+      "cancelAgentRun: canceled turn never settled the run, clearing it",
+    );
+    if (this.runs.getRun(agentId) === run) {
+      this.runs.clearAgentRun(agentId);
+    }
+    this.runs.cancelWaiters(agent, (turnId) => ({
+      type: "turn_canceled",
+      provider: agent.provider,
+      reason: "interrupted",
+      turnId,
+    }));
+    if (run.kind === "foreground") {
+      this.finalizeForegroundTurn(agent, runTurnId ?? undefined);
+    } else if (!agent.pendingReplacement) {
+      agent.lifecycle = "idle";
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
-    return { status: "settled" };
   }
 
   private async cancelAgentRunBefore(
@@ -4702,6 +4780,29 @@ export class AgentManager {
       if (this.sessionEventTails.get(agentId) === tail) {
         return;
       }
+    }
+  }
+
+  /**
+   * Bounded variant of {@link drainSessionEvents} for paths that hold the foreground mutation
+   * lane: a session-event dispatch that never settles must not pin that lane forever.
+   */
+  private async drainSessionEventsBounded(agentId: string, reason: string): Promise<void> {
+    const result = await this.waitWithTimeout({
+      operation: this.drainSessionEvents(agentId),
+      timeoutMs: this.rescueTimeouts.steerAdmissionMs,
+      onLateError: (error) => {
+        this.logger.warn(
+          { err: error, agentId, reason },
+          "Session event drain failed after its timeout",
+        );
+      },
+    });
+    if (result === "timed_out") {
+      this.logger.warn(
+        { agentId, reason, timeoutMs: this.rescueTimeouts.steerAdmissionMs },
+        "Session event drain timed out",
+      );
     }
   }
 
