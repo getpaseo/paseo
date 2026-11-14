@@ -160,6 +160,12 @@ const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspac
 
 const projectViewKeyExtractor = (project: SidebarProjectEntry) => project.viewKey;
 
+// Drag plumbing for projects rendered outside the drag list (automatic sorts are not draggable).
+const staticProjectDragState: {
+  drag: () => void;
+  isDragging: boolean;
+} = { drag: () => {}, isDragging: false };
+
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -2479,10 +2485,25 @@ function ProjectModeList({
     [renderPinnedChatRow],
   );
 
-  const projectBody =
-    projects.length === 0 ? (
-      <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
-    ) : (
+  const renderStaticProject = useCallback(
+    (item: SidebarProjectEntry) => renderProjectBlock(item, staticProjectDragState),
+    [renderProjectBlock],
+  );
+
+  function renderProjectBody(): ReactElement {
+    if (projects.length === 0) {
+      return (
+        <SidebarProjectEmptyState onAddProject={onAddProject} onImportSession={onImportSession} />
+      );
+    }
+    if (!manualSort) {
+      return (
+        <View testID="sidebar-project-list" style={styles.projectListContainer}>
+          {unpinnedProjects.map((project) => renderStaticProject(project))}
+        </View>
+      );
+    }
+    return (
       <DraggableList
         testID="sidebar-project-list"
         data={unpinnedProjects}
@@ -2498,6 +2519,9 @@ function ProjectModeList({
         containerStyle={styles.projectListContainer}
       />
     );
+  }
+
+  const projectBody = renderProjectBody();
 
   const content = (
     <>
