@@ -33,6 +33,7 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const [overviewShare, setOverviewShare] = useState(DEFAULT_OVERVIEW_SHARE);
   const [splitHeight, setSplitHeight] = useState(0);
   const [overviewHeight, setOverviewHeight] = useState(0);
+  const [overviewContentHeight, setOverviewContentHeight] = useState(0);
 
   const handleSplitLayout = useCallback((event: LayoutChangeEvent) => {
     setSplitHeight(event.nativeEvent.layout.height);
@@ -40,10 +41,19 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
   const handleOverviewLayout = useCallback((event: LayoutChangeEvent) => {
     setOverviewHeight(event.nativeEvent.layout.height);
   }, []);
-  const handleResize = useCallback((_groupId: string, sizes: number[]) => {
-    const [share] = sizes;
-    if (share !== undefined) setOverviewShare(share);
+  const handleOverviewContentSizeChange = useCallback((_width: number, height: number) => {
+    setOverviewContentHeight(height);
   }, []);
+  // A drag past the end of short content leaves the separator at the content's bottom, so the
+  // share saved is the one drawn. Otherwise the separator would jump there when content grows.
+  const handleResize = useCallback(
+    (_groupId: string, sizes: number[]) => {
+      const [share] = sizes;
+      if (share === undefined || splitHeight <= 0) return;
+      setOverviewShare(Math.min(share, overviewContentHeight / splitHeight));
+    },
+    [overviewContentHeight, splitHeight],
+  );
 
   // The overview stops at its content height, so a drag starts from where the separator is
   // drawn rather than from the share the overview may grow to.
@@ -69,6 +79,7 @@ export function PullRequestPaneSplit({ children, activityOpen }: PullRequestPane
         <ScrollView
           style={overviewStyle}
           onLayout={handleOverviewLayout}
+          onContentSizeChange={handleOverviewContentSizeChange}
           showsVerticalScrollIndicator={false}
           testID="pr-pane-overview"
         >

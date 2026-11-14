@@ -61,14 +61,9 @@ function pullRequest(checks: PrPaneCheck[]): PrPaneData {
 /** A phone's home indicator: the pane clears it with bottom padding. */
 const HOME_INDICATOR_INSETS = { top: 0, right: 0, bottom: 34, left: 0 };
 
-function mountPane(data: PrPaneData, insets = { top: 0, right: 0, bottom: 0, left: 0 }) {
-  container = document.createElement("div");
-  container.style.height = `${PANE_HEIGHT}px`;
-  container.style.width = "600px";
-  container.style.display = "flex";
-  container.style.flexDirection = "column";
-  document.body.appendChild(container);
-  root = createRoot(container);
+const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
+
+function renderPane(data: PrPaneData, insets = NO_INSETS) {
   act(() =>
     root?.render(
       <SafeAreaInsetsContext.Provider value={insets}>
@@ -78,6 +73,17 @@ function mountPane(data: PrPaneData, insets = { top: 0, right: 0, bottom: 0, lef
       </SafeAreaInsetsContext.Provider>,
     ),
   );
+}
+
+function mountPane(data: PrPaneData, insets = NO_INSETS) {
+  container = document.createElement("div");
+  container.style.height = `${PANE_HEIGHT}px`;
+  container.style.width = "600px";
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  document.body.appendChild(container);
+  root = createRoot(container);
+  renderPane(data, insets);
   const pane = container.querySelector<HTMLElement>('[data-testid="pr-pane"]');
   if (!pane) throw new Error("The pull request pane did not render");
   return pane;
@@ -175,6 +181,19 @@ describe("pull request pane layout", () => {
       .poll(() => activityHeader(pane).getBoundingClientRect().bottom)
       .toBeLessThanOrEqual(pane.getBoundingClientRect().bottom);
     expect(isOnScreen(activityHeader(pane))).toBe(true);
+  });
+
+  it("keeps the separator where it was drawn when a drag past short checks is followed by more", async () => {
+    const pane = mountPane(pullRequest(successfulChecks(2)));
+    await settleLayout();
+    const drawn = checksRegionBottom(pane);
+
+    dragSeparator(pane, 400);
+    await settleLayout();
+    renderPane(pullRequest(successfulChecks(30)));
+    await settleLayout();
+
+    expect(checksRegionBottom(pane)).toBeCloseTo(drawn, 0);
   });
 
   it("resizes the checks against Activity by dragging the separator between them", async () => {
