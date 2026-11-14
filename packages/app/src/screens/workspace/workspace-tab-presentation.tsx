@@ -147,6 +147,11 @@ interface WorkspaceTabOptionRowProps {
   active: boolean;
   onPress: () => void;
   trailingAccessory?: ReactNode;
+  onLongPress?: () => void;
+  titleNumberOfLines?: number;
+  details?: string;
+  disabled?: boolean;
+  testID?: string;
 }
 
 export function WorkspaceTabOptionRow({
@@ -155,6 +160,11 @@ export function WorkspaceTabOptionRow({
   active,
   onPress,
   trailingAccessory,
+  onLongPress,
+  titleNumberOfLines = 1,
+  details,
+  disabled,
+  testID,
 }: WorkspaceTabOptionRowProps): ReactElement {
   const { t } = useTranslation();
   const isOptionActive = useCallback(
@@ -175,7 +185,14 @@ export function WorkspaceTabOptionRow({
   );
   return (
     <View style={optionRowStyle}>
-      <Pressable onPress={onPress} style={pressableStyle}>
+      <Pressable
+        testID={testID}
+        accessibilityRole="button"
+        disabled={disabled}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        style={pressableStyle}
+      >
         {(state) => {
           const optionActive = isOptionActive(state);
           return (
@@ -188,11 +205,12 @@ export function WorkspaceTabOptionRow({
                 />
               </View>
               <View style={styles.optionContent}>
-                <Text numberOfLines={1} style={styles.optionLabel}>
+                <Text numberOfLines={titleNumberOfLines} style={styles.optionLabel}>
                   {presentation.titleState === "loading"
                     ? t("workspace.tabs.loading")
                     : presentation.label}
                 </Text>
+                {details ? <Text style={styles.optionDetails}>{details}</Text> : null}
               </View>
             </>
           );
@@ -251,6 +269,11 @@ const styles = StyleSheet.create((theme) => ({
   optionContent: {
     flex: 1,
     flexShrink: 1,
+  },
+  optionDetails: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    marginTop: theme.spacing[1],
   },
   optionLabel: {
     fontSize: theme.fontSize.base,

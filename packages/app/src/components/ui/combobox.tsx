@@ -107,6 +107,8 @@ export interface ComboboxProps {
    * and any leading icon at the sheet's shared indent.
    */
   header?: SheetHeader;
+  /** Use the sheet presentation even on wide layouts. */
+  forceSheet?: boolean;
   mobileChildrenScrollEnabled?: boolean;
   /** Let custom desktop children own scrolling, for example a virtualized list. */
   desktopChildrenScrollEnabled?: boolean;
@@ -135,7 +137,7 @@ export interface ComboboxProps {
   /** When true, selecting an option does not close the picker (multi-select mode). */
   keepOpenOnSelect?: boolean;
   anchorRef: React.RefObject<View | null>;
-  children?: ReactNode;
+  children?: ReactNode | ((input: { activeOptionId: string | null }) => ReactNode);
 }
 
 function resolveControlledOpen(
@@ -937,7 +939,7 @@ interface MobileBodyProps {
   emptyText: string;
   handleSelect: (id: string) => void;
   renderOption: RenderOptionFn | undefined;
-  children: ReactNode;
+  children: ComboboxProps["children"];
 }
 
 function MobileComboboxBody(props: MobileBodyProps): ReactElement | null {
@@ -960,18 +962,23 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
     () => [styles.comboboxTitle, { color: props.titleColor }],
     [props.titleColor],
   );
-  const body = props.hasChildren ? (
-    props.children
-  ) : (
-    <OptionsList
-      options={props.orderedVisibleOptions}
-      value={props.value}
-      activeIndex={props.activeIndex}
-      emptyText={props.emptyText}
-      onSelect={props.handleSelect}
-      renderOption={props.renderOption}
-    />
-  );
+  const activeOptionId = props.orderedVisibleOptions[props.activeIndex]?.id ?? null;
+  let body: ReactNode;
+  if (props.hasChildren) {
+    body =
+      typeof props.children === "function" ? props.children({ activeOptionId }) : props.children;
+  } else {
+    body = (
+      <OptionsList
+        options={props.orderedVisibleOptions}
+        value={props.value}
+        activeIndex={props.activeIndex}
+        emptyText={props.emptyText}
+        onSelect={props.handleSelect}
+        renderOption={props.renderOption}
+      />
+    );
+  }
 
   return (
     <IsolatedBottomSheetModal
@@ -984,6 +991,7 @@ function MobileComboboxSheet(props: MobileBodyProps): ReactElement {
       onDismiss={handleSheetDismiss}
       backdropOpacity={0.45}
       enablePanDownToClose
+      enableContentPanningGesture={!props.hasChildren || props.mobileChildrenScrollEnabled}
       backgroundComponent={ComboboxSheetBackground}
       handleIndicatorStyle={props.handleIndicatorStyle}
       keyboardBehavior="extend"
@@ -1090,21 +1098,26 @@ interface DesktopBodyProps {
   renderOption: RenderOptionFn | undefined;
   hasChildren: boolean;
   childrenScrollEnabled: boolean;
-  children: ReactNode;
+  children: ComboboxProps["children"];
 }
 
 function DesktopComboboxChildrenBody(props: {
   header: SheetHeader | undefined;
   stickyHeader: ReactNode;
   scrollEnabled: boolean;
-  children: ReactNode;
+  activeOptionId: string | null;
+  children: ComboboxProps["children"];
 }): ReactElement {
+  const renderedChildren =
+    typeof props.children === "function"
+      ? props.children({ activeOptionId: props.activeOptionId })
+      : props.children;
   const header = props.header ? <InlineHeaderView header={props.header} /> : props.stickyHeader;
   if (!props.scrollEnabled) {
     return (
       <>
         {header}
-        <View style={styles.desktopChildrenBody}>{props.children}</View>
+        <View style={styles.desktopChildrenBody}>{renderedChildren}</View>
       </>
     );
   }
@@ -1117,7 +1130,7 @@ function DesktopComboboxChildrenBody(props: {
         showsVerticalScrollIndicator={false}
         style={styles.desktopScroll}
       >
-        {props.children}
+        {renderedChildren}
       </ScrollView>
     </>
   );
@@ -1234,6 +1247,7 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
               header={props.header}
               stickyHeader={props.stickyHeader}
               scrollEnabled={props.childrenScrollEnabled}
+              activeOptionId={props.orderedVisibleOptions[props.activeIndex]?.id ?? null}
             >
               {props.children}
             </DesktopComboboxChildrenBody>
@@ -1287,6 +1301,7 @@ function filtersLocally(input: { searchable: boolean; remoteSearch?: boolean }):
   return input.searchable && !input.remoteSearch;
 }
 
+// oxlint-disable-next-line eslint(complexity)
 export function Combobox({
   options,
   value,
@@ -1305,6 +1320,7 @@ export function Combobox({
   optionsPosition = "below-search",
   title,
   header,
+  forceSheet,
   mobileChildrenScrollEnabled = true,
   desktopChildrenScrollEnabled = true,
   mobileChildrenContentContainerStyle,
@@ -1327,7 +1343,8 @@ export function Combobox({
   const resolvedPlaceholder = placeholder ?? t("common.placeholders.search");
   const resolvedEmptyText = emptyText ?? t("common.empty.noOptionsMatchSearch");
   const resolvedTitle = title ?? t("common.actions.select");
-  const isMobile = useIsCompactFormFactor();
+  const isCompact = useIsCompactFormFactor();
+  const isMobile = forceSheet === true || isCompact;
   const active = useRetainedPanelActive();
   const floatingLayer = useOverlayLayer("floating");
   const titleColor = theme.colors.foreground;
