@@ -235,8 +235,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     [snapshotEntries],
   );
   const snapshotModelSelectorProviders = useMemo(
-    () => buildSelectableProviderSelectorProviders(snapshotEntries, { isConnected }),
-    [snapshotEntries, isConnected],
+    () =>
+      buildSelectableProviderSelectorProviders(snapshotEntries, {
+        isConnected,
+        selectedProvider: formState.provider || null,
+      }),
+    [snapshotEntries, isConnected, formState.provider],
   );
   const snapshotSelectedEntry = useMemo(
     () =>
