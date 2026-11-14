@@ -1,4 +1,5 @@
 import type {
+  JsonValue,
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "@getpaseo/plugin/server/provider";
@@ -52,4 +53,35 @@ function toolDetail(step: Step): ProviderToolCallDetail {
     return { type: "edit", filePath: path };
   // Native frames summarize writes; they do not carry the file contents or diff.
   return { type: "unknown", input: info.parameters, output: info.error || info.output };
+}
+
+export function mapHistoryToolDetail(
+  name: string,
+  params: Record<string, unknown> = {},
+  output?: string,
+): ProviderToolCallDetail {
+  const filePath = (params.AbsolutePath || params.TargetFile || params.Path || params.file_path) as
+    | string
+    | undefined;
+
+  if (name === "run_command" && typeof params.CommandLine === "string") {
+    return { type: "shell", command: params.CommandLine, output };
+  }
+  if (name === "view_file" && typeof filePath === "string") {
+    return { type: "read", filePath, content: output };
+  }
+  if (name === "write_to_file" && typeof filePath === "string") {
+    return { type: "write", filePath };
+  }
+  if (
+    (name === "replace_file_content" || name === "multi_replace_file_content") &&
+    typeof filePath === "string"
+  ) {
+    return { type: "edit", filePath };
+  }
+  return {
+    type: "unknown",
+    input: params as unknown as JsonValue,
+    output: (output ?? null) as unknown as JsonValue,
+  };
 }
