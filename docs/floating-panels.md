@@ -282,14 +282,19 @@ settles; the composer's resting position changes as the draft grows.
 
 A measured rect is an asynchronous copy, so it lands after the anchor's new
 layout has painted. The composer resizes while the autocomplete is open: a
-wrapped line, cleared text, a window resize. Between measurements the popover
-follows the anchor's live size instead. On native a Reanimated frame callback
-reads `measure()` on the UI thread and moves the popover in the frame the new
-layout mounts. On web a `ResizeObserver` commits the placement with `flushSync`,
-which runs after layout and before paint. Keep the portal's
-`KeyboardTranslateView` host-sized with `pointerEvents="box-none"` and position
-the popover inside it, so the popover moves without leaving its parent's bounds
-(Gotcha 1).
+wrapped line, cleared text, a window resize. On web a `ResizeObserver` reads
+the anchor's rect against the layer and commits the placement with `flushSync`,
+which runs after layout and before paint. On native a Reanimated frame callback
+reads only the anchor's height on the UI thread and holds its bottom edge at
+the rest measurement. A height carries no transform. On iOS the absolute
+position does not reliably include one: the keyboard lift runs on the native
+driver and reaches the shadow tree only when the view re-renders. The
+fixed-bottom model is wrong for the centered New workspace composer on tablets,
+which grows around its middle, and for width or x changes. The popover is off
+there by half the growth, or by the old width, until the next rest measurement.
+Keep the portal's `KeyboardTranslateView` host-sized with
+`pointerEvents="box-none"` and position the popover inside it, so the popover
+moves without leaving its parent's bounds (Gotcha 1).
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
