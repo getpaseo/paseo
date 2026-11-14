@@ -31,6 +31,8 @@ interface GenericACPAgentClientOptions {
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
   now?: () => number;
+  /** The user home the skill roots resolve against; unset means the real one. */
+  homeDir?: string;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -58,6 +60,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
       now: options.now,
+      homeDir: options.homeDir,
     });
 
     this.command = options.command;

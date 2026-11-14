@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentStorage } from "./agent-storage.js";
@@ -16,7 +16,7 @@ import type {
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
+import type { AgentClient, AgentSession, AgentStreamEvent } from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import { AgentManager } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
@@ -51,6 +51,7 @@ const CAPABILITIES = [
 ] as const;
 
 interface ProviderHarnessOptions {
+  skillRoots?: readonly string[];
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
   closeAcknowledgementOnly?: boolean;
@@ -2115,7 +2116,9 @@ async function withObservedProvider(
   run: (client: AgentClient, registry: PluginAgentClientRegistry) => Promise<void>,
 ): Promise<void> {
   const harness = createProviderHarness(options);
-  const registry = new PluginAgentClientRegistry(createTestLogger());
+  const registry = new PluginAgentClientRegistry(createTestLogger(), {
+    skillRoots: options.skillRoots,
+  });
   const unhandled: unknown[] = [];
   const observe = (reason: unknown) => unhandled.push(reason);
   process.on("unhandledRejection", observe);
@@ -2612,3 +2615,124 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await registry.shutdown();
   }
 });
+
+describe("plugin session skills", () => {
+  test("merges discovered skills into advertised commands and expands unadvertised ones", async () => {
+    await withSkillSession(expectMergedSkillsAndExpansion);
+  });
+
+  test("expands a discovered skill in a steered prompt too", async () => {
+    await withSkillSession(async (session, prompts) => {
+      await session.steerActiveTurn!("/temp-skill do it", {
+        expectedTurnId: "turn-1",
+        clientMessageId: "steer-1",
+      });
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]!.prompt.input).toEqual({
+        type: "message",
+        content: [{ type: "text", text: expect.stringContaining('<skill name="temp-skill"') }],
+      });
+    });
+  });
+
+  test("a stop during skill discovery cancels the turn without prompting the plugin", async () => {
+    await withSkillSession(async (session, prompts) => {
+      const events: AgentStreamEvent[] = [];
+      const record = (event: AgentStreamEvent) => {
+        events.push(event);
+      };
+      const unsubscribe = session.subscribe(record);
+
+      // Discovery is filesystem work, so the turn is still preparing its prompt
+      // when the stop arrives; nothing has reached the plugin yet.
+      const turn = session.startTurn("/temp-skill do it");
+      await Promise.resolve();
+      await session.interrupt();
+      const { turnId } = await turn;
+      unsubscribe();
+
+      expect(prompts).toEqual([]);
+      expect(events).toEqual([
+        { type: "turn_started", provider: session.provider, turnId },
+        { type: "turn_canceled", provider: session.provider, turnId, reason: "Interrupted" },
+      ]);
+    });
+  });
+});
+
+async function expectMergedSkillsAndExpansion(
+  session: AgentSession,
+  prompts: Extract<ProviderInput, { type: "session.prompt" }>[],
+): Promise<void> {
+  const commands = await session.listCommands!();
+  const byName = new Map(commands.map((command) => [command.name, command]));
+  expect(byName.get("native-cmd")).toMatchObject({ kind: "command" });
+  expect(byName.get("temp-skill")).toMatchObject({
+    kind: "skill",
+    description: "A temp skill",
+  });
+
+  await session.startTurn("/temp-skill do it");
+  await session.startTurn("/native-cmd args here");
+
+  expect(prompts).toHaveLength(2);
+  const [expanded, advertised] = prompts;
+  expect(expanded!.prompt.input).toEqual({
+    type: "message",
+    content: [{ type: "text", text: expect.stringContaining('<skill name="temp-skill"') }],
+  });
+  expect(advertised!.prompt.input).toEqual({
+    type: "command",
+    name: "native-cmd",
+    arguments: "args here",
+  });
+}
+
+/**
+ * Opens a plugin session whose plugin advertises one native command and whose
+ * skill roots hold one discovered skill. Collects the session.prompt inputs so
+ * tests can assert how each slash prompt reached the plugin.
+ */
+async function withSkillSession(
+  run: (
+    session: AgentSession,
+    prompts: Extract<ProviderInput, { type: "session.prompt" }>[],
+  ) => Promise<void>,
+): Promise<void> {
+  const skillRoot = await mkdtemp(join(tmpdir(), "plugin-skills-"));
+  const prompts: Extract<ProviderInput, { type: "session.prompt" }>[] = [];
+  try {
+    await mkdir(join(skillRoot, "temp-skill"), { recursive: true });
+    await writeFile(
+      join(skillRoot, "temp-skill", "SKILL.md"),
+      "---\ndescription: A temp skill\n---\nBody of temp-skill",
+    );
+    await withObservedProvider(
+      {
+        capabilities: [...CAPABILITIES, "prompt.command", "prompt.steer"],
+        skillRoots: [skillRoot],
+        openChildren(sessionId, emit) {
+          emit({
+            type: "session.commands",
+            sessionId,
+            commands: [{ name: "native-cmd", description: "Plugin native", argumentHint: "args" }],
+          });
+        },
+        async handleInput(input) {
+          if (input.type === "session.prompt") prompts.push(input);
+          return false;
+        },
+      },
+      async (client) => {
+        const session = await client.createSession({ provider: client.provider, cwd: "/tmp" });
+        try {
+          await run(session, prompts);
+        } finally {
+          await session.close();
+        }
+      },
+    );
+  } finally {
+    await rm(skillRoot, { recursive: true, force: true });
+  }
+}
