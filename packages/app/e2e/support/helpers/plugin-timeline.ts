@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expectChatHistoryAttachment } from "./assistant-fork";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
@@ -75,12 +76,14 @@ export const ASSISTANT_TEXT =
 const CLIENT_SOURCE = `import React, { useState } from "react";
 import { Text, View, Pressable } from "react-native";
 import { z } from "zod";
+import { ForkMenu } from "@getpaseo/plugin/client/ui";
 
 function Card({ item }) {
   const [count, setCount] = useState(0);
   return <View>
     <Text accessibilityRole="header">{item.data.label + " " + item.data.phase}</Text>
     <Text>{item.data.text}</Text>
+    <ForkMenu testID="plugin-reply-fork" />
     <Pressable accessibilityRole="button" onPress={() => setCount(count + 1)}>
       <Text>{"Card clicks " + count}</Text>
     </Pressable>
@@ -335,6 +338,65 @@ export async function withPopoverTimelinePlugin(run: () => Promise<void>): Promi
     source: POPOVER_CLIENT_SOURCE,
     run,
   });
+}
+
+export async function expectPluginReplyForkHidden(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Fork chat" })).toHaveCount(0);
+}
+
+export async function expectPluginReplyForkAvailable(page: Page): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Fork chat" });
+  await expect(trigger).toHaveCount(1);
+  await expect(trigger).toBeVisible();
+}
+
+export async function forkCompletedPluginReply(
+  page: Page,
+  info: TestInfo,
+  target: "tab" | "workspace",
+): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Fork chat" });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const tabOption = page.getByRole("menuitem", { name: "Fork in a new tab" });
+  const workspaceOption = page.getByRole("menuitem", { name: "Fork in a new workspace" });
+  await expect(tabOption).toBeVisible();
+  await expect(workspaceOption).toBeVisible();
+  await expect
+    .poll(() =>
+      workspaceOption.evaluate((element) => {
+        let opacity = 1;
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          opacity *= Number(getComputedStyle(node).opacity);
+        }
+        return opacity;
+      }),
+    )
+    .toBe(1);
+  await info.attach("plugin-fork-menu", {
+    body: await page.screenshot({ path: info.outputPath("plugin-fork-menu.png") }),
+    contentType: "image/png",
+  });
+  await (target === "tab" ? tabOption : workspaceOption).click();
+  await expectChatHistoryAttachment(page);
+  if (target === "workspace") await expect(page).toHaveURL(/\/new\?.*draftId=/);
+}
+
+export async function attemptDroppedPluginReplyForkAndWaitForRecovery(
+  page: Page,
+  dropped: () => number,
+): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Fork chat" });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "Fork in a new tab" }).click();
+  await expect.poll(dropped).toBe(1);
+  await expect(trigger).toHaveAttribute("aria-disabled", "true");
+  await expect(page.getByTestId("app-toast-message").first()).toContainText(
+    "Timeout waiting for message (15000ms)",
+    { timeout: 25_000 },
+  );
+  await expect(trigger).not.toHaveAttribute("aria-disabled", "true");
 }
 
 const THOUGHT =
