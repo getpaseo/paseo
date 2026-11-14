@@ -1690,8 +1690,10 @@ it("leaves a worker from a newer Paseo running, reports it incompatible, and clo
 
   await manager.closeTerminals();
 
-  expect(isProcessAlive(newer.workerPid)).toBe(false);
   expect(isProcessAlive(newer.programPid)).toBe(false);
+  // Cleanup counts the worker gone once its socket refuses connections, which happens before
+  // its process exits.
+  await waitForCondition(() => !isProcessAlive(newer.workerPid), 5000);
   expect(await workerRecords(paseoHome)).toEqual([]);
 });
 
