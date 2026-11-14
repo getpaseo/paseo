@@ -24,6 +24,10 @@ import type {
   PluginComposerPillContribution,
 } from "./buttons.js";
 import type {
+  PluginComposerPlaceholderContribution,
+  PluginComposerPlaceholderRegistration,
+} from "./composer-placeholder.js";
+import type {
   PluginTheme,
   PluginWorkspaceSnapshot,
   PluginAgentSnapshot,
@@ -244,6 +248,14 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addComposerPill(
     contribution: PluginComposerPillContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
+  /**
+   * Sets the empty-chat placeholder for one agent. Visible only while the draft is empty;
+   * typing replaces it with the user's text. Terminal and new-workspace composers keep their
+   * own placeholders. A later registration for the same agent replaces the earlier text.
+   */
+  setComposerPlaceholder(
+    contribution: PluginComposerPlaceholderContribution,
+  ): PluginComposerPlaceholderRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
   addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;

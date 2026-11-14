@@ -2317,6 +2317,21 @@ For pills that follow the agent directory, use an explicit [owned list subscript
 The [local plugin example](https://github.com/getpaseo/paseo/blob/main/plugin-examples/local-plugin/client/main.tsx)
 replaces registrations on each snapshot and aborts the observation during entry cleanup, including pending bootstrap.
 
+## Composer placeholder
+
+`client.setComposerPlaceholder({ agentId, text })` replaces the empty-state hint in that agent's chat composer. The text is a native placeholder: it shows only while the draft is empty, and the first character the user types replaces it. It is not inserted into the draft, and Tab does not accept it. Terminal launch and new-workspace composers keep the placeholder their own caller supplies.
+
+The registration's `update(text)` replaces the hint. Whitespace-only text hides it until the next update. `remove()` is idempotent. A later registration for the same agent wins until it is removed. Text longer than 500 characters is cut. Paseo owns the composer, so this does not read or write the current draft.
+
+```tsx
+const hint = client.setComposerPlaceholder({
+  agentId,
+  text: "Run the tests",
+});
+hint.update("Open the diff");
+hint.remove();
+```
+
 ## Button descriptor
 
 These contracts are exported from `@getpaseo/plugin/client`.
