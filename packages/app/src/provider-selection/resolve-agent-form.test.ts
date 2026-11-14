@@ -131,6 +131,34 @@ describe("resolveDefaultModel", () => {
   });
 });
 
+describe("remembered model availability", () => {
+  it("uses the selected host's default when the remembered model belongs to another host", () => {
+    const preferences = {
+      provider: "codex" as const,
+      providerPreferences: { codex: { model: "remote/model" } },
+    };
+    const models: AgentModelDefinition[] = [
+      { provider: "codex", id: "local/first", label: "First" },
+      { provider: "codex", id: "local/default", label: "Default", isDefault: true },
+    ];
+    const resolve = (availableModels: AgentModelDefinition[] | null) =>
+      resolveFormState(
+        undefined,
+        preferences,
+        availableModels,
+        INITIAL_USER_MODIFIED,
+        makeState().form,
+        codexProviderMap,
+      ).model;
+
+    expect(resolve(null)).toBe("remote/model");
+    expect(resolve(models)).toBe("local/default");
+    expect(resolve([{ provider: "codex", id: "remote/model", label: "Remote" }])).toBe(
+      "remote/model",
+    );
+  });
+});
+
 describe("model aliases", () => {
   it("canonicalizes a retired preferred model and restores thinking from its alias key", () => {
     const resolved = resolveFormState(
@@ -791,17 +819,16 @@ describe("resolveFormState", () => {
   });
 });
 
-it("keeps the explicit model when a refreshed catalogue no longer lists it", () => {
+it("keeps a user-selected model when a refreshed catalog no longer lists it", () => {
   const resolved = resolveFormState(
     undefined,
-    { provider: "codex", providerPreferences: { codex: { model: "gpt-6-astra" } } },
+    { provider: "codex" },
     CODEX_MODELS,
-    INITIAL_USER_MODIFIED,
-    makeState().form,
+    { ...INITIAL_USER_MODIFIED, model: true },
+    makeState({ provider: "codex", model: "gpt-6-astra" }).form,
     codexProviderMap,
   );
   expect(resolved.model).toBe("gpt-6-astra");
-  // Label/persistence lookup must not reinterpret the submitted ID as another model.
   expect(resolveEffectiveModel(CODEX_MODELS, resolved.model)).toBeNull();
 });
 

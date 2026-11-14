@@ -317,9 +317,10 @@ function resolveModelField(input: {
       : resolveCanonicalModelId(availableModels, initialModel) || initialModel;
   }
   if (preferredModel) {
-    return !availableModels
+    return !availableModels?.length
       ? preferredModel
-      : resolveCanonicalModelId(availableModels, preferredModel) || preferredModel;
+      : resolveCanonicalModelId(availableModels, preferredModel) ||
+          resolveDefaultModelId(availableModels);
   }
   return "";
 }
