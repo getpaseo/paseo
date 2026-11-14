@@ -437,10 +437,10 @@ optional, so declare only what your CLI supports:
 | Member            | Users see                                                               | Declare it when                                        |
 | ----------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
 | `installUrl`      | **Install instructions**, and **Install** while not installed           | Users install a CLI                                    |
-| `updateUrl`       | **Update instructions** when a check finds an update or cannot tell     | Your docs say how to update                            |
+| `updateUrl`       | **Update instructions** while installed, when you declare no `update`   | Your docs say how to update                            |
 | `inspect`         | **Version**, or **Not installed**                                       | The CLI reports its version                            |
 | `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
-| `update`          | **Update** while an update is available, then the updater's output      | The CLI updates itself with a command                  |
+| `update`          | **Update** while installed, then the updater's output                   | The CLI updates itself with a command                  |
 
 This `example-agent` prints its version, checks for a release with
 `self-update --check --json`, and updates with `self-update`:
@@ -536,7 +536,10 @@ deadline shows **Couldn't check for updates** with your message and never shows 
 time. Pass the updater's output to `report` unchanged; Paseo keeps the last 65,536 characters. Paseo adds no
 verification of its own, so the update does what your command does in a terminal. Return
 `succeeded` with a message that says when the new version takes effect, or `failed` with the reason.
-Without `update`, an available update shows **Update instructions** when you declare `updateUrl`.
+Without `update`, **Update instructions** opens `updateUrl` instead.
+
+**Update** and **Update instructions** appear whenever `inspect` reports the CLI installed. The
+check only says what it knows beside them, so declare `update` even when you cannot check.
 
 Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It calls
 `checkForUpdates` after `inspect` reports the CLI installed and keeps a `current` or `available`

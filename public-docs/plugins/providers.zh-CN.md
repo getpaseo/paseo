@@ -355,13 +355,13 @@ export default function contribute(client: PluginClientContext) {
 
 在注册中添加 `installation`，Provider 的设置中就会出现 **安装** 部分。用户可以看到你的 CLI 是否已安装、是哪个版本、是否有可用更新，以及一个 **更新** 按钮，它会运行你的更新程序并显示其输出。每个成员都是可选的，只声明你的 CLI 支持的部分：
 
-| 成员              | 用户看到的内容                                    | 何时声明                                |
-| ----------------- | ------------------------------------------------- | --------------------------------------- |
-| `installUrl`      | **安装说明**，未安装时还有 **安装**               | 用户需要安装 CLI                        |
-| `updateUrl`       | 检查发现更新或无法判断时显示 **更新说明**         | 你的文档说明了如何更新                  |
-| `inspect`         | **版本**，或 **未安装**                           | CLI 会报告自己的版本                    |
-| `checkForUpdates` | **已是最新**、**有可用更新** 或 **无法检查更新**  | 你能询问 CLI 自带更新程序所用的发布来源 |
-| `update`          | 有可用更新时显示 **更新**，随后显示更新程序的输出 | CLI 能用一条命令更新自己                |
+| 成员              | 用户看到的内容                                   | 何时声明                                |
+| ----------------- | ------------------------------------------------ | --------------------------------------- |
+| `installUrl`      | **安装说明**，未安装时还有 **安装**              | 用户需要安装 CLI                        |
+| `updateUrl`       | 已安装且未声明 `update` 时显示 **更新说明**      | 你的文档说明了如何更新                  |
+| `inspect`         | **版本**，或 **未安装**                          | CLI 会报告自己的版本                    |
+| `checkForUpdates` | **已是最新**、**有可用更新** 或 **无法检查更新** | 你能询问 CLI 自带更新程序所用的发布来源 |
+| `update`          | 已安装时显示 **更新**，随后显示更新程序的输出    | CLI 能用一条命令更新自己                |
 
 这个 `example-agent` 会打印自己的版本，用 `self-update --check --json` 检查发布，并用 `self-update` 更新：
 
@@ -444,7 +444,9 @@ export function createProvider(): ProviderRegistration {
 
 Paseo 把版本当作文本。它按原样显示 `version` 和 `versions`，从不比较它们，因此由你的检查决定什么算更新。询问 CLI 自带更新程序所询问的来源；做不到时就不要声明 `checkForUpdates`。返回 `unknown`、抛出异常或超过期限的检查会显示 **无法检查更新** 和你的消息，绝不会显示 **已是最新**。
 
-`update` 只在用户选择 **更新** 时运行，并且每个 Provider 同一时间只运行一个更新。把更新程序的输出原样传给 `report`；Paseo 保留最后 65,536 个字符。Paseo 不会额外做任何校验，所以更新的效果与在终端中运行你的命令相同。返回 `succeeded` 并用消息说明新版本何时生效，或返回 `failed` 并说明原因。没有 `update` 时，如果你声明了 `updateUrl`，可用更新会显示 **更新说明**。
+`update` 只在用户选择 **更新** 时运行，并且每个 Provider 同一时间只运行一个更新。把更新程序的输出原样传给 `report`；Paseo 保留最后 65,536 个字符。Paseo 不会额外做任何校验，所以更新的效果与在终端中运行你的命令相同。返回 `succeeded` 并用消息说明新版本何时生效，或返回 `failed` 并说明原因。没有 `update` 时，**更新说明** 会打开 `updateUrl`。
+
+只要 `inspect` 报告 CLI 已安装，就会显示 **更新** 或 **更新说明**。检查只在旁边说明它知道的情况，所以即使无法检查，也要声明 `update`。
 
 Paseo 在设置打开时调用 `inspect`，并把结果保留 30 秒。它在 `inspect` 报告 CLI 已安装后调用 `checkForUpdates`，并把 `current` 或 `available` 结果保留一小时。`inspect` 必须在 20 秒内回答，`checkForUpdates` 必须在 25 秒内回答。`update` 没有期限。当 Paseo 停止等待或 daemon 停止时，`signal` 会中止。每个字段见 [`installation` 参考](/docs/plugins/reference#provider-installation)。
 

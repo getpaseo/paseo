@@ -128,7 +128,7 @@ describe("update check", () => {
       .toBeVisible();
   });
 
-  it.each([
+  const inconclusive = [
     {
       name: "unknown",
       updates: { status: "ready", updateCheck: { status: "unknown", message: "Offline" } },
@@ -138,20 +138,70 @@ describe("update check", () => {
       updates: { status: "ready", updateCheck: { status: "error", message: "Offline" } },
     },
     { name: "a failed request", updates: { status: "error", message: "Offline" } },
-  ] as const)("shows $name as inconclusive, never up to date", async ({ updates }) => {
+  ] as const;
+
+  it.each(inconclusive)("shows $name as inconclusive, never up to date", async ({ updates }) => {
     const section = mount(installed, updates);
     await expect.element(section.view.getByText("Couldn't check for updates")).toBeVisible();
     await expect.element(section.view.getByText("Offline")).toBeVisible();
     expect(section.view.queryByText("Up to date")).toBeNull();
     await expect
-      .element(section.view.getByRole("link", { name: "Update instructions" }))
+      .element(section.view.getByRole("button", { name: "Update instructions" }))
       .toBeVisible();
   });
+
+  it.each(inconclusive)(
+    "still says $name when the provider offers no update",
+    async ({ updates }) => {
+      const section = mount(
+        ready({
+          status: "ready",
+          installation: { inspection: { status: "installed", version: "0.165.0" } },
+        }),
+        updates,
+      );
+      await expect.element(section.view.getByText("Couldn't check for updates")).toBeVisible();
+      expect(section.view.queryByRole("button")).toBeNull();
+    },
+  );
 
   it("shows up to date only when the provider says so", async () => {
     const section = mount(installed, { status: "ready", updateCheck: { status: "current" } });
     await expect.element(section.view.getByText("Up to date")).toBeVisible();
   });
+
+  it("shows the check's answer for a provider that offers no update", async () => {
+    const section = mount(
+      ready({
+        status: "ready",
+        installation: { inspection: { status: "installed", version: "1.4.18" } },
+      }),
+      { status: "ready", updateCheck: { status: "current" } },
+    );
+    await expect.element(section.view.getByText("Up to date")).toBeVisible();
+    expect(section.view.queryByRole("button")).toBeNull();
+  });
+
+  it.each([
+    { name: "cannot check", updates: { status: "ready", updateCheck: null } },
+    { name: "is still checking", updates: { status: "loading" } },
+  ] as const)(
+    "shows no Updates row while a provider that offers no update $name",
+    ({ updates }) => {
+      const section = mount(
+        ready({
+          status: "ready",
+          installation: {
+            installUrl: INSTALL_URL,
+            inspection: { status: "installed", version: "1.0.0" },
+          },
+        }),
+        updates,
+      );
+      expect(section.view.queryByTestId("provider-updates")).toBeNull();
+      expect(section.view.getByTestId("provider-installation-version").textContent).toBe("1.0.0");
+    },
+  );
 });
 
 describe("update action", () => {
@@ -184,21 +234,55 @@ describe("update action", () => {
   const operation = { id: "op", startedAt: "2026-11-13T00:00:00.000Z" };
   const finishedAt = "2026-11-13T00:01:00.000Z";
 
-  it("offers Update when an update is available and the provider runs its own", () => {
-    const control = action();
-    const section = mount(installed(true), available, control.value);
-    const button = section.view.getByRole("button", { name: "Update" });
-    act(() => button.click());
-    expect(control.starts()).toBe(1);
-    expect(section.view.queryByRole("button", { name: "Update instructions" })).toBeNull();
-  });
+  // The check only informs: Update and the update instructions never wait on it.
+  const checkStates = [
+    { name: "an update is available", updates: available, says: "Update available" },
+    { name: "the provider cannot check", updates: { status: "ready", updateCheck: null } },
+    { name: "the check is running", updates: { status: "loading" }, says: "Checking…" },
+    {
+      name: "the check could not tell",
+      updates: { status: "ready", updateCheck: { status: "unknown" } },
+      says: "Couldn't check for updates",
+    },
+    {
+      name: "the check failed",
+      updates: { status: "error", message: "Offline" },
+      says: "Couldn't check for updates",
+    },
+    {
+      name: "the provider is up to date",
+      updates: { status: "ready", updateCheck: { status: "current" } },
+      says: "Up to date",
+    },
+  ] satisfies { name: string; updates: ProviderUpdatesState; says?: string }[];
 
-  it("keeps Update instructions when the provider does not run its own update", async () => {
-    const section = mount(installed(false), available, action().value);
-    expect(section.view.queryByRole("button", { name: "Update" })).toBeNull();
-    await expect
-      .element(section.view.getByRole("button", { name: "Update instructions" }))
-      .toBeVisible();
+  it.each(checkStates)(
+    "offers Update when $name and the provider runs its own",
+    async ({ updates, says }) => {
+      const control = action();
+      const section = mount(installed(true), updates, control.value);
+      const button = section.view.getByRole("button", { name: "Update" });
+      act(() => button.click());
+      expect(control.starts()).toBe(1);
+      expect(section.view.queryByRole("button", { name: "Update instructions" })).toBeNull();
+      if (says) await expect.element(section.view.getByText(says)).toBeVisible();
+    },
+  );
+
+  it.each(checkStates)(
+    "offers Update instructions when $name and the provider only links its guide",
+    async ({ updates }) => {
+      const section = mount(installed(false), updates, action().value);
+      expect(section.view.queryByRole("button", { name: "Update" })).toBeNull();
+      await expect
+        .element(section.view.getByRole("button", { name: "Update instructions" }))
+        .toBeVisible();
+    },
+  );
+
+  it("shows no update status beside Update when the provider cannot check", () => {
+    const section = mount(installed(true), { status: "ready", updateCheck: null }, action().value);
+    expect(section.view.getByTestId("provider-updates").textContent).toBe("UpdatesUpdate");
   });
 
   it("shows a running update with its output so far", () => {

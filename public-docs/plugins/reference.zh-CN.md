@@ -409,7 +409,7 @@ Provider 设置中的 **刷新** 会跳过保留的结果。Paseo 从不在会�
 | `ProviderUpdateCheck`  | `{ status: "current" }`、`{ status: "available", versions?: string[], message?: string }` 或 `{ status: "unknown", message?: string }` |
 | `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` 或 `{ status: "failed", message: string }`                                                 |
 
-Paseo 按原样显示 `version`、`versions` 和 `message`，不解析、排序或比较它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果，所以 `version` 要包含 `checkForUpdates` 比较的全部内容。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只有当 `checkForUpdates` 回答 `available` 且你声明了 `update` 时才会出现 **更新**；没有 `update` 时，Paseo 改为提供 `updateUrl`。
+Paseo 按原样显示 `version`、`versions` 和 `message`，不解析、排序或比较它们。只要 `inspect` 报告的 `version` 不变，Paseo 会在最长一小时内复用 `current` 或 `available` 的结果，所以 `version` 要包含 `checkForUpdates` 比较的全部内容。它保留 `report` 输出的最后 65,536 个字符。不符合这些结构的结果是错误。只要 `inspect` 报告 CLI 已安装且你声明了 `update`，就会出现 **更新**，与 `checkForUpdates` 的回答以及是否声明它无关；没有 `update` 时，Paseo 在同样条件下提供 `updateUrl`。
 
 ### 用量来源 {#usage-sources}
 
