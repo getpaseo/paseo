@@ -1631,7 +1631,13 @@ export const PluginInstallationSchema = z.object({
 });
 export type PluginInstallation = z.infer<typeof PluginInstallationSchema>;
 export const PluginUpdateTargetSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("git"), commit: z.string().regex(/^[0-9a-f]{40,64}$/) }),
+  z.object({
+    kind: z.literal("git"),
+    commit: z.string().regex(/^[0-9a-f]{40,64}$/),
+    // Named ref (branch or tag) the commit was resolved from when the source is
+    // pinned to one; absent when the source tracks the remote default branch.
+    ref: z.string().min(1).optional(),
+  }),
   z.object({
     kind: z.literal("npm"),
     version: z.string().min(1),
