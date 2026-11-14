@@ -12,6 +12,7 @@ import {
   type PluginClientBundle,
   type PluginClientBundleStore,
 } from "./daemon-client";
+import { createHostChannelTransport } from "./hosts/index.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { ChunkedTransport } from "@getpaseo/protocol/chunked-transport";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
@@ -9562,7 +9563,6 @@ test.each(["latency", "dictation start", "dictation finish"])(
 );
 
 test("routed channels inherit an origin without drain support", async () => {
-  const { createHostChannelTransport } = await import("./hosts/index.js");
   const mock = createMockTransport();
   mock.transport.supportsDrain = false;
   const client = new DaemonClient({
@@ -10132,4 +10132,70 @@ describe("provider options across daemon versions", () => {
       providerOptions: { sandbox_mode: "read-only" },
     });
   });
+});
+
+test.each([
+  { name: "route", initialRouteId: null, link: false },
+  { name: "link", initialRouteId: null, link: true },
+  { name: "initial route", initialRouteId: "route", link: false },
+])(
+  "$name fails promptly when its origin is offline during initialization",
+  async ({ initialRouteId, link }) => {
+    vi.useFakeTimers();
+    const origin = new DaemonClient({
+      url: "ws://origin",
+      clientId: "offline-origin",
+      transportFactory: () => createMockTransport().transport,
+      reconnect: { enabled: false },
+      logger: createMockLogger(),
+    });
+    clients.push(origin);
+    const unsubscribe = vi.fn();
+    const subscribe = origin.subscribeConnectionStatus.bind(origin);
+    vi.spyOn(origin, "subscribeConnectionStatus").mockImplementation((listener) => {
+      const release = subscribe(listener);
+      return () => {
+        release();
+        unsubscribe();
+      };
+    });
+    const child = new DaemonClient({
+      url: "ws://routed-host/ws",
+      clientId: "offline-origin-child",
+      transportFactory: createHostChannelTransport(origin, "child", "scope", initialRouteId, link),
+      reconnect: { enabled: false },
+      logger: createMockLogger(),
+    });
+    clients.push(child);
+    const rejected = expect(child.connect()).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(child.getConnectionState().status).toBe("disconnected");
+    await rejected;
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  },
+);
+
+test("disposing a route before its deferred close does not reopen it on origin recovery", async () => {
+  vi.useFakeTimers();
+  const mock = createMockTransport();
+  const origin = new DaemonClient({
+    url: "ws://origin",
+    clientId: "disposed-route-origin",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+    logger: createMockLogger(),
+  });
+  clients.push(origin);
+  const route = createHostChannelTransport(origin, "child", "scope", null)({ url: "ws://route" });
+  const opened = vi.fn();
+  const closed = vi.fn();
+  route.onOpen(opened);
+  route.onClose(closed);
+  route.close();
+  const connecting = origin.connect();
+  mock.triggerOpen({ features: { ownedSubscriptions: true, connectedHosts: true } });
+  await connecting;
+  await vi.advanceTimersByTimeAsync(0);
+  expect(opened).not.toHaveBeenCalled();
+  expect(closed).toHaveBeenCalledTimes(1);
 });
