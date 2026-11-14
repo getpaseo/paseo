@@ -119,7 +119,7 @@ for (const seeder of ["setup", "shell", "setup-bom"] as const) {
         const source = join(root, "source");
         const targetRoot = join(root, "target");
         const target = join(targetRoot, ".dev/paseo-home");
-        const storage = new AgentStorage(join(source, "agents"), createTestLogger());
+        const storage = new AgentStorage(join(root, "source-records"), createTestLogger());
         for (const [id, lastStatus, resumeOnStartup] of [
           ["live", "running", false],
           ["crashed", "running", true],
@@ -138,6 +138,12 @@ for (const seeder of ["setup", "shell", "setup-bom"] as const) {
           );
         }
         await storage.flush();
+        await mkdir(source, { recursive: true });
+        await symlink(
+          join(root, "source-records"),
+          join(source, "agents"),
+          process.platform === "win32" ? "junction" : "dir",
+        );
         await mkdir(join(source, "schedules"), { recursive: true });
         await writeFile(join(source, "schedules", "schedule.json"), '{"kind":"scheduled"}');
         await writeFile(join(source, "schedules", "heartbeat.json"), '{"kind":"heartbeat"}');
@@ -193,6 +199,8 @@ for (const seeder of ["setup", "shell", "setup-bom"] as const) {
           ["closed", false],
         ]);
         expect(readPersistedConfig(source).agents?.resumeOnStartup).toBe(true);
+        const unchangedSource = new AgentStorage(join(root, "source-records"), createTestLogger());
+        expect((await unchangedSource.get("live"))?.lastStatus).toBe("running");
       } finally {
         await rm(root, { recursive: true, force: true });
       }

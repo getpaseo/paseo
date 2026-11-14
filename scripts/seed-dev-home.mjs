@@ -58,6 +58,7 @@ function copyJsonTree(source, target) {
 
   cpSync(source, target, {
     recursive: true,
+    dereference: true,
     filter: (path) => isDirectory(path) || path.endsWith(".json"),
   });
 }
