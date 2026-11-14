@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveSafeAreaInsets,
   resolveTopBand,
+  resolveWorkspaceContentWidth,
   type WindowLayout,
   type WindowLayoutRect,
 } from "./model";
@@ -152,4 +153,42 @@ describe("resolveTopBand", () => {
   it("is null before the native layout arrives", () => {
     expect(resolveTopBand(duo.systemTop, null)).toBeNull();
   });
+});
+
+describe("resolveWorkspaceContentWidth", () => {
+  it("uses the new allocation immediately when Explorer makes navigation yield", () => {
+    const allocation = {
+      viewportWidth: 669,
+      sidebarWidth: 203,
+      sidebarVisible: true,
+      divisionContentWidth: null,
+    };
+    expect(resolveWorkspaceContentWidth(allocation)).toBe(466);
+    expect(resolveWorkspaceContentWidth({ ...allocation, sidebarVisible: false })).toBe(669);
+  });
+
+  it("follows live sidebar width without waiting for a retained workspace measurement", () => {
+    expect(
+      resolveWorkspaceContentWidth({
+        viewportWidth: 1000,
+        sidebarWidth: 287,
+        sidebarVisible: true,
+        divisionContentWidth: null,
+      }),
+    ).toBe(713);
+  });
+
+  it.each([true, false])(
+    "keeps a reserved division's allocation when navigation is %s",
+    (sidebarVisible) => {
+      expect(
+        resolveWorkspaceContentWidth({
+          viewportWidth: 1200,
+          sidebarWidth: 320,
+          sidebarVisible,
+          divisionContentWidth: 560,
+        }),
+      ).toBe(560);
+    },
+  );
 });
