@@ -824,7 +824,8 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      const { ExternalLink, Loading, Markdown } = require("@getpaseo/plugin/client/ui");
+      const { AgentTimeline, ExternalLink, Loading, Markdown } = require("@getpaseo/plugin/client/ui");
+      if (typeof AgentTimeline !== "function") throw new Error("AgentTimeline");
       if (typeof Markdown !== "function") throw new Error("Markdown");
       if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
       if (typeof Loading !== "function") throw new Error("Loading");

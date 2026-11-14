@@ -526,8 +526,19 @@
     {
       "files": ["packages/app/src/**/*.{ts,tsx}"],
       "rules": {
-        "paseo/no-raw-pressable": "error"
+        "paseo/no-raw-pressable": "error",
+        "paseo/no-raw-portal": "error"
       }
+    },
+    // The wrapper itself, and the floating header, whose overlay host sits inside the caller's
+    // own React subtree.
+    {
+      "files": [
+        "packages/app/src/components/ui/portal.tsx",
+        "packages/app/src/components/floating-header/index.tsx",
+        "packages/app/src/**/*.{test,spec}.{ts,tsx}"
+      ],
+      "rules": { "paseo/no-raw-portal": "off" }
     },
     // Press feedback is owned by the primitives in components/ui. Raw pressable burn-down:
     // 94 files. They may only leave this list.

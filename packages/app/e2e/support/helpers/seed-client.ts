@@ -170,7 +170,7 @@ export interface SeedDaemonClient {
   refreshAgent(agentId: string): Promise<unknown>;
   fetchAgent(options: {
     agentId: string;
-  }): Promise<{ agent: { id: string; archivedAt?: string | null } } | null>;
+  }): Promise<{ agent: { id: string; status: string; archivedAt?: string | null } } | null>;
   getLastServerInfoMessage(): {
     features?: {
       projectAdd?: boolean;

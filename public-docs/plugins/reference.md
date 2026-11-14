@@ -974,6 +974,85 @@ The component adds no page padding or scroll container. Use a surrounding layout
 scroll view when needed. Fetching content and showing loading or error states belong
 to your plugin.
 
+### Agent timeline
+
+Import `AgentTimeline` from `@getpaseo/plugin/client/ui` to show an agent's timeline the way its
+tab shows it, inside a screen, panel, or modal. This screen lists agents on the left and talks to
+the selected one on the right through a plain message box:
+
+```tsx
+import { AgentTimeline } from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+import { View } from "react-native";
+import { AgentList } from "./agent-list";
+
+export function Overseer() {
+  const [agentId, setAgentId] = useState<string | null>(null);
+  return (
+    <View style={{ flex: 1, flexDirection: "row" }}>
+      <AgentList selected={agentId} onSelect={setAgentId} />
+      {agentId ? <AgentTimeline agentId={agentId} composer={{ controls: "none" }} /> : null}
+    </View>
+  );
+}
+```
+
+| Prop       | Default                  | Meaning                                                                 |
+| ---------- | ------------------------ | ----------------------------------------------------------------------- |
+| `agentId`  | Required                 | The agent to show.                                                      |
+| `serverId` | The surface's host       | The host the agent runs on.                                             |
+| `composer` | The agent tab's composer | `false` shows the timeline without a composer; an object configures it. |
+| `testID`   | None                     | Test identifier for the timeline's root.                                |
+
+`composer` takes:
+
+| Field         | Values                                                                            | Meaning                                                                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `controls`    | `"all"` (default), `"none"`, or `{ model, mode, thinking, options, attachments }` | `"none"` leaves a message box and Send. The object hides each control set to `"hidden"`; an omitted control is shown. Hiding `attachments` also refuses pasted and dropped files. |
+| `items`       | `"all"` (default), `"none"`, or a list of item IDs                                | [Composer items](#composer-items) in the toolbar. A list keeps only your plugin's items with those IDs. Ignored with `controls: "none"`.                                          |
+| `placeholder` | A string                                                                          | Replaces the message box's placeholder.                                                                                                                                           |
+
+The timeline is the host's own: [timeline items](#timeline-items) your plugin and others
+contribute, older history as the user scrolls up, streaming, and the loading, error, and archived
+states. The component fills its parent and adds no header; the composer sits at its bottom. On
+compact layouts give it the whole screen, as the example's list and timeline take turns doing.
+
+Behavior that differs from the agent's tab:
+
+- **Permissions and questions.** The user answers them in the timeline, with or without a
+  composer, as in the agent's tab.
+- **Needs attention.** A timeline with a composer clears the agent's attention when it is shown,
+  like a focused tab. A timeline without one never clears it, so a page of previews doesn't hide
+  agents that need the user.
+- **Slash text.** With `controls: "none"` everything the user types, including `/exit` and
+  `/clear`, is sent to the agent as written. With the toolbar, `/exit` archives the agent and
+  `/clear` archives it and opens a fresh draft in its workspace, which leaves your screen.
+- **No pill track.** Tasks, subagents, and [composer pills](#composer-pills) open tabs and sheets
+  of a workspace, so the timeline does not show them.
+
+Showing an agent that is also open in a tab, or in several timelines, adds no work: Paseo keeps one
+live subscription per agent.
+
+Hiding the model control changes this view only. The user can still change the model from the
+agent's tab. To choose the model, call `setModel` on the agent's composer from
+[`useComposers({ agentId })`](#reach-a-composer-by-reference).
+
+`AgentTimeline` needs Paseo 0.16.0 or later. Declare `"requirements": { "paseo": ">=0.16.0" }`,
+or keep supporting older apps, where the export is undefined, by checking for it:
+
+```tsx
+{
+  typeof AgentTimeline === "function" ? (
+    <AgentTimeline agentId={agentId} composer={{ controls: "none" }} />
+  ) : (
+    <Button title="Open agent" onPress={() => navigation?.openAgent({ agentId })} />
+  );
+}
+```
+
+The runnable [agent timeline example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-timeline)
+switches between the message box, the toolbar with attachments hidden, and no composer.
+
 ### Modal
 
 `Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns

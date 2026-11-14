@@ -430,6 +430,16 @@ workspace only. Location controls hosting, not context. An agent panel target ke
 when moved between hosts. Explorer configuration can create workspace-context panels and remove
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
+`AgentTimeline` renders the agent tab's own chain (`AgentPanelContent` in
+`packages/app/src/panels/agent-panel.tsx`) through `packages/app/src/agent-embed`. The chain takes
+a `ConversationSurface` instead of reading the pane: a pane has a tab to retarget and a pill track,
+an embed has neither, so its composer handles `/clear` by opening the agent's workspace and the
+track is never mounted. The embed publishes itself as a viewer with `useViewedAgent`, the hook the
+workspace sheet uses, so the tab and every embed of one agent share the sync's single observation.
+Composer controls an embed hides come from `ComposerControlsScope` (`composer/controls-scope.tsx`),
+a context the composer, its toolbar, and the plugin composer items read; without a provider every
+control shows.
+
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel navigation
 belongs to the app; plugins do not receive Expo Router or workspace-layout store access.

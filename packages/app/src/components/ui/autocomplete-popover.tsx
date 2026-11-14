@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { View, useWindowDimensions, type StyleProp, type ViewStyle } from "react-native";
-import { Portal } from "@gorhom/portal";
+import { Portal } from "@/components/ui/portal";
 import Animated, { useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

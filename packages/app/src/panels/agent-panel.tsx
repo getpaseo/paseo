@@ -61,6 +61,7 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import { reconcileMissingAgentStateWithPresentAgent } from "@/panels/agent-panel-load-state";
 import { TimelineSyncStatus } from "@/timeline/sync-status";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
+import type { PaneHost } from "@/panels/panel-manifest";
 import { useAgentFactsLine } from "@/panels/agent-facts-line";
 import { PaneSubtitle } from "@/panels/pane-subtitle";
 import { definePanel } from "@/panels/panel-registry";
@@ -95,6 +96,7 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
 import type { StreamItem } from "@/types/stream";
@@ -338,12 +340,40 @@ function resolveConversationAgentId(target: ConversationTarget): string | undefi
 }
 
 /**
+ * Where a conversation is shown. A pane is a workspace tab or sheet; an embed is a plugin's
+ * `AgentTimeline`, which has no tab to retarget or close and shows a composer only when asked.
+ * `id` names the viewer: the tab in a pane, the embed instance otherwise.
+ */
+export type ConversationSurface =
+  | { kind: "pane"; id: string; host: PaneHost }
+  | { kind: "embed"; id: string; composer: EmbeddedComposerOptions | null };
+
+export interface EmbeddedComposerOptions {
+  /** Replaces the default placeholder. */
+  placeholder: string | undefined;
+}
+
+/** An embed with a composer is where the user acts on the agent, with key focus or without. */
+function surfaceClearsAttention(surface: ConversationSurface, isPaneFocused: boolean): boolean {
+  return surface.kind === "embed" ? surface.composer !== null : isPaneFocused;
+}
+
+function surfaceShowsComposer(surface: ConversationSurface): boolean {
+  // The workspace sheet is for looking; Open as tab brings the agent back with its composer.
+  return surface.kind === "pane" ? surface.host !== "sheet" : surface.composer !== null;
+}
+
+/**
  * Drafts and agents render through one chain so the timeline stays mounted when the draft's
  * first prompt creates the agent and the tab retargets. The agent gates are idle for a draft.
  */
 export function AgentConversationPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace, tabId, host } = usePaneContext();
   const { isInteractive } = usePaneFocus();
+  const surface = useMemo<ConversationSurface>(
+    () => ({ kind: "pane", id: tabId, host }),
+    [host, tabId],
+  );
   invariant(
     target.kind === "agent" || target.kind === "draft",
     "AgentConversationPanel requires an agent or draft target",
@@ -355,6 +385,7 @@ export function AgentConversationPanel() {
         serverId={serverId}
         workspaceId={workspaceId}
         target={target}
+        surface={surface}
         isPaneFocused={isInteractive}
         onOpenWorkspaceFile={openFileInWorkspace}
       />
@@ -433,16 +464,18 @@ type AgentLookupState =
   | { tag: "not_found"; message: string }
   | { tag: "error"; message: string };
 
-function AgentPanelContent({
+export function AgentPanelContent({
   serverId,
   workspaceId,
   target,
+  surface,
   isPaneFocused,
   onOpenWorkspaceFile,
 }: {
   serverId: string;
   workspaceId: string;
   target: ConversationTarget;
+  surface: ConversationSurface;
   isPaneFocused: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
@@ -493,6 +526,7 @@ function AgentPanelContent({
       serverId={resolvedServerId ?? serverId}
       workspaceId={workspaceId}
       target={target}
+      surface={surface}
       isPaneFocused={isPaneFocused}
       client={runtimeClient}
       isConnected={runtimeIsConnected}
@@ -505,6 +539,7 @@ function AgentPanelBody({
   serverId,
   workspaceId,
   target,
+  surface,
   isPaneFocused,
   client,
   isConnected,
@@ -513,6 +548,7 @@ function AgentPanelBody({
   serverId: string;
   workspaceId: string;
   target: ConversationTarget;
+  surface: ConversationSurface;
   isPaneFocused: boolean;
   client: ReturnType<typeof useHostRuntimeClient>;
   isConnected: boolean;
@@ -650,6 +686,7 @@ function AgentPanelBody({
       serverId={serverId}
       workspaceId={workspaceId}
       target={target}
+      surface={surface}
       isPaneFocused={isPaneFocused}
       client={client}
       isConnected={isConnected}
@@ -662,6 +699,7 @@ function ChatAgentContent({
   serverId,
   workspaceId,
   target,
+  surface,
   isPaneFocused,
   client,
   isConnected,
@@ -670,13 +708,14 @@ function ChatAgentContent({
   serverId: string;
   workspaceId: string;
   target: ConversationTarget;
+  surface: ConversationSurface;
   isPaneFocused: boolean;
   client: ReturnType<typeof useHostRuntimeClient>;
   isConnected: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
-  const { tabId } = usePaneContext();
+  const tabId = surface.id;
   const agentId = resolveConversationAgentId(target);
   const isPaneVisible = useRetainedPanelActive();
   const { api: toastApi, toast: toastState, dismiss: dismissToast } = useToastHost();
@@ -773,7 +812,7 @@ function ChatAgentContent({
     isAgentDataReady: agentHistorySyncGeneration === historySyncGeneration,
     requiresAttention: agentState.requiresAttention,
     attentionReason: agentState.attentionReason,
-    isScreenFocused: isPaneFocused,
+    isScreenFocused: surfaceClearsAttention(surface, isPaneFocused),
     focusRequest,
     onError: reportAttentionError,
   });
@@ -1009,6 +1048,7 @@ function ChatAgentContent({
       workspaceId={workspaceId}
       agentId={agentId ?? tabId}
       draft={draft}
+      surface={surface}
       isPaneFocused={isPaneFocused}
       isArchivingCurrentAgent={isArchivingCurrentAgent}
       agentState={agentState}
@@ -1041,6 +1081,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   workspaceId,
   agentId,
   draft,
+  surface,
   isPaneFocused,
   isArchivingCurrentAgent,
   agentState,
@@ -1070,6 +1111,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   /** The agent's id, or the tab id while a draft has no agent yet. */
   agentId: string;
   draft: DraftConversation | null;
+  surface: ConversationSurface;
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
   agentState: ChatAgentSelectedState;
@@ -1095,13 +1137,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
-  // The workspace sheet is for looking; Open as tab brings the agent back with its composer.
-  const paneHost = usePaneContext().host;
-  const showsComposer = draft !== null || paneHost !== "sheet";
+  const showsComposer = draft !== null || surfaceShowsComposer(surface);
   // The dock lays out fullscreen for the same session the composer edits in.
   const composerEditingSession = useComposerEditingSession("chat");
   const isComposerFullscreen = useComposerFullscreen(composerEditingSession);
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  // The track's pills open tabs and sheets of the workspace, which an embed is not in.
+  const showsTrack = hasActiveComposer && surface.kind === "pane";
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
@@ -1159,6 +1201,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       <AgentComposerSection
         agentId={agentId}
         serverId={serverId}
+        surface={surface}
         isPaneFocused={isPaneFocused}
         isArchivingCurrentAgent={isArchivingCurrentAgent}
         archivedAt={agentState.archivedAt}
@@ -1210,12 +1253,12 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
             !showHistorySyncError
           }
           revealInitialHistory={hasCachedHistory || showHistorySyncError}
-          hasActiveComposer={hasActiveComposer}
+          reservesTrack={showsTrack}
           toast={toastApi}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       </RenderProfile>
-      {hasActiveComposer && !draft ? (
+      {showsTrack && !draft ? (
         <AgentTracks
           serverId={serverId}
           workspaceId={workspaceId}
@@ -1377,7 +1420,7 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasAppliedAuthoritativeHistory,
   isInitialHistoryLoading,
   revealInitialHistory,
-  hasActiveComposer,
+  reservesTrack,
   toast,
   onOpenWorkspaceFile,
 }: {
@@ -1390,17 +1433,18 @@ const AgentStreamSection = memo(function AgentStreamSection({
   hasAppliedAuthoritativeHistory: boolean;
   isInitialHistoryLoading: boolean;
   revealInitialHistory: boolean;
-  hasActiveComposer: boolean;
+  /** Whether the composer's track bar sits over the bottom of the stream. */
+  reservesTrack: boolean;
   toast: ReturnType<typeof useToastHost>["api"];
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   // The track bar's space is reserved whenever the bar is mounted, pills or not: pills come and go
   // every turn, and the transcript must not jump with them.
-  const bottomOverlayTailClearance = hasActiveComposer
+  const bottomOverlayTailClearance = reservesTrack
     ? resolveComposerTrackTailClearance(isCompactFormFactor)
     : 0;
-  const bottomOverlayControlClearance = hasActiveComposer
+  const bottomOverlayControlClearance = reservesTrack
     ? resolveComposerTrackControlClearance(isCompactFormFactor)
     : 0;
   const streamItemsRaw = useAgentStreamTail(serverId, agentId);
@@ -1533,6 +1577,7 @@ function DraftComposerSection({
 const AgentComposerSection = memo(function AgentComposerSection({
   agentId,
   serverId,
+  surface,
   isPaneFocused,
   isArchivingCurrentAgent,
   archivedAt,
@@ -1547,6 +1592,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
 }: {
   agentId?: string;
   serverId: string;
+  surface: ConversationSurface;
   isPaneFocused: boolean;
   isArchivingCurrentAgent: boolean;
   archivedAt: Date | null;
@@ -1567,6 +1613,23 @@ const AgentComposerSection = memo(function AgentComposerSection({
   }
   if (isArchivingCurrentAgent) {
     return null;
+  }
+  if (surface.kind === "embed") {
+    return (
+      <EmbeddedAgentComposer
+        agentId={agentId}
+        isPaneFocused={isPaneFocused}
+        placeholder={surface.composer?.placeholder}
+        serverId={serverId}
+        cwd={cwd}
+        agentInputDraft={agentInputDraft}
+        editingSession={editingSession}
+        onAttentionInputFocus={onAttentionInputFocus}
+        onAttentionPromptSend={onAttentionPromptSend}
+        onComposerHeightChange={onComposerHeightChange}
+        onMessageSent={onMessageSent}
+      />
+    );
   }
 
   return (
@@ -1710,6 +1773,95 @@ function ActiveAgentComposer({
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
         onClientSlashCommand={handleClientSlashCommand}
+        isCompactLayout={isCompactComposerLayout}
+      />
+    </View>
+  );
+}
+
+/**
+ * The composer of an embedded timeline. It has no tab: `/clear` archives the agent and opens a
+ * fresh draft in the agent's workspace, as forking to a tab does. The composer runs client commands
+ * only where the controls scope allows them, so the plain message box sends every text as typed.
+ */
+function EmbeddedAgentComposer({
+  agentId,
+  isPaneFocused,
+  placeholder,
+  serverId,
+  cwd,
+  agentInputDraft,
+  editingSession,
+  onAttentionInputFocus,
+  onAttentionPromptSend,
+  onComposerHeightChange,
+  onMessageSent,
+}: {
+  agentId: string;
+  /** The embed has the user's focus, so its composer owns the key handlers. */
+  isPaneFocused: boolean;
+  placeholder: string | undefined;
+  serverId: string;
+  cwd: string;
+  agentInputDraft: AgentInputDraft;
+  editingSession: ComposerEditingSession;
+  onAttentionInputFocus: () => void;
+  onAttentionPromptSend: () => void;
+  onComposerHeightChange: (height: number) => void;
+  onMessageSent: () => void;
+}) {
+  const isCompactFormFactor = useIsCompactFormFactor();
+  const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
+    COMPACT_CONTENT_WIDTH,
+    { initialIsBelow: isCompactFormFactor },
+  );
+  const workspaceId = useSessionStore(
+    (state) => resolveChatAgentFromSession(state, serverId, agentId)?.workspaceId ?? null,
+  );
+  const { archiveAgent } = useArchiveAgent();
+  const runClientSlashCommand = useCallback(
+    async (command: ClientSlashCommand) => {
+      const agent = resolveChatAgentFromSession(useSessionStore.getState(), serverId, agentId);
+      if (!agent) {
+        throw new Error("Agent not found");
+      }
+      if (command.kind === "replace-agent-with-draft") {
+        if (!agent.workspaceId) {
+          throw new Error("This agent has no workspace to start a draft in");
+        }
+        navigateToWorkspace({
+          serverId,
+          workspaceId: agent.workspaceId,
+          target: { kind: "draft", draftId: generateDraftId(), setup: buildDraftAgentSetup(agent) },
+        });
+      }
+      await archiveAgent({ serverId, agentId });
+    },
+    [agentId, archiveAgent, serverId],
+  );
+
+  return (
+    <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
+      <Composer
+        agentId={agentId}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        blurOnSubmit={isNative}
+        isPaneFocused={isPaneFocused}
+        textSource={agentInputDraft.textSource}
+        onChangeText={agentInputDraft.editText}
+        textReplacement={agentInputDraft.textReplacement}
+        attachments={agentInputDraft.attachments}
+        onChangeAttachments={agentInputDraft.setAttachments}
+        cwd={cwd}
+        clearDraft={agentInputDraft.clear}
+        editingSession={editingSession}
+        onAttentionInputFocus={onAttentionInputFocus}
+        onAttentionPromptSend={onAttentionPromptSend}
+        onComposerHeightChange={onComposerHeightChange}
+        onMessageSent={onMessageSent}
+        onClientSlashCommand={runClientSlashCommand}
+        placeholder={placeholder}
         isCompactLayout={isCompactComposerLayout}
       />
     </View>

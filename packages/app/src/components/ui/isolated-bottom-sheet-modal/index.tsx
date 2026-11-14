@@ -13,6 +13,8 @@ import {
   createBottomSheetVisibilityTracker,
 } from "./visibility-tracker";
 import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
+import { FocusOwnerScope, useFocusOwner } from "@/components/ui/focus-owner";
+import { StyleSheet } from "react-native";
 import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
@@ -95,6 +97,9 @@ export const IsolatedBottomSheetModal = forwardRef<
     enableDismissOnClose = true,
     ...bottomSheetProps
   } = props;
+  // Gorhom portals the sheet to its host, away from the call site's React tree; re-open the
+  // focus owner there so a press in the sheet still belongs to whoever opened it.
+  const focusOwner = useFocusOwner();
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
       <SheetBackdrop
@@ -113,11 +118,20 @@ export const IsolatedBottomSheetModal = forwardRef<
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
     >
-      <BottomSheetScope>{contextBridge ? contextBridge(children) : children}</BottomSheetScope>
+      <BottomSheetScope>
+        <FocusOwnerScope owner={focusOwner} style={styles.content}>
+          {contextBridge ? contextBridge(children) : children}
+        </FocusOwnerScope>
+      </BottomSheetScope>
     </GorhomBottomSheetModal>
   );
 
   return modal;
+});
+
+const styles = StyleSheet.create({
+  // Grows into the sheet's content area and still sizes to dynamic content.
+  content: { flexGrow: 1, flexShrink: 1 },
 });
 
 export function useIsolatedBottomSheetVisibility({
