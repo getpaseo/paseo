@@ -147,6 +147,16 @@ test("the opening scene waits until most of the mockup is on screen", async ({ p
   await expect(request).toBeVisible({ timeout: 10_000 });
 });
 
+test("the opening scene starts in a window shorter than most of the mockup", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 400 });
+  await page.goto("/");
+  const mockup = page.getByRole("img", { name: desktopName, exact: true });
+  const request = mockup.getByText("Fix the issues labeled ready, one worktree each.");
+  await mockup.scrollIntoViewIfNeeded();
+  await expect(mockup).not.toBeInViewport({ ratio: 0.6 });
+  await expect(request).toBeVisible({ timeout: 10_000 });
+});
+
 test("the plugins scene installs the panel, then changes it on request", async ({ page }) => {
   await openHomepage(page);
   const mockup = page.getByRole("img", { name: desktopName, exact: true });

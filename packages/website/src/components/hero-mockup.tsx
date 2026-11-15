@@ -12,9 +12,12 @@ import {
   useMockupScene,
 } from "~/components/mockup";
 
-const IN_VIEW = { once: true, amount: 0.6 };
+const IN_VIEW = { once: true };
+/** How far down the mockup its start line sits. */
+const START_LINE = "60%";
 /** The space left between the top or bottom of the window and the pills or the mockup. */
 const PAGE_MARGIN = 16;
+const START_LINE_STYLE = { top: START_LINE };
 const PILL_TRANSITION = { duration: 0.34, ease: [0.22, 0.61, 0.36, 1] as const };
 
 export function HeroMockup() {
@@ -23,12 +26,13 @@ export function HeroMockup() {
   const state = useMockupScene(player);
 
   // The opening scene plays once most of the mockup is on screen, so a visitor who scrolls to it
-  // sees it from the start. With reduced motion there is nothing to miss, so the finished scene
-  // shows at once.
+  // sees it from the start. "Most" is a line 60% of the way down the mockup. A window shorter than
+  // 60% of the mockup still reaches the line, which a share of the mockup on screen would not.
+  // With reduced motion there is nothing to miss, so the finished scene shows at once.
   const frame = useRef<HTMLDivElement>(null);
-  const mockup = useRef<HTMLDivElement>(null);
+  const startLine = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
-  const onScreen = useInView(mockup, IN_VIEW);
+  const onScreen = useInView(startLine, IN_VIEW);
   const ready = onScreen || reduceMotion === true;
   useEffect(() => {
     if (ready) player.start();
@@ -60,7 +64,13 @@ export function HeroMockup() {
         ))}
       </div>
 
-      <div ref={mockup}>
+      <div className="relative">
+        <div
+          ref={startLine}
+          aria-hidden="true"
+          style={START_LINE_STYLE}
+          className="pointer-events-none absolute inset-x-0 h-px"
+        />
         <ScaledMockup
           width={DESIGN_WIDTH}
           height={DESIGN_HEIGHT}
