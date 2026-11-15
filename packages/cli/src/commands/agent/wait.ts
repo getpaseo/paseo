@@ -167,6 +167,7 @@ export async function runWaitCommand(
 
   const client = await connectToDaemon({ target: options.daemonTarget });
 
+  let reply: Omit<Parameters<typeof buildWaitResult>[0], "timeoutLabel">;
   try {
     try {
       const state = await client.waitForFinish(agentIdArg, timeoutMs);
@@ -178,17 +179,9 @@ export async function runWaitCommand(
 
       await client.close();
 
-      return {
-        type: "single",
-        data: buildWaitResult({ state, resolvedAgentId, recentActivity, timeoutLabel }),
-        schema: agentWaitSchema,
-      };
+      reply = { state, resolvedAgentId, recentActivity };
     } catch (waitErr) {
       await client.close().catch(() => {});
-
-      if (waitErr && typeof waitErr === "object" && "code" in waitErr) {
-        throw waitErr;
-      }
 
       const waitMessage = waitErr instanceof Error ? waitErr.message : String(waitErr);
 
@@ -214,4 +207,10 @@ export async function runWaitCommand(
     };
     throw error;
   }
+
+  return {
+    type: "single",
+    data: buildWaitResult({ ...reply, timeoutLabel }),
+    schema: agentWaitSchema,
+  };
 }
