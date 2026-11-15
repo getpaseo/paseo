@@ -1406,6 +1406,57 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("reopening drops disabled plugin instructions and starts with fresh collaboration settings", async () => {
+    const modes = {
+      data: [
+        {
+          name: "Code",
+          mode: "default",
+          model: null,
+          reasoning_effort: null,
+          developer_instructions: "Mode instructions",
+        },
+      ],
+    };
+    const firstServer = createFakeCodexAppServer({ "collaborationMode/list": () => modes });
+    const first = await createProviderWithFakeAppServer(firstServer).createSession(
+      createConfig({ pluginAppendSystemPrompt: ["Plugin instructions"] }),
+    );
+    await first.startTurn("first");
+    const firstTurn = await firstServer.waitForTurnStart();
+    expect(firstTurn).toMatchObject({
+      developerInstructions: "Plugin instructions",
+      collaborationMode: {
+        settings: { developer_instructions: "Mode instructions\n\nPlugin instructions" },
+      },
+    });
+    const started = waitForNextEvent(first, "thread_started");
+    firstServer.startsTurn({ threadId: "thread-1" });
+    await started;
+    const handle = first.describePersistence()!;
+    expect(handle.metadata).not.toHaveProperty("pluginAppendSystemPrompt");
+    await first.close();
+
+    const secondServer = createFakeCodexAppServer({ "collaborationMode/list": () => modes });
+    const resumed = await createProviderWithFakeAppServer(secondServer).resumeSession(handle, {
+      pluginAppendSystemPrompt: undefined,
+    });
+    try {
+      const resume = secondServer.requests().find((request) => request.method === "thread/resume");
+      expect(resume?.params).not.toHaveProperty("developerInstructions");
+      await resumed.startTurn("after disable");
+      const secondTurn = await secondServer.waitForTurnStart();
+      expect(secondTurn).not.toHaveProperty("developerInstructions");
+      expect(secondTurn).toMatchObject({
+        collaborationMode: { settings: { developer_instructions: "Mode instructions" } },
+      });
+      firstServer.assertNoErrors();
+      secondServer.assertNoErrors();
+    } finally {
+      await resumed.close();
+    }
+  });
+
   test("keeps the default effort when a session without one is resumed after a restart", async () => {
     const beforeRestart = createFakeCodexAppServer();
     const firstSession = await createProviderWithFakeAppServer(beforeRestart).createSession(
