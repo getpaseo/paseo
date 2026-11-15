@@ -46,3 +46,23 @@ test("enriches only live tasks with their correlated launch metadata", () => {
     runtime.observe(message({ type: "system", subtype: "background_tasks_changed", tasks: [] })),
   ).toEqual([]);
 });
+
+test("keeps the runtime while Claude's last Stop hook lists session crons", () => {
+  const runtime = new ClaudeRuntimeSafety();
+  runtime.observe(message({ type: "system", subtype: "init", claude_code_version: "2.1.321" }));
+  const cron = { id: "99eb0b69", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" };
+
+  runtime.observeStop({ session_crons: [cron] });
+  expect(runtime.canStopRuntime()).toBe(false);
+
+  runtime.observeStop({});
+  expect(runtime.canStopRuntime()).toBe(false);
+
+  runtime.observeStop({ session_crons: [] });
+  expect(runtime.canStopRuntime()).toBe(true);
+
+  runtime.observeStop({ session_crons: [cron] });
+  runtime.reset();
+  runtime.observe(message({ type: "system", subtype: "init", claude_code_version: "2.1.321" }));
+  expect(runtime.canStopRuntime()).toBe(true);
+});

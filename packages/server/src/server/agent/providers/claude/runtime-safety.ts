@@ -16,8 +16,12 @@ export class ClaudeRuntimeSafety {
   private readonly monitorTools = new Set<string>();
   private readonly toolInputs = new Map<string, { description?: string; command?: string }>();
   private readonly taskTools = new Map<string, string>();
+  // Session-only crons and wakeups live in the process and die with it. Claude lists them on
+  // every Stop hook, and they appear nowhere on the message stream.
+  private sessionCrons = 0;
 
   reset(): void {
+    this.sessionCrons = 0;
     this.inventoryState = "unknown";
     this.turnSeen = false;
     this.liveTasks = [];
@@ -36,6 +40,12 @@ export class ClaudeRuntimeSafety {
   /** Called before a prompt is written to this process. */
   notePromptSent(): void {
     this.turnSeen = true;
+  }
+
+  /** Called with each main-thread Stop hook input. */
+  observeStop(input: { session_crons?: readonly unknown[] }): void {
+    if (this.inventoryState === "retired" || !Array.isArray(input.session_crons)) return;
+    this.sessionCrons = input.session_crons.length;
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
@@ -129,6 +139,7 @@ export class ClaudeRuntimeSafety {
     if (this.inventoryState === "unknown" && !this.turnSeen) return true;
     return (
       this.inventoryState === "supported" &&
+      this.sessionCrons === 0 &&
       this.liveTasks.length === 0 &&
       this.awaitingNotifications.size === 0
     );
