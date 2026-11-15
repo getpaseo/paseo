@@ -44,4 +44,4 @@ Leading declared inputs follow the mention. Hub exposes the remaining text as `$
 
 Turn on **Settings → Advanced → Developer Mode**, then right-click to **Copy Server ID** for `guild`, **Copy Channel ID** for `channels`, and **Copy User ID** for `from_users`. All three are numeric snowflakes; quote them so YAML keeps them as strings.
 
-[Guided setup](/docs/hub/quickstart) fills `guild` from the Discord server you connected and asks you for your user ID.
+[Guided setup](/docs/hub/quickstart) selects the Discord connection and asks for your user ID. The connection limits the trigger to that server.

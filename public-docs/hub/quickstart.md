@@ -22,8 +22,6 @@ Open the address it prints, normally <http://localhost:3000>, and create the ope
 
 The first run needs no database, Docker, environment variables, or API keys. Hub creates an embedded database and your organization.
 
-Hub opens **Home** with four **Get started** steps: **Connect an integration**, **Connect a daemon**, **Create a trigger**, and **Run it**. The first unfinished step shows a hint and an action. Completed steps show a check and their result; later steps show only their title. The checklist collapses once all four are done.
-
 ## 2. Connect Slack
 
 **Set up your apps** explains how to create the Slack app and gives you a manifest to paste into Slack. Keep **Socket Mode** selected. It connects out from Hub and needs no public address or HTTPS.
@@ -47,6 +45,8 @@ paseo hub login http://localhost:3000
 Run it on the machine where your code lives, in the repository the agent should work in. Run the initializer below from that directory so it becomes the trigger's working directory.
 
 Approve the login in the browser tab that opens. Leave the Hub tab open: it watches for the daemon and shows **Daemon connected** by itself. Choose **Continue** when the daemon is connected.
+
+Hub opens **Home** with four **Get started** steps: **Connect an integration**, **Connect a daemon**, **Create a trigger**, and **Run it**. The first unfinished step shows a hint and an action. Completed steps show a check and their result; later steps show only their title. The checklist collapses once all four are done.
 
 ## 4. Create the starter trigger
 

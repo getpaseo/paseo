@@ -20,8 +20,6 @@ npx @getpaseo/hub
 
 首次运行不需要数据库、Docker、环境变量或 API key。Hub 会创建内嵌数据库和你的组织。
 
-Hub 会打开 **Home**，其中的 **Get started** 包含四个步骤：**Connect an integration**、**Connect a daemon**、**Create a trigger** 和 **Run it**。第一个未完成的步骤会显示提示和操作。已完成的步骤会显示勾选标记和结果，后续步骤只显示标题。四项全部完成后，清单会收起。
-
 ## 2. 连接 Slack {#2-connect-slack}
 
 **Set up your apps** 说明了如何创建 Slack 应用，并提供一份可以粘贴到 Slack 中的 manifest。保持选择 **Socket Mode**。它由 Hub 主动向外连接，不需要公开地址或 HTTPS。
@@ -45,6 +43,8 @@ paseo hub login http://localhost:3000
 在代码所在的机器上、Agent 要工作的仓库中运行它。之后也请在该目录中运行下面的初始化命令，这样它就会成为触发器的工作目录。
 
 在打开的浏览器标签页中批准登录。保持 Hub 标签页打开：它会监测 daemon，并自动显示 **Daemon connected**。daemon 连接后，选择 **Continue**。
+
+Hub 会打开 **Home**，其中的 **Get started** 包含四个步骤：**Connect an integration**、**Connect a daemon**、**Create a trigger** 和 **Run it**。第一个未完成的步骤会显示提示和操作。已完成的步骤会显示勾选标记和结果，后续步骤只显示标题。四项全部完成后，清单会收起。
 
 ## 4. 创建起步触发器 {#4-create-the-starter-trigger}
 

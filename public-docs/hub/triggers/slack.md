@@ -54,4 +54,4 @@ Hub consumes consecutive declared headers and exposes the remainder as `${{ pase
 | `from_users` | Your avatar → **Profile** → **⋮** → **Copy member ID**. Member IDs start with `U`.          |
 | `channels`   | Channel name → **About**. The channel ID is at the bottom of the panel and starts with `C`. |
 
-[Guided setup](/docs/hub/quickstart) fills `workspace` from the Slack workspace you connected and asks you for your member ID, so a generated starter already carries both.
+[Guided setup](/docs/hub/quickstart) selects the Slack connection and asks for your member ID. The connection limits the trigger to that workspace.
