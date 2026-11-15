@@ -86,7 +86,12 @@ type WaitFinishState = Awaited<
   ReturnType<Awaited<ReturnType<typeof connectToDaemon>>["waitForFinish"]>
 >;
 
-function buildWaitResult(args: {
+/**
+ * Turn the daemon's wait reply into the command result. Throws AGENT_NOT_FOUND when the
+ * daemon resolved no agent: it answers an unknown identifier with an error and no agent
+ * payload, while an agent that finished in error always comes with its payload.
+ */
+export function buildWaitResult(args: {
   state: WaitFinishState;
   resolvedAgentId: string;
   recentActivity: string | null;
@@ -117,6 +122,13 @@ function buildWaitResult(args: {
   }
 
   if (state.status === "error") {
+    if (state.final === null) {
+      throw {
+        code: "AGENT_NOT_FOUND",
+        message: state.error ?? `Agent not found: ${resolvedAgentId}`,
+        details: "Use `paseo ls` to list available agents",
+      } satisfies CommandError;
+    }
     return {
       agentId: resolvedAgentId,
       status: "error",
@@ -158,17 +170,6 @@ export async function runWaitCommand(
   try {
     try {
       const state = await client.waitForFinish(agentIdArg, timeoutMs);
-
-      // A null payload means the daemon never resolved this identifier to an agent,
-      // which is a missing agent rather than an agent that finished in error.
-      if (state.status === "error" && state.final === null) {
-        throw {
-          code: "AGENT_NOT_FOUND",
-          message: state.error ?? `No agent found matching: ${agentIdArg}`,
-          details: "Use `paseo ls` to list available agents",
-        } satisfies CommandError;
-      }
-
       const resolvedAgentId = state.final?.id ?? agentIdArg;
       const recentActivity =
         state.status === "timeout" || state.status === "idle"

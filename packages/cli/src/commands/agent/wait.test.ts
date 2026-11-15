@@ -1,54 +1,46 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
-
-const waitForFinish = vi.fn();
-const close = vi.fn(async () => undefined);
-
-vi.mock("../../utils/client.js", () => ({
-  connectToDaemon: vi.fn(async () => ({ waitForFinish, close })),
-  getDaemonHost: vi.fn(() => "ws://127.0.0.1:6767"),
-}));
-
-import { runWaitCommand } from "./wait.js";
+import { describe, expect, it } from "vitest";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { buildWaitResult } from "./wait.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 
-describe("runWaitCommand", () => {
-  beforeEach(() => {
-    waitForFinish.mockReset();
-    close.mockClear();
+describe("buildWaitResult", () => {
+  it("reports an identifier the daemon could not resolve as a missing agent", () => {
+    expect(() =>
+      buildWaitResult({
+        state: {
+          status: "error",
+          final: null,
+          error: "Agent not found: does-not-exist",
+          lastMessage: null,
+        },
+        resolvedAgentId: "does-not-exist",
+        recentActivity: null,
+        timeoutLabel: null,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "AGENT_NOT_FOUND",
+        message: "Agent not found: does-not-exist",
+        details: "Use `paseo ls` to list available agents",
+      }),
+    );
   });
 
-  it("reports an identifier the daemon could not resolve as a missing agent", async () => {
-    waitForFinish.mockResolvedValue({
-      status: "error",
-      final: null,
-      error: "Agent not found: does-not-exist",
-      lastMessage: null,
+  it("still reports an agent that finished in error as a result", () => {
+    const result = buildWaitResult({
+      state: {
+        status: "error",
+        final: { id: agentId, lastError: "The provider returned 500" } as AgentSnapshotPayload,
+        error: "The provider returned 500",
+        lastMessage: null,
+      },
+      resolvedAgentId: agentId,
+      recentActivity: null,
+      timeoutLabel: null,
     });
 
-    await expect(
-      runWaitCommand("does-not-exist", { daemonTarget }, {} as never),
-    ).rejects.toMatchObject({
-      code: "AGENT_NOT_FOUND",
-      message: "Agent not found: does-not-exist",
-      details: "Use `paseo ls` to list available agents",
-    });
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("still reports an agent that finished in error as a result", async () => {
-    waitForFinish.mockResolvedValue({
-      status: "error",
-      final: { id: agentId, lastError: "The provider returned 500" },
-      error: "The provider returned 500",
-      lastMessage: null,
-    });
-
-    const result = await runWaitCommand("11111111", { daemonTarget }, {} as never);
-
-    expect(result.data).toEqual({
+    expect(result).toEqual({
       agentId,
       status: "error",
       message: "The provider returned 500",
