@@ -10,7 +10,7 @@ import {
   decodeTerminalStreamFrame,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import type { ServerMessage, TerminalSession } from "./terminal.js";
+import type { ServerMessage, TerminalExitInfo, TerminalSession } from "./terminal.js";
 import {
   TerminalSessionController,
   type TerminalSessionControllerOptions,
@@ -1037,10 +1037,19 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
 
 function exitFixture(
   readReplay: () => Promise<ReplayFixture | null>,
-  options: { backedUp?: boolean; workspaceLaunch?: TerminalSession["workspaceLaunch"] } = {},
+  options: {
+    backedUp?: boolean;
+    workspaceLaunch?: TerminalSession["workspaceLaunch"];
+    completed?: boolean;
+  } = {},
 ) {
   const outputs = new Set<(message: ServerMessage) => void>();
   const exits = new Set<Parameters<TerminalSession["onExit"]>[0]>();
+  const changes = new Set<Parameters<TerminalManager["subscribeTerminalsChanged"]>[0]>();
+  let registered = true;
+  let exitInfo: TerminalExitInfo | null = options.completed
+    ? { exitCode: 17, signal: null, lastOutputLines: ["final output"] }
+    : null;
   const terminal: TerminalSession = {
     id: "exit-terminal",
     name: "Terminal",
@@ -1071,14 +1080,14 @@ function exitFixture(
     setActivity() {},
     clearActivityAttention: () => false,
     setTitle() {},
-    getExitInfo: () => null,
+    getExitInfo: () => exitInfo,
     kill() {},
     async killAndWait() {},
   };
   const manager: TerminalManager = {
-    getTerminal: () => terminal,
+    getTerminal: (id) => (registered && id === terminal.id ? terminal : undefined),
     replayTerminal: replayFixture(readReplay),
-    getTerminals: async () => [terminal],
+    getTerminals: async () => (registered ? [terminal] : []),
     createTerminal: async () => terminal,
     registerCwdEnv() {},
     validateTerminalActivityToken: () => "unknown",
@@ -1090,7 +1099,12 @@ function exitFixture(
     captureTerminal: async () => ({ lines: [], totalLines: 0 }),
     listDirectories: () => [],
     killAll() {},
-    subscribeTerminalsChanged: () => () => {},
+    subscribeTerminalsChanged: (listener) => {
+      changes.add(listener);
+      return () => {
+        changes.delete(listener);
+      };
+    },
     subscribeTerminalActivity: () => () => {},
     subscribeTerminalWorkspaceContributionChanged: () => () => {},
   };
@@ -1122,6 +1136,10 @@ function exitFixture(
     controller,
     outputs,
     exits,
+    removeTerminal: () => {
+      registered = false;
+      for (const listener of changes) listener({ cwd: terminal.cwd, terminals: [] });
+    },
     subscribe: async (source: object, modern: boolean, requestId: string) => {
       delivery.attach(source, modern);
       const request = {
@@ -1145,12 +1163,51 @@ function exitFixture(
       for (const listener of outputs) listener({ type: "output", data, revision });
     },
     exit: () => {
-      for (const listener of exits) listener({ exitCode: 0, signal: null, lastOutputLines: [] });
+      exitInfo = { exitCode: 0, signal: null, lastOutputLines: [] };
+      for (const listener of exits) listener(exitInfo);
     },
   };
 }
 
 describe("terminal output before natural exit", () => {
+  test.each([true, false])(
+    "releases retained observers on external dismissal (completed when attached=%s)",
+    async (completed) => {
+      const f = exitFixture(async () => terminalReplay("final output", 1), {
+        completed,
+        workspaceLaunch: { launchName: "dev", command: "./bin/dev", portBase: 42000, portCount: 4 },
+      });
+      f.controller.start();
+      try {
+        const phone = await f.subscribe({}, true, "phone");
+        const desktop = await f.subscribe({}, true, "desktop");
+        await flushMicrotasks();
+        f.exit();
+        await flushMicrotasks();
+        expect(f.frames.filter((row) => row.message?.type === "terminal_stream_exit")).toEqual([]);
+        expect(f.delivery.registrationCount).toBe(2);
+        f.removeTerminal();
+        await flushMicrotasks();
+        const exits = f.frames.filter((row) => row.message?.type === "terminal_stream_exit");
+        expect(exits.map((row) => row.message)).toEqual([
+          {
+            type: "terminal_stream_exit",
+            payload: { terminalId: "exit-terminal", subscriptionId: phone.id },
+          },
+          {
+            type: "terminal_stream_exit",
+            payload: { terminalId: "exit-terminal", subscriptionId: desktop.id },
+          },
+        ]);
+        expect(f.delivery.registrationCount).toBe(0);
+        expect(f.controller.getMetrics().streamSubscriptionCount).toBe(0);
+      } finally {
+        f.controller.dispose();
+        await f.delivery.close();
+      }
+    },
+  );
+
   test("replays output missed during worker disconnection before retaining a completed launch", async () => {
     let snapshot = terminalReplay("before disconnect", 1);
     const f = exitFixture(async () => snapshot, {

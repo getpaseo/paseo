@@ -327,6 +327,13 @@ export class TerminalSessionController {
   }
 
   private async handleTerminalsChanged(event: TerminalsChangedEvent): Promise<void> {
+    // Retained streams outlive their process listeners, but not their terminal records.
+    for (const stream of this.activeStreams.values()) {
+      if (stream.completion === "close") continue;
+      if (!this.terminalManager?.getTerminal(stream.terminalId)) {
+        this.detachStream(stream.terminalId, { emitExit: true });
+      }
+    }
     // A terminal can live in a subdirectory of a subscribed workspace root (an
     // agent can open one there). Deliver the change to every subscribed root at
     // or above the terminal's cwd, keyed by that root, carrying the full
