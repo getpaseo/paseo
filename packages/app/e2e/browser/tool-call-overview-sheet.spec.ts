@@ -524,3 +524,43 @@ for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
     }
   });
 }
+
+test("keeps tool headers reachable in an overflowing group", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(page, "Overflowing overview tool group");
+  try {
+    const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId);
+    await openOverviewAgent(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Inspect a large tool group.");
+    await gate.waitForFirstCompleted();
+    gate.appendCompletedCalls(15);
+    const group = page.getByTestId("tool-call-group").first();
+    await openToolDetails(group);
+    const badges = group.getByTestId("tool-call-badge");
+    await expect(badges).toHaveCount(16);
+    await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    const first = badges.first();
+    for (const action of ["expand", "collapse"]) {
+      await test.step(`${action} the first tool without moving its header`, async () => {
+        await first.scrollIntoViewIfNeeded();
+        const headerTop = await topOf(first);
+        const frames = await toggleAndMeasureTool(first);
+        for (const frame of frames) expect(Math.abs(frame.top - headerTop)).toBeLessThanOrEqual(1);
+      });
+    }
+    await test.step("follow the next appended tool", async () => {
+      gate.appendCompletedCalls(1);
+      await expect(badges).toHaveCount(17);
+      await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    });
+    await test.step("reopen the group at its latest tool", async () => {
+      await openToolDetails(group);
+      await expect(badges).toHaveCount(0);
+      await openToolDetails(group);
+      await expect(badges).toHaveCount(17);
+      await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
+    });
+  } finally {
+    await agent.cleanup();
+  }
+});
