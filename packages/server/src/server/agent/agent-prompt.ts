@@ -219,7 +219,7 @@ export async function unarchiveAgentState(
 
 export interface SendPromptToAgentParams {
   idleOnly?: boolean;
-  /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
+  /** Awaited after loading and before run admission; direct sends apply their mode first. */
   beforeDispatch?: () => Promise<void>;
   onDispatch?: StartAgentRunOptions["onDispatch"];
   agentManager: AgentManager;
@@ -364,7 +364,7 @@ export async function sendPreparedPromptToAgent(
     throw error;
   }
 
-  if (params.sessionMode) {
+  if (params.sessionMode && !params.idleOnly) {
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
@@ -375,7 +375,10 @@ export async function sendPreparedPromptToAgent(
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
-    runOptions: params.runOptions,
+    runOptions:
+      params.idleOnly && params.sessionMode
+        ? { ...params.runOptions, sessionMode: params.sessionMode }
+        : params.runOptions,
   });
 }
 

@@ -27,7 +27,7 @@ import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { createAgentMessageDelivery } from "./agent-messages/index.js";
-import { startAgentRun } from "./agent-prompt.js";
+import { startAgentRun, sendPreparedPromptToAgent, AgentTurnBusyError } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -14611,6 +14611,92 @@ test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
       expect(session.startCount).toBe(1);
     } finally {
       await delivery.close();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([false, true])(
+  "an idle-only prompt cannot change another turn's mode (starts during preparation: %s)",
+  async (concurrent) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-queued-mode-"));
+    class ModeSession extends SteeringTestSession {
+      mode = "plan";
+      applied: string[] = [];
+      startedModes: string[] = [];
+      override async setMode(mode?: string) {
+        if (!mode) throw new Error("Mode required");
+        this.mode = mode;
+        this.applied.push(mode);
+      }
+      override async getCurrentMode() {
+        return this.mode;
+      }
+      override async startTurn(prompt: AgentPromptInput) {
+        this.startedModes.push(this.mode);
+        return super.startTurn(prompt);
+      }
+    }
+    const session = new ModeSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.setAgentMode(agent.id, "plan");
+    session.applied.length = 0;
+    const providerStarted = new Promise<void>((resolve) => {
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type === "turn_started") {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+    const startOther = async () => {
+      await startAgentRun(manager, agent.id, "other turn", logger);
+      await manager.waitForAgentRunStart(agent.id);
+    };
+    try {
+      if (!concurrent) await startOther();
+      await expect(
+        sendPreparedPromptToAgent({
+          agentManager: manager,
+          agentStorage: storage,
+          agentId: agent.id,
+          prompt: "queued follow-up",
+          sessionMode: "full-access",
+          idleOnly: true,
+          logger,
+          beforeDispatch: concurrent ? startOther : undefined,
+        }),
+      ).rejects.toBeInstanceOf(AgentTurnBusyError);
+      expect(session.mode).toBe("plan");
+      expect(session.applied).toEqual([]);
+      expect(session.startedModes).toEqual(["plan"]);
+      await providerStarted;
+      session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
+      await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(false));
+      await sendPreparedPromptToAgent({
+        agentManager: manager,
+        agentStorage: storage,
+        agentId: agent.id,
+        prompt: "queued follow-up",
+        sessionMode: "full-access",
+        idleOnly: true,
+        logger,
+      });
+      await manager.waitForAgentRunStart(agent.id);
+      expect(session.mode).toBe("full-access");
+      expect(session.applied).toEqual(["full-access"]);
+      expect(session.startedModes).toEqual(["plan", "full-access"]);
+    } finally {
       await manager.closeAgent(agent.id);
       rmSync(workdir, { recursive: true, force: true });
     }
