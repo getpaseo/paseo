@@ -14,6 +14,7 @@ import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.j
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookCallback,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -3804,7 +3805,7 @@ class ClaudeAgentSession implements AgentSession {
       // subagents keep running. Without this declaration an interrupt kills every one of them.
       // Claude stops a helper itself with its TaskStop tool.
       perTaskStopAffordance: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: { ...this.buildSubagentEffortHooks(), Stop: [{ hooks: [this.observeStopHook] }] },
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -5479,6 +5480,12 @@ class ClaudeAgentSession implements AgentSession {
       SubagentStop: [{ hooks: [observe] }],
     };
   }
+
+  // Observation-only, like the effort hooks: it never alters turn control.
+  private readonly observeStopHook: HookCallback = async (input) => {
+    if (input.hook_event_name === "Stop") this.runtimeSafety.observeStop(input.session_crons);
+    return {};
+  };
 
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =

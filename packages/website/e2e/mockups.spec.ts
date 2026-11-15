@@ -1,12 +1,13 @@
-import { expect, test, type Locator, type Page } from "./fixtures";
+import { expect, test, waitForHydration, type Locator, type Page } from "./fixtures";
 
 const desktopName =
   "Paseo desktop app with coding agents, a conversation, and a code diff open side by side";
 
-async function openHomepage(page: Page) {
-  await page.setViewportSize({ width: 1512, height: 930 });
+/** Opens the homepage once it has hydrated, so the router's scroll reset cannot undo a later scroll. */
+async function openHomepage(page: Page, window = { width: 1512, height: 930 }) {
+  await page.setViewportSize(window);
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Orchestration", exact: true })).toBeVisible();
+  await waitForHydration(page);
 }
 
 async function viewPhones(page: Page) {
@@ -148,11 +149,7 @@ test("the opening scene waits until most of the mockup is on screen", async ({ p
 });
 
 test("the opening scene starts in a window shorter than most of the mockup", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 400 });
-  await page.goto("/");
-  // Hydration resets the scroll position, which would leave the mockup below the window. The
-  // language button is enabled once the page has hydrated.
-  await expect(page.getByRole("button", { name: /^Language/ }).first()).toBeEnabled();
+  await openHomepage(page, { width: 1400, height: 400 });
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const request = mockup.getByText("Fix the issues labeled ready, one worktree each.");
   await mockup.scrollIntoViewIfNeeded();
@@ -243,8 +240,7 @@ test("picking a scene while the hero is still sliding in keeps the pills on scre
 }) => {
   // Reduced motion makes the scroll instant, so the test does not wait for one to settle.
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.setViewportSize({ width: 1280, height: 700 });
-  await page.goto("/");
+  await openHomepage(page, { width: 1280, height: 700 });
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   await playScene(page, "Remote", page.getByRole("button", { name: "Remote", pressed: true }));
 
