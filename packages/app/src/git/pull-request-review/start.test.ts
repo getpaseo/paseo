@@ -88,7 +88,6 @@ beforeEach(() => {
   useWorkspaceDraftSubmissionStore.setState({
     pendingByDraftId: {},
     setupByDraftId: {},
-    creationByDraftId: {},
   });
   useDraftStore.setState({ drafts: {}, createModalDraft: null });
 });

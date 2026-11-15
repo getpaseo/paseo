@@ -184,6 +184,8 @@ interface UseGitActionsResult {
   gitActions: GitActions;
   branchLabel: string;
   isGit: boolean;
+  /** Archives this workspace, Git or not. Null while it cannot be archived. */
+  archiveWorkspace: (() => void) | null;
 }
 
 interface UseWorkspaceScreenArchiveControllerInput {
@@ -241,6 +243,13 @@ function canArchiveWorkspace(
   );
 }
 
+function availableArchive(
+  controller: { canArchive: boolean; isArchiving: boolean },
+  archive: () => void,
+): (() => void) | null {
+  return controller.canArchive && !controller.isArchiving ? archive : null;
+}
+
 function useWorkspaceScreenArchiveController({
   serverId,
   activeWorkspaceSelection,
@@ -266,21 +275,13 @@ function useWorkspaceScreenArchiveController({
     serverId,
     workspaceId: workspaceDescriptor?.id ?? "",
     workspaceKind: workspaceDescriptor?.workspaceKind ?? "directory",
+    workspaceDirectory: workspaceDescriptor?.workspaceDirectory ?? "",
     name: workspaceDescriptor?.name ?? branchLabel,
-    isDirty: archiveRisk.isDirty,
-    aheadOfOrigin: archiveRisk.aheadOfOrigin,
     diffStat: workspaceDescriptor?.diffStat ?? null,
     warningLabels: getWorktreeArchiveWarningLabels(t),
     onSetHiding: setIsHidingWorkspace,
-    onArchiveStarted: () => {
-      if (!activeWorkspaceSelection) {
-        return;
-      }
-      redirectIfArchivingActiveWorkspace({
-        serverId,
-        workspaceId: activeWorkspaceSelection.workspaceId,
-        activeWorkspaceSelection,
-      });
+    onArchiveStarted: (archived) => {
+      redirectIfArchivingActiveWorkspace({ ...archived, activeWorkspaceSelection });
     },
   });
 
@@ -686,7 +687,12 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, workflow, baseRefLabel, hasPullRequest, forge, t],
   );
 
-  return { gitActions, branchLabel, isGit };
+  return {
+    gitActions,
+    branchLabel,
+    isGit,
+    archiveWorkspace: availableArchive(archiveController, handleArchiveWorkspace),
+  };
 }
 
 function translateGitActions(

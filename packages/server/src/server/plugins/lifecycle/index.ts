@@ -195,21 +195,18 @@ export function publishAgentStream(
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "completed" },
     });
   } else if (event.type === "turn_failed") {
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "failed", error: { message: event.error, code: event.code } },
     });
   } else if (event.type === "turn_canceled") {
     lifecycle.emit("agent.turn.after", {
       agent,
       turnId: event.turnId ?? null,
-      timeline: [],
       outcome: { kind: "canceled", reason: event.reason },
     });
   } else if (event.type === "permission_requested") {

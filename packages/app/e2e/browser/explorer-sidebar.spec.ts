@@ -49,6 +49,21 @@ test("moves a terminal into Explorer execution while keeping its supporting view
   }
 });
 
+const LAYOUT_VIEWPORTS = {
+  compact: { width: 390, height: 844 },
+  wide: { width: 1280, height: 900 },
+};
+
+// The previous layout stays on screen for a few renders after the resize. Wait for the shell to
+// switch so the next step reads the layout it resized to.
+async function resizeToLayout(
+  page: Parameters<typeof ensureExplorerSidebar>[0],
+  layout: keyof typeof LAYOUT_VIEWPORTS,
+) {
+  await page.setViewportSize(LAYOUT_VIEWPORTS[layout]);
+  await expect(page.getByTestId(`${layout}-shell`)).toBeVisible();
+}
+
 async function expectExplorerActiveTabForeground(
   page: Parameters<typeof ensureExplorerSidebar>[0],
 ) {
@@ -273,7 +288,7 @@ test("tablet prototype keeps Explorer tabs when resizing down to a phone", async
     await page.screenshot({ path: testInfo.outputPath("tablet-951.png") });
     await openExplorerAgentDraft(page);
     await page.screenshot({ path: testInfo.outputPath("tablet-agent-draft.png") });
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await revealPhoneExplorer(page);
     await expect(
       explorerSidebar(page).getByRole("button", { name: "New tab", exact: true }),
@@ -318,10 +333,10 @@ test("retains the Explorer host through appearance changes and folding", async (
       .poll(() => explorer.evaluate((element) => getComputedStyle(element).backgroundColor))
       .not.toBe(previousColor);
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     await expect(explorer).toBeVisible();
     expect(await host.evaluate((element) => element.isConnected)).toBe(true);
   } finally {
@@ -356,7 +371,7 @@ test("reorders compact Explorer tabs with a pointer without changing selection",
   const workspace = await seedWorkspace({ repoPrefix: "explorer-compact-drag-" });
   try {
     await gotoWorkspace(page, workspace.workspaceId);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await openFilesPanel(page);
     await reorderCompactExplorerTabs(page);
     await expect(
@@ -423,9 +438,9 @@ test("updates populated code and diff appearance without losing the editor insta
       .getByTestId("file-source-editor")
       .elementHandle();
     await text.fill(`${source}\n// retained Explorer edit`);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     expect(await explorerEditor!.evaluate((node) => node.isConnected)).toBe(true);
     await expect(text).toContainText("retained Explorer edit");
   } finally {
@@ -490,9 +505,9 @@ test("retains populated Explorer chat and terminal attachments through appearanc
     const terminalNode = await terminal.elementHandle();
     await page.getByTestId("workspace-explorer-toggle").first().click();
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     await ensureExplorerSidebar(page);
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await resizeToLayout(page, "wide");
     await cycleWorkspaceTheme(page);
     expect(await terminalNode!.evaluate((node) => node.isConnected)).toBe(true);
     expect(attaches).toHaveLength(1);
@@ -512,7 +527,7 @@ test("compact file sheets cover Explorer and return to its retained file list", 
   try {
     await writeFile(`${workspace.repoPath}/sheet-marker.txt`, "Explorer sheet marker\n");
     await gotoWorkspace(page, workspace.workspaceId);
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeToLayout(page, "compact");
     const explorer = await ensureExplorerSidebar(page);
     await openFilesPanel(page);
     const host = await explorer.elementHandle();

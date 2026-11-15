@@ -1,3 +1,4 @@
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
@@ -52,6 +53,12 @@ function textPattern(forgeReferencePattern?: string): RegExp {
   }
   return pattern;
 }
+
+// External Markdown links only what its author wrote as an https URL.
+const EXTERNAL_LINKS = {
+  text: new RegExp(BARE_URL.replace("https?", "https"), "g"),
+  inlineCode: /^https:\/\/[^\s<>]+$/,
+};
 
 function linkMetadata(inlineCodePaths: ReadonlySet<string>, forgeReferencePattern?: string) {
   // The engine accepts regexes on both platforms. Classify complete code spans
@@ -139,6 +146,12 @@ export function prepareMarkdownSource(
     commandNames?: ReadonlySet<string>;
     /** Regex source for forge references such as `#12`; see `@/git/forge-shorthand`. */
     forgeReferencePattern?: string;
+    /**
+     * Author-controlled Markdown from outside this host, such as a plugin README. It follows the
+     * registry's overview contract: only absolute https links and images, and nothing is
+     * recognized as a file, forge reference or command.
+     */
+    external?: boolean;
   } = {},
 ) {
   source = normalizeMarkdownHtml(source);
@@ -149,10 +162,13 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
-  const metadata = linkMetadata(
-    collectInlineCodePaths(source, workspaceRoot, options.commandNames),
-    options.forgeReferencePattern,
-  );
+  const external = options.external === true;
+  const metadata = external
+    ? { linkRecognition: EXTERNAL_LINKS, linkSource: markdownLinkSource }
+    : linkMetadata(
+        collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+        options.forgeReferencePattern,
+      );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
@@ -162,7 +178,8 @@ export function prepareMarkdownSource(
     !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
       source,
     ) &&
-    !(workspaceRoot && source.includes("]("))
+    !(workspaceRoot && source.includes("](")) &&
+    !(external && /\]|<[a-z]+:/i.test(source))
   ) {
     return { images, ...metadata, render: () => source };
   }
@@ -181,9 +198,10 @@ export function prepareMarkdownSource(
   ) {
     const target = node.type === "image" ? node : definitions.get(node.identifier);
     if (
-      target &&
-      options.supportsSvg === false &&
-      /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(target.url)
+      (external && !pluginOverviewUrl(target?.url)) ||
+      (target &&
+        options.supportsSvg === false &&
+        /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(target.url))
     ) {
       edits.push({ start, end, text: escapeMarkdownText(node.alt ?? "") });
       return;
@@ -236,6 +254,21 @@ export function prepareMarkdownSource(
       if (lineEnd < end) split(lineEnd);
     }
   }
+  // An external link to anything but an https URL keeps its label and loses the brackets and
+  // destination around it, so edits inside the label still apply.
+  function dropUnsafeDestination(node: Nodes, start: number, end: number) {
+    if (node.type !== "link" && node.type !== "linkReference") return;
+    const target = node.type === "link" ? node : definitions.get(node.identifier);
+    if (pluginOverviewUrl(target?.url)) return;
+    const labelStart = node.children[0]?.position?.start.offset;
+    const labelEnd = node.children.at(-1)?.position?.end.offset;
+    if (labelStart === undefined || labelEnd === undefined) {
+      edits.push({ start, end, text: "" });
+      return;
+    }
+    edits.push({ start, end: labelStart, text: "" });
+    edits.push({ start: labelEnd, end, text: "" });
+  }
   function visit(node: Nodes, previous?: Nodes) {
     const position = node.position;
     if (position?.start.offset !== undefined && position.end.offset !== undefined) {
@@ -255,6 +288,7 @@ export function prepareMarkdownSource(
         const boundary = lineStart - newline.length;
         edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
       }
+      if (external) dropUnsafeDestination(node, start, end);
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)

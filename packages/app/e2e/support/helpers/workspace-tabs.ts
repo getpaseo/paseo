@@ -91,10 +91,13 @@ async function selectWorkspaceTab(tab: Locator): Promise<void> {
 export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const explorer = explorerSidebar(page);
-  if ((await explorer.count()) === 0) {
+  // Decide from the toggle, which reports the open state. The sidebar's own visibility lags it:
+  // a compact layout draws its closed Explorer for a frame before hiding it.
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
     await toggle.click();
   }
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const explorer = explorerSidebar(page);
   await expect(explorer).toBeVisible({ timeout: 30_000 });
   return explorer;
 }

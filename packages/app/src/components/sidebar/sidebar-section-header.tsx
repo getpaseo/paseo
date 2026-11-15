@@ -1,6 +1,7 @@
+import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import { useMemo, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react-native";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { DensityIcon } from "@/components/ui/density-icon";
 import { useIsCompactFormFactor } from "@/constants/layout";

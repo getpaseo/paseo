@@ -37,6 +37,7 @@ function installed(
       footer: [{ id: "status", title: "Status", Component: () => null }],
     },
     legacySidebarItems,
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
