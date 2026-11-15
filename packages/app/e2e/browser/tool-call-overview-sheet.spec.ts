@@ -153,21 +153,29 @@ async function holdStreamAfterFirstCompletedToolCall(page: Page, agentId: string
 type OverviewChatDisplay = "collapseToolCalls" | "collapseTurns";
 
 // Expand thinking keeps reasoning out of tool call runs, so the first tool call starts alone.
-async function configureOverviewToolCalls(page: Page, chatDisplay: OverviewChatDisplay) {
-  await page.addInitScript((display) => {
-    localStorage.setItem(
-      "@paseo:app-settings",
-      JSON.stringify({ chatDisplay: display, autoExpandReasoning: true }),
-    );
-  }, chatDisplay);
+async function configureOverviewToolCalls(
+  page: Page,
+  chatDisplay: OverviewChatDisplay,
+  autoExpandReasoning: boolean,
+) {
+  await page.addInitScript(
+    ({ display, expandReasoning }) => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ chatDisplay: display, autoExpandReasoning: expandReasoning }),
+      );
+    },
+    { display: chatDisplay, expandReasoning: autoExpandReasoning },
+  );
 }
 
 async function createOverviewAgent(
   page: Page,
   title: string,
   chatDisplay: OverviewChatDisplay = "collapseToolCalls",
+  autoExpandReasoning = true,
 ) {
-  await configureOverviewToolCalls(page, chatDisplay);
+  await configureOverviewToolCalls(page, chatDisplay, autoExpandReasoning);
   return seedMockAgentWorkspace({
     repoPrefix: "tool-call-overview-sheet-",
     title,
@@ -412,7 +420,13 @@ function provideLongReadDetail(item: Record<string, unknown> | undefined) {
   if (item?.type === "tool_call" && item.name === "read") item.detail = longGroupedDetail;
 }
 
-async function provideLongToolDetails(page: Page) {
+function provideLongReasoningDetail(item: Record<string, unknown> | undefined) {
+  if (item?.type === "reasoning") {
+    item.text = Array.from({ length: 80 }, (_, i) => `Long reasoning ${i}`).join("\n");
+  }
+}
+
+async function provideLongToolDetails(page: Page, transformItem = provideLongReadDetail) {
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
     ws.onMessage((message) => server.send(message));
@@ -420,9 +434,9 @@ async function provideLongToolDetails(page: Page) {
       const raw = typeof message === "string" ? message : message.toString("utf8");
       const envelope = JSON.parse(raw);
       const item = envelope.message?.payload?.event?.item;
-      provideLongReadDetail(item);
+      transformItem(item);
       if (envelope.message?.type === "fetch_agent_timeline_response") {
-        for (const entry of envelope.message.payload.entries) provideLongReadDetail(entry.item);
+        for (const entry of envelope.message.payload.entries) transformItem(entry.item);
       }
       ws.send(JSON.stringify(envelope));
     });
@@ -560,6 +574,45 @@ test("keeps tool headers reachable in an overflowing group", async ({ page }) =>
       await expect(badges).toHaveCount(17);
       await expect.poll(() => group.evaluate(hasScrolledToLatest)).toBe(true);
     });
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("keeps expanded reasoning within the group viewport", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(
+    page,
+    "Bounded grouped reasoning",
+    "collapseToolCalls",
+    false,
+  );
+  try {
+    // Seed before opening so the fixture transforms complete snapshots, not token deltas.
+    await agent.client.sendAgentMessage(agent.agentId, "Inspect grouped reasoning.");
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await provideLongToolDetails(page, provideLongReasoningDetail);
+    await openOverviewAgent(page, agent);
+    await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+    const group = page.getByTestId("tool-call-group").first();
+    await openToolDetails(group);
+    const thought = group.getByTestId("tool-call-badge").filter({ hasText: "Thinking" }).first();
+    const frames = await toggleAndMeasureTool(thought);
+    const viewportHeight = await group.evaluate((node) => {
+      const scroll = Array.from(node.querySelectorAll<HTMLElement>("*")).find((child) =>
+        ["auto", "scroll"].includes(getComputedStyle(child).overflowY),
+      );
+      if (!scroll) throw new Error("Expected the group's scroll viewport");
+      return scroll.getBoundingClientRect().height;
+    });
+    for (const frame of frames) expect(frame.height).toBeLessThanOrEqual(viewportHeight);
+    await expect(thought).toContainText("Long reasoning 79");
+    await openToolDetails(thought);
+    await expect(thought).not.toContainText("Long reasoning 79");
   } finally {
     await agent.cleanup();
   }
