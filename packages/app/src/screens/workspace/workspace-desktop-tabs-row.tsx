@@ -63,6 +63,7 @@ import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import {
   buildWorkspaceDesktopTabActions,
   type WorkspaceDesktopTabActions,
+  type WorkspaceTabExplorerSplitActions,
   type WorkspaceTabMenuEntry,
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
@@ -473,6 +474,10 @@ export interface WorkspaceDesktopTabRowItem {
   isActive: boolean;
   isCloseHovered: boolean;
   isClosingTab: boolean;
+  /** Explorer only: this tab is shown in the bottom half. */
+  isShownBelow?: boolean;
+  /** Explorer only: the tab menu's split entries. */
+  explorerSplit?: WorkspaceTabExplorerSplitActions;
 }
 
 interface ResolvedWorkspaceDesktopTabRowItem extends WorkspaceDesktopTabRowItem {
@@ -683,6 +688,7 @@ function TabHandleContent({
   tabLabelSkeletonStyle,
   tabLabelStyle,
   modifiedTestId,
+  shownBelowTestId,
 }: {
   presentation: WorkspaceTabPresentation;
   isHighlighted: boolean;
@@ -691,6 +697,8 @@ function TabHandleContent({
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
   modifiedTestId: string;
+  /** Set when the tab is shown in the Explorer's bottom half. */
+  shownBelowTestId?: string;
 }) {
   const { t } = useTranslation();
   const tabHandleDataSet = useMemo(
@@ -720,6 +728,14 @@ function TabHandleContent({
           testID={modifiedTestId}
         />
       ) : null}
+      {shownBelowTestId ? (
+        <View
+          accessibilityLabel={t("workspace.tabs.explorerSidebar.shownBelow")}
+          testID={shownBelowTestId}
+        >
+          <ThemedRows2 size={12} uniProps={extraMutedColorMapping} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -745,6 +761,7 @@ function TabChip({
   onNavigateTab,
   onCloseTab,
   dragHandleProps,
+  isShownBelow,
 }: {
   serverId: string;
   workspaceId: string;
@@ -767,6 +784,7 @@ function TabChip({
   onNavigateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
   dragHandleProps: DraggableListDragHandleProps | undefined;
+  isShownBelow?: boolean;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
   const { t } = useTranslation();
@@ -887,6 +905,9 @@ function TabChip({
                 tabLabelSkeletonStyle={tabLabelSkeletonStyle}
                 tabLabelStyle={tabLabelStyle}
                 modifiedTestId={`workspace-tab-modified-${testIdentity}`}
+                shownBelowTestId={
+                  isShownBelow ? `workspace-tab-shown-below-${testIdentity}` : undefined
+                }
               />
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -1568,10 +1589,12 @@ function ResolvedDesktopTabChip({
         onCloseTabsToRight,
         onCloseOtherTabs,
         labels,
+        explorerSplit: item.explorerSplit,
       }),
     [
       index,
       item.tab,
+      item.explorerSplit,
       onCloseOtherTabs,
       onCloseTab,
       onCloseTabsToLeft,
@@ -1624,6 +1647,7 @@ function ResolvedDesktopTabChip({
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
         dragHandleProps={dragHandleProps}
+        isShownBelow={item.isShownBelow}
       />
       {showDropIndicatorAfter ? (
         <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />

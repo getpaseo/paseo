@@ -68,6 +68,7 @@ function source(gitActions: GitActions): {
         closePane: "Close pane",
         toggleFocusMode: "Toggle focus mode",
         toggleExplorerSidebar: "Toggle Explorer sidebar",
+        toggleExplorerSplit: "Split or unsplit the Explorer",
         rename: "Rename workspace",
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
@@ -386,5 +387,27 @@ describe("workspace command center contributions", () => {
       { name: "bug", assigned: false },
       { name: "urgent", assigned: true },
     ]);
+  });
+});
+
+describe("Explorer split command", () => {
+  it("lists the Explorer split toggle in the desktop layout and dispatches it to the sidebar scope", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    const entry = contributions.find((item) => item.id === "workspace:toggle-explorer-split");
+    entry?.run();
+
+    expect(entry?.presentation).toMatchObject({ title: "Split or unsplit the Explorer" });
+    expect(fixture.dispatched).toEqual([{ id: "explorer.split.toggle", scope: "sidebar" }]);
+  });
+
+  it("omits the Explorer split toggle where panes cannot split", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    fixture.value.capabilities.canSplitPanes = false;
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    expect(contributions.some((item) => item.id === "workspace:toggle-explorer-split")).toBe(false);
   });
 });

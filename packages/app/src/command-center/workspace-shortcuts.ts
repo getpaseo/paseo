@@ -34,6 +34,8 @@ export function resolveWorkspaceCommandCenterShortcuts({
     toggleFocusMode: resolveShortcutKeysForAction("toggle-focus", overrides, platform) ?? undefined,
     toggleExplorerSidebar:
       resolveShortcutKeysForAction("toggle-right-sidebar", overrides, platform) ?? undefined,
+    toggleExplorerSplit:
+      resolveShortcutKeysForAction("toggle-explorer-split", overrides, platform) ?? undefined,
     // Workspace management shortcuts
     pinWorkspace: resolveShortcutKeysForAction("pin-workspace", overrides, platform) ?? undefined,
   };

@@ -8,6 +8,7 @@ import {
   readWorktreeArchiveRisk,
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
+import { useExplorerSplitStore } from "@/stores/explorer-split-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -17,10 +18,14 @@ import {
   type WorkspaceArchiveTarget,
 } from "@/workspace/workspace-archive";
 
-function purgeArchivedWorkspaceState(input: { serverId: string; workspaceId: string }): void {
+export function purgeArchivedWorkspaceState(input: {
+  serverId: string;
+  workspaceId: string;
+}): void {
   const workspaceKey = buildWorkspaceTabPersistenceKey(input);
   if (workspaceKey) {
     useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+    useExplorerSplitStore.getState().unsplit(workspaceKey);
   }
 }
 

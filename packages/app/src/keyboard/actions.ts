@@ -42,6 +42,7 @@ export type KeyboardActionId =
   | "workspace.navigate.relative"
   | "sidebar.toggle.left"
   | "sidebar.toggle.right"
+  | "explorer.split.toggle"
   | "sidebar.toggle.both"
   | "settings.toggle"
   | "command-center.toggle"
