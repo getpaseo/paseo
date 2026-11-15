@@ -228,32 +228,33 @@ test("picking a scene in a window too short for the mockup keeps the pills on sc
 test("picking a scene while the hero is still sliding in keeps the pills on screen", async ({
   page,
 }) => {
-  // The page clock is paused before the page loads, so the hero's slide-in stays at its first
-  // frame, 40px low, until the test runs the clock on.
-  await page.clock.install({ time: new Date("2026-01-01T00:00:00") });
-  await page.clock.pauseAt(new Date("2026-01-01T00:00:01"));
+  // Reduced motion makes the scroll instant, so the test does not wait for one to settle.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 700 });
   await page.goto("/");
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
-  await expect(mockup).not.toBeInViewport({ ratio: 0.99 });
-
-  const remote = page.getByRole("button", { name: "Remote", exact: true });
-  // The first ancestor with a transform is the container that slides in.
-  const slide = () =>
-    remote.evaluate((pill) => {
-      for (let node = pill.parentElement; node; node = node.parentElement) {
-        const { transform } = getComputedStyle(node);
-        if (transform !== "none") return transform;
-      }
-      return "none";
-    });
-
   await playScene(page, "Remote", page.getByRole("button", { name: "Remote", pressed: true }));
-  expect(await slide()).not.toBe("none");
 
-  await page.clock.runFor(3000);
-  await expect.poll(slide).toBe("none");
-  await expect(remote).toBeInViewport({ ratio: 1 });
+  // The hero slides up 40px as it enters. The test waits for that to end, puts the same 40px back
+  // on the container, picks a scene, and lets the slide end again. A click during a real slide
+  // does the same, but only inside the first second after load.
+  const sliding = page
+    .getByRole("button", { name: "Remote", exact: true })
+    .locator("xpath=../../../..");
+  await expect(sliding).toHaveCSS("transform", "none");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(mockup).not.toBeInViewport({ ratio: 0.99 });
+  const slideBy = (pixels: number) =>
+    sliding.evaluate((container, y) => {
+      container.style.transform = y === 0 ? "none" : `translateY(${y}px)`;
+    }, pixels);
+
+  const codeReview = page.getByRole("button", { name: "Code review", exact: true });
+  await slideBy(40);
+  await codeReview.click();
+  await slideBy(0);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(codeReview).toBeInViewport({ ratio: 1 });
 });
 
 test("the remote scene lists hosts with how each connects and its round trip time", async ({
