@@ -12,14 +12,17 @@ starts inside that body and stays inside it. Output starts below the cap.
 These are replay preconditions, not asserted pixel sizes. Close other expanded
 tools so the Scroll probe selector identifies this disclosure.
 
-Replay `native-inline-tool-scroll.ios.ad` on that explicit simulator through the
-existing mobile runner or agent-device. It scrolls to the separate Output
-section, then collapses and reopens the tool. Before the passive hover wrapper
-fix, these pans move the timeline and Output remains unreachable. The browser
-disclosure suite separately checks tab navigation and mouse hover reporting.
+Replay `native-inline-tool-scroll.ios.yaml --maestro` on that explicit simulator
+through the existing mobile runner or agent-device. In Expo's development menu,
+turn off Tools button, then dismiss the known notification entitlement toast
+with its bottom-right close button. Their transparent accessibility windows
+otherwise mark app text covered. Another overlay must fail the visibility
+assertions. Pass `--platform ios` and the prepared session's `--state-dir` when
+replaying in that session.
 
-The simulator development build's Expo gear overlay can mark all app nodes
-covered in accessibility, so this flow uses the measured coordinates for taps
-and pans. Section labels are separate native text nodes after the fix. During
-QA, the exact script commands were run in the prepared device session to retain
-its runner lease; no screenshot is used as an assertion.
+The flow first asserts Input is visible and the output marker is not. After
+panning it requires Output and its marker to be visible, then requires closing
+the tool to hide its contents and reopening it to show Input again. Presence in
+the accessibility tree is insufficient. A negative control with the passive
+wrapper retained and only the detail's scrolling disabled must fail at Output
+visibility. The browser disclosure suite checks tab navigation and mouse hover.
