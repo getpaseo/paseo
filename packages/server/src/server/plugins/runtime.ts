@@ -564,7 +564,7 @@ export class PluginRuntime {
         type: "hook",
         requestId: randomUUID(),
         name,
-        input: event,
+        input: wireEvent(name, event),
       })
         .then(() => undefined)
         .catch((error) => {
@@ -1481,4 +1481,12 @@ function readConnectionId(value: unknown): string | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const connectionId = Reflect.get(value, "connectionId");
   return typeof connectionId === "string" ? connectionId : null;
+}
+
+// COMPAT(pluginTurnTimeline): added in v0.16.0-beta.3; plugins built before the field left the SDK type read `timeline`; remove after 2027-05-31
+function wireEvent<Name extends keyof PluginHookEvents>(
+  name: Name,
+  event: PluginHookEvents[Name],
+): PluginHookEvents[Name] {
+  return name === "agent.turn.after" ? { ...event, timeline: [] } : event;
 }

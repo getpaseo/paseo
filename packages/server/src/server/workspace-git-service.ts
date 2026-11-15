@@ -5,7 +5,7 @@ import { LRUCache } from "lru-cache";
 import { CheckoutDiffCache } from "./checkout-diff-cache.js";
 import pLimit from "p-limit";
 import type pino from "pino";
-import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
+import type { ForgeWeb, ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
@@ -71,6 +71,12 @@ import {
   type SubscribeToFileChanges,
   createFileObserver,
 } from "./file-observer/index.js";
+import {
+  forgeWebForResolution,
+  resolveForgeWebReference,
+  type ForgeWebEntry,
+} from "./forge-web.js";
+import type { SshHostnameResolver } from "../utils/ssh-hostname.js";
 import { checkoutLiteFromGitSnapshot } from "./workspace-registry-model.js";
 import { createWatcherLivenessCanary } from "./watcher-liveness-canary.js";
 
@@ -200,6 +206,8 @@ export interface WorkspaceGitRuntimeSnapshot {
     } | null;
     error: { message: string } | null;
   };
+  /** Absent when the remote resolves to no forge. */
+  forgeWeb?: ForgeWeb;
 }
 
 export interface WorkspaceGitService {
@@ -406,6 +414,8 @@ interface WorkspaceGitServiceDependencies {
    * fakes. Any forge not listed here is built (and cached once) by the registry.
    */
   forgeOverrides?: Record<string, ForgeService>;
+  /** Resolves an SSH config alias to its HostName; defaults to `ssh -G`. */
+  resolveSshHostname?: SshHostnameResolver;
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
   hasOriginRemote: (cwd: string) => Promise<boolean>;
   runGitFetch: (
@@ -459,6 +469,11 @@ interface WorkspaceGitTarget {
   latestGitLoadedAtMs: number | null;
   latestForge: WorkspaceGitRuntimeSnapshot["forge"] | null;
   latestForgeLoadedAtMs: number | null;
+  latestForgeWeb: ForgeWebEntry | null;
+  /** The entry whose reference repository is being looked up, so one remote costs one call. */
+  forgeWebLookupEntry: ForgeWebEntry | null;
+  /** The remote the forge snapshot was last refreshed for; null until the first forge refresh. */
+  forgeRefreshedForRemote: { remoteUrl: string | null } | null;
   latestSnapshot: WorkspaceGitRuntimeSnapshot | null;
   latestSnapshotLoadedAtMs: number | null;
   latestFacts: CheckoutSnapshotFacts | null;
@@ -647,6 +662,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private readonly pendingRefreshes = new Set<Promise<WorkspaceGitRuntimeSnapshot>>();
+  private readonly pendingForgeWebLookups = new Set<Promise<void>>();
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
   private readonly repoTargets = new Map<string, RepoGitTarget>();
@@ -691,6 +707,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
     this.forgeResolver = createForgeResolver({
       createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+      resolveSshHostname: this.deps.resolveSshHostname,
     });
   }
 
@@ -1140,11 +1157,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.workingTreeWatchAliases.clear();
     this.snapshotUpdatedListeners.clear();
     // Unsubscribing can remove a target while its Git command still owns the cwd.
-    // Stop admission first, then drain those refreshes before releasing the service.
-    this.disposePromise = Promise.all([
-      this.fileObserver.close(),
-      Promise.allSettled(this.pendingRefreshes),
-    ]).then(() => undefined);
+    // Stop admission first, then drain those refreshes and the parent lookups they start.
+    this.disposePromise = (async () => {
+      await Promise.all([this.fileObserver.close(), Promise.allSettled(this.pendingRefreshes)]);
+      await Promise.allSettled(this.pendingForgeWebLookups);
+    })();
     return this.disposePromise;
   }
 
@@ -1301,6 +1318,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       latestGit: null,
       latestGitLoadedAtMs: null,
       latestForge: null,
+      latestForgeWeb: null,
+      forgeWebLookupEntry: null,
+      forgeRefreshedForRemote: null,
       latestForgeLoadedAtMs: null,
       latestSnapshot: null,
       latestSnapshotLoadedAtMs: null,
@@ -3568,6 +3588,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     if (request.includeForge) {
       await this.refreshForgeSnapshot(target, request, facts, runRefreshGitCommand);
+    } else if (this.hasRemoteChangedSinceForgeRefresh(target)) {
+      // `git remote set-url` reaches here as a git-only refresh. The forge, its host and the
+      // fork's parent all belong to the old remote, so resolve the new one now.
+      await this.refreshForgeSnapshot(
+        target,
+        { ...request, includeForge: true, force: true },
+        facts,
+        runRefreshGitCommand,
+      );
     }
 
     const snapshot = this.combineSnapshot(target);
@@ -3669,6 +3698,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       const loadedAtMs = this.deps.now().getTime();
       target.latestGitLoadedAtMs = loadedAtMs;
       target.latestForge = buildForgeUnavailableSnapshot();
+      target.latestForgeWeb = null;
       target.latestForgeLoadedAtMs = target.latestGitLoadedAtMs;
       return facts;
     }
@@ -3713,6 +3743,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return facts;
   }
 
+  private hasRemoteChangedSinceForgeRefresh(target: WorkspaceGitTarget): boolean {
+    const refreshedFor = target.forgeRefreshedForRemote;
+    return (
+      refreshedFor !== null &&
+      target.latestGit?.isGit === true &&
+      refreshedFor.remoteUrl !== target.latestGit.remoteUrl
+    );
+  }
+
   private async refreshForgeSnapshot(
     target: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
@@ -3720,13 +3759,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     runRefreshGitCommand: RunGitCommand,
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
+    target.forgeRefreshedForRemote = { remoteUrl };
     const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated
     // out by a cloud-only identity check.
-    if (!resolution) {
+    if (!resolution || !remoteUrl) {
       target.latestForge = buildUnresolvedRemoteForgeSnapshot(remoteUrl);
+      target.latestForgeWeb = null;
       target.latestForgeLoadedAtMs = this.deps.now().getTime();
       return;
     }
@@ -3749,7 +3790,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
+    // Publish the host with the snapshot; the parent lookup finishes in the background. Read the
+    // previous entry after the wait: a lookup for the old entry may have completed meanwhile.
+    target.latestForgeWeb = forgeWebForResolution({
+      remoteUrl,
+      resolution,
+      previous: target.latestForgeWeb,
+      nowMs: this.deps.now().getTime(),
+    });
     target.latestForgeLoadedAtMs = this.deps.now().getTime();
+    this.queueForgeWebReferenceLookup(target);
   }
 
   private combineSnapshot(target: WorkspaceGitTarget): WorkspaceGitRuntimeSnapshot {
@@ -3761,6 +3811,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       cwd: target.cwd,
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
+      // Only the remote it was resolved for: after `git remote set-url` the old host and
+      // parent are wrong until the next forge refresh resolves the new remote.
+      ...(target.latestForgeWeb?.remoteUrl === target.latestGit.remoteUrl
+        ? { forgeWeb: target.latestForgeWeb.forgeWeb }
+        : {}),
     };
   }
 
@@ -3800,6 +3855,68 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.rememberSnapshot(target, this.combineSnapshot(target), {
       forceEmit: false,
     });
+    this.queueForgeWebReferenceLookup(target);
+  }
+
+  private queueForgeWebReferenceLookup(target: WorkspaceGitTarget): void {
+    const lookup = this.resolveForgeWebReferenceIfDue(target)
+      .catch((error) => {
+        if (!this.disposed) {
+          this.logger.warn(
+            { err: error, cwd: target.cwd },
+            "Failed to resolve the forge reference repository",
+          );
+        }
+      })
+      .finally(() => {
+        this.pendingForgeWebLookups.delete(lookup);
+      });
+    this.pendingForgeWebLookups.add(lookup);
+  }
+
+  // The status poll is the only periodic work an idle workspace has, so it also
+  // retries a parent lookup that failed or ran before the forge CLI was signed in.
+  private async resolveForgeWebReferenceIfDue(target: WorkspaceGitTarget): Promise<void> {
+    const entry = target.latestForgeWeb;
+    const remoteUrl = target.latestGit?.remoteUrl ?? null;
+    const nowMs = this.deps.now().getTime();
+    if (
+      !entry ||
+      !remoteUrl ||
+      entry.remoteUrl !== remoteUrl ||
+      entry.retryAtMs === null ||
+      nowMs < entry.retryAtMs ||
+      target.forgeWebLookupEntry === entry
+    ) {
+      return;
+    }
+    target.forgeWebLookupEntry = entry;
+    try {
+      // The async resolver, like the forge refresh: only it reports the `ssh -G` host for an alias.
+      const resolution = await this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl);
+      if (!resolution) {
+        return;
+      }
+      const next = await resolveForgeWebReference({
+        cwd: target.cwd,
+        resolution,
+        entry,
+        nowMs,
+      });
+      if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+        return;
+      }
+      // The origin can change while the lookup runs; the old remote's answer is not ours to publish.
+      if (target.latestForgeWeb !== entry || target.latestGit?.remoteUrl !== entry.remoteUrl) {
+        return;
+      }
+      target.latestForgeWeb = next;
+      this.rememberSnapshot(target, this.combineSnapshot(target), { forceEmit: false });
+    } finally {
+      if (target.forgeWebLookupEntry === entry) {
+        target.forgeWebLookupEntry = null;
+      }
+    }
   }
 
   private rememberSnapshot(

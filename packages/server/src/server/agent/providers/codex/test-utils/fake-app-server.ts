@@ -33,7 +33,7 @@ interface FakeTerminalCommand {
   threadId: string;
   turnId: string;
   itemId: string;
-  processId: string;
+  processId?: string;
   command: string;
 }
 interface FakeTerminalInput {

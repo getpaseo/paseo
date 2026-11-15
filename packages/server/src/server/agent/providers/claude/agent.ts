@@ -9,10 +9,12 @@ import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
 import { LRUCache } from "lru-cache";
+import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookCallback,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -3803,7 +3805,7 @@ class ClaudeAgentSession implements AgentSession {
       // subagents keep running. Without this declaration an interrupt kills every one of them.
       // Claude stops a helper itself with its TaskStop tool.
       perTaskStopAffordance: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: { ...this.buildSubagentEffortHooks(), Stop: [{ hooks: [this.observeStopHook] }] },
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -5330,6 +5332,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      description: readNonEmptyString(stripAnsi(options.decisionReason ?? ""))?.trim(),
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
@@ -5477,6 +5480,12 @@ class ClaudeAgentSession implements AgentSession {
       SubagentStop: [{ hooks: [observe] }],
     };
   }
+
+  // Observation-only, like the effort hooks: it never alters turn control.
+  private readonly observeStopHook: HookCallback = async (input) => {
+    if (input.hook_event_name === "Stop") this.runtimeSafety.observeStop(input.session_crons);
+    return {};
+  };
 
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =

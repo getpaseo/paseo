@@ -186,10 +186,10 @@ This is the Android counterpart of the iOS local-simulator flow in [development.
 ## Scroll view corrections
 
 `modules/paseo-scroll` replaces React Native's vertical scroll view with `PaseoScrollView`, which
-keeps React Native's scroll manager interface and corrects `maintainVisibleContentPosition` for the
-chat timeline. [agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections)
-lists the corrections and the React Native issues they work around. Its instrumentation test,
-`VisibleContentPositionClampTest`, mounts through React Native's own mounting manager:
+keeps React Native's scroll manager interface and corrects how the chat timeline holds its position.
+[agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections) lists the
+corrections and the React Native issues they work around. Its instrumentation tests run the scroll
+view in a real window, mounting through React Native's own mounting manager and injecting touches:
 
 ```bash
 cd packages/app/android

@@ -1,3 +1,5 @@
+import { createTestAgentMessages } from "../test-utils/agent-messages.js";
+import { MessageAcceptanceStore } from "../message-receipts/acceptance.js";
 import { createIdleRuntimeCleanup } from "./idle-runtime-cleanup/index.js";
 import {
   prepareAgentMessage,
@@ -27,7 +29,11 @@ import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js"
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { startAgentRun } from "./agent-prompt.js";
+import {
+  startAgentRun,
+  sendPromptToAgent,
+  waitForAgentRunStartWithTimeout,
+} from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -3016,6 +3022,72 @@ test("opening during reload waits for the replacement", async () => {
     await manager.closeAgent(created.id);
   } finally {
     client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("clearing attention during reload waits for the replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-clear-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new HeldReloadCloseClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.markAgentUnread(created.id);
+    const reloading = manager.reloadAgentSession(created.id);
+    await client.waitForCloseToStart();
+    let cleared = false;
+    const clearing = manager.clearAgentAttention(created.id).then(() => {
+      cleared = true;
+      return true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(cleared).toBe(false);
+    client.finishClosing();
+    await Promise.all([reloading, clearing]);
+    expect(manager.getAgent(created.id)?.attention.requiresAttention).toBe(false);
+    expect((await storage.get(created.id))?.requiresAttention).toBe(false);
+    await manager.closeAgent(created.id);
+  } finally {
+    client.finishClosing();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("resuming after a queued attention clear keeps the agent read", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-resume-clear-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const handle = manager.getAgent(created.id)!.persistence!;
+    await manager.closeAgent(created.id);
+    await manager.markAgentUnread(created.id);
+    // A loader read the record before the clear landed, then queued the resume behind it.
+    const unreadAttention = {
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: new Date(),
+    } as const;
+    const clearing = manager.clearAgentAttention(created.id);
+    const resumed = await manager.resumeAgentFromPersistence(handle, { cwd: workdir }, created.id, {
+      attention: unreadAttention,
+    });
+    await clearing;
+    expect(resumed.attention.requiresAttention).toBe(false);
+    expect((await storage.get(created.id))?.requiresAttention).toBe(false);
+    await manager.closeAgent(created.id);
+  } finally {
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
@@ -8217,6 +8289,8 @@ test("failed replacement cancellation preserves an autonomous running state", as
       activeForegroundTurnId: null,
     });
   } finally {
+    await manager.flush();
+    await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -12227,6 +12301,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
   const manager = new AgentManager({
     clients: { codex: new DaemonHandledPromptClient() },
     registry: storage,
+    messageAcceptanceStore: new MessageAcceptanceStore(join(workdir, "acceptance")),
     logger,
     idFactory: () => "00000000-0000-4000-8000-000000000403",
   });
@@ -12245,6 +12320,13 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
       runOptions: { clientMessageId: "msg-client-daemon-handled" },
     });
     await commandCompleted.promise;
+    await expect(
+      manager.hasAcceptedSubmittedMessage({
+        agentId: snapshot.id,
+        clientMessageId: "msg-client-daemon-handled",
+        prompt: "/handled",
+      }),
+    ).resolves.toBe(true);
 
     expect(
       events.flatMap((event) =>
@@ -13335,7 +13417,6 @@ test.each([
             },
             turnId: "hook-turn",
             outcome,
-            timeline: [],
           },
         },
       ]);
@@ -13459,7 +13540,20 @@ function idleCleanupHarness() {
   const storage = new AgentStorage(join(workdir, "agents"), logger);
   const commands: AgentPromptInput[] = [];
   const prompts: AgentPromptInput[] = [];
+  const sessions: AgentSession[] = [];
+  const probes: Array<(() => Promise<boolean>) | undefined> = [];
+  const closeEntered = deferred<void>();
+  let closeGate: Promise<void> | undefined;
+  let closes = 0;
   const recordPrompts = (session: AgentSession) => {
+    const index = sessions.length;
+    session.canStopRuntime = async () => probes[index]?.() ?? false;
+    session.close = async () => {
+      closes++;
+      closeEntered.resolve();
+      await closeGate;
+    };
+    sessions.push(session);
     session.tryHandleOutOfBand = (prompt) =>
       prompt === "/maintenance"
         ? {
@@ -13475,11 +13569,6 @@ function idleCleanupHarness() {
     };
     return session;
   };
-  const sessions: AgentSession[] = [];
-  const probes: Array<(() => Promise<boolean>) | undefined> = [];
-  const closeEntered = deferred<void>();
-  let closeGate: Promise<void> | undefined;
-  let closes = 0;
   const client = new (class extends TestAgentClient {
     override async resumeSession(
       handle: AgentPersistenceHandle,
@@ -13490,15 +13579,7 @@ function idleCleanupHarness() {
       return recordPrompts(session);
     }
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      const index = sessions.length;
       const session: AgentSession = await super.createSession(config);
-      session.canStopRuntime = async () => probes[index]?.() ?? false;
-      session.close = async () => {
-        closes++;
-        closeEntered.resolve();
-        await closeGate;
-      };
-      sessions.push(session);
       return recordPrompts(session);
     }
   })();
@@ -14423,20 +14504,32 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
 });
 
 for (const origin of [
-  { name: "human", source: undefined },
-  { name: "agent", source: { kind: "agent-message" as const, agentId: "sender" } },
+  { name: "human", source: undefined, prompt: "hello" },
+  {
+    name: "quoted human",
+    source: undefined,
+    prompt: formatAgentMessage({
+      id: "foreign-envelope",
+      source: { kind: "agent-message", agentId: "untrusted" },
+      text: "quoted text",
+    }),
+  },
+  { name: "agent", source: { kind: "agent-message" as const, agentId: "sender" }, prompt: "hello" },
 ]) {
-  test(`pending ${origin.name} receipts recover after manager restart and provider replay`, async () => {
+  test(`pending ${origin.name} receipts recover after restart without rereading provider history`, async () => {
     const workdir = mkdtempSync(join(tmpdir(), "message-receipt-restart-"));
     const registryPath = join(workdir, "agents");
     const receiptPath = join(workdir, "receipts");
+    const acceptancePath = join(workdir, "acceptance");
     const history: AgentStreamEvent[] = [];
+    let historyReads = 0;
+    let sends = 0;
     class ReceiptSession extends TestAgentSession {
-      override async startTurn(
-        prompt: AgentPromptInput,
-        options?: AgentRunOptions,
-      ): Promise<{ turnId: string }> {
-        if (typeof prompt !== "string") throw new Error("Expected an enveloped text prompt");
+      private historyConsumed = false;
+      override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+        if (typeof prompt !== "string") throw new Error("Expected a text prompt");
+        sends++;
+        // Codex history does not retain the human client's message ID.
         history.push({
           type: "timeline",
           provider: "codex",
@@ -14444,12 +14537,15 @@ for (const origin of [
             type: "user_message",
             text: prompt,
             messageId: "provider-native-message",
-            clientMessageId: options?.clientMessageId,
           },
         });
         return super.startTurn();
       }
       override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+        historyReads++;
+        // Claude-style one-shot replay must not be used as an evidence lookup.
+        if (this.historyConsumed) return;
+        this.historyConsumed = true;
         yield* history;
       }
     }
@@ -14464,66 +14560,85 @@ for (const origin of [
         return new ReceiptSession({ ...config, provider: "codex", cwd: workdir });
       }
     }
-    const store = new RecordingTimelineStore();
+    const storageBeforeRestart = new AgentStorage(registryPath, logger);
     const first = new AgentManager({
       clients: { codex: new ReceiptClient() },
-      registry: new AgentStorage(registryPath, logger),
-      durableTimelineStore: store,
+      registry: storageBeforeRestart,
+      messageAcceptanceStore: new MessageAcceptanceStore(acceptancePath),
       logger,
     });
     let restored: AgentManager | null = null;
     let agentId: string | null = null;
-    let sends = 0;
     try {
       const agent = await first.createAgent({ provider: "codex", cwd: workdir }, undefined, {
         workspaceId: undefined,
       });
       agentId = agent.id;
       const messageId = "message-to-reconcile";
-      const prepared = prepareAgentMessage("hello", origin.source, messageId);
-      const request = { agentId: agent.id, messageId, request: { text: prepared.prompt } };
+      const identity = { agentId: agent.id, clientMessageId: messageId, prompt: origin.prompt };
+      const request = { agentId: agent.id, messageId, request: { prompt: origin.prompt } };
       await expect(
         new MessageReceipts(receiptPath).send({
           ...request,
-          send: async () => {
-            sends++;
-            await first.runAgent(agent.id, prepared.prompt, { clientMessageId: messageId });
+          send: async (beforeDispatch) => {
+            await beforeDispatch();
+            await sendPromptToAgent({
+              agentManager: first,
+              agentStorage: storageBeforeRestart,
+              agentId: agent.id,
+              prompt: origin.prompt,
+              source: origin.source,
+              messageId,
+              logger,
+            });
+            await waitForAgentRunStartWithTimeout(first, agent.id);
             throw new Error("acknowledgement lost");
           },
         }),
       ).rejects.toThrow("acknowledgement lost");
-      await first.flush();
       await first.closeAgent(agent.id);
       await first.flush();
       const storage = new AgentStorage(registryPath, logger);
       restored = new AgentManager({
         clients: { codex: new ReceiptClient() },
         registry: storage,
-        durableTimelineStore: store,
+        messageAcceptanceStore: new MessageAcceptanceStore(acceptancePath),
         logger,
       });
+      expect(restored.getLoadedTimelineHead(agent.id)).toBeNull();
+      const readsBeforeLookup = historyReads;
+      await expect(restored.hasAcceptedSubmittedMessage(identity)).resolves.toBe(true);
+      expect(historyReads).toBe(readsBeforeLookup);
+      expect(restored.getLoadedTimelineHead(agent.id)).toBeNull();
       await ensureAgentLoaded(agent.id, { agentManager: restored, agentStorage: storage, logger });
-      expect(restored.getTimeline(agent.id)).toEqual([]);
-      await expect(restored.hasAcceptedSubmittedMessage(agent.id, messageId)).resolves.toBe(true);
-      await restored.hydrateTimelineFromProvider(agent.id, { force: true });
-      await restored.flush();
+      const readsAfterReplay = historyReads;
       const manager = restored;
       await new MessageReceipts(receiptPath).send({
         ...request,
-        isAccepted: () => manager.hasAcceptedSubmittedMessage(agent.id, messageId),
+        isAccepted: () => manager.hasAcceptedSubmittedMessage(identity),
         send: async () => {
-          sends++;
+          throw new Error("An accepted prompt must never be resent");
         },
       });
+      expect(historyReads).toBe(readsAfterReplay);
       expect(sends).toBe(1);
-      await restored.appendTimelineItem(agent.id, {
+      await expect(
+        manager.hasAcceptedSubmittedMessage({ ...identity, prompt: "different prompt" }),
+      ).resolves.toBe(false);
+      await manager.appendTimelineItem(agent.id, {
         type: "user_message",
         text: "not accepted",
         clientMessageId: "rejected",
         messageId: "rejected",
       });
-      await restored.flush();
-      await expect(restored.hasAcceptedSubmittedMessage(agent.id, "rejected")).resolves.toBe(false);
+      await manager.flush();
+      await expect(
+        manager.hasAcceptedSubmittedMessage({
+          ...identity,
+          clientMessageId: "rejected",
+          prompt: "not accepted",
+        }),
+      ).resolves.toBe(false);
     } finally {
       if (restored && agentId) await restored.closeAgent(agentId);
       await first.flush();
@@ -14532,3 +14647,184 @@ for (const origin of [
     }
   });
 }
+
+test("idle cleanup gives a newly restored runtime a fresh idle window while keeping historical updatedAt", async () => {
+  const h = idleCleanupHarness();
+  const created = await h.create();
+  h.probes[0] = async () => true;
+  h.probes[1] = async () => true;
+  await h.manager.closeAgent(created.id);
+  await h.storage.flush();
+  const historicalUpdatedAt = new Date(Date.now() - 180 * 60_000);
+  const existingRecord = await h.storage.get(created.id);
+  expect(existingRecord).not.toBeNull();
+  const staleRecord: StoredAgentRecord = {
+    ...existingRecord!,
+    updatedAt: historicalUpdatedAt.toISOString(),
+    lastActivityAt: historicalUpdatedAt.toISOString(),
+  };
+  await h.storage.upsert(staleRecord);
+  await h.storage.flush();
+
+  const closesBeforeRestore = h.closes;
+  const restored = await h.manager.resumeAgentFromPersistence(
+    created.persistence!,
+    { cwd: created.cwd },
+    created.id,
+    { updatedAt: historicalUpdatedAt },
+  );
+  expect(restored.updatedAt.getTime()).toBe(historicalUpdatedAt.getTime());
+
+  // Sweeping 1 minute after restoring an old agent must NOT immediately kill the newly opened runtime.
+  expect((await h.sweep({ now: h.later(1) })).collected).toEqual([]);
+  expect(h.closes).toBe(closesBeforeRestore);
+
+  // Sweeping 61 minutes after restoration collects the runtime as expected.
+  expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
+  expect(h.closes).toBe(closesBeforeRestore + 1);
+});
+
+test("an acceptance journal failure does not fail or lose a fast provider turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "message-acceptance-failure-"));
+  const acceptancePath = join(workdir, "blocked-directory");
+  writeFileSync(acceptancePath, "not a directory");
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    messageAcceptanceStore: new MessageAcceptanceStore(acceptancePath),
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await manager.runAgent(agent.id, "fast turn", {
+      clientMessageId: "accepted-but-not-journaled",
+    });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    rmSync(acceptancePath);
+    await expect(
+      manager.hasAcceptedSubmittedMessage({
+        agentId: agent.id,
+        clientMessageId: "accepted-but-not-journaled",
+        prompt: "fast turn",
+      }),
+    ).resolves.toBe(false);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("batched agent messages retain each original payload's acceptance identity", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "message-acceptance-batch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const acceptancePath = join(workdir, "acceptance");
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    messageAcceptanceStore: new MessageAcceptanceStore(acceptancePath),
+    logger,
+  });
+  const delivery = createTestAgentMessages({
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const first = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "batch-first",
+      prompt: "first payload",
+      source: { kind: "agent-message", agentId: "sender-one" },
+    });
+    const second = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "batch-second",
+      prompt: "second payload",
+      source: { kind: "agent-message", agentId: "sender-two" },
+    });
+    await delivery.close();
+    await Promise.all([first.dispatched, second.dispatched]);
+    // Reconstructed evidence has no dependency on either the batch envelope or live rows.
+    const evidence = new MessageAcceptanceStore(acceptancePath);
+    await expect(
+      evidence.has({ agentId: agent.id, clientMessageId: "batch-first", prompt: "first payload" }),
+    ).resolves.toBe(true);
+    await expect(
+      evidence.has({
+        agentId: agent.id,
+        clientMessageId: "batch-second",
+        prompt: "second payload",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      evidence.has({ agentId: agent.id, clientMessageId: "batch-first", prompt: "second payload" }),
+    ).resolves.toBe(false);
+  } finally {
+    await delivery.close();
+    if (agentId) await manager.closeAgent(agentId);
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("steering journals only acknowledged submissions", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "message-acceptance-steer-"));
+  const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+  class ReceiptSteerClient extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ReceiptSteerClient() },
+    messageAcceptanceStore: new MessageAcceptanceStore(join(workdir, "acceptance")),
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    await run.next();
+    session.steerResult = "unavailable";
+    await expect(
+      manager.steerAgentRun(agent.id, "rejected steer", { clientMessageId: "not-accepted" }),
+    ).resolves.toEqual({ status: "unavailable" });
+    await expect(
+      manager.hasAcceptedSubmittedMessage({
+        agentId: agent.id,
+        clientMessageId: "not-accepted",
+        prompt: "rejected steer",
+      }),
+    ).resolves.toBe(false);
+    session.steerResult = "accepted";
+    await expect(
+      manager.steerAgentRun(agent.id, "accepted steer", { clientMessageId: "accepted" }),
+    ).resolves.toMatchObject({ status: "accepted" });
+    await expect(
+      manager.hasAcceptedSubmittedMessage({
+        agentId: agent.id,
+        clientMessageId: "accepted",
+        prompt: "accepted steer",
+      }),
+    ).resolves.toBe(true);
+    await manager.cancelAgentRun(agent.id);
+    await run.return();
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

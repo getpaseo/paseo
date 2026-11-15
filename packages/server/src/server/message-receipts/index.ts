@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { messageFingerprint } from "./fingerprint.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -13,10 +13,12 @@ interface SendMessageInput {
   agentId: string;
   messageId: string;
   request: unknown;
-  send: () => Promise<void>;
-  prepare?: () => Promise<void>;
-  /** Positive provider acceptance evidence, never just the presence of an optimistic row. */
   isAccepted?: () => Promise<boolean>;
+  /**
+   * Delivers the message. It awaits `beforeDispatch` immediately before the provider can receive
+   * the message; a failure before that call proves nothing was submitted and leaves no receipt.
+   */
+  send: (beforeDispatch: () => Promise<void>) => Promise<void>;
 }
 
 /** Owns message delivery receipts; creation is owned by CreationService. */
@@ -26,7 +28,7 @@ export class MessageReceipts {
 
   send(input: SendMessageInput): Promise<void> {
     // Preserve the existing on-disk identity and shape across daemon upgrades.
-    const key = digest(["send", input.agentId, input.messageId]);
+    const key = messageFingerprint(["send", input.agentId, input.messageId]);
     const previous = this.pending.get(key);
     const result = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() =>
       this.sendOnce(key, input),
@@ -42,7 +44,7 @@ export class MessageReceipts {
 
   private async sendOnce(key: string, input: SendMessageInput): Promise<void> {
     const file = path.join(this.directory, `${key}.json`);
-    const fingerprint = digest(input.request);
+    const fingerprint = messageFingerprint(input.request);
     const existing = await readReceipt(file);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
@@ -52,13 +54,15 @@ export class MessageReceipts {
       await writeJsonFileAtomic(file, { ...existing, state: "completed" });
       return;
     }
-    await input.prepare?.();
     const receipt = { fingerprint, agentId: input.agentId };
-    await writeJsonFileAtomic(file, { ...receipt, state: "pending" });
+    let pending: Promise<void> | null = null;
     try {
-      await input.send();
+      await input.send(() => {
+        pending ??= writeJsonFileAtomic(file, { ...receipt, state: "pending" });
+        return pending;
+      });
     } catch (error) {
-      if (!(await input.isAccepted?.())) throw error;
+      if (!pending || !(await input.isAccepted?.())) throw error;
     }
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
   }
@@ -71,19 +75,4 @@ async function readReceipt(file: string): Promise<z.infer<typeof ReceiptSchema> 
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-}
-
-function digest(value: unknown): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify(value, (_key, candidate: unknown) => {
-        if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) {
-          return Object.fromEntries(
-            Object.entries(candidate).sort(([a], [b]) => a.localeCompare(b)),
-          );
-        }
-        return candidate;
-      }),
-    )
-    .digest("hex");
 }

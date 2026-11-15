@@ -196,7 +196,14 @@ export type AgentPromptContentBlock =
 
 export type AgentPromptInput = string | AgentPromptContentBlock[];
 
+/** Original daemon-submitted identities, before quoting or agent-message batching. */
+export interface SubmittedMessageFingerprint {
+  clientMessageId: string;
+  promptFingerprint: string;
+}
+
 export interface AgentRunOptions {
+  submittedMessages?: readonly SubmittedMessageFingerprint[];
   outputSchema?: unknown;
   resumeFrom?: AgentPersistenceHandle;
   maxThinkingTokens?: number;

@@ -31,6 +31,7 @@ export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
 export { SettingsDetailRow } from "./detail-row";
 export { SettingsInfoTip } from "./headings/settings-info-tip";
+export { MenuSettingsRows } from "./row-density";
 
 /** What app screens can add to a plugin-facing row: an accessory beside the label, such as an info tip. */
 interface AppRowExtras {

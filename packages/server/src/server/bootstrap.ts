@@ -1,3 +1,4 @@
+import { MessageAcceptanceStore } from "./message-receipts/acceptance.js";
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
@@ -1020,6 +1021,9 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    messageAcceptanceStore: new MessageAcceptanceStore(
+      path.join(config.paseoHome, "message-acceptance"),
+    ),
     pluginLifecycle: pluginRuntime,
     pluginAgentTools: pluginRuntime,
     clients: initialAgentManagerState.clients,

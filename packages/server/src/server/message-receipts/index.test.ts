@@ -1,3 +1,5 @@
+import { messageFingerprint } from "./fingerprint.js";
+import { MessageAcceptanceStore } from "./acceptance.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,7 +25,8 @@ test("message retries survive reconstruction without submitting twice", async ()
     agentId: "agent",
     messageId: "arrival",
     request: { text: "hello" },
-    send: async () => {
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
       deliveries++;
     },
   };
@@ -41,7 +44,8 @@ test("ambiguous provider delivery is never blindly replayed after restart", asyn
     agentId: "agent",
     messageId: "arrival",
     request: {},
-    send: async () => {
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
       deliveries++;
       throw new Error("connection lost");
     },
@@ -53,7 +57,7 @@ test("ambiguous provider delivery is never blindly replayed after restart", asyn
   expect(deliveries).toBe(1);
 });
 
-test("failed local message preparation does not leave an ambiguous receipt", async () => {
+test("a send that fails before beforeDispatch can be retried with the same message", async () => {
   const { requests, directory } = await fixture();
   let available = false;
   let sends = 0;
@@ -61,14 +65,13 @@ test("failed local message preparation does not leave an ambiguous receipt", asy
     agentId: "agent",
     messageId: "message",
     request: {},
-    prepare: async () => {
-      if (!available) throw new Error("load failed");
-    },
-    send: async () => {
+    send: async (beforeDispatch: () => Promise<void>) => {
+      if (!available) throw new Error("mode change failed");
+      await beforeDispatch();
       sends++;
     },
   };
-  await expect(requests.send(input)).rejects.toThrow("load failed");
+  await expect(requests.send(input)).rejects.toThrow("mode change failed");
   available = true;
   await new MessageReceipts(directory).send(input);
   available = false;
@@ -77,22 +80,28 @@ test("failed local message preparation does not leave an ambiguous receipt", asy
 });
 
 for (const restart of [false, true]) {
-  test(`accepted timeline evidence settles an ambiguous receipt (restart: ${restart})`, async () => {
+  test(`durable acceptance evidence settles an ambiguous receipt (restart: ${restart})`, async () => {
     const { requests, directory } = await fixture();
-    let accepted = false;
+    const acceptancePath = path.join(directory, "acceptance");
+    const identity = { agentId: "agent", clientMessageId: "arrival", prompt: "hello" };
     let sends = 0;
     const input = {
       agentId: "agent",
       messageId: "arrival",
-      request: { text: "hello" },
-      isAccepted: async () => accepted,
-      send: async () => {
+      request: { prompt: "hello" },
+      isAccepted: () => new MessageAcceptanceStore(acceptancePath).has(identity),
+      send: async (beforeDispatch: () => Promise<void>) => {
+        await beforeDispatch();
         sends++;
         throw new Error("acknowledgement lost");
       },
     };
     await expect(requests.send(input)).rejects.toThrow("acknowledgement lost");
-    accepted = true;
+    await new MessageAcceptanceStore(acceptancePath).record({
+      agentId: identity.agentId,
+      clientMessageId: identity.clientMessageId,
+      promptFingerprint: messageFingerprint(identity.prompt),
+    });
     const receipts = restart ? new MessageReceipts(directory) : requests;
     await receipts.send(input);
     await new MessageReceipts(directory).send(input);
@@ -100,22 +109,97 @@ for (const restart of [false, true]) {
   });
 }
 
-test("delivery failure reconciles accepted evidence immediately", async () => {
-  const { requests } = await fixture();
-  let accepted = false;
+test("delivery failure reconciles a provider acknowledgement immediately", async () => {
+  const { requests, directory } = await fixture();
+  const acceptance = new MessageAcceptanceStore(path.join(directory, "acceptance"));
+  const identity = { agentId: "agent", clientMessageId: "arrival", prompt: "hello" };
   let sends = 0;
   const input = {
     agentId: "agent",
     messageId: "arrival",
-    request: {},
-    isAccepted: async () => accepted,
-    send: async () => {
+    request: { prompt: "hello" },
+    isAccepted: () => acceptance.has(identity),
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
       sends++;
-      accepted = true;
+      await acceptance.record({
+        agentId: identity.agentId,
+        clientMessageId: identity.clientMessageId,
+        promptFingerprint: messageFingerprint(identity.prompt),
+      });
       throw new Error("acknowledgement lost");
     },
   };
   await requests.send(input);
   await requests.send(input);
+  expect(sends).toBe(1);
+});
+
+test("acceptance records survive reconstruction and bind agent, message and full prompt", async () => {
+  const { directory } = await fixture();
+  const identity = {
+    agentId: "agent",
+    clientMessageId: "message",
+    prompt: [{ type: "text" as const, text: "hello" }],
+  };
+  await new MessageAcceptanceStore(path.join(directory, "acceptance")).record({
+    agentId: identity.agentId,
+    clientMessageId: identity.clientMessageId,
+    promptFingerprint: messageFingerprint(identity.prompt),
+  });
+  const restored = new MessageAcceptanceStore(path.join(directory, "acceptance"));
+  await expect(restored.has(identity)).resolves.toBe(true);
+  await expect(restored.has({ ...identity, agentId: "other" })).resolves.toBe(false);
+  await expect(restored.has({ ...identity, clientMessageId: "other" })).resolves.toBe(false);
+  await expect(restored.has({ ...identity, prompt: "hello" })).resolves.toBe(false);
+  await expect(
+    restored.has({ ...identity, prompt: [{ type: "text", text: "changed" }] }),
+  ).resolves.toBe(false);
+});
+
+test("legacy pending receipts without durable acceptance remain unknown after restart", async () => {
+  const { directory, requests } = await fixture();
+  const acceptance = new MessageAcceptanceStore(path.join(directory, "acceptance"));
+  let sends = 0;
+  const input = {
+    agentId: "legacy",
+    messageId: "old-message",
+    request: { prompt: "hello" },
+    isAccepted: () =>
+      acceptance.has({ agentId: "legacy", clientMessageId: "old-message", prompt: "hello" }),
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
+      sends++;
+      throw new Error("lost acknowledgement");
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("lost acknowledgement");
+  await expect(new MessageReceipts(directory).send(input)).rejects.toThrow(
+    "agent_request_outcome_unknown",
+  );
+  expect(sends).toBe(1);
+});
+
+test("positive acceptance cannot override a conflicting retry payload", async () => {
+  const { directory, requests } = await fixture();
+  let sends = 0;
+  const input = {
+    agentId: "agent",
+    messageId: "arrival",
+    request: { text: "original" },
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
+      sends++;
+      throw new Error("lost response");
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("lost response");
+  await expect(
+    new MessageReceipts(directory).send({
+      ...input,
+      request: { text: "changed" },
+      isAccepted: async () => true,
+    }),
+  ).rejects.toThrow("agent_request_key_conflict");
   expect(sends).toBe(1);
 });

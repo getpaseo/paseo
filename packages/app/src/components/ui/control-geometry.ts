@@ -132,9 +132,10 @@ export function iconSizeFor(size: IconSize): SizingValue {
 }
 
 /**
- * The glyph a toolbar control paints. Touch-sized every toolbar glyph matches the header icons:
- * 20pt at the app's 1.5px stroke, resting at `foreground`. Pointer-sized it is the `md` glyph at
- * the same stroke and rests muted until hovered.
+ * The glyph a toolbar control paints. Touch-sized every toolbar glyph is 20pt at the app's 1.5px
+ * stroke. An icon-only control's glyph matches the header icons and rests at `foreground`; a glyph
+ * paired with a label rests muted so the control reads as one quiet unit with its label.
+ * Pointer-sized it is the `md` glyph at the same stroke and rests muted until hovered.
  */
 export type ToolbarGlyphTone = "foreground" | "muted";
 
@@ -160,7 +161,7 @@ const POINTER_TOOLBAR_GLYPH: ToolbarGlyph = {
 const TOOLBAR_GLYPHS: Record<ControlSizing, ToolbarGlyphs> = {
   touch: {
     icon: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
-    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "foreground" },
+    label: { size: TOUCH_ICON_SIZE.md, strokeWidth: ICON_STROKE_WIDTH, tone: "muted" },
   },
   pointer: { icon: POINTER_TOOLBAR_GLYPH, label: POINTER_TOOLBAR_GLYPH },
 };

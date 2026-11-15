@@ -1,5 +1,12 @@
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
-import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallback,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+  SessionCronSummary,
+  StopHookInput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -884,6 +891,7 @@ test("Claude session runtime safety observes pumped background work and autonomo
     wake?.();
   };
   let nativeInput!: AsyncIterator<SDKUserMessage>;
+  let stopHook: HookCallback | undefined;
   let connected!: () => void;
   const connection = new Promise<void>((resolve) => {
     connected = resolve;
@@ -908,9 +916,10 @@ test("Claude session runtime safety observes pumped background work and autonomo
   const session = await new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveBinary: async () => "/test/claude/bin",
-    queryFactory: ({ prompt }) => {
+    queryFactory: ({ prompt, options }) => {
       if (typeof prompt === "string") throw new Error("Expected streaming input");
       nativeInput = prompt[Symbol.asyncIterator]();
+      stopHook = options?.hooks?.Stop?.[0]?.hooks[0];
       connected();
       return query;
     },
@@ -956,6 +965,22 @@ test("Claude session runtime safety observes pumped background work and autonomo
     await push(init);
     expect(await session.canStopRuntime!()).toBe(false);
     await push(result);
+    expect(await session.canStopRuntime!()).toBe(true);
+    // A session-only cron lives in this process, and Claude reports it only to the Stop hook.
+    const stop = (session_crons: SessionCronSummary[]) => {
+      const stopInput: StopHookInput = {
+        hook_event_name: "Stop",
+        session_id: "runtime-safety",
+        transcript_path: "",
+        cwd: process.cwd(),
+        stop_hook_active: false,
+        session_crons,
+      };
+      return stopHook!(stopInput, undefined, { signal: new AbortController().signal });
+    };
+    await stop([{ id: "99eb0b69", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" }]);
+    expect(await session.canStopRuntime!()).toBe(false);
+    await stop([]);
     expect(await session.canStopRuntime!()).toBe(true);
   } finally {
     await session.close();

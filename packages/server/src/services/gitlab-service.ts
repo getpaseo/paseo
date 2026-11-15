@@ -249,6 +249,16 @@ const GitLabApprovalsSchema = z
   })
   .passthrough();
 
+const GitLabProjectSchema = z
+  .object({
+    path_with_namespace: z.string(),
+    forked_from_project: z
+      .object({ path_with_namespace: z.string().optional() })
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+
 type GitLabMergeRequest = z.infer<typeof GitLabMergeRequestSchema>;
 type GitLabIssue = z.infer<typeof GitLabIssueSchema>;
 type GitLabNote = z.infer<typeof GitLabNoteSchema>;
@@ -1149,6 +1159,20 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       } catch {
         return false;
       }
+    },
+
+    async getReferenceRepository(input): Promise<string | null> {
+      const remoteUrl = await resolveRemoteUrl(input.cwd);
+      const projectPath = remoteUrl ? parseGitRemoteLocation(remoteUrl)?.path : null;
+      if (!projectPath) {
+        return null;
+      }
+      const project = await runJson(
+        ["api", `projects/${encodeURIComponent(projectPath)}`],
+        { cwd: input.cwd },
+        GitLabProjectSchema,
+      );
+      return project.forked_from_project?.path_with_namespace ?? null;
     },
 
     async getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {

@@ -1,3 +1,8 @@
+import { messageFingerprint } from "../message-receipts/fingerprint.js";
+import {
+  MessageAcceptanceStore,
+  type SubmittedMessageIdentity,
+} from "../message-receipts/acceptance.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -96,11 +101,7 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import {
-  agentMessageTimelineId,
-  parseAgentMessage,
-  projectAgentMessages,
-} from "./agent-messages/index.js";
+import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
 import {
   PASEO_MCP_SERVER_NAME,
@@ -369,6 +370,7 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  messageAcceptanceStore?: MessageAcceptanceStore;
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
   clients?: ProviderClientMap;
@@ -853,6 +855,7 @@ export class AgentManager {
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
+  private readonly messageAcceptanceStore?: MessageAcceptanceStore;
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -860,7 +863,10 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly historySessions = new WeakSet<AgentSession>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
-  private readonly runtimeCleanupIdentities = new WeakMap<AgentSession, object>();
+  private readonly runtimeCleanupIdentities = new WeakMap<
+    AgentSession,
+    { readonly openedAt: number }
+  >();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -891,6 +897,7 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.messageAcceptanceStore = options.messageAcceptanceStore;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1414,30 +1421,8 @@ export class AgentManager {
     return this.timelineStore.fetch(id, options);
   }
 
-  async hasAcceptedSubmittedMessage(agentId: string, clientMessageId: string): Promise<boolean> {
-    const agent = this.requireSessionAgent(agentId);
-    const matches = (item: AgentTimelineItem): boolean => {
-      if (item.type === "user_message") return item.clientMessageId === clientMessageId;
-      return (
-        item.type === "tool_call" &&
-        item.agentMessage !== undefined &&
-        item.callId === agentMessageTimelineId(clientMessageId)
-      );
-    };
-    const accepted = (row: AgentTimelineRow): boolean =>
-      matches(row.item) &&
-      (row.item.type === "tool_call" || Boolean(row.turnId || row.providerMessageId));
-    if (this.timelineStore.getRows(agentId).some(accepted)) return true;
-    if (this.durableTimelineStore) {
-      const committed = await this.durableTimelineStore.getCommittedRows(agentId);
-      if (committed.some(accepted)) return true;
-    }
-    // A restart may restore only sequence state, and replay strips row metadata.
-    // Native history contains delivered inputs; manager-only rejected rows do not.
-    for await (const event of agent.session.streamHistory()) {
-      if (event.type === "timeline" && projectAgentMessages(event.item).some(matches)) return true;
-    }
-    return false;
+  async hasAcceptedSubmittedMessage(input: SubmittedMessageIdentity): Promise<boolean> {
+    return (await this.messageAcceptanceStore?.has(input)) ?? false;
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -1749,9 +1734,9 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
       ...options,
-      // The caller read its metadata before this turn in the lane; a setMetadata queued ahead of
-      // it has saved a newer record, the one the open hooks saw.
-      ...(record ? { metadata: record.metadata } : {}),
+      // The caller read its metadata and attention before this turn in the lane; a setMetadata
+      // or attention clear queued ahead of it has saved a newer record, the one the open hooks saw.
+      ...(record ? { metadata: record.metadata, attention: extractAttention(record) } : {}),
       workspaceId,
       launchEnv,
       persistence: handle,
@@ -2098,7 +2083,7 @@ export class AgentManager {
       const updatedAt = agent.updatedAt;
       let identity = this.runtimeCleanupIdentities.get(agent.session);
       if (!identity) {
-        identity = Object.freeze({});
+        identity = Object.freeze({ openedAt: Date.now() });
         this.runtimeCleanupIdentities.set(agent.session, identity);
       }
       const isEligible = () =>
@@ -2111,7 +2096,7 @@ export class AgentManager {
         parentAgentId: getParentAgentIdFromLabels(agent.labels) ?? undefined,
         provider: agent.provider,
         sessionId: agent.persistence?.sessionId ?? null,
-        lastActivityAt: updatedAt.getTime(),
+        lastActivityAt: Math.max(updatedAt.getTime(), identity.openedAt),
         isEligible,
         canStopRuntime: agent.session.canStopRuntime?.bind(agent.session),
         closeIfEligible: async (revalidate) => {
@@ -2790,6 +2775,10 @@ export class AgentManager {
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
+    return this.runLifecycleMutation(agentId, () => this.clearAgentAttentionUnlocked(agentId));
+  }
+
+  private async clearAgentAttentionUnlocked(agentId: string): Promise<void> {
     const agent = this.agents.get(agentId);
     if (agent) {
       if (agent.attention.requiresAttention) {
@@ -3073,6 +3062,8 @@ export class AgentManager {
       return false;
     }
     this.touchUpdatedAt(agent);
+    if (this.messageAcceptanceStore)
+      await this.persistMessageAcceptances({ agentId, prompt, options });
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
       this.emitState(agent);
@@ -3152,6 +3143,8 @@ export class AgentManager {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
       const result = await agent.session.startTurn(prompt, options);
+      if (this.messageAcceptanceStore)
+        await this.persistMessageAcceptances({ agentId, prompt, options });
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -3466,6 +3459,8 @@ export class AgentManager {
         expectedTurnId,
       });
       if (admission.status === "accepted") {
+        if (this.messageAcceptanceStore)
+          await this.persistMessageAcceptances({ agentId, prompt, options });
         await this.recordAcceptedSteer(
           agent,
           prompt,
@@ -3505,6 +3500,8 @@ export class AgentManager {
             expectedTurnId,
           });
           if (admission.status === "accepted") {
+            if (this.messageAcceptanceStore)
+              await this.persistMessageAcceptances({ agentId, prompt, options });
             await this.recordAcceptedSteer(
               agent,
               prompt,
@@ -4372,6 +4369,7 @@ export class AgentManager {
       }
 
       this.assertAcceptingAgentRegistrations();
+      this.runtimeCleanupIdentities.set(session, Object.freeze({ openedAt: Date.now() }));
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -5603,6 +5601,35 @@ export class AgentManager {
     }
 
     return event;
+  }
+
+  private async persistMessageAcceptances(input: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+  }): Promise<void> {
+    if (!this.messageAcceptanceStore) return;
+    const submissions =
+      input.options?.submittedMessages ??
+      (input.options?.clientMessageId
+        ? [
+            {
+              clientMessageId: input.options.clientMessageId,
+              promptFingerprint: messageFingerprint(input.prompt),
+            },
+          ]
+        : []);
+    for (const submission of submissions) {
+      try {
+        await this.messageAcceptanceStore.record({ agentId: input.agentId, ...submission });
+      } catch (error) {
+        // A journal failure cannot undo provider acceptance or fail the running turn.
+        this.logger.error(
+          { err: error, agentId: input.agentId, clientMessageId: submission.clientMessageId },
+          "Could not persist message acceptance",
+        );
+      }
+    }
   }
 
   private recordSubmittedPrompt(

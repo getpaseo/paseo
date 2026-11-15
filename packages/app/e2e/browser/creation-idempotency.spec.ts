@@ -148,6 +148,23 @@ for (const scenario of [
   });
 }
 
+test("retrying failed agent initialization keeps the plugin metadata set on New workspace", async ({
+  creation,
+  startup,
+  composerMetadata,
+}) => {
+  await creation.openWorkspaceForm("local");
+  await composerMetadata.set({ "composer-metadata.tag": "kept" });
+  await creation.submitPrompt("Start the tagged task.", "Create");
+  await creation.expectAgentStillStarting();
+  await startup.fail();
+  await creation.expectStartupFailure();
+  await creation.expectOneCreatedWorkspace();
+  await creation.submitPrompt("Start the tagged task.");
+  await creation.expectAgentCount(1);
+  await creation.expectAgentMetadata({ "composer-metadata.tag": "kept" });
+});
+
 test("an edited agent draft starts after its first start failed", async ({
   creation,
   startup,

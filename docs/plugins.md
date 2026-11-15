@@ -624,6 +624,21 @@ one section's order from built-ins, plugin groups, and the section's preference
   remembers under its own key. It shares header ids and the `plugin:<pluginId>:<id>` settings key
   with new-API items.
 
+## Contribute workspace row badge items
+
+The [public reference](../public-docs/plugins/reference.md#workspace-row-badge-items) owns the author API.
+The host lives in `packages/app/src/plugins/workspace-row-badge-items/`; `WorkspaceMetaRow` draws a host's
+items after its own.
+
+- Plugin items render with no wrapper view. The meta line spaces children with `gap`, so an empty
+  wrapper would leave a gap on rows the plugin has nothing to say about. That is also why
+  the row adds no separator around plugin items; a plugin renders its slot.
+- A row only renders items from plugins on its own host. The Show menu coalesces items across hosts
+  by `<pluginId>/<itemId>`, the key in the `sidebarPluginRowBadgeItems` setting, and places them in
+  their own group below a separator. A missing key is visible.
+- Previews (Settings > Host appearance) pass no `workspace` to `WorkspaceMetaRow`, so plugin items
+  stay off them.
+
 ## Contribute file panels
 
 Client `addFilePanel` registrations become the body of a file tab. The tab stats the file, picks a

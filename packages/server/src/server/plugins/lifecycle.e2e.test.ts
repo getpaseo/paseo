@@ -163,8 +163,14 @@ export default function contribute(server) {
   server.addHook("agent.turn.before", async (event) => {
     console.log(JSON.stringify({ hook: "agent.turn.before", event }));
   });
-  server.addHook("agent.turn.after", async (event) => {
-    console.log(JSON.stringify({ hook: "agent.turn.after", event }));
+  server.addHook("agent.turn.after", async (event, context) => {
+    const page = await context.paseo.agents
+      .ref(event.agent.id)
+      .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries
+      .filter((entry) => entry.turnId === event.turnId)
+      .map(({ item }) => item.type);
+    console.log(JSON.stringify({ hook: "agent.turn.after", event, turn }));
   });
   server.addHook("agent.permission.before", async (event, context) => {
     console.log(JSON.stringify({ hook: "agent.permission.before", event }));
@@ -220,6 +226,7 @@ export default function contribute(server) {
         {
           hook: "agent.turn.after",
           event: { outcome: { kind: "completed" }, timeline: [] },
+          turn: ["user_message", "tool_call"],
         },
         { hook: "agent.turn.before", event: { agent: { id: agent.id } } },
       ]);

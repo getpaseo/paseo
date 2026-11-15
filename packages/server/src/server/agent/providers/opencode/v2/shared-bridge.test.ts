@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -166,4 +168,89 @@ test("a shared plugin binds Paseo sessions without involving unrelated sessions"
     await bridge.close();
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("a shared plugin rebinds a session after the previous bridge stops listening", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-shared-bridge-refused-"));
+  const previous = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    response.end(JSON.stringify({ tools: [] }));
+  });
+  await new Promise<void>((resolve) => previous.listen(0, "127.0.0.1", resolve));
+  const previousPort = (previous.address() as AddressInfo).port;
+  const current = new OpenCodeBridge({ paseoHome: home, logger: createTestLogger() });
+  current.setManifestCatalog({ tools: new Map() });
+  let rpc: Record<string, (input: Binding) => Promise<unknown>> = {};
+  let dispose: (() => Promise<void>) | undefined;
+  let releaseCurrent: (() => void) | undefined;
+  try {
+    const plugin = {
+      package: await current.materializeV2Plugin(),
+      options: { baseUrl: `http://127.0.0.1:${previousPort}`, token: "previous-bridge" },
+    };
+    const module = await import(
+      pathToFileURL(path.join(fileURLToPath(plugin.package), "server.js")).href
+    );
+    dispose = await module.default.setup({
+      options: {},
+      location: { directory: home },
+      provider: { reload: async () => {} },
+      model: { reload: async () => {} },
+      agent: { reload: async () => {} },
+      command: { reload: async () => {} },
+      skill: { reload: async () => {} },
+      rpc: {
+        register: async (_definition: unknown, handlers: typeof rpc) => {
+          rpc = handlers;
+          return { dispose: async () => {} };
+        },
+      },
+      tool: { transform: async () => ({ dispose: async () => {} }) },
+      session: {
+        context: async () => [],
+        get: async () => ({ parentID: "" }),
+        hook: async () => ({ dispose: async () => {} }),
+      },
+    });
+    await expect(rpc.bind({ sessionID: "paseo", ...plugin.options })).resolves.toEqual({});
+    await current.start();
+    // The restarted daemon owns the agent again, so its bridge serves this session.
+    releaseCurrent = current.bindSession({ sessionId: "paseo", env: {} });
+    await new Promise<void>((resolve) => {
+      previous.close(() => resolve());
+      previous.closeAllConnections();
+    });
+    await expect(
+      rpc.bind({ sessionID: "paseo", ...current.sharedV2Connection() }),
+    ).resolves.toEqual({});
+  } finally {
+    await dispose?.();
+    releaseCurrent?.();
+    await current.close();
+    await new Promise<void>((resolve) => previous.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a refused connection is the only probe failure that clears a binding", async () => {
+  const source = new URL("./shared-bridge-plugin.mjs", import.meta.url).href;
+  const { isRefused } = (await import(source)) as { isRefused: (error: unknown) => boolean };
+  const nodeShape = Object.assign(new Error("fetch failed"), {
+    cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+  });
+  const olderBunShape = Object.assign(new TypeError("Unable to connect"), {
+    code: "ConnectionRefused",
+  });
+  // OpenCode 2.2.5 runs on Bun 1.4.4, which carries the code on the error and
+  // leaves `cause` unset. Node puts the same failure on `cause` instead.
+  const bunShape = Object.assign(
+    new TypeError("ECONNREFUSED: Unable to connect. Is the computer able to access the url?"),
+    { code: "ECONNREFUSED" },
+  );
+  const inconclusive = Object.assign(new Error("request timed out"), { code: "ETIMEDOUT" });
+  expect(isRefused(nodeShape)).toBe(true);
+  expect(isRefused(olderBunShape)).toBe(true);
+  expect(isRefused(bunShape)).toBe(true);
+  expect(isRefused(inconclusive)).toBe(false);
+  expect(isRefused(undefined)).toBe(false);
 });

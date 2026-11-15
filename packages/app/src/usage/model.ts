@@ -2,7 +2,13 @@ import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
 import { usageCopy } from "./copy";
 import type { UsageDisplayAs } from "./preferences";
-import type { UsageReport, UsageReportEntry, UsageView, UsageWindow } from "./types";
+import type {
+  AvailableUsageReport,
+  UsageReport,
+  UsageReportEntry,
+  UsageView,
+  UsageWindow,
+} from "./types";
 
 export function usedPercent(window: UsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -205,13 +211,34 @@ export function resolveUsageModalHostId(choice: UsageHostChoice): string | null 
   return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;
 }
 
+export interface UsageSnapshot {
+  report: AvailableUsageReport;
+  successfulAt: string;
+  retained: boolean;
+}
+
+/** The latest successful values and their freshness, independent of the latest attempt's outcome. */
+export function resolveUsageSnapshot(entry: UsageReportEntry): UsageSnapshot | null {
+  if (entry.report.status === "available") {
+    // COMPAT(usageSuccessfulAt): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
+    // Old daemons expose only attempt time for available reports, never for failures.
+    return {
+      report: entry.report,
+      successfulAt: entry.successfulAt ?? entry.fetchedAt,
+      retained: false,
+    };
+  }
+  // COMPAT(usageLastSuccessful): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
+  // Older daemons cannot provide history; a failed attempt is never a successful update.
+  const retained = entry.lastSuccessful;
+  if (!retained) return null;
+  return { report: retained.report, successfulAt: retained.fetchedAt, retained: true };
+}
+
 /** Current outcome owns messages; only a successful poll owns values and freshness. */
 export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
   const available = entry.report.status === "available";
-  // COMPAT(usageLastSuccessful): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
-  // Older daemons cannot provide history; a failed attempt is never a successful update.
-  const snapshot = available ? null : (entry.lastSuccessful ?? null);
-  const content = entry.report.status === "available" ? entry.report : (snapshot?.report ?? null);
+  const snapshot = resolveUsageSnapshot(entry);
   const messages: string[] = [];
   if (!available) {
     if (entry.loginErrors)
@@ -224,16 +251,12 @@ export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
     else messages.push(usageProblemText(entry.report, t));
   }
   return {
-    windows: content?.windows ?? [],
-    balances: content?.balances ?? [],
-    details: content?.details ?? [],
-    planLabel: content?.planLabel ?? null,
-    // COMPAT(usageSuccessfulAt): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
-    // Old daemons expose only attempt time for available reports, never for failures.
-    successfulAt: available
-      ? (entry.successfulAt ?? entry.fetchedAt)
-      : (snapshot?.fetchedAt ?? null),
-    retained: snapshot !== null,
+    windows: snapshot?.report.windows ?? [],
+    balances: snapshot?.report.balances ?? [],
+    details: snapshot?.report.details ?? [],
+    planLabel: snapshot?.report.planLabel ?? null,
+    successfulAt: snapshot?.successfulAt ?? null,
+    retained: snapshot?.retained ?? false,
     messages,
   };
 }

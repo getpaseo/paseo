@@ -1,3 +1,4 @@
+import { messageFingerprint } from "../message-receipts/fingerprint.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -210,6 +211,8 @@ export async function unarchiveAgentState(
 }
 
 export interface SendPromptToAgentParams {
+  /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
+  beforeDispatch?: () => Promise<void>;
   onDispatch?: StartAgentRunOptions["onDispatch"];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -316,7 +319,16 @@ export async function sendPromptToAgent(
     ...params,
     prompt: delivery.prompt,
     runOptions: delivery.messageId
-      ? { ...params.runOptions, clientMessageId: delivery.messageId }
+      ? {
+          ...params.runOptions,
+          clientMessageId: delivery.messageId,
+          submittedMessages: [
+            {
+              clientMessageId: delivery.messageId,
+              promptFingerprint: messageFingerprint(params.prompt),
+            },
+          ],
+        }
       : params.runOptions,
   });
 }
@@ -357,6 +369,7 @@ export async function sendPreparedPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
+  await params.beforeDispatch?.();
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: true,
     onDispatch: params.onDispatch,

@@ -319,6 +319,7 @@ type ProviderSubagentManagerEvent = Extract<
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
+const FULL_AGENT_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
@@ -5393,15 +5394,11 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
-      );
+      for (const id of agentIds) {
+        if (!this.agentManager.getAgent(id) && !(await this.agentStorage.get(id))) {
+          throw new Error(`Agent not found: ${id}`);
+        }
+      }
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
@@ -5765,6 +5762,12 @@ export class Session {
 
     if (knownIds.has(trimmed)) {
       return { ok: true, agentId: trimmed };
+    }
+
+    // A complete agent ID names one agent. When none has it, no prefix or
+    // title answers for it, so a command never acts on a different agent.
+    if (FULL_AGENT_ID_PATTERN.test(trimmed)) {
+      return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
     }
 
     const prefixMatches = Array.from(knownIds).filter((id) => id.startsWith(trimmed));
@@ -6184,6 +6187,7 @@ export class Session {
       // resolves to "github") so the sidebar/hover-card brand mark matches the
       // status projection without a second resolve.
       forge: snapshot.forge.forge,
+      forgeWeb: snapshot.forgeWeb,
     };
   }
 
@@ -8917,8 +8921,9 @@ export class Session {
         queued = acceptAdmission;
       });
       let deliveryStatus: "queued" | undefined;
-      const send = async () => {
+      const send = async (beforeDispatch: () => Promise<void>) => {
         if (msg.sourceAgentId) {
+          await beforeDispatch();
           const receipt = this.agentMessages.enqueue({
             recipientId: agentId,
             messageId: msg.messageId,
@@ -8949,6 +8954,7 @@ export class Session {
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
+          beforeDispatch,
           logger: this.sessionLogger,
         });
         if (result.disposition === "turn_started") {
@@ -8972,17 +8978,13 @@ export class Session {
               activeTurnBehavior:
                 msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
             },
-            prepare: async () => {
-              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-            },
             isAccepted: async () => {
               try {
-                await ensureAgentLoaded(agentId, {
-                  agentManager: this.agentManager,
-                  agentStorage: this.agentStorage,
-                  logger: this.sessionLogger,
+                return await this.agentManager.hasAcceptedSubmittedMessage({
+                  agentId,
+                  clientMessageId: messageId,
+                  prompt,
                 });
-                return await this.agentManager.hasAcceptedSubmittedMessage(agentId, messageId);
               } catch (error) {
                 this.sessionLogger.warn(
                   { err: error, agentId, messageId },
@@ -8991,9 +8993,12 @@ export class Session {
                 return false;
               }
             },
-            send,
+            send: async (beforeDispatch) => {
+              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+              await send(beforeDispatch);
+            },
           })
-        : send();
+        : send(async () => {});
       void sent.catch((error) => {
         if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
