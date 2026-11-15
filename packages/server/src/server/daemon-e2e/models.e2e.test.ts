@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config.js";
@@ -163,6 +163,80 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
     await rm(cwd, { recursive: true, force: true });
   }
 }, 120000);
+
+test("Antigravity replays its stored conversation into the timeline after a daemon restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-antigravity-replay-"));
+  const cwd = path.join(root, "workspace");
+  await mkdir(cwd);
+  // The fake CLI replays a fixed ACP history and answers session/load mid-stream, as agy can.
+  const fake = path.resolve(
+    import.meta.dirname,
+    "../../../../../plugins/antigravity-provider/test/agy.mjs",
+  );
+  const options = {
+    paseoHomeRoot: path.join(root, "home"),
+    cleanup: false,
+    agentClients: {},
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["antigravity-provider"]),
+    providerOverrides: {
+      antigravity: { command: [process.execPath, fake], paseoTools: { enabled: false } },
+    },
+  };
+  let daemon = await createTestPaseoDaemon(options);
+  const connect = async () => {
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.16.0",
+    });
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    return client;
+  };
+  let client = await connect();
+  try {
+    const agent = await client.createAgent({ provider: "antigravity", cwd });
+    await client.sendMessage(agent.id, "HELLO");
+    expect((await client.waitForFinish(agent.id, 30000)).status).toBe("idle");
+    await client.close();
+    await daemon.close();
+    // The restarted daemon has no timeline for the agent; loading it replays provider history.
+    daemon = await createTestPaseoDaemon({ ...options, staticDir: daemon.staticDir });
+    client = await connect();
+
+    const timeline = await client.fetchAgentTimeline(agent.id, { direction: "tail", limit: 200 });
+    const messages = timeline.entries.flatMap(({ item }) =>
+      item.type === "user_message" || item.type === "assistant_message"
+        ? [{ type: item.type, text: item.text }]
+        : [],
+    );
+    // The fixture's first prompt carries a system prefix this daemon did not send, so it stays.
+    expect(messages).toEqual([
+      { type: "user_message", text: "SYSTEM PREFIX\n\nList the files." },
+      { type: "assistant_message", text: "There is one file, README.md." },
+      { type: "user_message", text: "Edit it. Then stop." },
+      { type: "assistant_message", text: "Done." },
+    ]);
+    expect(timeline.entries.map(({ item }) => item.type)).toEqual([
+      "user_message",
+      "reasoning",
+      "tool_call",
+      "tool_call",
+      "reasoning",
+      "assistant_message",
+      "user_message",
+      "tool_call",
+      "tool_call",
+      "tool_call",
+      "assistant_message",
+      "notification",
+    ]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
 
 test("bundled fx requires a config entry and lists models instead of its providers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-fx-optin-"));

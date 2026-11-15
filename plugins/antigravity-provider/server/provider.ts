@@ -20,7 +20,16 @@ const capabilities = [
   "session.persistence",
 ] as const;
 
-export function createAntigravityProvider(): ProviderRegistration {
+interface AntigravityOptions {
+  /** How long `session.open` waits for `agy acp` to replay a stored conversation. */
+  historyTimeoutMs: number;
+  /** How long the replayed history must stay quiet after `agy` answers `session/load`. */
+  historySettleMs: number;
+}
+
+export function createAntigravityProvider(
+  options: AntigravityOptions = { historyTimeoutMs: 20_000, historySettleMs: 1000 },
+): ProviderRegistration {
   return {
     id: "antigravity",
     label: "Antigravity",
@@ -48,15 +57,18 @@ export function createAntigravityProvider(): ProviderRegistration {
       if (!request.launch)
         throw new AntigravityError("The daemon must supply the Antigravity launch");
       const negotiated = negotiateProviderCapabilities(request.capabilities, capabilities);
-      return createConnection(request.launch, negotiated);
+      return createConnection({ launch: request.launch, negotiated, options });
     },
   };
 }
 
-function createConnection(
-  launch: ProviderLaunch,
-  negotiated: readonly string[],
-): ProviderConnection {
+interface ConnectionOptions {
+  launch: ProviderLaunch;
+  negotiated: readonly string[];
+  options: AntigravityOptions;
+}
+
+function createConnection({ launch, negotiated, options }: ConnectionOptions): ProviderConnection {
   const sessions = new Map<string, Session>();
   const listeners = new Set<(event: ProviderEvent) => void>();
   let discovered: ProviderCatalog | null = null;
@@ -97,11 +109,17 @@ function createConnection(
           persistence: input.persistence,
           catalog,
           launch,
+          historyTimeoutMs: options.historyTimeoutMs,
+          historySettleMs: options.historySettleMs,
           emit,
         });
         sessions.set(input.sessionId, opened);
         try {
-          await opened.open(input.requestId, negotiated);
+          await opened.open({
+            requestId: input.requestId,
+            history: input.history,
+            capabilities: negotiated,
+          });
         } catch (error) {
           sessions.delete(input.sessionId);
           await opened.close();

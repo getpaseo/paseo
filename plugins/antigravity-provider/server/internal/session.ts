@@ -11,10 +11,10 @@ import type {
   ProviderTimelineItem,
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
-import { startDriver, selection, type Driver } from "./process.js";
-import { validateSelection } from "./catalog.js";
+import { readConversation, startDriver, selection, type Driver } from "./process.js";
+import { supportsHistory, validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
-import { toolItem } from "./timeline.js";
+import { historyItems, toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
 const persistenceSchema = z
@@ -40,8 +40,18 @@ interface SessionOptions {
   launch: ProviderLaunch;
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
+  historyTimeoutMs: number;
+  historySettleMs: number;
   emit(event: ProviderEvent): void;
 }
+interface OpenOptions {
+  requestId: string;
+  history: "replay" | "skip";
+  capabilities: readonly string[];
+}
+type History =
+  | { type: "loaded"; items: ProviderTimelineItem[] }
+  | { type: "unavailable"; reason: string };
 
 export class Session {
   private state: State = { type: "dormant" };
@@ -60,7 +70,10 @@ export class Session {
     validateSelection(this.config, options.catalog());
   }
 
-  async open(requestId: string, capabilities: readonly string[]): Promise<void> {
+  async open({ requestId, history, capabilities }: OpenOptions): Promise<void> {
+    // The history reader exits before the driver resumes the same conversation.
+    const replayed: History =
+      history === "replay" ? await this.readHistory() : { type: "loaded", items: [] };
     await this.ensureDriver();
     this.emit({
       type: "session.opened",
@@ -72,7 +85,9 @@ export class Session {
       cwd: this.config.cwd,
       title: this.config.title,
     });
+    if (replayed.type === "loaded") for (const item of replayed.items) this.item(item);
     this.publishFullAccessNotice();
+    if (replayed.type === "unavailable") this.publishHistoryNotice(replayed.reason);
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
@@ -177,6 +192,46 @@ export class Session {
         state: "canceled",
       });
     }
+  }
+
+  private async readHistory(): Promise<History> {
+    const conversationId = this.conversationId;
+    if (conversationId === null) return { type: "loaded", items: [] };
+    try {
+      if (!(await supportsHistory(this.options.launch)))
+        return {
+          type: "unavailable",
+          reason: "Update `agy` to 1.5.0 or later to show messages from before this chat reopened.",
+        };
+      const updates = await readConversation({
+        launch: this.options.launch,
+        config: this.config,
+        conversationId,
+        timeoutMs: this.options.historyTimeoutMs,
+        settleMs: this.options.historySettleMs,
+      });
+      const items = historyItems(updates, {
+        conversationId,
+        systemPrompt: this.config.systemPrompt,
+      });
+      return { type: "loaded", items };
+    } catch (error) {
+      if (!(error instanceof AntigravityError)) throw error;
+      return { type: "unavailable", reason: error.message };
+    }
+  }
+
+  private publishHistoryNotice(reason: string): void {
+    this.emit({
+      type: "session.notice",
+      sessionId: this.options.id,
+      notice: {
+        id: `${this.options.id}:history`,
+        severity: "warning",
+        title: "Earlier Antigravity messages could not be loaded",
+        description: reason,
+      },
+    });
   }
 
   private publishFullAccessNotice(): void {

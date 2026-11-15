@@ -4,6 +4,17 @@
 command, then a text-only answer whose result retains the first denial. The replay clock is
 synthetic; frames retain the native cumulative denial payload.
 
+`acp-load.stdout.ndjson` is not a capture. It reduces the `session/update` notifications that
+`agy acp` 1.5.9 streamed for `session/load` of real conversations on 2026-11-15 to neutral content
+with the same field shapes: chunk updates, and `tool_call` rows carrying Antigravity's `name` and
+`args` beside the ACP fields, with `content` and `rawOutput` for commands and `diff` content for
+writes. Those loads sent each tool call once, already final; the `tool_call_update` row follows
+the ACP schema and the `pending`/`in_progress` statuses exercise unfinished calls. The fake
+replaces the session ID with the requested conversation and answers `session/load` halfway through
+the stream: under load, agy 1.5.9 replied while its history stream was still sending (its
+`acp-server-*.log` shows the reply before `Stream goroutine exited`), and it logs `Timeout waiting
+for history stream` when it stops waiting after 2 seconds.
+
 Captured on Linux x86_64 on 2026-09-29. These are observations from the supplied binary, not guarantees for the Google sign-in route. No product code or capture drivers are included.
 
 Each row names a capture prefix. Its `.stdin.ndjson`, `.stdout.ndjson`, `.stderr.ndjson`, and `.capture.ndjson` companions keep the streams separate; empty streams are empty files. Every line wraps the exact decoded JSON frame or text line in `{t_ms, stream, data}`. `t_ms` is milliseconds since construction immediately before spawn. Capture annotations record launch arguments, configuration, signals, EOF, timeouts, and exit code; they are not CLI output. Line references refer to the indicated file, starting at 1.

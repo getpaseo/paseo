@@ -4,6 +4,8 @@ interface SignalOptions {
   platform: NodeJS.Platform;
   pid: number;
   signal: NodeJS.Signals;
+  /** Delivers a POSIX signal. Defaults to `process.kill`. */
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
 }
 
 type SignalPlan =
@@ -20,11 +22,24 @@ export function signalPlan(options: SignalOptions): SignalPlan {
 export function signalProcess(options: SignalOptions): void | Promise<void> {
   const plan = signalPlan(options);
   if (plan.type === "tree") return killTree(plan);
+  const kill = options.kill ?? deliverSignal;
   try {
-    process.kill(plan.pid, plan.signal);
+    kill(plan.pid, plan.signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    if (!isSettledGroup(error)) throw error;
   }
+}
+
+function deliverSignal(pid: number, signal: NodeJS.Signals): void {
+  process.kill(pid, signal);
+}
+
+// ESRCH means the group is gone. macOS answers EPERM when any member of the group could not be
+// signaled, which includes members that have exited but are not reaped yet; the members it could
+// reach still got the signal. These signals are sent from timers, so a throw here crashes the daemon.
+function isSettledGroup(error: unknown): boolean {
+  if (!(error instanceof Error && "code" in error)) return false;
+  return error.code === "ESRCH" || error.code === "EPERM";
 }
 
 async function killTree(plan: Extract<SignalPlan, { type: "tree" }>): Promise<void> {
