@@ -109,10 +109,15 @@ function mapOmpWaitDetail(result: OmpToolResult): ToolCallDetail {
     jobType && jobStatus && jobLabel
       ? `${jobType} ${jobStatus}: ${jobLabel}`
       : (text?.split("\n", 1)[0] ?? "Waiting for background work");
+  const jobText = firstString(firstJob?.resultText, firstJob?.errorText);
+  // OMP writes the whole wait report and a subagent's result as Markdown; a bash job's own
+  // output is terminal text and stays raw.
+  const markdown = jobText === undefined || jobType === "task";
   return {
     type: "plain_text",
     label,
-    text: firstString(firstJob?.resultText, firstJob?.errorText) ?? text,
+    text: jobText ?? text,
+    ...(markdown ? { format: "markdown" as const } : {}),
   };
 }
 

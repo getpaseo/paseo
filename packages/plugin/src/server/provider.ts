@@ -540,6 +540,8 @@ export type ProviderToolCallDetail =
         | "sparkles"
         | "brain"
         | "mic_vocal";
+      /** How `text` reads. `markdown` renders it as formatted text; absent means raw text. */
+      format?: "markdown";
     }
   | { type: "plan"; text: string }
   | { type: "unknown"; input: JsonValue; output: JsonValue };
@@ -1258,6 +1260,7 @@ const toolCallDetailSchema: z.ZodType<ProviderToolCallDetail> = z.discriminatedU
           "mic_vocal",
         ])
         .optional(),
+      format: z.literal("markdown").optional(),
     })
     .strip(),
   z.object({ type: z.literal("plan"), text: z.string() }).strip(),
