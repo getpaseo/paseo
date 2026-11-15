@@ -11,6 +11,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 interface Item {
   id: string;
+  label?: string;
 }
 
 function keyExtractor(item: Item): string {
@@ -41,7 +42,7 @@ function renderRowWithHandle(info: DraggableRenderItemInfo<Item>) {
       <DraggableListHandle accessibilityLabel={`Move ${info.item.id}`} testID="row-handle">
         <span>grip</span>
       </DraggableListHandle>
-      <span data-testid="row-body">{info.item.id}</span>
+      <span data-testid="row-body">{info.item.label ?? info.item.id}</span>
     </div>
   );
 }
@@ -95,18 +96,23 @@ function wait(ms: number): Promise<void> {
   });
 }
 
-/** An owner whose new order reaches the list in a later render, like one that saves to a store. */
+/**
+ * An owner that relabels its rows as soon as one is dropped, and whose new order reaches the list
+ * in a later render, like one that saves to a store.
+ */
 function ListWithLateOwner() {
   const [items, setItems] = useState<Item[]>([{ id: "one" }, { id: "two" }]);
-  const reorderLater = useCallback((next: Item[]) => {
-    setTimeout(() => setItems(next), OWNER_DELAY_MS);
+  const relabelThenReorderLater = useCallback((next: Item[]) => {
+    const relabel = (item: Item): Item => ({ id: item.id, label: `${item.id} dropped` });
+    setItems((current) => current.map(relabel));
+    setTimeout(() => setItems(next.map(relabel)), OWNER_DELAY_MS);
   }, []);
   return (
     <DraggableList
       data={items}
       keyExtractor={keyExtractor}
       renderItem={renderRowWithHandle}
-      onDragEnd={reorderLater}
+      onDragEnd={relabelThenReorderLater}
       useDragHandle
     />
   );
@@ -142,7 +148,7 @@ async function dragDown(element: HTMLElement, distance: number) {
 }
 
 describe("DraggableList on web", () => {
-  it("keeps a dropped row in its new slot until the owner's new order arrives", async () => {
+  it("shows the owner's current rows in the dropped order until its new order arrives", async () => {
     act(() => {
       root?.render(<ListWithLateOwner />);
     });
@@ -156,10 +162,10 @@ describe("DraggableList on web", () => {
       secondRow.getBoundingClientRect().top - firstRow.getBoundingClientRect().top;
 
     await dragDown(firstHandle, rowDistance);
-    expect(rowOrder()).toEqual(["two", "one"]);
+    expect(rowOrder()).toEqual(["two dropped", "one dropped"]);
 
     await act(() => wait(OWNER_DELAY_MS * 2));
-    expect(rowOrder()).toEqual(["two", "one"]);
+    expect(rowOrder()).toEqual(["two dropped", "one dropped"]);
   });
 });
 
