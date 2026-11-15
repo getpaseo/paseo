@@ -8,6 +8,7 @@ import type {
 } from "../runtime.js";
 import type {
   PiAgentMessage,
+  PiCustomEntry,
   PiModel,
   PiPromptAck,
   PiRpcSlashCommand,
@@ -150,6 +151,7 @@ export class FakePiSession implements PiRuntimeSession {
   readonly rawFrames: Array<object & { type: string }> = [];
   // Every user entry in the session file, including rewound and compacted ones.
   treeUserEntries: FakePiUserEntry[] = [];
+  customEntries: PiCustomEntry[] = [];
   // Native user entries paired with the complete active-branch history.
   historyUserEntries: FakePiUserEntry[] = [];
   abortRequested = false;
@@ -163,6 +165,7 @@ export class FakePiSession implements PiRuntimeSession {
   models: PiModel[] = [];
   messages: PiAgentMessage[] = [];
   getHistoryError: Error | null = null;
+  treeNavigationError: Error | null = null;
   stats: PiSessionStats = {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
@@ -483,6 +486,9 @@ export class FakePiSession implements PiRuntimeSession {
       return;
     }
     this.treeNavigationRequests.push(payload.targetId);
+    if (this.treeNavigationError) {
+      throw this.treeNavigationError;
+    }
     this.emitEntryCapture(undefined, "tree_navigation");
     this.emitExtensionCommandResult(payload.requestId, { ok: true, result: {} });
   }
@@ -513,6 +519,7 @@ export class FakePiSession implements PiRuntimeSession {
         reason,
         requestId,
         treeEntries: this.treeUserEntries,
+        customEntries: this.customEntries,
       })}`,
     });
   }

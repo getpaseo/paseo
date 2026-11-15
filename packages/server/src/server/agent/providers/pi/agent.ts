@@ -84,9 +84,11 @@ import {
   readPiImportSessionConfig,
 } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
+import { PiCustomEntrySchema } from "./rpc-types.js";
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
+  PiCustomEntry,
   PiImageContent,
   PiModel,
   PiRpcSlashCommand,
@@ -224,6 +226,11 @@ function capabilitiesForClient(): AgentCapabilityFlags {
 
 function capabilitiesForSession(hasMcpConfig: boolean): AgentCapabilityFlags {
   return withPiCapabilities(hasMcpConfig);
+}
+
+interface PiExtensionCommandInput {
+  command: string;
+  args: Record<string, string>;
 }
 
 interface StartTurnResult {
@@ -688,6 +695,8 @@ function createPiPaseoExtensionFile({
 	        requestId,
 	        // Rewind targets: rows can still show entries that a rewind or compaction left off the branch.
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
+	        // Extension state belongs to the active branch, including entries before compaction.
+	        customEntries: ctx.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
 	      }),
 	    "info",
 	  );
@@ -1211,6 +1220,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
+  private customEntries: PiCustomEntry[] = [];
+  private readonly customEntryStreams = new Set<PiCustomEntry[]>();
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private compactionPromise: Promise<void> | null = null;
@@ -1458,8 +1469,11 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    let customEntries: PiCustomEntry[] = [];
     try {
       await this.requestEntryCapture("history");
+      customEntries = [...this.customEntries];
+      this.customEntryStreams.add(customEntries);
       const history = await this.runtimeSession.getHistory();
       yield* streamPiHistory(
         this.provider,
@@ -1469,8 +1483,10 @@ export class PiRpcAgentSession implements AgentSession {
         // At most eight 2 MiB child files per replay; later cards retain their summaries.
         createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
         this.closeController.signal,
+        customEntries,
       );
     } finally {
+      this.customEntryStreams.delete(customEntries);
       if (this.closeAfterHistory) await this.close();
     }
   }
@@ -1626,11 +1642,10 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async runPiTreeExtensionCommand(targetId: string): Promise<unknown> {
-    const requestId = randomUUID();
-    const resultPromise = this.waitForExtensionResult(requestId);
-    const payload = Buffer.from(JSON.stringify({ targetId, requestId })).toString("base64url");
-    await this.runtimeSession.prompt(`/${PASEO_PI_TREE_EXTENSION_COMMAND} ${payload}`);
-    return await resultPromise;
+    return await this.runPiExtensionCommand({
+      command: PASEO_PI_TREE_EXTENSION_COMMAND,
+      args: { targetId },
+    });
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -1977,11 +1992,30 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private async requestEntryCapture(reason: string): Promise<void> {
+    await this.runPiExtensionCommand({
+      command: PASEO_PI_CAPTURE_EXTENSION_COMMAND,
+      args: { reason },
+    });
+  }
+
+  private async runPiExtensionCommand(input: PiExtensionCommandInput): Promise<unknown> {
     const requestId = randomUUID();
     const resultPromise = this.waitForExtensionResult(requestId);
-    const payload = Buffer.from(JSON.stringify({ requestId, reason })).toString("base64url");
-    await this.runtimeSession.prompt(`/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`);
-    await resultPromise;
+    const payload = Buffer.from(JSON.stringify({ ...input.args, requestId })).toString("base64url");
+    try {
+      // Either channel can fail before the other acknowledges the command.
+      const [result] = await Promise.all([
+        resultPromise,
+        this.runtimeSession.prompt(`/${input.command} ${payload}`),
+      ]);
+      return result;
+    } catch (error) {
+      this.rejectExtensionResult(
+        requestId,
+        error instanceof Error ? error : new Error(toDiagnosticErrorMessage(error)),
+      );
+      throw error;
+    }
   }
 
   private waitForExtensionResult(requestId: string): Promise<unknown> {
@@ -2060,6 +2094,18 @@ export class PiRpcAgentSession implements AgentSession {
       return false;
     }
     this.recordCapturedUserEntries(parseCapturedEntries(payload.treeEntries));
+    this.customEntries = [];
+    this.extensionHost.resetCustomEntries();
+    if (Array.isArray(payload.customEntries)) {
+      for (const candidate of payload.customEntries) {
+        const entry = PiCustomEntrySchema.safeParse(candidate);
+        if (entry.success) {
+          this.customEntries.push(entry.data);
+          // Seed live delta consumers after resume; history emits through its own fresh host.
+          this.extensionHost.mapCustomEntry(entry.data);
+        }
+      }
+    }
     if (typeof payload.requestId === "string") {
       this.resolveExtensionResult(payload.requestId, undefined);
     }
@@ -2157,6 +2203,15 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
+    if (event.type === "entry_appended") {
+      const entry = PiCustomEntrySchema.safeParse(event.entry);
+      if (entry.success) {
+        this.customEntries.push(entry.data);
+        for (const entries of this.customEntryStreams) entries.push(entry.data);
+        this.emitExtensionOutput(this.extensionHost.mapCustomEntry(entry.data), undefined);
+      }
+      return;
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
