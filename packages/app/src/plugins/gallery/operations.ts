@@ -144,6 +144,7 @@ export async function updatePlugins(request: UpdateRequest): Promise<void> {
       previews?.filter((preview) => !updatedIds.has(preview.id)),
     );
     if (updated.length) request.onUpdated(updated);
+    if (updated.length < results.length) recheckUpdates(request);
   } catch (error) {
     for (const proposal of proposals)
       setOperation(serverId, proposal.id, {
@@ -151,5 +152,11 @@ export async function updatePlugins(request: UpdateRequest): Promise<void> {
         status: "failed",
         error: errorMessage(error),
       });
+    recheckUpdates(request);
   }
+}
+
+// A proposal fails when the plugin changed since it was reviewed; Retry needs a fresh one.
+function recheckUpdates({ queryClient, serverId }: HostContext): void {
+  void queryClient.invalidateQueries({ queryKey: pluginUpdatesQueryKey(serverId) });
 }

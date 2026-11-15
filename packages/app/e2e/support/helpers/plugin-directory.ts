@@ -9,7 +9,13 @@ import appPackage from "../../../package.json";
 import { gotoAppShell, openSettings } from "./app";
 import { addConnectedHostAndReload } from "./hosts";
 import { pluginRequirements } from "./plugin-fixture";
-import { expectToast, pluginPageName, selectPluginPageAction } from "./plugin-gallery";
+import {
+  expectToast,
+  openPluginPage,
+  pluginPageName,
+  selectInstalledTab,
+  selectPluginPageAction,
+} from "./plugin-gallery";
 import { openHostSection, selectSettingsHost } from "./settings";
 import { startHostDaemon } from "./versioned-host-daemon";
 
@@ -170,8 +176,11 @@ export async function openListingPage(page: Page) {
   await expect(page.getByText(LISTING.overview, { exact: true })).toBeVisible();
 }
 
-/** Uninstalling from a listing's page keeps the page open, back on Install. */
-export async function uninstallFromListingPage(page: Page) {
+/**
+ * Uninstalling keeps the plugin's page open on its listing, back on Install, whether the page was
+ * opened from Browse or from the Installed tab.
+ */
+export async function uninstallFromPage(page: Page) {
   page.once("dialog", (dialog) => dialog.accept());
   await selectPluginPageAction(page, LISTING.name, "Uninstall");
   await expectToast(page, `Uninstalled ${LISTING.name}`);
@@ -179,4 +188,18 @@ export async function uninstallFromListingPage(page: Page) {
   await expect(
     page.getByTestId(`plugin-install-${LISTING.id}`).filter({ visible: true }),
   ).toBeVisible();
+}
+
+export async function installFromPage(page: Page) {
+  await page.getByTestId(`plugin-install-${LISTING.id}`).filter({ visible: true }).click();
+  await page.getByTestId("plugin-install-confirm").click();
+  await expect(
+    page.getByRole("button", { name: `Actions for ${LISTING.name}`, exact: true }),
+  ).toBeVisible({ timeout: 60_000 });
+}
+
+export async function openFromInstalledTab(page: Page) {
+  await page.getByRole("button", { name: "Back to plugins", exact: true }).click();
+  await selectInstalledTab(page);
+  await openPluginPage(page, LISTING.name, "directory-example");
 }

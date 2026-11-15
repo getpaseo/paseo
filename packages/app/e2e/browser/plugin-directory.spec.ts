@@ -1,13 +1,15 @@
 import {
   test,
   expectStillBrowsing,
+  installFromPage,
   installListingFromRow,
   openDirectory,
+  openFromInstalledTab,
   openListingPage,
-  uninstallFromListingPage,
+  uninstallFromPage,
 } from "../support/helpers/plugin-directory";
 
-test("installs a listed plugin from Browse and uninstalls it from its page", async ({
+test("installs a listed plugin from Browse and uninstalls it from either of its pages", async ({
   page,
   directoryHost,
 }) => {
@@ -15,5 +17,8 @@ test("installs a listed plugin from Browse and uninstalls it from its page", asy
   await installListingFromRow(page);
   await expectStillBrowsing(page);
   await openListingPage(page);
-  await uninstallFromListingPage(page);
+  await uninstallFromPage(page);
+  await installFromPage(page);
+  await openFromInstalledTab(page);
+  await uninstallFromPage(page);
 });

@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePluginList } from "@/plugins/plugin-list";
 import { useFetchQuery } from "@/data/query";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginUpdatesQueryKey } from "./operations";
 
-// The directory changes when a maintainer publishes, not while someone browses.
+// The directory changes when a maintainer publishes, not while someone browses. These queries
+// refetch on mount only once stale, so opening a plugin's page does not fetch them again.
 const DIRECTORY_STALE_MS = 10 * 60_000;
 
 function useHostReady(serverId: string) {
@@ -28,6 +30,7 @@ export function usePluginDirectory(serverId: string) {
     enabled: ready && supported,
     dataShape: "value",
     staleTimeMs: DIRECTORY_STALE_MS,
+    refetchOnMount: true,
   });
   return { supported, query };
 }
@@ -46,6 +49,7 @@ export function usePluginListing(serverId: string, listingId: string | undefined
     enabled: ready && supported && listingId !== undefined,
     dataShape: "value",
     staleTimeMs: DIRECTORY_STALE_MS,
+    refetchOnMount: true,
   });
 }
 
@@ -63,6 +67,7 @@ export function usePluginUpdates(serverId: string) {
     enabled: ready && supported,
     dataShape: "list",
     staleTimeMs: DIRECTORY_STALE_MS,
+    refetchOnMount: true,
     select: (previews) => previews.filter((preview) => preview.outcome === "update"),
   });
 }
@@ -90,9 +95,18 @@ function usePluginCatalogFeed(serverId: string, refetch: () => unknown) {
   }, [client, connected, supported, refetch]);
 }
 
-/** The host's plugins, refetched whenever another client or the CLI changes them. */
+/**
+ * The host's plugins, refetched whenever another client or the CLI changes them. A change also
+ * re-checks updates, whose proposals name the revision each plugin had when checked.
+ */
 export function useLivePluginList(serverId: string) {
   const plugins = usePluginList(serverId);
-  usePluginCatalogFeed(serverId, plugins.refetch);
+  const queryClient = useQueryClient();
+  const { refetch } = plugins;
+  const refresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: pluginUpdatesQueryKey(serverId) });
+    return refetch();
+  }, [queryClient, refetch, serverId]);
+  usePluginCatalogFeed(serverId, refresh);
   return plugins;
 }

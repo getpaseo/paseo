@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { router } from "expo-router";
 import { ArrowLeft } from "lucide-react-native";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,6 +44,7 @@ import {
 import { PluginActionsMenu } from "./menus";
 import { updatePlugins, usePluginOperation, type PluginOperation } from "./operations";
 import { PluginMeta, PluginTile } from "./plugin-row";
+import { buildPluginListingRoute } from "./routes";
 import { PluginsOffAlert } from "./plugins-off-alert";
 import { OverviewSkeleton, PluginPageSkeleton } from "./skeletons";
 import {
@@ -399,9 +401,13 @@ export function PluginPage({
     [],
   );
   const closeInstall = useCallback(() => setInstallTarget(null), []);
+  // An installed page finds its listing through the plugin, which uninstalling removes. A listed
+  // plugin's page becomes its listing's page, offering Install again; any other returns to Plugins.
   const onRemoved = useCallback(() => {
-    if (subject.kind === "installed" && !listingId) onBack();
-  }, [listingId, onBack, subject.kind]);
+    if (subject.kind !== "installed") return;
+    if (listingId) router.replace(buildPluginListingRoute(serverId, listingId));
+    else onBack();
+  }, [listingId, onBack, serverId, subject.kind]);
 
   const back = compact ? null : (
     <Button onPress={onBack} variant="ghost" leftIcon={ArrowLeft} style={styles.back}>
