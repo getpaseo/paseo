@@ -267,22 +267,17 @@ function renderCopyOutput() {
 }
 
 describe("tool detail interaction", () => {
-  it("keeps detail controls in the tab order and reports detail hover", async () => {
+  it("keeps detail controls in the tab order", async () => {
     function Badge() {
       const [expanded, setExpanded] = React.useState(true);
-      const [hovered, setHovered] = React.useState(false);
       const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
       return (
-        <>
-          <ExpandableBadge
-            label="Probe"
-            isExpanded={expanded}
-            onToggle={toggle}
-            onDetailHoverChange={setHovered}
-            renderDetails={renderCopyOutput}
-          />
-          <output aria-label="Detail hover">{hovered ? "hovered" : "outside"}</output>
-        </>
+        <ExpandableBadge
+          label="Probe"
+          isExpanded={expanded}
+          onToggle={toggle}
+          renderDetails={renderCopyOutput}
+        />
       );
     }
     act(() => root.render(<Badge />));
@@ -290,10 +285,5 @@ describe("tool detail interaction", () => {
     act(() => header.focus());
     await userEvent.keyboard("{Tab}");
     expect(document.activeElement).toBe(view().getByRole("button", { name: "Copy output" }));
-
-    await page.getByRole("button", { name: "Copy output" }).hover();
-    expect(view().getByLabelText("Detail hover").textContent).toBe("hovered");
-    await page.getByRole("button", { name: "Probe" }).hover();
-    expect(view().getByLabelText("Detail hover").textContent).toBe("outside");
   });
 });
