@@ -125,9 +125,7 @@ export function createBottomSheetVisibilityTracker(opts: {
     },
     handleSheetIndexChange(index) {
       if (index !== -1) {
-        if (phase === "presenting" || phase === "dismissing") {
-          setPhase("presented");
-        }
+        setPhase("presented");
         // A dismiss sent before the sheet measured its layout is dropped, and the sheet still
         // finishes opening. The owner wants it hidden, so it goes again.
         if (!visible && isEnabled !== false) {

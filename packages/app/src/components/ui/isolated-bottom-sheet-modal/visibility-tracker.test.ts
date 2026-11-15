@@ -306,3 +306,19 @@ it("closes a retained owner's sheet and releases Back when the owner becomes ina
   tracker.syncDesired({ visible: false, active: true });
   expect(sheet.events).toHaveLength(2);
 });
+
+it("dismisses a late opening after the inactive owner acknowledges closure", () => {
+  const { sheet, tracker, backPress, closeCount } = setup();
+  tracker.attachController(sheet);
+  tracker.syncDesired({ visible: true, active: true });
+  tracker.syncDesired({ visible: true, active: false });
+  expect(closeCount()).toBe(1);
+  tracker.syncDesired({ visible: false, active: false });
+  // Gorhom can drop an early dismiss before its first layout measurement.
+  tracker.handleSheetIndexChange(0);
+  expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }, { type: "dismiss" }]);
+  expect(backPress.press()).toBe(false);
+  tracker.handleSheetDismiss();
+  tracker.syncDesired({ visible: false, active: true });
+  expect(sheet.events).toHaveLength(3);
+});
