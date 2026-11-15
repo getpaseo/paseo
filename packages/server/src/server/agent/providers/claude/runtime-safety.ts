@@ -3,6 +3,8 @@ import type { AgentBackgroundWorkInput } from "../../background-work/index.js";
 import { parseClaudeCodeVersion } from "./model-manifest.js";
 import { toBackgroundWorkInputs, type ClaudeBackgroundTask } from "./background-work.js";
 
+const SESSION_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "ScheduleWakeup"]);
+
 /** Process-local background ownership. Completion delivery can follow an empty roster. */
 export class ClaudeRuntimeSafety {
   private inventoryState: "unknown" | "supported" | "retired" = "unknown";
@@ -16,12 +18,15 @@ export class ClaudeRuntimeSafety {
   private readonly monitorTools = new Set<string>();
   private readonly toolInputs = new Map<string, { description?: string; command?: string }>();
   private readonly taskTools = new Map<string, string>();
-  // Session-only crons and wakeups live in the process and die with it. Claude lists them on
-  // every Stop hook, and they appear nowhere on the message stream.
+  // Session-only crons and wakeups live in the process and die with it. Only the Stop hook
+  // lists them, and Claude runs it only for turns that complete. A cron tool call makes the
+  // count unknown until the next Stop, so an interrupted or failed turn keeps the runtime.
   private sessionCrons = 0;
+  private sessionCronsUnknown = false;
 
   reset(): void {
     this.sessionCrons = 0;
+    this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
     this.turnSeen = false;
     this.liveTasks = [];
@@ -44,8 +49,9 @@ export class ClaudeRuntimeSafety {
 
   /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
   observeStop(sessionCrons: readonly SessionCronSummary[] | undefined): void {
-    if (this.inventoryState === "retired" || !sessionCrons) return;
-    this.sessionCrons = sessionCrons.length;
+    if (this.inventoryState === "retired") return;
+    this.sessionCronsUnknown = false;
+    if (sessionCrons) this.sessionCrons = sessionCrons.length;
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
@@ -64,6 +70,8 @@ export class ClaudeRuntimeSafety {
     if (message.type === "assistant") {
       let relevant = false;
       for (const block of message.message.content) {
+        if (block.type === "tool_use" && SESSION_CRON_TOOLS.has(block.name))
+          this.sessionCronsUnknown = true;
         if (block.type === "tool_use" && (block.name === "Monitor" || block.name === "Bash")) {
           if (block.name === "Monitor") relevant = this.observeMonitor(block.id) || relevant;
           relevant = this.observeInput(block.id, block.input) || relevant;
@@ -140,6 +148,7 @@ export class ClaudeRuntimeSafety {
     return (
       this.inventoryState === "supported" &&
       this.sessionCrons === 0 &&
+      !this.sessionCronsUnknown &&
       this.liveTasks.length === 0 &&
       this.awaitingNotifications.size === 0
     );
