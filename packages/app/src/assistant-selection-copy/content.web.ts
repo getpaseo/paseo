@@ -91,6 +91,33 @@ turndown.addRule("compactListItem", {
   },
 });
 
+// The Markdown renderer keeps a formula's TeX in the aria-label of its KaTeX host. Copy that
+// source between dollars, unescaped, rather than the MathML presentation text.
+const MATH_SELECTOR = '[role="math"][aria-label]';
+const COPIED_MATH_TAG = "paseo-math";
+turndown.addRule("texMath", {
+  filter: (node) => node.nodeName === COPIED_MATH_TAG.toUpperCase(),
+  replacement: (_content, node) => {
+    const element = node as HTMLElement;
+    const tex = element.getAttribute("data-tex") ?? "";
+    return element.hasAttribute("data-display") ? `\n\n$$${tex}$$\n\n` : `$${tex}$`;
+  },
+});
+
+function restoreMathSources(container: HTMLElement): void {
+  for (const math of container.querySelectorAll<HTMLElement>(MATH_SELECTOR)) {
+    const tex = math.getAttribute("aria-label") ?? "";
+    const copy = document.createElement(COPIED_MATH_TAG);
+    copy.setAttribute("data-tex", tex);
+    // Turndown drops an element without text as blank before any rule sees it.
+    copy.textContent = tex;
+    if (math.style.display === "block" || math.querySelector('math[display="block"]')) {
+      copy.setAttribute("data-display", "");
+    }
+    math.replaceWith(copy);
+  }
+}
+
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,
 ): MarkdownClipboardContent | null {
@@ -268,6 +295,7 @@ function cloneMarkdownSelection(range: Range, message: Element): Node {
   const clonedMessage = message.cloneNode(true) as Element;
   const clonedRange = cloneRangeInto(range, message, clonedMessage);
   removeUnselectedSemantics(range, message, clonedMessage);
+  dropPartialMathSources(range, message, clonedMessage);
 
   let selected: Node = clonedRange.cloneContents();
   let ancestor =
@@ -323,6 +351,16 @@ function nodeAtPath(root: Node, path: number[]): Node {
     current = child;
   }
   return current;
+}
+
+/** A formula selected only in part has no TeX to copy; it keeps its rendered text. */
+function dropPartialMathSources(range: Range, source: Element, clone: Element): void {
+  const copies = clone.querySelectorAll(MATH_SELECTOR);
+  source.querySelectorAll(MATH_SELECTOR).forEach((original, index) => {
+    if (range.intersectsNode(original) && !hasSelectedAllContents(range, original)) {
+      copies[index]?.removeAttribute("aria-label");
+    }
+  });
 }
 
 function removeUnselectedSemantics(range: Range, source: Element, clone: Element): void {
@@ -597,6 +635,7 @@ function selectedMessageParts(range: Range): SelectedMessagePart[] | null {
 }
 
 function restoreMarkdownElements(container: HTMLElement): void {
+  restoreMathSources(container);
   for (const ignored of container.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
     ignored.remove();
   }
