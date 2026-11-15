@@ -1,33 +1,177 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const backing = vi.hoisted(() => new Map<string, string>());
-const submission = vi.hoisted(() => ({
-  begin: vi.fn(),
-  accept: vi.fn(),
-  reject: vi.fn(),
-}));
-
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
+    getAllKeys: async () => [...backing.keys()],
+    multiGet: async (keys: string[]) => keys.map((key) => [key, backing.get(key) ?? null]),
+    removeItem: async (key: string) => {
+      backing.delete(key);
+    },
     getItem: async (key: string) => backing.get(key) ?? null,
     setItem: async (key: string, value: string) => {
       backing.set(key, value);
     },
   },
 }));
-vi.mock("@/composer/submission/writer", () => ({
-  createMessageSubmissionWriter: () => submission,
-}));
-
-beforeEach(() => {
+beforeEach(async () => {
   backing.clear();
-  submission.begin.mockClear();
-  submission.accept.mockClear();
-  submission.reject.mockClear();
   vi.resetModules();
+  const { useSessionStore } = await import("@/stores/session-store");
+  useSessionStore
+    .getState()
+    .initializeSession(
+      "host-1",
+      null as unknown as import("@getpaseo/client/internal/daemon-client").DaemonClient,
+    );
+});
+
+const idleClient = (sendAgentMessage = vi.fn(async () => ({}))) => ({
+  sendAgentMessage,
+  isConnected: true,
+  fetchAgent: async () => ({ agent: { status: "idle" as const } }),
 });
 
 describe("offline message outbox", () => {
+  it("preserves messages saved concurrently by two independent app windows", async () => {
+    const first = await import("./store");
+    await first.hydrateOutbox();
+    vi.resetModules();
+    const second = await import("./store");
+    await second.hydrateOutbox();
+    await Promise.all([
+      first.enqueueOutboxItem(
+        first.createPendingOutboxItem({
+          id: "window-one",
+          serverId: "host-1",
+          agentId: "agent-1",
+          text: "One",
+          images: [],
+          attachments: [],
+        }),
+      ),
+      second.enqueueOutboxItem(
+        second.createPendingOutboxItem({
+          id: "window-two",
+          serverId: "host-1",
+          agentId: "agent-1",
+          text: "Two",
+          images: [],
+          attachments: [],
+        }),
+      ),
+    ]);
+    vi.resetModules();
+    const restored = await import("./store");
+    await restored.hydrateOutbox();
+    expect(
+      restored.useOutboxStore
+        .getState()
+        .items.map((item) => item.id)
+        .sort(),
+    ).toEqual(["window-one", "window-two"]);
+  });
+
+  it("leaves unattempted messages pending when a send disconnects", async () => {
+    const store = await import("./store");
+    for (const id of ["first", "second"])
+      await store.enqueueOutboxItem(
+        store.createPendingOutboxItem({
+          id,
+          serverId: "host-1",
+          agentId: id,
+          text: id,
+          sendBehavior: "interrupt",
+          images: [],
+          attachments: [],
+        }),
+      );
+    let connected = true;
+    const sendAgentMessage = vi.fn(async () => {
+      connected = false;
+      throw new Error("Disconnected");
+    });
+    const client = {
+      ...idleClient(sendAgentMessage),
+      get isConnected() {
+        return connected;
+      },
+    };
+    await (await import("./delivery")).drainPendingOutbox({ serverId: "host-1", client });
+    expect(store.useOutboxStore.getState().items.map(({ id, status }) => ({ id, status }))).toEqual(
+      [
+        { id: "first", status: "needs_review" },
+        { id: "second", status: "pending" },
+      ],
+    );
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the agent to be idle before draining the next queued message", async () => {
+    const store = await import("./store");
+    for (const id of ["first", "second"])
+      await store.enqueueOutboxItem(
+        store.createPendingOutboxItem({
+          id,
+          serverId: "host-1",
+          agentId: "agent-1",
+          text: id,
+          sendBehavior: "queue",
+          images: [],
+          attachments: [],
+        }),
+      );
+    let running = false;
+    const sendAgentMessage = vi.fn(async () => {
+      running = true;
+      return {};
+    });
+    const client = {
+      ...idleClient(sendAgentMessage),
+      fetchAgent: async () => ({
+        agent: { status: running ? ("running" as const) : ("idle" as const) },
+      }),
+    };
+    const { drainPendingOutbox } = await import("./delivery");
+    await drainPendingOutbox({ serverId: "host-1", client });
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    await drainPendingOutbox({ serverId: "host-1", client });
+    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    running = false;
+    await drainPendingOutbox({ serverId: "host-1", client });
+    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+    expect(store.useOutboxStore.getState().items).toEqual([]);
+  });
+
+  it("reuses a canonical timeline row when retrying the same message", async () => {
+    const store = await import("./store");
+    const item = store.createPendingOutboxItem({
+      id: "canonical",
+      serverId: "host-1",
+      agentId: "agent-1",
+      text: "Already received",
+      images: [],
+      attachments: [],
+    });
+    await store.enqueueOutboxItem(item);
+    const { useSessionStore } = await import("@/stores/session-store");
+    const { createUserMessage } = await import("@/types/stream");
+    const canonical = createUserMessage({
+      clientMessageId: item.id,
+      text: item.text,
+      timestamp: new Date(),
+    });
+    useSessionStore
+      .getState()
+      .setAgentStreamState("host-1", "agent-1", { head: [], tail: [canonical] });
+    const client = idleClient();
+    await (await import("./delivery")).deliverOutboxItem({ item, client });
+    expect(client.sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(useSessionStore.getState().sessions["host-1"]?.agentStreamTail.get("agent-1")).toEqual([
+      canonical,
+    ]);
+    expect(store.useOutboxStore.getState().items).toEqual([]);
+  });
   it("persists a pending message across reloads and retains its image", async () => {
     const first = await import("./store");
     const image = {
@@ -74,7 +218,7 @@ describe("offline message outbox", () => {
       .mockRejectedValueOnce(new Error("Connection dropped"))
       .mockResolvedValueOnce({});
     const delivery = await import("./delivery");
-    const client = { sendAgentMessage };
+    const client = idleClient(sendAgentMessage);
     await delivery.drainPendingOutbox({ serverId: "host-1", client });
     expect(store.useOutboxStore.getState().items).toMatchObject([
       { id: "message-2", status: "needs_review", error: "Connection dropped" },
@@ -115,7 +259,7 @@ describe("offline message outbox", () => {
     expect(restored.useOutboxStore.getState().items[0]?.status).toBe("needs_review");
     const sendAgentMessage = vi.fn();
     const delivery = await import("./delivery");
-    await delivery.drainPendingOutbox({ serverId: "host-1", client: { sendAgentMessage } });
+    await delivery.drainPendingOutbox({ serverId: "host-1", client: idleClient(sendAgentMessage) });
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 

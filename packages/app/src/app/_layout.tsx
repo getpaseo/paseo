@@ -192,15 +192,19 @@ function OutboxDrain({
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
 }) {
   const connected = useHostRuntimeIsConnected(serverId);
-  const outboxItems = useOutboxStore((state) => state.items);
-  const hasPending = outboxItems.some(
-    (item) => item.serverId === serverId && item.status === "pending",
+  const hasPending = useOutboxStore((state) =>
+    state.items.some((item) => item.serverId === serverId && item.status === "pending"),
   );
   useEffect(() => {
     if (!connected) return;
-    void hydrateOutbox()
-      .then(() => drainPendingOutbox({ serverId, client }))
-      .catch((error) => console.warn("[Outbox] Could not resume pending messages", error));
+    const drain = () =>
+      void hydrateOutbox()
+        .then(() => drainPendingOutbox({ serverId, client }))
+        .catch((error) => console.warn("[Outbox] Could not resume pending messages", error));
+    drain();
+    if (!hasPending) return;
+    const timer = setInterval(drain, 2000);
+    return () => clearInterval(timer);
   }, [client, connected, hasPending, serverId]);
   return null;
 }

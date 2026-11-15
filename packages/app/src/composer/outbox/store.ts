@@ -6,12 +6,16 @@ import type { AttachmentMetadata } from "@/attachments/types";
 import { AttachmentMetadataSchema } from "@/stores/draft-store/state";
 
 const STORAGE_KEY = "paseo-message-outbox-v1";
+const ITEM_PREFIX = "paseo-message-outbox-item-v1:";
+const ownedSending = new Set<string>();
+const itemKey = (id: string) => `${ITEM_PREFIX}${encodeURIComponent(id)}`;
 
 const OutboxItemSchema = z.strictObject({
   id: z.string(),
   serverId: z.string(),
   agentId: z.string(),
   text: z.string(),
+  sendBehavior: z.enum(["queue", "interrupt", "steer"]).optional(),
   activeTurnBehavior: z.enum(["interrupt", "steer"]).optional(),
   activeTurnId: z.string().optional(),
   images: z.array(AttachmentMetadataSchema),
@@ -35,21 +39,32 @@ export const useOutboxStore = create<OutboxState>(() => ({ items: [], hydrated: 
 let hydration: Promise<void> | null = null;
 let mutation: Promise<unknown> = Promise.resolve();
 
+async function readItems(): Promise<OutboxItem[]> {
+  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(ITEM_PREFIX));
+  const entries = await AsyncStorage.multiGet(keys);
+  return entries
+    .flatMap(([, raw]) => {
+      if (!raw) return [];
+      const item = OutboxItemSchema.parse(JSON.parse(raw));
+      if (item.status === "sending" && !ownedSending.has(item.id)) item.status = "needs_review";
+      return [item];
+    })
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+}
+
 export function hydrateOutbox(): Promise<void> {
   hydration ??= (async () => {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      useOutboxStore.setState({ hydrated: true });
-      return;
+    const legacy = await AsyncStorage.getItem(STORAGE_KEY);
+    if (legacy) {
+      const parsed = StoredOutboxSchema.parse(JSON.parse(legacy));
+      for (const item of parsed.items) {
+        if ((await AsyncStorage.getItem(itemKey(item.id))) === null) {
+          await AsyncStorage.setItem(itemKey(item.id), JSON.stringify(item));
+        }
+      }
+      await AsyncStorage.removeItem(STORAGE_KEY);
     }
-    const parsed = StoredOutboxSchema.safeParse(JSON.parse(raw));
-    if (!parsed.success) throw new Error("Saved outbox is invalid; it was left untouched.");
-    // A send interrupted by app termination has an unknown outcome. Never auto-retry it.
-    const items = parsed.data.items;
-    for (const item of items) {
-      if (item.status === "sending") item.status = "needs_review";
-    }
-    useOutboxStore.setState({ items, hydrated: true });
+    useOutboxStore.setState({ items: await readItems(), hydrated: true });
   })().catch((error) => {
     hydration = null;
     throw error;
@@ -57,13 +72,17 @@ export function hydrateOutbox(): Promise<void> {
   return hydration;
 }
 
-function mutateItems(transform: (items: OutboxItem[]) => OutboxItem[]): Promise<void> {
+function mutateItem(operation: () => Promise<void>): Promise<void> {
   const next = mutation
     .catch(() => undefined)
     .then(async () => {
       await hydrateOutbox();
-      const items = transform(useOutboxStore.getState().items);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, items }));
+      await operation();
+      const previous = new Map(useOutboxStore.getState().items.map((item) => [item.id, item]));
+      const items = (await readItems()).map((item) => {
+        const old = previous.get(item.id);
+        return old && JSON.stringify(old) === JSON.stringify(item) ? old : item;
+      });
       useOutboxStore.setState({ items });
       return undefined;
     });
@@ -72,24 +91,41 @@ function mutateItems(transform: (items: OutboxItem[]) => OutboxItem[]): Promise<
 }
 
 export function enqueueOutboxItem(item: OutboxItem): Promise<void> {
-  return mutateItems((items) => [...items, item]);
+  // Separate keys prevent one window's cached array from replacing another window's messages.
+  return mutateItem(() => AsyncStorage.setItem(itemKey(item.id), JSON.stringify(item)));
 }
 
 export function updateOutboxItem(
   id: string,
   update: (item: OutboxItem) => OutboxItem,
 ): Promise<void> {
-  return mutateItems((items) => items.map((item) => (item.id === id ? update(item) : item)));
+  return mutateItem(async () => {
+    const raw = await AsyncStorage.getItem(itemKey(id));
+    if (!raw) return;
+    const item = update(OutboxItemSchema.parse(JSON.parse(raw)));
+    if (item.status === "sending") ownedSending.add(id);
+    else ownedSending.delete(id);
+    await AsyncStorage.setItem(itemKey(id), JSON.stringify(item));
+  });
 }
 
 export function removeOutboxItem(id: string): Promise<void> {
-  return mutateItems((items) => items.filter((item) => item.id !== id));
+  return mutateItem(async () => {
+    await AsyncStorage.removeItem(itemKey(id));
+    ownedSending.delete(id);
+  });
 }
 
 export function discardOutboxItem(id: string): Promise<void> {
-  return mutateItems((items) =>
-    items.filter((item) => item.id !== id || item.status === "sending"),
-  );
+  return mutateItem(async () => {
+    const raw = await AsyncStorage.getItem(itemKey(id));
+    if (
+      !raw ||
+      (OutboxItemSchema.parse(JSON.parse(raw)).status === "sending" && ownedSending.has(id))
+    )
+      return;
+    await AsyncStorage.removeItem(itemKey(id));
+  });
 }
 
 export function getOutboxImageIds(): ReadonlySet<string> {
@@ -101,6 +137,7 @@ export function createPendingOutboxItem(input: {
   serverId: string;
   agentId: string;
   text: string;
+  sendBehavior?: "queue" | "interrupt" | "steer";
   activeTurnBehavior?: "interrupt" | "steer";
   activeTurnId?: string;
   images: AttachmentMetadata[];

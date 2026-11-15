@@ -759,11 +759,7 @@ function OutboxRow({
   let status: string;
   if (item.status === "pending") status = t("composer.outbox.pending");
   else if (item.status === "sending") status = t("composer.outbox.sending");
-  else
-    status =
-      item.error === "agent_request_outcome_unknown"
-        ? t("composer.outbox.needsReview")
-        : item.error || t("composer.outbox.needsReview");
+  else status = t("composer.outbox.needsReview");
   return (
     <View style={styles.queueItem}>
       <View style={styles.outboxDescription}>
@@ -1407,16 +1403,17 @@ function ComposerContentImpl({
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
-  const allOutboxItems = useOutboxStore((state) => state.items);
-  const outboxItems = useMemo(
-    () => allOutboxItems.filter((item) => item.serverId === serverId && item.agentId === agentId),
-    [allOutboxItems, agentId, serverId],
+  const outboxItems = useOutboxStore(
+    useShallow((state) =>
+      state.items.filter((item) => item.serverId === serverId && item.agentId === agentId),
+    ),
   );
   useEffect(() => {
-    void hydrateOutbox().catch((error) =>
-      setSendError(error instanceof Error ? error.message : String(error)),
-    );
-  }, []);
+    void hydrateOutbox().catch((error) => {
+      console.warn("[Outbox] Could not load saved messages", error);
+      setSendError(t("composer.errors.failedToSend"));
+    });
+  }, [t]);
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
@@ -1892,6 +1889,7 @@ function ComposerContentImpl({
             text: submitText,
             images: payload.images,
             attachments: payload.attachments,
+            sendBehavior: appSettings.sendBehavior,
             activeTurnBehavior: appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
             activeTurnId:
               appSettings.sendBehavior === "steer"
