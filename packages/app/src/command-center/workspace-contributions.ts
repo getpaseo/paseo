@@ -115,7 +115,6 @@ export interface WorkspaceCommandCenterSource {
     canSplitPanes: boolean;
     canOpenBrowserTabs: boolean;
     isGit: boolean;
-    isNonGit: boolean;
     /** Host supports the `workspacePinning` feature. */
     canPin: boolean;
     /** The workspace has setup commands or a setup error — same gate as the header menu. */
@@ -134,6 +133,8 @@ export interface WorkspaceCommandCenterSource {
   labelCatalog: readonly WorkspaceCommandCenterLabelChoice[] | null;
   dispatch(action: KeyboardActionDefinition): void;
   runGitAction(action: GitAction): void;
+  /** Null while the workspace cannot be archived. A Git workspace archives through `gitActions`. */
+  archiveWorkspace: (() => void) | null;
   copyPath(): void;
   copyBranchName(): void;
   toggleLabel(name: string, assigned: boolean): void | Promise<void>;
@@ -548,21 +549,6 @@ function buildCreationContributions(
   ];
   const primary = source.gitActions.primary;
   if (primary) contributions.push(buildGitContribution(source, primary, 1, "always"));
-  if (source.capabilities.isNonGit) {
-    contributions.push(
-      buildWorkspaceAction({
-        source,
-        id: "workspace:archive",
-        rank: 1,
-        title: source.labels.archiveWorkspace,
-        keywords: ["archive", "workspace"],
-        icon: source.icons.archiveWorkspace,
-        shortcutKeys: source.shortcuts.archiveWorkspace,
-        action: { id: "workspace.archive", scope: "sidebar" },
-        visibility: "always",
-      }),
-    );
-  }
   contributions.push(
     buildQueryAction(source, {
       id: "tab:new-terminal",
@@ -600,15 +586,23 @@ export function buildWorkspaceCommandCenterContributions(
   ];
 
   for (const [index, action] of actionsWithoutPrimary(source.gitActions).entries()) {
-    // Archiving is workspace management, not an occasional Git operation. Keep it in the
-    // empty-query command center list even when another Git action is promoted to primary.
+    contributions.push(buildGitContribution(source, action, 100 + index, "query"));
+  }
+
+  // A Git workspace lists archive among its Git actions; any other workspace archives here.
+  if (!source.capabilities.isGit && source.archiveWorkspace) {
     contributions.push(
-      buildGitContribution(
+      buildWorkspaceCallback({
         source,
-        action,
-        100 + index,
-        action.id === "archive-workspace" ? "always" : "query",
-      ),
+        id: "workspace:archive",
+        rank: 100,
+        title: source.labels.archiveWorkspace,
+        keywords: ["archive", "workspace"],
+        icon: source.icons.archiveWorkspace,
+        shortcutKeys: source.shortcuts.archiveWorkspace,
+        run: source.archiveWorkspace,
+        visibility: "query",
+      }),
     );
   }
 

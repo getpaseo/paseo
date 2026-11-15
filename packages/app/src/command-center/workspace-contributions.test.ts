@@ -25,12 +25,13 @@ function source(gitActions: GitActions): {
   dispatched: KeyboardActionDefinition[];
   copiedPaths: number;
   copiedBranchNames: number;
+  archivedWorkspaces: number;
   toggledLabels: Array<{ name: string; assigned: boolean }>;
 } {
   const runGitActions: GitAction[] = [];
   const dispatched: KeyboardActionDefinition[] = [];
   const toggledLabels: Array<{ name: string; assigned: boolean }> = [];
-  const counters = { copiedPaths: 0, copiedBranchNames: 0 };
+  const counters = { copiedPaths: 0, copiedBranchNames: 0, archivedWorkspaces: 0 };
   return {
     value: {
       gitActions,
@@ -83,7 +84,6 @@ function source(gitActions: GitActions): {
         canSplitPanes: true,
         canOpenBrowserTabs: true,
         isGit: false,
-        isNonGit: true,
         canPin: false,
         canShowSetup: false,
       },
@@ -95,6 +95,9 @@ function source(gitActions: GitActions): {
       labelCatalog: null,
       dispatch: (action) => dispatched.push(action),
       runGitAction: (action) => runGitActions.push(action),
+      archiveWorkspace: () => {
+        counters.archivedWorkspaces += 1;
+      },
       copyPath: () => {
         counters.copiedPaths += 1;
       },
@@ -114,20 +117,46 @@ function source(gitActions: GitActions): {
     get copiedBranchNames() {
       return counters.copiedBranchNames;
     },
+    get archivedWorkspaces() {
+      return counters.archivedWorkspaces;
+    },
   };
 }
 
 describe("workspace command center contributions", () => {
-  it("shows archive workspace for non-Git workspaces", () => {
+  it("offers archive in a non-Git workspace and runs the workspace's archive", () => {
     const fixture = source({ primary: null, secondary: [], menu: [] });
 
-    const archiveContribution = buildWorkspaceCommandCenterContributions(fixture.value).find(
+    const archive = buildWorkspaceCommandCenterContributions(fixture.value).find(
       (item) => item.id === "workspace:archive",
     );
 
-    expect(archiveContribution?.visibility).toBe("always");
-    archiveContribution?.run();
-    expect(fixture.dispatched).toEqual([{ id: "workspace.archive", scope: "sidebar" }]);
+    expect(archive?.visibility).toBe("query");
+    expect(archive?.presentation).toMatchObject({ title: "Archive workspace" });
+    archive?.run();
+    expect(fixture.archivedWorkspaces).toBe(1);
+    expect(fixture.dispatched).toEqual([]);
+  });
+
+  it("omits archive while the workspace cannot be archived", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+    fixture.value.archiveWorkspace = null;
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    expect(contributions.some((item) => item.id === "workspace:archive")).toBe(false);
+  });
+
+  it("lists archive once in a Git workspace, through its Git action", () => {
+    const archive = gitAction("archive-workspace", "Archive workspace");
+    const fixture = source({ primary: null, secondary: [archive], menu: [] });
+    fixture.value.capabilities.isGit = true;
+
+    const contributions = buildWorkspaceCommandCenterContributions(fixture.value);
+
+    expect(
+      contributions.filter((item) => item.id.includes("archive")).map((item) => item.id),
+    ).toEqual(["git:archive-workspace"]);
   });
 
   it("makes only the policy-selected primary Git action default-visible and runs it", () => {
@@ -145,24 +174,6 @@ describe("workspace command center contributions", () => {
     expect(defaultGitContributions.map((item) => item.id)).toEqual(["git:commit"]);
     defaultGitContributions[0].run();
     expect(fixture.runGitActions).toEqual([primary]);
-  });
-
-  it("keeps archive workspace visible when another Git action is primary", () => {
-    const primary = gitAction("commit", "Commit");
-    const archive = gitAction("archive-workspace", "Archive workspace");
-    const fixture = source({
-      primary,
-      secondary: [gitAction("push", "Push"), archive],
-      menu: [],
-    });
-
-    const archiveContribution = buildWorkspaceCommandCenterContributions(fixture.value).find(
-      (item) => item.id === "git:archive-workspace",
-    );
-
-    expect(archiveContribution?.visibility).toBe("always");
-    archiveContribution?.run();
-    expect(fixture.runGitActions).toEqual([archive]);
   });
 
   it("does not duplicate a primary action retained in the secondary policy list", () => {
@@ -216,7 +227,6 @@ describe("workspace command center contributions", () => {
       canSplitPanes: false,
       canOpenBrowserTabs: false,
       isGit: false,
-      isNonGit: true,
       canPin: false,
       canShowSetup: false,
     };
