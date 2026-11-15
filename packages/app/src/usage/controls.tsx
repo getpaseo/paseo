@@ -61,7 +61,10 @@ export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   const controls = useMemo(
     () =>
       hasUsageControls(view, hostSelection) ? (
+        // Keyed by host, so state one host's controls hold, such as a failed setting change,
+        // never shows on another's.
         <UsageControls
+          key={hostSelection.serverId}
           serverId={hostSelection.serverId}
           view={view}
           onRefresh={refresh}

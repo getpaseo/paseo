@@ -57,8 +57,9 @@ function HostUsageModal({
     : undefined;
   return (
     <UsageModalFrame {...props} actions={controls} subtitle={hostLabel}>
-      {/* Keyed by host so a refresh in flight on one host never shows on another's cards. Only the
-        body remounts: remounting the frame would dismiss a compact sheet, and Usage with it. */}
+      {/* Keyed by host so state the cards hold, such as a refresh in flight, never shows on another
+        host's cards. The frame is not keyed: remounting it would dismiss a compact sheet, and Usage
+        with it. */}
       <View key={serverId} testID={`usage-host-${serverId}`}>
         <UsageBody serverId={serverId} view={view} display={display} onRefresh={refresh} />
       </View>

@@ -8,6 +8,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { openSettingsSection } from "../support/helpers/settings";
+import { gate } from "../support/helpers/context-window";
 import { getServerId } from "../support/helpers/server-id";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import {
@@ -375,9 +376,11 @@ test.describe("usage modal", () => {
     );
     try {
       await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      // The second host's reports wait until the test lets them through, like a slow host.
+      const secondaryReports = gate();
       await installUsageReportsFixture(page, {
         port: secondary.port,
-        lists: [[weeklyReport("beta", 12)]],
+        lists: [{ stream: [secondaryReports.promise, weeklyReport("beta", 12)] }],
       });
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
@@ -393,10 +396,13 @@ test.describe("usage modal", () => {
 
       await expect(usageModalHost(page)).toHaveText("localhost");
       await pickUsageHost(page, secondary.serverId);
-      await expect(
-        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
-      ).toBeVisible({ timeout: 30_000 });
+      // Until its reports arrive, the picked host loads; it never shows the first host's cards.
+      const secondaryBody = page.getByTestId(`usage-host-${secondary.serverId}`);
+      await expect(secondaryBody.getByText("Loading usage...")).toBeVisible();
+      await expect(page.getByTestId("usage-modal-body").getByText("31% used")).toHaveCount(0);
       await expect(usageModalHost(page)).toHaveText("Secondary box");
+      secondaryReports.open();
+      await expect(secondaryBody.getByText("12% used")).toBeVisible({ timeout: 30_000 });
       await qaScreenshot(page, "usage-modal-picked-host");
       await expectPinnedUsage(page, ["12% Weekly"]);
 
