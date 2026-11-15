@@ -16,10 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
-import type {
-  PluginRegistryIndex,
-  PublishedPluginDetail,
-} from "@getpaseo/protocol/plugin-registry";
+import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
@@ -6586,7 +6583,7 @@ export class DaemonClient {
   }
 
   /** The host's default plugin registry directory. */
-  async listPluginRegistry(): Promise<PluginRegistryIndex> {
+  async listPluginRegistry(): Promise<PluginListingIndex> {
     this.requirePluginRegistry();
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
@@ -6599,7 +6596,7 @@ export class DaemonClient {
   }
 
   /** One registry listing with its overview. */
-  async getRegistryPlugin(id: string): Promise<PublishedPluginDetail> {
+  async getRegistryPlugin(id: string): Promise<PluginListingDetail> {
     this.requirePluginRegistry();
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({

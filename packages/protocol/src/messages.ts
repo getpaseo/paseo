@@ -22,8 +22,8 @@ import {
 import {
   PluginRegistryIdSchema,
   PluginRegistryIdentitySchema,
-  PluginRegistryIndexSchema,
-  PublishedPluginDetailSchema,
+  PluginListingDetailSchema,
+  PluginListingIndexSchema,
 } from "./plugin-registry.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
@@ -7282,12 +7282,12 @@ export type PluginSourceStatusItem = z.infer<typeof PluginSourceStatusItemSchema
 /** The host's plugin directory index, fetched by the daemon from its configured registry. */
 export const PluginRegistryListResponseSchema = z.object({
   type: z.literal("plugin.registry.list.response"),
-  payload: z.object({ requestId: z.string(), index: PluginRegistryIndexSchema }),
+  payload: z.object({ requestId: z.string(), index: PluginListingIndexSchema }),
 });
 
 export const PluginRegistryGetResponseSchema = z.object({
   type: z.literal("plugin.registry.get.response"),
-  payload: z.object({ requestId: z.string(), plugin: PublishedPluginDetailSchema }),
+  payload: z.object({ requestId: z.string(), plugin: PluginListingDetailSchema }),
 });
 
 export const PluginSourceStatusResponseSchema = z.object({

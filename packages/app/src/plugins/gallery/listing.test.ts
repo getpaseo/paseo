@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PluginRegistryIndex, PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListingIndex, PluginListing } from "@getpaseo/protocol/plugin-registry";
 import {
   ALL_CATEGORIES,
   featuredListings,
@@ -9,7 +9,7 @@ import {
   listingText,
 } from "./listing";
 
-function listing(id: string, overrides: Partial<PublishedPlugin> = {}): PublishedPlugin {
+function listing(id: string, overrides: Partial<PluginListing> = {}): PluginListing {
   return {
     id,
     name: id.split("/")[1] ?? id,
@@ -24,10 +24,10 @@ function listing(id: string, overrides: Partial<PublishedPlugin> = {}): Publishe
     updatedAt: "2026-01-01T00:00:00Z",
     publishedAt: "2026-01-01T00:00:00Z",
     ...overrides,
-  } as PublishedPlugin;
+  } as PluginListing;
 }
 
-function directory(plugins: PublishedPlugin[], featured: string[] = []): PluginRegistryIndex {
+function directory(plugins: PluginListing[], featured: string[] = []): PluginListingIndex {
   return {
     schemaVersion: 1,
     registry: { name: "Paseo", url: "https://plugins.paseo.sh" },
@@ -38,7 +38,7 @@ function directory(plugins: PublishedPlugin[], featured: string[] = []): PluginR
   };
 }
 
-const ids = (listings: PublishedPlugin[]) => listings.map((entry) => entry.id);
+const ids = (listings: PluginListing[]) => listings.map((entry) => entry.id);
 
 describe("filterDirectory", () => {
   const index = directory([

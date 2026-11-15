@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { PluginListItem } from "@getpaseo/protocol/messages";
-import type { PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListing } from "@getpaseo/protocol/plugin-registry";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsCard, SettingsRow } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
@@ -15,22 +15,18 @@ import { useToast } from "@/contexts/toast-api-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import { pluginDisplayName } from "@/plugins/plugin-list";
-import { listingAuthor, listingText, listingVersion } from "./listing";
+import { listingAuthor, listingSource, listingText, listingVersion } from "./listing";
 import { dismissFailedOperation, installPlugin, usePluginOperation } from "./operations";
 
 const PLUGIN_SOURCE_DOCS_URL = "https://paseo.sh/docs/plugins/reference#plugin-sources";
 const SOURCE_SUBJECT = "source";
 
 /** What the sheet installs: a directory listing, or a source the user types. */
-export type InstallTarget = { kind: "listing"; listing: PublishedPlugin } | { kind: "source" };
+export type InstallTarget = { kind: "listing"; listing: PluginListing } | { kind: "source" };
 
 export function useHostLabel(serverId: string): string {
   const hosts = useHosts();
   return hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
-}
-
-function artifactSource(listing: PublishedPlugin): string {
-  return listing.artifact.kind === "npm" ? listing.artifact.package : listing.repository.url;
 }
 
 /**
@@ -148,7 +144,7 @@ export function InstallPluginSheet({
             </SettingsRow>
             <SettingsRow label={t("settings.plugins.gallery.install.source")}>
               <Text style={styles.value} numberOfLines={1}>
-                {artifactSource(target.listing)}
+                {listingSource(target.listing)}
               </Text>
             </SettingsRow>
             <SettingsRow label={t("settings.plugins.gallery.install.version")}>

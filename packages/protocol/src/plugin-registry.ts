@@ -79,6 +79,32 @@ export const PluginRegistryIndexSchema = z.object({
   featured: z.array(z.string()),
   generatedAt: z.string(),
 });
+
+/**
+ * A listing as a host sends it to apps. The registry's schema is closed, so its artifact is open
+ * here: an app older than its host keeps listing plugins whose artifact kind it does not know, and
+ * installs them through the host by ID.
+ */
+const PluginListingArtifactSchema = z.object({
+  kind: z.string(),
+  package: z.string().optional(),
+  version: z.string().optional(),
+  commit: z.string().optional(),
+});
+export const PluginListingSchema = PublishedPluginSchema.extend({
+  artifact: PluginListingArtifactSchema,
+});
+export const PluginListingDetailSchema = PublishedPluginDetailSchema.extend({
+  artifact: PluginListingArtifactSchema,
+});
+export const PluginListingIndexSchema = PluginRegistryIndexSchema.extend({
+  schemaVersion: z.number().int(),
+  plugins: z.array(PluginListingSchema),
+});
+export type PluginListing = z.infer<typeof PluginListingSchema>;
+export type PluginListingDetail = z.infer<typeof PluginListingDetailSchema>;
+export type PluginListingIndex = z.infer<typeof PluginListingIndexSchema>;
+
 export type PluginRegistryIdentity = z.infer<typeof PluginRegistryIdentitySchema>;
 export type PluginRegistries = z.infer<typeof PluginRegistriesSchema>;
 export type PublishedPlugin = z.infer<typeof PublishedPluginSchema>;

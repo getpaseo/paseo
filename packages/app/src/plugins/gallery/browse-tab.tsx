@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Image, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { PluginListItem } from "@getpaseo/protocol/messages";
-import type { PluginRegistryIndex, PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListingIndex, PluginListing } from "@getpaseo/protocol/plugin-registry";
 import { SettingsCard, SettingsSection } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ const LISTING_PAGE = 50;
 export function useListingMeta() {
   const { t } = useTranslation();
   return useCallback(
-    (listing: PublishedPlugin) =>
+    (listing: PluginListing) =>
       listing.installs === undefined
         ? listingAuthor(listing)
         : `${listingAuthor(listing)} · ${t("settings.plugins.gallery.installs", {
@@ -63,10 +63,10 @@ function ListingRow({
   onUninstall,
 }: {
   serverId: string;
-  listing: PublishedPlugin;
+  listing: PluginListing;
   installedPlugin?: PluginListItem;
   uninstalling: boolean;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
   onUninstall(plugin: PluginListItem): void;
 }) {
   const { i18n } = useTranslation();
@@ -103,7 +103,7 @@ function ListingRow({
 
 type HoverState = PressableStateCallbackType & { hovered?: boolean };
 
-function FeaturedCard({ serverId, listing }: { serverId: string; listing: PublishedPlugin }) {
+function FeaturedCard({ serverId, listing }: { serverId: string; listing: PluginListing }) {
   const { i18n } = useTranslation();
   const meta = useListingMeta();
   const { name, description } = listingText(listing, i18n.language);
@@ -146,7 +146,7 @@ function FeaturedCard({ serverId, listing }: { serverId: string; listing: Publis
 }
 
 /** Every featured listing: a row to swipe on a phone, a grid of four or two columns otherwise. */
-function Featured({ serverId, listings }: { serverId: string; listings: PublishedPlugin[] }) {
+function Featured({ serverId, listings }: { serverId: string; listings: PluginListing[] }) {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
   const grid = useContainerWidthBelow(FEATURED_FOUR_COLUMNS, { initialIsBelow: false });
@@ -243,9 +243,9 @@ function ListingList({
   onInstall,
 }: {
   serverId: string;
-  listings: PublishedPlugin[];
+  listings: PluginListing[];
   installed: ReadonlyMap<string, PluginListItem>;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
 }) {
   const { t } = useTranslation();
   const actions = usePluginActions(serverId);
@@ -302,10 +302,10 @@ function Directory({
   onInstall,
 }: {
   serverId: string;
-  index: PluginRegistryIndex;
+  index: PluginListingIndex;
   installed: ReadonlyMap<string, PluginListItem>;
   query: string;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
 }) {
   const { t, i18n } = useTranslation();
   const [category, setCategory] = useState<string>(ALL_CATEGORIES);
@@ -371,7 +371,7 @@ export function BrowseTab({
   /** Installed plugins by the listing they came from. */
   installed: ReadonlyMap<string, PluginListItem>;
   query: string;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
 }) {
   const { t } = useTranslation();
   const directory = usePluginDirectory(serverId);

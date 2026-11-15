@@ -8,9 +8,9 @@ import { StyleSheet } from "react-native-unistyles";
 import type { PluginListItem } from "@getpaseo/protocol/messages";
 import { formatPluginInstallation } from "@getpaseo/protocol/plugin-source-reference";
 import type {
-  PluginRegistryIndex,
-  PublishedPlugin,
-  PublishedPluginDetail,
+  PluginListingIndex,
+  PluginListing,
+  PluginListingDetail,
 } from "@getpaseo/protocol/plugin-registry";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { SettingsCard, SettingsRow, SettingsSection } from "@/components/settings";
@@ -37,6 +37,7 @@ import {
   listingAuthorAvatar,
   listingImages,
   listingText,
+  listingSource,
   listingVersion,
 } from "./listing";
 import { PluginActionsMenu } from "./menus";
@@ -210,14 +211,14 @@ function DetailValue({ children }: { children: ReactNode }) {
   );
 }
 
-function detailSource(plugin: PluginListItem | undefined, listing: PublishedPlugin | undefined) {
+function detailSource(plugin: PluginListItem | undefined, listing: PluginListing | undefined) {
   if (plugin?.installation) return formatPluginInstallation(plugin.installation);
   if (plugin) return plugin.path;
   if (!listing) return undefined;
-  return listing.artifact.kind === "npm" ? listing.artifact.package : listing.repository.url;
+  return listingSource(listing);
 }
 
-function Details({ plugin, listing }: { plugin?: PluginListItem; listing?: PublishedPlugin }) {
+function Details({ plugin, listing }: { plugin?: PluginListItem; listing?: PluginListing }) {
   const { t } = useTranslation();
   const version = plugin?.installation?.currentRevision ?? (listing && listingVersion(listing));
   const source = detailSource(plugin, listing);
@@ -281,9 +282,9 @@ function usePluginPageModel({
   serverId: string;
   subject: PluginPageSubject;
   plugin?: PluginListItem;
-  listing?: PublishedPlugin;
+  listing?: PluginListing;
   /** The listing with its overview, once its own request returns. */
-  detail?: PublishedPluginDetail;
+  detail?: PluginListingDetail;
   installOperation: PluginOperation | undefined;
 }): PluginPageModel {
   const { i18n } = useTranslation();
@@ -311,14 +312,14 @@ function subjectId(subject: PluginPageSubject): string {
   return subject.kind === "listing" ? subject.listingId : subject.pluginId;
 }
 
-function listingOverview(listing: PublishedPluginDetail, language: string): string {
+function listingOverview(listing: PluginListingDetail, language: string): string {
   return (listing.overviewTranslations?.[language] ?? listing.readme).trim();
 }
 
 function listingMetaLine(
   meta: string,
-  index: PluginRegistryIndex | undefined,
-  listing: PublishedPlugin,
+  index: PluginListingIndex | undefined,
+  listing: PluginListing,
 ): string {
   const category = listing.categories[0];
   return category && index ? `${meta} · ${categoryLabel(index, category)}` : meta;
@@ -342,9 +343,9 @@ function HeaderControl({
 }: {
   serverId: string;
   plugin?: PluginListItem;
-  listing?: PublishedPlugin;
+  listing?: PluginListing;
   installOperation: PluginOperation | undefined;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
   onRemoved(): void;
 }) {
   if (plugin)
@@ -394,7 +395,7 @@ export function PluginPage({
   });
   const [installTarget, setInstallTarget] = useState<InstallTarget | null>(null);
   const install = useCallback(
-    (target: PublishedPlugin) => setInstallTarget({ kind: "listing", listing: target }),
+    (target: PluginListing) => setInstallTarget({ kind: "listing", listing: target }),
     [],
   );
   const closeInstall = useCallback(() => setInstallTarget(null), []);
@@ -474,7 +475,7 @@ function PluginPageBody({
 }: {
   serverId: string;
   plugin?: PluginListItem;
-  listing?: PublishedPlugin;
+  listing?: PluginListing;
   overviewLoading: boolean;
   model: PluginPageModel;
 }) {

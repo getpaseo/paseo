@@ -4,7 +4,9 @@ import {
   PluginRegistryIdSchema,
   PluginRegistryIndexSchema,
   PublishedPluginDetailSchema,
+  PublishedPluginSchema,
   type PluginRegistries,
+  type PluginRegistryIndex,
   type PluginRegistryIdentity,
 } from "@getpaseo/protocol/plugin-registry";
 import type { PluginUpdateTarget } from "@getpaseo/protocol/messages";
@@ -57,9 +59,21 @@ async function readRegistryDocument(options: RegistryOptions, path: string): Pro
   return response.json();
 }
 
-/** The default registry's plugin directory, for browsing. */
-export async function listRegistryPlugins(options: RegistryOptions) {
-  return PluginRegistryIndexSchema.parse(await readRegistryDocument(options, "index.json"));
+// Listings are read one by one, so a listing this host cannot read leaves the rest browsable.
+const RegistryIndexDocumentSchema = PluginRegistryIndexSchema.extend({
+  plugins: z.array(z.unknown()),
+});
+
+/** The default registry's plugin directory, for browsing, without listings this host cannot read. */
+export async function listRegistryPlugins(options: RegistryOptions): Promise<PluginRegistryIndex> {
+  const index = RegistryIndexDocumentSchema.parse(
+    await readRegistryDocument(options, "index.json"),
+  );
+  const plugins = index.plugins.flatMap((listing) => {
+    const parsed = PublishedPluginSchema.safeParse(listing);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return { ...index, plugins };
 }
 
 /** One listing with its overview, for the plugin's page. */

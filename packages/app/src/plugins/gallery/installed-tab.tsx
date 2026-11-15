@@ -6,7 +6,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { PluginListItem, PluginUpdatePreview } from "@getpaseo/protocol/messages";
 import { formatPluginInstallation } from "@getpaseo/protocol/plugin-source-reference";
-import type { PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListing } from "@getpaseo/protocol/plugin-registry";
 import { SettingsCard, SettingsSection } from "@/components/settings";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -36,7 +36,7 @@ function matchesQuery(plugin: PluginListItem, query: string): boolean {
 }
 
 /** "author · version" for a listed plugin; where it was installed from otherwise. */
-function installedMeta(plugin: PluginListItem, listing: PublishedPlugin | undefined) {
+function installedMeta(plugin: PluginListItem, listing: PluginListing | undefined) {
   if (!plugin.installation) return plugin.path;
   if (!listing) return formatPluginInstallation(plugin.installation);
   const version = shortRevision(plugin.installation.currentRevision);
@@ -81,7 +81,7 @@ function UpdateRow({
   serverId: string;
   plugin: PluginListItem;
   preview: PluginUpdatePreview;
-  listing?: PublishedPlugin;
+  listing?: PluginListing;
   onUpdate(previews: PluginUpdatePreview[]): void;
 }) {
   const { t } = useTranslation();
@@ -126,7 +126,7 @@ function InstalledRow({
 }: {
   serverId: string;
   plugin: PluginListItem;
-  listing?: PublishedPlugin;
+  listing?: PluginListing;
   pending: boolean;
   onToggle(plugin: PluginListItem, enabled: boolean): void;
 }) {
@@ -181,7 +181,7 @@ export function InstalledTab({
   serverId: string;
   plugins: readonly PluginListItem[];
   /** Directory listings by ID, for icons and authors. Empty until the directory loads. */
-  listings: ReadonlyMap<string, PublishedPlugin>;
+  listings: ReadonlyMap<string, PluginListing>;
   query: string;
   onBrowse(): void;
 }) {

@@ -1,8 +1,8 @@
 import type { PluginListItem } from "@getpaseo/protocol/messages";
 import {
   pluginMediaKind,
-  type PluginRegistryIndex,
-  type PublishedPlugin,
+  type PluginListingIndex,
+  type PluginListing,
 } from "@getpaseo/protocol/plugin-registry";
 
 export type DirectorySort = "popular" | "recent" | "name";
@@ -15,7 +15,7 @@ export interface DirectoryFilter {
 }
 
 /** The listing's name and description in the reader's language, falling back to English. */
-export function listingText(listing: PublishedPlugin, language: string) {
+export function listingText(listing: PluginListing, language: string) {
   const translation = listing.translations?.[language] ?? listing.translations?.[baseTag(language)];
   return {
     name: translation?.name ?? listing.name,
@@ -27,24 +27,27 @@ function baseTag(language: string): string {
   return language.split("-")[0] ?? language;
 }
 
-export function listingAuthor(listing: PublishedPlugin): string {
+export function listingAuthor(listing: PluginListing): string {
   return listing.author.name ?? listing.author.github;
 }
 
 /** The author's GitHub avatar, the same picture the website shows. */
-export function listingAuthorAvatar(listing: PublishedPlugin): string {
+export function listingAuthorAvatar(listing: PluginListing): string {
   return `https://github.com/${encodeURIComponent(listing.author.github)}.png?size=40`;
 }
 
 /** The version a listing pins: the npm version, or the short Git commit. */
-export function listingVersion(listing: PublishedPlugin): string {
-  return listing.artifact.kind === "npm"
-    ? listing.artifact.version
-    : listing.artifact.commit.slice(0, 7);
+export function listingVersion(listing: PluginListing): string | undefined {
+  return listing.artifact.version ?? listing.artifact.commit?.slice(0, 7);
+}
+
+/** Where a listing's code comes from: the npm package, or the repository. */
+export function listingSource(listing: PluginListing): string {
+  return listing.artifact.package ?? listing.repository.url;
 }
 
 /** Image media in display order. Videos are left to the website. */
-export function listingImages(listing: PublishedPlugin): string[] {
+export function listingImages(listing: PluginListing): string[] {
   return listing.media.filter((url) => pluginMediaKind(url) === "image");
 }
 
@@ -72,14 +75,14 @@ export function installedByListing(plugins: readonly PluginListItem[]) {
   return byListing;
 }
 
-function matches(listing: PublishedPlugin, language: string, query: string): boolean {
+function matches(listing: PluginListing, language: string, query: string): boolean {
   if (!query) return true;
   const { name, description } = listingText(listing, language);
   const haystack = [name, description, listing.id, listingAuthor(listing)].join("\n").toLowerCase();
   return haystack.includes(query);
 }
 
-const SORTS: Record<DirectorySort, (left: PublishedPlugin, right: PublishedPlugin) => number> = {
+const SORTS: Record<DirectorySort, (left: PluginListing, right: PluginListing) => number> = {
   popular: (left, right) => (right.installs ?? 0) - (left.installs ?? 0),
   recent: (left, right) => right.updatedAt.localeCompare(left.updatedAt),
   name: (left, right) => left.name.localeCompare(right.name),
@@ -87,10 +90,10 @@ const SORTS: Record<DirectorySort, (left: PublishedPlugin, right: PublishedPlugi
 
 /** The directory's listings that pass the filter, in the chosen order. */
 export function filterDirectory(
-  index: PluginRegistryIndex,
+  index: PluginListingIndex,
   filter: DirectoryFilter,
   language: string,
-): PublishedPlugin[] {
+): PluginListing[] {
   const query = filter.query.trim().toLowerCase();
   return index.plugins
     .filter(
@@ -102,11 +105,11 @@ export function filterDirectory(
 }
 
 /** Featured listings that exist, in the maintainer's order. */
-export function featuredListings(index: PluginRegistryIndex): PublishedPlugin[] {
+export function featuredListings(index: PluginListingIndex): PluginListing[] {
   const byId = new Map(index.plugins.map((listing) => [listing.id, listing]));
   return index.featured.flatMap((id) => byId.get(id) ?? []);
 }
 
-export function categoryLabel(index: PluginRegistryIndex, slug: string): string {
+export function categoryLabel(index: PluginListingIndex, slug: string): string {
   return index.categories.find((category) => category.slug === slug)?.label ?? slug;
 }

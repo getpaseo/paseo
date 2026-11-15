@@ -8,6 +8,7 @@ import {
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { matchCommandLink, useAgentCommandHints, type CommandHints } from "@/agent-commands";
 import { useForgeShorthand } from "@/git/forge-shorthand";
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { Theme } from "@/styles/theme";
@@ -123,6 +124,12 @@ const MarkdownPart = memo(function MarkdownPart({
   );
   const [image, setImage] = useState<ImageLightboxSource | null>(null);
   const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
+    if (external) {
+      // The parser still autolinks bare http, www and email text; only https links open.
+      const safe = pluginOverviewUrl(url);
+      if (safe) void openExternalUrl(safe);
+      return;
+    }
     const command = commandHints && matchCommandLink(url, sourceType, commandHints.names);
     if (command) {
       commandHints.insert(command);

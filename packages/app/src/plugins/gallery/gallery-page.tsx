@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import type { PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListing } from "@getpaseo/protocol/plugin-registry";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { SearchField } from "@/components/ui/search-field";
@@ -35,8 +35,10 @@ export function PluginGalleryPage({ serverId }: { serverId: string }) {
   const [query, setQuery] = useState("");
   const [installTarget, setInstallTarget] = useState<InstallTarget | null>(null);
   const installed = useMemo(() => plugins.data ?? [], [plugins.data]);
-  const tab: GalleryTab =
-    chosenTab ?? (plugins.data && plugins.data.length === 0 ? "browse" : "installed");
+  // The opening tab is chosen once, so installing the first plugin does not move the user off Browse.
+  if (chosenTab === null && plugins.data)
+    setChosenTab(plugins.data.length === 0 ? "browse" : "installed");
+  const tab: GalleryTab = chosenTab ?? "installed";
   const byListing = useMemo(() => installedByListing(installed), [installed]);
   const listings = useMemo(
     () => new Map((directory.query.data?.plugins ?? []).map((listing) => [listing.id, listing])),
@@ -61,7 +63,7 @@ export function PluginGalleryPage({ serverId }: { serverId: string }) {
   );
   const browse = useCallback(() => setChosenTab("browse"), []);
   const install = useCallback(
-    (listing: PublishedPlugin) => setInstallTarget({ kind: "listing", listing }),
+    (listing: PluginListing) => setInstallTarget({ kind: "listing", listing }),
     [],
   );
   const closeInstall = useCallback(() => setInstallTarget(null), []);

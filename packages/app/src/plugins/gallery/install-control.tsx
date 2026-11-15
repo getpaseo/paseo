@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { PluginListItem } from "@getpaseo/protocol/messages";
-import type { PublishedPlugin } from "@getpaseo/protocol/plugin-registry";
+import type { PluginListing } from "@getpaseo/protocol/plugin-registry";
 import { Button } from "@/components/ui/button";
 import type { PluginOperation } from "./operations";
 
@@ -26,12 +26,12 @@ export function ListingInstallControl({
   onUninstall,
   primary = false,
 }: {
-  listing: PublishedPlugin;
+  listing: PluginListing;
   /** The plugin this listing installed on the host, when it is installed. */
   installedPlugin?: PluginListItem;
   operation: PluginOperation | undefined;
   uninstalling?: boolean;
-  onInstall(listing: PublishedPlugin): void;
+  onInstall(listing: PluginListing): void;
   onUninstall?(plugin: PluginListItem): void;
   /** The page's one accent action, on the plugin's own page. */
   primary?: boolean;
