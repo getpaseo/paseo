@@ -31,6 +31,7 @@ import {
   toolbarSlot,
   type ToolbarGlyphs,
 } from "@/components/ui/control-geometry";
+import { shortModelLabel } from "./utils";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -64,11 +65,6 @@ interface CompactModelSheetProps {
   /** Carries the composer's contexts into the sheets, which draw away from it. */
   contextBridge?: ContextBridge | null;
   children: ReactNode;
-}
-
-function shortModelLabel(label: string): string {
-  const separatorIndex = label.lastIndexOf("/");
-  return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
 }
 
 function resolveModelSheetProfileActions(
