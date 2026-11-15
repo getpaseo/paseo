@@ -1,3 +1,4 @@
+import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
@@ -37,6 +38,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   logger: pino.Logger;
+  lifecycle: Pick<PluginLifecycle, "before"> | null;
 }
 
 export interface LifecycleRegistration {
@@ -182,6 +184,7 @@ export class CreateAgentLifecycleDispatch {
 
     await archiveByScope(
       {
+        lifecycle: this.dependencies.lifecycle,
         paseoHome: this.dependencies.paseoHome,
         paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
         github: this.dependencies.github,

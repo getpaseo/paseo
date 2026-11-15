@@ -93,7 +93,10 @@ const beforeSchemas = {
     config: true,
     env: true,
     metadata: true,
-  }).strict(),
+  })
+    // A plugin built before the field may omit it from its result; it can't change it.
+    .extend({ workspaceId: z.string().nullable().optional() })
+    .strict(),
   "agent.open.before": z
     .object({
       agentId: z.string(),
@@ -117,7 +120,49 @@ const beforeSchemas = {
     type: true,
     requestId: true,
   }).strict(),
+  "terminal.create.before": z
+    .object({
+      workspaceId: z.string(),
+      cwd: z.string(),
+      source: z.enum(["client", "agent", "script", "worktree"]),
+      name: z.string().nullable(),
+      input: z.string().nullable(),
+      command: z.string().min(1).optional(),
+      args: z.array(z.string()),
+      env: z.record(z.string(), z.string()),
+    })
+    .strict(),
+  "command.run.before": z
+    .object({
+      workspaceId: z.string().nullable(),
+      cwd: z.string(),
+      purpose: z.enum(["setup", "teardown"]),
+      command: z.string().min(1),
+      env: z.record(z.string(), z.string()),
+    })
+    .strict(),
 };
+
+// Request fields a hook reads but can't change, with the error a changed one gets.
+const readOnlyRequestFields = {
+  "terminal.create.before": {
+    fields: ["workspaceId", "cwd", "source", "name", "input"],
+    message: "terminal.create.before hooks can only change command, args, and env",
+  },
+  "command.run.before": {
+    fields: ["workspaceId", "cwd", "purpose"],
+    message: "command.run.before hooks can only change command and env",
+  },
+} as const;
+
+function assertReadOnlyFields(name: string, input: unknown, result: unknown): void {
+  if (!Object.hasOwn(readOnlyRequestFields, name)) return;
+  const { fields, message } = readOnlyRequestFields[name as keyof typeof readOnlyRequestFields];
+  const previous = input as Record<string, unknown>;
+  const next = result as Record<string, unknown>;
+  if (fields.some((field) => !isDeepStrictEqual(previous[field], next[field])))
+    throw new Error(message);
+}
 
 const sessionOpenLocalResultSchema = beforeSchemas["agent.open.before"].extend({
   tools: z.array(
@@ -258,8 +303,15 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
+    if ((next.workspaceId ?? previous.workspaceId ?? null) !== (previous.workspaceId ?? null)) {
+      throw new Error("agent.create.before hooks cannot change the workspace");
+    }
     // Omitted means unchanged: the next hook sees what this one was handed.
-    return { ...result, metadata: next.metadata ?? previous.metadata };
+    return {
+      ...result,
+      metadata: next.metadata ?? previous.metadata,
+      workspaceId: previous.workspaceId ?? null,
+    };
   }
   if (name === "workspace.create.before") {
     const previous = beforeSchemas["workspace.create.before"].parse(input);
@@ -267,6 +319,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     // Omitted means unchanged; an explicit {} still replaces.
     return { ...result, metadata: next.metadata ?? previous.metadata };
   }
+  assertReadOnlyFields(name, input, result);
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);
     const next = beforeSchemas["worktree.create.before"].parse(result);

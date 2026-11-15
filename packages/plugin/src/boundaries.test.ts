@@ -427,6 +427,30 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
+        server.addHook("agent.create.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          // @ts-expect-error The agent's workspace is read-only.
+          request.workspaceId = "wks_other";
+        });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
+        server.addHook("terminal.create.before", async ({ request }) => {
+          const source: "client" | "agent" | "script" | "worktree" = request.source;
+          const input: string | null = request.input;
+          // @ts-expect-error The terminal's workspace is read-only.
+          request.workspaceId = "wks_other";
+          // @ts-expect-error The terminal's directory is read-only.
+          request.cwd = "/other";
+          return { ...request, command: "/usr/bin/wrapper", args: [request.command ?? "sh"], env: { A: "1" } };
+        });
+        server.addHook("command.run.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          const purpose: "setup" | "teardown" = request.purpose;
+          // @ts-expect-error A command's purpose is read-only.
+          request.purpose = "setup";
+          return { ...request, command: "wrapper " + request.command };
+        });
         server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
           const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
