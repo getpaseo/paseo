@@ -13,7 +13,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/contexts/toast-api-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { pluginRegistry } from "@/plugins/registry";
+import { usePluginEvaluationError } from "@/plugins/registry";
 import { pluginDisplayName } from "@/plugins/plugin-list";
 import { settingsStyles } from "@/styles/settings";
 import { usePluginActions } from "./actions";
@@ -132,7 +132,7 @@ function InstalledRow({
 }) {
   const { t } = useTranslation();
   const name = pluginDisplayName(plugin);
-  const error = pluginRegistry.getEvaluationError(serverId, plugin.id) ?? plugin.error;
+  const error = usePluginEvaluationError(serverId, plugin.id) ?? plugin.error;
   const failed = error !== undefined || plugin.status === "failed";
   const open = useCallback(
     () => router.push(buildPluginPageRoute(serverId, plugin.id)),

@@ -23,7 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-api-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
-import { pluginRegistry, useInstalledPlugin, useInstalledPlugins } from "@/plugins/registry";
+import { useInstalledPlugin, usePluginEvaluationError } from "@/plugins/registry";
 import { pluginDisplayName } from "@/plugins/plugin-list";
 import { PluginSettingsContent } from "@/plugins/settings";
 import { usePluginActions, type PluginAction } from "./actions";
@@ -289,7 +289,9 @@ function usePluginPageModel({
   const { i18n } = useTranslation();
   const directory = usePluginDirectory(serverId);
   const meta = useListingMeta();
-  const installedPlugin = useInstalledPlugin(serverId, plugin?.id ?? "");
+  const pluginId = plugin?.id ?? "";
+  const installedPlugin = useInstalledPlugin(serverId, pluginId);
+  const evaluationError = usePluginEvaluationError(serverId, pluginId);
   const text = listing ? listingText(listing, i18n.language) : undefined;
   const requestedScreen = subject.kind === "installed" ? subject.screenId : undefined;
   return {
@@ -299,9 +301,7 @@ function usePluginPageModel({
       ? listingMetaLine(meta(listing), directory.query.data, listing)
       : installedMetaLine(plugin),
     authorAvatar: listing && listingAuthorAvatar(listing),
-    error: plugin
-      ? (pluginRegistry.getEvaluationError(serverId, plugin.id) ?? plugin.error)
-      : failedError(installOperation),
+    error: plugin ? (evaluationError ?? plugin.error) : failedError(installOperation),
     screenId: plugin ? (requestedScreen ?? installedPlugin?.settingsScreens[0]?.id) : undefined,
     overview: detail && listingOverview(detail, i18n.language),
   };
@@ -382,7 +382,6 @@ export function PluginPage({
 }) {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
-  useInstalledPlugins();
   const { plugin, listingId, listing, detail, loading } = useResolvedPlugin(serverId, subject);
   const installOperation = usePluginOperation(serverId, listingId);
   const model = usePluginPageModel({

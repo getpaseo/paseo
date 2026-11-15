@@ -62,6 +62,9 @@ export function returnFromSettings(view: SettingsView): void {
       return;
     }
     if (!navigateToLastWorkspace()) {
+      // Detail pages such as a plugin's page are pushed onto Settings; replacing only the top
+      // entry would leave the rest of Settings mounted underneath.
+      if (router.canDismiss()) router.dismissAll();
       router.replace(buildOpenProjectRoute());
     }
     return;
