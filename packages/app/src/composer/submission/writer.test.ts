@@ -75,3 +75,17 @@ test("retrying a canonical message keeps its timeline position and settles witho
     useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
   ).toEqual([canonical]);
 });
+
+test("a failed same-ID retry preserves an accepted send awaiting its canonical echo", () => {
+  initializeSession(CANONICAL_ONLY_SERVER_ID, { canonicalSubmittedPrompts: true });
+  const writer = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+  const message = submittedMessage("accepted-before-retry");
+  writer.begin("agent-1", message);
+  writer.accept("agent-1", message.clientMessageId!);
+  writer.begin("agent-1", message);
+  expect(writer.reject("agent-1", message.clientMessageId!)).toBe("accepted");
+  expect(
+    useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
+  ).toEqual([message]);
+  expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual([message.clientMessageId]);
+});

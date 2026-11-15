@@ -93,6 +93,10 @@ export function rejectMessageSubmission(
   if (!submission) {
     return { outcome: "unknown", submissions: submissions as MessageSubmissionRecord[] };
   }
+  if (submission.rpcSettled && !submission.providerAcknowledged) {
+    // A failed retry cannot revoke an earlier accepted RPC. Keep waiting for its echo.
+    return { outcome: "accepted", submissions: submissions as MessageSubmissionRecord[] };
+  }
   return {
     outcome: submission.providerAcknowledged ? "accepted" : "rejected",
     submissions: submissions.filter((item) => item.clientMessageId !== clientMessageId),
