@@ -504,6 +504,12 @@ function createBottomAnchorControllerDriver(
     // arrived below it during the gesture, stays detached with the pill.
     endUserScroll(params) {
       isUserScrollActive = false;
+      // A request made after the gesture began owns the next position. A newer gesture
+      // would have detached again, so only the still-sticky request supersedes this release.
+      if (pendingRequest && mode === "sticky-bottom") {
+        evaluate(false, "user_scroll_end");
+        return;
+      }
       if (params.isAtEnd) {
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
