@@ -228,16 +228,31 @@ test("picking a scene in a window too short for the mockup keeps the pills on sc
 test("picking a scene while the hero is still sliding in keeps the pills on screen", async ({
   page,
 }) => {
-  // The page clock stands still, so the hero's slide-in stays at its first frame, 40px low.
-  await page.clock.install();
+  // The page clock is paused before the page loads, so the hero's slide-in stays at its first
+  // frame, 40px low, until the test runs the clock on.
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01"));
   await page.setViewportSize({ width: 1280, height: 700 });
   await page.goto("/");
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   await expect(mockup).not.toBeInViewport({ ratio: 0.99 });
 
   const remote = page.getByRole("button", { name: "Remote", exact: true });
+  // The first ancestor with a transform is the container that slides in.
+  const slide = () =>
+    remote.evaluate((pill) => {
+      for (let node = pill.parentElement; node; node = node.parentElement) {
+        const { transform } = getComputedStyle(node);
+        if (transform !== "none") return transform;
+      }
+      return "none";
+    });
+
   await playScene(page, "Remote", page.getByRole("button", { name: "Remote", pressed: true }));
+  expect(await slide()).not.toBe("none");
+
   await page.clock.runFor(3000);
+  await expect.poll(slide).toBe("none");
   await expect(remote).toBeInViewport({ ratio: 1 });
 });
 
