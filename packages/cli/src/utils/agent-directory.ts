@@ -62,8 +62,9 @@ export async function resolveAgentEntry(
     }
   }
 
-  // A complete agent UUID is an exact identity: the daemon falls back to a
-  // title match, which must not answer for an ID that does not exist.
+  // COMPAT(fullAgentIdExact): daemons before v0.16.0 resolve a full agent ID
+  // that matches no agent to an agent titled with it, so archive, detach and
+  // reload accept their answer only when it is that ID. Remove after 2027-05-15.
   if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
     const agentId = trimmed.toLowerCase();
     const fetchResult = await client.fetchAgent({ agentId });

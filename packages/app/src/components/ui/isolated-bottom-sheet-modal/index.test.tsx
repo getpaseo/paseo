@@ -41,25 +41,41 @@ vi.mock("@gorhom/portal", () => ({
   PortalHost: () => React.createElement("div", { "data-host": true }),
 }));
 
+/** Every `waitFor` Gorhom received, in render order. Gorhom rebuilds its content pan per value. */
+const sheetWaitFor = vi.hoisted(() => [] as unknown[]);
+
 vi.mock("@gorhom/bottom-sheet", async () => {
   const { Portal } = await import("@gorhom/portal");
   return {
     BottomSheetModalProvider: ({ children }: { children?: React.ReactNode }) =>
       React.createElement("div", { "data-bottom-sheet-provider": true }, children),
     BottomSheetModal: React.forwardRef(
-      ({ children, stackBehavior }: { children?: React.ReactNode; stackBehavior?: string }, _ref) =>
-        React.createElement(
+      (
+        {
+          children,
+          stackBehavior,
+          waitFor,
+        }: { children?: React.ReactNode; stackBehavior?: string; waitFor?: unknown },
+        _ref,
+      ) => {
+        sheetWaitFor.push(waitFor);
+        return React.createElement(
           Portal,
           null,
           React.createElement("div", { "data-stack-behavior": stackBehavior }, children),
-        ),
+        );
+      },
     ),
   };
 });
 
 import { IsolatedBottomSheetModal, type ContextBridge } from ".";
 import { useAnimatedLayout } from "@gorhom/bottom-sheet/src/hooks/useAnimatedLayout";
-import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
+import {
+  useAttachSheetContentDrag,
+  useIsInsideBottomSheet,
+  type SheetContentDragGesture,
+} from "@/components/ui/bottom-sheet-scope";
 
 /** Renders whatever the portal is currently holding, from its own place in the tree. */
 function PortalHostProbe() {
@@ -231,5 +247,53 @@ describe("bottom sheet layout subscription", () => {
       if (originalWidth) Object.defineProperty(viewport, "clientWidth", originalWidth);
       else Reflect.deleteProperty(viewport, "clientWidth");
     }
+  });
+});
+
+describe("IsolatedBottomSheetModal content drag", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    sheetWaitFor.length = 0;
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    portalStore.reset();
+  });
+
+  const dragGesture: SheetContentDragGesture = { current: undefined };
+
+  function ContentDrag() {
+    const attach = useAttachSheetContentDrag();
+    React.useEffect(() => attach?.(dragGesture), [attach]);
+    return null;
+  }
+
+  function renderSheet(content: React.ReactNode) {
+    act(() => {
+      root.render(
+        <>
+          <IsolatedBottomSheetModal contextBridge={null}>{content}</IsolatedBottomSheetModal>
+          <PortalHostProbe />
+        </>,
+      );
+    });
+  }
+
+  it("makes the sheet wait for a content drag that mounts after it, until it unmounts", () => {
+    renderSheet(null);
+    expect(sheetWaitFor.at(-1)).toBeUndefined();
+
+    renderSheet(<ContentDrag />);
+    expect(sheetWaitFor.at(-1)).toBe(dragGesture);
+
+    renderSheet(null);
+    expect(sheetWaitFor.at(-1)).toBeUndefined();
   });
 });

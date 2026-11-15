@@ -147,6 +147,46 @@ export function usageModal(page: Page): Locator {
   return visible(page, "usage-modal-body");
 }
 
+/** The Usage modal's cards, top to bottom, by report id. */
+export async function expectUsageCardOrder(page: Page, reportIds: string[]): Promise<void> {
+  const cards = usageModal(page).locator('[data-testid^="usage-report-"]');
+  await expect(cards).toHaveCount(reportIds.length);
+  await expect
+    .poll(() =>
+      cards.evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute("data-testid")?.slice("usage-report-".length)),
+      ),
+    )
+    .toEqual(reportIds);
+}
+
+/** Turns a card on or off from its header switch, named by its source and account. */
+export async function setUsageCardOn(page: Page, name: string, on: boolean): Promise<void> {
+  const cardSwitch = usageModal(page).getByRole("switch", { name: `Show ${name}`, exact: true });
+  await cardSwitch.click();
+  await expect(cardSwitch).toBeChecked({ checked: on });
+}
+
+/** Drags a card by its handle until it sits above another card, with the mouse. */
+export async function dragUsageCardAbove(
+  page: Page,
+  reportId: string,
+  targetReportId: string,
+): Promise<void> {
+  const card = usageModal(page).getByTestId(`usage-report-${reportId}`);
+  const target = usageModal(page).getByTestId(`usage-report-${targetReportId}`);
+  await card.hover();
+  const handle = await card.getByTestId("usage-card-drag-handle").boundingBox();
+  const targetBox = await target.boundingBox();
+  if (!handle || !targetBox) throw new Error("Both cards must be on screen to drag.");
+  const x = handle.x + handle.width / 2;
+  await page.mouse.move(x, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x, handle.y + handle.height / 2 - 10, { steps: 3 });
+  await page.mouse.move(x, targetBox.y + 4, { steps: 12 });
+  await page.mouse.up();
+}
+
 /** Each pinned window as it reads: its percent and short label, "31% 5h". */
 export async function expectPinnedUsage(page: Page, windows: string[]): Promise<void> {
   const pinned = usageItem(page).getByTestId("sidebar-usage-pinned-window");
@@ -167,14 +207,18 @@ export function pinRow(scope: Locator, source: string, window: string): Locator 
 
 /**
  * A report card whose window rows do not pin: no pin toggle, no pin glyph, and nothing focusable
- * but buttons, so no row presses or highlights on hover.
+ * but the header's buttons and on/off switch, so no row presses or highlights on hover.
  */
 export async function expectUnpinnableRows(card: Locator): Promise<void> {
   await expect(card.getByRole("checkbox")).toHaveCount(0);
   await expect(card.locator('[data-testid^="usage-pin-"]')).toHaveCount(0);
   const focusable = await card
     .locator("[tabindex]")
-    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("role") !== "button").length);
+    .evaluateAll(
+      (nodes) =>
+        nodes.filter((node) => !["button", "switch"].includes(node.getAttribute("role") ?? ""))
+          .length,
+    );
   expect(focusable).toBe(0);
 }
 

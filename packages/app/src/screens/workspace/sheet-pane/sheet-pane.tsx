@@ -85,7 +85,7 @@ export function SheetPane({ sheet, onClose, onBack, opener = null, isTop }: Shee
       actions: sheet.policy.openAsTab ? (
         <SheetHeaderIconButton
           icon={Maximize2}
-          accessibilityLabel={t("workspace.sheet.openAsTab")}
+          label={t("workspace.sheet.openAsTab")}
           onPress={handleOpenAsTab}
           testID="sheet-tab-open-as-tab"
         />

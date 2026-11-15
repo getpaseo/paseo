@@ -33,7 +33,10 @@ import {
   pinRow,
   openUsageOptions,
   closeUsageOptions,
+  dragUsageCardAbove,
+  expectUsageCardOrder,
   expectUsageOptionsFitContent,
+  setUsageCardOn,
   showUsageAs,
   refreshAllUsage,
   togglePin,
@@ -108,6 +111,14 @@ function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
   };
 }
 
+function accountReport(sourceId: string, account: string, usedPct: number): UsageReportEntry {
+  return {
+    ...weeklyReport(sourceId, usedPct),
+    id: `${sourceId}:${account}`,
+    account: { label: account },
+  };
+}
+
 function installReversedUsageRefresh(page: Page) {
   const initial = [weeklyReport("opencode", 31), weeklyReport("openai", 12)];
   const refreshed = [weeklyReport("openai", 22), weeklyReport("opencode", 41)];
@@ -120,15 +131,15 @@ async function openUsageSummaryAtWidth(page: Page, width: number) {
   await page.setViewportSize({ width, height: 900 });
   await gotoAppShell(page);
   if (width === 390) await openCompactSidebar(page);
-  await expectPinnedUsage(page, ["31% Weekly", "12% Weekly"]);
+  await expectPinnedUsage(page, ["12% Weekly", "31% Weekly"]);
   await openUsageFromItem(page);
 }
 
 async function expectUsageProviderOrder(page: Page, summary: string[]) {
   const group = page.getByTestId(`usage-host-${getServerId()}`);
   await expect(group.getByText(/^(opencode|openai) plan$/)).toHaveText([
-    "opencode plan",
     "openai plan",
+    "opencode plan",
   ]);
   await expectPinnedUsage(page, summary);
 }
@@ -200,14 +211,60 @@ test.describe("usage modal", () => {
     }) => {
       const usage = await installReversedUsageRefresh(page);
       await openUsageSummaryAtWidth(page, width);
-      await expectUsageProviderOrder(page, ["31% Weekly", "12% Weekly"]);
+      // Reports arrive opencode first; cards and the summary stay alphabetical.
+      await expectUsageProviderOrder(page, ["12% Weekly", "31% Weekly"]);
       await qaScreenshot(page, `usage-order-${width}-before-refresh`);
 
       await refreshUsageAndWaitForReports(page, usage);
-      await expectUsageProviderOrder(page, ["41% Weekly", "22% Weekly"]);
+      await expectUsageProviderOrder(page, ["22% Weekly", "41% Weekly"]);
       await qaScreenshot(page, `usage-order-${width}-after-refresh`);
     });
   }
+
+  test("keeps a card turned off and a dragged order after a reload", async ({ page }) => {
+    test.setTimeout(120_000);
+    await installUsageReportsFixture(page, {
+      lists: [
+        [
+          accountReport("beta", "work", 12),
+          weeklyReport("alpha", 31),
+          accountReport("beta", "home", 20),
+        ],
+      ],
+    });
+    await gotoAppShell(page);
+    // Three windows leave no room for labels in the summary, so it reads percents.
+    await expectPinnedUsage(page, ["31%", "20%", "12%"]);
+    await openUsageFromItem(page);
+    await expectUsageCardOrder(page, ["alpha:a", "beta:home", "beta:work"]);
+
+    // Without the pointer over the card, keyboard focus on its handle shows the handle.
+    await page.mouse.move(0, 0);
+    const alphaHandle = page
+      .getByTestId("usage-report-alpha:a")
+      .getByRole("button", { name: "Reorder alpha plan", exact: true });
+    await expect(alphaHandle).toHaveCSS("opacity", "0");
+    await alphaHandle.focus();
+    await expect(alphaHandle).toHaveCSS("opacity", "1");
+    await alphaHandle.blur();
+
+    // The off card collapses to its header, which still names the account.
+    await setUsageCardOn(page, "beta plan (work)", false);
+    const work = page.getByTestId("usage-report-beta:work");
+    await expect(work.getByText("12% used")).toHaveCount(0);
+    await expect(work.getByText("work", { exact: true })).toBeVisible();
+    await expectPinnedUsage(page, ["31% Weekly", "20% Weekly"]);
+
+    await dragUsageCardAbove(page, "beta:home", "alpha:a");
+    await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
+    await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
+
+    await page.reload();
+    await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
+    await openUsageFromItem(page);
+    await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
+    await expect(page.getByTestId("usage-report-beta:work").getByText("12% used")).toHaveCount(0);
+  });
 
   test("refreshes one report from its card", async ({ page }) => {
     test.setTimeout(120_000);
