@@ -1017,7 +1017,8 @@ describe("ClaudeAgentSession features", () => {
         { command: "printf test" },
         {
           toolUseID: "tool-hook-ask",
-          decisionReason: "Heredoc input to python3 -- cannot statically verify safety",
+          decisionReason:
+            "\u001b[33mHeredoc input to python3 -- cannot statically verify safety\u001b[0m",
         },
       ).catch(() => undefined);
 
