@@ -53,6 +53,7 @@ import {
   usePluginListing,
   usePluginUpdates,
 } from "./queries";
+import { pluginErrorText } from "./error-text";
 
 /** Which plugin the page is for: one installed on the host, or one listed in the directory. */
 export type PluginPageSubject =
@@ -427,7 +428,7 @@ export function PluginPage({
         size="sm"
         variant="warning"
         title={t("settings.plugins.gallery.missing")}
-        description={detail.error?.message}
+        description={detail.error ? pluginErrorText(detail.error) : undefined}
       />
     );
 

@@ -8,6 +8,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { pluginListQueryKey } from "@/plugins/plugin-list";
+import { pluginErrorText } from "./error-text";
 
 /**
  * Installs and updates outlive the screen that started them: leaving Plugins and coming back
@@ -60,10 +61,6 @@ export function pluginUpdatesQueryKey(serverId: string) {
   return ["plugin-updates", serverId] as const;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function upsertPlugin(queryClient: QueryClient, serverId: string, plugin: PluginListItem) {
   queryClient.setQueryData<PluginListItem[]>(pluginListQueryKey(serverId), (plugins = []) => {
     const others = plugins.filter((candidate) => candidate.id !== plugin.id);
@@ -105,7 +102,7 @@ export async function installPlugin(request: InstallRequest): Promise<void> {
     setOperation(serverId, subject, {
       kind: "install",
       status: "failed",
-      error: errorMessage(error),
+      error: pluginErrorText(error),
     });
   }
 }
@@ -150,7 +147,7 @@ export async function updatePlugins(request: UpdateRequest): Promise<void> {
       setOperation(serverId, proposal.id, {
         kind: "update",
         status: "failed",
-        error: errorMessage(error),
+        error: pluginErrorText(error),
       });
     recheckUpdates(request);
   }

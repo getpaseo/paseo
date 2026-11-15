@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/contexts/toast-api-context";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostLabel } from "./install-sheet";
+import { pluginErrorText } from "./error-text";
 
 /** Says that installed plugins are not running on this host, with the switch that runs them. */
 export function PluginsOffAlert({ serverId }: { serverId: string }) {
@@ -20,7 +21,7 @@ export function PluginsOffAlert({ serverId }: { serverId: string }) {
     try {
       await patchConfig({ pluginsEnabled: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(pluginErrorText(error));
     } finally {
       setTurningOn(false);
     }

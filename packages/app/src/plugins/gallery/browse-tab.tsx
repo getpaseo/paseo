@@ -33,6 +33,7 @@ import { PluginMeta, PluginRow, PluginTile } from "./plugin-row";
 import { usePluginDirectory } from "./queries";
 import { buildPluginListingRoute } from "./routes";
 import { PluginRowsSkeleton } from "./skeletons";
+import { pluginErrorText } from "./error-text";
 
 const SORTS: DirectorySort[] = ["popular", "recent", "name"];
 // Below this width the featured grid has two columns instead of four.
@@ -386,7 +387,7 @@ export function BrowseTab({
         size="sm"
         variant="error"
         title={t("settings.plugins.gallery.directory.errorTitle")}
-        description={directory.query.error.message}
+        description={pluginErrorText(directory.query.error)}
       >
         <Button variant="outline" onPress={retry}>
           {t("settings.plugins.states.retry")}

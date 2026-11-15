@@ -6,12 +6,9 @@ import { useToast } from "@/contexts/toast-api-context";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { pluginDisplayName, pluginListQueryKey } from "@/plugins/plugin-list";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { pluginErrorText } from "./error-text";
 
 export type PluginAction = "enable" | "disable" | "reload" | "remove";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Turning a plugin on or off, reloading and removing it. Each action writes its result into the
@@ -65,7 +62,7 @@ export function usePluginActions(serverId: string) {
         }
         return true;
       } catch (error) {
-        toast.error(errorMessage(error));
+        toast.error(pluginErrorText(error));
         return false;
       } finally {
         setPending(null);

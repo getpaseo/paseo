@@ -17,6 +17,7 @@ import { installedByListing } from "./listing";
 import { PluginsOffAlert } from "./plugins-off-alert";
 import { useLivePluginList, usePluginDirectory } from "./queries";
 import { PluginRowsSkeleton } from "./skeletons";
+import { pluginErrorText } from "./error-text";
 
 type GalleryTab = "installed" | "browse";
 
@@ -88,7 +89,7 @@ export function PluginGalleryPage({ serverId }: { serverId: string }) {
         size="sm"
         variant="error"
         title={t("settings.plugins.states.errorTitle")}
-        description={plugins.error.message}
+        description={pluginErrorText(plugins.error)}
       >
         <Button variant="outline" onPress={retry}>
           {t("settings.plugins.states.retry")}

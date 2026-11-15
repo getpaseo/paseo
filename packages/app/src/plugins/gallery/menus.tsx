@@ -42,6 +42,7 @@ import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import type { PluginAction } from "./actions";
 import { InstallPluginSheet } from "./install-sheet";
+import { pluginErrorText } from "./error-text";
 
 const SUBMIT_PLUGIN_URL =
   "https://github.com/getpaseo/plugins/issues/new?template=submit-plugin.yml";
@@ -107,7 +108,7 @@ export function PluginGalleryMenu({ serverId }: { serverId: string }) {
         { variant: "success" },
       );
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(pluginErrorText(error));
     }
   }, [patchConfig, pluginsOn, t, toast]);
   const submit = useCallback(() => void openExternalUrl(SUBMIT_PLUGIN_URL), []);
@@ -260,7 +261,7 @@ function PluginLogsSheet({
         size="sm"
         variant="error"
         title={t("settings.plugins.logs.errorTitle")}
-        description={logs.error.message}
+        description={pluginErrorText(logs.error)}
       >
         <Button variant="outline" onPress={refresh}>
           {t("settings.plugins.logs.refresh")}
