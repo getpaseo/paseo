@@ -10,6 +10,12 @@ import {
   type SidebarGroupMode,
   type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
+import { useInstalledPlugins } from "@/plugins/registry";
+import {
+  groupPluginWorkspaceRowBadgeItems,
+  isWorkspaceRowBadgeItemVisible,
+  type PluginWorkspaceRowBadgeItemGroup,
+} from "@/plugins/workspace-row-badge-items";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
@@ -27,6 +33,10 @@ export interface SidebarDisplayPreferences {
   setTitleSource: (source: WorkspaceTitleSource) => void;
   rowItems: SidebarRowItems;
   toggleRowItem: (item: SidebarRowItem) => void;
+  /** Workspace row badge items contributed by installed plugins, one per plugin item across hosts. */
+  pluginRowBadgeItems: readonly PluginWorkspaceRowBadgeItemGroup[];
+  isPluginRowBadgeItemVisible: (key: string) => boolean;
+  togglePluginRowBadgeItem: (key: string) => void;
   checksDisplay: SidebarChecksDisplay;
   setChecksDisplay: (display: SidebarChecksDisplay) => void;
   trailing: SidebarWorkspaceTrailing;
@@ -75,9 +85,30 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       sidebarWorkspaceTrailing,
       sidebarRowItems,
       sidebarChecksDisplay,
+      sidebarPluginRowBadgeItems,
     },
     updateSettings,
   } = useAppSettings();
+  const installedPlugins = useInstalledPlugins();
+  const pluginRowBadgeItems = useMemo(
+    () => groupPluginWorkspaceRowBadgeItems(installedPlugins),
+    [installedPlugins],
+  );
+  const isPluginRowBadgeItemVisible = useCallback(
+    (key: string) => isWorkspaceRowBadgeItemVisible(sidebarPluginRowBadgeItems, key),
+    [sidebarPluginRowBadgeItems],
+  );
+  const togglePluginRowBadgeItem = useCallback(
+    (key: string) => {
+      void updateSettings({
+        sidebarPluginRowBadgeItems: {
+          ...sidebarPluginRowBadgeItems,
+          [key]: !isWorkspaceRowBadgeItemVisible(sidebarPluginRowBadgeItems, key),
+        },
+      });
+    },
+    [updateSettings, sidebarPluginRowBadgeItems],
+  );
 
   const setTitleSource = useCallback(
     (source: WorkspaceTitleSource) => {
@@ -123,6 +154,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       rowItems: sidebarRowItems,
       toggleRowItem,
+      pluginRowBadgeItems,
+      isPluginRowBadgeItemVisible,
+      togglePluginRowBadgeItem,
       checksDisplay: sidebarChecksDisplay,
       setChecksDisplay,
       trailing: sidebarWorkspaceTrailing,
@@ -148,6 +182,9 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       setTitleSource,
       sidebarRowItems,
       toggleRowItem,
+      pluginRowBadgeItems,
+      isPluginRowBadgeItemVisible,
+      togglePluginRowBadgeItem,
       sidebarChecksDisplay,
       setChecksDisplay,
       sidebarWorkspaceTrailing,

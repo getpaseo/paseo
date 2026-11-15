@@ -200,6 +200,18 @@ export async function openUsageFromItem(page: Page): Promise<void> {
   await expect(usageModal(page)).toBeVisible();
 }
 
+export async function openUsageFromItemWithPressFeedback(page: Page): Promise<void> {
+  const summary = page.getByRole("button", { name: /^Usage:/ });
+  await summary.hover();
+  const hoveredFill = await summary.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await page.mouse.down();
+  await expect(summary).not.toHaveCSS("background-color", hoveredFill);
+  await page.mouse.up();
+  await expect(usageModal(page)).toBeVisible();
+}
+
 /** Scrolls the Usage modal's body with the mouse wheel, as a user does. */
 export async function scrollUsage(page: Page, deltaY: number): Promise<void> {
   const body = await usageModal(page).boundingBox();

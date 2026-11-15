@@ -29,6 +29,7 @@ import {
   openCompactSidebar,
   openUsageFromIcon,
   openUsageFromItem,
+  openUsageFromItemWithPressFeedback,
   pinRow,
   scrollUsageToWindow,
   setSummaryInSidebar,
@@ -197,7 +198,7 @@ test.describe("Usage item", () => {
     });
 
     await test.step("the summary opens the same sheet", async () => {
-      await openUsageFromItem(page);
+      await openUsageFromItemWithPressFeedback(page);
       await expect(usageModal(page).getByText("Codex", { exact: true })).toBeVisible();
       await expect(page).toHaveURL(startingUrl);
       await qaScreenshot(page, "compact-usage-summary-sheet");

@@ -139,6 +139,7 @@ describe("resolvePinnedUsage", () => {
     expect(sources[0]).toEqual({
       key: "claude:default",
       icon: "<svg/>",
+      hasError: false,
       windows: [
         {
           key: "claude:default/five-hour",
@@ -257,7 +258,7 @@ describe("resolvePinnedUsage", () => {
   });
 });
 
-it("keeps unavailable and error reports out of the sidebar summary even with retained data", () => {
+it("shows retained windows and marks errored sources in the sidebar summary", () => {
   if (claude.report.status !== "available" || codex.report.status !== "available")
     throw new Error("fixtures must be available");
   const expired: UsageReportEntry = {
@@ -273,7 +274,30 @@ it("keeps unavailable and error reports out of the sidebar summary even with ret
     lastSuccessful: { fetchedAt: codex.fetchedAt, report: codex.report },
     report: { status: "error", error: "Store deleted" },
   };
-  expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
+  const expected = [
+    { key: "claude:default", hasError: false, windows: ["31%"] },
+    { key: "codex:default", hasError: true, windows: ["12%"] },
+  ];
+  const summarize = (pins: UsagePreferences["pins"]) =>
+    resolvePinnedUsage([expired, failed], preferences(pins)).map((source) => ({
+      key: source.key,
+      hasError: source.hasError,
+      windows: source.windows.map((window) => window.percentText),
+    }));
+
+  expect(summarize(null)).toEqual(expected);
+  expect(
+    summarize([
+      { sourceId: "claude", windowId: "five-hour" },
+      { sourceId: "codex", windowId: "weekly" },
+    ]),
+  ).toEqual(expected);
+  expect(
+    resolvePinnedUsage(
+      [{ ...failed, lastSuccessful: undefined }],
+      preferences([{ sourceId: "codex", windowId: "weekly" }]),
+    ),
+  ).toEqual([]);
 });
 
 it("localizes pinned labels and meanings while preserving custom window names", async () => {

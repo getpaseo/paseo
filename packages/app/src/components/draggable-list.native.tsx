@@ -11,6 +11,10 @@ export type { DraggableListProps, DraggableRenderItemInfo };
 
 const SCROLL_ENABLED_FLEX_STYLE = { flex: 1 };
 
+// A drop remounts every row between the drag's start and end slots (see the draggable-flatlist
+// patch), so state held inside a rendered row resets when a drop moves it. Keep state that must
+// survive a reorder in the list's owner, keyed by row.
+
 export function DraggableList<T>({
   data,
   keyExtractor,
@@ -117,6 +121,10 @@ export function DraggableList<T>({
       ListEmptyComponent={ListEmptyComponent}
       showsVerticalScrollIndicator={showsVerticalScrollIndicator}
       scrollEnabled={scrollEnabled}
+      // A list that doesn't scroll shows every row, so it renders them all in its first commit.
+      // FlatList's default first render is 10 rows; a nested list remounted by a drop would paint
+      // 10 rows, then grow on a later commit.
+      initialNumToRender={scrollEnabled ? undefined : data.length}
       extraData={extraData}
       simultaneousHandlers={simultaneousHandlers}
       dragGestureHostPresented={gestureHostPresented}
