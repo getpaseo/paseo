@@ -350,6 +350,28 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("drops placeholder-only narration instead of streaming a '.' bubble", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("count the lines");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("count the lines", "user-1");
+    // Models that have nothing to say answer the pre-tool narration slot with a
+    // bare placeholder; it must not surface as an assistant message.
+    runtime.streamAssistantText(".\n\n", "omp-assistant-dot");
+    runtime.streamAssistantText("Counting lines now", "omp-assistant-real");
+    runtime.finishTurn();
+
+    expect(
+      omp
+        .timeline()
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => [item.text, item.messageId]),
+    ).toEqual([["Counting lines now", "omp-assistant-real"]]);
+  });
+
   test("streams a prompt through completion", async () => {
     const omp = new OmpHarness();
     await omp.start();

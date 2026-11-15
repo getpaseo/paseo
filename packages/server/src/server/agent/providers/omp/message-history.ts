@@ -17,6 +17,7 @@ import {
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
+import { isOmpPlaceholderNarration } from "./narration.js";
 
 export interface OmpCapturedUserMessageEntry {
   id: string;
@@ -170,6 +171,9 @@ export class OmpHistoryMapper {
       message.responseId || `${this.provider}-history-assistant-${this.assistantIndex}`;
     for (const content of message.content) {
       if (content.type === "text" && content.text) {
+        if (isOmpPlaceholderNarration(content.text)) {
+          continue;
+        }
         events.push({
           type: "timeline",
           provider: this.provider,
