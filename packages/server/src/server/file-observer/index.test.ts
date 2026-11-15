@@ -327,6 +327,32 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   expect(callback).toHaveBeenCalledTimes(callsAtClose);
 }, 20_000);
 
+test("aborting a pending subscription stops its startup scan and rejects", async () => {
+  const root = await createRoot();
+  await Promise.all(
+    Array.from({ length: 50 }, (_, index) =>
+      mkdir(join(root, `dir-${index}`, "nested"), { recursive: true }),
+    ),
+  );
+  const observer = createObserver();
+  const controller = new AbortController();
+  const reason = new Error("setup deadline passed");
+  const callback = vi.fn();
+
+  const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  controller.abort(reason);
+
+  await expect(subscription).rejects.toBe(reason);
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    pendingReconciliationWorkCount: 0,
+  });
+  await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(callback).not.toHaveBeenCalled();
+});
+
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
   const observer = createObserver();
