@@ -58,7 +58,8 @@ cannot deliver them.
 Register keyboard handling with `useOverlayRegistration` from `@/keyboard`.
 Pass the surface's open state, layer, handled keys and `onKeyDown`. The highest
 layer gets first refusal; the latest registration wins a tie. Native registration
-does not need a DOM ref. Web adds focus trapping and restoration through its adapter.
+does not need a DOM ref. Hidden retained panels release overlay keyboard ownership even if
+the owner keeps its open state. Web adds focus trapping and restoration through its adapter.
 Declaring Tab takes it from the web focus trap and hands it to `onKeyDown`; the command
 center rotates its tabs with it. Native sources drop Tab from the declarations.
 

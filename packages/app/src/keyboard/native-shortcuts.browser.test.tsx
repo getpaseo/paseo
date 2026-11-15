@@ -1,3 +1,4 @@
+import React from "react";
 import { describe, expect, it } from "vitest";
 import { buildEffectiveBindings } from "./keyboard-shortcuts";
 import { createKeyboardPipeline } from "./internal/pipeline";
@@ -45,4 +46,47 @@ describe("DOM source adapter", () => {
     input.remove();
     pipeline.dispose();
   });
+});
+
+it("releases a hidden retained owner's overlay keys while its scope stays mounted", async () => {
+  const { createElement, act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { RetainedPanelActivity } = await import("@/components/retained-panel");
+  const { useOverlayRegistration, getTopOverlayKeys, hasActiveOverlay } = await import("./index");
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  function Viewer() {
+    const scope = useOverlayRegistration({
+      active: true,
+      layer: 100,
+      keys: ["Escape"],
+      manageFocus: false,
+      onKeyDown: () => true,
+    });
+    return createElement("button", { ref: scope, type: "button" }, "Viewer");
+  }
+  async function render(active: boolean) {
+    await act(async () =>
+      root.render(
+        <RetainedPanelActivity active={active}>
+          <Viewer />
+        </RetainedPanelActivity>,
+      ),
+    );
+  }
+  try {
+    await render(true);
+    expect(getTopOverlayKeys()).toEqual(["Escape"]);
+    await render(false);
+    expect(container.querySelector("button")).not.toBeNull();
+    expect(hasActiveOverlay()).toBe(false);
+    expect(getTopOverlayKeys()).toEqual([]);
+    await render(true);
+    expect(getTopOverlayKeys()).toEqual(["Escape"]);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
 });
