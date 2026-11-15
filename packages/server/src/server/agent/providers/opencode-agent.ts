@@ -3692,6 +3692,7 @@ class OpenCodeAgentSession implements AgentSession {
     const systemPrompt = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
@@ -4029,6 +4030,7 @@ class OpenCodeAgentSession implements AgentSession {
           const systemPrompt = composeSystemPromptParts(
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
+            ...(this.config.pluginAppendSystemPrompt ?? []),
           );
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,

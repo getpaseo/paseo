@@ -4047,6 +4047,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       match.developer_instructions,
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     if (developerInstructions) settings.developer_instructions = developerInstructions;
     if (this.config.model) settings.model = this.config.model;
@@ -4311,6 +4312,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
@@ -4464,6 +4466,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
@@ -5806,6 +5809,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     const params: Record<string, unknown> = {
       model,

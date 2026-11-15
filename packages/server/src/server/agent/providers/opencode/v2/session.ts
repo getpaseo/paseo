@@ -196,13 +196,20 @@ export class OpenCodeV2Session implements AgentSession {
     const system = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
+      ...(this.config.pluginAppendSystemPrompt ?? []),
     );
-    if (system)
+    if (system) {
       await this.client.session.instructions.entry.put({
         sessionID: this.id,
         key: "paseo",
         value: system,
       });
+    } else {
+      const entries = await this.client.session.instructions.entry.list({ sessionID: this.id });
+      if (entries.some((entry) => entry.key === "paseo")) {
+        await this.client.session.instructions.entry.remove({ sessionID: this.id, key: "paseo" });
+      }
+    }
   }
   private async startStream() {
     let ready!: () => void;

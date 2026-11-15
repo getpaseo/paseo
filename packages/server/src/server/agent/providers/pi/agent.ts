@@ -52,7 +52,7 @@ import {
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { composeSystemPromptParts } from "../../system-prompt.js";
+import { composeAgentSystemPrompt } from "../../system-prompt.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -2621,7 +2621,7 @@ export class PiRpcAgentClient implements AgentClient {
     const mcp = await this.prepareMcpInjection(config.cwd, config.mcpServers, mcpEnv, runtime);
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
-      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      systemPrompt: composeAgentSystemPrompt(config),
       mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
     });
     let runtimeSession: PiRuntimeSession;
@@ -2690,10 +2690,7 @@ export class PiRpcAgentClient implements AgentClient {
     );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
-      systemPrompt: composeSystemPromptParts(
-        resumeConfig.config.systemPrompt,
-        resumeConfig.config.daemonAppendSystemPrompt,
-      ),
+      systemPrompt: composeAgentSystemPrompt(resumeConfig.config),
       mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
     });
     const tempFiles = mcpConfigFile ? [mcpConfigFile, paseoExtension] : [paseoExtension];

@@ -14826,3 +14826,69 @@ test("an idle-only prompt rejects a busy recipient before changing its mode", as
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("plugin instructions are recomputed for each launch without changing saved config", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  let additions = ["Plugin one", "Plugin two"];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon",
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.open.before" ? { ...request, appendSystemPrompt: additions } : request,
+    },
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, systemPrompt: "Saved" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  expect(client.createdConfigs[0]).toMatchObject({
+    systemPrompt: "Saved",
+    daemonAppendSystemPrompt: "Daemon",
+    pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
+  });
+  expect(snapshot.config.systemPrompt).toBe("Saved");
+  expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBe("Saved");
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "prompt-session",
+    metadata: { provider: "codex", cwd: workdir, systemPrompt: "Saved" },
+  };
+  await manager.closeAgent(snapshot.id);
+  await manager.resumeAgentFromPersistence(
+    handle,
+    { cwd: workdir, systemPrompt: "Saved" },
+    snapshot.id,
+  );
+  expect(client.resumeOverrides.at(-1)?.pluginAppendSystemPrompt).toEqual([
+    "Plugin one",
+    "Plugin two",
+  ]);
+  additions = ["Changed"];
+  await manager.closeAgent(snapshot.id);
+  await manager.resumeAgentFromPersistence(
+    handle,
+    { cwd: workdir, systemPrompt: "Saved" },
+    snapshot.id,
+  );
+  expect(client.resumeOverrides.at(-1)?.pluginAppendSystemPrompt).toEqual(["Changed"]);
+  additions = ["Refreshed"];
+  await manager.reloadAgentSession(snapshot.id);
+  expect(client.resumeOverrides.at(-1)?.pluginAppendSystemPrompt).toEqual(["Refreshed"]);
+  additions = [];
+  await manager.closeAgent(snapshot.id);
+  await manager.resumeAgentFromPersistence(
+    handle,
+    { cwd: workdir, systemPrompt: "Saved" },
+    snapshot.id,
+  );
+  expect(client.resumeOverrides.at(-1)?.systemPrompt).toBe("Saved");
+  expect(client.resumeOverrides.at(-1)?.daemonAppendSystemPrompt).toBe("Daemon");
+  expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBe("Saved");
+});

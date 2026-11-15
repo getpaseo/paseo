@@ -621,6 +621,8 @@ export interface AgentSessionConfig {
    * persisted into agent config so daemon setting changes apply cleanly.
    */
   daemonAppendSystemPrompt?: string;
+  /** Plugin instructions for this launch; never persisted. */
+  pluginAppendSystemPrompt?: string[];
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
@@ -636,6 +638,8 @@ export interface AgentSessionConfig {
 }
 
 export interface AgentLaunchContext {
+  /** Launch-only instructions contributed by plugins. */
+  appendSystemPrompt?: string[];
   /** Launch-only plugin MCP servers and their owners; never persisted. */
   mcpServers?: Record<string, McpServerConfig>;
   mcpServerOwners?: Record<string, string>;
