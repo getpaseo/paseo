@@ -66,9 +66,14 @@ export function getModelContextWindow(modelId: string): number {
   return 1_048_576;
 }
 
+// agy only accepts --effort for models that come in low/medium/high variants;
+// anything else (e.g. gemini-pro-orchestrator, *-xhigh) rejects the flag at startup.
+const EFFORT_SUFFIX = /^gemini-.+-(low|medium|high)$/;
+const EFFORT_BASE_MODELS = new Set(["gemini-4-argon", "gemini-3.8-flash"]);
+
 export function supportsEffort(modelId?: string): boolean {
   if (!modelId) return true;
-  return modelId.startsWith("gemini-");
+  return EFFORT_SUFFIX.test(modelId) || EFFORT_BASE_MODELS.has(modelId);
 }
 
 export function resolveModelAndEffort(
