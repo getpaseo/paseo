@@ -3075,6 +3075,20 @@ describe("Codex app-server provider", () => {
       expect(forkRequest?.params).toMatchObject({
         developerInstructions: "Agent instructions\n\nDaemon instructions\n\nPlugin instructions",
       });
+      const rewindRequests = appServer
+        .requests()
+        .filter((request) =>
+          ["thread/fork", "thread/rollback", "thread/inject_items"].includes(
+            String(request.method),
+          ),
+        );
+      expect(rewindRequests.map((request) => request.method)).toEqual(
+        historyMode === "legacy"
+          ? ["thread/fork", "thread/rollback", "thread/inject_items"]
+          : ["thread/fork", "thread/inject_items"],
+      );
+      expect(rewindRequests.at(-1)?.params).toMatchObject({ threadId: "forked-thread" });
+      expect(JSON.stringify(rewindRequests.at(-1)?.params)).toContain("Plugin instructions");
       const forkConfigs = appServer
         .requests()
         .filter((request) => request.method === "thread/fork")
