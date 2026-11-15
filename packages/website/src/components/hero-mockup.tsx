@@ -75,13 +75,22 @@ export function HeroMockup() {
   );
 }
 
+/** Where an element sits in the window, from layout alone. A slide-in that is still running does not count. */
+function layoutRect(element: HTMLElement) {
+  let top = -window.scrollY;
+  for (let node: Element | null = element; node instanceof HTMLElement; node = node.offsetParent) {
+    top += node.offsetTop;
+  }
+  return { top, bottom: top + element.offsetHeight };
+}
+
 /**
  * Scrolls the least that shows all of an element, and never past the point where its top edge is
- * at the top of the window. The browser's own `scrollIntoView` with `nearest` leaves that choice to
- * each engine when the element is taller than the window.
+ * at the top of the window. The element is measured where it settles, because the hero slides up
+ * as it enters and a click can come before it stops.
  */
 function scrollOnScreen(element: HTMLElement, behavior: ScrollBehavior) {
-  const { top, bottom } = element.getBoundingClientRect();
+  const { top, bottom } = layoutRect(element);
   const aboveWindow = top - PAGE_MARGIN;
   const belowWindow = bottom + PAGE_MARGIN - window.innerHeight;
   const distance = aboveWindow < 0 ? aboveWindow : Math.min(Math.max(belowWindow, 0), aboveWindow);

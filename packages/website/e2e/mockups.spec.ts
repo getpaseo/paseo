@@ -225,6 +225,22 @@ test("picking a scene in a window too short for the mockup keeps the pills on sc
   });
 });
 
+test("picking a scene while the hero is still sliding in keeps the pills on screen", async ({
+  page,
+}) => {
+  // The page clock stands still, so the hero's slide-in stays at its first frame, 40px low.
+  await page.clock.install();
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.goto("/");
+  const mockup = page.getByRole("img", { name: desktopName, exact: true });
+  await expect(mockup).not.toBeInViewport({ ratio: 0.99 });
+
+  const remote = page.getByRole("button", { name: "Remote", exact: true });
+  await playScene(page, "Remote", page.getByRole("button", { name: "Remote", pressed: true }));
+  await page.clock.runFor(3000);
+  await expect(remote).toBeInViewport({ ratio: 1 });
+});
+
 test("the remote scene lists hosts with how each connects and its round trip time", async ({
   page,
 }) => {
