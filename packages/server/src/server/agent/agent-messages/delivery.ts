@@ -185,7 +185,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     queueDispatch(recipientId, async () => {
       const waiting: Admitted[] = [];
       for (const message of messages) {
-        if (message.outOfBandDeclined || closed || !dependencies.isRunning?.(recipientId)) {
+        if (
+          message.outOfBandDeclined ||
+          message.sessionMode !== undefined ||
+          closed ||
+          !dependencies.isRunning?.(recipientId)
+        ) {
           waiting.push(message);
           continue;
         }

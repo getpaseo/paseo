@@ -820,3 +820,48 @@ test("a declined out-of-band message is offered once across running-turn retries
   expect(dispatched).toBe(1);
   await delivery.close();
 });
+
+test("a command with an explicit mode waits for turn end without an out-of-band offer", async () => {
+  const clock = createClock();
+  let running = true;
+  let offers = 0;
+  let wake!: (recipientId: string) => void;
+  const dispatched: Array<{ prompt: AgentPromptInput; sessionMode?: string }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      wake = listener;
+      return () => {};
+    },
+    tryRunOutOfBand: async (_request, onAccepted) => {
+      offers++;
+      onAccepted();
+      return true;
+    },
+    dispatch: async (request) => {
+      dispatched.push(request);
+      return "out_of_band";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const receipt = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "/handled",
+    sessionMode: "plan",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(offers).toBe(0);
+  expect(dispatched).toEqual([]);
+  running = false;
+  wake("parent");
+  await receipt.dispatched;
+  expect(dispatched).toHaveLength(1);
+  expect(dispatched[0]!.sessionMode).toBe("plan");
+  expect(parseAgentMessages(String(dispatched[0]!.prompt))![0]!.text).toBe("/handled");
+  await delivery.close();
+});
