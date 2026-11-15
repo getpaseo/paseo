@@ -168,6 +168,8 @@ test.describe("New workspace entry points", () => {
       await waitForSidebarHydration(page);
       await openGlobalNewWorkspaceComposer(page);
 
+      await openGlobalNewWorkspaceComposer(page);
+      await page.goBack();
       await openNewWorkspaceProjectPickerWithShortcut(page, "Control+N");
     } finally {
       await seeded.cleanup();

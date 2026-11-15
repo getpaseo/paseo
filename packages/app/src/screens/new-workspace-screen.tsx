@@ -3,7 +3,7 @@ import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/da
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
@@ -910,6 +910,7 @@ export function NewWorkspaceScreen({
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
   const isScreenFocused = useIsFocused();
+  const projectPickHandlerId = useId();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1191,9 +1192,9 @@ export function NewWorkspaceScreen({
     return true;
   }, [openProjectPicker]);
   useKeyboardActionHandler({
-    handlerId: "new-workspace-project-pick",
+    handlerId: `new-workspace-project-pick:${projectPickHandlerId}`,
     actions: PROJECT_PICK_ACTIONS,
-    enabled: true,
+    enabled: isScreenFocused,
     isActive: isStillOnCreateScreen,
     priority: 10,
     handle: handleProjectPick,
