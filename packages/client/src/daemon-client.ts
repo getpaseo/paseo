@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
+import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
@@ -6573,6 +6574,38 @@ export class DaemonClient {
       responseType: "plugin.source.status.response",
     });
     return payload.plugins;
+  }
+
+  private requirePluginRegistry(): void {
+    // COMPAT(pluginRegistry): added in v0.16.0; remove after 2027-05-15 once daemon floor proxies the registry.
+    if (this.getLastServerInfoMessage()?.features?.pluginRegistry !== true)
+      throw new Error("Update the host to browse plugins.");
+  }
+
+  /** The host's default plugin registry directory. */
+  async listPluginRegistry(): Promise<PluginListingIndex> {
+    this.requirePluginRegistry();
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.registry.list.request", requestId },
+      responseType: "plugin.registry.list.response",
+      timeout: 60_000,
+    });
+    return payload.index;
+  }
+
+  /** One registry listing with its overview. */
+  async getRegistryPlugin(id: string): Promise<PluginListingDetail> {
+    this.requirePluginRegistry();
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.registry.get.request", requestId, id },
+      responseType: "plugin.registry.get.response",
+      timeout: 60_000,
+    });
+    return payload.plugin;
   }
 
   private requirePluginUpdates(): void {
