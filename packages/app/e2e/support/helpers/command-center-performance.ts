@@ -49,11 +49,27 @@ export async function searchCommandCenter(panel: Locator, query: string) {
 }
 
 export async function warmCommandCenterRows(page: Page) {
-  // FlatList fills its overscan window in timed batches after the first visible frame.
-  await page.waitForTimeout(600);
-  await page.evaluate(() => {
-    globalThis.__PASEO_RENDER_PROFILE_REASONS__ = {};
-  });
+  // FlatList fills its overscan window in timed batches after the first visible frame,
+  // and a slow runner can still be mounting rows long after it. Start counting only
+  // once a quiet period passes with no row render.
+  await expect
+    .poll(() => page.evaluate(countRowRendersOverQuietPeriod), {
+      intervals: [0],
+      timeout: 15_000,
+    })
+    .toBe(0);
+}
+
+// Runs in the page: resets the render profile and counts row renders over two frames and 300ms.
+async function countRowRendersOverQuietPeriod() {
+  globalThis.__PASEO_RENDER_PROFILE_REASONS__ = {};
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return Object.keys(globalThis.__PASEO_RENDER_PROFILE_REASONS__ ?? {}).filter((id) =>
+    id.startsWith("CommandCenterResultRow:"),
+  ).length;
 }
 
 export async function expectOnlyCommandCenterRowRendered(page: Page, resultId: string) {
