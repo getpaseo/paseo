@@ -2221,6 +2221,7 @@ export const ko: TranslationResources = {
     turnOn: "켜기",
 
     options: "설정",
+    host: "호스트",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
     agentError: "사용량을 불러올 수 없습니다: {{reason}}",

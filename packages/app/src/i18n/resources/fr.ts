@@ -2260,6 +2260,7 @@ export const fr: TranslationResources = {
     turnOn: "Activer",
 
     options: "Paramètres",
+    host: "Hôte",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
     agentError: "Impossible de charger l’utilisation : {{reason}}",
