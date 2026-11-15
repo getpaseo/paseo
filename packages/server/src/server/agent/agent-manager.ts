@@ -227,6 +227,10 @@ interface TimeoutOptions {
   onLateError?: (error: unknown) => void;
 }
 
+function launchWorkspace(opening?: { workspaceId?: string | null }): { workspaceId?: string } {
+  return opening?.workspaceId ? { workspaceId: opening.workspaceId } : {};
+}
+
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
@@ -6206,6 +6210,7 @@ export class AgentManager {
     }
     const context: AgentLaunchContext = {
       agentId,
+      ...launchWorkspace(opening),
       mcpServers,
       mcpServerOwners,
       env: {

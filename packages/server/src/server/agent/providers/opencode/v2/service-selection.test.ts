@@ -38,6 +38,15 @@ test("selects the registered service with its credential and ignores stale regis
       await selectOpenCodeService({ file, explicit: { url: "http://explicit.test" } }),
     ).toEqual({ kind: "explicit", server: { url: "http://explicit.test" } });
     expect(requests).toBe(1);
+    // A scope other than shared always starts Paseo's own helpers, without probing the service.
+    expect(await selectOpenCodeService({ file, scope: "workspace" })).toEqual({ kind: "owned" });
+    expect(await selectOpenCodeService({ file, scope: "agent" })).toEqual({ kind: "owned" });
+    expect(requests).toBe(1);
+    await expect(
+      selectOpenCodeService({ file, scope: "agent", explicit: { url: "http://explicit.test" } }),
+    ).rejects.toThrow(
+      "PASEO_OPENCODE_SERVER_SCOPE=agent starts Paseo's own OpenCode servers and cannot be combined with PASEO_OPENCODE_SERVER_URL",
+    );
     await writeFile(file, JSON.stringify({ url, password: "secret", pid: process.pid + 1 }));
     expect(await selectOpenCodeService({ file })).toEqual({ kind: "owned" });
   } finally {
