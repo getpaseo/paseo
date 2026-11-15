@@ -692,6 +692,8 @@ export interface AgentUsageSession {
 }
 
 export interface AgentSession {
+  /** Persist the session's current handle immediately after an interactive resume. */
+  readonly persistenceUpdatedOnResume?: boolean;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;

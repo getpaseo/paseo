@@ -3592,6 +3592,7 @@ interface ConsumedRootCompaction {
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly persistenceUpdatedOnResume = true;
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
