@@ -121,7 +121,10 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
+import {
+  captureWorkspaceDraftCleanup,
+  handOffDraftMetadata,
+} from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
@@ -635,6 +638,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     allowEmptyText: true,
     agentCreation: input.agentCreation,
   });
+  handOffDraftMetadata({ serverId, draftId, metadata: composerState.metadata });
   clearDraft("sent");
   navigateToWorkspace({
     serverId,
