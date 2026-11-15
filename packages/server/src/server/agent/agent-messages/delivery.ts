@@ -119,7 +119,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           if (error instanceof AgentTurnBusyError && !closed) {
             const entry = pending.get(recipientId) ?? {
               messages: [],
-              ready: false,
+              ready: true,
               cancel: () => {},
             };
             entry.cancel();

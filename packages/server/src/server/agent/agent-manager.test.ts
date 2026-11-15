@@ -14547,3 +14547,72 @@ test.each([
     }
   },
 );
+
+test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
+  "an autonomous %s publishes readiness after settling its run",
+  async (ending) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-autonomous-delivery-"));
+    const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    let tick = () => {};
+    const settledStates: boolean[] = [];
+    const delivery = createAgentMessageDelivery({
+      isRunning: (id) => manager.hasInFlightRun(id),
+      subscribe: (notify) =>
+        manager.subscribe(
+          (event) => {
+            if (event.type !== "agent_state") return;
+            if (event.agent.lifecycle !== "running")
+              settledStates.push(manager.hasInFlightRun(agent.id));
+            notify(event.agent.id);
+          },
+          { agentId: agent.id, replayState: false },
+        ),
+      schedule: (_delay, callback) => {
+        tick = callback;
+        return () => {};
+      },
+      dispatch: async (request) =>
+        (
+          await startAgentRun(manager, agent.id, request.prompt, logger, {
+            idleOnly: request.idleOnly,
+          })
+        ).disposition,
+      onError: (error) => {
+        throw error;
+      },
+    });
+    try {
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "autonomous" });
+      await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(true));
+      delivery.enqueue({
+        recipientId: agent.id,
+        prompt: "queued report",
+        source: { kind: "agent-message", agentId: "child" },
+      });
+      tick();
+      expect(session.startCount).toBe(0);
+      session.pushEvent({
+        type: ending,
+        provider: "codex",
+        turnId: "autonomous",
+        ...(ending === "turn_failed" ? { error: "test failure" } : {}),
+      } as AgentStreamEvent);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settledStates).toEqual([false]);
+      expect(session.startCount).toBe(1);
+    } finally {
+      await delivery.close();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

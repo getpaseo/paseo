@@ -602,3 +602,43 @@ test.each([false, true])(
     await delivery.close();
   },
 );
+
+test("a busy admission retry stays ready for the next settled-turn event", async () => {
+  const clock = createClock();
+  let running = false;
+  let raced = true;
+  let notify: (id: string) => void = () => {};
+  const sent: string[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      notify = listener;
+      return () => {};
+    },
+    dispatch: async (request) => {
+      if (raced) {
+        running = true;
+        throw new AgentTurnBusyError("next turn started");
+      }
+      sent.push(request.recipientId);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  delivery.enqueue({
+    recipientId: "parent",
+    prompt: "report",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  raced = false;
+  running = false;
+  notify("parent");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(sent).toEqual(["parent"]);
+  await delivery.close();
+});
