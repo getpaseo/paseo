@@ -339,8 +339,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   }, [audio, clearStreamingState, reportError, stopDurationTracking]);
 
   useEffect(() => {
-    if (!active) void cancelDictation();
-  }, [active, cancelDictation]);
+    if (!active && isRecording && !isProcessing) void cancelDictation();
+  }, [active, cancelDictation, isRecording, isProcessing]);
 
   const confirmDictation = useCallback(async () => {
     if (actionGateRef.current.confirming) {

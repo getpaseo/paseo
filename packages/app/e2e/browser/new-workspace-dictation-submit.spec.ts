@@ -87,7 +87,8 @@ async function installSyntheticMicrophone(page: Page): Promise<void> {
   });
 }
 
-async function installDictationFailureHarness(page: Page) {
+async function installDictationFailureHarness(page: Page, holdTranscript = false) {
+  let deliverTranscript: (() => void) | null = null;
   let resolveAudioChunk!: () => void;
   let resolveCreateRequest!: () => void;
   const audioChunk = new Promise<void>((resolve) => {
@@ -125,12 +126,14 @@ async function installDictationFailureHarness(page: Page) {
       if (type === "dictation_stream_finish" && dictationId) {
         sendSessionMessage(ws, {
           type: "dictation_stream_finish_accepted",
-          payload: { dictationId, timeoutMs: 5_000 },
+          payload: { dictationId, timeoutMs: holdTranscript ? 60_000 : 5_000 },
         });
-        sendSessionMessage(ws, {
-          type: "dictation_stream_final",
-          payload: { dictationId, text: TRANSCRIPT },
-        });
+        deliverTranscript = () =>
+          sendSessionMessage(ws, {
+            type: "dictation_stream_final",
+            payload: { dictationId, text: TRANSCRIPT },
+          });
+        if (!holdTranscript) deliverTranscript();
         return;
       }
       if (request && type === "workspace.create.request" && typeof request.requestId === "string") {
@@ -158,6 +161,11 @@ async function installDictationFailureHarness(page: Page) {
 
   return {
     waitForAudio: () => audioChunk,
+    hasPendingTranscript: () => deliverTranscript !== null,
+    deliverTranscript: () => {
+      if (!deliverTranscript) throw new Error("No pending transcript");
+      deliverTranscript();
+    },
     waitForCreateRequest: () => createRequest,
     failWorkspaceCreation: () => {
       if (!failCreate) {
@@ -297,3 +305,35 @@ function microphoneTracksEnded(page: Page): Promise<boolean> {
     return tracks.length > 0 && tracks.every((track) => track.readyState === "ended");
   });
 }
+
+test("confirmed dictation survives leaving and returning while pending", async ({ page }) => {
+  const first = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-processing-",
+    title: "Processing workspace",
+  });
+  const second = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-other-",
+    title: "Other workspace",
+  });
+  await installSyntheticMicrophone(page);
+  const harness = await installDictationFailureHarness(page, true);
+  try {
+    await openAgentRoute(page, first);
+    await expectComposerVisible(page);
+    await page.getByRole("button", { name: "Start dictation", exact: true }).click();
+    await harness.waitForAudio();
+    await page.getByRole("button", { name: "Insert transcription", exact: true }).click();
+    await expect.poll(harness.hasPendingTranscript).toBe(true);
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${second.workspaceId}`));
+    await expect.poll(() => microphoneTracksEnded(page)).toBe(true);
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${first.workspaceId}`));
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toBeVisible();
+    harness.deliverTranscript();
+    await expect(composerLocator(page)).toHaveValue(TRANSCRIPT);
+  } finally {
+    await second.cleanup();
+    await first.cleanup();
+  }
+});

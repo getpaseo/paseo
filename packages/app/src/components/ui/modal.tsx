@@ -1,3 +1,4 @@
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMemo } from "react";
 import {
   Modal as NativeModal,
@@ -23,11 +24,23 @@ type ModalProps = Omit<NativeModalProps, "onRequestClose"> & {
 function noClose() {}
 
 export function Modal(props: ModalProps) {
-  const { visible = true, onRequestClose, style } = props;
+  const { visible: requestedVisible = true, onRequestClose, style } = props;
+  const active = useRetainedPanelActive();
+  const visible = requestedVisible && active;
   useDismissibleOverlay(visible && onRequestClose !== undefined, onRequestClose ?? noClose);
   const windowFrame = useAndroidWindowFrame();
   const containerStyle = useMemo(() => [windowFrame, style], [windowFrame, style]);
-  return <NativeModal supportedOrientations={orientations} {...props} style={containerStyle} />;
+  // Hidden web chats freeze before a modal exit animation can finish.
+  // Remove the portal while its owner is inactive.
+  if (!active) return null;
+  return (
+    <NativeModal
+      supportedOrientations={orientations}
+      {...props}
+      visible={visible}
+      style={containerStyle}
+    />
+  );
 }
 
 /**
