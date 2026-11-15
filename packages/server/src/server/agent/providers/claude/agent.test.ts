@@ -1004,7 +1004,7 @@ describe("ClaudeAgentSession features", () => {
       logger,
       queryFactory,
       resolveBinary: async () => "/test/claude/bin",
-    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "bypassPermissions" });
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
     const events: AgentStreamEvent[] = [];
     const unsubscribe = session.subscribe((event) => events.push(event));
 
