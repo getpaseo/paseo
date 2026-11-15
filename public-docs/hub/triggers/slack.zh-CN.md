@@ -52,4 +52,4 @@ Hub 会读取连续的已声明头部，并把剩余部分作为 `${{ paseo.prom
 | `from_users` | 你的头像 → **Profile** → **⋮** → **Copy member ID**。成员 ID 以 `U` 开头。 |
 | `channels`   | 频道名称 → **About**。频道 ID 位于面板底部，以 `C` 开头。                  |
 
-[引导式设置](/docs/hub/quickstart)会根据你连接的 Slack 应用填好 `workspace`，并询问你的成员 ID，因此生成的起步配置已经包含这两项。
+[引导式设置](/docs/hub/quickstart)会根据你连接的 Slack 工作区填好 `workspace`，并询问你的成员 ID，因此生成的起步配置已经包含这两项。

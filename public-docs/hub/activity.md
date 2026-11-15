@@ -14,7 +14,7 @@ Every event Hub accepts is recorded, whether or not it ran anything. That record
 
 **Project → Activity** lists routed trigger runs and their execution state.
 
-**Connections → Known unrouted events** is the organization-level view of accepted provider events that did not start a configured trigger. Hub records one of four bounded reasons:
+**Integrations → Known unrouted events** is the organization-level view of accepted provider events that did not start a configured trigger. Hub records one of four bounded reasons:
 
 | Reason                      | Meaning                                                      |
 | --------------------------- | ------------------------------------------------------------ |
@@ -27,7 +27,7 @@ Every event Hub accepts is recorded, whether or not it ran anything. That record
 
 Work down this list.
 
-1. **Is the event in the project's Activity?** If not, check **Connections → Known unrouted events** and use its reason to distinguish routing, source, filter, and configuration failures.
+1. **Is the event in the project's Activity?** If not, check **Integrations → Known unrouted events** and use its reason to distinguish routing, source, filter, and configuration failures.
 2. **Is the event anywhere at all?** If not, the event never reached Hub. Check the provider's own delivery log: GitHub's App → Advanced → Recent Deliveries, or Slack's Event Subscriptions page. Then check that the app is subscribed to that event type.
 3. **Is your user in `from_users`?** This is the most common cause. GitHub uses your login; Slack and Discord use the user ID, not the display name. See [find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) and [find your Discord IDs](/docs/hub/triggers/discord#find-your-discord-ids).
 4. **Did the invocation match?** On GitHub, `contains` must appear in the comment body. On Slack and Discord the bot must be mentioned, and `pattern` or its legacy `contains` alias must prefix the text after the mention.

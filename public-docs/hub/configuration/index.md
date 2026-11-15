@@ -18,7 +18,7 @@ Each organization trigger is one self-contained YAML file. Keep triggers in your
 
 ## Generated starter trigger
 
-Run `paseo hub init` from the repository the agent should work in. Setup selects an app connection and an available agent runtime, asks which user may trigger it, validates the result, and writes one file. It then asks whether to deploy. Interactive `paseo hub login` connects the daemon and points to this command; it does not write trigger files.
+Run `paseo hub init` from the repository the agent should work in. Setup selects an integration connection and an available agent runtime, asks which user may trigger it, validates the result, and writes one file. It then asks whether to deploy. Interactive `paseo hub login` connects the daemon and points to this command; it does not write trigger files.
 
 For a Slack connection named `my-team`, the generated document looks like this:
 
@@ -56,7 +56,7 @@ run:
       required: true
 ```
 
-`connection` is the app connection's slug in your organization. `target.daemon` is the connected daemon's slug and `target.cwd` is the absolute directory where you ran setup. `agent` contains the provider, model, and execution mode you selected from the daemon. The mode is required.
+`connection` is the integration connection's slug in your organization. `target.daemon` is the connected daemon's slug and `target.cwd` is the absolute directory where you ran setup. `agent` contains the provider, model, and execution mode you selected from the daemon. The mode is required.
 
 `continuation.mode: conversation` keeps follow-ups in the same provider conversation on the same agent. The prompt asks the agent to reply and then call `hub.finish_execution`; replying alone does not finish the execution.
 

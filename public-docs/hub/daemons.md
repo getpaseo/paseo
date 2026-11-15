@@ -75,7 +75,7 @@ paseo hub permissions grant hub.execute
 paseo hub permissions revoke hub.execute
 ```
 
-Until it is granted, Hub keeps the daemon for identity and presence only. The Daemons page shows it as **Connected only** with the grant command, and Home's checklist reads **Cannot run agents**. [Hub security](/docs/hub/security#choose-daemon-authority) covers what the permission allows once granted.
+Until it is granted, Hub keeps the daemon for identity and presence only. The Daemons page shows it as **Connected only** with the grant command, and Home's checklist says the daemon cannot run agents yet. [Hub security](/docs/hub/security#choose-daemon-authority) covers what the permission allows once granted.
 
 ## Reference it from configuration
 

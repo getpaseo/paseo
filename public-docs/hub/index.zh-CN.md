@@ -34,7 +34,7 @@ daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上�
     └── slack-help.yml
 ```
 
-这个文件指定了应用连接、允许的用户、daemon、工作目录、Agent 运行时、提示词和输出。设置流程会校验它并询问是否部署。之后提及机器人，就会在你的机器上启动一个 Agent。[快速开始](/docs/hub/quickstart)完整地跑通了这个过程；[生成的起步触发器](/docs/hub/configuration#generated-starter-trigger)展示了设置流程写入的内容。
+这个文件指定了集成连接、允许的用户、daemon、工作目录、Agent 运行时、提示词和输出。设置流程会校验它并询问是否部署。之后提及机器人，就会在你的机器上启动一个 Agent。[快速开始](/docs/hub/quickstart)完整地跑通了这个过程；[生成的起步触发器](/docs/hub/configuration#generated-starter-trigger)展示了设置流程写入的内容。
 
 ## 阅读顺序 {#reading-order}
 

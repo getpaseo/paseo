@@ -22,7 +22,7 @@ Open the address it prints, normally <http://localhost:3000>, and create the ope
 
 The first run needs no database, Docker, environment variables, or API keys. Hub creates an embedded database and your organization.
 
-Hub opens **Home**, a checklist of the four things that have to be true before a mention starts an agent: connect an app, connect a daemon, create a trigger, run it. The steps below are those four. Home derives each one from what your organization actually has, prints the command the next step needs, and collapses once all four are done.
+Hub opens **Home** with four **Get started** steps: **Connect an integration**, **Connect a daemon**, **Create a trigger**, and **Run it**. The first unfinished step shows a hint and an action. Completed steps show a check and their result; later steps show only their title. The checklist collapses once all four are done.
 
 ## 2. Connect Slack
 
@@ -58,7 +58,7 @@ Then run:
 paseo hub init
 ```
 
-Choose **Custom endpoint** and confirm `http://localhost:3000`. Setup reuses your login and daemon connection, then lists the app connections ready for this trigger. With one Slack workspace connected, it selects that connection automatically. With several usable connections, choose the **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
+Choose **Custom endpoint** and confirm `http://localhost:3000`. Setup reuses your login and daemon connection, then lists the integration connections ready for this trigger. With one Slack workspace connected, it selects that connection automatically. With several usable connections, choose the **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
 
 | Question                                | What it wants                                                                                 |
 | --------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -68,7 +68,7 @@ Choose **Custom endpoint** and confirm `http://localhost:3000`. Setup reuses you
 
 Providers must expose a selectable model and execution mode. If there is no default mode, choose the one the agent should use. Hub runs agents unattended, so it accepts only Claude, Codex, and OpenCode, and it checks the model, mode, and options against your daemon before deploying. Another provider, or a value the daemon does not offer, is refused here rather than at the first run.
 
-[Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) explains how to copy your member ID. The Slack workspace comes from the selected app connection.
+[Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) explains how to copy your member ID. The Slack workspace comes from the selected connection.
 
 Setup validates the trigger and writes:
 

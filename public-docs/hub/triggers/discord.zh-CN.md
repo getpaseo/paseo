@@ -42,4 +42,4 @@ Discord 过滤器使用 ID，而不是服务器名称、显示名称或 Hub 连�
 
 打开 **Settings → Advanced → Developer Mode**，然后右键选择 **Copy Server ID** 获取 `guild`，**Copy Channel ID** 获取 `channels`，**Copy User ID** 获取 `from_users`。三者都是数字 snowflake；请加上引号，让 YAML 把它们当作字符串。
 
-[引导式设置](/docs/hub/quickstart)会根据你连接的 Discord 应用填好 `guild`，并询问你的用户 ID。
+[引导式设置](/docs/hub/quickstart)会根据你连接的 Discord 服务器填好 `guild`，并询问你的用户 ID。

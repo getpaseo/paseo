@@ -12,7 +12,7 @@ Hub 接受的每个事件都会被记录，无论它是否运行了任何内容�
 
 **Project → Activity** 列出已路由的触发器运行及其执行状态。
 
-**Connections → Known unrouted events** 是组织级视图，列出已接受但没有启动任何已配置触发器的 Provider 事件。Hub 会记录以下四种原因之一：
+**Integrations → Known unrouted events** 是组织级视图，列出已接受但没有启动任何已配置触发器的 Provider 事件。Hub 会记录以下四种原因之一：
 
 | 原因                        | 含义                                         |
 | --------------------------- | -------------------------------------------- |
@@ -25,7 +25,7 @@ Hub 接受的每个事件都会被记录，无论它是否运行了任何内容�
 
 按这个列表逐项排查。
 
-1. **事件是否出现在项目的 Activity 中？** 如果没有，请查看 **Connections → Known unrouted events**，根据其中的原因区分路由、来源、过滤器和配置方面的失败。
+1. **事件是否出现在项目的 Activity 中？** 如果没有，请查看 **Integrations → Known unrouted events**，根据其中的原因区分路由、来源、过滤器和配置方面的失败。
 2. **事件是否出现在任何地方？** 如果没有，说明事件从未到达 Hub。请查看 Provider 自己的投递日志：GitHub 的 App → Advanced → Recent Deliveries，或 Slack 的 Event Subscriptions 页面。然后确认应用订阅了该事件类型。
 3. **你的用户是否在 `from_users` 中？** 这是最常见的原因。GitHub 使用你的登录名；Slack 和 Discord 使用用户 ID，而不是显示名称。参见[查找 Slack ID](/docs/hub/triggers/slack#find-your-slack-ids) 和[查找 Discord ID](/docs/hub/triggers/discord#find-your-discord-ids)。
 4. **调用是否匹配？** 在 GitHub 上，评论正文中必须出现 `contains`。在 Slack 和 Discord 上，必须提及机器人，并且提及之后的文本必须以 `pattern`（或其旧别名 `contains`）开头。
