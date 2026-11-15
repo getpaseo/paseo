@@ -13,6 +13,8 @@ import {
   MARKDOWN_COPY_LANGUAGE_ATTRIBUTE,
   MARKDOWN_COPY_LIST_MARKER_ATTRIBUTE,
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
+  MARKDOWN_COPY_MATH_DISPLAY_ATTRIBUTE,
+  MARKDOWN_COPY_MATH_TEX_ATTRIBUTE,
   MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
@@ -28,11 +30,22 @@ const CODE_REGION_SELECTOR = `${CODE_BLOCK_SELECTOR}, code, [${MARKDOWN_COPY_TAG
 const IMAGE_FRAME_SELECTOR = `img, [${MARKDOWN_COPY_TAG_ATTRIBUTE}="img"]`;
 
 const SEMANTIC_TAGS =
-  "p,blockquote,br,code,pre,h1,h2,h3,h4,h5,h6,hr,img,li,ol,ul,strong,em,s,del,table,thead,tbody,tr,th,td";
+  "p,blockquote,br,code,pre,h1,h2,h3,h4,h5,h6,hr,img,li,ol,ul,strong,em,s,del,table,thead,tbody,tr,th,td,math";
 function semanticTag(element: Element): string | null {
   return (
     element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE) ??
     (element.matches(SEMANTIC_TAGS) ? element.tagName.toLowerCase() : null)
+  );
+}
+function copyMathAttributes(original: Element, copy: Element): void {
+  const tex =
+    original.querySelector('annotation[encoding="application/x-tex"]')?.textContent ??
+    original.closest('[role="math"]')?.getAttribute("aria-label") ??
+    "";
+  copy.setAttribute(MARKDOWN_COPY_MATH_TEX_ATTRIBUTE, tex);
+  copy.setAttribute(
+    MARKDOWN_COPY_MATH_DISPLAY_ATTRIBUTE,
+    original.getAttribute("display") === "block" ? "block" : "inline",
   );
 }
 function copySemanticAttributes(original: Element, copy: Element): void {
@@ -50,6 +63,7 @@ function copySemanticAttributes(original: Element, copy: Element): void {
     copy.setAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE, sources[url] ?? url);
     copy.setAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE, original.getAttribute("alt") ?? "");
   }
+  if (tag === "math") copyMathAttributes(original, copy);
   if (tag === "td" || tag === "th") {
     const align = (original as HTMLElement).style.textAlign;
     if (align) copy.setAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE, align);
@@ -74,6 +88,17 @@ turndown.addRule("escapedGfmTableCell", {
 turndown.addRule("gfmStrikethrough", {
   filter: ["del", "s"],
   replacement: (content) => `~~${content}~~`,
+});
+turndown.addRule("katexMath", {
+  filter: (node) => node.nodeName.toLowerCase() === "math",
+  replacement: (_content, node) => {
+    const element = node as Element;
+    const tex = element.getAttribute("data-tex") ?? "";
+    if (!tex) return "";
+    return element.getAttribute("display") === "block"
+      ? `\n\n$$\n${tex.trim()}\n$$\n\n`
+      : `$${tex}$`;
+  },
 });
 turndown.addRule("compactListItem", {
   filter: "li",
@@ -360,6 +385,9 @@ function shouldPreserveSemanticElement(range: Range, element: Element): boolean 
   if (tag === "p" || tag === "img" || isTableStructure(tag)) {
     return true;
   }
+  if (tag === "math") {
+    return hasSelectedAllContents(range, element);
+  }
   if (isCrossBoundaryCodeElement(range, element, tag)) {
     return true;
   }
@@ -504,6 +532,9 @@ function selectsNothingOutside(range: Range, element: Element): boolean {
 }
 
 function hasMarkdownContent(fragment: DocumentFragment, includeIgnored: boolean): boolean {
+  for (const annotation of fragment.querySelectorAll("annotation, annotation-xml")) {
+    annotation.remove();
+  }
   if (!includeIgnored) {
     for (const ignored of fragment.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
       ignored.remove();
@@ -596,46 +627,54 @@ function selectedMessageParts(range: Range): SelectedMessagePart[] | null {
   });
 }
 
+function restoreMarkedElement(element: Element): void {
+  const tagName = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
+  if (!tagName) return;
+  const semanticElement = document.createElement(tagName);
+  if (tagName !== "br" && tagName !== "img" && tagName !== "math") {
+    semanticElement.append(...element.childNodes);
+  }
+  if (tagName === "img") {
+    semanticElement.setAttribute("src", element.getAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE) ?? "");
+    semanticElement.setAttribute("alt", element.getAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE) ?? "");
+  }
+  if (tagName === "math") {
+    const tex = element.getAttribute(MARKDOWN_COPY_MATH_TEX_ATTRIBUTE) ?? "";
+    semanticElement.setAttribute(
+      "display",
+      element.getAttribute(MARKDOWN_COPY_MATH_DISPLAY_ATTRIBUTE) ?? "inline",
+    );
+    semanticElement.setAttribute("data-tex", tex);
+    // Turndown drops empty non-void elements before custom rules run.
+    semanticElement.textContent = tex;
+  }
+  if (tagName === "ol") {
+    const start = element.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE);
+    if (start) semanticElement.setAttribute("start", start);
+    numberOrderedListItems(semanticElement, Number(start ?? 1));
+  }
+  if (tagName === "pre") {
+    const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
+    const code = semanticElement.querySelector(":scope > code");
+    if (language && code) code.className = `language-${language}`;
+  }
+  if (tagName === "th" || tagName === "td") {
+    const alignment = element.getAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE);
+    if (alignment) semanticElement.setAttribute("align", alignment);
+  }
+  element.replaceWith(semanticElement);
+}
+
 function restoreMarkdownElements(container: HTMLElement): void {
-  for (const ignored of container.querySelectorAll(`[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}]`)) {
+  for (const ignored of container.querySelectorAll(
+    `[${MARKDOWN_COPY_IGNORE_ATTRIBUTE}], annotation, annotation-xml`,
+  )) {
     ignored.remove();
   }
 
   const marked = Array.from(container.querySelectorAll(`[${MARKDOWN_COPY_TAG_ATTRIBUTE}]`));
   for (const element of marked.toReversed()) {
-    const tagName = element.getAttribute(MARKDOWN_COPY_TAG_ATTRIBUTE);
-    if (!tagName) {
-      continue;
-    }
-    const semanticElement = document.createElement(tagName);
-    if (tagName !== "br" && tagName !== "img") {
-      semanticElement.append(...element.childNodes);
-    }
-    if (tagName === "img") {
-      semanticElement.setAttribute("src", element.getAttribute(MARKDOWN_COPY_SRC_ATTRIBUTE) ?? "");
-      semanticElement.setAttribute("alt", element.getAttribute(MARKDOWN_COPY_ALT_ATTRIBUTE) ?? "");
-    }
-    if (tagName === "ol") {
-      const start = element.getAttribute(MARKDOWN_COPY_LIST_START_ATTRIBUTE);
-      if (start) {
-        semanticElement.setAttribute("start", start);
-      }
-      numberOrderedListItems(semanticElement, Number(start ?? 1));
-    }
-    if (tagName === "pre") {
-      const language = element.getAttribute(MARKDOWN_COPY_LANGUAGE_ATTRIBUTE);
-      const code = semanticElement.querySelector(":scope > code");
-      if (language && code) {
-        code.className = `language-${language}`;
-      }
-    }
-    if (tagName === "th" || tagName === "td") {
-      const alignment = element.getAttribute(MARKDOWN_COPY_ALIGN_ATTRIBUTE);
-      if (alignment) {
-        semanticElement.setAttribute("align", alignment);
-      }
-    }
-    element.replaceWith(semanticElement);
+    restoreMarkedElement(element);
   }
 
   unwrapIncompleteTables(container);

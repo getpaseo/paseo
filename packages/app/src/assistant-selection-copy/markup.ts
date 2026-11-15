@@ -7,6 +7,8 @@ export const MARKDOWN_COPY_LANGUAGE_ATTRIBUTE = "data-paseo-markdown-language";
 export const MARKDOWN_COPY_ALIGN_ATTRIBUTE = "data-paseo-markdown-align";
 export const MARKDOWN_COPY_SRC_ATTRIBUTE = "data-paseo-markdown-src";
 export const MARKDOWN_COPY_ALT_ATTRIBUTE = "data-paseo-markdown-alt";
+export const MARKDOWN_COPY_MATH_TEX_ATTRIBUTE = "data-paseo-markdown-math-tex";
+export const MARKDOWN_COPY_MATH_DISPLAY_ATTRIBUTE = "data-paseo-markdown-math-display";
 
 /**
  * Trailing line breaks, with any indentation that followed the last one.

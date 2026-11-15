@@ -86,3 +86,62 @@ it("counts occurrences per rendered block rather than across block boundaries", 
   // neither does a match, however contiguous the Markdown source looks.
   expect((await searchTimeline({ rows: source, query: "one target" })).locations).toEqual([]);
 });
+
+it("indexes visible MathML symbols for inline and display LaTeX without misclassifying currency or shell dollars", async () => {
+  const source = rows([
+    {
+      type: "assistant_message",
+      text: [
+        "只在 $2^k$ 翻倍点建 Key，当亲和阈值 $\\theta \\in [0.5, 1.0]$ 时，读区间 $[\\text{floorLevel}(\\theta N_w), N_w]$ 满足 **ReadSet $\\le 2$** 且 $\\alpha < \\beta$。",
+        "",
+        "$$",
+        "\\begin{aligned}",
+        "|\\text{ReadSet}(N_w)| &\\le 2 \\quad \\forall \\theta \\in [0.5, 1.0]",
+        "\\end{aligned}",
+        "$$",
+        "",
+        "Pricing stays literal: $50 to $100/yr, `$HOME`, $PATH:$HOME, and https://example.com/$raw$/path.",
+      ].join("\n"),
+    },
+  ]);
+
+  expect((await searchTimeline({ rows: source, query: "α" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "α<β" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "θ" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 3 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "≤" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 2 },
+  ]);
+  // Hidden TeX commands are not visible in rendered MathML and must not inflate candidate counts.
+  expect((await searchTimeline({ rows: source, query: "\\alpha" })).locations).toEqual([]);
+  // Currency, shell variables, and URLs remain literal searchable text.
+  expect((await searchTimeline({ rows: source, query: "$50 to $100/yr" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "$PATH:$HOME" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect(
+    (await searchTimeline({ rows: source, query: "https://example.com/$raw$/path" })).locations,
+  ).toEqual([{ seq: 1, role: "assistant", count: 1 }]);
+});
+
+it("treats display math as a separate block boundary matching browser DOM groups", async () => {
+  const source = rows([
+    {
+      type: "assistant_message",
+      text: "before $$\\theta + 1$$ after",
+    },
+  ]);
+
+  expect((await searchTimeline({ rows: source, query: "θ+1" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "before θ" })).locations).toEqual([]);
+  expect((await searchTimeline({ rows: source, query: "1 after" })).locations).toEqual([]);
+});
