@@ -77,6 +77,11 @@ export interface HostProfile {
   serverId: string;
   password?: string;
   label: string;
+  /**
+   * The label the managing daemon last gave a host found through it (a routed host). While
+   * `label` still equals it, the label follows the daemon; a label the user chose stays.
+   */
+  discoveredLabel?: string;
   appearance: HostAppearance;
   lifecycle: HostLifecycle;
   connections: HostConnection[];
@@ -270,6 +275,7 @@ function hasProfileChanged(input: {
   password?: string;
   createdAt: string;
   label: string;
+  discoveredLabel: string | undefined;
   preferredConnectionId: string;
   lifecycle: HostLifecycle;
   connections: HostConnection[];
@@ -281,6 +287,7 @@ function hasProfileChanged(input: {
     (input.password !== undefined && input.password !== previous.password) ||
     input.createdAt !== previous.createdAt ||
     input.label !== previous.label ||
+    input.discoveredLabel !== previous.discoveredLabel ||
     input.preferredConnectionId !== previous.preferredConnectionId ||
     !hostLifecycleEquals(previous.lifecycle, input.lifecycle) ||
     connections.length !== previous.connections.length ||
@@ -327,11 +334,13 @@ export function upsertHostConnectionInProfiles(input: {
     return matches;
   }, []);
 
+  const discovered = normalizedConnection.type === "routed" && labelTrimmed.length > 0;
   if (matchingIndexes.length === 0) {
     const profile: HostProfile = {
       serverId,
       ...(password ? { password } : {}),
       label: derivedLabel,
+      ...(discovered ? { discoveredLabel: labelTrimmed } : {}),
       appearance: defaultHostAppearance(),
       lifecycle: defaultLifecycle(),
       connections: [normalizedConnection],
@@ -349,7 +358,22 @@ export function upsertHostConnectionInProfiles(input: {
     normalizedConnection,
   );
   const nextLifecycle = prev.lifecycle;
-  const nextLabel = prev.label === prev.serverId ? derivedLabel : prev.label;
+  // A routed host follows the label its managing daemon gives it, unless the user renamed it.
+  // A profile saved before discoveredLabel existed follows only when every route to it is
+  // routed, i.e. it was created by discovery and never added by hand.
+  const followsDaemon =
+    discovered &&
+    (prev.label === prev.serverId ||
+      (prev.discoveredLabel !== undefined
+        ? prev.label === prev.discoveredLabel
+        : prev.connections.length > 0 &&
+          prev.connections.every((connection) => connection.type === "routed")));
+  const nextLabel = followsDaemon
+    ? labelTrimmed
+    : prev.label === prev.serverId
+      ? derivedLabel
+      : prev.label;
+  const nextDiscoveredLabel = followsDaemon ? labelTrimmed : prev.discoveredLabel;
   const nextPreferredConnectionId =
     prev.preferredConnectionId &&
     nextConnections.some((connection) => connection.id === prev.preferredConnectionId)
@@ -366,6 +390,7 @@ export function upsertHostConnectionInProfiles(input: {
     password,
     createdAt: nextCreatedAt,
     label: nextLabel,
+    discoveredLabel: nextDiscoveredLabel,
     preferredConnectionId: nextPreferredConnectionId,
     lifecycle: nextLifecycle,
     connections: nextConnections,
@@ -380,6 +405,7 @@ export function upsertHostConnectionInProfiles(input: {
     ...(password ? { password } : {}),
     serverId,
     label: nextLabel,
+    ...(nextDiscoveredLabel !== undefined ? { discoveredLabel: nextDiscoveredLabel } : {}),
     lifecycle: nextLifecycle,
     connections: nextConnections,
     preferredConnectionId: nextPreferredConnectionId,
@@ -392,6 +418,48 @@ export function upsertHostConnectionInProfiles(input: {
   const next = existing.filter((_daemon, index) => !matchingIndexSet.has(index));
   next.splice(firstIndex, 0, nextProfile);
   return next;
+}
+
+/**
+ * A routed host lives in its managing daemon's directory. When the directory no longer lists
+ * it, the route through that daemon goes, and a host left with no other connection goes with
+ * it. Connections the user added themselves stay.
+ */
+export function pruneRoutesMissingFromDirectory(input: {
+  profiles: HostProfile[];
+  originServerId: string;
+  listedServerIds: ReadonlySet<string>;
+}): { profiles: HostProfile[]; removedServerIds: string[] } {
+  const removedServerIds: string[] = [];
+  let changed = false;
+  const profiles: HostProfile[] = [];
+  for (const profile of input.profiles) {
+    const isStale = (connection: HostConnection) =>
+      connection.type === "routed" &&
+      connection.originServerId === input.originServerId &&
+      profile.serverId !== input.originServerId &&
+      !input.listedServerIds.has(profile.serverId);
+    if (!profile.connections.some(isStale)) {
+      profiles.push(profile);
+      continue;
+    }
+    changed = true;
+    const connections = profile.connections.filter((connection) => !isStale(connection));
+    if (connections.length === 0) {
+      removedServerIds.push(profile.serverId);
+      continue;
+    }
+    profiles.push({
+      ...profile,
+      connections,
+      preferredConnectionId: connections.some(
+        (connection) => connection.id === profile.preferredConnectionId,
+      )
+        ? profile.preferredConnectionId
+        : (connections[0]?.id ?? null),
+    });
+  }
+  return { profiles: changed ? profiles : input.profiles, removedServerIds };
 }
 
 export function connectionFromListen(listen: string): HostConnection | null {
@@ -520,6 +588,7 @@ const StoredHostProfileSchema = z.strictObject({
   serverId: z.string().trim().min(1),
   password: z.string().optional(),
   label: z.string().optional(),
+  discoveredLabel: z.string().optional(),
   appearance: HostAppearanceSchema.optional(),
   lifecycle: z.strictObject({}).optional(),
   connections: z.array(StoredHostConnectionSchema).min(1),
@@ -623,6 +692,7 @@ export function normalizeStoredHostProfile(entry: unknown): HostProfile | null {
     serverId,
     ...(password ? { password } : {}),
     label,
+    ...(record.discoveredLabel ? { discoveredLabel: record.discoveredLabel } : {}),
     appearance: record.appearance ?? defaultHostAppearance(),
     lifecycle: defaultLifecycle(),
     connections,
