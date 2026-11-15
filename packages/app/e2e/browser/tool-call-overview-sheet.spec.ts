@@ -401,3 +401,52 @@ test("forms a closed group when the lone tool call was left closed", async ({ pa
     await agent.cleanup();
   }
 });
+
+const longGroupedDetail = {
+  type: "unknown",
+  input: Array.from({ length: 80 }, (_, i) => `Long input ${i}`),
+  output: Array.from({ length: 80 }, (_, i) => `Long output ${i}`),
+};
+
+async function provideLongToolDetails(page: Page) {
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const raw = typeof message === "string" ? message : message.toString("utf8");
+      const envelope = JSON.parse(raw);
+      const item = envelope.message?.payload?.event?.item;
+      if (item?.type === "tool_call" && item.status === "completed") {
+        item.detail = longGroupedDetail;
+      }
+      ws.send(JSON.stringify(envelope));
+    });
+  });
+}
+
+test("keeps multi-section tool details within the group", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(page, "Bounded grouped tool details");
+  try {
+    await provideLongToolDetails(page);
+    await openOverviewAgent(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Exercise bounded grouped details.");
+    const group = page.getByTestId("tool-call-group").first();
+    await expect(group).toBeVisible();
+    await openToolDetails(group);
+    const badge = group.getByTestId("tool-call-badge").filter({ hasText: "Read" }).first();
+    await expect(badge).toBeVisible();
+    await openToolDetails(badge);
+    await expect(badge).toContainText("Long output");
+    await page.screenshot({
+      path: `../../.artifacts/group-${process.env.HEIGHT_EVIDENCE ?? "after"}.png`,
+    });
+    const childBox = await badge.boundingBox();
+    const groupBox = await group.boundingBox();
+    expect(childBox!.height).toBeLessThanOrEqual(groupBox!.height);
+    await openToolDetails(badge);
+    await expect(badge).not.toContainText("Long output");
+  } finally {
+    await agent.cleanup();
+  }
+});

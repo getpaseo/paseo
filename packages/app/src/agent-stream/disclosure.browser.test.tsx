@@ -4,6 +4,7 @@ import { within } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n as testI18n } from "@/i18n/i18next";
+import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { ExpandableBadge } from "@/components/message";
 import { page, userEvent } from "vitest/browser";
 import { PlanCard } from "@/components/plan-card";
@@ -200,5 +201,30 @@ describe("tool badge file action", () => {
     act(() => disclosure.focus());
     await userEvent.keyboard("{Enter}");
     expect(view().queryByText("File contents")).toBeNull();
+  });
+});
+
+const longDetail = {
+  type: "unknown" as const,
+  input: { text: "input\n".repeat(80) },
+  output: { text: "output\n".repeat(80) },
+};
+
+describe("inline tool detail height", () => {
+  it("caps the complete detail, including input, output and error, to its allowance", () => {
+    act(() =>
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToolCallDetailsContent
+            detail={longDetail}
+            errorText={"error\n".repeat(80)}
+            maxHeight={200}
+          />
+        </QueryClientProvider>,
+      ),
+    );
+    expect(container.getBoundingClientRect().height).toBeLessThanOrEqual(200);
+    expect(container.textContent).toContain("output");
+    expect(container.textContent).toContain("error");
   });
 });

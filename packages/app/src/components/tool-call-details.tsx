@@ -49,7 +49,6 @@ interface DetailStyles {
   jsonScrollErrorCombined: StyleProp<ViewStyle>;
   fullBleedContainerStyle: StyleProp<ViewStyle>;
   loadingContainerStyle: StyleProp<ViewStyle>;
-  resolvedMaxHeight: number | undefined;
   shouldFill: boolean;
   isFullBleed: boolean;
 }
@@ -69,7 +68,6 @@ function resolveShouldFill(
 
 function useDetailStyles(
   detail: ToolCallDetail | undefined,
-  resolvedMaxHeight: number | undefined,
   fillAvailableHeight: boolean,
 ): DetailStyles {
   const isFullBleed = resolveIsFullBleed(detail);
@@ -85,28 +83,14 @@ function useDetailStyles(
     [codeBlockStyle, shouldFill],
   );
   const codeVerticalScrollStyle = useMemo(
-    () => [
-      styles.codeVerticalScroll,
-      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
-      shouldFill && styles.fillHeight,
-    ],
-    [resolvedMaxHeight, shouldFill],
+    () => [styles.codeVerticalScroll, shouldFill && styles.fillHeight],
+    [shouldFill],
   );
   const scrollAreaFillStyle = useMemo(
-    () => [
-      styles.scrollArea,
-      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
-      shouldFill && styles.fillHeight,
-    ],
-    [resolvedMaxHeight, shouldFill],
+    () => [styles.scrollArea, shouldFill && styles.fillHeight],
+    [shouldFill],
   );
-  const scrollAreaStyle = useMemo(
-    () => [
-      styles.scrollArea,
-      resolvedMaxHeight !== undefined && inlineUnistylesStyle({ maxHeight: resolvedMaxHeight }),
-    ],
-    [resolvedMaxHeight],
-  );
+  const scrollAreaStyle = useMemo(() => [styles.scrollArea], []);
   const jsonScrollCombined = styles.jsonScroll;
   const jsonScrollErrorCombined = [styles.jsonScroll, styles.jsonScrollError];
   const fullBleedContainerStyle = useMemo(
@@ -131,7 +115,6 @@ function useDetailStyles(
     jsonScrollErrorCombined,
     fullBleedContainerStyle,
     loadingContainerStyle,
-    resolvedMaxHeight,
     shouldFill,
     isFullBleed,
   };
@@ -196,11 +179,7 @@ function EditDetailSection({ diffLines, ds }: EditDetailProps) {
     <View style={ds.sectionFillStyle}>
       {diffLines ? (
         <View style={ds.codeBlockFillStyle}>
-          <DiffViewer
-            diffLines={diffLines}
-            maxHeight={ds.resolvedMaxHeight}
-            fillAvailableHeight={ds.shouldFill}
-          />
+          <DiffViewer diffLines={diffLines} fillAvailableHeight={ds.shouldFill} />
         </View>
       ) : null}
     </View>
@@ -548,7 +527,8 @@ export function ToolCallDetailsContent({
 }: ToolCallDetailsContentProps) {
   const { t } = useTranslation();
   const resolvedMaxHeight = fillAvailableHeight ? undefined : (maxHeight ?? 300);
-  const ds = useDetailStyles(detail, resolvedMaxHeight, fillAvailableHeight);
+  // The allowance belongs to the whole disclosure, rather than each section.
+  const ds = useDetailStyles(detail, fillAvailableHeight);
   const diffLines = useDiffLines(detail);
 
   const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
@@ -564,6 +544,17 @@ export function ToolCallDetailsContent({
     return <Text style={styles.emptyStateText}>{t("toolCallDetails.empty")}</Text>;
   }
 
+  if (resolvedMaxHeight !== undefined) {
+    return (
+      <ScrollView
+        style={inlineUnistylesStyle({ maxHeight: resolvedMaxHeight })}
+        contentContainerStyle={ds.fullBleedContainerStyle}
+        nestedScrollEnabled
+      >
+        {sections}
+      </ScrollView>
+    );
+  }
   return <View style={ds.fullBleedContainerStyle}>{sections}</View>;
 }
 
