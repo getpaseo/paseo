@@ -25,4 +25,4 @@ panning it requires Output and its marker to be visible, then requires closing
 the tool to hide its contents and reopening it to show Input again. Presence in
 the accessibility tree is insufficient. A negative control with the passive
 wrapper retained and only the detail's scrolling disabled must fail at Output
-visibility. The browser disclosure suite checks tab navigation and mouse hover.
+visibility. The browser disclosure suite checks tab navigation.
