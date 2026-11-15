@@ -1,4 +1,4 @@
-import type { PromptDispatchDisposition } from "../agent-prompt.js";
+import { AgentTurnBusyError, type PromptDispatchDisposition } from "../agent-prompt.js";
 import { randomUUID } from "node:crypto";
 import type { AgentPromptInput, AgentPromptContentBlock } from "../agent-sdk-types.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./envelope.js";
@@ -30,12 +30,14 @@ interface DispatchRequest {
   messageIds: readonly string[];
   prompt: AgentPromptInput;
   activeTurnBehavior: "steer" | "interrupt";
+  idleOnly: boolean;
   sessionMode?: string;
   clearPendingPermissions: boolean;
   unarchive: boolean;
-  onDispatch(disposition: PromptDispatchDisposition): void;
 }
 interface Dependencies {
+  /** Includes admitted starts and provider turns, including compaction. */
+  isRunning?: (recipientId: string) => boolean;
   dispatch(request: DispatchRequest): Promise<PromptDispatchDisposition>;
   onError(error: unknown, request: DispatchRequest): void;
   /** Return a cancellation function. Production uses the daemon's event loop. */
@@ -61,6 +63,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     });
   const pending = new Map<string, { messages: Admitted[]; cancel(): void }>();
   const dispatching = new Map<string, Promise<void>>();
+  const receipts = new Map<string, Set<Receipt>>();
   let closed = false;
   let closing: Promise<void> | undefined;
 
@@ -76,21 +79,13 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         );
     const request: DispatchRequest = {
       recipientId,
+      idleOnly: !closed && messages[0]!.activeTurnBehavior !== "interrupt",
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt,
       activeTurnBehavior: messages[0]!.activeTurnBehavior ?? "steer",
       sessionMode: messages.find((message) => message.sessionMode)?.sessionMode,
       clearPendingPermissions: messages.some((message) => message.clearPendingPermissions),
       unarchive: messages.some((message) => message.unarchive !== false),
-      onDispatch: (disposition) => {
-        for (const message of messages) {
-          try {
-            message.onDispatch?.(disposition);
-          } catch (error) {
-            dependencies.onError(error, request);
-          }
-        }
-      },
     };
     const previous = dispatching.get(recipientId) ?? Promise.resolve();
     const dispatched = previous
@@ -98,10 +93,32 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       .then(async () => {
         try {
           for (const message of messages) message.beforeDispatch?.();
-          const disposition = await dependencies.dispatch(request);
-          for (const message of messages) message.resolve(disposition);
+          let disposition: PromptDispatchDisposition;
+          try {
+            disposition = await dependencies.dispatch(request);
+          } catch (error) {
+            if (!(error instanceof AgentTurnBusyError) || !closed) throw error;
+            // Shutdown drains admitted messages before closing the recipients.
+            disposition = await dependencies.dispatch({ ...request, idleOnly: false });
+          }
+          for (const message of messages) {
+            try {
+              message.onDispatch?.(disposition);
+            } catch (error) {
+              dependencies.onError(error, request);
+            }
+            message.resolve(disposition);
+          }
           return undefined;
         } catch (error) {
+          if (error instanceof AgentTurnBusyError && !closed) {
+            const entry = pending.get(recipientId) ?? { messages: [], cancel: () => {} };
+            entry.cancel();
+            entry.messages.unshift(...messages);
+            entry.cancel = schedule(2000, () => flush(recipientId));
+            pending.set(recipientId, entry);
+            return;
+          }
           for (const message of messages) message.reject(error);
           dependencies.onError(error, request);
           throw error;
@@ -118,8 +135,23 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   function flush(recipientId: string): void {
     const entry = pending.get(recipientId);
     if (!entry) return;
-    pending.delete(recipientId);
     entry.cancel();
+    if (!closed && dependencies.isRunning?.(recipientId)) {
+      const interrupts = entry.messages.filter(
+        (message) => message.activeTurnBehavior === "interrupt",
+      );
+      entry.messages = entry.messages.filter(
+        (message) => message.activeTurnBehavior !== "interrupt",
+      );
+      if (interrupts.length) dispatch(recipientId, interrupts);
+      if (entry.messages.length) {
+        entry.cancel = schedule(2000, () => flush(recipientId));
+      } else {
+        pending.delete(recipientId);
+      }
+      return;
+    }
+    pending.delete(recipientId);
     let group: Admitted[] = [];
     let mode: string | undefined;
     for (const message of entry.messages) {
@@ -155,6 +187,15 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         messageId: message.messageId ?? randomUUID(),
         dispatched,
       };
+      const owned = receipts.get(message.recipientId) ?? new Set<Receipt>();
+      owned.add(receipt);
+      receipts.set(message.recipientId, owned);
+      void dispatched
+        .finally(() => {
+          owned.delete(receipt);
+          if (!owned.size) receipts.delete(message.recipientId);
+        })
+        .catch(() => undefined);
       const entry = pending.get(message.recipientId) ?? { messages: [], cancel: () => {} };
       entry.cancel();
       entry.messages.push({ ...message, receipt, resolve, reject });
@@ -164,8 +205,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     },
     async waitForDispatch(recipientId, signal) {
       signal.throwIfAborted();
-      const admitted =
-        pending.get(recipientId)?.messages.map((message) => message.receipt.dispatched) ?? [];
+      const admitted = Array.from(receipts.get(recipientId) ?? [], (receipt) => receipt.dispatched);
       let aborted!: () => void;
       const cancellation = new Promise<never>((_resolve, reject) => {
         aborted = () => reject(new DOMException("Wait aborted", "AbortError"));

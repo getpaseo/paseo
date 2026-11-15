@@ -14,6 +14,7 @@ export function createTestAgentMessages(params: {
   logger: Logger;
 }) {
   return createAgentMessageDelivery({
+    isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
     schedule: (_delay, callback) => {
       const timer = setTimeout(callback, 0);
       return () => clearTimeout(timer);
@@ -26,8 +27,8 @@ export function createTestAgentMessages(params: {
         sessionMode: request.sessionMode,
         unarchive: request.unarchive,
         activeTurnBehavior: request.activeTurnBehavior,
+        idleOnly: request.idleOnly,
         clearPendingPermissions: request.clearPendingPermissions,
-        onDispatch: request.onDispatch,
         runOptions: { clientMessageId: request.messageIds[0] },
       });
       if (result.disposition === "turn_started")

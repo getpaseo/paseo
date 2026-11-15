@@ -26,6 +26,7 @@ import { buildStoredAgentPayload, toAgentPayload } from "./agent-projections.js"
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { createAgentMessageDelivery } from "./agent-messages/index.js";
 import { startAgentRun } from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
@@ -14457,3 +14458,87 @@ test("idle cleanup gives a newly restored runtime a fresh idle window while keep
   expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
   expect(h.closes).toBe(closesBeforeRestore + 1);
 });
+
+test.each([
+  ["supported", "turn_completed"],
+  ["supported", "turn_canceled"],
+  ["supported", "turn_failed"],
+  ["unsupported", "turn_completed"],
+  ["unsupported", "turn_canceled"],
+  ["unsupported", "turn_failed"],
+] as const)(
+  "queued delivery after %s provider %s never steers or interrupts",
+  async (support, ending) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-queued-terminal-"));
+    const session =
+      support === "supported"
+        ? new SteeringTestSession({ provider: "codex", cwd: workdir })
+        : new UnsupportedSteeringSession({ provider: "codex", cwd: workdir });
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    let tick = () => {};
+    const delivery = createAgentMessageDelivery({
+      isRunning: (id) => manager.hasInFlightRun(id),
+      schedule: (_delay, callback) => {
+        tick = callback;
+        return () => {};
+      },
+      dispatch: async (request) =>
+        (
+          await startAgentRun(manager, agent.id, request.prompt, logger, {
+            idleOnly: request.idleOnly,
+            replaceRunning: true,
+            activeTurnBehavior: request.activeTurnBehavior,
+          })
+        ).disposition,
+      onError: (error) => {
+        throw error;
+      },
+    });
+    const providerStarted = new Promise<void>((resolve) => {
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type === "turn_started") {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+    try {
+      await startAgentRun(manager, agent.id, "original", logger);
+      await manager.waitForAgentRunStart(agent.id);
+      const receipt = delivery.enqueue({
+        recipientId: agent.id,
+        prompt: "queued",
+        source: { kind: "agent-message", agentId: "child" },
+      });
+      tick();
+      expect(session.startCount).toBe(1);
+      expect(session.interruptCount).toBe(0);
+      const turnId = support === "supported" ? "active-turn-1" : "unsupported-turn-1";
+      await providerStarted;
+      session.pushEvent({
+        type: ending,
+        provider: "codex",
+        turnId,
+        ...(ending === "turn_failed" ? { error: "test failure" } : {}),
+      } as AgentStreamEvent);
+      await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(false));
+      tick();
+      await receipt.dispatched;
+      await manager.waitForAgentRunStart(agent.id);
+      expect(session.startCount).toBe(2);
+      expect(session.interruptCount).toBe(0);
+    } finally {
+      await delivery.close();
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);

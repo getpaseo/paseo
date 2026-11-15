@@ -1,3 +1,4 @@
+import { AgentTurnBusyError } from "../agent-prompt.js";
 import { expect, test } from "vitest";
 import { createAgentMessageDelivery, parseAgentMessages } from "./index.js";
 import type { AgentPromptInput } from "../agent-sdk-types.js";
@@ -117,7 +118,6 @@ test("explicit interrupt and conflicting session modes retain ordered dispatch b
   const delivery = createAgentMessageDelivery({
     dispatch: async (request) => {
       sent.push(request);
-      request.onDispatch("steered");
       return "steered";
     },
     onError: (error) => {
@@ -312,4 +312,145 @@ test("runtime safety sees queued messages until provider dispatch settles", asyn
   release();
   await delivery.close();
   expect(delivery.hasPending("parent")).toBe(false);
+});
+
+test("messages wait across quiet windows and batch after the recipient turn ends", async () => {
+  const clock = createClock();
+  let running = true;
+  const sent: Array<readonly string[]> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    dispatch: async (request) => {
+      sent.push(request.messageIds);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const source = { kind: "agent-message" as const, agentId: "child" };
+  const report = delivery.enqueue({
+    recipientId: "parent",
+    messageId: "report",
+    source,
+    prompt: "report",
+  });
+  clock.advance(2000);
+  await Promise.resolve();
+  expect(sent).toEqual([]);
+  clock.advance(13000);
+  const finish = delivery.enqueue({
+    recipientId: "parent",
+    messageId: "finish",
+    source: { kind: "agent-notification", agentId: "child", event: "finished" },
+    prompt: "finished",
+    activeTurnBehavior: "steer",
+  });
+  clock.advance(2000);
+  await Promise.resolve();
+  expect(sent).toEqual([]);
+  running = false;
+  clock.advance(2000);
+  await Promise.all([report.dispatched, finish.dispatched]);
+  expect(sent).toEqual([["report", "finish"]]);
+  await delivery.close();
+});
+
+test("a turn starting during dispatch preparation keeps receipts queued and joins later arrivals", async () => {
+  const clock = createClock();
+  let busy = true;
+  const sent: Array<readonly string[]> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    dispatch: async (request) => {
+      if (busy) throw new AgentTurnBusyError("concurrent turn");
+      sent.push(request.messageIds);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "parent",
+    source: { kind: "agent-message" as const, agentId: "child" },
+    prompt: "report",
+  };
+  const first = delivery.enqueue({ ...message, messageId: "first" });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(delivery.hasPending("parent")).toBe(true);
+  const second = delivery.enqueue({ ...message, messageId: "second" });
+  busy = false;
+  clock.advance(2000);
+  await Promise.all([first.dispatched, second.dispatched]);
+  expect(sent).toEqual([["first", "second"]]);
+  await delivery.close();
+});
+
+test("explicit interrupt bypasses a running turn while ordinary messages keep waiting", async () => {
+  const clock = createClock();
+  const sent: Array<readonly string[]> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => true,
+    dispatch: async (request) => {
+      sent.push(request.messageIds);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "parent",
+    source: { kind: "agent-message" as const, agentId: "child" },
+    prompt: "report",
+  };
+  delivery.enqueue({ ...message, messageId: "wait" });
+  const interrupt = delivery.enqueue({
+    ...message,
+    messageId: "interrupt",
+    activeTurnBehavior: "interrupt",
+  });
+  clock.advance(2000);
+  await interrupt.dispatched;
+  expect(sent).toEqual([["interrupt"]]);
+  expect(delivery.hasPending("parent")).toBe(true);
+  await delivery.close();
+  expect(sent).toEqual([["interrupt"], ["wait"]]);
+});
+
+test("shutdown flushes a dispatch that discovered a concurrent turn during preparation", async () => {
+  const clock = createClock();
+  let release!: () => void;
+  const preparing = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const modes: boolean[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    dispatch: async (request) => {
+      modes.push(request.idleOnly);
+      if (request.idleOnly) {
+        await preparing;
+        throw new AgentTurnBusyError("busy");
+      }
+      return "turn_started";
+    },
+    onError: () => {},
+  });
+  const receipt = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "report",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const closing = delivery.close();
+  release();
+  await closing;
+  await expect(receipt.dispatched).resolves.toBe("turn_started");
+  expect(modes).toEqual([true, false]);
 });
