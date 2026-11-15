@@ -200,6 +200,8 @@ export interface MessageInputProps {
   sendShortcut: SendShortcut;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
+  /** Sends the first queued message when the composer is empty. Returns whether it started a send. */
+  onSendNextQueued?: () => boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
@@ -1195,6 +1197,7 @@ interface ResolvedMessageInputProps {
   defaultSendBehavior: "interrupt" | "steer" | "queue";
   sendShortcut: SendShortcut;
   onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSendNextQueued: (() => boolean) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
@@ -1243,6 +1246,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     defaultSendBehavior: props.defaultSendBehavior,
     sendShortcut: props.sendShortcut,
     onQueue: props.onQueue,
+    onSendNextQueued: props.onSendNextQueued,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
     onSelectionChangeCallback: props.onSelectionChange,
@@ -1325,6 +1329,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       defaultSendBehavior,
       sendShortcut,
       onQueue,
+      onSendNextQueued,
       onSubmitLoadingPress,
       onKeyPressCallback,
       onSelectionChangeCallback,
@@ -1804,11 +1809,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        hasSendableContent:
+          allowEmptySubmit ||
+          hasSendableComposerContent({
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            attachments,
+            hasExternalContent,
+          }),
+        onSendNextQueued,
       });
       if (hasFinePointer()) {
         textInputRef.current?.focus();
       }
-    }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    }, [
+      allowEmptySubmit,
+      attachments,
+      defaultSendBehavior,
+      hasExternalContent,
+      isAgentRunning,
+      onQueue,
+      onSendNextQueued,
+      handleQueueMessage,
+      handleSendMessage,
+    ]);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({
@@ -1817,8 +1840,26 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        hasSendableContent:
+          allowEmptySubmit ||
+          hasSendableComposerContent({
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            attachments,
+            hasExternalContent,
+          }),
+        onSendNextQueued,
       });
-    }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
+    }, [
+      allowEmptySubmit,
+      attachments,
+      defaultSendBehavior,
+      hasExternalContent,
+      isAgentRunning,
+      handleSendMessage,
+      handleQueueMessage,
+      onQueue,
+      onSendNextQueued,
+    ]);
 
     const alternateSendAction = resolveAlternateSendAction({
       defaultSendBehavior,

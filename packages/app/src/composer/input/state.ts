@@ -53,6 +53,8 @@ interface SendActionContext {
   onQueue: ((payload: MessagePayload) => void) | undefined;
   handleSendMessage: () => void;
   handleQueueMessage: () => void;
+  hasSendableContent?: boolean;
+  onSendNextQueued?: () => boolean;
 }
 
 interface DictationTranscriptContext {
@@ -119,6 +121,7 @@ export function computeCanStartDictation(input: {
 }
 
 export function runDefaultSendAction(ctx: SendActionContext): void {
+  if (ctx.hasSendableContent === false && ctx.onSendNextQueued?.()) return;
   if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
     ctx.handleQueueMessage();
     return;
@@ -140,6 +143,7 @@ export function resolveAlternateSendAction(
 }
 
 export function runAlternateSendAction(ctx: SendActionContext): void {
+  if (ctx.hasSendableContent === false && ctx.onSendNextQueued?.()) return;
   const action = resolveAlternateSendAction(ctx);
   if (action === "queue") {
     ctx.handleQueueMessage();

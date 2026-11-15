@@ -2081,6 +2081,13 @@ function ComposerContentImpl({
     [agentId, queueWriter, submitMessage, t],
   );
 
+  const handleSendNextQueued = useCallback(() => {
+    const next = queuedMessages[0];
+    if (!next || (!sendAgentMessageRef.current && !onSubmitMessageRef.current)) return false;
+    void handleSendQueuedNow(next.id);
+    return true;
+  }, [handleSendQueuedNow, queuedMessages]);
+
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
       const outgoingAttachments = buildOutgoingAttachments(attachments);
@@ -2620,6 +2627,7 @@ function ComposerContentImpl({
                   defaultSendBehavior={activeSendBehavior}
                   sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
+                  onSendNextQueued={handleSendNextQueued}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}

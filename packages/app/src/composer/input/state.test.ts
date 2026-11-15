@@ -507,6 +507,44 @@ describe("resolveMessageInputEnterAction", () => {
       expect(sendAction.calls).toEqual(["send"]);
     });
 
+    it("sends the next queued message when the default action has no content", () => {
+      const sendAction = actions();
+
+      runDefaultSendAction({
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        onQueue: sendAction.onQueue,
+        handleSendMessage: sendAction.handleSendMessage,
+        handleQueueMessage: sendAction.handleQueueMessage,
+        hasSendableContent: false,
+        onSendNextQueued: () => {
+          sendAction.calls.push("queued-send");
+          return true;
+        },
+      });
+
+      expect(sendAction.calls).toEqual(["queued-send"]);
+    });
+
+    it("sends the next queued message when the alternate action has no content", () => {
+      const sendAction = actions();
+
+      runAlternateSendAction({
+        defaultSendBehavior: "steer",
+        isAgentRunning: true,
+        onQueue: sendAction.onQueue,
+        handleSendMessage: sendAction.handleSendMessage,
+        handleQueueMessage: sendAction.handleQueueMessage,
+        hasSendableContent: false,
+        onSendNextQueued: () => {
+          sendAction.calls.push("queued-send");
+          return true;
+        },
+      });
+
+      expect(sendAction.calls).toEqual(["queued-send"]);
+    });
+
     it.each([{ defaultSendBehavior: "steer" }, { defaultSendBehavior: "interrupt" }] as const)(
       "sends through the default send action when $defaultSendBehavior behavior is selected and the agent is running",
       ({ defaultSendBehavior }) => {
