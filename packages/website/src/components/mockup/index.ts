@@ -1,10 +1,11 @@
 export { ClaudeIcon, CodexIcon, SourceControlIcon } from "./icons";
-export { type ToolCall, ToolCallRow } from "./chat";
+export { ToolCallRow } from "./chat";
+export type { ToolCall } from "./script";
 export { DESIGN_HEIGHT, DESIGN_WIDTH } from "./geometry";
 export { PhoneFrame } from "./mobile/frame";
 export { MobileChat } from "./mobile/chat";
 export { MobileDiff } from "./mobile/diff";
 export { MobileSidebar } from "./mobile/sidebar";
-export { DEFAULT_MOCKUP_STATE, MOCKUP_STATES, type MockupStateId } from "./states";
-export { MockupWindow } from "./window";
+export { MOCKUP_STATES, type MockupStateId } from "./states";
+export { createMockupPlayer, MockupWindow, useMockupScene } from "./window";
 export { ScaledMockup } from "./scaled-mockup";
