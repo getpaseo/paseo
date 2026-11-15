@@ -3030,6 +3030,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
+    onAccepted?: () => void,
   ): Promise<boolean> {
     if (this.collectingRuntimes.has(agentId) || !this.agents.has(agentId)) {
       await this.waitForAgentClose(agentId);
@@ -3049,6 +3050,7 @@ export class AgentManager {
     if (!handler) {
       return false;
     }
+    onAccepted?.();
     this.touchUpdatedAt(agent);
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");

@@ -12,8 +12,16 @@ export function createTestAgentMessages(params: {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
+  schedule?: (delayMs: number, callback: () => void) => () => void;
 }) {
   return createAgentMessageDelivery({
+    tryRunOutOfBand: (request, onAccepted) =>
+      params.agentManager.tryRunOutOfBand(
+        request.recipientId,
+        request.prompt,
+        { clientMessageId: request.messageIds[0] },
+        onAccepted,
+      ),
     isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
     hasPendingPermission: (agentId) => params.agentManager.hasPendingPermissions(agentId),
     subscribe: (notify) =>
@@ -23,10 +31,12 @@ export function createTestAgentMessages(params: {
         },
         { replayState: false },
       ),
-    schedule: (_delay, callback) => {
-      const timer = setTimeout(callback, 0);
-      return () => clearTimeout(timer);
-    },
+    schedule:
+      params.schedule ??
+      ((_delay, callback) => {
+        const timer = setTimeout(callback, 0);
+        return () => clearTimeout(timer);
+      }),
     dispatch: async (request) => {
       const result = await sendPreparedPromptToAgent({
         ...params,

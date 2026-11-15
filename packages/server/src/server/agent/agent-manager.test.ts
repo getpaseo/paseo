@@ -12280,11 +12280,18 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
 test("tryRunOutOfBand gives providers the command another agent sent, not its envelope", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-agent-out-of-band-"));
   const seenPrompts: AgentPromptInput[] = [];
+  const acceptanceOrder: string[] = [];
 
   class SlashCommandSession extends TestAgentSession {
     override tryHandleOutOfBand(prompt: AgentPromptInput) {
       seenPrompts.push(prompt);
-      return prompt === "/handled" ? { run: async () => {} } : null;
+      return prompt === "/handled"
+        ? {
+            run: async () => {
+              acceptanceOrder.push("run");
+            },
+          }
+        : null;
     }
   }
   const client = new (class extends TestAgentClient {
@@ -12299,12 +12306,22 @@ test("tryRunOutOfBand gives providers the command another agent sent, not its en
 
   try {
     const fromAgent = prepareAgentMessage("/handled", { kind: "agent-message", agentId: "sender" });
-    expect(await manager.tryRunOutOfBand(agent.id, fromAgent.prompt)).toBe(true);
+    expect(
+      await manager.tryRunOutOfBand(agent.id, fromAgent.prompt, undefined, () => {
+        acceptanceOrder.push("accepted");
+      }),
+    ).toBe(true);
+    await vi.waitFor(() => expect(acceptanceOrder).toEqual(["accepted", "run"]));
     expect(seenPrompts).toEqual(["/handled"]);
 
     // A human who pastes an envelope gets it quoted, and it stays a plain prompt.
     const pasted = prepareAgentMessage(String(fromAgent.prompt));
-    expect(await manager.tryRunOutOfBand(agent.id, pasted.prompt)).toBe(false);
+    expect(
+      await manager.tryRunOutOfBand(agent.id, pasted.prompt, undefined, () => {
+        acceptanceOrder.push("unexpected");
+      }),
+    ).toBe(false);
+    expect(acceptanceOrder).toEqual(["accepted", "run"]);
     expect(seenPrompts.at(-1)).toBe(pasted.prompt);
   } finally {
     await manager.closeAgent(agent.id);

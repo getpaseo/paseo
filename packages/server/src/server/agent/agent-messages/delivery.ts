@@ -42,6 +42,7 @@ interface Dependencies {
   hasPendingPermission?: (recipientId: string) => boolean;
   /** Notify when recipient state changes; admission still checks whether it is idle. */
   subscribe?: (listener: (recipientId: string) => void) => () => void;
+  tryRunOutOfBand?(request: DispatchRequest, onAccepted: () => void): Promise<boolean>;
   dispatch(request: DispatchRequest): Promise<PromptDispatchDisposition>;
   onError(error: unknown, request: DispatchRequest): void;
   /** Return a cancellation function. Production uses the daemon's event loop. */
@@ -72,7 +73,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   let closed = false;
   let closing: Promise<void> | undefined;
 
-  function dispatch(recipientId: string, messages: Admitted[]): void {
+  function requestFor(recipientId: string, messages: Admitted[]): DispatchRequest {
     const prompts = messages.map(
       (message) =>
         prepareAgentMessage(message.prompt, message.source, message.receipt.messageId).prompt,
@@ -82,7 +83,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       : prompts.flatMap((entry): AgentPromptContentBlock[] =>
           typeof entry === "string" ? [{ type: "text", text: entry }] : entry,
         );
-    const request: DispatchRequest = {
+    return {
       recipientId,
       idleOnly: !closed && messages[0]!.activeTurnBehavior !== "interrupt",
       messageIds: messages.map((message) => message.receipt.messageId),
@@ -92,39 +93,45 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       clearPendingPermissions: messages.some((message) => message.clearPendingPermissions),
       unarchive: messages.some((message) => message.unarchive !== false),
     };
-    const previous = dispatching.get(recipientId) ?? Promise.resolve();
-    const dispatched = previous
-      .catch(() => undefined)
-      .then(async () => {
+  }
+
+  function dispatch(recipientId: string, messages: Admitted[]): void {
+    const request = requestFor(recipientId, messages);
+    queueDispatch(recipientId, async () => {
+      try {
+        for (const message of messages) message.beforeDispatch?.();
+        let disposition: PromptDispatchDisposition;
         try {
-          for (const message of messages) message.beforeDispatch?.();
-          let disposition: PromptDispatchDisposition;
-          try {
-            disposition = await dependencies.dispatch(request);
-          } catch (error) {
-            if (!(error instanceof AgentTurnBusyError) || !closed) throw error;
-            // Shutdown drains admitted messages before closing the recipients.
-            disposition = await dependencies.dispatch({ ...request, idleOnly: false });
-          }
-          for (const message of messages) {
-            try {
-              message.onDispatch?.(disposition);
-            } catch (error) {
-              dependencies.onError(error, request);
-            }
-            message.resolve(disposition);
-          }
-          return undefined;
+          disposition = await dependencies.dispatch(request);
         } catch (error) {
-          if (error instanceof AgentTurnBusyError && !closed) {
-            requeue(recipientId, messages);
-            return;
-          }
-          for (const message of messages) message.reject(error);
-          dependencies.onError(error, request);
-          throw error;
+          if (!(error instanceof AgentTurnBusyError) || !closed) throw error;
+          // Shutdown drains admitted messages before closing the recipients.
+          disposition = await dependencies.dispatch({ ...request, idleOnly: false });
         }
-      });
+        for (const message of messages) {
+          try {
+            message.onDispatch?.(disposition);
+          } catch (error) {
+            dependencies.onError(error, request);
+          }
+          message.resolve(disposition);
+        }
+        return undefined;
+      } catch (error) {
+        if (error instanceof AgentTurnBusyError && !closed) {
+          requeue(recipientId, messages);
+          return;
+        }
+        for (const message of messages) message.reject(error);
+        dependencies.onError(error, request);
+        throw error;
+      }
+    });
+  }
+
+  function queueDispatch(recipientId: string, operation: () => Promise<void>): void {
+    const previous = dispatching.get(recipientId) ?? Promise.resolve();
+    const dispatched = previous.catch(() => undefined).then(operation);
     dispatching.set(recipientId, dispatched);
     void dispatched
       .finally(() => {
@@ -159,7 +166,10 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         (message) => message.activeTurnBehavior !== "interrupt",
       );
       if (interrupts.length) dispatchGroups(recipientId, interrupts);
-      if (entry.messages.length) {
+      if (entry.messages.length && dependencies.tryRunOutOfBand) {
+        pending.delete(recipientId);
+        offerOutOfBand(recipientId, entry.messages);
+      } else if (entry.messages.length) {
         entry.cancel = schedule(2000, () => flush(recipientId));
       } else {
         pending.delete(recipientId);
@@ -168,6 +178,40 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     }
     pending.delete(recipientId);
     dispatchGroups(recipientId, entry.messages);
+  }
+
+  function offerOutOfBand(recipientId: string, messages: Admitted[]): void {
+    queueDispatch(recipientId, async () => {
+      const waiting: Admitted[] = [];
+      for (const message of messages) {
+        if (closed || !dependencies.isRunning?.(recipientId)) {
+          waiting.push(message);
+          continue;
+        }
+        const request = requestFor(recipientId, [message]);
+        try {
+          const accepted = await dependencies.tryRunOutOfBand!(request, () =>
+            message.beforeDispatch?.(),
+          );
+          if (!accepted) {
+            waiting.push(message);
+            continue;
+          }
+          try {
+            message.onDispatch?.("out_of_band");
+          } catch (error) {
+            dependencies.onError(error, request);
+          }
+          message.resolve("out_of_band");
+        } catch (error) {
+          message.reject(error);
+          dependencies.onError(error, request);
+        }
+      }
+      if (waiting.length) requeue(recipientId, waiting);
+      if (closed || (pending.get(recipientId)?.ready && !dependencies.isRunning?.(recipientId)))
+        flush(recipientId);
+    });
   }
 
   function dispatchGroups(recipientId: string, messages: Admitted[]): void {
@@ -277,7 +321,9 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       unsubscribe?.();
       for (const recipientId of pending.keys()) flush(recipientId);
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
-      closing = Promise.allSettled(dispatching.values()).then(() => undefined);
+      closing = Promise.allSettled(
+        [...receipts.values()].flatMap((owned) => [...owned].map((receipt) => receipt.dispatched)),
+      ).then(() => undefined);
       return closing;
     },
   };

@@ -728,6 +728,13 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
+      tryRunOutOfBand: (request, onAccepted) =>
+        agentManager.tryRunOutOfBand(
+          request.recipientId,
+          request.prompt,
+          { clientMessageId: request.messageIds[0] },
+          onAccepted,
+        ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
       hasPendingPermission: (agentId) => agentManager.hasPendingPermissions(agentId),
       subscribe: (notify) =>

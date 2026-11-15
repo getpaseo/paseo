@@ -656,3 +656,117 @@ test("a busy admission retry stays ready for the next settled-turn event", async
   expect(sent).toEqual(["parent"]);
   await delivery.close();
 });
+
+test("out-of-band acceptance owns callbacks and receipts; a failed attempt does not block waiting messages", async () => {
+  const clock = createClock();
+  let running = true;
+  let wake!: (recipientId: string) => void;
+  const callbacks: string[] = [];
+  const sent: string[] = [];
+  const errors: unknown[] = [];
+  const failure = new Error("recipient could not load");
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      wake = listener;
+      return () => {};
+    },
+    tryRunOutOfBand: async (request, onAccepted) => {
+      const text = parseAgentMessages(String(request.prompt))[0]!.text;
+      if (text === "failure") throw failure;
+      if (text !== "/handled") return false;
+      onAccepted();
+      callbacks.push("command ran");
+      return true;
+    },
+    dispatch: async (request) => {
+      sent.push(...parseAgentMessages(String(request.prompt)).map((message) => message.text));
+      return "turn_started";
+    },
+    onError: (error) => {
+      errors.push(error);
+    },
+  });
+  const message = {
+    recipientId: "parent",
+    source: { kind: "agent-message" as const, agentId: "child" },
+  };
+  const ordinary = delivery.enqueue({
+    ...message,
+    prompt: "ordinary",
+    beforeDispatch: () => {
+      callbacks.push("ordinary");
+    },
+  });
+  const failed = delivery.enqueue({
+    ...message,
+    prompt: "failure",
+    beforeDispatch: () => {
+      callbacks.push("failure");
+    },
+  });
+  const command = delivery.enqueue({
+    ...message,
+    prompt: "/handled",
+    beforeDispatch: () => {
+      callbacks.push("command accepted");
+    },
+    onDispatch: (disposition) => {
+      callbacks.push(disposition);
+    },
+  });
+  clock.advance(2000);
+  await expect(failed.dispatched).rejects.toBe(failure);
+  await expect(command.dispatched).resolves.toBe("out_of_band");
+  expect(errors).toEqual([failure]);
+  expect(callbacks).toEqual(["command accepted", "command ran", "out_of_band"]);
+  expect(sent).toEqual([]);
+  running = false;
+  wake("parent");
+  await ordinary.dispatched;
+  expect(callbacks.at(-1)).toBe("ordinary");
+  expect(sent).toEqual(["ordinary"]);
+  await delivery.close();
+});
+
+test("shutdown waits for an in-flight out-of-band attempt and drains its unhandled message", async () => {
+  const clock = createClock();
+  let release!: () => void;
+  let attempted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    attempted = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const dispatched: boolean[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => true,
+    tryRunOutOfBand: async () => {
+      attempted();
+      await gate;
+      return false;
+    },
+    dispatch: async (request) => {
+      dispatched.push(request.idleOnly);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const receipt = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "ordinary",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  await started;
+  const closing = delivery.close();
+  release();
+  await closing;
+  await expect(receipt.dispatched).resolves.toBe("turn_started");
+  expect(dispatched).toEqual([false]);
+});

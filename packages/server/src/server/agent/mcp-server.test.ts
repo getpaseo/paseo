@@ -885,8 +885,9 @@ function createPaseoWorktreeForMcpTest(options: {
 async function createAgentMcpServer(
   options: Parameters<typeof createAgentMcpServerWithDependencies>[0],
   subscriptionStore?: FinishSubscriptionStore,
+  schedule?: (delayMs: number, callback: () => void) => () => void,
 ) {
-  const messages = createTestAgentMessages(options);
+  const messages = createTestAgentMessages({ ...options, schedule });
   const records = new Map<string, FinishSubscription>();
   const subscriptions = createFinishSubscriptions({
     store: subscriptionStore ?? {
@@ -4493,7 +4494,7 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
 
-  async function setupOmpChild() {
+  async function setupOmpChild(schedule?: (delayMs: number, callback: () => void) => () => void) {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-omp-child-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);
     const parentClient = new HeldTurnAgentClient("claude", false);
@@ -4521,13 +4522,17 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
       undefined,
       { workspaceId: "wks_parent" },
     );
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage: storage,
-      callerAgentId: parent.id,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      logger,
-    });
+    const server = await createAgentMcpServer(
+      {
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      },
+      undefined,
+      schedule,
+    );
     return {
       agentManager,
       storage,
@@ -4557,18 +4562,32 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
     { command: "follow-up", streamingBehavior: "followUp" },
     { command: "steer", streamingBehavior: "steer" },
   ] as const)(
-    "queues /$command until the turn OMP started on its own ends",
+    "delivers /$command to a running OMP child while ordinary messages in the same quiet window wait",
     async ({ command, streamingBehavior }) => {
-      const { agentManager, storage, workdir, parentClient, ompSession, childId, tool } =
-        await setupOmpChild();
+      let flush!: () => void;
+      const { agentManager, storage, workdir, ompSession, childId, tool } = await setupOmpChild(
+        (_delay, callback) => {
+          flush = callback;
+          return () => {};
+        },
+      );
       try {
         ompSession.beginTurn();
         ompSession.streamAssistantText("background job finished, working on it");
         await vi.waitFor(() => {
           expect(agentManager.getAgent(childId)?.activeTurnId).toMatch(/^autonomous-/);
         });
-
-        const commandStarted = ompSession.nextPrompt();
+        const activeTurnId = agentManager.getAgent(childId)?.activeTurnId;
+        const delivery = toolDeliveries.get(tool)!;
+        let ordinaryBeforeDispatch = 0;
+        const ordinary = delivery.enqueue({
+          recipientId: childId,
+          source: { kind: "agent-message", agentId: "parent" },
+          prompt: "ordinary follow-up",
+          beforeDispatch: () => {
+            ordinaryBeforeDispatch++;
+          },
+        });
         const response = await invokeToolWithParsedInput(
           tool,
           {
@@ -4577,29 +4596,29 @@ describe("send_agent_prompt MCP tool to an OMP child", () => {
           },
           false,
         );
-        expect(ompSession.prompts).toEqual([]);
-        expect(ompSession.abortRequested).toBe(false);
-        ompSession.finishTurn();
-        await commandStarted;
-        ompSession.beginTurn();
-        ompSession.streamAssistantText("Summarizing the logs");
-        await toolDeliveries.get(tool)!.waitForDispatch(childId, new AbortController().signal);
-
-        expect(response.structuredContent).toMatchObject({
-          success: true,
-          deliveryStatus: "queued",
-          status: "running",
-        });
+        flush();
         await vi.waitFor(() => {
           expect(ompSession.prompts).toEqual([
             { message: "then summarize the logs", imageCount: 0, streamingBehavior },
           ]);
         });
+        expect(ordinaryBeforeDispatch).toBe(0);
+        expect(agentManager.getAgent(childId)?.activeTurnId).toBe(activeTurnId);
+        expect(response.structuredContent).toMatchObject({
+          success: true,
+          deliveryStatus: "queued",
+          status: "running",
+        });
         expect(ompSession.abortRequested).toBe(false);
         expect(agentManager.getAgent(childId)?.lifecycle).toBe("running");
 
         ompSession.finishTurn();
-        await expectOneFinishNotification(agentManager, parentClient, childId);
+        await ordinary.dispatched;
+        expect(ordinaryBeforeDispatch).toBe(1);
+        expect(ompSession.prompts).toHaveLength(2);
+        expect(ompSession.prompts[1]!.message).toContain("ordinary follow-up");
+        ompSession.beginTurn();
+        ompSession.finishTurn();
       } finally {
         await removeAgentStateDir(agentManager, storage, workdir);
       }
