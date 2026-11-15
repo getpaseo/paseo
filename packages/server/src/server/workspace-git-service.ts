@@ -1198,13 +1198,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const facts = input.context?.facts;
     let key = input.cwd;
     if (facts?.isGit) key = facts.gitCommonDir ?? facts.worktreeRoot;
+    const run = input.context?.runGitCommand ?? this.deps.runGitCommand;
+    const gitContextArgs: string[] = [];
+    if (facts?.isGit && facts.gitCommonDir) {
+      gitContextArgs.push("--git-dir", facts.gitCommonDir, "--work-tree", facts.worktreeRoot);
+    }
+    // Explicit Git context preserves shared config while safety checks use the checkout.
+    const repositoryContext: CheckoutContext = {
+      ...input.context,
+      runGitCommand: (args, options) => run([...gitContextArgs, ...args], options),
+    };
     const result = await this.readAuxiliaryCache(
       this.defaultBranchRefCache,
       key,
       undefined,
       async () => ({
-        // Resolve in the cached repository scope, not a caller's worktree-local config.
-        ref: await resolveRepositoryDefaultBranchRef({ ...input, cwd: key }),
+        ref: await resolveRepositoryDefaultBranchRef({ ...input, context: repositoryContext }),
       }),
     );
     return result.ref;

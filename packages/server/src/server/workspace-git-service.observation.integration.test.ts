@@ -1,5 +1,6 @@
 import { flushGitCommandTrace } from "../utils/git-command-trace.js";
 import {
+  runGitCommand as runRealGitCommand,
   runWithGitCommandPriority,
   startGitCommandMetrics,
   stopGitCommandMetrics,
@@ -1853,3 +1854,76 @@ test("default branch ref cache invalidates when fetch snapshots consume prune ev
     )
     .toBe("refs/heads/main");
 }, 30_000);
+
+test.each([
+  { bare: false, differentOwner: false },
+  { bare: false, differentOwner: true },
+  { bare: true, differentOwner: false },
+  { bare: true, differentOwner: true },
+])(
+  "default branch ref uses explicit Git context under safe repository policies (bare: $bare, different owner: $differentOwner)",
+  async ({ bare, differentOwner }) => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-safe-")));
+    let repo = path.join(root, "repo");
+    const worktree = path.join(root, "worktree");
+    const globalConfig = path.join(root, "global.gitconfig");
+    mkdirSync(repo);
+    function git(...args: string[]) {
+      return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+        cwd: repo,
+        stdio: "pipe",
+      });
+    }
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    git("commit", "--allow-empty", "-m", "base");
+    if (bare) {
+      const bareRepo = path.join(root, "bare.git");
+      const mainCheckout = path.join(root, "main");
+      git("clone", "--bare", repo, bareRepo);
+      git("--git-dir", bareRepo, "worktree", "add", mainCheckout, "main");
+      repo = mainCheckout;
+    }
+    const nested = path.join(repo, "packages", "nested");
+    git("worktree", "add", "-b", "feature/agent", worktree);
+    mkdirSync(nested, { recursive: true });
+    git("config", "--file", globalConfig, "safe.bareRepository", "explicit");
+    for (const checkout of [repo, worktree])
+      git("config", "--file", globalConfig, "--add", "safe.directory", checkout);
+    cleanup.push(async () => {
+      rmSync(root, { recursive: true, force: true });
+    });
+    for (const checkouts of [
+      [nested, worktree],
+      [worktree, nested],
+    ]) {
+      const service = new WorkspaceGitServiceImpl({
+        logger: pino({ enabled: false }),
+        paseoHome: path.join(root, "home"),
+        deps: {
+          async getCheckoutStatus(cwd, context) {
+            return readCheckoutStatus(cwd, {
+              ...context,
+              runGitCommand: (args, options) =>
+                runRealGitCommand(args, {
+                  ...options,
+                  envOverlay: {
+                    ...options.envOverlay,
+                    GIT_CONFIG_GLOBAL: globalConfig,
+                    GIT_TEST_ASSUME_DIFFERENT_OWNER: String(Number(differentOwner)),
+                  },
+                }),
+            });
+          },
+        },
+      });
+      cleanup.push(() => service.dispose());
+      for (const cwd of checkouts) {
+        const snapshot = await service.getSnapshot(cwd, { includeForge: false });
+        expect(snapshot.git.defaultBranchRef).toBe("refs/heads/main");
+      }
+    }
+  },
+  30_000,
+);
