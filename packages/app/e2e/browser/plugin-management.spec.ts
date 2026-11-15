@@ -885,10 +885,11 @@ test("keeps Reload pending past a minute while the plugin queue is busy", async 
   // Observe before the app loads: its daemon socket comes up with the page.
   const reload = observePluginReload(page);
   await gotoAppShell(page);
-  await openPluginSettings(page);
   // Plugins on is a precondition here, not the subject: set it through the daemon.
   await client.patchDaemonConfig({ pluginsEnabled: true });
   await client.installPluginSource({ source: pluginDirectory });
+  // Installed before Plugins opens, so it opens on the Installed tab.
+  await openPluginSettings(page);
   await expectPluginOn(page, "e2e-plugin");
   await openPluginPage(page, "e2e-plugin");
 
