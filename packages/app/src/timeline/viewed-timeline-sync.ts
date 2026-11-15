@@ -742,7 +742,10 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         await fetchUntilCurrent(
           agentId,
           generation,
-          planTimelineCatchUpAfter(page.endCursor),
+          planTimelineCatchUpPastApplied(
+            planTimelineCatchUpAfter(page.endCursor),
+            ports.readCursor(agentId),
+          ),
           false,
         );
         return;
