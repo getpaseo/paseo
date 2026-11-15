@@ -13,6 +13,8 @@ import {
 } from "~/components/mockup";
 
 const IN_VIEW = { once: true, amount: 0.6 };
+/** The space left between the top or bottom of the window and the pills or the mockup. */
+const PAGE_MARGIN = 16;
 const PILL_TRANSITION = { duration: 0.34, ease: [0.22, 0.61, 0.36, 1] as const };
 
 export function HeroMockup() {
@@ -28,7 +30,10 @@ export function HeroMockup() {
   const reduceMotion = useReducedMotion();
   const onScreen = useInView(mockup, IN_VIEW);
   const ready = onScreen || reduceMotion === true;
-  useEffect(() => (ready ? player.start() : undefined), [ready, player]);
+  useEffect(() => {
+    if (ready) player.start();
+  }, [ready, player]);
+  useEffect(() => player.stop, [player]);
 
   // The pills can sit above a mockup that is partly below the fold, most of all on a phone.
   // Picking a scene brings the pills and the mockup on screen together. A window too short for
@@ -36,16 +41,13 @@ export function HeroMockup() {
   const select = useCallback(
     (scene: MockupStateId) => {
       player.select(scene);
-      frame.current?.scrollIntoView({
-        block: "nearest",
-        behavior: reduceMotion ? "auto" : "smooth",
-      });
+      if (frame.current) scrollOnScreen(frame.current, reduceMotion ? "auto" : "smooth");
     },
     [player, reduceMotion],
   );
 
   return (
-    <div ref={frame} className="scroll-my-4">
+    <div ref={frame}>
       <div className="mb-4 flex flex-wrap items-center justify-center gap-1 sm:gap-2">
         {MOCKUP_STATES.map((option) => (
           <StatePill
@@ -71,6 +73,19 @@ export function HeroMockup() {
       </div>
     </div>
   );
+}
+
+/**
+ * Scrolls the least that shows all of an element, and never past the point where its top edge is
+ * at the top of the window. The browser's own `scrollIntoView` with `nearest` leaves that choice to
+ * each engine when the element is taller than the window.
+ */
+function scrollOnScreen(element: HTMLElement, behavior: ScrollBehavior) {
+  const { top, bottom } = element.getBoundingClientRect();
+  const aboveWindow = top - PAGE_MARGIN;
+  const belowWindow = bottom + PAGE_MARGIN - window.innerHeight;
+  const distance = aboveWindow < 0 ? aboveWindow : Math.min(Math.max(belowWindow, 0), aboveWindow);
+  if (distance !== 0) window.scrollBy({ top: distance, behavior });
 }
 
 function StatePill({

@@ -11,17 +11,34 @@ export interface ScenePlayer {
   elapsed(scene: MockupStateId): number;
   /** Shows a scene and plays its script from the start. */
   select(scene: MockupStateId): void;
-  /** Plays the current scene from the start. Returns a function that stops the clock. */
-  start(): () => void;
+  /**
+   * Plays the opening scene from the start, unless a scene has played already. A pill click can
+   * come before the page decides to start, and that scene keeps its place.
+   */
+  start(): void;
+  /** Stops the clock. A scene that is playing holds its last frame. */
+  stop(): void;
   subscribe(listener: () => void): () => void;
 }
 
 // A background tab stops animation frames. On return the script resumes where it paused.
 const LONGEST_FRAME_MS = 64;
 
-function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** What the player needs from the page to keep time. Tests pass a clock they turn by hand. */
+export interface Frames {
+  now(): number;
+  request(callback: (now: number) => void): number;
+  cancel(id: number): void;
+  reducedMotion(): boolean;
 }
+
+const browserFrames: Frames = {
+  now: () => performance.now(),
+  request: (callback) => requestAnimationFrame(callback),
+  cancel: (id) => cancelAnimationFrame(id),
+  // Visitors who ask for reduced motion get the finished scene.
+  reducedMotion: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+};
 
 /**
  * @param durations How long each scene's script runs. A scene without a script has no entry and is
@@ -30,19 +47,21 @@ function prefersReducedMotion(): boolean {
 export function createScenePlayer(
   initial: MockupStateId,
   durations: Partial<Record<MockupStateId, number>>,
+  frames: Frames = browserFrames,
 ): ScenePlayer {
   let scene = initial;
   const times = new Map<MockupStateId, number>();
   const listeners = new Set<() => void>();
   let frame = 0;
   let lastFrameAt = 0;
+  let played = false;
 
   function emit() {
     for (const listener of listeners) listener();
   }
 
   function stop() {
-    if (frame) cancelAnimationFrame(frame);
+    if (frame) frames.cancel(frame);
     frame = 0;
   }
 
@@ -54,19 +73,19 @@ export function createScenePlayer(
     );
     lastFrameAt = now;
     times.set(scene, next);
-    frame = next < end ? requestAnimationFrame(tick) : 0;
+    frame = next < end ? frames.request(tick) : 0;
     emit();
   }
 
   function play() {
+    played = true;
     stop();
     const end = durations[scene] ?? 0;
-    // Visitors who ask for reduced motion get the finished scene.
-    const animated = end > 0 && !prefersReducedMotion();
+    const animated = end > 0 && !frames.reducedMotion();
     times.set(scene, animated ? 0 : end);
     if (animated) {
-      lastFrameAt = performance.now();
-      frame = requestAnimationFrame(tick);
+      lastFrameAt = frames.now();
+      frame = frames.request(tick);
     }
     emit();
   }
@@ -79,9 +98,9 @@ export function createScenePlayer(
       play();
     },
     start() {
-      play();
-      return stop;
+      if (!played) play();
     },
+    stop,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
