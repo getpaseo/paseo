@@ -2939,6 +2939,9 @@ describe("Codex app-server provider", () => {
       const session = new CodexAppServerAgentSession(
         createConfig({
           cwd: "/workspace/project",
+          systemPrompt: "Agent instructions",
+          daemonAppendSystemPrompt: "Daemon instructions",
+          pluginAppendSystemPrompt: ["Plugin instructions"],
           mcpServers: {
             paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
           },
@@ -2970,6 +2973,10 @@ describe("Codex app-server provider", () => {
 
       await session.revertConversation({ messageId: "codex-first" });
 
+      const forkRequest = appServer.requests().find((request) => request.method === "thread/fork");
+      expect(forkRequest?.params).toMatchObject({
+        developerInstructions: "Agent instructions\n\nDaemon instructions\n\nPlugin instructions",
+      });
       const forkConfigs = appServer
         .requests()
         .filter((request) => request.method === "thread/fork")
