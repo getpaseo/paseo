@@ -261,3 +261,39 @@ describe("capped tool scrolling", () => {
     },
   );
 });
+
+function renderCopyOutput() {
+  return <button type="button">Copy output</button>;
+}
+
+describe("tool detail interaction", () => {
+  it("keeps detail controls in the tab order and reports detail hover", async () => {
+    function Badge() {
+      const [expanded, setExpanded] = React.useState(true);
+      const [hovered, setHovered] = React.useState(false);
+      const toggle = React.useCallback(() => setExpanded(!expanded), [expanded]);
+      return (
+        <>
+          <ExpandableBadge
+            label="Probe"
+            isExpanded={expanded}
+            onToggle={toggle}
+            onDetailHoverChange={setHovered}
+            renderDetails={renderCopyOutput}
+          />
+          <output aria-label="Detail hover">{hovered ? "hovered" : "outside"}</output>
+        </>
+      );
+    }
+    act(() => root.render(<Badge />));
+    const header = view().getByRole("button", { name: "Probe" });
+    act(() => header.focus());
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement).toBe(view().getByRole("button", { name: "Copy output" }));
+
+    await page.getByRole("button", { name: "Copy output" }).hover();
+    expect(view().getByLabelText("Detail hover").textContent).toBe("hovered");
+    await page.getByRole("button", { name: "Probe" }).hover();
+    expect(view().getByLabelText("Detail hover").textContent).toBe("outside");
+  });
+});

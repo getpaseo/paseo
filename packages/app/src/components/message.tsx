@@ -1913,9 +1913,14 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   }, []);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
-  const handleDetailHoverIn = useCallback(() => onDetailHoverChange?.(true), [onDetailHoverChange]);
-  const handleDetailHoverOut = useCallback(
-    () => onDetailHoverChange?.(false),
+  const detailHoverHandlers = useMemo(
+    () =>
+      isWeb
+        ? {
+            onPointerEnter: () => onDetailHoverChange?.(true),
+            onPointerLeave: () => onDetailHoverChange?.(false),
+          }
+        : {},
     [onDetailHoverChange],
   );
   const handleOpenFilePress = useCallback(
@@ -2207,14 +2212,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         ) : null}
       </View>
       {detailContent ? (
-        <Pressable
-          ref={detailWrapperRef}
-          style={detailWrapperStyle}
-          onHoverIn={handleDetailHoverIn}
-          onHoverOut={handleDetailHoverOut}
-        >
+        <View ref={detailWrapperRef} style={detailWrapperStyle} {...detailHoverHandlers}>
           {detailContent}
-        </Pressable>
+        </View>
       ) : null}
     </View>
   );
