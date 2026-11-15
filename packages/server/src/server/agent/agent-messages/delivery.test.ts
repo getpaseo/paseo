@@ -455,15 +455,25 @@ test("shutdown flushes a dispatch that discovered a concurrent turn during prepa
   expect(modes).toEqual([true, false]);
 });
 
-test("busy retries retain admission order across conflicting session modes", async () => {
+test("conflicting modes dispatch on separate turn ends without changing the active turn mode", async () => {
   const clock = createClock();
-  let busy = true;
+  let busy = false;
+  let mode = "initial";
+  let wake!: (recipientId: string) => void;
   const sent: Array<{ ids: readonly string[]; mode?: string }> = [];
   const delivery = createAgentMessageDelivery({
     schedule: clock.schedule,
+    isRunning: () => busy,
+    subscribe: (listener) => {
+      wake = listener;
+      return () => {};
+    },
     dispatch: async (request) => {
+      // Mode preparation precedes run admission in the real dispatcher.
+      mode = request.sessionMode ?? mode;
       if (busy) throw new AgentTurnBusyError("concurrent turn");
-      sent.push({ ids: request.messageIds, mode: request.sessionMode });
+      sent.push({ ids: request.messageIds, mode });
+      busy = true;
       return "turn_started";
     },
     onError: (error) => {
@@ -478,10 +488,14 @@ test("busy retries retain admission order across conflicting session modes", asy
   const a = delivery.enqueue({ ...message, messageId: "A", sessionMode: "plan" });
   const b = delivery.enqueue({ ...message, messageId: "B", sessionMode: "default" });
   clock.advance(2000);
+  await a.dispatched;
   await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(mode).toBe("plan");
+  expect(sent).toEqual([{ ids: ["A"], mode: "plan" }]);
   busy = false;
-  clock.advance(2000);
-  await Promise.all([a.dispatched, b.dispatched]);
+  wake("parent");
+  await b.dispatched;
+  expect(mode).toBe("default");
   expect(sent).toEqual([
     { ids: ["A"], mode: "plan" },
     { ids: ["B"], mode: "default" },

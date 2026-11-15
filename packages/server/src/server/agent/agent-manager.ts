@@ -3128,11 +3128,7 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
-      const { sessionMode, ...providerOptions } = options ?? {};
-      if (sessionMode) await this.setAgentMode(agentId, sessionMode);
-      if (pendingRun.settled)
-        throw new Error(`Agent ${agentId} run was canceled before its turn started`);
-      const result = await agent.session.startTurn(prompt, sessionMode ? providerOptions : options);
+      const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }

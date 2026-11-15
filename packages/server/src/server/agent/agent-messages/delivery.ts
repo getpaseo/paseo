@@ -117,16 +117,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           return undefined;
         } catch (error) {
           if (error instanceof AgentTurnBusyError && !closed) {
-            const entry = pending.get(recipientId) ?? {
-              messages: [],
-              ready: true,
-              cancel: () => {},
-            };
-            entry.cancel();
-            entry.messages.push(...messages);
-            entry.messages.sort((a, b) => a.sequence - b.sequence);
-            entry.cancel = schedule(2000, () => flush(recipientId));
-            pending.set(recipientId, entry);
+            requeue(recipientId, messages);
             return;
           }
           for (const message of messages) message.reject(error);
@@ -140,6 +131,19 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         if (dispatching.get(recipientId) === dispatched) dispatching.delete(recipientId);
       })
       .catch(() => undefined);
+  }
+
+  function requeue(recipientId: string, messages: Admitted[]): void {
+    const entry = pending.get(recipientId) ?? {
+      messages: [],
+      ready: true,
+      cancel: () => {},
+    };
+    entry.cancel();
+    entry.messages.push(...messages);
+    entry.messages.sort((a, b) => a.sequence - b.sequence);
+    entry.cancel = schedule(2000, () => flush(recipientId));
+    pending.set(recipientId, entry);
   }
 
   function flush(recipientId: string): void {
@@ -167,6 +171,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   function dispatchGroups(recipientId: string, messages: Admitted[]): void {
+    const groups: Admitted[][] = [];
     let group: Admitted[] = [];
     let mode: string | undefined;
     for (const message of messages) {
@@ -176,14 +181,23 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         ((message.activeTurnBehavior ?? "steer") !== (group[0]!.activeTurnBehavior ?? "steer") ||
           (mode && message.sessionMode && mode !== message.sessionMode))
       ) {
-        dispatch(recipientId, group);
+        groups.push(group);
         group = [];
         mode = undefined;
       }
       group.push(message);
       mode ??= message.sessionMode;
     }
-    if (group.length) dispatch(recipientId, group);
+    if (group.length) groups.push(group);
+    let started = false;
+    for (const batch of groups) {
+      if (!closed && started && batch[0]!.activeTurnBehavior !== "interrupt") {
+        requeue(recipientId, batch);
+      } else {
+        dispatch(recipientId, batch);
+        started = true;
+      }
+    }
   }
 
   const unsubscribe = dependencies.subscribe?.((recipientId) => {
