@@ -335,15 +335,21 @@ describe("IsolatedBottomSheetModal content drag", () => {
   );
 });
 
-// Exercise the library boundary as well as the modal props: nested refs used to be silently dropped.
-import BottomSheetDraggableView from "@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView";
-import { BottomSheetInternalContext } from "@gorhom/bottom-sheet/src/contexts/internal";
-import {
-  BottomSheetDraggableContext,
-  BottomSheetGestureHandlersContext,
-} from "@gorhom/bottom-sheet/src/contexts/gesture";
-import { Gesture } from "react-native-gesture-handler";
-import { extractGestureRelations } from "react-native-gesture-handler/src/handlers/gestures/GestureDetector/utils";
+// Load the real vendored implementations at runtime without typechecking Gorhom's entire source
+// tree (its hooks barrel reaches upstream files that don't compile under the app's TS settings).
+const gorhomSource = "@gorhom/bottom-sheet/src";
+const { default: BottomSheetDraggableView } = await import(
+  `${gorhomSource}/components/bottomSheetDraggableView/BottomSheetDraggableView`
+);
+const { BottomSheetInternalContext } = await import(`${gorhomSource}/contexts/internal`);
+const { BottomSheetDraggableContext, BottomSheetGestureHandlersContext } = await import(
+  `${gorhomSource}/contexts/gesture`
+);
+const rnghSource = "react-native-gesture-handler/src";
+const { extractGestureRelations } = await import(
+  `${rnghSource}/handlers/gestures/GestureDetector/utils`
+);
+import { Gesture, type GestureType } from "react-native-gesture-handler";
 
 const noGestureWork = () => {};
 const gestureHandlerContext = {
@@ -365,7 +371,7 @@ function dragInternalContext(relations: SheetContentDragGesture | SheetContentDr
     enableContentPanningGesture: true,
     waitFor: relations,
     simultaneousHandlers: relations,
-  } as React.ContextType<typeof BottomSheetInternalContext>;
+  };
 }
 
 describe("bottom sheet native drag relations", () => {
@@ -381,7 +387,7 @@ describe("bottom sheet native drag relations", () => {
       let resolved: ReturnType<typeof extractGestureRelations> | undefined;
       const internal = dragInternalContext(relations);
       function Probe() {
-        const pan = useContext(BottomSheetDraggableContext);
+        const pan = useContext(BottomSheetDraggableContext) as GestureType | null;
         if (pan) resolved = extractGestureRelations(pan);
         return null;
       }

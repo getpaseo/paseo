@@ -196,6 +196,19 @@ index 8259637..eb057fe 100644
  export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
  export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
  export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
+diff --git a/node_modules/@gorhom/bottom-sheet/lib/typescript/components/bottomSheet/types.d.ts b/node_modules/@gorhom/bottom-sheet/lib/typescript/components/bottomSheet/types.d.ts
+index 6b23056..8d92aae 100644
+--- a/node_modules/@gorhom/bottom-sheet/lib/typescript/components/bottomSheet/types.d.ts
++++ b/node_modules/@gorhom/bottom-sheet/lib/typescript/components/bottomSheet/types.d.ts
+@@ -353,6 +353,6 @@ export type BottomSheetGestureProps = {
+ 
+   simultaneousHandlers: Parameters<
+     PanGesture['simultaneousWithExternalGesture']
+-  >[0];
+-  waitFor: Parameters<PanGesture['requireExternalGestureToFail']>[0];
++  >[0] | Parameters<PanGesture['simultaneousWithExternalGesture']>;
++  waitFor: Parameters<PanGesture['requireExternalGestureToFail']>[0] | Parameters<PanGesture['requireExternalGestureToFail']>;
+ };
 diff --git a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts b/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
 index ffc6caa..550f1b3 100644
 --- a/node_modules/@gorhom/bottom-sheet/lib/typescript/index.d.ts
@@ -209,8 +222,21 @@ index ffc6caa..550f1b3 100644
  export { useScrollEventsHandlersDefault } from './hooks/useScrollEventsHandlersDefault';
  export { useGestureEventsHandlersDefault } from './hooks/useGestureEventsHandlersDefault';
  export { useBottomSheetGestureHandlers } from './hooks/useBottomSheetGestureHandlers';
+diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/types.d.ts b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/types.d.ts
+index 6b23056..8d92aae 100644
+--- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/types.d.ts
++++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheet/types.d.ts
+@@ -353,6 +353,6 @@ export type BottomSheetGestureProps = {
+ 
+   simultaneousHandlers: Parameters<
+     PanGesture['simultaneousWithExternalGesture']
+-  >[0];
+-  waitFor: Parameters<PanGesture['requireExternalGestureToFail']>[0];
++  >[0] | Parameters<PanGesture['simultaneousWithExternalGesture']>;
++  waitFor: Parameters<PanGesture['requireExternalGestureToFail']>[0] | Parameters<PanGesture['requireExternalGestureToFail']>;
+ };
 diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView.tsx
-index 923e430..5f68852 100644
+index 923e430..eeef8cf 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView.tsx
 +++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView.tsx
 @@ -65,12 +65,12 @@ const BottomSheetDraggableViewComponent = ({
@@ -224,12 +250,12 @@ index 923e430..5f68852 100644
      if (simultaneousHandlers) {
        gesture = gesture.simultaneousWithExternalGesture(
 -        simultaneousHandlers as never
-+        ...simultaneousHandlers
++        ...(simultaneousHandlers as Parameters<typeof gesture.simultaneousWithExternalGesture>)
        );
      }
  
 diff --git a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetHandle/BottomSheetHandleContainer.tsx b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetHandle/BottomSheetHandleContainer.tsx
-index 0223843..c72196f 100644
+index 0223843..4ca56e5 100644
 --- a/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetHandle/BottomSheetHandleContainer.tsx
 +++ b/node_modules/@gorhom/bottom-sheet/src/components/bottomSheetHandle/BottomSheetHandleContainer.tsx
 @@ -67,12 +67,12 @@ function BottomSheetHandleContainerComponent({
@@ -243,7 +269,7 @@ index 0223843..c72196f 100644
      if (simultaneousHandlers) {
        gesture = gesture.simultaneousWithExternalGesture(
 -        simultaneousHandlers as never
-+        ...simultaneousHandlers
++        ...(simultaneousHandlers as Parameters<typeof gesture.simultaneousWithExternalGesture>)
        );
      }
  
