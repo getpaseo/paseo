@@ -66,6 +66,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
       throw new Error("Subscriptions are not used here");
     },
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

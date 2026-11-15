@@ -22,6 +22,7 @@ function installation(): InstalledPlugin {
     },
     cleanup: () => undefined,
     settingsScreens: [],
+    updateIndicators: [],
     surfaces: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },

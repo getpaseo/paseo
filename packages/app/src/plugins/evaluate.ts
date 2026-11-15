@@ -131,6 +131,7 @@ export function runPluginClientBundle(
   const collector: Omit<EvaluatedPlugin, "id" | "cleanup"> = {
     surfaces: [],
     settingsScreens: [],
+    updateIndicators: [],
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
@@ -251,6 +252,11 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addUpdateIndicator(Component) {
+      if (!isComponentType(Component)) throw new Error("Invalid update indicator component");
+      if (collector.updateIndicators.length) throw new Error("Duplicate update indicator");
+      return register(collector.updateIndicators, Component, () => undefined);
+    },
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
@@ -651,6 +657,7 @@ export function runPluginClientBundle(
     cleanup,
     surfaces: collector.surfaces,
     settingsScreens: collector.settingsScreens,
+    updateIndicators: collector.updateIndicators,
     sidebarViews: collector.sidebarViews,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
