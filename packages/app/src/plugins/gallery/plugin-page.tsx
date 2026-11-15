@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Image, ScrollView, Text, View } from "react-native";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { StyleSheet } from "react-native-unistyles";
-import type { PluginListItem } from "@getpaseo/protocol/messages";
+import type { PluginListItem, PluginUpdatePreview } from "@getpaseo/protocol/messages";
 import { formatPluginInstallation } from "@getpaseo/protocol/plugin-source-reference";
 import type {
   PluginListingIndex,
@@ -270,7 +270,7 @@ interface PluginPageModel {
   authorAvatar?: string;
   /** Why the plugin failed to load, or why its install failed. */
   error?: string;
-  /** Why the last update failed. The installed version keeps running. */
+  /** Why the last update failed, while the update is still offered. The installed version keeps running. */
   updateError?: string;
   /** The plugin's own settings screen, shown inline. */
   screenId?: string;
@@ -300,6 +300,7 @@ function usePluginPageModel({
   const installedPlugin = useInstalledPlugin(serverId, pluginId);
   const evaluationError = usePluginEvaluationError(serverId, pluginId);
   const pluginOperation = usePluginOperation(serverId, pluginId);
+  const updates = usePluginUpdates(serverId);
   const text = listing ? listingText(listing, i18n.language) : undefined;
   const requestedScreen = subject.kind === "installed" ? subject.screenId : undefined;
   return {
@@ -310,7 +311,7 @@ function usePluginPageModel({
       : installedMetaLine(plugin),
     authorAvatar: listing && listingAuthorAvatar(listing),
     error: plugin ? (evaluationError ?? plugin.error) : failedError(installOperation),
-    updateError: failedUpdateError(pluginOperation),
+    updateError: failedUpdateError(pluginOperation, updates.data, pluginId),
     screenId: plugin ? (requestedScreen ?? installedPlugin?.settingsScreens[0]?.id) : undefined,
     overview: detail && listingOverview(detail, i18n.language),
   };
@@ -341,8 +342,15 @@ function failedError(operation: PluginOperation | undefined): string | undefined
   return operation?.status === "failed" ? operation.error : undefined;
 }
 
-function failedUpdateError(operation: PluginOperation | undefined): string | undefined {
-  return operation?.kind === "update" ? failedError(operation) : undefined;
+/** Shown with the Update button it belongs to, as on the Installed tab's Updates row. */
+function failedUpdateError(
+  operation: PluginOperation | undefined,
+  updates: PluginUpdatePreview[] | undefined,
+  pluginId: string,
+): string | undefined {
+  if (operation?.kind !== "update" || !updates?.some((preview) => preview.id === pluginId))
+    return undefined;
+  return failedError(operation);
 }
 
 function HeaderControl({

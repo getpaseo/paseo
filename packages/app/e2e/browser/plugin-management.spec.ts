@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import overviewCorpus from "../../../protocol/tests/fixtures/plugin-overview.json";
 import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -678,21 +678,21 @@ async function updateGitPlugin(page: Page, repository: string) {
   await expectPluginOn(page, "git-e2e-plugin");
 }
 
-/** An update that fails on the plugin's page says why there. */
+/** An update that fails on the plugin's page says why there, and offers Retry. */
 async function failUpdateFromPluginPage(page: Page, repository: string) {
   await publishGitPluginChange(repository, "Git plugin v3");
   await page.reload();
   const update = page.getByTestId("plugin-update").filter({ visible: true });
   await expect(update).toHaveText("Update");
-  // The source disappears after the check, so applying the update cannot fetch it.
-  const moved = `${repository}-moved`;
-  await rename(repository, moved);
-  try {
-    await update.click();
-    await expect(page.getByText(/Could not read from remote repository/)).toBeVisible();
-  } finally {
-    await rename(moved, repository);
-  }
+  // Rewriting the commit the page checked leaves its update pointing at a commit the remote no
+  // longer serves. The next check offers the rewritten commit.
+  execFileSync("git", ["commit", "--amend", "-m", "Git plugin v3, amended"], {
+    cwd: repository,
+    stdio: "ignore",
+  });
+  await update.click();
+  await expect(update).toHaveText("Retry");
+  await expect(page.getByText(/Git command failed/)).toBeVisible();
 }
 
 async function expectCompactPluginMenuFits(page: Page, testInfo: TestInfo) {

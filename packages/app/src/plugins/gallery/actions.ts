@@ -7,6 +7,7 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { pluginDisplayName, pluginListQueryKey } from "@/plugins/plugin-list";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { pluginErrorText } from "./error-text";
+import { dismissFailedOperation } from "./operations";
 
 export type PluginAction = "enable" | "disable" | "reload" | "remove";
 
@@ -51,6 +52,8 @@ export function usePluginActions(serverId: string) {
       try {
         if (action === "remove") {
           await client.removePlugin(plugin.id);
+          // A failed update belonged to this installation, not to a later one with the same ID.
+          dismissFailedOperation(serverId, plugin.id);
           queryClient.setQueryData<PluginListItem[]>(pluginListQueryKey(serverId), (plugins) =>
             plugins?.filter((candidate) => candidate.id !== plugin.id),
           );
