@@ -35,7 +35,9 @@ Under **Subscribe to events**, select **Issue comment**, **Issues**, **Pull requ
 
 ## Connect repositories
 
-After Hub verifies the App, choose **Install on GitHub**. Select the account or organization and repositories the App may access.
+After Hub verifies the App, choose **Connect GitHub** and authorize on GitHub. If the App is already installed, Hub shows an account chooser. Choose **Connect** beside the account, or **Add another account** to install elsewhere. With no existing installations, Hub opens GitHub’s install page directly. Select the account or organization and repositories the App may access.
+
+Only an account owner can connect it. The App does not need the organization Members permission. Disconnecting in Hub leaves the App installed on GitHub; choose **Connect GitHub** again to reconnect through the chooser.
 
 Start from Hub rather than GitHub's own install button. The round trip binds the installation to the active Hub organization.
 

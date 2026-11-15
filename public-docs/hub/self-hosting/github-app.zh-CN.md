@@ -33,7 +33,9 @@ GitHub 会使用以下 Hub URL：
 
 ## 连接仓库 {#connect-repositories}
 
-Hub 验证 App 之后，选择 **Install on GitHub**。选择 App 可以访问的账号或组织以及仓库。
+Hub 验证 App 之后，选择 **Connect GitHub**，然后在 GitHub 上授权。如果 App 已安装，Hub 会显示账号选择器。选择账号旁的 **Connect**，或选择 **Add another account** 在其他账号上安装。如果没有现有安装，Hub 会直接打开 GitHub 安装页面。选择 App 可以访问的账号或组织以及仓库。
+
+只有账号所有者才能连接。App 不需要组织的 Members 权限。在 Hub 中断开连接不会卸载 GitHub 上的 App；再次选择 **Connect GitHub** 即可通过账号选择器重新连接。
 
 请从 Hub 发起安装，而不是使用 GitHub 自己的安装按钮。这一来一回会把安装绑定到当前的 Hub 组织。
 
