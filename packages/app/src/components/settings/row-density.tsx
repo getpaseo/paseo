@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { CONTROL_HEIGHTS, mapLayout, type ControlSize } from "@/components/ui/control-geometry";
-import { menuLabelInset } from "@/components/ui/menu";
+import { menuRowContentInset } from "@/components/ui/menu";
 
 import { settingsStyles } from "@/styles/settings";
 
@@ -76,6 +76,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
   },
   menuRow: {
-    paddingHorizontal: menuLabelInset(theme),
+    paddingHorizontal: menuRowContentInset(theme),
   },
 }));
