@@ -283,6 +283,92 @@ try {
       await daemon.stop();
     }
   }
+  // Test 10: archives an agent whose workspace no longer exists (omitted from agent ls)
+  {
+    console.log("Test 10: archives an agent whose workspace was deleted");
+    const orphanId = "9eac296c-4d60-4189-a0b5-ae71dd9c6ad9";
+    const dirs = await createTempDirs();
+    await writeFile(
+      join(dirs.paseoHome, "agents", `${orphanId}.json`),
+      JSON.stringify(
+        {
+          id: orphanId,
+          provider: "codex",
+          cwd: dirs.workDir,
+          workspaceId: "deleted-workspace-id",
+          createdAt: "2026-09-03T18:29:21.949Z",
+          updatedAt: "2026-09-03T18:29:21.949Z",
+          title: "orphaned agent",
+          labels: {},
+          lastStatus: "closed",
+        },
+        null,
+        2,
+      ),
+    );
+    const daemon = await startTestDaemon(dirs);
+    const host = `127.0.0.1:${daemon.port}`;
+    try {
+      const listed = await runPaseoCli(daemon, ["agent", "ls", "-ag", "--json", "--host", host]);
+      assert.strictEqual(listed.exitCode, 0, listed.stderr);
+      assert.deepStrictEqual(JSON.parse(listed.stdout), []);
+
+      const inspected = await runPaseoCli(daemon, [
+        "agent",
+        "inspect",
+        orphanId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(inspected.exitCode, 0, inspected.stderr);
+      assert.strictEqual((JSON.parse(inspected.stdout) as { Archived: boolean }).Archived, false);
+
+      const detached = await runPaseoCli(daemon, [
+        "agent",
+        "detach",
+        orphanId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(detached.exitCode, 0, detached.stdout + detached.stderr);
+      assert.deepStrictEqual(JSON.parse(detached.stdout), {
+        agentId: orphanId,
+        status: "detached",
+      });
+
+      const reloaded = await runPaseoCli(daemon, [
+        "agent",
+        "reload",
+        orphanId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(reloaded.exitCode, 1);
+      assert.strictEqual(
+        (parseJsonError(reloaded.stderr) as { error: { code: string } }).error.code,
+        "agent_refresh_failed",
+      );
+
+      const archived = await runPaseoCli(daemon, [
+        "agent",
+        "archive",
+        orphanId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(archived.exitCode, 0, archived.stdout + archived.stderr);
+      const result = JSON.parse(archived.stdout) as { agentId: string; status: string };
+      assert.strictEqual(result.agentId, orphanId);
+      assert.strictEqual(result.status, "archived");
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ archives an agent whose workspace was deleted\n");
+  }
 } finally {
   // Clean up temp directory
   await rm(paseoHome, { recursive: true, force: true });
