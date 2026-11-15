@@ -188,7 +188,10 @@ function noopChangeAttachments() {}
 function noopClearDraft() {}
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
-const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
+const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = [
+  "workspace.project.pick",
+  "workspace.new",
+];
 
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
@@ -1181,10 +1184,8 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
-  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
-  // switch projects from the keyboard. Registered only while this screen is
-  // mounted, so the shortcut doesn't swallow the browser's native print
-  // elsewhere; gated on having projects to pick.
+  // On this screen, both project-pick and new-workspace open the chooser.
+  // Take precedence over global new-workspace navigation to preserve the draft.
   const handleProjectPick = useCallback(() => {
     openProjectPicker();
     return true;
@@ -1193,7 +1194,8 @@ export function NewWorkspaceScreen({
     handlerId: "new-workspace-project-pick",
     actions: PROJECT_PICK_ACTIONS,
     enabled: projectPickerOptions.length > 0,
-    priority: 0,
+    isActive: isStillOnCreateScreen,
+    priority: 10,
     handle: handleProjectPick,
   });
 
