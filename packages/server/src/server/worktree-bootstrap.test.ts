@@ -12,6 +12,7 @@ import {
 } from "./worktree-bootstrap.js";
 import {
   ensureWorkspaceServicePortPlan,
+  getAllReservedWorkspaceServicePorts,
   releaseWorkspaceServicePortPlan,
 } from "./workspace-service-port-registry.js";
 import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
@@ -244,6 +245,7 @@ describe("runWorktreeAutoTerminals", () => {
 
   interface CreateTerminalCall {
     cwd: string;
+    workspaceId?: string;
     name?: string;
     title?: string;
     env?: Record<string, string>;
@@ -293,6 +295,7 @@ describe("runWorktreeAutoTerminals", () => {
           id: terminalId,
           name: options.name ?? "Terminal",
           cwd: options.cwd,
+          workspaceId: options.workspaceId,
           workspacePortBlock: options.workspacePortBlock,
           workspaceScriptName: options.workspaceScriptName,
           send: (message) => {
@@ -700,6 +703,127 @@ describe("runWorktreeAutoTerminals", () => {
     expect(createTerminalCalls[0]?.env).not.toHaveProperty("PASEO_SERVICE_DEV_URL");
     expect(serviceProxy.listRoutes().map((route) => route.scriptName)).toEqual(["api"]);
   });
+
+  it("releases an idle suppressed service lease before allocating a script block", async () => {
+    const workspaceId = "workspace-script-superseded-idle-service";
+    commitPaseoConfig({
+      worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+      scripts: {
+        dev: { type: "service", command: "./bin/legacy-dev", port: 43_000 },
+        inspect: { command: "docker compose ps" },
+      },
+    });
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "dev", port: 43_000 }],
+      allocatePort: async () => 43_000,
+    });
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    try {
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId,
+        projectSlug: "repo",
+        branchName: "feature-superseded-service",
+        scriptName: "inspect",
+        suppressedScriptNames: new Set(["dev"]),
+        daemonPort: null,
+        serviceProxy: new ScriptRouteStore(),
+        runtimeStore: new WorkspaceScriptRuntimeStore(),
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment,
+      });
+      expect(createTerminalCalls).toHaveLength(1);
+      expect(createTerminalCalls[0]?.env).toMatchObject({
+        PASEO_PORT_BASE: "43000",
+        PASEO_PORT_END: "43003",
+      });
+      expect(getAllReservedWorkspaceServicePorts().has(43_000)).toBe(false);
+    } finally {
+      workspaceRuntimeEnvironment.release(workspaceId);
+      releaseWorkspaceServicePortPlan(workspaceId);
+    }
+  });
+
+  it.each([
+    {
+      owner: "running",
+      lifecycle: "running" as const,
+      closingTerminals: (_terminal: TerminalSession) => [],
+    },
+    {
+      owner: "closing",
+      lifecycle: "stopped" as const,
+      closingTerminals: (terminal: TerminalSession) => [terminal],
+    },
+  ])(
+    "preserves a $owner suppressed service lease during script block allocation",
+    async ({ owner, lifecycle, closingTerminals }) => {
+      const workspaceId = `workspace-script-superseded-${owner}-service`;
+      commitPaseoConfig({
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev", port: 43_000 },
+          inspect: { command: "docker compose ps" },
+        },
+      });
+      await ensureWorkspaceServicePortPlan({
+        workspaceId,
+        services: [{ scriptName: "dev", port: 43_000 }],
+        allocatePort: async () => 43_000,
+      });
+      const createTerminalCalls: CreateTerminalCall[] = [];
+      const terminalManager = createStubTerminalManager(createTerminalCalls);
+      const terminal = await terminalManager.createTerminal({
+        cwd: repoDir,
+        workspaceId,
+        name: "dev",
+        workspaceScriptName: "dev",
+      });
+      terminalManager.getClosingTerminals = () => closingTerminals(terminal);
+      const runtimeStore = new WorkspaceScriptRuntimeStore();
+      runtimeStore.set({
+        workspaceId,
+        scriptName: "dev",
+        type: "service",
+        lifecycle,
+        terminalId: terminal.id,
+        exitCode: null,
+      });
+      const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      });
+      try {
+        await expect(
+          spawnWorkspaceScript({
+            repoRoot: repoDir,
+            workspaceId,
+            projectSlug: "repo",
+            branchName: "feature-superseded-service",
+            scriptName: "inspect",
+            suppressedScriptNames: new Set(["dev"]),
+            daemonPort: null,
+            serviceProxy: new ScriptRouteStore(),
+            runtimeStore,
+            terminalManager,
+            workspaceRuntimeEnvironment,
+          }),
+        ).rejects.toThrow("No available workspace port block in configured range 43000-43003");
+        expect(createTerminalCalls).toHaveLength(1);
+        expect(createTerminalCalls[0]?.name).toBe("dev");
+        expect(getAllReservedWorkspaceServicePorts().has(43_000)).toBe(true);
+        expect(workspaceRuntimeEnvironment.get(workspaceId)).toBe(null);
+      } finally {
+        workspaceRuntimeEnvironment.release(workspaceId);
+        releaseWorkspaceServicePortPlan(workspaceId);
+      }
+    },
+  );
 
   it("rejects an explicit service port reserved by an active launch block", async () => {
     const reservedPort = 45_678;

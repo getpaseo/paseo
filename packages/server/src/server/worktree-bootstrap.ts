@@ -28,6 +28,7 @@ import {
   getAllReservedWorkspaceServicePorts,
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
+  releaseWorkspaceServicePorts,
 } from "./workspace-service-port-registry.js";
 import type {
   WorkspaceRuntimeEnvironment,
@@ -546,6 +547,9 @@ async function acquireWorkspaceScriptTerminal(params: {
 
 async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   workspaceRuntimeEnvironment: Pick<WorkspaceRuntimeEnvironmentService, "ensure"> | undefined;
+  runtimeStore: WorkspaceScriptRuntimeStore;
+  terminalManager: TerminalManager;
+  suppressedScriptNames: ReadonlySet<string> | undefined;
   workspaceId: string;
   cwd: string;
   branchName: string | null;
@@ -558,6 +562,19 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   if (!params.workspaceRuntimeEnvironment || params.allocation?.blockSize === undefined) {
     return null;
   }
+  const closingScripts = new Set(
+    (params.terminalManager.getClosingTerminals?.() ?? [])
+      .filter((terminal) => terminal.workspaceId === params.workspaceId)
+      .map((terminal) => terminal.workspaceScriptName),
+  );
+  const idleServiceNames = [...(params.suppressedScriptNames ?? [])].filter(
+    (scriptName) =>
+      !params.runtimeStore.isRunning({ workspaceId: params.workspaceId, scriptName }) &&
+      !closingScripts.has(scriptName),
+  );
+  // A project launch supersedes idle service definitions, including leases
+  // planned before the config changed. Running and closing owners keep theirs.
+  await releaseWorkspaceServicePorts(params.workspaceId, idleServiceNames);
   return await params.workspaceRuntimeEnvironment.ensure({
     workspaceId: params.workspaceId,
     cwd: params.cwd,
@@ -713,6 +730,9 @@ export async function spawnWorkspaceScript(
       getWorkspaceServicePortAllocation(configResult.config?.worktree) ?? globalServicePorts;
     const workspaceRuntime = await resolveWorkspaceScriptRuntimeEnvironment({
       workspaceRuntimeEnvironment,
+      runtimeStore,
+      terminalManager,
+      suppressedScriptNames,
       workspaceId,
       cwd: repoRoot,
       branchName,
