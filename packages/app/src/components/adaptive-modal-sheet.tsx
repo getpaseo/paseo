@@ -1,3 +1,4 @@
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
@@ -662,7 +663,7 @@ function CompactSheetBody({
 
 export function AdaptiveModalSheet({
   header,
-  visible,
+  visible: requestedVisible,
   onClose,
   onDismiss,
   children,
@@ -678,6 +679,8 @@ export function AdaptiveModalSheet({
   bodyStyle,
   contextBridge = null,
 }: AdaptiveModalSheetProps) {
+  const active = useRetainedPanelActive();
+  const visible = requestedVisible && active;
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const isKeyboardVisible = useKeyboardVisibility(visible);

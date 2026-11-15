@@ -148,3 +148,26 @@ test.describe("mobile bottom sheet reopen", () => {
     }
   });
 });
+
+async function switchToNextWorkspace(page: Page, workspaceId: string) {
+  await page.keyboard.press("Alt+]");
+  await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspaceId}`));
+}
+
+test("leaving a retained workspace dismisses its model sheet", async ({ page }) => {
+  const first = await openMockAgentAtMobileBreakpoint(page);
+  const second = await seedMockAgentWorkspace({
+    repoPrefix: "sheet-other-workspace-",
+    title: "Other workspace",
+    initialPrompt: "Prepare another workspace.",
+  });
+  try {
+    await openModelSelector(page);
+    await switchToNextWorkspace(page, second.workspaceId);
+    await expect(page.getByTestId("agent-controls-model-sheet")).not.toBeInViewport();
+    await expectComposerVisible(page);
+  } finally {
+    await second.cleanup();
+    await first.cleanup();
+  }
+});
