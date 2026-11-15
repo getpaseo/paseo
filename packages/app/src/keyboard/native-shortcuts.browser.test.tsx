@@ -52,7 +52,12 @@ it("releases a hidden retained owner's overlay keys while its scope stays mounte
   const { createElement, act } = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { RetainedPanelActivity } = await import("@/components/retained-panel");
-  const { useOverlayRegistration, getTopOverlayKeys, hasActiveOverlay } = await import("./index");
+  const { getTopOverlayKeys, hasActiveOverlay } = await import("./index");
+  // Exercise the native adapter itself in a real React renderer, bypassing Vite's .web resolution.
+  const nativeAdapterPath = "./internal/overlay-registration.ts";
+  const { useOverlayRegistration } = (await import(
+    /* @vite-ignore */ nativeAdapterPath
+  )) as typeof import("./internal/overlay-registration");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const container = document.createElement("div");
   document.body.append(container);

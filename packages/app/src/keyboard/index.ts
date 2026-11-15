@@ -1,11 +1,4 @@
-import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useOverlayRegistration as usePlatformOverlayRegistration } from "./internal/overlay-registration";
-import type { OverlayRegistration } from "./internal/overlay-contract";
-
-export function useOverlayRegistration(input: OverlayRegistration) {
-  const active = useRetainedPanelActive();
-  return usePlatformOverlayRegistration({ ...input, active: input.active && active });
-}
+export { useOverlayRegistration } from "./internal/overlay-registration";
 export type { KeyboardInputEvent } from "./internal/overlays";
 export {
   dispatchTopOverlayKeyDown,

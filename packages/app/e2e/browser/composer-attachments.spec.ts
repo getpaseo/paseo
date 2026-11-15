@@ -334,6 +334,7 @@ test("image lightbox hides when its retained workspace becomes inactive", async 
     await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${first.workspaceId}`));
     await expect(page.getByTestId("attachment-lightbox-close")).toBeVisible();
     await closeImageLightbox(page);
+    await expect(page.getByRole("button", { name: "Open image attachment" }).first()).toBeFocused();
   } finally {
     await second.cleanup();
     await first.cleanup();
