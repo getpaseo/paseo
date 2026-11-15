@@ -187,6 +187,44 @@ export async function dragUsageCardAbove(
   await page.mouse.up();
 }
 
+/**
+ * Starts recording where the cards are painted on every frame after the next mouse release.
+ * Call the returned function to stop and read the frames, each as "id@top" for every card.
+ */
+export async function recordUsageCardPositionsAfterRelease(
+  page: Page,
+): Promise<() => Promise<string[]>> {
+  const recording = await usageModal(page).evaluateHandle((modal) => {
+    const state = { released: false, stopped: false, frames: [] as string[] };
+    const markReleased = () => {
+      state.released = true;
+    };
+    window.addEventListener("mouseup", markReleased, { capture: true, once: true });
+    const recordFrame = () => {
+      if (state.stopped) return;
+      if (state.released) {
+        const cards = Array.from(modal.querySelectorAll('[data-testid^="usage-report-"]'));
+        state.frames.push(
+          cards
+            .map((card) => {
+              const id = card.getAttribute("data-testid")?.slice("usage-report-".length);
+              return `${id}@${Math.round(card.getBoundingClientRect().top)}`;
+            })
+            .join(" "),
+        );
+      }
+      requestAnimationFrame(recordFrame);
+    };
+    requestAnimationFrame(recordFrame);
+    return state;
+  });
+  return () =>
+    recording.evaluate((state) => {
+      state.stopped = true;
+      return state.frames;
+    });
+}
+
 /** Each pinned window as it reads: its percent and short label, "31% 5h". */
 export async function expectPinnedUsage(page: Page, windows: string[]): Promise<void> {
   const pinned = usageItem(page).getByTestId("sidebar-usage-pinned-window");
