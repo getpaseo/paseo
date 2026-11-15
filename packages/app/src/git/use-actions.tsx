@@ -209,6 +209,7 @@ interface UseGitActionsResult {
   gitActions: GitActions;
   branchLabel: string;
   isGit: boolean;
+  isNonGit: boolean;
 }
 
 interface UseWorkspaceScreenArchiveControllerInput {
@@ -864,7 +865,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, baseRefLabel, hasPullRequest, forge, t],
   );
 
-  return { gitActions, branchLabel, isGit };
+  return { gitActions, branchLabel, isGit, isNonGit: notGit };
 }
 
 function translateGitActions(
