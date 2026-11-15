@@ -22,6 +22,7 @@ interface Receipt {
 }
 interface Admitted extends Message {
   sequence: number;
+  outOfBandDeclined: boolean;
   receipt: Receipt;
   resolve(disposition: PromptDispatchDisposition): void;
   reject(error: unknown): void;
@@ -184,7 +185,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     queueDispatch(recipientId, async () => {
       const waiting: Admitted[] = [];
       for (const message of messages) {
-        if (closed || !dependencies.isRunning?.(recipientId)) {
+        if (message.outOfBandDeclined || closed || !dependencies.isRunning?.(recipientId)) {
           waiting.push(message);
           continue;
         }
@@ -194,6 +195,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
             message.beforeDispatch?.(),
           );
           if (!accepted) {
+            message.outOfBandDeclined = true;
             waiting.push(message);
             continue;
           }
@@ -281,7 +283,14 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       };
       entry.cancel();
       entry.ready = false;
-      entry.messages.push({ ...message, receipt, resolve, reject, sequence: sequence++ });
+      entry.messages.push({
+        ...message,
+        receipt,
+        resolve,
+        reject,
+        sequence: sequence++,
+        outOfBandDeclined: false,
+      });
       entry.cancel = schedule(2000, () => flush(message.recipientId));
       pending.set(message.recipientId, entry);
       return receipt;

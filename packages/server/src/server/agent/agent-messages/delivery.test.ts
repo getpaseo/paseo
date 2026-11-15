@@ -770,3 +770,53 @@ test("shutdown waits for an in-flight out-of-band attempt and drains its unhandl
   await expect(receipt.dispatched).resolves.toBe("turn_started");
   expect(dispatched).toEqual([false]);
 });
+
+test("a declined out-of-band message is offered once across running-turn retries", async () => {
+  const clock = createClock();
+  let running = true;
+  let accepts = false;
+  let offers = 0;
+  let dispatched = 0;
+  let wake!: (recipientId: string) => void;
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      wake = listener;
+      return () => {};
+    },
+    tryRunOutOfBand: async (_request, onAccepted) => {
+      offers++;
+      if (accepts) onAccepted();
+      return accepts;
+    },
+    dispatch: async () => {
+      dispatched++;
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const receipt = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "message",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(offers).toBe(1);
+  // A later provider state change does not reinterpret a declined message.
+  accepts = true;
+  for (let retry = 0; retry < 3; retry++) {
+    clock.advance(2000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  expect(offers).toBe(1);
+  expect(dispatched).toBe(0);
+  running = false;
+  wake("parent");
+  await receipt.dispatched;
+  expect(dispatched).toBe(1);
+  await delivery.close();
+});
