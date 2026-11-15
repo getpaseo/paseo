@@ -669,6 +669,19 @@ it("reads the registry directory and a listing with the registry's credentials, 
   }
 });
 
+it("reports a misconfigured registry instead of asking the user to retry", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-browse-config-"));
+  roots.push(home);
+  const sources = new ManagedPluginSources(home, {
+    defaultUrl: "http://registry.example",
+    registries: { "registry.example": { authorization: "Bearer test" } },
+  });
+  await expect(sources.listRegistry()).rejects.toThrow("Registry credentials require HTTPS");
+  await expect(sources.getRegistryPlugin("acme/example")).rejects.toThrow(
+    "Registry credentials require HTTPS",
+  );
+});
+
 it("installs and updates only the npm artifacts pinned by the plugin registry", async () => {
   const { startNpmRegistry, npmPluginPackages } =
     await import("../../../../../scripts/test-support/npm-registry.mjs");

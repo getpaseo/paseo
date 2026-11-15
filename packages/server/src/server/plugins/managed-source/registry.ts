@@ -45,10 +45,12 @@ function defaultRegistryUrl(options: RegistryOptions): string {
 async function readRegistryDocument(options: RegistryOptions, path: string): Promise<unknown> {
   const base = defaultRegistryUrl(options);
   const url = `${base}/${path}`;
+  // Built before the request, so a registry setup error reaches the user instead of "Retry later".
+  const headers = registryHeaders(base, options);
   let response: Response;
   try {
     response = await fetch(url, {
-      headers: registryHeaders(base, options),
+      headers,
       redirect: "error",
       signal: AbortSignal.timeout(30000),
     });
