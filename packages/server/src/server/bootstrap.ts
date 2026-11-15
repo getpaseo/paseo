@@ -1625,6 +1625,7 @@ export async function createPaseoDaemon(
     const agentMcpRoute = "/mcp/agents";
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
+      if (callerAgentId) await agentManager.refreshPluginTools(callerAgentId);
       const agentMcpServer = await createAgentMcpServer(
         createAgentToolHostDependencies({
           callerAgentId,
