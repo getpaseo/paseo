@@ -16,7 +16,11 @@ const LOCAL_PROJECT_LINKS_STORAGE_KEY = "local-project-links";
 
 const ProjectLinkPlacementRefSchema = z.strictObject({
   serverId: z.string().trim().min(1),
-  projectId: z.string().trim().min(1),
+  // Project IDs can be retained legacy remote/path-shaped values, so whitespace is significant.
+  projectId: z
+    .string()
+    .min(1)
+    .refine((projectId) => projectId.trim().length > 0),
 });
 
 const LocalProjectLinkIdentitySchema = z.strictObject({
@@ -118,6 +122,7 @@ export function unlinkLocalProject(input: {
 export function createLocalProjectLinksStore(
   storage: PersistStorage<LocalProjectLinksPersistedState>,
 ) {
+  let hydrationError: unknown;
   let resolveHydration: () => void;
   const hydration = new Promise<void>((resolve) => {
     resolveHydration = resolve;
@@ -132,6 +137,8 @@ export function createLocalProjectLinksStore(
           // Validated storage deliberately skips writes during its initial read. Wait until that
           // read has settled so this update applies to the saved links and can be acknowledged.
           await hydration;
+          // A write after a failed read would replace saved links that were never loaded.
+          if (hydrationError != null) throw hydrationError;
           const previousLinks = get().links;
           const nextLinks = update(previousLinks);
           try {
@@ -164,7 +171,10 @@ export function createLocalProjectLinksStore(
         name: LOCAL_PROJECT_LINKS_STORAGE_KEY,
         storage,
         partialize: (state) => ({ links: state.links }),
-        onRehydrateStorage: () => () => resolveHydration(),
+        onRehydrateStorage: () => (_state, error) => {
+          hydrationError = error;
+          resolveHydration();
+        },
       },
     ),
   );
@@ -179,8 +189,8 @@ function normalizeMembers(members: readonly ProjectLinkPlacementRef[]): ProjectL
   const normalized: ProjectLinkPlacementRef[] = [];
   for (const member of members) {
     const serverId = member.serverId.trim();
-    const projectId = member.projectId.trim();
-    if (!serverId || !projectId) continue;
+    const projectId = member.projectId;
+    if (!serverId || !projectId.trim()) continue;
     const normalizedMember = { serverId, projectId };
     const key = projectLinkPlacementKey(normalizedMember);
     if (seen.has(key)) continue;

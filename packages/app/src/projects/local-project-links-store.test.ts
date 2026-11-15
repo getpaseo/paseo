@@ -19,12 +19,16 @@ function storageWithPendingRead() {
   let finishRead: (value: string | null) => void = () => {
     throw new Error("pending storage read was not initialized");
   };
+  let failRead: (error: Error) => void = () => {
+    throw new Error("pending storage read was not initialized");
+  };
   let signalReadStarted: () => void;
   const readStarted = new Promise<void>((resolve) => {
     signalReadStarted = resolve;
   });
-  const read = new Promise<string | null>((resolve) => {
+  const read = new Promise<string | null>((resolve, reject) => {
     finishRead = resolve;
+    failRead = reject;
   });
   const setItem = vi.fn(async () => undefined);
   const storage: StateStorage = {
@@ -40,6 +44,7 @@ function storageWithPendingRead() {
     storage: createValidatedPersistStorage(storage, LocalProjectLinksPersistedStateSchema),
     readStarted,
     finishRead,
+    failRead,
     setItem,
   };
 }
@@ -89,6 +94,19 @@ describe("local project links store", () => {
     expect(pendingStorage.setItem).toHaveBeenCalledOnce();
   });
 
+  test("rejects link mutations when initial hydration fails", async () => {
+    const pendingStorage = storageWithPendingRead();
+    const store = createLocalProjectLinksStore(pendingStorage.storage);
+    await pendingStorage.readStarted;
+
+    const save = store.getState().linkProjects(input);
+    pendingStorage.failRead(new Error("storage unavailable"));
+
+    await expect(save).rejects.toThrow("storage unavailable");
+    expect(store.getState().links).toEqual([]);
+    expect(pendingStorage.setItem).not.toHaveBeenCalled();
+  });
+
   test("rejects a suggestion that hydration reveals would merge clones on one host", async () => {
     const persistedLink = {
       id: "local-existing",
@@ -132,6 +150,23 @@ describe("local project links store", () => {
     finishWrite!();
     await expect(save).resolves.toBeUndefined();
     expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  test("preserves significant whitespace in opaque project IDs", async () => {
+    const members = [
+      { serverId: "host-a", projectId: "remote:github.com/acme/app#subdir:web " },
+      { serverId: "host-b", projectId: "project-b" },
+    ];
+    const persisted = {
+      links: [{ id: "local-legacy", members, identity: input.identity }],
+    };
+    const store = createLocalProjectLinksStore(storageThat(async () => undefined));
+
+    expect(LocalProjectLinksPersistedStateSchema.parse(persisted)).toEqual(persisted);
+    await expect(store.getState().linkProjects({ ...input, members })).resolves.toBeUndefined();
+    expect(store.getState().links).toEqual([
+      expect.objectContaining({ identity: input.identity, members }),
+    ]);
   });
 
   test("exposes a local write failure to the caller", async () => {
