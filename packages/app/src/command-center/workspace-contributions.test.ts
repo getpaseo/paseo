@@ -68,6 +68,7 @@ function source(gitActions: GitActions): {
         closePane: "Close pane",
         toggleFocusMode: "Toggle focus mode",
         toggleExplorerSidebar: "Toggle Explorer sidebar",
+        archiveWorkspace: "Archive workspace",
         rename: "Rename workspace",
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
@@ -82,6 +83,7 @@ function source(gitActions: GitActions): {
         canSplitPanes: true,
         canOpenBrowserTabs: true,
         isGit: false,
+        isNonGit: true,
         canPin: false,
         canShowSetup: false,
       },
@@ -116,6 +118,18 @@ function source(gitActions: GitActions): {
 }
 
 describe("workspace command center contributions", () => {
+  it("shows archive workspace for non-Git workspaces", () => {
+    const fixture = source({ primary: null, secondary: [], menu: [] });
+
+    const archiveContribution = buildWorkspaceCommandCenterContributions(fixture.value).find(
+      (item) => item.id === "workspace:archive",
+    );
+
+    expect(archiveContribution?.visibility).toBe("always");
+    archiveContribution?.run();
+    expect(fixture.dispatched).toEqual([{ id: "workspace.archive", scope: "sidebar" }]);
+  });
+
   it("makes only the policy-selected primary Git action default-visible and runs it", () => {
     const primary = gitAction("commit", "Commit");
     const fixture = source({
@@ -202,6 +216,7 @@ describe("workspace command center contributions", () => {
       canSplitPanes: false,
       canOpenBrowserTabs: false,
       isGit: false,
+      isNonGit: true,
       canPin: false,
       canShowSetup: false,
     };

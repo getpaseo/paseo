@@ -50,6 +50,7 @@ export interface WorkspaceCommandCenterLabels {
   toggleFocusMode: string;
   toggleExplorerSidebar: string;
   // Workspace management actions
+  archiveWorkspace: string;
   rename: string;
   copyPath: string;
   copyBranchName: string;
@@ -79,6 +80,7 @@ export interface WorkspaceCommandCenterIcons {
   focusMode?: CommandCenterIcon;
   explorerSidebar?: CommandCenterIcon;
   // Workspace management action icons
+  archiveWorkspace?: CommandCenterIcon;
   copyPath?: CommandCenterIcon;
   copyBranchName?: CommandCenterIcon;
   pin?: CommandCenterIcon;
@@ -113,6 +115,7 @@ export interface WorkspaceCommandCenterSource {
     canSplitPanes: boolean;
     canOpenBrowserTabs: boolean;
     isGit: boolean;
+    isNonGit: boolean;
     /** Host supports the `workspacePinning` feature. */
     canPin: boolean;
     /** The workspace has setup commands or a setup error — same gate as the header menu. */
@@ -545,6 +548,21 @@ function buildCreationContributions(
   ];
   const primary = source.gitActions.primary;
   if (primary) contributions.push(buildGitContribution(source, primary, 1, "always"));
+  if (source.capabilities.isNonGit) {
+    contributions.push(
+      buildWorkspaceAction({
+        source,
+        id: "workspace:archive",
+        rank: 1,
+        title: source.labels.archiveWorkspace,
+        keywords: ["archive", "workspace"],
+        icon: source.icons.archiveWorkspace,
+        shortcutKeys: source.shortcuts.archiveWorkspace,
+        action: { id: "workspace.archive", scope: "sidebar" },
+        visibility: "always",
+      }),
+    );
+  }
   contributions.push(
     buildQueryAction(source, {
       id: "tab:new-terminal",
