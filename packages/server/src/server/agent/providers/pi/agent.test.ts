@@ -23,7 +23,7 @@ import {
   PiProviderOptionsSchema,
   PiRpcAgentClient,
   PiRpcAgentSession,
-  transformPiModels,
+  piModelLabel,
 } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
@@ -3970,35 +3970,31 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   });
 });
 
-describe("transformPiModels", () => {
-  test("normalizes labels that include the upstream provider prefix", () => {
+describe("piModelLabel", () => {
+  test("drops the vendor prefix from an upstream model name", () => {
+    expect(piModelLabel({ id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" })).toBe("GPT-5.5");
+  });
+
+  test("keeps slashes and underscores that belong to the model name", () => {
     expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/google/gemini-2.5-flash-lite",
-          label: "openrouter/google/gemini_2.5 flash lite",
-        },
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-5.5",
-          label: "openrouter/OpenAI: GPT-5.5",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini 2.5 flash lite",
-        description: "openrouter/google/gemini_2.5 flash lite",
-      },
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-5.5",
-        label: "GPT-5.5",
-        description: "openrouter/OpenAI: GPT-5.5",
-      },
-    ]);
+      piModelLabel({
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (~60-70 tok/s, 52/56)",
+      }),
+    ).toBe("Qwen3.8 Flash Next IQ3_S, prior + tail skip (~60-70 tok/s, 52/56)");
+  });
+
+  test("shortens a path-like name to its last segment", () => {
+    expect(
+      piModelLabel({ id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" }),
+    ).toBe("gemini-2.5-flash-lite");
+  });
+
+  test("falls back to the last segment of a path-like id", () => {
+    expect(piModelLabel({ id: "google/gemini_2.5-flash-lite" })).toBe("gemini 2.5-flash-lite");
+    expect(piModelLabel({ id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " })).toBe(
+      "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    );
   });
 });
 

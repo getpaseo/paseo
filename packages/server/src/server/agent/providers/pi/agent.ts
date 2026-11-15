@@ -313,34 +313,20 @@ interface PiSlashCommandInvocation {
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
-function normalizePiModelLabel(label: string): string {
-  const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
-  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
-  if (vendorSeparatorIndex === -1) {
-    return normalizedLabel;
-  }
-
-  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
+function stripVendorPrefix(label: string): string {
+  const vendorSeparatorIndex = label.indexOf(": ");
+  return vendorSeparatorIndex === -1 ? label : label.slice(vendorSeparatorIndex + 2).trim();
 }
 
-export function transformPiModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
-  return models.map((model) => {
-    if (!model.label.includes("/")) {
-      return model;
-    }
-
-    const segments = model.label.split("/").filter((segment) => segment.length > 0);
-    const rawLabel = segments.at(-1);
-    if (!rawLabel) {
-      return model;
-    }
-
-    return {
-      ...model,
-      label: normalizePiModelLabel(rawLabel),
-      description: model.description ?? model.label,
-    };
-  });
+// A Pi model name is either a path ("google/gemini_2.5-flash", as OpenRouter reports it) or
+// free text that can contain slashes and underscores ("IQ3_S ... 52/56"). Only shorten paths.
+export function piModelLabel(model: Pick<PiModel, "id" | "name">): string {
+  const text = model.name?.trim().replace(/\s+/g, " ") || model.id.trim();
+  if (/\s/.test(text)) {
+    return stripVendorPrefix(text);
+  }
+  const lastSegment = text.split("/").findLast((segment) => segment.length > 0) ?? text;
+  return stripVendorPrefix(lastSegment.replace(/_+/g, " "));
 }
 
 function isPiThinkingLevel(value: string | null | undefined): value is PiThinkingLevel {
@@ -1166,7 +1152,7 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
+    label: piModelLabel(model),
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,
@@ -2817,15 +2803,13 @@ export class PiRpcAgentClient implements AgentClient {
         "get_state",
         () => catalogSession.getState(),
       );
-      const models = transformPiModels(
-        piModels.map((model) => {
-          const mapped = mapPiModel(model, PI_PROVIDER);
-          const isConfigured =
-            model.provider === configuredModel?.provider && model.id === configuredModel?.id;
-          if (isConfigured) mapped.isDefault = true;
-          return mapped;
-        }),
-      );
+      const models = piModels.map((model) => {
+        const mapped = mapPiModel(model, PI_PROVIDER);
+        const isConfigured =
+          model.provider === configuredModel?.provider && model.id === configuredModel?.id;
+        if (isConfigured) mapped.isDefault = true;
+        return mapped;
+      });
       return { models, modes: [] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
