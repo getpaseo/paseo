@@ -336,6 +336,8 @@ server.addHook("agent.open.before", async ({ request }) => ({
 
 插件指令按插件顺序追加在已保存的 Agent 提示词和 daemon 指令之后。指令不会保存到 Agent 配置中，读取历史时也会忽略这些指令。插件数据更改后，重新加载插件以在下次重新打开会话时应用新指令。正在运行的轮次会继续。移除指令不会删除对话历史。内部 Agent 也会收到这些指令。ACP 适配器不会向 Provider 发送系统指令。插件 Provider 会收到组合后的提示词，但需要自行应用。
 
+更新 Codex 指令需要 Codex 0.121.0 或更新版本。Paseo 会向现有会话添加当前指令快照；之前的快照仍保留在对话中。更新期间发生崩溃或回退会话时，快照可能重复。
+
 ### 在每次打开会话时注入环境变量 {#inject-environment-variables-on-every-session-opening}
 
 ```ts

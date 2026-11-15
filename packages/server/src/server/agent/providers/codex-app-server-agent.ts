@@ -56,6 +56,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeAgentSystemPrompt } from "../system-prompt.js";
+import { CodexInstructionSnapshot } from "./codex/instruction-snapshot.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
   fileChangesToPreview,
@@ -3594,6 +3595,8 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
+  private readonly instructionSnapshot: CodexInstructionSnapshot;
+  private supportsInstructionSnapshots = false;
   private readonly asyncQuestions: CodexAsyncQuestions;
   private readonly codexHome: string;
   private currentMode: string;
@@ -3758,6 +3761,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.providerOptions =
       validateProviderOptions("codex", CodexProviderOptionsSchema, config.providerOptions) ?? {};
     this.config = config;
+    this.instructionSnapshot = new CodexInstructionSnapshot(
+      composeAgentSystemPrompt(config),
+      resumeHandle?.metadata?.paseoInstructionReceipt,
+    );
     this.harnessEnvironment = deps.environment ?? buildCodexAppServerEnv();
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
@@ -3844,9 +3851,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.registerRequestHandlers();
 
     try {
-      this.threadRollbackAvailable = codexServerHasThreadRollback(
-        toObjectRecord(initialized)?.userAgent,
-      );
+      const userAgent = toObjectRecord(initialized)?.userAgent;
+      this.threadRollbackAvailable = codexServerHasThreadRollback(userAgent);
+      this.supportsInstructionSnapshots =
+        typeof userAgent === "string" && codexVersionAtLeast(userAgent, [0, 121, 0]);
+      if (
+        !this.currentThreadId &&
+        this.config.pluginAppendSystemPrompt?.length &&
+        !this.supportsInstructionSnapshots
+      ) {
+        throw new Error("Update Codex to 0.121.0 or newer to apply agent instruction updates.");
+      }
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
@@ -4325,12 +4340,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
-      if (ids.includes(this.currentThreadId)) {
-        return;
+      if (!ids.includes(this.currentThreadId)) {
+        const response = await this.client.request("thread/resume", params);
+        this.rememberResolvedSandboxPolicy(response);
+        this.rememberRestoredCollaborationMode(response);
       }
-      const response = await this.client.request("thread/resume", params);
-      this.rememberResolvedSandboxPolicy(response);
-      this.rememberRestoredCollaborationMode(response);
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -4346,11 +4360,16 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.rememberResolvedSandboxPolicy(response);
         this.rememberRestoredCollaborationMode(response);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
-        return;
+      } else {
+        this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
+        throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
       }
-      this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
-      throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
+    await this.instructionSnapshot.apply(
+      this.currentThreadId,
+      this.client.request.bind(this.client),
+      this.supportsInstructionSnapshots,
+    );
   }
 
   private rememberRestoredCollaborationMode(response: unknown): void {
@@ -4483,9 +4502,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       params.outputSchema = normalizeCodexOutputSchema(options.outputSchema);
     }
     const developerInstructions = composeAgentSystemPrompt(this.config);
-    if (developerInstructions) {
-      params.developerInstructions = developerInstructions;
-    }
     const codexConfig = this.buildCodexInnerConfig();
     if (codexConfig) {
       params.config = codexConfig;
@@ -5244,6 +5260,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
         asyncQuestions: this.asyncQuestions.serialize(),
+        ...(this.instructionSnapshot.describe(threadId)
+          ? { paseoInstructionReceipt: this.instructionSnapshot.describe(threadId) }
+          : {}),
       },
     };
   }
@@ -5278,6 +5297,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       userMessageTurns: this.codexUserMessageTurns(),
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
+        await this.instructionSnapshot.apply(
+          threadId,
+          this.client!.request.bind(this.client),
+          this.supportsInstructionSnapshots,
+        );
         this.currentThreadId = threadId;
         // Codex writes a forked thread's rollout when it forks it, even before any turn.
         this.savedThreadId = threadId;
@@ -5811,6 +5835,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     this.currentThreadId = threadId;
+    this.instructionSnapshot.recordNewThread(threadId);
   }
 
   private buildThreadStartRequest(model: string): {

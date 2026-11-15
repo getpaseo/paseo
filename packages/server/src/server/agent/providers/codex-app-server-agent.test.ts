@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { CodexInstructionSnapshot } from "./codex/instruction-snapshot.js";
 
 import type {
   AgentClient,
@@ -173,6 +174,9 @@ function createSession(
   ) as CodexTestSession;
   session.connectionState = "connected";
   session.currentThreadId = "test-thread";
+  castInternals<{ instructionSnapshot: { recordNewThread(id: string): void } }>(
+    session,
+  ).instructionSnapshot.recordNewThread("test-thread");
   session.activeForegroundTurnId = "test-turn";
   return session;
 }
@@ -1423,8 +1427,10 @@ describe("Codex app-server provider", () => {
     );
     await first.startTurn("first");
     const firstTurn = await firstServer.waitForTurnStart();
+    expect(
+      firstServer.requests().find((request) => request.method === "thread/start")?.params,
+    ).toMatchObject({ developerInstructions: "Plugin instructions" });
     expect(firstTurn).toMatchObject({
-      developerInstructions: "Plugin instructions",
       collaborationMode: {
         settings: { developer_instructions: null },
       },
@@ -1456,6 +1462,90 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("reopen injects current instructions once, including an explicit empty snapshot", async () => {
+    const handlers = {
+      initialize: () => ({ userAgent: "codex/0.165.0" }),
+      "thread/inject_items": () => ({}),
+    };
+    const firstServer = createFakeCodexAppServer(handlers);
+    const first = await createProviderWithFakeAppServer(firstServer).createSession(
+      createConfig({ pluginAppendSystemPrompt: ["Old plugin"] }),
+    );
+    await first.startTurn("first");
+    const started = waitForNextEvent(first, "thread_started");
+    firstServer.startsTurn({ threadId: "thread-1" });
+    await started;
+    expect(
+      firstServer.requests().filter((request) => request.method === "thread/inject_items"),
+    ).toEqual([]);
+    const original = first.describePersistence()!;
+    expect(original.metadata).toHaveProperty("paseoInstructionReceipt");
+    await first.close();
+
+    const changedServer = createFakeCodexAppServer(handlers);
+    const changed = await createProviderWithFakeAppServer(changedServer).resumeSession(original, {
+      pluginAppendSystemPrompt: ["New plugin"],
+    });
+    const injected = changedServer
+      .requests()
+      .filter((request) => request.method === "thread/inject_items");
+    expect(injected).toHaveLength(1);
+    expect(JSON.stringify(injected[0]?.params)).toContain("New plugin");
+    const changedHandle = changed.describePersistence()!;
+    expect(changedHandle.metadata?.paseoInstructionReceipt).not.toEqual(
+      original.metadata?.paseoInstructionReceipt,
+    );
+    await changed.close();
+
+    const sameServer = createFakeCodexAppServer(handlers);
+    const same = await createProviderWithFakeAppServer(sameServer).resumeSession(changedHandle, {
+      pluginAppendSystemPrompt: ["New plugin"],
+    });
+    expect(
+      sameServer.requests().filter((request) => request.method === "thread/inject_items"),
+    ).toEqual([]);
+    await same.close();
+
+    const emptyServer = createFakeCodexAppServer(handlers);
+    const empty = await createProviderWithFakeAppServer(emptyServer).resumeSession(changedHandle, {
+      pluginAppendSystemPrompt: undefined,
+    });
+    const removal = emptyServer
+      .requests()
+      .filter((request) => request.method === "thread/inject_items");
+    expect(removal).toHaveLength(1);
+    expect(JSON.stringify(removal[0]?.params)).toContain('\\"instructions\\":\\"\\"');
+    await empty.close();
+  });
+
+  test("requires a compatible Codex version before creating a thread with plugin instructions", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "codex/0.120.0" }),
+    });
+    await expect(
+      createProviderWithFakeAppServer(appServer).createSession(
+        createConfig({ pluginAppendSystemPrompt: ["Plugin instructions"] }),
+      ),
+    ).rejects.toThrow("Update Codex to 0.121.0 or newer");
+  });
+
+  test("retries an instruction snapshot when injection fails", async () => {
+    const snapshot = new CodexInstructionSnapshot("current", undefined);
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValue({});
+    await expect(snapshot.apply("thread-1", request, true)).rejects.toThrow("connection lost");
+    expect(snapshot.describe("thread-1")).toBeUndefined();
+    await snapshot.apply("thread-1", request, true);
+    expect(snapshot.describe("thread-1")).toEqual({
+      threadId: "thread-1",
+      digest: expect.any(String),
+    });
+    await snapshot.apply("thread-1", request, true);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   test("keeps built-in Plan instructions while sending plugin instructions to the thread", async () => {
     const appServer = createFakeCodexAppServer({
       "collaborationMode/list": () => ({
@@ -1478,6 +1568,9 @@ describe("Codex app-server provider", () => {
       expect(await appServer.waitForTurnStart()).toMatchObject({
         collaborationMode: { mode: "plan", settings: { developer_instructions: null } },
       });
+      expect(
+        appServer.requests().find((request) => request.method === "turn/start")?.params,
+      ).not.toHaveProperty("developerInstructions");
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -2406,7 +2499,12 @@ describe("Codex app-server provider", () => {
       ]);
       // Background terminal observation is independent of conversation history loading.
       const historyMethods = (index: number) =>
-        codex.threadMethods(index).filter((method) => method !== "thread/backgroundTerminals/list");
+        codex
+          .threadMethods(index)
+          .filter(
+            (method) =>
+              method !== "thread/backgroundTerminals/list" && method !== "thread/inject_items",
+          );
       expect(historyMethods(0)).toEqual([
         "thread/loaded/list",
         "thread/resume",
