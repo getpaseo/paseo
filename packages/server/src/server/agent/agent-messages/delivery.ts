@@ -21,6 +21,7 @@ interface Receipt {
   dispatched: Promise<PromptDispatchDisposition>;
 }
 interface Admitted extends Message {
+  sequence: number;
   receipt: Receipt;
   resolve(disposition: PromptDispatchDisposition): void;
   reject(error: unknown): void;
@@ -38,6 +39,9 @@ interface DispatchRequest {
 interface Dependencies {
   /** Includes admitted starts and provider turns, including compaction. */
   isRunning?: (recipientId: string) => boolean;
+  hasPendingPermission?: (recipientId: string) => boolean;
+  /** Notify when recipient state changes; admission still checks whether it is idle. */
+  subscribe?: (listener: (recipientId: string) => void) => () => void;
   dispatch(request: DispatchRequest): Promise<PromptDispatchDisposition>;
   onError(error: unknown, request: DispatchRequest): void;
   /** Return a cancellation function. Production uses the daemon's event loop. */
@@ -49,7 +53,7 @@ export interface AgentMessageDelivery {
   hasPending(recipientId: string): boolean;
   /** Stop admission, flush pending messages, and await provider dispatch acknowledgments. */
   close(): Promise<void>;
-  /** Existing completion waits include agent messages admitted before the wait. */
+  /** Completion waits include admitted messages, but return at permission checkpoints. */
   waitForDispatch(recipientId: string, signal: AbortSignal): Promise<void>;
 }
 
@@ -61,9 +65,10 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       const timer = setTimeout(callback, delayMs);
       return () => clearTimeout(timer);
     });
-  const pending = new Map<string, { messages: Admitted[]; cancel(): void }>();
+  const pending = new Map<string, { messages: Admitted[]; ready: boolean; cancel(): void }>();
   const dispatching = new Map<string, Promise<void>>();
   const receipts = new Map<string, Set<Receipt>>();
+  let sequence = 0;
   let closed = false;
   let closing: Promise<void> | undefined;
 
@@ -112,9 +117,14 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           return undefined;
         } catch (error) {
           if (error instanceof AgentTurnBusyError && !closed) {
-            const entry = pending.get(recipientId) ?? { messages: [], cancel: () => {} };
+            const entry = pending.get(recipientId) ?? {
+              messages: [],
+              ready: false,
+              cancel: () => {},
+            };
             entry.cancel();
-            entry.messages.unshift(...messages);
+            entry.messages.push(...messages);
+            entry.messages.sort((a, b) => a.sequence - b.sequence);
             entry.cancel = schedule(2000, () => flush(recipientId));
             pending.set(recipientId, entry);
             return;
@@ -135,6 +145,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   function flush(recipientId: string): void {
     const entry = pending.get(recipientId);
     if (!entry) return;
+    entry.ready = true;
     entry.cancel();
     if (!closed && dependencies.isRunning?.(recipientId)) {
       const interrupts = entry.messages.filter(
@@ -143,7 +154,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       entry.messages = entry.messages.filter(
         (message) => message.activeTurnBehavior !== "interrupt",
       );
-      if (interrupts.length) dispatch(recipientId, interrupts);
+      if (interrupts.length) dispatchGroups(recipientId, interrupts);
       if (entry.messages.length) {
         entry.cancel = schedule(2000, () => flush(recipientId));
       } else {
@@ -152,9 +163,13 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       return;
     }
     pending.delete(recipientId);
+    dispatchGroups(recipientId, entry.messages);
+  }
+
+  function dispatchGroups(recipientId: string, messages: Admitted[]): void {
     let group: Admitted[] = [];
     let mode: string | undefined;
-    for (const message of entry.messages) {
+    for (const message of messages) {
       // Explicitly conflicting send options require separate, ordered dispatches.
       if (
         group.length &&
@@ -170,6 +185,11 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     }
     if (group.length) dispatch(recipientId, group);
   }
+
+  const unsubscribe = dependencies.subscribe?.((recipientId) => {
+    if (pending.get(recipientId)?.ready && !dependencies.isRunning?.(recipientId))
+      flush(recipientId);
+  });
 
   return {
     hasPending: (recipientId) => pending.has(recipientId) || dispatching.has(recipientId),
@@ -196,9 +216,14 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           if (!owned.size) receipts.delete(message.recipientId);
         })
         .catch(() => undefined);
-      const entry = pending.get(message.recipientId) ?? { messages: [], cancel: () => {} };
+      const entry = pending.get(message.recipientId) ?? {
+        messages: [],
+        ready: false,
+        cancel: () => {},
+      };
       entry.cancel();
-      entry.messages.push({ ...message, receipt, resolve, reject });
+      entry.ready = false;
+      entry.messages.push({ ...message, receipt, resolve, reject, sequence: sequence++ });
       entry.cancel = schedule(2000, () => flush(message.recipientId));
       pending.set(message.recipientId, entry);
       return receipt;
@@ -206,6 +231,16 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     async waitForDispatch(recipientId, signal) {
       signal.throwIfAborted();
       const admitted = Array.from(receipts.get(recipientId) ?? [], (receipt) => receipt.dispatched);
+      let unsubscribePermission: (() => void) | undefined;
+      const permission = new Promise<void>((resolve) => {
+        const check = () => {
+          if (dependencies.hasPendingPermission?.(recipientId)) resolve();
+        };
+        unsubscribePermission = dependencies.subscribe?.((agentId) => {
+          if (agentId === recipientId) check();
+        });
+        check();
+      });
       let aborted!: () => void;
       const cancellation = new Promise<never>((_resolve, reject) => {
         aborted = () => reject(new DOMException("Wait aborted", "AbortError"));
@@ -215,14 +250,17 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         await Promise.race([
           Promise.all([dispatching.get(recipientId), ...admitted]),
           cancellation,
+          permission,
         ]);
       } finally {
         signal.removeEventListener("abort", aborted);
+        unsubscribePermission?.();
       }
     },
     close() {
       if (closing) return closing;
       closed = true;
+      unsubscribe?.();
       for (const recipientId of pending.keys()) flush(recipientId);
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
       closing = Promise.allSettled(dispatching.values()).then(() => undefined);

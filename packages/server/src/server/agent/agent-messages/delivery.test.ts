@@ -454,3 +454,151 @@ test("shutdown flushes a dispatch that discovered a concurrent turn during prepa
   await expect(receipt.dispatched).resolves.toBe("turn_started");
   expect(modes).toEqual([true, false]);
 });
+
+test("busy retries retain admission order across conflicting session modes", async () => {
+  const clock = createClock();
+  let busy = true;
+  const sent: Array<{ ids: readonly string[]; mode?: string }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    dispatch: async (request) => {
+      if (busy) throw new AgentTurnBusyError("concurrent turn");
+      sent.push({ ids: request.messageIds, mode: request.sessionMode });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "parent",
+    source: { kind: "agent-message" as const, agentId: "child" },
+    prompt: "message",
+  };
+  const a = delivery.enqueue({ ...message, messageId: "A", sessionMode: "plan" });
+  const b = delivery.enqueue({ ...message, messageId: "B", sessionMode: "default" });
+  clock.advance(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  busy = false;
+  clock.advance(2000);
+  await Promise.all([a.dispatched, b.dispatched]);
+  expect(sent).toEqual([
+    { ids: ["A"], mode: "plan" },
+    { ids: ["B"], mode: "default" },
+  ]);
+  await delivery.close();
+});
+
+test("interrupts retain separate mode choices while the recipient is busy", async () => {
+  const clock = createClock();
+  const sent: Array<{ ids: readonly string[]; mode?: string }> = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => true,
+    dispatch: async (request) => {
+      sent.push({ ids: request.messageIds, mode: request.sessionMode });
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  const message = {
+    recipientId: "parent",
+    source: { kind: "agent-message" as const, agentId: "child" },
+    prompt: "message",
+    activeTurnBehavior: "interrupt" as const,
+  };
+  const a = delivery.enqueue({ ...message, messageId: "A", sessionMode: "plan" });
+  const b = delivery.enqueue({ ...message, messageId: "B", sessionMode: "default" });
+  clock.advance(2000);
+  await Promise.all([a.dispatched, b.dispatched]);
+  expect(sent).toEqual([
+    { ids: ["A"], mode: "plan" },
+    { ids: ["B"], mode: "default" },
+  ]);
+  await delivery.close();
+});
+
+test("a settled-turn event releases a ready batch without waiting for the next timer sample", async () => {
+  const clock = createClock();
+  let running = true;
+  let settled: (id: string) => void = () => {};
+  let subscribed = true;
+  const sent: string[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    isRunning: () => running,
+    subscribe: (listener) => {
+      settled = listener;
+      return () => {
+        subscribed = false;
+      };
+    },
+    dispatch: async (request) => {
+      sent.push(request.recipientId);
+      return "turn_started";
+    },
+    onError: (error) => {
+      throw error;
+    },
+  });
+  delivery.enqueue({
+    recipientId: "parent",
+    prompt: "report",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  clock.advance(2000);
+  expect(sent).toEqual([]);
+  running = false;
+  settled("parent");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(sent).toEqual(["parent"]);
+  running = true;
+  await delivery.close();
+  expect(subscribed).toBe(false);
+});
+
+test.each([false, true])(
+  "completion waits report permission checkpoints without draining messages (initial: %s)",
+  async (initial) => {
+    const clock = createClock();
+    let permission = initial;
+    let changed: (id: string) => void = () => {};
+    let reported = false;
+    let sent = 0;
+    const delivery = createAgentMessageDelivery({
+      schedule: clock.schedule,
+      isRunning: () => true,
+      hasPendingPermission: () => permission,
+      subscribe: (listener) => {
+        changed = listener;
+        return () => {};
+      },
+      dispatch: async () => {
+        sent++;
+        return "turn_started";
+      },
+      onError: (error) => {
+        throw error;
+      },
+    });
+    delivery.enqueue({
+      recipientId: "child",
+      prompt: "follow up",
+      source: { kind: "agent-message", agentId: "parent" },
+    });
+    const wait = delivery.waitForDispatch("child", new AbortController().signal).then(() => {
+      reported = true;
+      return undefined;
+    });
+    permission = true;
+    changed("child");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reported).toBe(true);
+    expect(sent).toBe(0);
+    expect(delivery.hasPending("child")).toBe(true);
+    await wait;
+    await delivery.close();
+  },
+);

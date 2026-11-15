@@ -14486,6 +14486,13 @@ test.each([
     let tick = () => {};
     const delivery = createAgentMessageDelivery({
       isRunning: (id) => manager.hasInFlightRun(id),
+      subscribe: (notify) =>
+        manager.subscribe(
+          (event) => {
+            if (event.type === "agent_state") notify(event.agent.id);
+          },
+          { replayState: false },
+        ),
       schedule: (_delay, callback) => {
         tick = callback;
         return () => {};
@@ -14529,8 +14536,6 @@ test.each([
         turnId,
         ...(ending === "turn_failed" ? { error: "test failure" } : {}),
       } as AgentStreamEvent);
-      await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(false));
-      tick();
       await receipt.dispatched;
       await manager.waitForAgentRunStart(agent.id);
       expect(session.startCount).toBe(2);

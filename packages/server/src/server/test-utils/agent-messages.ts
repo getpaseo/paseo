@@ -15,6 +15,14 @@ export function createTestAgentMessages(params: {
 }) {
   return createAgentMessageDelivery({
     isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
+    hasPendingPermission: (agentId) => params.agentManager.hasPendingPermissions(agentId),
+    subscribe: (notify) =>
+      params.agentManager.subscribe(
+        (event) => {
+          if (event.type === "agent_state") notify(event.agent.id);
+        },
+        { replayState: false },
+      ),
     schedule: (_delay, callback) => {
       const timer = setTimeout(callback, 0);
       return () => clearTimeout(timer);
