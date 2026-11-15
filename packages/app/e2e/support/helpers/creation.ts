@@ -152,6 +152,16 @@ export async function createCreationScenario(page: Page) {
       await openNewWorkspaceComposer(page, project);
       await selectWorkspaceIsolation(page, isolation);
     },
+    async leaveWorkspaceForm() {
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: project.workspaceId,
+      });
+    },
+    async returnToWorkspaceForm() {
+      await openNewWorkspaceComposer(page, project);
+    },
     async openAgentDraft() {
       await gotoWorkspace(page, project.workspaceId);
       await createAgentTabFromMenu(page);

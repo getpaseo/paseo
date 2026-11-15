@@ -8717,6 +8717,41 @@ test("measures an outbound message in UTF-8 bytes against the daemon's message l
   expect(client.getConnectionState().status).toBe("connected");
 });
 
+test.each([
+  {
+    name: "agent",
+    create: (client: DaemonClient, initialPrompt: string) =>
+      client.createAgent({
+        provider: "codex",
+        cwd: "/tmp/project",
+        initialPrompt,
+      }),
+  },
+  {
+    name: "workspace",
+    create: (client: DaemonClient, initialPrompt: string) =>
+      client.createWorkspace({
+        source: { kind: "directory", path: "/tmp/project" },
+        agent: { config: { provider: "codex", cwd: "/tmp/project" }, initialPrompt },
+      }),
+  },
+])("classifies an oversized $name creation as not sent", async ({ create }) => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "oversized-creation",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ features: { creationLifecycle: true } });
+  await connected;
+  await expect(create(client, "é".repeat(51 * 1024 * 1024))).rejects.toThrow(CreationNotSentError);
+  expect(mock.sent).toHaveLength(0);
+  expect(client.getConnectionState().status).toBe("connected");
+});
+
 test("sends worktree target and autoArchive in create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

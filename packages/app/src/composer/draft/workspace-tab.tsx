@@ -17,6 +17,7 @@ import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "@/composer/dra
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
+import { prepareDraftCreation, useDraftStore } from "@/stores/draft-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -105,6 +106,7 @@ function resolveDraftModeId(input: {
 }
 
 async function submitDraftCreateRequest(input: {
+  draftStoreKey: string;
   serverId: string;
   draftId: string;
   attempt: { clientMessageId: string };
@@ -166,18 +168,23 @@ async function submitDraftCreateRequest(input: {
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
   const imagesData = await encodeImages(images);
+  const creationDraftId = await prepareDraftCreation({
+    draftKey: input.draftStoreKey,
+    proposedId: input.draftId,
+  });
+  const metadata = useDraftStore.getState().metadataByDraftKey[input.draftStoreKey] ?? {};
   const request = {
     config,
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
-    ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
   };
   const result = await draftCreations.submit({
     serverId: input.serverId,
-    draftId: input.draftId,
+    draftId: creationDraftId,
     kind: "agent",
     request,
     send: (options) => client.createAgent({ ...request, ...options }),
@@ -453,6 +460,7 @@ export function WorkspaceDraftComposer({
           return { agentId: result.id, result };
         }
         return submitDraftCreateRequest({
+          draftStoreKey,
           serverId,
           draftId,
           attempt,

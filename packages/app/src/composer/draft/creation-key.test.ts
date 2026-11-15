@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { draftCreationKey } from "./creation-key";
 import { createDraftCreations, DraftCreationOutcomeUnknownError } from "./creation-attempt";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import { WorkspaceDescriptorPayloadSchema } from "@getpaseo/protocol/messages";
 
 const request = {
   config: { provider: "codex", cwd: "/repo", model: "gpt-6" },
@@ -72,6 +73,66 @@ function failure(options: {
 const scope = { serverId: "host", draftId: "draft-1" };
 
 describe("draft creation retry admission", () => {
+  it("retains a background-ready workspace across reload and retries only its agent after definite failure", async () => {
+    const disk = storage();
+    const workspace = WorkspaceDescriptorPayloadSchema.parse({
+      id: "workspace-1",
+      projectId: "project",
+      projectDisplayName: "Project",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo/worktree",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "Existing workspace",
+      status: "running",
+      statusEnteredAt: null,
+      activityAt: null,
+      archivingAt: null,
+      scripts: [],
+    });
+    let workspaceCreates = 0;
+    const original = creationsFor(disk);
+    const workspaceRequest = { source: { kind: "directory", path: "/repo" }, agent: request };
+    await original.submit({
+      ...scope,
+      kind: "workspace",
+      request: workspaceRequest,
+      send: async ({ idempotencyKey, onEvent }) => {
+        workspaceCreates++;
+        onEvent({
+          ...failure({ kind: "workspace", idempotencyKey, unknown: false }),
+          phase: "workspace_ready",
+          revision: 1,
+          error: null,
+          workspace,
+        });
+        onEvent(failure({ kind: "workspace", idempotencyKey, unknown: false }));
+      },
+    });
+    const restored = creationsFor(disk);
+    expect(await restored.workspaceRetry({ ...scope, request: workspaceRequest })).toEqual({
+      kind: "replay",
+    });
+    expect(
+      await restored.workspaceRetry({
+        ...scope,
+        request: { ...workspaceRequest, agent: { ...request, initialPrompt: "Edited" } },
+      }),
+    ).toEqual({ kind: "reuse", workspace });
+    const result = await restored.submit({
+      ...scope,
+      kind: "agent",
+      request: {
+        ...request,
+        initialPrompt: "Edited after background failure",
+        workspaceId: workspace.id,
+      },
+      send: async () => "agent-in-existing-workspace",
+    });
+    expect(result).toBe("agent-in-existing-workspace");
+    expect(workspaceCreates).toBe(1);
+  });
+
   it("does not send when admission cannot be persisted", async () => {
     let starts = 0;
     let writable = false;

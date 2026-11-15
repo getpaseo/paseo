@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import {
+  WorkspaceDescriptorPayloadSchema,
+  type CreationSnapshot,
+  type WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
 import { draftCreationKey } from "./creation-key";
 
 interface Storage {
@@ -18,6 +22,7 @@ type Attempt = z.infer<typeof AttemptSchema>;
 const RecordSchema = z.object({
   attempt: AttemptSchema.nullable(),
   worktreeSlug: z.string().optional(),
+  workspace: WorkspaceDescriptorPayloadSchema.optional(),
 });
 type Record = z.infer<typeof RecordSchema>;
 
@@ -39,6 +44,11 @@ interface Identity {
   serverId: string;
   draftId: string;
 }
+
+type WorkspaceRetry =
+  | { kind: "create" }
+  | { kind: "replay" }
+  | { kind: "reuse"; workspace: WorkspaceDescriptorPayload };
 
 interface CreationOptions {
   idempotencyKey: string;
@@ -116,6 +126,17 @@ export function createDraftCreations(deps: Dependencies) {
     });
   }
 
+  async function workspaceRetry(input: Identity & { request: object }): Promise<WorkspaceRetry> {
+    const scope = await scopeFor(input);
+    await scope.writes;
+    if (!scope.record.workspace) return { kind: "create" };
+    const prior = scope.record.attempt;
+    const sameRequest =
+      prior?.kind === "workspace" && prior.key === draftCreationKey(input.draftId, input.request);
+    if (sameRequest) return { kind: "replay" };
+    return { kind: "reuse", workspace: scope.record.workspace };
+  }
+
   async function submit<Result>(input: Submission<Result>): Promise<Result> {
     const scope = await scopeFor(input);
     return serialize(scope, async () => {
@@ -155,6 +176,7 @@ export function createDraftCreations(deps: Dependencies) {
         }
         checkpoint(scope, {
           ...scope.record,
+          workspace: snapshot.workspace ?? scope.record.workspace,
           attempt: {
             kind: snapshot.kind,
             key: snapshot.idempotencyKey,
@@ -177,5 +199,5 @@ export function createDraftCreations(deps: Dependencies) {
     });
   }
 
-  return { submit, worktreeSlug };
+  return { submit, worktreeSlug, workspaceRetry };
 }

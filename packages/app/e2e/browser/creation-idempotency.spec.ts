@@ -1,6 +1,40 @@
 import type { createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
+import { delayBrowserWorkspaceCreatedResponse } from "../support/helpers/new-workspace";
+
+test("an edited background failure reuses its ready workspace and restored metadata after reload", async ({
+  creation,
+  startup,
+  composerMetadata,
+  page,
+}) => {
+  const delay = await delayBrowserWorkspaceCreatedResponse(page);
+  try {
+    await creation.openWorkspaceForm("local");
+    await composerMetadata.set({ "composer-metadata.tag": "restored" });
+    await creation.submitPrompt("Original background task", "Create");
+    await delay.waitForCreateRequest();
+    await creation.leaveWorkspaceForm();
+    await startup.fail();
+    delay.release();
+    await expect(
+      page
+        .getByText(/Creation startup failed for test/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
+    await creation.expectOneCreatedWorkspace();
+    await creation.returnToWorkspaceForm();
+    await creation.submitPrompt("Edited background task", "Create");
+    await creation.expectPromptVisible("Edited background task");
+    await creation.expectOneCreatedWorkspace();
+    await creation.expectAgentCount(1);
+    await creation.expectAgentMetadata({ "composer-metadata.tag": "restored" });
+  } finally {
+    delay.release();
+  }
+});
 
 for (const isolation of ["local", "worktree"] as const) {
   test(`repeated Create clicks before a render create only one ${isolation} workspace`, async ({

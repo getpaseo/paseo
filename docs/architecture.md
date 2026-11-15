@@ -358,10 +358,13 @@ join active work or reuse committed stages. A persisted resource alone cannot pr
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
 receipt return an unknown outcome instead of being repeated.
 
-The app persists a draft's last creation identity before sending it. Only a confirmed failure
-without an unknown outcome permits an edited request or a workspace-to-agent retry to use a
+The app durably saves the draft's ID, metadata, and last creation identity before sending it.
+Only a confirmed failure without an unknown outcome permits an edited request or a
+workspace-to-agent retry to use a
 different identity. A timeout or app restart cannot authorize another creation in the same draft.
-Generated worktree slugs are part of that identity and must survive remounts. Client preflight
+Generated worktree slugs are part of that identity and must survive remounts. A confirmed
+workspace milestone survives an initial-agent failure: unchanged retries replay its receipt,
+while edited retries create the agent in that workspace. Client preflight and frame-size
 errors carry proof that no creation was sent, so admission can roll back. Progress checkpoint
 failures must preserve confirmed host results and remain isolated to the affected draft.
 

@@ -1,6 +1,7 @@
 import { useAddHost } from "@/hosts/add-host";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import { draftCreations } from "@/composer/draft/creation-attempts";
+import { prepareDraftCreation, useDraftStore } from "@/stores/draft-store";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -342,6 +343,36 @@ async function createMultiplicityWorkspace(input: {
     ...(firstAgentContext ? { firstAgentContext } : {}),
     ...(Object.keys(input.metadata).length > 0 ? { metadata: { ...input.metadata } } : {}),
   };
+  const retry = await draftCreations.workspaceRetry({
+    serverId: input.serverId,
+    draftId: input.idempotencyKey,
+    request,
+  });
+  if (retry.kind === "reuse") {
+    const ready = retry.workspace;
+    const workspace = normalizeWorkspaceDescriptor(ready);
+    if (!input.agent) return { workspace };
+    if (!input.agent.config) throw new Error("Agent configuration is required");
+    const cwd = remapDraftCwdToWorkspace({
+      cwd: input.agent.config.cwd,
+      sourceDirectory: input.sourceDirectory,
+      workspaceDirectory: workspace.workspaceDirectory,
+    });
+    const agentRequest = {
+      ...input.agent,
+      config: { ...input.agent.config, cwd },
+      workspaceId: ready.id,
+    };
+    const agent = await draftCreations.submit({
+      serverId: input.serverId,
+      draftId: input.idempotencyKey,
+      kind: "agent",
+      request: agentRequest,
+      onEvent: (snapshot) => input.onEvent?.({ ...snapshot, workspace: ready }),
+      send: (options) => input.client.createAgent({ ...agentRequest, ...options }),
+    });
+    return { workspace, agent };
+  }
   const payload = await draftCreations.submit({
     serverId: input.serverId,
     draftId: input.idempotencyKey,
@@ -903,7 +934,6 @@ export function NewWorkspaceScreen({
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [creationIdentity] = useState(() => ({
-    draftId: draftId ?? generateDraftId(),
     worktreeSlug: createNameId(),
   }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1256,6 +1286,10 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
+      const creationDraftId = await prepareDraftCreation({
+        draftKey,
+        proposedId: draftId ?? generateDraftId(),
+      });
       const createsWorktree = !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
       const checkoutStatusForCreate = createsWorktree
         ? await ensureCheckoutStatus({
@@ -1271,7 +1305,7 @@ export function NewWorkspaceScreen({
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
-        idempotencyKey: creationIdentity.draftId,
+        idempotencyKey: creationDraftId,
         worktreeSlug: creationIdentity.worktreeSlug,
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
@@ -1295,6 +1329,8 @@ export function NewWorkspaceScreen({
     [
       creationIdentity,
       creationResult,
+      draftId,
+      draftKey,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -1340,15 +1376,24 @@ export function NewWorkspaceScreen({
         }
 
         setPendingAction("chat");
+        const creationDraftId = await prepareDraftCreation({
+          draftKey,
+          proposedId: draftId ?? generateDraftId(),
+        });
         const outcome = await runCreateChatAgent({
           payload,
-          composerState,
+          composerState: composerState
+            ? {
+                ...composerState,
+                metadata: useDraftStore.getState().metadataByDraftKey[draftKey] ?? {},
+              }
+            : composerState,
           forkDraftSetup,
           ensureWorkspace,
           serverId: selectedServerId,
           clearDraft: chatDraft.clear,
           draftKey,
-          draftId: creationIdentity.draftId,
+          draftId: creationDraftId,
           draftContextScopeKey,
           supportsForgeSearch,
           resolveClient: withConnectedClient,
@@ -1371,7 +1416,7 @@ export function NewWorkspaceScreen({
     [
       composerState,
       draftContextScopeKey,
-      creationIdentity,
+      draftId,
       chatDraft.clear,
       draftKey,
       ensureWorkspace,

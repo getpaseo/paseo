@@ -14,7 +14,7 @@ import {
   decodeHostRouteFrame,
   type HostRouteFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { messageTooLargeError } from "./daemon-client-transport-utils.js";
+import { messageTooLargeError, MessageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
 import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
@@ -2168,6 +2168,13 @@ export class DaemonClient {
       });
     try {
       return this.sendTransportFrame(JSON.stringify(message), submitted);
+    } catch (error) {
+      const creation =
+        messageType === "agent.create.request" ||
+        messageType === "create_agent_request" ||
+        messageType === "workspace.create.request";
+      if (creation && error instanceof MessageTooLargeError) throw new CreationNotSentError(error);
+      throw error;
     } finally {
       this.endTraceSection(isOpen);
     }

@@ -65,6 +65,8 @@ interface DraftStoreActions {
   /** Plugin metadata the draft will create its agent with; see `composer/draft/metadata`. */
   patchDraftMetadata: (input: { draftKey: string; patch: Record<string, JsonValue> }) => void;
   clearDraftMetadata: (input: { draftKey: string }) => void;
+  ensureDraftCreationId: (input: { draftKey: string; proposedId: string }) => string;
+  clearDraftCreationId: (input: { draftKey: string }) => void;
   attachWorkspaceFile: (input: {
     draftKey: string;
     attachment: WorkspaceFileComposerAttachment;
@@ -79,10 +81,11 @@ interface DraftStoreRuntimeState {
   /** Counts `replaceDraftText`, so a mounted input knows to show text it did not type. */
   textReplacementRequestByDraftKey: Record<string, number>;
   /**
-   * Kept beside the prompt so a composer that remounts finds it. Not persisted, and not cleared
+   * Kept beside the prompt so a composer that remounts finds it. Persisted, and not cleared
    * with an emptied prompt: a plugin's choice outlives the text until the draft is sent.
    */
   metadataByDraftKey: Record<string, Record<string, JsonValue>>;
+  creationIdByDraftKey: Record<string, string>;
 }
 
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
@@ -91,6 +94,38 @@ let gcScheduled = false;
 const draftPersistStorage = createDraftPersistStorage(
   createValidatedPersistStorage(AsyncStorage, PersistedDraftStoreSchema),
 );
+
+let finishInitialHydration: () => void;
+let hydrationError: unknown;
+const initialHydration = new Promise<void>((resolve) => {
+  finishInitialHydration = resolve;
+});
+
+export async function prepareDraftCreation(input: {
+  draftKey: string;
+  proposedId: string;
+}): Promise<string> {
+  await initialHydration;
+  if (hydrationError !== undefined) {
+    await useDraftStore.persist.rehydrate();
+    if (hydrationError !== undefined) throw hydrationError;
+  }
+  const id = useDraftStore.getState().ensureDraftCreationId(input);
+  await draftPersistStorage.checkpoint("paseo-drafts", {
+    state: persistedDraftState(useDraftStore.getState()),
+    version: DRAFT_STORE_VERSION,
+  });
+  return id;
+}
+
+function persistedDraftState({
+  drafts,
+  createModalDraft,
+  metadataByDraftKey,
+  creationIdByDraftKey,
+}: DraftStore) {
+  return { drafts, createModalDraft, metadataByDraftKey, creationIdByDraftKey };
+}
 
 export function flushDraftPersistStorage(): Promise<void> {
   return draftPersistStorage?.flush() ?? Promise.resolve();
@@ -281,6 +316,22 @@ export const useDraftStore = create<DraftStore>()(
       attachmentFocusRequestByDraftKey: {},
       textReplacementRequestByDraftKey: {},
       metadataByDraftKey: {},
+      creationIdByDraftKey: {},
+
+      ensureDraftCreationId: ({ draftKey, proposedId }) => {
+        const existing = get().creationIdByDraftKey[draftKey];
+        if (existing) return existing;
+        set((state) => ({
+          creationIdByDraftKey: { ...state.creationIdByDraftKey, [draftKey]: proposedId },
+        }));
+        return proposedId;
+      },
+      clearDraftCreationId: ({ draftKey }) =>
+        set((state) => {
+          const creationIdByDraftKey = { ...state.creationIdByDraftKey };
+          delete creationIdByDraftKey[draftKey];
+          return { creationIdByDraftKey };
+        }),
 
       getDraftInput: (draftKey) => {
         const record = get().drafts[draftKey];
@@ -489,14 +540,16 @@ export const useDraftStore = create<DraftStore>()(
       name: "paseo-drafts",
       version: DRAFT_STORE_VERSION,
       storage: draftPersistStorage,
-      partialize: ({ drafts, createModalDraft }) => ({ drafts, createModalDraft }),
+      partialize: persistedDraftState,
       migrate: (state) =>
         migratePersistedState(state, {
           migrateLegacyImages,
           nowMs: Date.now(),
         }),
       onRehydrateStorage: () => {
-        return () => {
+        return (_state, error) => {
+          hydrationError = error;
+          finishInitialHydration();
           void migrateAllLegacyDrafts();
           scheduleAttachmentGc();
         };
