@@ -62,7 +62,13 @@ export async function resolveAgentEntry(
     }
   }
 
-  const lookupId = FULL_AGENT_UUID_PATTERN.test(trimmed) ? trimmed.toLowerCase() : trimmed;
-  const fetchResult = await client.fetchAgent({ agentId: lookupId });
+  // A complete agent UUID is an exact identity: the daemon falls back to a
+  // title match, which must not answer for an ID that does not exist.
+  if (FULL_AGENT_UUID_PATTERN.test(trimmed)) {
+    const agentId = trimmed.toLowerCase();
+    const fetchResult = await client.fetchAgent({ agentId });
+    return fetchResult?.agent.id === agentId ? fetchResult.agent : null;
+  }
+  const fetchResult = await client.fetchAgent({ agentId: trimmed });
   return fetchResult?.agent ?? null;
 }

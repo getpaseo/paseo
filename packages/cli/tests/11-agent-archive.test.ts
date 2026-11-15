@@ -369,6 +369,65 @@ try {
     }
     console.log("✓ archives an agent whose workspace was deleted\n");
   }
+  // Test 11: a missing full ID never resolves to an unlisted agent titled with it
+  {
+    console.log("Test 11: a missing full ID does not archive an agent titled with it");
+    const missingId = "9eac296c-4d60-4189-a0b5-ae71dd9c6ad9";
+    const titledId = "c9a97e5d-4a92-4646-a016-53032146d0a1";
+    const dirs = await createTempDirs();
+    await writeFile(
+      join(dirs.paseoHome, "agents", `${titledId}.json`),
+      JSON.stringify(
+        {
+          id: titledId,
+          provider: "codex",
+          cwd: dirs.workDir,
+          workspaceId: "deleted-workspace-id",
+          createdAt: "2026-09-03T18:29:21.949Z",
+          updatedAt: "2026-09-03T18:29:21.949Z",
+          title: missingId,
+          labels: {},
+          lastStatus: "closed",
+        },
+        null,
+        2,
+      ),
+    );
+    const daemon = await startTestDaemon(dirs);
+    const host = `127.0.0.1:${daemon.port}`;
+    try {
+      for (const command of ["archive", "detach", "reload"]) {
+        const result = await runPaseoCli(daemon, [
+          "agent",
+          command,
+          missingId,
+          "--json",
+          "--host",
+          host,
+        ]);
+        assert.strictEqual(result.exitCode, 1, `${command}: ${result.stdout}`);
+        assert.strictEqual(
+          (parseJsonError(result.stderr) as { error: { code: string } }).error.code,
+          "AGENT_NOT_FOUND",
+          `${command}: ${result.stderr}`,
+        );
+      }
+
+      const titled = await runPaseoCli(daemon, [
+        "agent",
+        "inspect",
+        titledId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(titled.exitCode, 0, titled.stderr);
+      assert.strictEqual((JSON.parse(titled.stdout) as { Archived: boolean }).Archived, false);
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ a missing full ID does not archive an agent titled with it\n");
+  }
 } finally {
   // Clean up temp directory
   await rm(paseoHome, { recursive: true, force: true });

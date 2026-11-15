@@ -111,6 +111,15 @@ describe("unlisted agent resolution", () => {
     });
   });
 
+  it("does not accept another agent the daemon matched by title for a missing full id", async () => {
+    const titled = makeAgent(otherId, { title: unlistedId });
+    const client = new FakeAgentClient([], [titled]);
+    await expect(archiveAgent(unlistedId, {}, async () => client)).rejects.toMatchObject({
+      code: "AGENT_NOT_FOUND",
+    });
+    expect(client.archived).toEqual([]);
+  });
+
   it("throws AGENT_NOT_FOUND when missing and propagates lookup errors", async () => {
     await expect(
       archiveAgent(unlistedId, {}, async () => new FakeAgentClient([], [])),
