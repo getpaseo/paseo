@@ -1,5 +1,5 @@
 import React, { createContext, memo, type ReactNode, useContext } from "react";
-import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from "react-native";
 
 const RetainedPanelActiveContext = createContext(true);
 
@@ -12,6 +12,7 @@ interface RetainedPanelProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   testID?: string;
+  dataSet?: ViewProps["dataSet"];
 }
 
 interface RetainedPanelActivityProps {
@@ -39,6 +40,7 @@ export const RetainedPanel = memo(function RetainedPanel({
   children,
   style,
   testID,
+  dataSet,
 }: RetainedPanelProps) {
   const visibleStyle = StyleSheet.compose<ViewStyle, ViewStyle, ViewStyle>(styles.root, style);
   const panelStyle = active
@@ -52,6 +54,7 @@ export const RetainedPanel = memo(function RetainedPanel({
         pointerEvents={active ? "auto" : "none"}
         style={panelStyle}
         testID={testID}
+        dataSet={dataSet}
       >
         {children}
       </View>

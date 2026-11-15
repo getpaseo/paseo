@@ -49,6 +49,7 @@ export interface WorkspaceCommandCenterLabels {
   closePane: string;
   toggleFocusMode: string;
   toggleExplorerSidebar: string;
+  toggleExplorerSplit: string;
   // Workspace management actions
   rename: string;
   copyPath: string;
@@ -101,6 +102,7 @@ export interface WorkspaceCommandCenterShortcuts {
   closePane?: ShortcutKey[][];
   toggleFocusMode?: ShortcutKey[][];
   toggleExplorerSidebar?: ShortcutKey[][];
+  toggleExplorerSplit?: ShortcutKey[][];
   pinWorkspace?: ShortcutKey[][];
 }
 
@@ -673,6 +675,22 @@ export function buildWorkspaceCommandCenterContributions(
       visibility: "query",
     }),
   );
+  // The Explorer split exists only in the desktop layout, the same gate as pane splits.
+  if (source.capabilities.canSplitPanes) {
+    contributions.push(
+      buildWorkspaceAction({
+        source,
+        id: "workspace:toggle-explorer-split",
+        rank: 27,
+        title: source.labels.toggleExplorerSplit,
+        keywords: ["split", "unsplit", "explorer", "sidebar", "below", "stack"],
+        icon: source.icons.splitDown,
+        shortcutKeys: source.shortcuts.toggleExplorerSplit,
+        action: { id: "explorer.split.toggle", scope: "sidebar" },
+        visibility: "query",
+      }),
+    );
+  }
 
   // `buildPaneContributions` already dispatches this same `workspace.focus.toggle` action as
   // `pane:focus-mode-toggle` once split panes are available, so only add the standalone entry

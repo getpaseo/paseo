@@ -269,6 +269,7 @@ export function useWorkspaceCommandCenterActions(): void {
           closePane: t("settings.shortcuts.help.closePane"),
           toggleFocusMode: t("settings.shortcuts.help.toggleFocusMode"),
           toggleExplorerSidebar: t("workspace.tabs.explorerSidebar.toggle"),
+          toggleExplorerSplit: t("settings.shortcuts.help.toggleExplorerSplit"),
           // Workspace management labels
           rename: t("sidebar.workspace.actions.rename"),
           copyPath: t("workspace.header.actions.copyPath"),

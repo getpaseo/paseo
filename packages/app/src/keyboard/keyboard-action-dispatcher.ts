@@ -46,6 +46,7 @@ export type KeyboardActionId =
   | "workspace.terminal.new"
   | "workspace.browser.new"
   | "sidebar.toggle.right"
+  | "explorer.split.toggle"
   | "sidebar.toggle.both"
   | "workspace.new"
   | "workspace.project.pick"
@@ -105,6 +106,7 @@ export type KeyboardActionDefinition =
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
   | { id: "workspace.browser.new"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
+  | { id: "explorer.split.toggle"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.both"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }

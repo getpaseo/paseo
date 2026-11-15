@@ -194,7 +194,13 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-pane-move-tab-down",
     "workspace-pane-close",
   ],
-  layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
+  layout: [
+    "toggle-left-sidebar",
+    "toggle-right-sidebar",
+    "toggle-explorer-split",
+    "toggle-both-sidebars",
+    "toggle-focus",
+  ],
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
@@ -239,6 +245,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
   "toggle-right-sidebar": "settings.shortcuts.help.toggleRightSidebar",
+  "toggle-explorer-split": "settings.shortcuts.help.toggleExplorerSplit",
   "toggle-both-sidebars": "settings.shortcuts.help.toggleBothSidebars",
   "toggle-settings": "settings.shortcuts.help.toggleSettings",
   "toggle-focus": "settings.shortcuts.help.toggleFocusMode",
@@ -1019,6 +1026,29 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "toggle-right-sidebar",
       section: "layout",
       label: "Toggle Explorer sidebar",
+    },
+  },
+  // Alt+E types a character on AltGr layouts, so the non-mac binding stays out of text and terminals.
+  {
+    id: "explorer-split-toggle-cmd-alt-e-mac",
+    action: "explorer.split.toggle",
+    combo: "Cmd+Alt+E",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "toggle-explorer-split",
+      section: "layout",
+      label: "Split or unsplit the Explorer",
+    },
+  },
+  {
+    id: "explorer-split-toggle-ctrl-alt-e-non-mac",
+    action: "explorer.split.toggle",
+    combo: "Ctrl+Alt+E",
+    when: { mac: false, commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "toggle-explorer-split",
+      section: "layout",
+      label: "Split or unsplit the Explorer",
     },
   },
   {

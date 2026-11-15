@@ -105,9 +105,20 @@ The + menu opens compatible panels in the dock, including Agent and terminal pro
 layouts omit Diff from it because compact Changes shows each file's diff inline.
 Web also supports dragging agents and terminals into Explorer.
 Bulk-close actions apply only to the dock's tabs. Explorer tabs can be reordered and dragged
-between compatible panes, but the dock cannot be split or maximized. Selecting an Explorer tab
-does not change workspace focus. Web dragging shares the workspace drag scope; compact layouts
-accept only reordering inside the source pane.
+between compatible panes. The dock stays one layout pane and cannot be maximized. Selecting an
+Explorer tab does not change workspace focus. Web dragging shares the workspace drag scope; compact
+layouts accept only reordering inside the source pane.
+
+In the desktop layout the dock can show a second tab below the active one: the split button in its
+tab rail, Cmd+Alt+E (Ctrl+Alt+E elsewhere), or a tab's "Show below". This is a display split, not a
+second pane, so the persisted layout and every pane rule stay unchanged. The split lives in its own
+`explorer-split` store (`packages/app/src/stores/explorer-split-store.ts`), and
+`deriveExplorerSplitView` there is the only place that decides what each half shows. The one panel
+host keeps both tabs as siblings and moves them between halves by position style alone, so a swap
+keeps unsaved text and terminal scrollback. Only the half the user last clicked or
+focused is interactive. Selecting the bottom tab swaps the halves; when the bottom tab leaves the
+Explorer, or becomes active after the top tab closes, the split ends. Compact layouts show one tab
+and keep the saved split for when the window widens.
 
 Cmd+E shows or hides Explorer without changing its selected view. All layouts use the same
 workspace tabs, launcher, and panel host. Below 600 points the shell is the swipeable Explorer

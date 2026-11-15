@@ -123,3 +123,51 @@ test("Explorer drag previews without rerendering panes or rewriting the shared s
   expect(shrunk.paneRenders).toBe(0);
   await expectExplorerWidthSurvivesReload(page, shrunk.width);
 });
+
+test("Explorer split divider drag previews without rerendering panes or rewriting the shared stylesheet", async ({
+  page,
+  withWorkspace,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.addInitScript(() => {
+    globalThis.__PASEO_RENDER_PROFILE_ENABLED__ = true;
+  });
+  const workspace = await withWorkspace();
+  await workspace.navigateTo();
+  await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+  await page.getByTestId("workspace-explorer-toggle").first().click();
+  const explorer = page.getByTestId("workspace-explorer-sidebar");
+  await expect(explorer).toBeVisible();
+  await expectCleanChangesLoaded(page);
+  await explorer.getByTestId("workspace-explorer-split-toggle").click();
+  const header = explorer.getByTestId("explorer-split-bottom-header");
+  await expect(header).toBeVisible();
+  const handle = explorer.getByTestId("explorer-split-divider").getByRole("separator");
+  const bounds = (await handle.boundingBox())!;
+  const headerBefore = (await header.boundingBox())!.y;
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await waitForResizePaint(page);
+  await beginResizeMeasurement(page);
+  for (let move = 1; move <= 20; move++) {
+    await page.mouse.move(x, y - (120 * move) / 20);
+    await waitForResizePaint(page);
+  }
+  const headerDuring = (await header.boundingBox())!.y;
+  const measurement = await page.evaluate(() => {
+    const state = window.__PASEO_EXPLORER_DRAG_MEASUREMENT__!;
+    state.observer.disconnect();
+    return {
+      stylesheetMutations: state.stylesheetMutations,
+      paneRenders: Object.entries(globalThis.__PASEO_RENDER_PROFILE_REASONS__ ?? {})
+        .filter(([id]) => id.startsWith("SplitPaneView:"))
+        .reduce((sum, [, reasons]) => sum + (reasons.render ?? 0), 0),
+    };
+  });
+  await page.mouse.up();
+  expect(headerDuring).toBeCloseTo(headerBefore - 120, 0);
+  expect(measurement.stylesheetMutations).toBe(0);
+  expect(measurement.paneRenders).toBe(0);
+});

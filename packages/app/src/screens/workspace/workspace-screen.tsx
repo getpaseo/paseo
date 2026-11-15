@@ -186,6 +186,7 @@ import {
   workspaceAgentVisibilityEqual,
 } from "@/workspace-tabs/agent-visibility";
 import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
+import { toggleExplorerSplit } from "@/stores/explorer-split-store";
 import {
   buildWorkspacePaneContentModel,
   WorkspacePaneContent,
@@ -1304,6 +1305,14 @@ function WorkspaceScreenContent({
     isCompact: isMobile,
     workspaceKey: persistenceKey,
   });
+  const desktopFocusModeEnabled = useMemo(
+    () => isFocusModeEnabled && !isMobile,
+    [isFocusModeEnabled, isMobile],
+  );
+  const isExplorerFrameOpen = useMemo(
+    () => isExplorerSidebarShowing && !desktopFocusModeEnabled,
+    [desktopFocusModeEnabled, isExplorerSidebarShowing],
+  );
   const hasPullRequest = useWorkspacePullRequestDiscovery({
     workspaceKey: persistenceKey,
     serverId: normalizedServerId,
@@ -2674,10 +2683,35 @@ function WorkspaceScreenContent({
     ],
   );
 
+  // The shortcut and command act on what the Explorer shows, so they do nothing while it is hidden.
+  const handleToggleExplorerSplit = useCallback(() => {
+    if (layoutMode !== "split-panes" || !isExplorerFrameOpen) return;
+    if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return;
+    const explorerPane = findPaneById(workspaceLayout.root, explorerSidebarPaneId);
+    if (!explorerPane) return;
+    const explorerState = deriveWorkspacePaneState({ pane: explorerPane, tabs: uiTabs });
+    toggleExplorerSplit({
+      workspaceKey: persistenceKey,
+      explorerTabs: explorerState.tabs.map((tab) => tab.descriptor),
+      activeTabId: explorerState.activeTabId,
+    });
+  }, [
+    explorerSidebarPaneId,
+    isExplorerFrameOpen,
+    layoutMode,
+    persistenceKey,
+    uiTabs,
+    workspaceLayout,
+  ]);
+
   const handleWorkspaceSidebarAction = useCallback(
     (action: KeyboardActionDefinition): boolean => {
       if (action.id === "sidebar.toggle.right") {
         handleToggleExplorerSidebar();
+        return true;
+      }
+      if (action.id === "explorer.split.toggle") {
+        handleToggleExplorerSplit();
         return true;
       }
       if (action.id !== "sidebar.toggle.both") {
@@ -2698,7 +2732,7 @@ function WorkspaceScreenContent({
       });
       return true;
     },
-    [handleToggleExplorerSidebar, isMobile, persistenceKey],
+    [handleToggleExplorerSidebar, handleToggleExplorerSplit, isMobile, persistenceKey],
   );
 
   const handleWorkspacePaneAction = useCallback(
@@ -2905,7 +2939,7 @@ function WorkspaceScreenContent({
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
     }),
-    actions: ["sidebar.toggle.right", "sidebar.toggle.both"] as const,
+    actions: ["sidebar.toggle.right", "explorer.split.toggle", "sidebar.toggle.both"] as const,
     enabled: workspaceActionsEnabled,
     priority: 100,
     isActive: () => true,
@@ -3339,10 +3373,6 @@ function WorkspaceScreenContent({
     ],
   );
   const focusedPaneIdOrUndefined = useMemo(() => focusedPaneId ?? undefined, [focusedPaneId]);
-  const desktopFocusModeEnabled = useMemo(
-    () => isFocusModeEnabled && !isMobile,
-    [isFocusModeEnabled, isMobile],
-  );
   const workspaceFloatingPanelPortalHostName = useMemo(
     () =>
       `${WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX}:${normalizedServerId}:${normalizedWorkspaceId}`,
@@ -3722,6 +3752,8 @@ function WorkspaceScreenContent({
     const dock = (
       <ExplorerSidebarDock
         pane={explorerPane}
+        workspaceKey={persistenceKey}
+        layoutMode={layoutMode}
         uiTabs={uiTabs}
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3754,7 +3786,7 @@ function WorkspaceScreenContent({
         isWorkspaceActive={isRouteFocused}
         persistenceKey={persistenceKey}
         containerWidth={workspaceViewportWidth}
-        isOpen={isExplorerSidebarShowing && !desktopFocusModeEnabled}
+        isOpen={isExplorerFrameOpen}
       >
         {dock}
       </ExplorerFrame>
@@ -3763,13 +3795,14 @@ function WorkspaceScreenContent({
     workspaceLayout,
     explorerSidebarPaneId,
     persistenceKey,
+    layoutMode,
     isMobile,
     uiTabs,
     normalizedServerId,
     normalizedWorkspaceId,
     isRouteFocused,
     paneFocusSuspended,
-    isExplorerSidebarShowing,
+    isExplorerFrameOpen,
     closingTabIds,
     hoveredCloseTabKey,
     selectTabInPane,
@@ -3789,7 +3822,6 @@ function WorkspaceScreenContent({
     buildDesktopPaneContentModel,
     renderExplorerSidebarHeaderAction,
     workspaceViewportWidth,
-    desktopFocusModeEnabled,
   ]);
 
   const { revealDirectory } = useFileExplorerActions({

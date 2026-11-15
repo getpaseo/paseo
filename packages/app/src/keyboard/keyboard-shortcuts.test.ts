@@ -359,6 +359,18 @@ describe("keyboard-shortcuts", () => {
       preventDefault: false,
       stopPropagation: false,
     },
+    {
+      name: "matches Cmd+Alt+E to toggle the Explorer split on macOS when Option substitutes event.key",
+      event: { key: "\u00B4", code: "KeyE", metaKey: true, altKey: true },
+      context: { isMac: true, focusScope: "terminal" },
+      action: "explorer.split.toggle",
+    },
+    {
+      name: "matches Ctrl+Alt+E to toggle the Explorer split on non-mac",
+      event: { key: "e", code: "KeyE", ctrlKey: true, altKey: true },
+      context: { isMac: false, focusScope: "other" },
+      action: "explorer.split.toggle",
+    },
     // macOS rewrites event.key when Option is held (Option+T -> "†",
     // Option+[ -> "“", Option+Shift+W -> "„", etc.). Every Alt-bound
     // letter / bracket shortcut must still resolve.
@@ -449,6 +461,16 @@ describe("keyboard-shortcuts", () => {
   });
 
   const nonMatchingCases: NonMatchingShortcutCase[] = [
+    {
+      name: "does not match Ctrl+Alt+E for the Explorer split on non-mac in a terminal, where AltGr+E types",
+      event: { key: "€", code: "KeyE", ctrlKey: true, altKey: true },
+      context: { isMac: false, focusScope: "terminal" },
+    },
+    {
+      name: "does not match Ctrl+Alt+E for the Explorer split on non-mac in a text field",
+      event: { key: "€", code: "KeyE", ctrlKey: true, altKey: true },
+      context: { isMac: false, focusScope: "editable" },
+    },
     {
       name: "does not keep old Mod+Alt+N binding",
       event: { key: "n", code: "KeyN", metaKey: true, altKey: true },

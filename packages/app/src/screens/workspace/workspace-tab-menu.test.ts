@@ -367,3 +367,78 @@ describe("buildWorkspaceTabMenuEntries", () => {
     expect(terminalSeparator?.key).toBe("rename-separator");
   });
 });
+
+describe("Explorer split menu entries", () => {
+  function terminalTab(): WorkspaceTabDescriptor {
+    return {
+      key: "terminal_t1",
+      tabId: "terminal_t1",
+      kind: "terminal",
+      target: { kind: "terminal", terminalId: "t1" },
+    };
+  }
+
+  function buildDesktopEntries(
+    explorerSplit?: Parameters<typeof buildWorkspaceDesktopTabActions>[0]["explorerSplit"],
+  ) {
+    return buildWorkspaceDesktopTabActions({
+      tab: terminalTab(),
+      index: 0,
+      tabCount: 2,
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsToLeft: vi.fn(),
+      onCloseTabsToRight: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+      explorerSplit,
+    }).menuEntries;
+  }
+
+  it("offers Show below on an Explorer tab that can be shown below, and runs it", () => {
+    const onShowBelow = vi.fn();
+    const entries = buildDesktopEntries({
+      canShowBelow: true,
+      isSplit: false,
+      showBelowLabel: "Show below",
+      unsplitLabel: "Unsplit Explorer",
+      onShowBelow,
+      onUnsplit: vi.fn(),
+    });
+    const showBelow = entries.find((entry) => entry.key === "explorer-show-below");
+
+    expect(showBelow).toMatchObject({ kind: "item", label: "Show below" });
+    expect(entries.find((entry) => entry.key === "explorer-unsplit")).toBeUndefined();
+    if (showBelow?.kind === "item") showBelow.onSelect();
+    expect(onShowBelow).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Unsplit Explorer, and not Show below, when the tab is already shown", () => {
+    const onUnsplit = vi.fn();
+    const entries = buildDesktopEntries({
+      canShowBelow: false,
+      isSplit: true,
+      showBelowLabel: "Show below",
+      unsplitLabel: "Unsplit Explorer",
+      onShowBelow: vi.fn(),
+      onUnsplit,
+    });
+    const unsplit = entries.find((entry) => entry.key === "explorer-unsplit");
+
+    expect(entries.find((entry) => entry.key === "explorer-show-below")).toBeUndefined();
+    expect(unsplit).toMatchObject({ kind: "item", label: "Unsplit Explorer" });
+    if (unsplit?.kind === "item") unsplit.onSelect();
+    expect(onUnsplit).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds no split entries to tabs outside the Explorer", () => {
+    const keys = buildDesktopEntries(undefined).map((entry) => entry.key);
+
+    expect(keys).not.toContain("explorer-show-below");
+    expect(keys).not.toContain("explorer-unsplit");
+  });
+});

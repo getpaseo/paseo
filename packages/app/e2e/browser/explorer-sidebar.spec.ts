@@ -498,3 +498,445 @@ test("compact file sheets cover Explorer and return to its retained file list", 
     await workspace.cleanup();
   }
 });
+
+async function explorerTabIds(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  return explorerSidebar(page)
+    .getByTestId("workspace-tabs-row")
+    .locator('[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-modified-"])')
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => node.getAttribute("data-testid")?.replace("workspace-tab-", "") ?? "")
+        .filter((tabId) => tabId.length > 0),
+    );
+}
+
+async function addExplorerTerminal(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  await explorerSidebar(page).getByRole("button", { name: "New tab", exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: /^Terminal/ })
+    .first()
+    .click();
+}
+
+async function explorerTerminalTabIds(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  return (await explorerTabIds(page)).filter((id) => id.startsWith("terminal_"));
+}
+
+/** Terminal ids the page subscribes to; a second subscription means the terminal remounted. */
+function recordTerminalAttaches(page: Parameters<typeof ensureExplorerSidebar>[0]): string[] {
+  const attaches: string[] = [];
+  page.on("websocket", (socket) =>
+    socket.on("framesent", (frame) => {
+      if (typeof frame.payload !== "string") return;
+      try {
+        const message = JSON.parse(frame.payload).message;
+        if (message?.type === "subscribe_terminal_request") attaches.push(message.terminalId);
+      } catch {
+        /* Binary terminal traffic is not a JSON request. */
+      }
+    }),
+  );
+  return attaches;
+}
+
+function terminalAttachCount(attaches: string[], terminalId: string): number {
+  return attaches.filter((id) => id === terminalId).length;
+}
+
+function explorerSplitToggle(page: Parameters<typeof ensureExplorerSidebar>[0]) {
+  return explorerSidebar(page).getByTestId("workspace-explorer-split-toggle");
+}
+
+function explorerHalf(page: Parameters<typeof ensureExplorerSidebar>[0], half: "top" | "bottom") {
+  return explorerSidebar(page).locator(`[data-explorer-slot="${half}"]`);
+}
+
+test.describe("Explorer split", () => {
+  test("splits from the button, swaps from the row, and unsplits from the button or the bottom header", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-basics-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await openFilesPanel(page);
+      const explorer = explorerSidebar(page);
+      await page.screenshot({ path: testInfo.outputPath("explorer-single.png") });
+
+      await explorerSplitToggle(page).click();
+      await expect(
+        explorerHalf(page, "top").getByTestId("file-explorer-tree-scroll"),
+      ).toBeVisible();
+      await expect(explorerHalf(page, "bottom").getByTestId("changes-tree-panel")).toBeVisible();
+      await expect(explorer.getByTestId("explorer-split-bottom-header")).toContainText("Changes");
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Unsplit Explorer");
+      await page.screenshot({ path: testInfo.outputPath("explorer-split.png") });
+
+      await explorer.getByTestId("workspace-tab-changes_tree").click();
+      await expect(explorerHalf(page, "top").getByTestId("changes-tree-panel")).toBeVisible();
+      await expect(
+        explorerHalf(page, "bottom").getByTestId("file-explorer-tree-scroll"),
+      ).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("explorer-split-swapped.png") });
+
+      await explorerSplitToggle(page).click();
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+      await expect(explorer.getByTestId("workspace-tab-files")).toBeVisible();
+      await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible();
+
+      await explorerSplitToggle(page).click();
+      await expect(explorer.getByTestId("explorer-split-bottom-header")).toBeVisible();
+      await explorer.getByTestId("explorer-split-unsplit").click();
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Split Explorer");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("ends the split when the bottom tab is closed", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-close-bottom-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      const explorer = explorerSidebar(page);
+      await addExplorerTerminal(page);
+      await expect(explorer.getByTestId("terminal-surface")).toBeVisible();
+      await explorer.getByTestId("workspace-tab-changes_tree").click();
+      await explorerSplitToggle(page).click();
+      await expect(explorerHalf(page, "bottom").getByTestId("terminal-surface")).toBeVisible();
+      const terminalTabId = (await explorerTabIds(page)).find((id) => id.startsWith("terminal_"));
+
+      page.on("dialog", (dialog) => dialog.accept());
+      await explorer.getByTestId(`workspace-tab-${terminalTabId}`).hover();
+      await explorer
+        .getByTestId(`workspace-terminal-close-${terminalTabId?.replace("terminal_", "")}`)
+        .click();
+
+      await expect(explorer.getByTestId(`workspace-tab-${terminalTabId}`)).toHaveCount(0);
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Split Explorer");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("ends the split when closing the top tab hands focus to the bottom tab", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-close-top-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      const explorer = explorerSidebar(page);
+      await addExplorerTerminal(page);
+      await expect(explorer.getByTestId("terminal-surface")).toBeVisible();
+      await addExplorerTerminal(page);
+      await expect.poll(() => explorerTerminalTabIds(page)).toHaveLength(2);
+      const [topTerminalTabId] = await explorerTerminalTabIds(page);
+      await explorer.getByTestId(`workspace-tab-${topTerminalTabId}`).click();
+      await explorerSplitToggle(page).click();
+      await expect(explorerHalf(page, "bottom").getByTestId("terminal-surface")).toBeVisible();
+
+      // The closed tab's right neighbour is the bottom tab, so focus lands on it and the split ends.
+      page.on("dialog", (dialog) => dialog.accept());
+      await explorer.getByTestId(`workspace-tab-${topTerminalTabId}`).hover();
+      await explorer
+        .getByTestId(`workspace-terminal-close-${topTerminalTabId.replace("terminal_", "")}`)
+        .click();
+      await expect(explorer.getByTestId(`workspace-tab-${topTerminalTabId}`)).toHaveCount(0);
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+
+      await explorer.getByTestId("workspace-tab-files").click();
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Split Explorer");
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps the split and the bottom tab mounted while the Explorer is hidden", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-hide-" });
+    try {
+      const attaches = recordTerminalAttaches(page);
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      const explorer = explorerSidebar(page);
+      await addExplorerTerminal(page);
+      await expect(explorer.getByTestId("terminal-surface")).toBeVisible();
+      const [terminalTabId] = await explorerTerminalTabIds(page);
+      const terminalId = terminalTabId.replace("terminal_", "");
+      await explorer.getByTestId("workspace-tab-changes_tree").click();
+      await explorerSplitToggle(page).click();
+      await expect(explorerHalf(page, "bottom").getByTestId("terminal-surface")).toBeVisible();
+      await expect.poll(() => terminalAttachCount(attaches, terminalId)).toBe(1);
+
+      const toggleExplorer = page.getByTestId("workspace-explorer-toggle").first();
+      await toggleExplorer.click();
+      await expect(explorerSidebar(page)).toHaveCount(0);
+      // The hidden dock measures zero; the split must keep its last real height meanwhile.
+      await expect(
+        page.getByTestId("workspace-explorer-sidebar").locator('[data-explorer-slot="bottom"]'),
+      ).toHaveCount(1);
+
+      await toggleExplorer.click();
+      await expect(explorerHalf(page, "bottom").getByTestId("terminal-surface")).toBeVisible();
+      expect(terminalAttachCount(attaches, terminalId)).toBe(1);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps the split and divider position across a reload, and folds to one tab in compact width", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-persist-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await openFilesPanel(page);
+      const explorer = explorerSidebar(page);
+      await explorerSplitToggle(page).click();
+      const header = explorer.getByTestId("explorer-split-bottom-header");
+      await expect(header).toBeVisible();
+      const headerBefore = (await header.boundingBox())!;
+      const handle = explorer.getByTestId("explorer-split-divider").getByRole("separator");
+      const handleBox = (await handle.boundingBox())!;
+      await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        handleBox.x + handleBox.width / 2,
+        handleBox.y + handleBox.height / 2 - 80,
+        {
+          steps: 8,
+        },
+      );
+      await page.mouse.up();
+      await expect
+        .poll(async () => (await header.boundingBox())!.y)
+        .toBeLessThan(headerBefore.y - 40);
+      const headerMoved = (await header.boundingBox())!;
+      await page.screenshot({ path: testInfo.outputPath("explorer-split-resized.png") });
+
+      await page.reload();
+      await ensureExplorerSidebar(page);
+      await expect(header).toBeVisible();
+      await expect
+        .poll(async () => Math.round((await header.boundingBox())!.y))
+        .toBe(Math.round(headerMoved.y));
+      await expect(explorerHalf(page, "bottom").getByTestId("changes-tree-panel")).toBeVisible();
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await ensureExplorerSidebar(page);
+      await expect(explorerSidebar(page).locator("[data-explorer-slot]")).toHaveCount(0);
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await ensureExplorerSidebar(page);
+      await expect(explorerSidebar(page).getByTestId("explorer-split-bottom-header")).toBeVisible();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("disables the split button when no other tab can be shown below", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-disabled-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await closeOtherExplorerTabs(page);
+      await expect(explorerSidebar(page).getByTestId("workspace-tab-changes_tree")).toHaveCount(0);
+
+      await expect(explorerSplitToggle(page)).toBeDisabled();
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Split Explorer");
+      await explorerSplitToggle(page).click({ force: true });
+      await expect(explorerSidebar(page).locator("[data-explorer-slot]")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps unsaved text, terminal scrollback and attachments when Explorer tabs swap halves", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-retain-" });
+    const attaches = recordTerminalAttaches(page);
+    try {
+      await writeFile(`${workspace.repoPath}/split.ts`, "export const kept = 1;\n");
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await openFilesPanel(page);
+      await openFileFromExplorer(page, "split.ts");
+      await dragTabIntoExplorer(page, "file_split.ts");
+      const explorer = explorerSidebar(page);
+      const editor = explorer.getByTestId("file-source-editor");
+      await expect(editor).toBeVisible();
+      const text = editor.locator(".cm-content");
+      await text.fill("export const kept = 1;\n// unsaved split edit");
+      await addExplorerTerminal(page);
+      const terminal = explorer.getByTestId("terminal-surface");
+      await expect(terminal).toBeVisible();
+      await terminal.click();
+      await page.keyboard.type("echo split-scrollback-marker");
+      await page.keyboard.press("Enter");
+      await expect(terminal).toContainText("split-scrollback-marker");
+      await expect.poll(() => attaches.length).toBe(1);
+      const editorNode = await editor.elementHandle();
+      const terminalNode = await terminal.elementHandle();
+
+      // The split shows the next tab after the active one; with Changes closed that is the terminal.
+      await explorer
+        .getByTestId("workspace-tab-changes_tree")
+        .click({ button: "right", position: { x: 12, y: 13 } });
+      await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+      await expect(explorer.getByTestId("workspace-tab-changes_tree")).toHaveCount(0);
+      await explorer.getByTestId("workspace-tab-file_split.ts").click();
+      await explorerSplitToggle(page).click();
+      await expect(explorerHalf(page, "top").getByTestId("file-source-editor")).toBeVisible();
+      await expect(explorerHalf(page, "bottom").getByTestId("terminal-surface")).toBeVisible();
+      const terminalTabId = (await explorerTabIds(page)).find((id) => id.startsWith("terminal_"));
+      await explorer.getByTestId(`workspace-tab-${terminalTabId}`).click();
+      await expect(explorerHalf(page, "top").getByTestId("terminal-surface")).toBeVisible();
+      await explorer.getByTestId("workspace-tab-file_split.ts").click();
+      await expect(explorerHalf(page, "top").getByTestId("file-source-editor")).toBeVisible();
+
+      expect(await editorNode!.evaluate((node) => node.isConnected)).toBe(true);
+      expect(await terminalNode!.evaluate((node) => node.isConnected)).toBe(true);
+      await expect(text).toContainText("unsaved split edit");
+      await expect(terminal).toContainText("split-scrollback-marker");
+      expect(attaches).toHaveLength(1);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("sends typing and Find to the Explorer half the user clicked", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-active-half-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await waitForWorkspaceTabsVisible(page);
+      await ensureExplorerSidebar(page);
+      const explorer = explorerSidebar(page);
+      await addExplorerTerminal(page);
+      await expect(explorer.getByTestId("terminal-surface")).toBeVisible();
+      await addExplorerTerminal(page);
+      await expect.poll(() => explorerTerminalTabIds(page)).toHaveLength(2);
+      await addExplorerTerminal(page);
+      await expect.poll(() => explorerTerminalTabIds(page)).toHaveLength(3);
+      const [firstTerminalTabId, , thirdTerminalTabId] = await explorerTerminalTabIds(page);
+      await explorer.getByTestId(`workspace-tab-${firstTerminalTabId}`).click();
+      await explorerSplitToggle(page).click();
+      const top = explorerHalf(page, "top");
+      const bottom = explorerHalf(page, "bottom");
+      await expect(top.getByTestId("terminal-surface")).toBeVisible();
+      await expect(bottom.getByTestId("terminal-surface")).toBeVisible();
+      const blurFocus = () =>
+        page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+      await bottom.getByTestId("terminal-surface").click();
+      await page.keyboard.type("echo typed-into-bottom");
+      await page.keyboard.press("Enter");
+      await expect(bottom.getByTestId("terminal-surface")).toContainText("typed-into-bottom");
+      await expect(top.getByTestId("terminal-surface")).not.toContainText("typed-into-bottom");
+      await blurFocus();
+      await page.keyboard.press("ControlOrMeta+f");
+      await expect(bottom.getByLabel("Find", { exact: true })).toBeVisible();
+      await expect(top.getByLabel("Find", { exact: true })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(bottom.getByLabel("Find", { exact: true })).toHaveCount(0);
+
+      await top.getByTestId("terminal-surface").click();
+      await blurFocus();
+      await page.keyboard.press("ControlOrMeta+f");
+      await expect(top.getByLabel("Find", { exact: true })).toBeVisible();
+      await expect(bottom.getByLabel("Find", { exact: true })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // Selecting another tab in the row puts it on top and makes the top half active again.
+      await bottom.getByTestId("terminal-surface").click();
+      await explorer.getByTestId(`workspace-tab-${thirdTerminalTabId}`).click();
+      await blurFocus();
+      await page.keyboard.press("ControlOrMeta+f");
+      await expect(top.getByLabel("Find", { exact: true })).toBeVisible();
+      await expect(bottom.getByLabel("Find", { exact: true })).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+test.describe("Explorer split controls", () => {
+  test("toggles the split with the keyboard shortcut", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-shortcut-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await openFilesPanel(page);
+      const explorer = explorerSidebar(page);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+      await page.keyboard.press("ControlOrMeta+Alt+KeyE");
+      await expect(explorer.getByTestId("explorer-split-bottom-header")).toBeVisible();
+      await page.keyboard.press("ControlOrMeta+Alt+KeyE");
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("ignores the split shortcut in focus mode, where the Explorer is not shown", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-focus-mode-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      await openFilesPanel(page);
+      const exitFocusMode = page.getByRole("button", { name: "Exit focus mode" });
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.keyboard.press("ControlOrMeta+Shift+KeyF");
+      await expect(exitFocusMode).toBeVisible();
+
+      await page.keyboard.press("ControlOrMeta+Alt+KeyE");
+      await exitFocusMode.click();
+      await expect(explorerSidebar(page)).toBeVisible();
+      await expect(explorerSplitToggle(page)).toHaveAccessibleName("Split Explorer");
+      await expect(explorerSidebar(page).locator("[data-explorer-slot]")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("shows a chosen tab below from its menu, marks it in the row, and unsplits from the menu", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "explorer-split-show-below-" });
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await ensureExplorerSidebar(page);
+      const explorer = explorerSidebar(page);
+      await addExplorerTerminal(page);
+      await expect(explorer.getByTestId("terminal-surface")).toBeVisible();
+      await explorer.getByTestId("workspace-tab-files").click();
+
+      await explorer
+        .getByTestId("workspace-tab-changes_tree")
+        .click({ button: "right", position: { x: 12, y: 13 } });
+      await page.getByRole("menuitem", { name: "Show below", exact: true }).click();
+
+      await expect(explorerHalf(page, "bottom").getByTestId("changes-tree-panel")).toBeVisible();
+      await expect(explorer.getByTestId("workspace-tab-shown-below-changes_tree")).toBeVisible();
+
+      await explorer
+        .getByTestId("workspace-tab-files")
+        .click({ button: "right", position: { x: 12, y: 13 } });
+      await expect(page.getByRole("menuitem", { name: "Show below", exact: true })).toHaveCount(0);
+      await page.getByRole("menuitem", { name: "Unsplit Explorer", exact: true }).click();
+
+      await expect(explorer.locator("[data-explorer-slot]")).toHaveCount(0);
+      await expect(explorer.getByTestId("workspace-tab-shown-below-changes_tree")).toHaveCount(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});

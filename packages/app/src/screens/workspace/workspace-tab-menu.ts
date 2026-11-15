@@ -67,6 +67,16 @@ export type WorkspaceTabMenuEntry =
       key: string;
     };
 
+/** Split actions for one Explorer tab; main-pane tabs pass none. */
+export interface WorkspaceTabExplorerSplitActions {
+  canShowBelow: boolean;
+  isSplit: boolean;
+  showBelowLabel: string;
+  unsplitLabel: string;
+  onShowBelow: () => void;
+  onUnsplit: () => void;
+}
+
 interface BuildWorkspaceTabMenuEntriesInput {
   surface: WorkspaceTabMenuSurface;
   tab: WorkspaceTabDescriptor;
@@ -84,6 +94,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   labels?: WorkspaceTabMenuLabels;
+  explorerSplit?: WorkspaceTabExplorerSplitActions;
 }
 
 interface BuildWorkspaceDesktopTabActionsInput {
@@ -101,6 +112,7 @@ interface BuildWorkspaceDesktopTabActionsInput {
   onCloseTabsToRight: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
   labels?: WorkspaceTabMenuLabels;
+  explorerSplit?: WorkspaceTabExplorerSplitActions;
 }
 
 export interface WorkspaceDesktopTabActions {
@@ -187,6 +199,7 @@ export function buildWorkspaceTabMenuEntries(
     onCloseTabsBefore,
     onCloseTabsAfter,
     onCloseOtherTabs,
+    explorerSplit,
   } = input;
   const labels = input.labels ?? DEFAULT_WORKSPACE_TAB_MENU_LABELS;
   const isFirstTab = index === 0;
@@ -264,6 +277,28 @@ export function buildWorkspaceTabMenuEntries(
       kind: "separator",
       key: "rename-separator",
     });
+  }
+
+  if (explorerSplit?.canShowBelow) {
+    entries.push({
+      kind: "item",
+      key: "explorer-show-below",
+      label: explorerSplit.showBelowLabel,
+      testID: `${menuTestIDBase}-show-below`,
+      onSelect: explorerSplit.onShowBelow,
+    });
+  }
+  if (explorerSplit?.isSplit) {
+    entries.push({
+      kind: "item",
+      key: "explorer-unsplit",
+      label: explorerSplit.unsplitLabel,
+      testID: `${menuTestIDBase}-unsplit-explorer`,
+      onSelect: explorerSplit.onUnsplit,
+    });
+  }
+  if (explorerSplit?.canShowBelow || explorerSplit?.isSplit) {
+    entries.push({ kind: "separator", key: "explorer-split-separator" });
   }
 
   entries.push({
@@ -350,6 +385,7 @@ export function buildWorkspaceDesktopTabActions(
       onCloseTabsAfter: input.onCloseTabsToRight,
       onCloseOtherTabs: input.onCloseOtherTabs,
       labels: input.labels,
+      explorerSplit: input.explorerSplit,
     }),
     closeButtonTestId: getCloseButtonTestId(input.tab),
   };
