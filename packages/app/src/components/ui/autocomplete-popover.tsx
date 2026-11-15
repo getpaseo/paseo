@@ -9,7 +9,11 @@ import {
 } from "react";
 import { View, useWindowDimensions, type StyleProp, type ViewStyle } from "react-native";
 import { Portal } from "@gorhom/portal";
-import Animated, { useAnimatedReaction, useAnimatedStyle } from "react-native-reanimated";
+import Animated, {
+  useAnimatedReaction,
+  useAnimatedStyle,
+  type DerivedValue,
+} from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -126,38 +130,62 @@ export function AutocompletePopover({
     });
   }, [relativeAnchorRect]);
 
-  const anchorY = relativeAnchorRect?.y ?? 0;
-  const reservedLift = anchor.reservedLift;
-  const heightStyle = useAnimatedStyle(
-    () => ({
-      maxHeight: Math.max(
-        0,
-        anchorY - reservedLift.value - safeAreaInsets.top - OFFSET_FROM_ANCHOR * 2,
-      ),
-    }),
-    [anchorY, reservedLift, safeAreaInsets.top],
-  );
-
-  const showPopover = canMeasure && relativeAnchorRect && baseStyle;
-
   // The translate view is the popover's own frame, so it lifts only the popover.
   return (
     <View ref={anchorRef} onLayout={remeasure} style={anchorStyle} collapsable={false}>
       {children}
-      {showPopover ? (
+      {canMeasure && relativeAnchorRect && baseStyle ? (
         <Portal hostName={portalHostName}>
           <KeyboardTranslateView {...anchor.translation} style={baseStyle}>
-            <Animated.View testID="composer-autocomplete-popover" style={heightStyle}>
+            <PopoverFrame
+              anchorY={relativeAnchorRect.y}
+              reservedLift={anchor.reservedLift}
+              topInset={safeAreaInsets.top}
+            >
               <Autocomplete
                 options={options}
                 selectedIndex={selectedIndex}
                 onSelect={onSelect}
                 status={status}
               />
-            </Animated.View>
+            </PopoverFrame>
           </KeyboardTranslateView>
         </Portal>
       ) : null}
     </View>
+  );
+}
+
+interface PopoverFrameProps {
+  anchorY: number;
+  reservedLift: DerivedValue<number>;
+  topInset: number;
+  children: ReactNode;
+}
+
+/**
+ * Bounds the popover's height to the space above the anchor. It mounts only with a measured
+ * anchor: Reanimated computes the first style when the hook first runs and sends later values
+ * after the mounting commit, which native paints. A bound computed before the measurement painted
+ * the popover at its minimum height, hanging over the composer, for a frame on every open.
+ */
+function PopoverFrame({
+  anchorY,
+  reservedLift,
+  topInset,
+  children,
+}: PopoverFrameProps): ReactElement {
+  "use no memo";
+  // React Compiler memoizes effect captures by reading SharedValue.value during render.
+  const heightStyle = useAnimatedStyle(
+    () => ({
+      maxHeight: Math.max(0, anchorY - reservedLift.value - topInset - OFFSET_FROM_ANCHOR * 2),
+    }),
+    [anchorY, reservedLift, topInset],
+  );
+  return (
+    <Animated.View testID="composer-autocomplete-popover" style={heightStyle}>
+      {children}
+    </Animated.View>
   );
 }
