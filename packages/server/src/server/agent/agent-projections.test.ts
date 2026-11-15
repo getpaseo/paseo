@@ -387,6 +387,8 @@ describe("toAgentPayload", () => {
           sessionId: "persist-stored",
           metadata: {
             conversationId: "conversation-stored",
+            pluginAppendSystemPrompt: ["plugin instruction"],
+            daemonAppendSystemPrompt: "daemon instruction",
             mcpServers: {
               hub: {
                 type: "http",
@@ -402,6 +404,8 @@ describe("toAgentPayload", () => {
 
     expect(record.persistence?.metadata).toEqual({
       conversationId: "conversation-stored",
+      pluginAppendSystemPrompt: ["plugin instruction"],
+      daemonAppendSystemPrompt: "daemon instruction",
       mcpServers: {
         hub: {
           type: "http",

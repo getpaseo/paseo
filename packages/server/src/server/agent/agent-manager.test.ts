@@ -674,6 +674,48 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+test("OpenCode persistence excludes launch-only instructions from storage and clients", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-plugin-persistence-"));
+  const harness = new V2Harness();
+  harness.info.location.directory = workdir;
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new OpenCodeV2AgentClient({ logger, runtime: harness.runtime });
+  const manager = new AgentManager({
+    clients: { opencode: client },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Daemon instruction",
+    pluginLifecycle: {
+      emit: () => {},
+      before: async (name, request) =>
+        name === "agent.open.before"
+          ? { ...request, appendSystemPrompt: ["Plugin instruction"] }
+          : request,
+    },
+  });
+  const agent = await manager.createAgent({ provider: "opencode", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    expect(harness.instructions.get("paseo")).toBe("Daemon instruction\n\nPlugin instruction");
+    await manager.flush();
+    const record = await storage.get(agent.id);
+    expect(record?.persistence?.metadata).not.toHaveProperty("pluginAppendSystemPrompt");
+    expect(record?.persistence?.metadata).not.toHaveProperty("daemonAppendSystemPrompt");
+    const live = manager.getAgent(agent.id)!;
+    expect(toAgentPayload(live).persistence?.metadata).not.toHaveProperty(
+      "pluginAppendSystemPrompt",
+    );
+    expect(toAgentPayload(live).persistence?.metadata).not.toHaveProperty(
+      "daemonAppendSystemPrompt",
+    );
+  } finally {
+    await manager.closeAgent(agent.id);
+    await client.shutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("stops an OpenCode execution already active when its conversation is reopened", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-opencode-resume-"));
   onTestFinished(() => rmSync(workdir, { recursive: true, force: true }));

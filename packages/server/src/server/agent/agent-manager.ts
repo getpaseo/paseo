@@ -634,7 +634,12 @@ function normalizePersistenceForConfig(
   if (!handle) {
     return null;
   }
-  const { mcpServers: _launchMcpServers, ...metadata } = handle.metadata ?? {};
+  const {
+    mcpServers: _launchMcpServers,
+    pluginAppendSystemPrompt: _pluginAppendSystemPrompt,
+    daemonAppendSystemPrompt: _daemonAppendSystemPrompt,
+    ...metadata
+  } = handle.metadata ?? {};
   return {
     ...handle,
     metadata: {

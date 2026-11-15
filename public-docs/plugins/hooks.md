@@ -338,7 +338,7 @@ server.addHook("agent.open.before", async ({ request }) => ({
 }));
 ```
 
-Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
+Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. Internal agents also receive these instructions. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
 
 ### Inject environment variables on every session opening
 
