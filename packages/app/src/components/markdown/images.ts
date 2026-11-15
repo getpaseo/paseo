@@ -44,7 +44,6 @@ export function useMarkdownSource(
     external?: boolean;
   } = {},
 ) {
-  const occurrenceKey = useId();
   const { commandNames, forgeReferencePattern, external } = links;
   const prepared = useMemo(
     () =>
@@ -56,7 +55,30 @@ export function useMarkdownSource(
       }),
     [text, context.workspaceRoot, commandNames, forgeReferencePattern, external],
   );
-  const sources = [...new Set(prepared.images.map((image) => image.source))];
+  const { resolved, images } = useMarkdownImageSources(
+    prepared.images.map((image) => image.source),
+    context,
+  );
+  const unavailableImages = new Set(
+    images.filter((image) => image.status === "unavailable").map((image) => image.source),
+  );
+  const pendingImages = new Set(
+    images.filter((image) => image.status === "pending").map((image) => image.source),
+  );
+  return {
+    markdown: prepared.render(resolved, unavailableImages, pendingImages),
+    linkRecognition: prepared.linkRecognition,
+    linkSource: prepared.linkSource,
+    imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
+  };
+}
+
+export function useMarkdownImageSources(
+  inputSources: readonly string[],
+  context: MarkdownImageContext,
+) {
+  const occurrenceKey = useId();
+  const sources = [...new Set(inputSources)];
   const acquisitions = sources.map((source) => {
     const resolved = resolveMarkdownPreviewImageSource({
       source,
@@ -135,14 +157,12 @@ export function useMarkdownSource(
       decoded: decoded[index].data === true,
     }),
   );
-  const unavailableImages = new Set(
-    sources.filter((_source, index) => statuses[index] === "unavailable"),
-  );
-  const pendingImages = new Set(sources.filter((_source, index) => statuses[index] === "pending"));
   return {
-    markdown: prepared.render(resolved, unavailableImages, pendingImages),
-    linkRecognition: prepared.linkRecognition,
-    linkSource: prepared.linkSource,
-    imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
+    resolved,
+    images: sources.map((source, index) => ({
+      source,
+      uri: displayUrls[index],
+      status: statuses[index]!,
+    })),
   };
 }

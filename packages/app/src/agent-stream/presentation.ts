@@ -1,4 +1,5 @@
 import { isTurnBoundary } from "./turn-membership";
+import { indexToolImages } from "@/tool-calls/detail-level/image-index";
 import type { ChatDisplay } from "@/hooks/use-settings";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
@@ -12,6 +13,10 @@ import {
 import type { StreamItem, UserMessageItem } from "@/types/stream";
 import { collapseTurns, type TurnCollapse } from "./turn-collapse/model";
 import type { ReadingRowReplacements } from "./reading-anchor";
+import {
+  collectToolCallImages,
+  type ToolCallImage,
+} from "@/tool-calls/detail-level/overview/model";
 
 interface PresentationInput {
   tail: StreamItem[];
@@ -25,10 +30,36 @@ interface PresentationInput {
   activeTurnId?: string | null;
 }
 
+interface ToolCallImageLookup {
+  get(itemId: string): readonly ToolCallImage[] | undefined;
+}
+
 export interface StreamPresentation extends ToolCallDetailProjection {
   turns: Omit<TurnCollapse, "tail">;
   readingRowReplacements: ReadingRowReplacements;
+  toolImagesByItemId: ToolCallImageLookup;
+  historyImageUpdates: ReadonlySet<string>;
 }
+
+function toolImageGroups(
+  rows: readonly StreamItem[],
+  groups: ToolCallDetailProjection["groupsByHostId"],
+): ReadonlyMap<string, readonly ToolCallImage[]> {
+  const imagesByItem = new Map<string, readonly ToolCallImage[]>();
+  for (const row of rows) {
+    const group = groups.get(row.id);
+    if (group) {
+      for (const image of group.images) imagesByItem.set(image.itemId, group.images);
+    } else if (row.kind === "assistant_message") {
+      const images = collectToolCallImages([row]);
+      if (images.length > 0) imagesByItem.set(row.id, images);
+    }
+  }
+  return imagesByItem;
+}
+
+const EMPTY_HOSTS: ReadonlyMap<string, string> = new Map();
+const NO_IMAGE_UPDATES: ReadonlySet<string> = new Set();
 
 function groupedRowHosts(
   rows: readonly StreamItem[],
@@ -79,7 +110,9 @@ export function createStreamPresentation() {
   let preparedAutoExpandReasoning: boolean | undefined;
   let preparedLevel: ToolCallDetailLevel | undefined;
   let preparedHistory: PreparedToolCallHistory | null = null;
+  let fullImageRun: ReturnType<typeof indexToolImages>["pending"] | undefined;
   let historyGroupHosts: ReadonlyMap<string, string> = new Map();
+  let historyToolImages: ReadonlyMap<string, readonly ToolCallImage[]> = new Map();
   let collapsedSource: StreamItem[] | undefined;
   let collapsedIsLatestTurnOpen = false;
   let collapsedExpandedHostIds: ReadonlySet<string> | undefined;
@@ -108,7 +141,10 @@ export function createStreamPresentation() {
   function collapse(
     projection: ToolCallDetailProjection,
     input: PresentationInput,
-  ): Omit<StreamPresentation, "readingRowReplacements"> {
+  ): Omit<
+    StreamPresentation,
+    "readingRowReplacements" | "toolImagesByItemId" | "historyImageUpdates"
+  > {
     if (input.display !== "collapseTurns") {
       return { ...projection, turns: NO_COLLAPSED_TURNS };
     }
@@ -174,18 +210,15 @@ export function createStreamPresentation() {
       const blocks = presentRows(item);
       head.push(...blocks);
     }
-    if (
+    const historyChanged =
       preparedTail !== historyRows ||
       preparedLevel !== level ||
-      preparedAutoExpandReasoning !== input.autoExpandReasoning
-    ) {
+      preparedAutoExpandReasoning !== input.autoExpandReasoning;
+    if (historyChanged) {
       preparedHistory = prepareToolCallHistory(level, historyRows, input.autoExpandReasoning);
       historyGroupHosts = preparedHistory
         ? groupedRowHosts(preparedHistory.grouped.tail, preparedHistory.grouped.groupsByHostId)
-        : new Map();
-      preparedTail = historyRows;
-      preparedLevel = level;
-      preparedAutoExpandReasoning = input.autoExpandReasoning;
+        : EMPTY_HOSTS;
     }
     const projection = projectToolCallDetailLevel({
       level,
@@ -194,7 +227,36 @@ export function createStreamPresentation() {
       preparedHistory,
       isTurnActive: input.isTurnActive,
     });
+    if (historyChanged) {
+      if (preparedHistory) {
+        historyToolImages = toolImageGroups(
+          preparedHistory.grouped.tail,
+          preparedHistory.grouped.groupsByHostId,
+        );
+        fullImageRun = undefined;
+      } else {
+        const indexed = indexToolImages(projection.tail, input.autoExpandReasoning);
+        historyToolImages = indexed.byItemId;
+        fullImageRun = indexed.pending;
+      }
+      preparedTail = historyRows;
+      preparedLevel = level;
+      preparedAutoExpandReasoning = input.autoExpandReasoning;
+    }
     const result = collapse(projection, input);
+    const imageHost = projection.tail.at(-1);
+    const liveToolImages = preparedHistory
+      ? toolImageGroups(
+          imageHost ? [imageHost, ...projection.head] : projection.head,
+          projection.groupsByHostId,
+        )
+      : indexToolImages(projection.head, input.autoExpandReasoning, fullImageRun).byItemId;
+    const retainedToolImages = historyToolImages;
+    const changedImageGroup = imageHost && projection.historyGroupUpdatesByHostId.get(imageHost.id);
+    const changedImages = preparedHistory
+      ? changedImageGroup?.images.map((image) => image.itemId)
+      : [...liveToolImages.keys()];
+    const historyImageUpdates = changedImages?.length ? new Set(changedImages) : NO_IMAGE_UPDATES;
     // Only the trailing retained group can absorb head rows. Reuse the retained
     // index across streaming updates rather than walking the full history again.
     const last = projection.tail.at(-1);
@@ -205,6 +267,10 @@ export function createStreamPresentation() {
     const retainedGroupHosts = historyGroupHosts;
     return {
       ...result,
+      historyImageUpdates,
+      toolImagesByItemId: {
+        get: (id) => liveToolImages.get(id) ?? retainedToolImages.get(id),
+      },
       readingRowReplacements: {
         get(id) {
           if (result.turns.nestedItemIds.has(id)) return undefined;
