@@ -36,7 +36,10 @@ export interface DraggableListProps<T> {
   data: T[];
   keyExtractor: (item: T, index: number) => string;
   renderItem: (info: DraggableRenderItemInfo<T>) => ReactElement;
-  /** The new order, and the key of the item the user moved to reach it. */
+  /**
+   * The new order, and the key of the item the user moved to reach it. The list keeps showing
+   * this order until `data` arrives in a different order, so the owner must apply it.
+   */
   onDragEnd: (data: T[], movedKey: string) => void;
   style?: StyleProp<ViewStyle>;
   /** Outer container style (useful for nested, non-scrolling lists). */

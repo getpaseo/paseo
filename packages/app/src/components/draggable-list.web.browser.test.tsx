@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import React, { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -86,6 +86,82 @@ function pressAndMove(element: HTMLElement, distance: number) {
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
 }
+
+const OWNER_DELAY_MS = 50;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** An owner whose new order reaches the list in a later render, like one that saves to a store. */
+function ListWithLateOwner() {
+  const [items, setItems] = useState<Item[]>([{ id: "one" }, { id: "two" }]);
+  const reorderLater = useCallback((next: Item[]) => {
+    setTimeout(() => setItems(next), OWNER_DELAY_MS);
+  }, []);
+  return (
+    <DraggableList
+      data={items}
+      keyExtractor={keyExtractor}
+      renderItem={renderRowWithHandle}
+      onDragEnd={reorderLater}
+      useDragHandle
+    />
+  );
+}
+
+function rowOrder(): (string | null)[] {
+  return Array.from(container?.querySelectorAll('[data-testid="row-body"]') ?? []).map(
+    (row) => row.textContent,
+  );
+}
+
+/** Drag the element down by `distance` in two mouse moves, letting dnd-kit measure in between. */
+async function dragDown(element: HTMLElement, distance: number) {
+  const { left, top, width, height } = element.getBoundingClientRect();
+  const x = left + width / 2;
+  const y = top + height / 2;
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: x, clientY: y }),
+    );
+  });
+  for (const moved of [distance / 2, distance]) {
+    await act(async () => {
+      document.dispatchEvent(
+        new MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y + moved }),
+      );
+      await wait(20);
+    });
+  }
+  act(() => {
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+}
+
+describe("DraggableList on web", () => {
+  it("keeps a dropped row in its new slot until the owner's new order arrives", async () => {
+    act(() => {
+      root?.render(<ListWithLateOwner />);
+    });
+    const [firstHandle] = Array.from(
+      container?.querySelectorAll<HTMLElement>('[data-testid="row-handle"]') ?? [],
+    );
+    const [firstRow, secondRow] = Array.from(
+      container?.querySelectorAll<HTMLElement>('[data-testid="row-body"]') ?? [],
+    );
+    const rowDistance =
+      secondRow.getBoundingClientRect().top - firstRow.getBoundingClientRect().top;
+
+    await dragDown(firstHandle, rowDistance);
+    expect(rowOrder()).toEqual(["two", "one"]);
+
+    await act(() => wait(OWNER_DELAY_MS * 2));
+    expect(rowOrder()).toEqual(["two", "one"]);
+  });
+});
 
 describe("DraggableListHandle on web", () => {
   it("starts the row's drag from the handle, and only from the handle", () => {

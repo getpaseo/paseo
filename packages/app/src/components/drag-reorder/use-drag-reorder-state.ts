@@ -15,6 +15,17 @@ export interface DragReorderState<T> {
   handlers: DragReorderHandlers;
 }
 
+function haveSameOrder<T>(
+  left: T[],
+  right: T[],
+  keyExtractor: (item: T, index: number) => string,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => keyExtractor(item, index) === keyExtractor(right[index], index))
+  );
+}
+
 export function useDragReorderState<T>({
   data,
   keyExtractor,
@@ -46,25 +57,33 @@ export function useDragReorderState<T>({
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
-      const items = state.dragItems ?? data;
-      dispatch({ type: "clear" });
-      if (disabled) return;
-
       const activeId = String(active.id);
-      const reordered = reorderItemsOnDragEnd({
-        items,
-        activeId,
-        overId: over ? String(over.id) : null,
-        keyExtractor,
-      });
-      if (reordered) onDragEnd?.(reordered, activeId);
+      const reordered = disabled
+        ? null
+        : reorderItemsOnDragEnd({
+            items: state.dragItems ?? data,
+            activeId,
+            overId: over ? String(over.id) : null,
+            keyExtractor,
+          });
+      if (!reordered) {
+        dispatch({ type: "clear" });
+        return;
+      }
+      // The owner's new order can arrive in a later render. Hold the dropped order until it does.
+      dispatch({ type: "drop", items: reordered, replaces: data });
+      onDragEnd?.(reordered, activeId);
     },
     [data, disabled, keyExtractor, onDragEnd, state.dragItems],
   );
 
+  const ownerReordered =
+    state.replaces !== null && !haveSameOrder(state.replaces, data, keyExtractor);
+  if (ownerReordered) dispatch({ type: "clear" });
+
   return {
     activeId: state.activeId,
-    items: state.dragItems ?? data,
+    items: ownerReordered ? data : (state.dragItems ?? data),
     handlers: {
       onDragStart: handleDragStart,
       onDragCancel: clearDragState,

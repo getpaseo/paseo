@@ -37,6 +37,7 @@ import {
   pickUsageHost,
   usageModalHost,
   dragUsageCardAbove,
+  recordUsageCardPositionsAfterRelease,
   expectUsageCardOrder,
   expectUsageOptionsFitContent,
   setUsageCardOn,
@@ -254,9 +255,15 @@ test.describe("usage modal", () => {
     await expect(work.getByText("work", { exact: true })).toBeVisible();
     await expectPinnedUsage(page, ["31% Weekly", "20% Weekly"]);
 
+    const stopRecording = await recordUsageCardPositionsAfterRelease(page);
     await dragUsageCardAbove(page, "beta:home", "alpha:a");
     await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
+    // The cards are in their new slots from the first frame after the drop.
+    const framesAfterDrop = await stopRecording();
+    const settled = framesAfterDrop.at(-1);
+    expect(settled).toBeDefined();
+    expect(framesAfterDrop.filter((frame) => frame !== settled)).toEqual([]);
 
     await page.reload();
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
