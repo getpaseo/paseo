@@ -5309,11 +5309,7 @@ class ClaudeAgentSession implements AgentSession {
   ): Promise<PermissionResult> => {
     // Decide before publishing anything: bypassed tools never enter the permission UI.
     // Claude also routes questions and plan review through this callback.
-    const needsUserAnswer =
-      toolName === "AskUserQuestion" ||
-      toolName === "ExitPlanMode" ||
-      // The SDK drops requires_user_interaction but forwards this CLI reason.
-      options.decisionReason === "requiresUserInteraction";
+    const needsUserAnswer = toolName === "AskUserQuestion" || toolName === "ExitPlanMode";
     if (this.currentMode === "bypassPermissions" && !needsUserAnswer) {
       return { behavior: "allow", updatedInput: input, toolUseID: options.toolUseID };
     }
