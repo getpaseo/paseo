@@ -70,6 +70,8 @@ function enableDictationCapability(message: WebSocketMessage): WebSocketMessage 
 async function installSyntheticMicrophone(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const mediaDevices = navigator.mediaDevices;
+    const tracks: MediaStreamTrack[] = [];
+    Object.defineProperty(window, "dictationTestTracks", { value: tracks });
     Object.defineProperty(mediaDevices, "getUserMedia", {
       configurable: true,
       value: async () => {
@@ -78,6 +80,7 @@ async function installSyntheticMicrophone(page: Page): Promise<void> {
         const destination = context.createMediaStreamDestination();
         oscillator.connect(destination);
         oscillator.start();
+        tracks.push(...destination.stream.getTracks());
         return destination.stream;
       },
     });
@@ -254,3 +257,43 @@ test("dictation shortcut leaves retained fullscreen and exposes recording contro
     await agent.cleanup();
   }
 });
+
+test("leaving a retained workspace stops dictation and preserves its draft", async ({ page }) => {
+  const first = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-owner-",
+    title: "Recording workspace",
+  });
+  const second = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-other-",
+    title: "Other workspace",
+  });
+  await installSyntheticMicrophone(page);
+  const harness = await installDictationFailureHarness(page);
+  try {
+    await openAgentRoute(page, first);
+    await expectComposerVisible(page);
+    await fillComposerDraft(page, "Keep this draft");
+    await page.getByRole("button", { name: "Start dictation", exact: true }).click();
+    await harness.waitForAudio();
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${second.workspaceId}`));
+    await expect.poll(() => microphoneTracksEnded(page)).toBe(true);
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${first.workspaceId}`));
+    await expect(composerLocator(page)).toHaveValue("Keep this draft");
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toHaveCount(
+      0,
+    );
+  } finally {
+    await second.cleanup();
+    await first.cleanup();
+  }
+});
+
+function microphoneTracksEnded(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const tracks = (window as unknown as { dictationTestTracks: MediaStreamTrack[] })
+      .dictationTestTracks;
+    return tracks.length > 0 && tracks.every((track) => track.readyState === "ended");
+  });
+}

@@ -291,3 +291,18 @@ it("does not cancel the owner's editor when the compact sheet leaves the tree on
   expect(context.closeCount()).toBe(0);
   expect(context.backPress.press()).toBe(false);
 });
+
+it("closes a retained owner's sheet and releases Back when the owner becomes inactive", () => {
+  const { sheet, tracker, backPress, closeCount } = setup();
+  tracker.attachController(sheet);
+  tracker.syncDesired({ visible: true, active: true });
+  tracker.handleSheetIndexChange(0);
+  tracker.syncDesired({ visible: true, active: false });
+  expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  expect(closeCount()).toBe(1);
+  expect(backPress.press()).toBe(false);
+  tracker.syncDesired({ visible: false, active: false });
+  tracker.handleSheetDismiss();
+  tracker.syncDesired({ visible: false, active: true });
+  expect(sheet.events).toHaveLength(2);
+});

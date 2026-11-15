@@ -166,6 +166,31 @@ test("leaving a retained workspace dismisses its model sheet", async ({ page }) 
     await switchToNextWorkspace(page, second.workspaceId);
     await expect(page.getByTestId("agent-controls-model-sheet")).not.toBeInViewport();
     await expectComposerVisible(page);
+    await switchToNextWorkspace(page, first.workspaceId);
+    await expect(page.getByTestId("agent-controls-model-sheet")).not.toBeInViewport();
+    await expectComposerVisible(page);
+  } finally {
+    await second.cleanup();
+    await first.cleanup();
+  }
+});
+
+test("leaving a retained workspace closes its context window sheet", async ({ page }) => {
+  const first = await openMockAgentAtMobileBreakpoint(page);
+  const second = await seedMockAgentWorkspace({
+    repoPrefix: "context-sheet-other-",
+    title: "Other workspace",
+  });
+  try {
+    await page.getByRole("button", { name: /Context window.*used/ }).click();
+    const sheet = page.getByRole("dialog", { name: "Context window", exact: true });
+    await expect(sheet).toBeInViewport();
+    await switchToNextWorkspace(page, second.workspaceId);
+    await expect(sheet).not.toBeInViewport();
+    await expectComposerVisible(page);
+    await switchToNextWorkspace(page, first.workspaceId);
+    await expect(sheet).not.toBeInViewport();
+    await expectComposerVisible(page);
   } finally {
     await second.cleanup();
     await first.cleanup();

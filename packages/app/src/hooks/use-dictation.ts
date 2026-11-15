@@ -1,3 +1,4 @@
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -16,6 +17,7 @@ import {
 
 export function useDictation(options: UseDictationOptions): UseDictationResult {
   const { t } = useTranslation();
+  const active = useRetainedPanelActive();
   const {
     client,
     onTranscript,
@@ -335,6 +337,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       actionGateRef.current.cancelling = false;
     }
   }, [audio, clearStreamingState, reportError, stopDurationTracking]);
+
+  useEffect(() => {
+    if (!active) void cancelDictation();
+  }, [active, cancelDictation]);
 
   const confirmDictation = useCallback(async () => {
     if (actionGateRef.current.confirming) {

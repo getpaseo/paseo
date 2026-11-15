@@ -5,6 +5,7 @@ export interface BottomSheetController {
 
 export interface BottomSheetVisibilityInput {
   visible: boolean;
+  active?: boolean;
   isEnabled?: boolean;
 }
 
@@ -101,8 +102,15 @@ export function createBottomSheetVisibilityTracker(opts: {
       }
     },
     syncDesired(next) {
-      visible = next.visible;
+      visible = next.visible && next.active !== false;
       isEnabled = next.isEnabled;
+      // Leaving a retained owner is a close, not a temporary presentation pause.
+      // Clear its desired state so returning does not reopen the old sheet.
+      if (next.visible && next.active === false) {
+        dismiss();
+        notifyClose();
+        return;
+      }
       if (isEnabled === false) return;
       if (visible) {
         present();
