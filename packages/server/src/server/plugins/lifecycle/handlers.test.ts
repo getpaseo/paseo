@@ -403,11 +403,19 @@ test("terminal and command hooks can change only what Paseo runs", async () => {
 test("agent creation hooks keep the workspace, including from plugins that omit it", async () => {
   const request = {
     config: { provider: "claude", cwd: "/work/a" },
+    metadata: { "issues.id": "ENG-1" },
     workspaceId: "wks_a",
   };
+  // A result built before either field existed keeps both.
   await expect(
     validateBeforeResult("agent.create.before", request, { config: request.config }),
   ).resolves.toEqual(request);
+  await expect(
+    validateBeforeResult("agent.create.before", request, {
+      config: request.config,
+      metadata: { "issues.id": "ENG-2" },
+    }),
+  ).resolves.toEqual({ ...request, metadata: { "issues.id": "ENG-2" } });
   await expect(
     validateBeforeResult("agent.create.before", request, { ...request, workspaceId: "wks_b" }),
   ).rejects.toThrow("agent.create.before hooks cannot change the workspace");
