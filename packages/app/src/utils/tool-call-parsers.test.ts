@@ -21,6 +21,36 @@ describe("tool-call-parsers", () => {
     expect(parsed.find((entry) => entry.type === "add")?.content).toBe("+new");
   });
 
+  it("keeps file headers in multi-file diffs", () => {
+    const parsed = parseUnifiedDiff(
+      [
+        "diff --git a/alpha.txt b/alpha.txt",
+        "--- a/alpha.txt",
+        "+++ b/alpha.txt",
+        "@@ -1 +1 @@",
+        "-color = blue",
+        "+color = green",
+        "diff --git a/beta.txt b/beta.txt",
+        "--- a/beta.txt",
+        "+++ b/beta.txt",
+        "@@ -1 +1 @@",
+        "-size = small",
+        "+size = large",
+      ].join("\n"),
+    );
+
+    expect(parsed).toEqual([
+      { type: "header", content: "diff --git a/alpha.txt b/alpha.txt" },
+      { type: "header", content: "@@ -1 +1 @@" },
+      { type: "remove", content: "-color = blue" },
+      { type: "add", content: "+color = green" },
+      { type: "header", content: "diff --git a/beta.txt b/beta.txt" },
+      { type: "header", content: "@@ -1 +1 @@" },
+      { type: "remove", content: "-size = small" },
+      { type: "add", content: "+size = large" },
+    ]);
+  });
+
   it("extracts TodoWrite task entries", () => {
     const tasks = extractTaskEntriesFromToolCall("TodoWrite", {
       todos: [

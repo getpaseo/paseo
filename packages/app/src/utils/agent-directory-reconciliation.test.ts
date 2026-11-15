@@ -126,6 +126,23 @@ describe("agent directory reconciliation", () => {
     }).toEqual({ title: "newer page", status: "running", projectName: "repo" });
   });
 
+  it("takes the project of a newer buffered upsert", () => {
+    const snapshotEntry = entry("agent", "idle");
+    const newerProject = { ...snapshotEntry.project, projectName: "renamed project" };
+    const result = reconcileAgentDirectory({
+      snapshot: [snapshotEntry],
+      deltas: [
+        {
+          kind: "upsert",
+          agent: { ...snapshot("agent", "idle"), updatedAt: "2026-07-12T11:00:00.000Z" },
+          project: newerProject,
+        },
+      ],
+    });
+
+    expect(result[0]?.project.projectName).toBe("renamed project");
+  });
+
   it("clears a snapshot stop when a newer buffered upsert is running", () => {
     const result = reconcileAgentDirectory({
       snapshot: [entry("agent", "idle")],

@@ -7,6 +7,7 @@ import type {
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
+import type { BackgroundVisibility } from "../../agent/directory.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
@@ -19,6 +20,7 @@ interface AgentUpdatesSubscriptionState {
   emit: (message: SessionOutboundMessage) => void;
   syncEnabled: boolean;
   filter?: AgentUpdatesFilter;
+  backgroundVisibility: BackgroundVisibility;
   isProviderVisible: (provider: string) => boolean;
   isBootstrapping: boolean;
   pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
@@ -31,6 +33,7 @@ export interface AgentUpdatesService {
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    backgroundVisibility?: BackgroundVisibility;
     syncEnabled?: boolean;
   }): void;
   flushBootstrapped(
@@ -47,7 +50,10 @@ export interface AgentUpdatesService {
 }
 
 export interface AgentUpdatesServiceDeps {
-  includesWorkspace?(agent: AgentSnapshotPayload, includeBackground?: boolean): Promise<boolean>;
+  includesWorkspace?(
+    agent: AgentSnapshotPayload,
+    backgroundVisibility: BackgroundVisibility,
+  ): Promise<boolean>;
   emit(message: SessionOutboundMessage): void;
   enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload>;
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
@@ -60,7 +66,7 @@ export interface AgentUpdatesServiceDeps {
     project: ProjectPlacementPayload | null,
     agentId: string,
     includeSequence: boolean,
-    includeBackground?: boolean,
+    backgroundVisibility: BackgroundVisibility,
   ): T;
   logger: pino.Logger;
 }
@@ -173,7 +179,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       project,
       agentId,
       sub.syncEnabled === true,
-      sub.filter?.includeBackground,
+      sub.backgroundVisibility,
     );
 
   function bufferOrEmit(sub: AgentUpdatesSubscriptionState, payload: AgentUpdatePayload): void {
@@ -194,10 +200,12 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    backgroundVisibility?: BackgroundVisibility;
     syncEnabled?: boolean;
   }): void {
     subscriptions.set(input.subscriptionId, {
       ...input,
+      backgroundVisibility: input.backgroundVisibility ?? false,
       emit: input.emit ?? deps.emit,
       syncEnabled: input.syncEnabled ?? false,
       isProviderVisible: input.isProviderVisible ?? deps.isProviderVisibleToClient,
@@ -249,9 +257,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
     const backgroundVisible = await Promise.all(
-      observers.map(
-        (sub) => deps.includesWorkspace?.(payload, sub.filter?.includeBackground) ?? true,
-      ),
+      observers.map((sub) => deps.includesWorkspace?.(payload, sub.backgroundVisibility) ?? true),
     );
     return (
       project !== null &&
@@ -273,7 +279,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     for (const sub of observers) {
       const matches =
         project &&
-        ((await deps.includesWorkspace?.(payload, sub.filter?.includeBackground)) ?? true) &&
+        ((await deps.includesWorkspace?.(payload, sub.backgroundVisibility)) ?? true) &&
         matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter });
       bufferOrEmit(
         sub,

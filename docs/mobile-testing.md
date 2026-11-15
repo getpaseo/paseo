@@ -452,18 +452,9 @@ Regular `View` components can safely use Unistyles dynamic styles — the confli
 
 ## Native Chat Stream Layout
 
-The native agent stream uses an inverted `FlatList`, so chat layout has three coordinate systems:
-
-- chronological stream order
-- strategy-ordered array order
-- native inverted cell visual order
-
 Do not compute stream neighbors, history/live-head seams, turn footer ownership, assistant block spacing, or tool sequence endings inside React render loops. Those policies live in `packages/app/src/agent-stream/layout.ts` and are unit-tested without React Native rendering.
 
-Platform-specific stream edges belong on `StreamStrategy`:
-
-- forward web uses the last history item as the history/live-head boundary and renders content before a footer
-- native inverted uses the first history item as the history/live-head boundary and compensates for inverted cell child order
+Platform-specific stream edges belong on `StreamStrategy`. Web and native both render in chronological order, so both use the last history item as the history/live-head boundary and render content before a footer.
 
 If a chat footer looks duplicated or appears above the assistant message on mobile, start with `packages/app/src/agent-stream/layout.test.ts`. Do not add a React Native renderer test for this class of bug; make the pure layout invariant fail first.
 

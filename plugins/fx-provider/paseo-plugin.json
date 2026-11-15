@@ -1,0 +1,1 @@
+{ "id": "fx-provider", "requirements": { "paseo": ">=0.11.0" } }

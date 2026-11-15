@@ -80,7 +80,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
     this.nextError = error;
   }
 
-  override async list() {
+  override async listActive() {
     if (this.nextRead) {
       const pending = this.nextRead;
       this.nextRead = null;
@@ -91,7 +91,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
       this.nextError = null;
       throw error;
     }
-    return super.list();
+    return super.listActive();
   }
 }
 

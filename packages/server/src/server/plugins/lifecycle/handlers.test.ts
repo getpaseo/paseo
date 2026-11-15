@@ -92,6 +92,7 @@ test("session-open hooks reject changes to session identity instead of silently 
         env: {},
         title: null,
         labels: {},
+        metadata: {},
         tools: [],
         mcpServers: {},
       },
@@ -100,7 +101,108 @@ test("session-open hooks reject changes to session identity instead of silently 
   ).rejects.toThrow("agent.open.before hooks can only change env");
 });
 
-test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
+test("a create hook that omits metadata passes on what an earlier hook added", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.create.before", async ({ request }) => ({
+    ...request,
+    metadata: { ...request.metadata, "new.plugin": { ticket: 42 } },
+  }));
+  hooks.addHook("agent.create.before", async ({ request }) => ({
+    config: request.config,
+    env: request.env,
+  }));
+  const seen: unknown[] = [];
+  hooks.addHook("agent.create.before", async ({ request }) => {
+    seen.push(request.metadata);
+  });
+  const result = await hooks.invoke(
+    "operation",
+    "agent.create.before",
+    { config: { provider: "codex", cwd: "/project" }, env: {}, metadata: { original: true } },
+    paseo,
+  );
+  expect(result).toMatchObject({ metadata: { original: true, "new.plugin": { ticket: 42 } } });
+  expect(seen).toEqual([{ original: true, "new.plugin": { ticket: 42 } }]);
+});
+
+test("a workspace create hook that omits metadata passes on what an earlier hook added", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("workspace.create.before", async ({ request }) => ({
+    ...request,
+    metadata: { ...request.metadata, "new.plugin": { ticket: 42 } },
+  }));
+  hooks.addHook("workspace.create.before", async ({ request }) => ({ source: request.source }));
+  const seen: unknown[] = [];
+  hooks.addHook("workspace.create.before", async ({ request }) => {
+    seen.push(request.metadata);
+  });
+  const result = await hooks.invoke(
+    "operation",
+    "workspace.create.before",
+    { source: { kind: "directory", path: "/project" }, metadata: { original: true } },
+    paseo,
+  );
+  expect(result).toMatchObject({ metadata: { original: true, "new.plugin": { ticket: 42 } } });
+  expect(seen).toEqual([{ original: true, "new.plugin": { ticket: 42 } }]);
+
+  const replacing = new PluginHookHandlers(() => {});
+  replacing.addHook("workspace.create.before", async ({ request }) => ({
+    ...request,
+    metadata: {},
+  }));
+  await expect(
+    replacing.invoke(
+      "operation",
+      "workspace.create.before",
+      { source: { kind: "directory", path: "/project" }, metadata: { original: true } },
+      paseo,
+    ),
+  ).resolves.toMatchObject({ metadata: {} });
+});
+
+test("a session-open hook that returns its own object without metadata or background leaves them unchanged", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  hooks.addHook("agent.open.before", async ({ request }) => ({
+    agentId: request.agentId,
+    workspaceId: request.workspaceId,
+    provider: request.provider,
+    cwd: request.cwd,
+    reason: request.reason,
+    purpose: request.purpose,
+    title: request.title,
+    labels: request.labels,
+    tools: request.tools,
+    env: { HOOK: "1" },
+    mcpServers: request.mcpServers,
+  }));
+  const result = await hooks.invoke(
+    "operation",
+    "agent.open.before",
+    {
+      agentId: "agent",
+      workspaceId: null,
+      provider: "codex",
+      cwd: "/project",
+      title: null,
+      background: true,
+      labels: {},
+      metadata: { "linear.issue": { id: "ENG-1" } },
+      tools: [],
+      mcpServers: {},
+      env: {},
+      reason: "resume",
+      purpose: "interactive",
+    },
+    paseo,
+  );
+  expect(result).toMatchObject({
+    env: { HOOK: "1" },
+    background: true,
+    metadata: { "linear.issue": { id: "ENG-1" } },
+  });
+});
+
+test.each([{ title: "Changed" }, { labels: { changed: "true" } }, { background: true }])(
   "session-open targeting metadata is read-only: %j",
   async (patch) => {
     const hooks = new PluginHookHandlers(() => {});
@@ -115,7 +217,9 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
           provider: "codex",
           cwd: "/project",
           title: "Original",
+          background: false,
           labels: {},
+          metadata: {},
           tools: [],
           mcpServers: {},
           env: {},

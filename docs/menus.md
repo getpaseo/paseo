@@ -226,7 +226,8 @@ its own.
   inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
   portal backdrop blocking the destination. On web the chat suspends one commit after it goes
   inactive, and that inactive commit is where the surface unmounts.
-- Anchoring, flipping, and edge clamping live in `components/ui/anchor.ts`, shared with the hover
-  card, and are unit-tested. Fix positioning bugs there, not at a call site.
+- Anchoring, flipping, edge clamping, and capping a surface's width to the display live in
+  `components/ui/anchor.ts`, shared with the hover card, and are unit-tested. Clamping moves a
+  surface but cannot shrink it, so the width cap is what keeps a wide menu on a narrow screen. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

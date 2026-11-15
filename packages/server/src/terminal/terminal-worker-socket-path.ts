@@ -18,6 +18,7 @@ const OWNER_ONLY_MODE = 0o700;
 export interface TerminalWorkerSocketPathInput {
   paseoHome: string;
   workerPid: number;
+  recordId: string;
   platform?: NodeJS.Platform;
   tmpDir?: string;
   uid?: number;
@@ -60,7 +61,7 @@ export function terminalWorkerSocketId(paseoHome: string, workerPid: number): st
  */
 export function resolveTerminalWorkerSocketPath(input: TerminalWorkerSocketPathInput): string {
   const platform = input.platform ?? process.platform;
-  const id = terminalWorkerSocketId(input.paseoHome, input.workerPid);
+  const id = terminalWorkerSocketId(input.paseoHome, input.workerPid) + "-" + input.recordId;
   if (platform === "win32") {
     return `\\\\.\\pipe\\paseo-tw-${id}`;
   }

@@ -5,6 +5,8 @@ import { ChevronDown } from "lucide-react-native";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Shortcut } from "@/components/ui/shortcut";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 /**
@@ -97,15 +99,17 @@ export interface FieldTriggerProps extends FieldTriggerContentProps {
   disabled?: boolean;
   /** Desktop hover hint; badges only, since a field shows its label. */
   tooltip?: string;
+  shortcutAction?: string;
   testID?: string;
 }
 
 /** A field trigger that anchors a Combobox. */
 export const FieldTrigger = forwardRef<View, FieldTriggerProps>(function FieldTrigger(
-  { accessibilityLabel, onPress, disabled = false, tooltip, testID, ...content },
+  { accessibilityLabel, onPress, disabled = false, tooltip, shortcutAction, testID, ...content },
   ref,
 ): ReactElement {
   const style = useFieldTriggerStyle(content.variant, disabled);
+  const shortcutKeys = useShortcutKeys(shortcutAction ?? null);
   const trigger = (
     <ComboboxTrigger
       ref={ref}
@@ -128,14 +132,17 @@ export const FieldTrigger = forwardRef<View, FieldTriggerProps>(function FieldTr
         {trigger}
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
-        <Text style={styles.tooltipText}>{tooltip}</Text>
+        <View style={styles.tooltipRow}>
+          <Text style={styles.tooltipText}>{tooltip}</Text>
+          {shortcutKeys ? <Shortcut chord={shortcutKeys} /> : null}
+        </View>
       </TooltipContent>
     </Tooltip>
   );
 });
 
 // Height of a badge. The desktop row sizes from it.
-export const FIELD_BADGE_HEIGHT = CONTROL_HEIGHTS.tight;
+export const FIELD_BADGE_HEIGHT = CONTROL_HEIGHTS.sm;
 // Height of a compact field: label line plus value line. The compact stack reserves rows from it.
 export const FIELD_HEIGHT = 56;
 
@@ -209,6 +216,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   detail: {
     color: theme.colors.foregroundExtraMuted,
+  },
+  tooltipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   tooltipText: {
     fontSize: theme.fontSize.base,

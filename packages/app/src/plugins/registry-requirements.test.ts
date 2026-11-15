@@ -1,3 +1,4 @@
+import { getPluginClientApi } from "./client-state/api";
 import { createPluginHosts } from "./hosts";
 import { afterEach, expect, it } from "vitest";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -25,7 +26,7 @@ function registry(version: string) {
           },
           installation.lifetime.signal,
         ),
-        paseo: installation.paseo,
+        paseo: getPluginClientApi(installation).paseo,
         i18n: installation.i18n,
         rpc: async () => {
           throw new Error("No RPC in this plugin");
@@ -35,10 +36,14 @@ function registry(version: string) {
         },
         openScreen() {},
         openSurface() {},
+        composers: () => [],
         async playAudio() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),
         addHeaderButton: () => ({ update() {}, remove() {} }),
+        subscribe: () => {
+          throw new Error("Subscriptions are not used here");
+        },
       };
     },
   });

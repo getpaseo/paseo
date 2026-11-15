@@ -112,6 +112,15 @@ need an artifact. `android:clear` removes the generated Android project.
 
 Run `npm run test:android --workspace=@getpaseo/app` explicitly with a local Android toolchain to prebuild Android and run native module unit tests. Ordinary CI does not prebuild Android or run these tests.
 
+With an emulator or device connected, run the hardware keyboard's window-dispatch regression tests
+from `packages/app/android`:
+
+```bash
+./gradlew :paseo-hardware-keyboard:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
+
+These check terminal arrow ownership, held-key repeats and modifiers, and ordinary text-field editing.
+
 ### Diagnostic logs without ADB
 
 In a dogfood build, open Android's Files app → Downloads → **Paseo diagnostics** and share all
@@ -174,14 +183,18 @@ REACT_NATIVE_PACKAGER_HOSTNAME=localhost \
 
 This is the Android counterpart of the iOS local-simulator flow in [development.md](development.md): on iOS the simulator shares the Mac's loopback so `localhost:<port>` works directly; on Android you need `10.0.2.2` or `adb reverse`.
 
-## Inverted timeline selection
+## Scroll view corrections
 
-Android focus and selection visibility requests must not reposition inverted timelines. The
-`modules/paseo-scroll` package keeps React Native's scroll manager interface and returns zero for
-child-reveal scroll calculations when the view's transform matrix inverts the vertical axis. React
-Native's Android list uses `scale: -1`, which decomposes into a 180-degree rotation with positive
-`scaleY`; checking the scale property alone misses it. Dragging and explicit scroll
-commands still work; non-inverted scroll views keep Android's default behavior.
+`modules/paseo-scroll` replaces React Native's vertical scroll view with `PaseoScrollView`, which
+keeps React Native's scroll manager interface and corrects how the chat timeline holds its position.
+[agent-stream-disclosure.md](agent-stream-disclosure.md#scroll-view-corrections) lists the
+corrections and the React Native issues they work around. Its instrumentation tests run the scroll
+view in a real window, mounting through React Native's own mounting manager and injecting touches:
+
+```bash
+cd packages/app/android
+./gradlew :paseo-scroll:connectedDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.parallel=false
+```
 
 Register this package before React Native's core package through its Expo config plugin. Normal
 Android builds use the prebuilt `react-android` library, so patching Java under `node_modules` does

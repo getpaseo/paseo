@@ -162,6 +162,7 @@ const GiteaPrListItemSchema = z
     updated: z.string().optional(),
     labels: z.string().optional(),
     ci: z.string().optional(),
+    headSha: z.string().optional(),
   })
   .passthrough();
 
@@ -243,6 +244,14 @@ const GiteaPullRequestApiSchema = z
       .object({ repo: GiteaPullRequestRepoSchema.nullable().optional() })
       .passthrough()
       .optional(),
+  })
+  .passthrough();
+
+// `full_name` is required so an HTTP error body, which `tea api` returns with exit code 0, fails the parse.
+const GiteaRepositoryApiSchema = z
+  .object({
+    full_name: z.string(),
+    parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
   })
   .passthrough();
 
@@ -1010,6 +1019,7 @@ function currentPullRequestApiToListItem(item: GiteaCurrentPullRequestApi): Gite
     ...(item.mergeable != null ? { mergeable: String(item.mergeable) } : {}),
     base: item.base.ref,
     head,
+    headSha: item.head.sha,
     updated: item.updated_at,
     labels: item.labels.map((label) => label.name).join(","),
   };
@@ -1082,6 +1092,7 @@ function toCurrentPullRequestStatus(item: GiteaPrListItem): CurrentPullRequestSt
     state,
     baseRefName: item.base ?? "",
     headRefName: stripHeadOwner(item.head),
+    ...(item.headSha ? { headSha: item.headSha } : {}),
     isMerged: state === "merged",
     mergeable: mapGiteaMergeable(item),
     checks: [],
@@ -1653,6 +1664,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
           input.headSha !== undefined &&
           item.head.sha === input.headSha,
       ) ??
+      candidates[0] ??
       null;
     return match ? currentPullRequestApiToListItem(match) : null;
   }
@@ -1718,7 +1730,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         combined,
         actionTasks,
       );
-      return applyGiteaChecks(status, combined, actionTasks, actionRequiredRunIds);
+      return applyGiteaChecks(
+        { ...status, headSha: pr.headSha },
+        combined,
+        actionTasks,
+        actionRequiredRunIds,
+      );
     } catch {
       return status;
     }
@@ -1996,6 +2013,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       } catch {
         return false;
       }
+    },
+
+    async getReferenceRepository(input): Promise<string | null> {
+      const repo = await resolveCurrentRepoIdentity(input.cwd);
+      if (!repo) {
+        return null;
+      }
+      const repository = await runJson(
+        ["api", `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`],
+        { cwd: input.cwd },
+        GiteaRepositoryApiSchema,
+      );
+      return repository.parent?.full_name ?? null;
     },
 
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {

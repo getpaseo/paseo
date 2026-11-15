@@ -8,7 +8,7 @@ import {
   openProjectViaDaemon,
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
-import { openSettingsHostSection } from "../support/helpers/settings";
+import { openCompactSettings, openSettingsHostSection } from "../support/helpers/settings";
 import {
   expectFooterItemSetting,
   expectFooterSeparator,
@@ -29,6 +29,7 @@ import {
   openCompactSidebar,
   openUsageFromIcon,
   openUsageFromItem,
+  openUsageFromItemWithPressFeedback,
   pinRow,
   scrollUsageToWindow,
   setSummaryInSidebar,
@@ -42,6 +43,7 @@ import {
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 import { createTempGitRepo } from "../support/helpers/workspace";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
 
 const WIDE = { width: 1440, height: 900 };
 const COMPACT = { width: 390, height: 844 };
@@ -70,7 +72,112 @@ async function footerClip(page: Page) {
   return (await page.locator('[data-testid="sidebar-footer"]:visible').boundingBox())!;
 }
 
+async function setPageVisibility(page: Page, visibility: DocumentVisibilityState): Promise<void> {
+  await page.evaluate((state) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => state === "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visibility);
+}
+
 test.describe("Usage item", () => {
+  test("visible summary refreshes every five minutes without opening Usage", async ({ page }) => {
+    let usedPct = 31;
+    const usage = await installUsageReportsFixture(page, {
+      lists: [
+        () => [
+          {
+            ...claudeAndCodexReports()[0]!,
+            report: {
+              status: "available",
+              windows: [
+                { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct },
+              ],
+            },
+          },
+        ],
+      ],
+    });
+    await page.clock.install();
+    await page.setViewportSize(WIDE);
+    await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+    await gotoAppShell(page);
+    await expectPinnedUsage(page, ["31% 5h"]);
+    const startingUrl = page.url();
+    await qaScreenshot(page, "usage-auto-refresh-initial", { kind: "footer" });
+    const requestsBeforeRefresh = usage.listRequests();
+
+    usedPct = 42;
+    await page.clock.fastForward(5 * 60_000);
+    await qaScreenshot(page, "usage-auto-refresh-after-interval", { kind: "footer" });
+    await expectPinnedUsage(page, ["42% 5h"]);
+    await expect(usageModal(page)).toHaveCount(0);
+    await expect(page).toHaveURL(startingUrl);
+    expect(usage.listRequests()).toEqual([
+      ...requestsBeforeRefresh,
+      { forceRefresh: false, reportIds: undefined, agentId: undefined },
+    ]);
+
+    await setPageVisibility(page, "hidden");
+    const requestsBeforeBackgrounding = usage.listRequests();
+    usedPct = 47;
+    await page.clock.fastForward(5 * 60_000);
+    expect(usage.listRequests()).toEqual(requestsBeforeBackgrounding);
+    await expectPinnedUsage(page, ["42% 5h"]);
+    await setPageVisibility(page, "visible");
+    await page.clock.fastForward(5 * 60_000);
+    await expectPinnedUsage(page, ["47% 5h"]);
+    expect(usage.listRequests()).toEqual([
+      ...requestsBeforeBackgrounding,
+      { forceRefresh: false, reportIds: undefined, agentId: undefined },
+    ]);
+
+    await page.setViewportSize(COMPACT);
+    await expect(usageItem(page)).toHaveCount(0);
+    const requestsBeforeHiding = usage.listRequests();
+    await page.clock.fastForward(5 * 60_000);
+    expect(usage.listRequests()).toEqual(requestsBeforeHiding);
+
+    await openCompactSidebar(page);
+    await expectPinnedUsage(page, ["47% 5h"]);
+    await expect(page.getByTestId("agent-list-backdrop")).toBeVisible();
+    usedPct = 53;
+    await page.clock.fastForward(5 * 60_000);
+    await expectPinnedUsage(page, ["53% 5h"]);
+    await expect(usageModal(page)).toHaveCount(0);
+
+    await page.setViewportSize(WIDE);
+    await openSidebarNavSettings(page);
+    await setFooterItemVisible(page, "usage", false);
+    await leaveSettings(page);
+    await expectNoUsageItem(page);
+    const requestsBeforeDisabling = usage.listRequests();
+    await page.clock.fastForward(5 * 60_000);
+    expect(usage.listRequests()).toEqual(requestsBeforeDisabling);
+  });
+
+  test("Usage settings do not poll reports while the sidebar is inactive", async ({ page }) => {
+    const usage = await installUsageReportsFixture(page, {
+      lists: [() => claudeAndCodexReports()],
+    });
+    await page.clock.install();
+    await page.setViewportSize(COMPACT);
+    await seedSidebarFooterPreferences(page, [{ key: "usage", visible: true }]);
+    await gotoAppShell(page);
+    await openCompactSettings(page, buildOpenProjectRoute());
+    await openSettingsHostSection(page, getServerId(), "usage");
+    await expect(page.getByTestId("usage-card").getByText("31% used")).toBeVisible();
+    await expect(usageItem(page)).toHaveCount(0);
+    const requestsBeforeWaiting = usage.listRequests();
+
+    await page.clock.fastForward(5 * 60_000);
+    expect(usage.listRequests()).toEqual(requestsBeforeWaiting);
+    await expect(page.getByTestId("usage-card").getByText("31% used")).toBeVisible();
+  });
+
   test("both compact footer entry points open Usage as a sheet", async ({ page }) => {
     await page.setViewportSize(COMPACT);
     await installUsageReportsFixture(page, { lists: [() => claudeAndCodexReports()] });
@@ -91,7 +198,7 @@ test.describe("Usage item", () => {
     });
 
     await test.step("the summary opens the same sheet", async () => {
-      await openUsageFromItem(page);
+      await openUsageFromItemWithPressFeedback(page);
       await expect(usageModal(page).getByText("Codex", { exact: true })).toBeVisible();
       await expect(page).toHaveURL(startingUrl);
       await qaScreenshot(page, "compact-usage-summary-sheet");
@@ -211,10 +318,11 @@ test.describe("Usage item", () => {
 
     await test.step("pinning Claude 5-hour and Codex weekly shows both in the Usage item", async () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
-      // One host: no host filter, as on History.
-      await expect(page.locator('[data-testid="usage-host-filter-trigger"]:visible')).toHaveCount(
-        0,
-      );
+      // One host: Settings has no Host row, and the title no host under it.
+      await expect(page.getByTestId("usage-modal-host")).toHaveCount(0);
+      await openUsageOptions(page);
+      await expect(page.getByTestId("usage-options-host")).toHaveCount(0);
+      await closeUsageOptions(page);
       await togglePin(screen, "Claude", "Weekly");
       await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
       await expect(pinRow(screen, "Claude", "Session")).toBeChecked();

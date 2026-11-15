@@ -2,6 +2,7 @@ import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoWorkspace } from "../support/helpers/launcher";
+import { gotoAppShell } from "../support/helpers/app";
 import {
   BOTS_PLUGIN_ID,
   COMPACT,
@@ -27,6 +28,7 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { installUsageReportsFixture } from "../support/helpers/usage-reports";
 import { claudeAndCodexReports } from "../support/helpers/usage-sidebar-item";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 
 const APP_SETTINGS_KEY = "@paseo:app-settings";
 
@@ -133,6 +135,30 @@ function sidebarFooter(page: Page): Locator {
   return visibleTestId(page, "sidebar-add-project").locator("xpath=..");
 }
 
+function isPluginCatalogResponse(message: string | Buffer): boolean {
+  if (typeof message !== "string") return false;
+  const frame = JSON.parse(message);
+  return frame.type === "session" && frame.message?.type === "plugin.catalog.get.response";
+}
+
+async function holdNextPluginCatalogResponse(page: Page) {
+  const response = Promise.withResolvers<() => void>();
+  let holdCatalog = true;
+  await page.routeWebSocket(daemonWsRoutePattern(), (socket) => {
+    const server = socket.connectToServer();
+    socket.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      if (holdCatalog && isPluginCatalogResponse(message)) {
+        holdCatalog = false;
+        response.resolve(() => socket.send(message));
+        return;
+      }
+      socket.send(message);
+    });
+  });
+  return { response: response.promise };
+}
+
 test.describe("Plugin sidebar items", () => {
   let workspaceId: string;
   let cleanup: () => Promise<void>;
@@ -149,6 +175,69 @@ test.describe("Plugin sidebar items", () => {
 
   test.afterEach(async () => {
     await cleanup();
+  });
+
+  test("a short compact sidebar keeps workspaces usable while navigation scrolls", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 600 });
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).first().click();
+    await expect(botRow(page, "status")).toBeAttached();
+    const workspace = visibleTestId(page, `sidebar-workspace-row-${getServerId()}:${workspaceId}`);
+    await expect(workspace).toBeInViewport({ ratio: 1 });
+
+    await test.step("scrolling navigation reaches its last row without moving workspaces", async () => {
+      const before = await boxOf(workspace);
+      await visibleTestId(page, "sidebar-global-new-workspace").hover();
+      await page.mouse.wheel(0, 800);
+      await expect(botRow(page, "status")).toBeInViewport({ ratio: 1 });
+      await expect(workspace).toBeInViewport({ ratio: 1 });
+      expect((await boxOf(workspace)).y).toBe(before.y);
+      await botRow(page, "status").click();
+      await expect(page.getByText("Bot status details", { exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Close bot status", exact: true }).click();
+    });
+
+    await test.step("the workspace still opens and closes the sidebar", async () => {
+      await workspace.click();
+      await expect(
+        page.getByRole("button", { name: "Open menu", exact: true }).first(),
+      ).toBeVisible();
+      await expect(workspace).not.toBeInViewport();
+    });
+  });
+
+  test("a restored plugin screen waits for its catalog before rendering", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    const row = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+    const body = page.getByText("Deploys screen body", { exact: true });
+    await expect(body).toBeVisible();
+    const screenUrl = page.url();
+    const catalog = await holdNextPluginCatalogResponse(page);
+
+    await page.reload();
+    const releaseCatalog = await catalog.response;
+    try {
+      await expect(
+        page.getByRole("progressbar", { name: "Loading plugin", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("This plugin surface is unavailable.", { exact: true }),
+      ).toHaveCount(0);
+      await expect(body).toHaveCount(0);
+    } finally {
+      releaseCatalog();
+    }
+
+    await expect(body).toBeVisible();
+    await expect(
+      page.getByRole("progressbar", { name: "Loading plugin", exact: true }),
+    ).toHaveCount(0);
+    await expect(page).toHaveURL(screenUrl);
   });
 
   test("a plugin's screen, header row, footer popover and command work together", async ({
@@ -228,7 +317,10 @@ test.describe("Plugin sidebar items", () => {
       const compactSync = footerItem(page, SHOWCASE_PLUGIN_ID, "sync");
       await expect(compactSync).toBeInViewport();
       await expectFooterRow(page, compactSync);
-      await expect(headerRow(page, SHOWCASE_PLUGIN_ID, "deploys")).toBeInViewport();
+      // The compact nav block is capped at half the sidebar and scrolls past it.
+      const compactDeploys = headerRow(page, SHOWCASE_PLUGIN_ID, "deploys");
+      await compactDeploys.scrollIntoViewIfNeeded();
+      await expect(compactDeploys).toBeInViewport();
       await qaScreenshot(page, "phase2-compact-sidebar");
       await qaScreenshot(page, "phase5-compact-footer", sidebarFooter(page));
       await compactSync.click();

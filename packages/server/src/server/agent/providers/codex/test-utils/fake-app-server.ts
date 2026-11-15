@@ -14,7 +14,7 @@ interface FakeSubAgentActivity {
   callId: string;
   threadId: string;
   agentPath: string;
-  kind: "started" | "interacted" | "interrupted";
+  kind: "started" | "interacted" | "interrupted" | "completed";
   parentThreadId?: string;
 }
 interface FakeLegacyCommand {
@@ -33,7 +33,7 @@ interface FakeTerminalCommand {
   threadId: string;
   turnId: string;
   itemId: string;
-  processId: string;
+  processId?: string;
   command: string;
 }
 interface FakeTerminalInput {
@@ -42,6 +42,13 @@ interface FakeTerminalInput {
   itemId: string;
   processId: string;
   text: string;
+}
+interface FakeFileChange {
+  threadId: string;
+  turnId: string;
+  callId: string;
+  path: string;
+  diff: string;
 }
 interface FakeLegacyPatch {
   threadId: string;
@@ -72,6 +79,14 @@ export interface FakeCodexAppServer {
     status?: "completed" | "failed" | "interrupted";
     error?: { message: string } | null;
   }): void;
+  reportsTurnError(params: {
+    threadId: string;
+    turnId: string;
+    message: string;
+    additionalDetails?: string;
+    willRetry: boolean;
+  }): void;
+  warns(params: { threadId: string | null; message: string }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -88,6 +103,7 @@ export interface FakeCodexAppServer {
   completesSubAgentActivity(params: FakeSubAgentActivity): void;
   completesCompaction(params: { threadId: string; itemId: string }): void;
   runsLegacyCommand(params: FakeLegacyCommand): void;
+  startsFileChange(params: FakeFileChange): void;
   appliesLegacyPatch(params: FakeLegacyPatch): void;
   completesCommand(params: FakeLegacyCommand): void;
   completesSilentCommand(params: FakeSilentCommand): void;
@@ -138,6 +154,10 @@ export function createCodexAppServerChildProcess(): CodexAppServerChildProcess {
     exitCode: null,
     signalCode: null,
   }) as CodexAppServerChildProcess;
+  // A real ChildProcess closes its stdio after exit, then emits close.
+  child.once("exit", (code, signal) => {
+    queueMicrotask(() => child.emit("close", code, signal));
+  });
   child.kill = ((signal?: NodeJS.Signals | number) => {
     queueMicrotask(() => child.emit("exit", null, signal ?? null));
     return true;
@@ -167,6 +187,7 @@ export function createFakeCodexAppServer(
     "skills/list": () => ({ data: [] }),
     "thread/start": () => ({ thread: { id: "thread-1" } }),
     "thread/loaded/list": () => ({ data: [] }),
+    "thread/backgroundTerminals/list": () => ({ data: [], nextCursor: null }),
     "thread/resume": () => ({}),
     "turn/start": () => ({}),
     "thread/fork": (params) => ({
@@ -424,6 +445,21 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
+    reportsTurnError(params) {
+      writeNotification("error", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        willRetry: params.willRetry,
+        error: {
+          message: params.message,
+          codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+          additionalDetails: params.additionalDetails ?? null,
+        },
+      });
+    },
+    warns(params) {
+      writeNotification("warning", { threadId: params.threadId, message: params.message });
+    },
     startsSubAgent(params) {
       writeSubAgentActivity("item/completed", { ...params, kind: "started" });
     },
@@ -465,6 +501,20 @@ export function createFakeCodexAppServer(
         command: params.command,
         exit_code: 0,
         success: true,
+      });
+    },
+    startsFileChange(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        item: {
+          type: "fileChange",
+          id: params.callId,
+          status: "inProgress",
+          changes: [
+            { path: params.path, kind: { type: "update", move_path: null }, diff: params.diff },
+          ],
+        },
       });
     },
     appliesLegacyPatch(params) {
