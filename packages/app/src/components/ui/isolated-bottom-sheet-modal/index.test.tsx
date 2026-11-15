@@ -43,6 +43,7 @@ vi.mock("@gorhom/portal", () => ({
 
 /** Every `waitFor` Gorhom received, in render order. Gorhom rebuilds its content pan per value. */
 const sheetWaitFor = vi.hoisted(() => [] as unknown[]);
+const sheetSimultaneousHandlers = vi.hoisted(() => [] as unknown[]);
 
 vi.mock("@gorhom/bottom-sheet", async () => {
   const { Portal } = await import("@gorhom/portal");
@@ -55,10 +56,17 @@ vi.mock("@gorhom/bottom-sheet", async () => {
           children,
           stackBehavior,
           waitFor,
-        }: { children?: React.ReactNode; stackBehavior?: string; waitFor?: unknown },
+          simultaneousHandlers,
+        }: {
+          children?: React.ReactNode;
+          stackBehavior?: string;
+          waitFor?: unknown;
+          simultaneousHandlers?: unknown;
+        },
         _ref,
       ) => {
         sheetWaitFor.push(waitFor);
+        sheetSimultaneousHandlers.push(simultaneousHandlers);
         return React.createElement(
           Portal,
           null,
@@ -259,6 +267,7 @@ describe("IsolatedBottomSheetModal content drag", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     sheetWaitFor.length = 0;
+    sheetSimultaneousHandlers.length = 0;
   });
 
   afterEach(() => {
@@ -275,11 +284,19 @@ describe("IsolatedBottomSheetModal content drag", () => {
     return null;
   }
 
-  function renderSheet(content: React.ReactNode) {
+  function renderSheet(
+    content: React.ReactNode,
+    handlers: Pick<
+      React.ComponentProps<typeof IsolatedBottomSheetModal>,
+      "waitFor" | "simultaneousHandlers"
+    > = {},
+  ) {
     act(() => {
       root.render(
         <>
-          <IsolatedBottomSheetModal contextBridge={null}>{content}</IsolatedBottomSheetModal>
+          <IsolatedBottomSheetModal contextBridge={null} {...handlers}>
+            {content}
+          </IsolatedBottomSheetModal>
           <PortalHostProbe />
         </>,
       );
@@ -291,9 +308,100 @@ describe("IsolatedBottomSheetModal content drag", () => {
     expect(sheetWaitFor.at(-1)).toBeUndefined();
 
     renderSheet(<ContentDrag />);
-    expect(sheetWaitFor.at(-1)).toBe(dragGesture);
+    expect(sheetSimultaneousHandlers.at(-1)).toEqual([dragGesture]);
+    expect(sheetWaitFor.at(-1)).toEqual([dragGesture]);
 
     renderSheet(null);
     expect(sheetWaitFor.at(-1)).toBeUndefined();
+    expect(sheetSimultaneousHandlers.at(-1)).toBeUndefined();
   });
+
+  it.each([false, true])(
+    "preserves supplied relations when a content drag mounts and unmounts (array=%s)",
+    (array) => {
+      const waiting = React.createRef<React.ComponentType>();
+      const simultaneous = React.createRef<React.ComponentType>();
+      const handlers = {
+        waitFor: array ? [waiting] : waiting,
+        simultaneousHandlers: array ? [simultaneous] : simultaneous,
+      };
+      renderSheet(<ContentDrag />, handlers);
+      expect(sheetWaitFor.at(-1)).toEqual([waiting, dragGesture]);
+      expect(sheetSimultaneousHandlers.at(-1)).toEqual([simultaneous, dragGesture]);
+      renderSheet(null, handlers);
+      expect(sheetWaitFor.at(-1)).toBe(handlers.waitFor);
+      expect(sheetSimultaneousHandlers.at(-1)).toBe(handlers.simultaneousHandlers);
+    },
+  );
+});
+
+// Exercise the library boundary as well as the modal props: nested refs used to be silently dropped.
+import BottomSheetDraggableView from "@gorhom/bottom-sheet/src/components/bottomSheetDraggableView/BottomSheetDraggableView";
+import { BottomSheetInternalContext } from "@gorhom/bottom-sheet/src/contexts/internal";
+import {
+  BottomSheetDraggableContext,
+  BottomSheetGestureHandlersContext,
+} from "@gorhom/bottom-sheet/src/contexts/gesture";
+import { Gesture } from "react-native-gesture-handler";
+import { extractGestureRelations } from "react-native-gesture-handler/src/handlers/gestures/GestureDetector/utils";
+
+const noGestureWork = () => {};
+const gestureHandlerContext = {
+  contentPanGestureHandler: {
+    handleOnStart: noGestureWork,
+    handleOnChange: noGestureWork,
+    handleOnEnd: noGestureWork,
+    handleOnFinalize: noGestureWork,
+  },
+  handlePanGestureHandler: {
+    handleOnStart: noGestureWork,
+    handleOnChange: noGestureWork,
+    handleOnEnd: noGestureWork,
+    handleOnFinalize: noGestureWork,
+  },
+};
+function dragInternalContext(relations: SheetContentDragGesture | SheetContentDragGesture[]) {
+  return {
+    enableContentPanningGesture: true,
+    waitFor: relations,
+    simultaneousHandlers: relations,
+  } as React.ContextType<typeof BottomSheetInternalContext>;
+}
+
+describe("bottom sheet native drag relations", () => {
+  it.each([false, true])(
+    "resolves both relations through the real content pan (array=%s)",
+    (array) => {
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      const child = Gesture.Pan();
+      child.handlerTag = 42;
+      const ref = { current: child };
+      const relations = array ? [ref] : ref;
+      let resolved: ReturnType<typeof extractGestureRelations> | undefined;
+      const internal = dragInternalContext(relations);
+      function Probe() {
+        const pan = useContext(BottomSheetDraggableContext);
+        if (pan) resolved = extractGestureRelations(pan);
+        return null;
+      }
+      try {
+        act(() =>
+          root.render(
+            <BottomSheetInternalContext.Provider value={internal}>
+              <BottomSheetGestureHandlersContext.Provider value={gestureHandlerContext}>
+                <BottomSheetDraggableView>
+                  <Probe />
+                </BottomSheetDraggableView>
+              </BottomSheetGestureHandlersContext.Provider>
+            </BottomSheetInternalContext.Provider>,
+          ),
+        );
+        expect(resolved?.waitFor).toEqual([42]);
+        expect(resolved?.simultaneousHandlers).toEqual([42]);
+      } finally {
+        act(() => root.unmount());
+      }
+    },
+  );
 });
