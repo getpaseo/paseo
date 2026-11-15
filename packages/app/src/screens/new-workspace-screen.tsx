@@ -1193,7 +1193,7 @@ export function NewWorkspaceScreen({
   useKeyboardActionHandler({
     handlerId: "new-workspace-project-pick",
     actions: PROJECT_PICK_ACTIONS,
-    enabled: projectPickerOptions.length > 0,
+    enabled: true,
     isActive: isStillOnCreateScreen,
     priority: 10,
     handle: handleProjectPick,
