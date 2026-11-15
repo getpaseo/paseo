@@ -4,6 +4,8 @@ import type {
   Query,
   SDKMessage,
   SDKUserMessage,
+  SessionCronSummary,
+  StopHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -965,10 +967,17 @@ test("Claude session runtime safety observes pumped background work and autonomo
     await push(result);
     expect(await session.canStopRuntime!()).toBe(true);
     // A session-only cron lives in this process, and Claude reports it only to the Stop hook.
-    const stop = (session_crons: unknown[]) =>
-      stopHook!({ hook_event_name: "Stop", session_crons } as never, undefined, {
-        signal: new AbortController().signal,
-      });
+    const stop = (session_crons: SessionCronSummary[]) => {
+      const stopInput: StopHookInput = {
+        hook_event_name: "Stop",
+        session_id: "runtime-safety",
+        transcript_path: "",
+        cwd: process.cwd(),
+        stop_hook_active: false,
+        session_crons,
+      };
+      return stopHook!(stopInput, undefined, { signal: new AbortController().signal });
+    };
     await stop([{ id: "99eb0b69", schedule: "0 */6 * * *", recurring: true, prompt: "say hi" }]);
     expect(await session.canStopRuntime!()).toBe(false);
     await stop([]);

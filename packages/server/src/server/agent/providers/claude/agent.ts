@@ -14,6 +14,7 @@ import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.j
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookCallback,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -5481,8 +5482,8 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   // Observation-only, like the effort hooks: it never alters turn control.
-  private readonly observeStopHook = async (input: unknown): Promise<Record<string, never>> => {
-    this.runtimeSafety.observeStop(input as { session_crons?: readonly unknown[] });
+  private readonly observeStopHook: HookCallback = async (input) => {
+    if (input.hook_event_name === "Stop") this.runtimeSafety.observeStop(input.session_crons);
     return {};
   };
 

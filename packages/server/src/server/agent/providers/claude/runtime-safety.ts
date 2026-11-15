@@ -1,4 +1,4 @@
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentBackgroundWorkInput } from "../../background-work/index.js";
 import { parseClaudeCodeVersion } from "./model-manifest.js";
 import { toBackgroundWorkInputs, type ClaudeBackgroundTask } from "./background-work.js";
@@ -42,10 +42,10 @@ export class ClaudeRuntimeSafety {
     this.turnSeen = true;
   }
 
-  /** Called with each main-thread Stop hook input. */
-  observeStop(input: { session_crons?: readonly unknown[] }): void {
-    if (this.inventoryState === "retired" || !Array.isArray(input.session_crons)) return;
-    this.sessionCrons = input.session_crons.length;
+  /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
+  observeStop(sessionCrons: readonly SessionCronSummary[] | undefined): void {
+    if (this.inventoryState === "retired" || !sessionCrons) return;
+    this.sessionCrons = sessionCrons.length;
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
