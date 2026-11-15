@@ -5312,7 +5312,8 @@ class ClaudeAgentSession implements AgentSession {
     const needsUserAnswer =
       toolName === "AskUserQuestion" ||
       toolName === "ExitPlanMode" ||
-      ("requiresUserInteraction" in options && options.requiresUserInteraction === true);
+      // The SDK drops requires_user_interaction but forwards this CLI reason.
+      options.decisionReason === "requiresUserInteraction";
     if (this.currentMode === "bypassPermissions" && !needsUserAnswer) {
       return { behavior: "allow", updatedInput: input, toolUseID: options.toolUseID };
     }

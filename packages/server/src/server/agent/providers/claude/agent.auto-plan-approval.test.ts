@@ -127,16 +127,18 @@ test("bypass allows execution without publishing permission events and follows l
     await expect(result).resolves.toMatchObject({ behavior: "allow", updatedInput: input });
     expect(events.filter((event) => event.type.startsWith("permission_"))).toEqual([]);
 
-    for (const [mode, tool, toolInput] of [
-      ["bypassPermissions", "AskUserQuestion", { questions: [] }],
-      ["bypassPermissions", "ExitPlanMode", { plan: "Review this" }],
-      ["default", "Bash", input],
-      ["plan", "Bash", input],
+    for (const [mode, tool, toolInput, decisionReason] of [
+      ["bypassPermissions", "AskUserQuestion", { questions: [] }, undefined],
+      ["bypassPermissions", "ExitPlanMode", { plan: "Review this" }, undefined],
+      ["bypassPermissions", "mcp__survey__answer", {}, "requiresUserInteraction"],
+      ["default", "Bash", input, undefined],
+      ["plan", "Bash", input, undefined],
     ] as const) {
       await session.setMode(mode);
       const resolution = requestPermission(tool, toolInput, {
         signal: new AbortController().signal,
         toolUseID: tool,
+        decisionReason,
       });
       const requestEvent = events.at(-1);
       expect(requestEvent?.type).toBe("permission_requested");
