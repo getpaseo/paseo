@@ -109,11 +109,12 @@ function UpdateButton({ serverId, plugin }: { serverId: string; plugin: PluginLi
   }, [client, preview, queryClient, serverId, t, toast]);
   if (!preview) return null;
   const running = operation?.status === "running";
+  let label = t("settings.plugins.gallery.actions.update");
+  if (running) label = t("settings.plugins.gallery.actions.updating");
+  else if (operation?.status === "failed") label = t("settings.plugins.gallery.actions.retry");
   return (
     <Button variant="outline" onPress={update} loading={running} testID="plugin-update">
-      {running
-        ? t("settings.plugins.gallery.actions.updating")
-        : t("settings.plugins.gallery.actions.update")}
+      {label}
     </Button>
   );
 }
@@ -269,6 +270,8 @@ interface PluginPageModel {
   authorAvatar?: string;
   /** Why the plugin failed to load, or why its install failed. */
   error?: string;
+  /** Why the last update failed. The installed version keeps running. */
+  updateError?: string;
   /** The plugin's own settings screen, shown inline. */
   screenId?: string;
   overview?: string;
@@ -296,6 +299,7 @@ function usePluginPageModel({
   const pluginId = plugin?.id ?? "";
   const installedPlugin = useInstalledPlugin(serverId, pluginId);
   const evaluationError = usePluginEvaluationError(serverId, pluginId);
+  const pluginOperation = usePluginOperation(serverId, pluginId);
   const text = listing ? listingText(listing, i18n.language) : undefined;
   const requestedScreen = subject.kind === "installed" ? subject.screenId : undefined;
   return {
@@ -306,6 +310,7 @@ function usePluginPageModel({
       : installedMetaLine(plugin),
     authorAvatar: listing && listingAuthorAvatar(listing),
     error: plugin ? (evaluationError ?? plugin.error) : failedError(installOperation),
+    updateError: failedUpdateError(pluginOperation),
     screenId: plugin ? (requestedScreen ?? installedPlugin?.settingsScreens[0]?.id) : undefined,
     overview: detail && listingOverview(detail, i18n.language),
   };
@@ -334,6 +339,10 @@ function installedMetaLine(plugin: PluginListItem | undefined): string | undefin
 
 function failedError(operation: PluginOperation | undefined): string | undefined {
   return operation?.status === "failed" ? operation.error : undefined;
+}
+
+function failedUpdateError(operation: PluginOperation | undefined): string | undefined {
+  return operation?.kind === "update" ? failedError(operation) : undefined;
 }
 
 function HeaderControl({
@@ -494,6 +503,11 @@ function PluginPageBody({
       {model.error ? (
         <View style={styles.block}>
           <Alert size="sm" variant="error" title={model.error} />
+        </View>
+      ) : null}
+      {model.updateError ? (
+        <View style={styles.block}>
+          <Alert size="sm" variant="error" title={model.updateError} />
         </View>
       ) : null}
       {listing ? <MediaStrip urls={listingImages(listing)} /> : null}
