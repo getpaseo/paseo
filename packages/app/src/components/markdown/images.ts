@@ -2,6 +2,7 @@ import { Image } from "react-native";
 import { isWeb } from "@/constants/platform";
 import { useMemo, useEffect, useId } from "react";
 import { useFetchQueries } from "@/data/query";
+import { useAssistantFileLinkEnvironment } from "@/assistant-file-links";
 import { createAssistantImageFileAcquisition } from "@/assistant-image/file-acquisition";
 import {
   persistAttachmentFromBytes,
@@ -35,12 +36,27 @@ export interface MarkdownImageContext {
   filePath?: string;
 }
 
+/** Fill in the workspace, host, and file reader of the surrounding assistant view. */
+export function useMarkdownImageContext(context: MarkdownImageContext): MarkdownImageContext {
+  const environment = useAssistantFileLinkEnvironment();
+  const client =
+    context.client ??
+    (environment.client?.readFile
+      ? { readFile: environment.client.readFile.bind(environment.client) }
+      : undefined);
+  return {
+    workspaceRoot: environment.workspaceRoot,
+    serverId: environment.serverId,
+    ...context,
+    client,
+  };
+}
+
 export function useMarkdownSource(
   text: string,
   context: MarkdownImageContext,
   links: { commandNames?: ReadonlySet<string>; forgeReferencePattern?: string } = {},
 ) {
-  const occurrenceKey = useId();
   const { commandNames, forgeReferencePattern } = links;
   const prepared = useMemo(
     () =>
@@ -52,6 +68,22 @@ export function useMarkdownSource(
     [text, context.workspaceRoot, commandNames, forgeReferencePattern],
   );
   const sources = [...new Set(prepared.images.map((image) => image.source))];
+  const { resolved, statuses } = useMarkdownImages(sources, context);
+  const unavailableImages = new Set(
+    sources.filter((_source, index) => statuses[index] === "unavailable"),
+  );
+  const pendingImages = new Set(sources.filter((_source, index) => statuses[index] === "pending"));
+  return {
+    markdown: prepared.render(resolved, unavailableImages, pendingImages),
+    linkRecognition: prepared.linkRecognition,
+    linkSource: prepared.linkSource,
+    imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
+  };
+}
+
+/** Load Markdown image sources: local files through the daemon, then decode each one. */
+export function useMarkdownImages(sources: readonly string[], context: MarkdownImageContext) {
+  const occurrenceKey = useId();
   const acquisitions = sources.map((source) => {
     const resolved = resolveMarkdownPreviewImageSource({
       source,
@@ -127,17 +159,14 @@ export function useMarkdownSource(
       url: displayUrls[index],
       acquisitionFailed: results[index].isError,
       decodeFailed: decoded[index].isError,
-      decoded: decoded[index].data === true,
+      decoded: decoded[index].data !== undefined,
     }),
   );
-  const unavailableImages = new Set(
-    sources.filter((_source, index) => statuses[index] === "unavailable"),
-  );
-  const pendingImages = new Set(sources.filter((_source, index) => statuses[index] === "pending"));
   return {
-    markdown: prepared.render(resolved, unavailableImages, pendingImages),
-    linkRecognition: prepared.linkRecognition,
-    linkSource: prepared.linkSource,
-    imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
+    /** Daemon-read sources and the local URL each one displays from. */
+    resolved,
+    statuses,
+    urls: displayUrls,
+    sizes: decoded.map((result) => result.data),
   };
 }

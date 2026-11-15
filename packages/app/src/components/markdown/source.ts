@@ -130,6 +130,10 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
   return link.url.slice(workspaceRoot.length + 1);
 }
 
+export function isSvgImageSource(url: string) {
+  return /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(url);
+}
+
 /** Preserve source spelling; adapt workspace images, spoiler delimiters, and entity text. */
 export function prepareMarkdownSource(
   source: string,
@@ -180,11 +184,7 @@ export function prepareMarkdownSource(
     end: number,
   ) {
     const target = node.type === "image" ? node : definitions.get(node.identifier);
-    if (
-      target &&
-      options.supportsSvg === false &&
-      /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(target.url)
-    ) {
+    if (target && options.supportsSvg === false && isSvgImageSource(target.url)) {
       edits.push({ start, end, text: escapeMarkdownText(node.alt ?? "") });
       return;
     }
