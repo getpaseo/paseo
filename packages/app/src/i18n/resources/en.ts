@@ -2236,6 +2236,7 @@ export const en = {
     turnOn: "Turn on",
 
     options: "Settings",
+    host: "Host",
     refreshFailed: "Unable to refresh usage",
     noHosts: "No connected hosts",
     agentError: "Unable to load usage: {{reason}}",

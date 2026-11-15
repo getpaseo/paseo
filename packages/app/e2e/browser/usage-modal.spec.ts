@@ -33,6 +33,8 @@ import {
   pinRow,
   openUsageOptions,
   closeUsageOptions,
+  pickUsageHost,
+  usageModalHost,
   dragUsageCardAbove,
   expectUsageCardOrder,
   expectUsageOptionsFitContent,
@@ -96,10 +98,6 @@ async function qaScreenshot(page: Page, name: string, target: "page" | "summary"
   await page.screenshot({ path: file });
 }
 
-function hostFilter(page: Page) {
-  return page.locator('[data-testid="usage-host-filter-trigger"]:visible');
-}
-
 function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
   return {
     id: `${sourceId}:a`,
@@ -154,7 +152,7 @@ async function refreshUsageAndWaitForReports(page: Page, usage: UsageReportsFixt
 }
 
 test.describe("usage modal", () => {
-  test("opens from the sidebar on the host's reports, with no host filter for one host", async ({
+  test("opens from the sidebar on the host's reports, with no host named for one host", async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -194,7 +192,7 @@ test.describe("usage modal", () => {
 
     const group = page.getByTestId(`usage-host-${serverId}`);
     await expect(group.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(hostFilter(page)).toHaveCount(0);
+    await expect(page.getByTestId("usage-modal-host")).toHaveCount(0);
     await qaScreenshot(page, "usage-modal-one-host");
     await expect(group.getByText("31% used")).toBeVisible();
     await expect(group.getByText("Beta plan", { exact: true })).toBeVisible();
@@ -393,12 +391,12 @@ test.describe("usage modal", () => {
       await openUsageFromItem(page);
       await expect(page.getByTestId(`usage-host-${primaryServerId}`)).toBeVisible();
 
-      await hostFilter(page).click();
-      await page.getByTestId(`usage-host-filter-item-${secondary.serverId}`).click();
+      await expect(usageModalHost(page)).toHaveText("localhost");
+      await pickUsageHost(page, secondary.serverId);
       await expect(
         page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
       ).toBeVisible({ timeout: 30_000 });
-      await expect(hostFilter(page)).toContainText("Secondary box");
+      await expect(usageModalHost(page)).toHaveText("Secondary box");
       await qaScreenshot(page, "usage-modal-picked-host");
       await expectPinnedUsage(page, ["12% Weekly"]);
 
@@ -413,6 +411,51 @@ test.describe("usage modal", () => {
       await expect(
         page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
       ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await secondary.close().catch(() => undefined);
+    }
+  });
+
+  test("on a phone, picking a host in Settings keeps Usage open on that host", async ({ page }) => {
+    test.setTimeout(420_000);
+    const longName = "build-box-eu-west-gpu-runner-02.internal";
+    const secondary = await startIsolatedHostDaemon(
+      `srv_usage_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+    );
+    try {
+      await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      await installUsageReportsFixture(page, {
+        port: secondary.port,
+        lists: [[weeklyReport("beta", 12)]],
+      });
+      await page.setViewportSize({ width: 375, height: 812 });
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: longName,
+        port: secondary.port,
+      });
+      await openCompactSidebar(page);
+      await openUsageFromItem(page);
+
+      await pickUsageHost(page, secondary.serverId);
+
+      // The sheet stays up once Settings has closed over it, showing the picked host's cards.
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(usageModalHost(page)).toHaveText(longName);
+      // The long name truncates under the title; the title itself reads in full.
+      const title = page.locator('[data-testid="usage-modal-title"]:visible');
+      await expect(title).toHaveText("Usage");
+      expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      const host = usageModalHost(page);
+      expect(await host.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true,
+      );
+      await qaScreenshot(page, "usage-phone-picked-long-host");
     } finally {
       await secondary.close().catch(() => undefined);
     }

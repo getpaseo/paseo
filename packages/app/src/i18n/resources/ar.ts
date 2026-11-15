@@ -2210,6 +2210,7 @@ export const ar: TranslationResources = {
     turnOn: "تشغيل",
 
     options: "الإعدادات",
+    host: "المضيف",
     refreshFailed: "تعذّر تحديث الاستخدام",
     noHosts: "لا توجد مضيفات متصلة",
     agentError: "تعذّر تحميل الاستخدام: {{reason}}",

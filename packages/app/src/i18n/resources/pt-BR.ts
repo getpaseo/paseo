@@ -2244,6 +2244,7 @@ export const ptBR: TranslationResources = {
     turnOn: "Ativar",
 
     options: "Configurações",
+    host: "Host",
     refreshFailed: "Não foi possível atualizar o uso",
     noHosts: "Nenhum host conectado",
     agentError: "Não foi possível carregar o uso: {{reason}}",
