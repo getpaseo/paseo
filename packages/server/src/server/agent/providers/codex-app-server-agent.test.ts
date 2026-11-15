@@ -101,6 +101,7 @@ import {
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
 import { buildProviderRegistry } from "../provider-registry.js";
 
 interface CollaborationModeRecord {
@@ -687,7 +688,7 @@ function codexAgentItem(text: string) {
 
 // An AgentManager over a real Codex provider whose every spawn gets a fresh fake
 // app-server serving `threads` from thread/read.
-function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
+function createReopenableCodexAgent(threads: Record<string, unknown[]>, registry?: AgentStorage) {
   const appServers: FakeCodexAppServer[] = [];
   const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
     appServerProcess: createFakeCodexAppServerProcess(() => {
@@ -719,7 +720,11 @@ function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
     },
     resumeSession: (...args) => provider.resumeSession(...args),
   };
-  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry,
+    logger: createTestLogger(),
+  });
   const agentId = "00000000-0000-4000-8000-000000000001";
   const handle = { provider: "codex", sessionId: "saved-thread" };
   const config = createConfig({ cwd: process.cwd() });
@@ -732,6 +737,9 @@ function createReopenableCodexAgent(threads: Record<string, unknown[]>) {
   return {
     manager,
     agentId,
+    handle,
+    config,
+    appServers,
     latestAppServer: () => appServers[appServers.length - 1],
     threadMethods: (index: number) =>
       appServers[index]
@@ -2515,6 +2523,34 @@ describe("Codex app-server provider", () => {
       expect(codex.manager.getTimeline(codex.agentId)).toEqual(projected);
     } finally {
       await codex.close();
+    }
+  });
+
+  test("persists an acknowledged instruction snapshot before a turn on repeated opens", async () => {
+    const artifactDir = path.resolve(process.cwd(), "../../.artifacts");
+    mkdirSync(artifactDir, { recursive: true });
+    const dir = await mkdtemp(path.join(artifactDir, "codex-receipt-"));
+    const storage = new AgentStorage(dir, createTestLogger());
+    const codex = createReopenableCodexAgent({}, storage);
+    try {
+      let handle = codex.handle;
+      for (let i = 0; i < 3; i++) {
+        await codex.manager.resumeAgentFromPersistence(handle, codex.config, codex.agentId);
+        await storage.flush();
+        const saved = await storage.get(codex.agentId);
+        expect(saved?.persistence?.metadata?.paseoInstructionReceipt).toEqual(expect.any(Object));
+        handle = saved!.persistence!;
+        await codex.manager.closeAgent(codex.agentId);
+      }
+      expect(
+        codex.appServers
+          .flatMap((server) => server.requests())
+          .filter((request) => request.method === "thread/inject_items"),
+      ).toHaveLength(1);
+    } finally {
+      if (codex.manager.getAgent(codex.agentId)) await codex.manager.closeAgent(codex.agentId);
+      await storage.flush();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

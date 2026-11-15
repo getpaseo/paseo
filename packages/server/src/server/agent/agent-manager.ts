@@ -1736,7 +1736,7 @@ export class AgentManager {
       ...(record ? { metadata: record.metadata, attention: extractAttention(record) } : {}),
       workspaceId,
       launchEnv,
-      persistence: handle,
+      persistence: purpose === "history" ? handle : (session.describePersistence() ?? handle),
       restoring: true,
     });
   }
