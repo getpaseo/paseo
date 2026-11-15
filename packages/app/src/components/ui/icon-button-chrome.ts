@@ -126,6 +126,10 @@ export function smallIconButtonChromeFrameSize(compact = false): number {
   return ICON_BUTTON_SIZES.small[controlSizingForLayout(compact)];
 }
 
+// Icon buttons sit in header and toolbar rows that clip overflow, so the keyboard focus ring
+// from public/index.html is drawn inside the frame instead of around it.
+const FOCUS_RING_INSET = -2;
+
 const styles = StyleSheet.create((theme) => ({
   large: {
     width: bySizing(ICON_BUTTON_SIZES.large),
@@ -135,8 +139,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    outlineWidth: 0,
-    outlineColor: "transparent",
+    outlineOffset: FOCUS_RING_INSET,
   },
   small: {
     width: ICON_BUTTON_SIZES.small.pointer,
@@ -146,8 +149,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    outlineWidth: 0,
-    outlineColor: "transparent",
+    outlineOffset: FOCUS_RING_INSET,
   },
   smallTouch: {
     width: ICON_BUTTON_SIZES.small.touch,
@@ -157,8 +159,7 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    outlineWidth: 0,
-    outlineColor: "transparent",
+    outlineOffset: FOCUS_RING_INSET,
   },
   round: {
     borderRadius: theme.borderRadius.full,
