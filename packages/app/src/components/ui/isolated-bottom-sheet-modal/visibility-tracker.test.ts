@@ -322,3 +322,15 @@ it("dismisses a late opening after the inactive owner acknowledges closure", () 
   tracker.syncDesired({ visible: false, active: true });
   expect(sheet.events).toHaveLength(3);
 });
+
+it("closes a disabled presentation on every departure after owner acknowledgement", () => {
+  const { tracker, closeCount } = setup();
+  for (let departure = 1; departure <= 2; departure++) {
+    tracker.syncDesired({ visible: true, active: true, isEnabled: false });
+    tracker.syncDesired({ visible: true, active: false, isEnabled: false });
+    tracker.syncDesired({ visible: true, active: false, isEnabled: false });
+    expect(closeCount()).toBe(departure);
+    tracker.syncDesired({ visible: false, active: false, isEnabled: false });
+    tracker.syncDesired({ visible: false, active: true, isEnabled: false });
+  }
+});

@@ -104,6 +104,7 @@ export function createBottomSheetVisibilityTracker(opts: {
     syncDesired(next) {
       visible = next.visible && next.active !== false;
       isEnabled = next.isEnabled;
+      if (!next.visible) hasNotifiedClose = false;
       // Leaving a retained owner is a close, not a temporary presentation pause.
       // Clear its desired state so returning does not reopen the old sheet.
       if (next.visible && next.active === false) {
