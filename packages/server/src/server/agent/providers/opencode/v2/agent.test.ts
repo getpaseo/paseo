@@ -45,6 +45,26 @@ describe("OpenCode v2 session lifecycle", () => {
     await cleared.close();
   });
 
+  test("opening history does not change an existing session instruction", async () => {
+    const harness = new V2Harness();
+    harness.instructions.set("paseo", "Existing plugin instruction");
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.resumeSession(
+      { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } },
+      { cwd: "/tmp/project" },
+      undefined,
+      { purpose: "history" },
+    );
+    try {
+      expect(harness.instructions.get("paseo")).toBe("Existing plugin instruction");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("refreshes the existing location before reading a forced catalog", async () => {
     const harness = new V2Harness();
     const refreshed: string[] = [];

@@ -75,6 +75,7 @@ export class OpenCodeV2Session implements AgentSession {
     bindChild?: (id: string) => void,
     private readonly acquire?: () => Promise<V2Connection>,
     private readonly moved?: (connection: V2Connection) => void,
+    private readonly historyOnly = false,
   ) {
     this.background = new OpenCodeBackgroundInventory({
       id: info.id,
@@ -193,6 +194,7 @@ export class OpenCodeV2Session implements AgentSession {
       });
       await this.awaitMcp(server);
     }
+    if (this.historyOnly) return;
     const system = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
