@@ -2261,6 +2261,8 @@ export const ru: TranslationResources = {
     loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
     title: "Использование плана",
     refresh: "Обновить",
+    reorderCard: "Переместить {{source}}",
+    showCard: "Показывать {{source}}",
     refreshAll: "Обновить всё",
     refreshing: "Обновление...",
     loading: "Загрузка данных об использовании...",

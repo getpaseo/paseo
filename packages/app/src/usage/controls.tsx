@@ -16,47 +16,41 @@ export interface UsageHostSelection {
 }
 
 /**
- * The controls on the right of every usage title row: the host filter when there is more than one
- * host, Refresh all, and the Settings cog. A host that cannot report usage keeps only the host filter.
+ * The controls on the right of every usage title row: Refresh all and the Settings cog. A host
+ * that cannot report usage has none.
  */
 export function UsageControls({
   view,
   serverId,
   onRefresh,
-  hostSelection,
 }: {
   view: UsageView;
   serverId: string;
   onRefresh: () => void;
-  hostSelection?: UsageHostSelection;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
+  if (view.kind === "unavailable") return null;
   return (
     <View style={styles.controls}>
-      {hasHostChoice(hostSelection) ? (
-        <HostFilter
-          hosts={hostSelection.hosts}
-          selectedHost={hostSelection.serverId}
-          onSelectHost={hostSelection.onSelect}
-          includeAllHost={false}
-          triggerTestID="usage-host-filter-trigger"
-          hostOptionTestID={usageHostOptionTestID}
-        />
-      ) : null}
-      {view.kind === "unavailable" ? null : (
-        <>
-          {view.kind === "off" ? null : <UsageRefreshButton busy={busy} onRefresh={onRefresh} />}
-          <UsageOptions serverId={serverId} />
-        </>
-      )}
+      {view.kind === "off" ? null : <UsageRefreshButton busy={busy} onRefresh={onRefresh} />}
+      <UsageOptions serverId={serverId} />
     </View>
   );
 }
 
-function hasHostChoice(
-  hostSelection: UsageHostSelection | undefined,
-): hostSelection is UsageHostSelection {
-  return hostSelection !== undefined && hostSelection.hosts.length > 1;
+/** The host whose usage shows, when there is more than one to choose from. */
+function UsageHostFilter({ hostSelection }: { hostSelection: UsageHostSelection }) {
+  return (
+    <HostFilter
+      hosts={hostSelection.hosts}
+      selectedHost={hostSelection.serverId}
+      onSelectHost={hostSelection.onSelect}
+      includeAllHost={false}
+      hang
+      triggerTestID="usage-host-filter-trigger"
+      hostOptionTestID={usageHostOptionTestID}
+    />
+  );
 }
 
 function usageHostOptionTestID(serverId: string): string {
@@ -73,27 +67,28 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * One host’s usage and title-row controls for the Usage modal.
- * Returns null when there is nothing to control, so headers leave no empty island.
+ * One host’s usage for the Usage modal: its title-row controls, null when there is nothing to
+ * control so the header leaves no empty island, and the host filter for the top of the body, null
+ * with a single host.
  */
 export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   view: UsageView;
   refresh: () => void;
   controls: ReactElement | null;
+  hostFilter: ReactElement | null;
 } {
   const { view, refresh } = useHostUsage(hostSelection.serverId);
-  const hasControls = hasHostChoice(hostSelection) || view.kind !== "unavailable";
   const controls = useMemo(
     () =>
-      hasControls ? (
-        <UsageControls
-          serverId={hostSelection.serverId}
-          view={view}
-          onRefresh={refresh}
-          hostSelection={hostSelection}
-        />
-      ) : null,
-    [hasControls, hostSelection, refresh, view],
+      view.kind === "unavailable" ? null : (
+        <UsageControls serverId={hostSelection.serverId} view={view} onRefresh={refresh} />
+      ),
+    [hostSelection.serverId, refresh, view],
   );
-  return { view, refresh, controls };
+  const hostFilter = useMemo(
+    () =>
+      hostSelection.hosts.length > 1 ? <UsageHostFilter hostSelection={hostSelection} /> : null,
+    [hostSelection],
+  );
+  return { view, refresh, controls, hostFilter };
 }
