@@ -408,6 +408,10 @@ const longGroupedDetail = {
   output: Array.from({ length: 80 }, (_, i) => `Long output ${i}`),
 };
 
+function provideLongReadDetail(item: Record<string, unknown> | undefined) {
+  if (item?.type === "tool_call" && item.name === "read") item.detail = longGroupedDetail;
+}
+
 async function provideLongToolDetails(page: Page) {
   await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
     const server = ws.connectToServer();
@@ -416,8 +420,9 @@ async function provideLongToolDetails(page: Page) {
       const raw = typeof message === "string" ? message : message.toString("utf8");
       const envelope = JSON.parse(raw);
       const item = envelope.message?.payload?.event?.item;
-      if (item?.type === "tool_call" && item.status === "completed") {
-        item.detail = longGroupedDetail;
+      provideLongReadDetail(item);
+      if (envelope.message?.type === "fetch_agent_timeline_response") {
+        for (const entry of envelope.message.payload.entries) provideLongReadDetail(entry.item);
       }
       ws.send(JSON.stringify(envelope));
     });
@@ -427,21 +432,25 @@ async function provideLongToolDetails(page: Page) {
 async function toggleAndMeasureTool(badge: Locator) {
   await badge.scrollIntoViewIfNeeded();
   await badge.evaluate((node) => {
-    const group = node.closest('[data-testid="tool-call-group"]');
-    const frames: { top: number; height: number; groupHeight: number }[] = [];
+    // Inline groups own a bounded viewport; opened turns use the chat viewport.
+    const container =
+      node.closest('[data-testid="tool-call-group"]') ??
+      node.closest('[data-testid="agent-chat-scroll"]');
+    if (!container) throw new Error("Expected a tool inside a group or chat viewport");
+    const frames: { top: number; height: number; containerHeight: number }[] = [];
     (node as HTMLElement & { disclosureFrames: typeof frames }).disclosureFrames = frames;
     node.querySelector("button")!.addEventListener(
       "click",
       () => {
-        function measure() {
+        const measure = () => {
           const bounds = node.getBoundingClientRect();
           frames.push({
             top: bounds.top,
             height: bounds.height,
-            groupHeight: group?.getBoundingClientRect().height ?? 433,
+            containerHeight: container.getBoundingClientRect().height,
           });
           if (frames.length < 20) requestAnimationFrame(measure);
-        }
+        };
         requestAnimationFrame(measure);
       },
       { once: true },
@@ -459,7 +468,7 @@ async function toggleAndMeasureTool(badge: Locator) {
     (node) =>
       (
         node as HTMLElement & {
-          disclosureFrames: { top: number; height: number; groupHeight: number }[];
+          disclosureFrames: { top: number; height: number; containerHeight: number }[];
         }
       ).disclosureFrames,
   );
@@ -478,7 +487,9 @@ for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
         (snapshot) => snapshot.status === "idle",
         30_000,
       );
-      await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+      if (display === "collapseToolCalls") {
+        await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+      }
       const group = page.getByTestId("tool-call-group").first();
       if (display === "collapseTurns") {
         if ((await page.getByTestId("tool-call-badge").count()) === 0) {
@@ -494,22 +505,12 @@ for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
       await expect(badge).toBeVisible();
       const expandedFrames = await toggleAndMeasureTool(badge);
       for (const frame of expandedFrames)
-        expect(frame.height).toBeLessThanOrEqual(frame.groupHeight);
+        expect(frame.height).toBeLessThanOrEqual(frame.containerHeight);
       expect(
         Math.max(...expandedFrames.map((frame) => frame.top)) -
           Math.min(...expandedFrames.map((frame) => frame.top)),
       ).toBeLessThanOrEqual(1);
       await expect(badge).toContainText("Long output");
-      await page.screenshot({
-        path: `../../.artifacts/group-${process.env.HEIGHT_EVIDENCE ?? "after"}.png`,
-      });
-      const childBox = await badge.boundingBox();
-      if (display === "collapseToolCalls") {
-        const groupBox = await group.boundingBox();
-        expect(childBox!.height).toBeLessThanOrEqual(groupBox!.height);
-      } else {
-        expect(childBox!.height).toBeLessThanOrEqual(433);
-      }
       const collapsedFrames = await toggleAndMeasureTool(badge);
       expect(
         Math.max(...collapsedFrames.map((frame) => frame.top)) -
