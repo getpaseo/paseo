@@ -487,18 +487,20 @@ for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
         (snapshot) => snapshot.status === "idle",
         30_000,
       );
+      // A fresh mount of a finished conversation starts with its disclosures closed.
+      await page.reload();
+      await expectComposerVisible(page);
       if (display === "collapseToolCalls") {
         await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
       }
       const group = page.getByTestId("tool-call-group").first();
       if (display === "collapseTurns") {
-        if ((await page.getByTestId("tool-call-badge").count()) === 0) {
-          await openToolDetails(page.getByTestId("turn-summary").first());
-        }
+        await expect(page.getByTestId("tool-call-badge")).toHaveCount(0);
+        await openToolDetails(page.getByTestId("turn-summary").first());
       } else {
         await expect(group).toBeVisible();
-        if ((await group.getByTestId("tool-call-badge").count()) === 0)
-          await openToolDetails(group);
+        await expect(group.getByTestId("tool-call-badge")).toHaveCount(0);
+        await openToolDetails(group);
       }
       const scope = display === "collapseTurns" ? page : group;
       const badge = scope.getByTestId("tool-call-badge").filter({ hasText: "Read" }).first();

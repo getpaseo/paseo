@@ -228,3 +228,36 @@ describe("inline tool detail height", () => {
     expect(container.textContent).toContain("error");
   });
 });
+
+const longShellDetail = {
+  type: "shell" as const,
+  command: "echo command\n".repeat(80),
+  output: "output\n".repeat(80),
+};
+
+const longEditDetail = {
+  type: "edit" as const,
+  filePath: "example.txt",
+  oldString: "old line\n".repeat(80),
+  newString: "new line\n".repeat(80),
+};
+
+describe("capped tool scrolling", () => {
+  it.each([longShellDetail, longEditDetail])(
+    "gives a capped $type detail one vertical scroll owner",
+    (detail) => {
+      act(() =>
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <ToolCallDetailsContent detail={detail} maxHeight={200} />
+          </QueryClientProvider>,
+        ),
+      );
+      const verticalScrollers = Array.from(container.querySelectorAll("*")).filter((node) =>
+        ["auto", "scroll"].includes(getComputedStyle(node).overflowY),
+      );
+      expect(verticalScrollers).toHaveLength(1);
+      expect(container.getBoundingClientRect().height).toBeLessThanOrEqual(200);
+    },
+  );
+});
