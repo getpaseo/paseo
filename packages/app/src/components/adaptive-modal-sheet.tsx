@@ -139,6 +139,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
+  subtitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
   headerTrailing: {
     flexDirection: "row",
     alignItems: "center",
@@ -418,6 +422,15 @@ function SheetHeaderBackButton({ back }: { back: SheetHeaderBack }) {
         testID="sheet-header-back"
       />
     </View>
+  );
+}
+
+/** A plain-text header subtitle: one muted line under the title that truncates, never the title. */
+export function SheetHeaderSubtitle({ text, testID }: { text: string; testID?: string }) {
+  return (
+    <Text style={styles.subtitle} numberOfLines={1} testID={testID}>
+      {text}
+    </Text>
   );
 }
 

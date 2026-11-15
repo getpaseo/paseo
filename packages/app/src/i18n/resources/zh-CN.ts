@@ -2187,6 +2187,7 @@ export const zhCN: TranslationResources = {
     turnOn: "开启",
 
     options: "设置",
+    host: "主机",
     refreshFailed: "无法刷新用量",
     noHosts: "没有已连接的主机",
     agentError: "无法加载用量：{{reason}}",

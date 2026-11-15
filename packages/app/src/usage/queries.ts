@@ -43,6 +43,11 @@ function hostUsageQueryKey(serverId: string) {
   return ["usage", serverId] as const;
 }
 
+/**
+ * A host's own reports. The key differs only by host, so it is read with `dataShape: "value"`:
+ * a list shape keeps the previous key's data while the next one loads, which would show one host's
+ * reports as another's.
+ */
 function usageReportsQueryKey(serverId: string) {
   return [...hostUsageQueryKey(serverId), "reports"] as const;
 }
@@ -150,7 +155,7 @@ export function useHostUsage(serverId: string): { view: UsageView; refresh: () =
     queryKey: usageReportsQueryKey(serverId),
     queryFn: () => listReports(queryClient, serverId),
     enabled: isConnected && isSupported && setting.enabled,
-    dataShape: "list",
+    dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
   });
   const refresh = useCallback(() => {
@@ -189,7 +194,7 @@ export function useUsageHostReports({
     enabled: setting.enabled,
     queryKey: usageReportsQueryKey(serverId ?? ""),
     queryFn: serverId ? () => listReports(queryClient, serverId) : skipToken,
-    dataShape: "list",
+    dataShape: "value",
     staleTimeMs: REPORTS_STALE_TIME_MS,
     refetchInterval: shouldPoll ? REPORTS_REFETCH_INTERVAL_MS : false,
   });

@@ -136,7 +136,7 @@ Cards inside a section sit closer than sections. Rows inside a card touch — on
 
 Rows have generous vertical padding: roughly 16px of content plus 16px of vertical padding for settings rows, 8–12px for sidebar list items where many rows must fit. Compressing rows below the established density to fit more on the screen is wrong. Too many rows means more cards or more sections, not smaller rows.
 
-Rows revealed under a `<SettingsCollapsibleRow>` are nested rows, one step smaller than card rows: 8px of vertical padding, `fontSize.sm` text, `sm` controls, and one fixed height so rows with and without a trailing button line up. The collapsible row sets this for everything under it (`packages/app/src/components/settings/row-density.tsx`). Never pass a density to a row, and never pad or resize a nested row by hand.
+Rows revealed under a `<SettingsCollapsibleRow>` are nested rows, one step smaller than card rows: 8px of vertical padding, `fontSize.sm` text, `sm` controls, and one fixed height so rows with and without a trailing button line up. The collapsible row sets this for everything under it (`packages/app/src/components/settings/row-density.tsx`). Never pass a density to a row, and never pad or resize a nested row by hand. Settings rows that share a menu surface with menu rows, such as Usage's options, go inside `<MenuSettingsRows>`, which puts their labels on the menu rows' label rail (`menuRowContentInset`).
 
 The whitespace is the design.
 

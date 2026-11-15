@@ -317,6 +317,19 @@ export async function openUsageOptions(page: Page): Promise<void> {
   await expect(visible(page, "usage-display-used")).toBeVisible();
 }
 
+/** Picks the host Usage shows, from the Host row of its Settings. */
+export async function pickUsageHost(page: Page, serverId: string): Promise<void> {
+  await openUsageOptions(page);
+  await visible(page, "usage-options-host").click();
+  await visible(page, `usage-options-host-${serverId}`).click();
+  await expect(page.getByTestId("usage-display-used")).toHaveCount(0);
+}
+
+/** The host Usage shows, under its title; absent with a single host. */
+export function usageModalHost(page: Page): Locator {
+  return visible(page, "usage-modal-host");
+}
+
 export function usageOptionsSurface(page: Page): Locator {
   return page
     .locator(
