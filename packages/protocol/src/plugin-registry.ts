@@ -81,10 +81,15 @@ export const PluginRegistryIndexSchema = z.object({
 });
 export type PluginRegistryIdentity = z.infer<typeof PluginRegistryIdentitySchema>;
 export type PluginRegistries = z.infer<typeof PluginRegistriesSchema>;
+export type PublishedPlugin = z.infer<typeof PublishedPluginSchema>;
+export type PublishedPluginDetail = z.infer<typeof PublishedPluginDetailSchema>;
+export type PluginRegistryIndex = z.infer<typeof PluginRegistryIndexSchema>;
+
+export const DEFAULT_PLUGIN_REGISTRY_URL = "https://plugins.paseo.sh";
 
 export function parsePluginRegistryReference(
   source: string,
-  defaultUrl = "https://plugins.paseo.sh",
+  defaultUrl = DEFAULT_PLUGIN_REGISTRY_URL,
 ): PluginRegistryIdentity | null {
   const segments = source.split("/");
   if (segments.length === 2 && PluginRegistryIdSchema.safeParse(source).success)

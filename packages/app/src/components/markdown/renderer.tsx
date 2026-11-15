@@ -24,6 +24,8 @@ import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fen
 
 const ThemedMarkdown = withUnistyles(EnrichedMarkdownText);
 const MD4C_FLAGS = { latexMath: false, hardSoftBreaks: true, admonitions: true };
+// A README is written for its forge, where the lines of a paragraph join into one.
+const EXTERNAL_MD4C_FLAGS = { ...MD4C_FLAGS, hardSoftBreaks: false };
 
 // Reading the breakpoint here makes Unistyles restyle the text when the layout crosses it.
 const markdownStyle =
@@ -52,6 +54,12 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
   streaming?: boolean;
   onLinkPress?: (url: string) => unknown;
   agentCommands?: boolean;
+  /**
+   * Author-controlled Markdown from outside this host, such as a plugin README: only its https
+   * links and images work, nothing is read as a file, forge reference or command, and the lines of
+   * a paragraph join as they do on its forge.
+   */
+  external?: boolean;
 }
 
 /** All Markdown surfaces share the same engine and source adaptation. */
@@ -86,12 +94,14 @@ const MarkdownPart = memo(function MarkdownPart({
   streaming = false,
   onLinkPress,
   agentCommands: _agentCommands,
+  external = false,
   commandHints = null,
   ...imageContext
 }: MarkdownRendererProps & { commandHints?: CommandHints | null }) {
   const environment = useAssistantFileLinkEnvironment();
   const actions = useAssistantFileLinkActions();
-  const forgeShorthand = useForgeShorthand();
+  const workspaceForgeShorthand = useForgeShorthand();
+  const forgeShorthand = external ? null : workspaceForgeShorthand;
   const client =
     imageContext.client ??
     (environment.client?.readFile
@@ -105,7 +115,11 @@ const MarkdownPart = memo(function MarkdownPart({
       ...imageContext,
       client,
     },
-    { commandNames: commandHints?.names, forgeReferencePattern: forgeShorthand?.pattern },
+    {
+      commandNames: commandHints?.names,
+      forgeReferencePattern: forgeShorthand?.pattern,
+      external,
+    },
   );
   const [image, setImage] = useState<ImageLightboxSource | null>(null);
   const pressLink = useStableEvent(({ url, sourceType }: LinkPressEvent) => {
@@ -145,7 +159,7 @@ const MarkdownPart = memo(function MarkdownPart({
               uniProps={pickMarkdownStyle(compact, muted)}
               flavor="github"
               selectable={selectable}
-              md4cFlags={MD4C_FLAGS}
+              md4cFlags={external ? EXTERNAL_MD4C_FLAGS : MD4C_FLAGS}
               linkRecognition={linkRecognition}
               enableTaskListItemToggle={false}
               enableLinkPreview={false}

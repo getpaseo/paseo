@@ -1096,3 +1096,30 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("external Markdown", () => {
+  const external = (source: string) => prepareMarkdownSource(source, undefined, { external: true });
+
+  it("recognizes no files, forge references or commands, only https URLs", () => {
+    const { linkRecognition } = external("Needs Node.js 22 and `~/.dsh/.env`, see #12");
+    expect("Needs Node.js 22, see #12".match(linkRecognition.text)).toBeNull();
+    expect(linkRecognition.inlineCode.test("~/.dsh/.env")).toBe(false);
+    expect("Docs at https://example.com/a.".match(linkRecognition.text)).toEqual([
+      "https://example.com/a",
+    ]);
+  });
+
+  it("keeps https links and leaves any other destination as its label", () => {
+    expect(
+      external(
+        "[Guide](docs/guide.md), [site](https://example.com), [mail](mailto:a@b.c), [ref][r]\n\n[r]: ./x",
+      ).render(),
+    ).toBe("Guide, [site](https://example.com), mail, ref\n\n[r]: ./x");
+  });
+
+  it("shows a relative image as its alt text", () => {
+    expect(external("![Demo](media/demo.png) ![Shot](https://x/a.png)").render()).toBe(
+      "Demo ![Shot](https://x/a.png)",
+    );
+  });
+});
