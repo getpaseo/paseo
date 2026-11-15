@@ -122,7 +122,7 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
-    viewMessage: "メッセージを表示",
+    viewMessage: "メッセージを探す",
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",
@@ -185,7 +185,10 @@ export const ja: TranslationResources = {
       removeReview: "レビュー添付ファイルを削除",
     },
     errors: {
-      messageNotFound: "このメッセージはまだ会話にありません。",
+      messageLookupFailed:
+        "会話を更新できませんでした。配信はまだ確認できていません。再接続してメッセージをもう一度探してください。",
+      messageNotFound:
+        "利用可能な履歴でこのメッセージを見つけられませんでした。配信はまだ確認できていません。",
       failedToSend: "メッセージの送信に失敗しました",
       failedToCreateAgent: "エージェントの作成に失敗しました",
       noHostSelected: "ホストが選択されていません",

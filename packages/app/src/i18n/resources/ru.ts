@@ -122,7 +122,7 @@ export const ru: TranslationResources = {
     },
   },
   composer: {
-    viewMessage: "Показать сообщение",
+    viewMessage: "Найти сообщение",
     placeholders: {
       desktop: "Напишите агенту сообщение, отметьте @files или используйте /commands и /skills.",
       mobile: "Сообщение,@files,/commands",
@@ -185,7 +185,10 @@ export const ru: TranslationResources = {
       removeReview: "Удалить вложение проверки",
     },
     errors: {
-      messageNotFound: "Этого сообщения пока нет в разговоре.",
+      messageLookupFailed:
+        "Не удалось обновить разговор. Доставка ещё не подтверждена. Подключитесь снова и повторите поиск сообщения.",
+      messageNotFound:
+        "Не удалось найти сообщение в доступной истории. Доставка ещё не подтверждена.",
       failedToSend: "Не удалось отправить сообщение",
       failedToCreateAgent: "Не удалось создать агента.",
       noHostSelected: "Хост не выбран",

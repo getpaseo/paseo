@@ -121,7 +121,7 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
-    viewMessage: "메시지 보기",
+    viewMessage: "메시지 찾기",
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -184,7 +184,10 @@ export const ko: TranslationResources = {
       removeReview: "리뷰 첨부 제거",
     },
     errors: {
-      messageNotFound: "이 메시지는 아직 대화에 없습니다.",
+      messageLookupFailed:
+        "대화를 새로 고칠 수 없습니다. 전달 여부는 아직 확인되지 않았습니다. 다시 연결한 후 메시지를 찾아보세요.",
+      messageNotFound:
+        "사용 가능한 기록에서 이 메시지를 찾을 수 없습니다. 전달 여부는 아직 확인되지 않았습니다.",
       failedToSend: "메시지를 보내지 못했습니다",
       failedToCreateAgent: "에이전트를 생성하지 못했습니다",
       noHostSelected: "선택된 호스트가 없습니다",

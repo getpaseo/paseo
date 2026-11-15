@@ -376,6 +376,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
+    const submissionFocusRequest = useRef(0);
     const [focusedSubmission, setFocusedSubmission] = useState<FocusedSubmittedMessage | null>(
       null,
     );
@@ -650,7 +651,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       revealLoadedMessage: revealLoadedHistory,
     });
 
+    useEffect(
+      () => () => {
+        submissionFocusRequest.current += 1;
+      },
+      [agentId, resolvedServerId],
+    );
+
     const focusSubmittedMessage = useStableEvent(async (clientMessageId: string) => {
+      const request = ++submissionFocusRequest.current;
       let target = findSubmittedUserMessage(
         effectiveStreamItems,
         effectiveStreamHead ?? [],
@@ -669,6 +678,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           clientMessageId,
         );
       }
+      if (submissionFocusRequest.current !== request) return true;
       if (!target) return false;
       setFocusedSubmission({
         serverId: resolvedServerId,
@@ -709,6 +719,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () => ({
         focusSubmittedMessage,
         scrollToBottom(reason = "jump-to-bottom") {
+          submissionFocusRequest.current += 1;
           setFocusedSubmission(null);
           viewportRef.current?.scrollToBottom(reason);
         },

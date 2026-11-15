@@ -1419,9 +1419,15 @@ function ComposerContentImpl({
     clientMessageId: string | null;
   } | null>(null);
   const viewSubmittedMessage = useMutation({
+    networkMode: "always",
     mutationFn: async () => {
       if (!sendError?.clientMessageId || !onViewSubmittedMessage) return;
-      const found = await onViewSubmittedMessage(sendError.clientMessageId);
+      let found: boolean;
+      try {
+        found = await onViewSubmittedMessage(sendError.clientMessageId);
+      } catch (cause) {
+        throw new Error(t("composer.errors.messageLookupFailed"), { cause });
+      }
       if (!found) throw new Error(t("composer.errors.messageNotFound"));
     },
   });
@@ -1435,10 +1441,10 @@ function ComposerContentImpl({
     },
     [resetMessageLocation],
   );
-  const handleViewSubmittedMessage = useCallback(
-    () => locateSubmittedMessage(),
-    [locateSubmittedMessage],
-  );
+  const handleViewSubmittedMessage = useCallback(() => {
+    editingSession.setFullscreen(false);
+    locateSubmittedMessage();
+  }, [editingSession, locateSubmittedMessage]);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");

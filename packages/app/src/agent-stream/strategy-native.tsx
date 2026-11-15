@@ -453,7 +453,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     if (index < 0) return;
     bottomAnchorController.detachByUser();
     listRef.current?.cancelScroll();
-    void listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    void listRef.current?.scrollToIndex({
+      index,
+      animated: false,
+      viewPosition: 0,
+      viewOffset: topOverlayInset,
+    });
     onNearBottomChange(false);
   });
 

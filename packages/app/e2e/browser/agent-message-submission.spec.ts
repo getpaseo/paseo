@@ -1213,7 +1213,7 @@ test.describe("Agent message submission", () => {
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
     await page.screenshot({ path: testInfo.outputPath("message-delivery-before-jump.png") });
-    await page.getByRole("button", { name: "View message", exact: true }).click();
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
     const highlighted = page.getByTestId("user-message-highlight");
     await expect(highlighted).toHaveCount(1);
     await expect(highlighted).toContainText(prompt);
@@ -1225,6 +1225,20 @@ test.describe("Agent message submission", () => {
     await retryRestoredSubmission(page, prompt);
     await expect(highlighted).toHaveCount(0);
   });
+  test("finds a cached failed message offline without losing the draft", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "Keep this failed draft while locating it offline.";
+    await submitMessageThatWillBeRejected(page, prompt);
+    await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(prompt);
+    await expectComposerDraft(page, prompt);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  });
+
   test("keeps a failed message location after a later queued send succeeds", async ({
     page,
     rejectionScenario,
@@ -1248,7 +1262,7 @@ test.describe("Agent message submission", () => {
     await expect(
       page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "View message", exact: true }).click();
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
     const highlighted = page.getByTestId("user-message-highlight");
     await expect(highlighted).toHaveCount(1);
     await expect(highlighted).toContainText(failedPrompt);
@@ -1450,9 +1464,11 @@ test.describe("Agent message submission", () => {
     ).toBeVisible();
     await unrelatedRunningScenario.gate.disconnect();
     await expectFailedSubmissionRestored(page, prompt);
-    const viewMessage = page.getByRole("button", { name: "View message", exact: true });
+    const viewMessage = page.getByRole("button", { name: "Find message", exact: true });
     await viewMessage.click();
-    await expect(page.getByTestId("view-submitted-message-error")).toBeVisible();
+    await expect(page.getByTestId("view-submitted-message-error")).toHaveText(
+      "Could not refresh the conversation. Delivery is still unconfirmed. Reconnect and try finding the message again.",
+    );
     await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
     await expect(viewMessage).toBeEnabled();
   });
