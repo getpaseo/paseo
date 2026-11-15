@@ -3706,6 +3706,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     reasoning_effort?: string | null;
     developer_instructions?: string | null;
   }> = [];
+  private restoredCollaborationMode: {
+    name: string;
+    mode: string;
+    model: string;
+    reasoning_effort: string | null;
+    developer_instructions?: never;
+  } | null = null;
   private resolvedCollaborationMode: {
     mode: string;
     settings: Record<string, unknown>;
@@ -4037,7 +4044,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     settings: Record<string, unknown>;
     name: string;
   } | null {
-    const match = this.findCollaborationMode(this.planModeEnabled ? "plan" : "code");
+    const match =
+      this.findCollaborationMode(this.planModeEnabled ? "plan" : "code") ??
+      this.restoredCollaborationMode;
     if (!match) return null;
 
     const settings: Record<string, unknown> = {};
@@ -4050,6 +4059,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       ...(this.config.pluginAppendSystemPrompt ?? []),
     );
     if (developerInstructions) settings.developer_instructions = developerInstructions;
+    else if (match === this.restoredCollaborationMode) settings.developer_instructions = null;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
@@ -4329,6 +4339,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       const response = await this.client.request("thread/resume", params);
       this.rememberResolvedSandboxPolicy(response);
+      this.rememberRestoredCollaborationMode(response);
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -4342,12 +4353,29 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
         const response = await this.client.request("thread/resume", params);
         this.rememberResolvedSandboxPolicy(response);
+        this.rememberRestoredCollaborationMode(response);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
         return;
       }
       this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
       throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
+  }
+
+  private rememberRestoredCollaborationMode(response: unknown): void {
+    const mode = toObjectRecord(toObjectRecord(response)?.collaborationMode);
+    const settings = toObjectRecord(mode?.settings);
+    if (typeof mode?.mode !== "string" || typeof settings?.model !== "string") return;
+    // The resumed mode can contain instructions from a previous launch. Keep its
+    // identity and model, but rebuild instructions from the current launch.
+    this.restoredCollaborationMode = {
+      name: mode.mode,
+      mode: mode.mode,
+      model: settings.model,
+      reasoning_effort:
+        typeof settings.reasoning_effort === "string" ? settings.reasoning_effort : null,
+    };
+    this.refreshResolvedCollaborationMode();
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {

@@ -1457,6 +1457,40 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("clears restored plugin instructions when the collaboration catalog is unavailable", async () => {
+    const appServer = createFakeCodexAppServer({
+      "collaborationMode/list": () => ({ data: [] }),
+      "thread/resume": () => ({
+        thread: { id: "saved-thread" },
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: "gpt-5.4",
+            reasoning_effort: "medium",
+            developer_instructions: "Old plugin",
+          },
+        },
+      }),
+    });
+    const session = await createProviderWithFakeAppServer(appServer).resumeSession(
+      { sessionId: "saved-thread" },
+      { pluginAppendSystemPrompt: undefined },
+    );
+    try {
+      await session.startTurn("after disable");
+      const turn = await appServer.waitForTurnStart();
+      expect(turn).toMatchObject({
+        collaborationMode: {
+          mode: "default",
+          settings: { model: "gpt-5.4", developer_instructions: null },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("keeps the default effort when a session without one is resumed after a restart", async () => {
     const beforeRestart = createFakeCodexAppServer();
     const firstSession = await createProviderWithFakeAppServer(beforeRestart).createSession(
