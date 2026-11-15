@@ -158,6 +158,17 @@ export async function runWaitCommand(
   try {
     try {
       const state = await client.waitForFinish(agentIdArg, timeoutMs);
+
+      // A null payload means the daemon never resolved this identifier to an agent,
+      // which is a missing agent rather than an agent that finished in error.
+      if (state.status === "error" && state.final === null) {
+        throw {
+          code: "AGENT_NOT_FOUND",
+          message: state.error ?? `No agent found matching: ${agentIdArg}`,
+          details: "Use `paseo ls` to list available agents",
+        } satisfies CommandError;
+      }
+
       const resolvedAgentId = state.final?.id ?? agentIdArg;
       const recentActivity =
         state.status === "timeout" || state.status === "idle"
@@ -173,6 +184,10 @@ export async function runWaitCommand(
       };
     } catch (waitErr) {
       await client.close().catch(() => {});
+
+      if (waitErr && typeof waitErr === "object" && "code" in waitErr) {
+        throw waitErr;
+      }
 
       const waitMessage = waitErr instanceof Error ? waitErr.message : String(waitErr);
 
