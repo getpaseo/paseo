@@ -424,29 +424,100 @@ async function provideLongToolDetails(page: Page) {
   });
 }
 
-test("keeps multi-section tool details within the group", async ({ page }) => {
-  test.setTimeout(120_000);
-  const agent = await createOverviewAgent(page, "Bounded grouped tool details");
-  try {
-    await provideLongToolDetails(page);
-    await openOverviewAgent(page, agent);
-    await agent.client.sendAgentMessage(agent.agentId, "Exercise bounded grouped details.");
-    const group = page.getByTestId("tool-call-group").first();
-    await expect(group).toBeVisible();
-    await openToolDetails(group);
-    const badge = group.getByTestId("tool-call-badge").filter({ hasText: "Read" }).first();
-    await expect(badge).toBeVisible();
-    await openToolDetails(badge);
-    await expect(badge).toContainText("Long output");
-    await page.screenshot({
-      path: `../../.artifacts/group-${process.env.HEIGHT_EVIDENCE ?? "after"}.png`,
-    });
-    const childBox = await badge.boundingBox();
-    const groupBox = await group.boundingBox();
-    expect(childBox!.height).toBeLessThanOrEqual(groupBox!.height);
-    await openToolDetails(badge);
-    await expect(badge).not.toContainText("Long output");
-  } finally {
-    await agent.cleanup();
-  }
-});
+async function toggleAndMeasureTool(badge: Locator) {
+  await badge.scrollIntoViewIfNeeded();
+  await badge.evaluate((node) => {
+    const group = node.closest('[data-testid="tool-call-group"]');
+    const frames: { top: number; height: number; groupHeight: number }[] = [];
+    (node as HTMLElement & { disclosureFrames: typeof frames }).disclosureFrames = frames;
+    node.querySelector("button")!.addEventListener(
+      "click",
+      () => {
+        function measure() {
+          const bounds = node.getBoundingClientRect();
+          frames.push({
+            top: bounds.top,
+            height: bounds.height,
+            groupHeight: group?.getBoundingClientRect().height ?? 433,
+          });
+          if (frames.length < 20) requestAnimationFrame(measure);
+        }
+        requestAnimationFrame(measure);
+      },
+      { once: true },
+    );
+  });
+  await openToolDetails(badge);
+  await expect
+    .poll(() =>
+      badge.evaluate(
+        (node) => (node as HTMLElement & { disclosureFrames: unknown[] }).disclosureFrames.length,
+      ),
+    )
+    .toBe(20);
+  return badge.evaluate(
+    (node) =>
+      (
+        node as HTMLElement & {
+          disclosureFrames: { top: number; height: number; groupHeight: number }[];
+        }
+      ).disclosureFrames,
+  );
+}
+
+for (const display of ["collapseToolCalls", "collapseTurns"] as const) {
+  test(`keeps multi-section tool details within the group (${display})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await createOverviewAgent(page, "Bounded grouped tool details", display);
+    try {
+      await provideLongToolDetails(page);
+      await openOverviewAgent(page, agent);
+      await agent.client.sendAgentMessage(agent.agentId, "Exercise bounded grouped details.");
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "idle",
+        30_000,
+      );
+      await scrollChatAwayFromBottom(page, { deltaY: -10_000, minDistanceFromBottom: 1 });
+      const group = page.getByTestId("tool-call-group").first();
+      if (display === "collapseTurns") {
+        if ((await page.getByTestId("tool-call-badge").count()) === 0) {
+          await openToolDetails(page.getByTestId("turn-summary").first());
+        }
+      } else {
+        await expect(group).toBeVisible();
+        if ((await group.getByTestId("tool-call-badge").count()) === 0)
+          await openToolDetails(group);
+      }
+      const scope = display === "collapseTurns" ? page : group;
+      const badge = scope.getByTestId("tool-call-badge").filter({ hasText: "Read" }).first();
+      await expect(badge).toBeVisible();
+      const expandedFrames = await toggleAndMeasureTool(badge);
+      for (const frame of expandedFrames)
+        expect(frame.height).toBeLessThanOrEqual(frame.groupHeight);
+      expect(
+        Math.max(...expandedFrames.map((frame) => frame.top)) -
+          Math.min(...expandedFrames.map((frame) => frame.top)),
+      ).toBeLessThanOrEqual(1);
+      await expect(badge).toContainText("Long output");
+      await page.screenshot({
+        path: `../../.artifacts/group-${process.env.HEIGHT_EVIDENCE ?? "after"}.png`,
+      });
+      const childBox = await badge.boundingBox();
+      if (display === "collapseToolCalls") {
+        const groupBox = await group.boundingBox();
+        expect(childBox!.height).toBeLessThanOrEqual(groupBox!.height);
+      } else {
+        expect(childBox!.height).toBeLessThanOrEqual(433);
+      }
+      const collapsedFrames = await toggleAndMeasureTool(badge);
+      expect(
+        Math.max(...collapsedFrames.map((frame) => frame.top)) -
+          Math.min(...collapsedFrames.map((frame) => frame.top)),
+      ).toBeLessThanOrEqual(1);
+      await expect(badge).not.toContainText("Long output");
+    } finally {
+      await agent.cleanup();
+    }
+  });
+}
