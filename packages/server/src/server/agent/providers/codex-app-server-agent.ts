@@ -83,6 +83,7 @@ import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js"
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
   buildCodexControls,
+  codexSpeedTiers,
   CodexServiceTierSchema,
   readCodexServiceTier,
   type CodexServiceTier,
@@ -3789,7 +3790,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   get controls(): AgentOptionControl[] {
     return buildCodexControls({
-      serviceTiers: this.currentServiceTiers(),
+      serviceTiers: this.offeredServiceTiers(),
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
   }
@@ -4082,13 +4083,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resolvedCollaborationMode = this.resolveCollaborationMode();
   }
 
-  private currentServiceTiers(): CodexServiceTier[] {
+  /**
+   * The speeds this session offers: Flex, which Codex accepts whatever the model advertises, plus
+   * the tiers the catalog advertises for the selected model. The Speed control and the checks
+   * below all read this, so what the control offers is what the session will run.
+   */
+  private offeredServiceTiers(): CodexServiceTier[] {
     const selectedModel = this.config.model
       ? this.speedModels.find(
           (model) => model.id === this.config.model || model.model === this.config.model,
         )
       : (this.speedModels.find((model) => model.isDefault) ?? this.speedModels[0]);
-    return selectedModel?.serviceTiers ?? [];
+    return codexSpeedTiers(selectedModel?.serviceTiers ?? []);
   }
 
   /**
@@ -4113,7 +4119,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private resolveServiceTier(requested: string | null): string | null {
     // Until the model list arrives there is nothing to check the request against.
     if (this.speedModels.length === 0 || requested === "default") return requested;
-    const tiers = this.currentServiceTiers();
+    const tiers = this.offeredServiceTiers();
     // `fast` names whichever tier the model calls Fast.
     if (requested === "fast" && !tiers.some((tier) => tier.id === "fast")) {
       return tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
@@ -4920,7 +4926,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   /**
    * A speed the new model does not offer turns into Normal and is reported, so choosing a model
    * that does offer it again does not bring the paid tier back. It is reported as Normal rather
-   * than removed so a configured default cannot fill the old speed back in.
+   * than removed so a configured default cannot fill the old speed back in. Flex is exempt: Codex
+   * treats it as a request option rather than a model capability, so it survives a model switch.
    */
   private dropUnavailableServiceTier(): void {
     const requested = this.requestedServiceTier;
@@ -4981,7 +4988,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private isServiceTierAvailable(tier: string | null): boolean {
     if (tier === null || tier === "default") return true;
-    const tiers = this.currentServiceTiers();
+    const tiers = this.offeredServiceTiers();
     const namesFast = tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
     return namesFast || tiers.some((entry) => entry.id === tier);
   }
