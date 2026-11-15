@@ -898,6 +898,13 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentTurnChangesSchema = z.object({
+  turnId: z.string(),
+  before: z.string(),
+  after: z.string(),
+});
+export type AgentTurnChanges = z.infer<typeof AgentTurnChangesSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -918,9 +925,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
   // COMPAT(turnChanges): added in v0.16.0, remove gate after 2027-11-11.
-  latestTurnChanges: z
-    .object({ turnId: z.string(), before: z.string(), after: z.string() })
-    .optional(),
+  latestTurnChanges: AgentTurnChangesSchema.optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),
@@ -4094,6 +4099,8 @@ export const ServerInfoStatusPayloadSchema = z
         timelineFreshnessCheck: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        // COMPAT(turnChanges): added in v0.16.0, remove gate after 2027-05-13.
+        turnChanges: z.boolean().optional(),
         providerOptionControls: z.boolean().optional(),
         entityMetadata: z.boolean().optional(),
         diffSubscription: z.boolean().optional(),

@@ -259,6 +259,7 @@ export const ar: TranslationResources = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "حدّث المضيف لمراجعة التغييرات خلال الجولة.",
       viewChanges: "التغييرات خلال هذا الدور",
       backToConversation: "العودة إلى المحادثة",
     },

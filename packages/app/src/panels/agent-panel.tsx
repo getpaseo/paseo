@@ -1,3 +1,4 @@
+import { useHostFeature } from "@/runtime/host-features";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -1058,11 +1059,13 @@ function TurnChangesSwitch({
   children: ReactNode;
 }) {
   const { t } = useTranslation();
+  // COMPAT(turnChanges): added in v0.16.0, remove gate after 2027-05-13.
+  const supported = useHostFeature(serverId, "turnChanges");
   const [show, setShow] = useState(false);
   const toggle = useCallback(() => setShow((value) => !value), []);
   return (
     <View style={styles.turnChangesSwitch}>
-      {changes ? (
+      {changes || !supported ? (
         <View style={styles.turnChangesAction}>
           <Button variant="secondary" size="sm" onPress={toggle} testID="agent-turn-changes-toggle">
             {show
@@ -1071,7 +1074,10 @@ function TurnChangesSwitch({
           </Button>
         </View>
       ) : null}
-      {show && changes ? (
+      {show && !supported ? (
+        <Text style={styles.turnChangesHint}>{t("agentPanel.turnChanges.updateHost")}</Text>
+      ) : null}
+      {show && supported && changes ? (
         <TurnChangesContent
           key={changes.after}
           serverId={serverId}
@@ -1079,9 +1085,8 @@ function TurnChangesSwitch({
           before={changes.before}
           after={changes.after}
         />
-      ) : (
-        children
-      )}
+      ) : null}
+      {!show || (supported && !changes) ? children : null}
     </View>
   );
 }
@@ -1328,12 +1333,16 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       {archivingOverlay}
     </View>
   );
-  const content = wrapRewindComposerRestoreProvider({
-    textSource: agentInputDraft.textSource,
-    setText: agentInputDraft.replaceText,
-    onRewindComplete: handleRewindComplete,
-    children: contentBody,
-  });
+  const content = (
+    // oxlint-disable-next-line react/jsx-max-depth -- This inline context provider adds no layout nesting.
+    <RewindComposerRestoreProvider
+      textSource={agentInputDraft.textSource}
+      setText={agentInputDraft.replaceText}
+      onRewindComplete={handleRewindComplete}
+    >
+      {contentBody}
+    </RewindComposerRestoreProvider>
+  );
   return wrapAgentCommandProvider({
     enabled: showsComposer && hasActiveComposer && !draft,
     serverId,
@@ -1342,28 +1351,6 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     children: content,
   });
 });
-
-function wrapRewindComposerRestoreProvider({
-  textSource,
-  setText,
-  onRewindComplete,
-  children,
-}: {
-  textSource: AgentInputDraft["textSource"];
-  setText: AgentInputDraft["replaceText"];
-  onRewindComplete: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <RewindComposerRestoreProvider
-      textSource={textSource}
-      setText={setText}
-      onRewindComplete={onRewindComplete}
-    >
-      {children}
-    </RewindComposerRestoreProvider>
-  );
-}
 
 function wrapAgentCommandProvider({
   enabled,
@@ -1895,6 +1882,7 @@ const styles = StyleSheet.create((theme) => ({
     ...(isWeb ? { userSelect: "none" as const } : {}),
   },
   turnChangesSwitch: { flex: 1, minHeight: 0 },
+  turnChangesHint: { color: theme.colors.foregroundMuted, padding: theme.spacing[3] },
   turnChangesAction: {
     flexDirection: "row",
     paddingHorizontal: theme.spacing[3],

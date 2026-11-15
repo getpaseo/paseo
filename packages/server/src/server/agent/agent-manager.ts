@@ -1,3 +1,4 @@
+import type { AgentTurnChanges } from "@getpaseo/protocol/messages";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -103,7 +104,6 @@ import {
   discardPendingTurnStart,
   retainPendingTurnStart,
   retainTurnChanges,
-  type TurnChanges,
 } from "./turn-changes.js";
 import {
   PASEO_MCP_SERVER_NAME,
@@ -501,7 +501,7 @@ interface ManagedAgentBase {
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
-  latestTurnChanges?: TurnChanges;
+  latestTurnChanges?: AgentTurnChanges;
   lastUsage?: AgentUsage;
   lastError?: string;
   attention: AttentionState;
@@ -3126,6 +3126,9 @@ export class AgentManager {
     options?: AgentRunOptions;
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
+    if (pendingRun.settled || this.runs.getPendingRun(agentId) !== pendingRun) {
+      throw new Error(`Agent ${agentId} run was canceled before its turn started`);
+    }
     try {
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
@@ -3188,7 +3191,13 @@ export class AgentManager {
     let before: string | null = null;
     try {
       before = await captureTurnWorktree(agent.cwd);
-      if (before) await retainPendingTurnStart(agent.cwd, agentId, before);
+      if (
+        before &&
+        !params.pendingRun.settled &&
+        this.runs.getPendingRun(agentId) === params.pendingRun
+      ) {
+        await retainPendingTurnStart(agent.cwd, agentId, before);
+      }
     } catch (error) {
       this.logger.warn({ err: error, agentId }, "Could not capture turn start worktree");
       before = null;
@@ -3200,7 +3209,10 @@ export class AgentManager {
       if (before) this.pendingTurnChanges.set(agentId, { turnId, before });
       return turnId;
     } catch (error) {
-      if (before) void discardPendingTurnStart(agent.cwd, agentId);
+      if (before)
+        await discardPendingTurnStart(agent.cwd, agentId).catch((cleanupError) => {
+          this.logger.warn({ err: cleanupError, agentId }, "Could not discard turn start snapshot");
+        });
       throw error;
     }
   }
@@ -3223,7 +3235,12 @@ export class AgentManager {
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Could not capture turn end worktree");
-      void discardPendingTurnStart(agent.cwd, agent.id);
+      await discardPendingTurnStart(agent.cwd, agent.id).catch((cleanupError) => {
+        this.logger.warn(
+          { err: cleanupError, agentId: agent.id },
+          "Could not discard turn end snapshot",
+        );
+      });
     }
   }
 
@@ -4025,6 +4042,7 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    this.pendingTurnChanges.delete(agentId);
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
   }
@@ -4279,7 +4297,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       metadata?: AgentMetadata;
-      latestTurnChanges?: TurnChanges;
+      latestTurnChanges?: AgentTurnChanges;
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
       timelineNextSeq?: number;
@@ -4493,7 +4511,7 @@ export class AgentManager {
           lastUserMessageAt?: Date | null;
           labels?: Record<string, string>;
           metadata?: AgentMetadata;
-          latestTurnChanges?: TurnChanges;
+          latestTurnChanges?: AgentTurnChanges;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
           lastError?: string;
@@ -5112,11 +5130,11 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
-        this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           if (eventTurnId) await this.finishTurnWorktreeCapture(agent, eventTurnId);
           this.finalizeForegroundTurn(agent, eventTurnId);
         }
+        this.runs.settleTerminalRun(agent.id, eventTurnId);
       }
 
       if (flags.shouldDispatchEvent) {

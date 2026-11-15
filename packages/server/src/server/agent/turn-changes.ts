@@ -5,11 +5,7 @@ import { join } from "node:path";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { worktreeRoot } from "../diff/git.js";
 
-export interface TurnChanges {
-  turnId: string;
-  before: string;
-  after: string;
-}
+import type { AgentTurnChanges } from "@getpaseo/protocol/messages";
 
 const SNAPSHOT_ENV = {
   GIT_AUTHOR_NAME: "Paseo",
@@ -72,10 +68,24 @@ export async function discardPendingTurnStart(cwd: string, agentId: string) {
   });
 }
 
-export async function retainTurnChanges(cwd: string, agentId: string, changes: TurnChanges) {
+export async function retainTurnChanges(cwd: string, agentId: string, changes: AgentTurnChanges) {
   const prefix = refPrefix(agentId);
   await runGitCommand(["update-ref", "--stdin"], {
     cwd,
     input: `start\nupdate ${prefix}/before ${changes.before}\nupdate ${prefix}/after ${changes.after}\ndelete ${prefix}/pending\nprepare\ncommit\n`,
+  });
+}
+
+/** Release Git objects when the owning agent state is permanently removed. */
+export async function discardAgentTurnChanges(cwd: string, agentId: string): Promise<void> {
+  const repo = await runGitCommand(["rev-parse", "--is-inside-work-tree"], {
+    cwd,
+    acceptExitCodes: [0, 128],
+  });
+  if (repo.exitCode !== 0 || repo.stdout.trim() !== "true") return;
+  const prefix = refPrefix(agentId);
+  await runGitCommand(["update-ref", "--stdin"], {
+    cwd,
+    input: `start\ndelete ${prefix}/before\ndelete ${prefix}/after\ndelete ${prefix}/pending\nprepare\ncommit\n`,
   });
 }

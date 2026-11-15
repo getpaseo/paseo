@@ -259,6 +259,7 @@ export const zhCN: TranslationResources = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "请更新主机以查看单轮对话中的更改。",
       viewChanges: "本轮期间的更改",
       backToConversation: "返回对话",
     },

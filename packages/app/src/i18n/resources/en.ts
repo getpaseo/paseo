@@ -255,6 +255,7 @@ export const en = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "Update the host to review changes during a turn.",
       viewChanges: "Changes during this turn",
       backToConversation: "Back to conversation",
     },

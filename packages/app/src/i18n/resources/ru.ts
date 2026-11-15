@@ -261,6 +261,7 @@ export const ru: TranslationResources = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "Обновите хост, чтобы просмотреть изменения за ход.",
       viewChanges: "Изменения за этот ход",
       backToConversation: "Вернуться к беседе",
     },

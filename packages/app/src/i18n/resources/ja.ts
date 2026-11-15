@@ -261,6 +261,7 @@ export const ja: TranslationResources = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "ターン中の変更を確認するにはホストを更新してください。",
       viewChanges: "このターン中の変更",
       backToConversation: "会話に戻る",
     },

@@ -261,6 +261,7 @@ export const es: TranslationResources = {
   },
   agentPanel: {
     turnChanges: {
+      updateHost: "Actualiza el host para revisar los cambios de un turno.",
       viewChanges: "Cambios durante este turno",
       backToConversation: "Volver a la conversación",
     },

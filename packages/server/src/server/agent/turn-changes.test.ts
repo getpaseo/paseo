@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { listComparison } from "../diff/git.js";
-import { captureTurnWorktree, retainPendingTurnStart, retainTurnChanges } from "./turn-changes.js";
+import {
+  captureTurnWorktree,
+  retainPendingTurnStart,
+  retainTurnChanges,
+  discardAgentTurnChanges,
+} from "./turn-changes.js";
 
 test("turn snapshots compare full worktrees while leaving the real index alone", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "paseo-turn-changes-test-"));
@@ -33,6 +38,11 @@ test("turn snapshots compare full worktrees while leaving the real index alone",
     expect(after).toMatch(/^[0-9a-f]{40,64}$/);
     await retainTurnChanges(cwd, "agent-1", { turnId: "turn-1", before: before!, after: after! });
 
+    await retainPendingTurnStart(cwd, "other-agent", before!);
+    await discardAgentTurnChanges(cwd, "agent-1");
+    expect(
+      git("for-each-ref", "--format=%(refname)", "refs/paseo/turn-changes/").split("\n"),
+    ).toEqual([expect.stringMatching(/\/pending$/)]);
     const comparison = await listComparison({
       cwd,
       base: { kind: "rev", rev: before! },
