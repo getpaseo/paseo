@@ -5377,6 +5377,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.background.stop();
     this.clearPendingPermissions();
     this.dismissInterruptedAsyncQuestions();
+    this.completePendingRootCompactions();
     for (const [callId, state] of this.subAgentCallsByCallId) {
       if (state.toolCall.status === "running") this.emitSubAgentActivityUpdate(callId, "canceled");
     }

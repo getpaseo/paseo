@@ -853,21 +853,7 @@ test("interrupt retirement dismisses async questions before cancellation and per
   try {
     await session.startTurn("ask a question");
     appServer.startsTurn({ threadId: "thread-1", turnId: "question-turn" });
-    appServer.child.stdout.write(
-      `${JSON.stringify({
-        method: "item/completed",
-        params: {
-          threadId: "thread-1",
-          turnId: "question-turn",
-          item: {
-            type: "agentMessage",
-            id: "async-question",
-            delivery: "async",
-            questions: [{ title: "Which option?", options: ["One", "Two"] }],
-          },
-        },
-      })}\n`,
-    );
+    appServer.asksAsyncQuestion({ threadId: "thread-1", turnId: "question-turn" });
     await expect
       .poll(() => session.getPendingPermissions().map((request) => request.id))
       .toEqual(["permission-async-question"]);
@@ -885,6 +871,33 @@ test("interrupt retirement dismisses async questions before cancellation and per
     );
     expect(reopened.getPendingPermissions()).toEqual([]);
     await reopened.close();
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement completes pending compaction before cancellation", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-interrupt-compaction-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const lifecycle: string[] = [];
+  session.subscribe((event) => {
+    if (event.type === "turn_canceled") lifecycle.push("canceled");
+    if (event.type === "timeline" && event.item.type === "compaction")
+      lifecycle.push(event.item.status);
+  });
+  try {
+    await session.startTurn("compact this conversation");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "compacting-turn" });
+    appServer.startsCompaction({ threadId: "thread-1", itemId: "pending-compaction" });
+    await expect.poll(() => lifecycle).toEqual(["loading"]);
+    await session.interrupt();
+    expect(lifecycle).toEqual(["loading", "completed", "canceled"]);
   } finally {
     await session.close();
     rmSync(workdir, { recursive: true, force: true });
