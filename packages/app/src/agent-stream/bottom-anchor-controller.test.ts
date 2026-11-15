@@ -414,6 +414,23 @@ describe("bottom anchor controller driver", () => {
     });
   });
 
+  it.each(["rewind", "jump-to-bottom"] as const)(
+    "lets scrolling away supersede a late %s request",
+    (reason) => {
+      const harness = createDriverHarness({ isNearBottom: false });
+      harness.driver.beginUserScroll();
+      harness.driver.requestLocalAnchor({ agentId: "agent-1", reason });
+      harness.driver.endUserScroll({ isAtEnd: false });
+      harness.scheduler.flushAll();
+
+      expect(harness.scrollAttempts).toEqual([]);
+      expect(harness.driver.getSnapshot()).toMatchObject({
+        mode: "detached",
+        pendingRequest: null,
+      });
+    },
+  );
+
   it("lets a new gesture supersede a submit requested during the previous gesture", () => {
     const harness = createDriverHarness({ isNearBottom: false });
     harness.driver.beginUserScroll();
