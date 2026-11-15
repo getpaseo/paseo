@@ -1,4 +1,4 @@
-import { en, type TranslationResources } from "./en";
+import type { TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
@@ -139,7 +139,7 @@ export const ptBR: TranslationResources = {
     },
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
-      terminalAccessibilityLabel: "Terminal prompt",
+      terminalAccessibilityLabel: "Prompt do terminal",
       fullscreen: "Tela cheia",
       exitFullscreen: "Sair da tela cheia",
       focusHint: "{{shortcut}} para focar",
@@ -438,7 +438,7 @@ export const ptBR: TranslationResources = {
     },
   },
   importSession: {
-    chooseHostTitle: en.importSession.chooseHostTitle,
+    chooseHostTitle: "Importar de um host",
     title: "Importar sessão",
     searchPlaceholder: "Buscar sessões...",
     scope: {
@@ -816,7 +816,7 @@ export const ptBR: TranslationResources = {
       },
       routes: {
         public: "Proxy reverso",
-        paseo: "Memorable",
+        paseo: "Memorável",
         direct: "Direta",
       },
       states: {
@@ -1337,8 +1337,8 @@ export const ptBR: TranslationResources = {
         openSettings: "Abrir configurações do projeto",
         openNewWindow: "Abrir em nova janela",
         openNewWindowFailed: "Não foi possível abrir uma nova janela",
-        openFolder: "Open in file manager",
-        openFolderFailed: "Couldn't open folder",
+        openFolder: "Abrir no gerenciador de arquivos",
+        openFolderFailed: "Não foi possível abrir a pasta",
         remove: "Remover projeto",
         removing: "Removendo...",
       },
@@ -1437,11 +1437,11 @@ export const ptBR: TranslationResources = {
       selectModel: "Selecione um modelo",
     },
     tooltips: {
-      project: "Choose the project",
-      host: "Choose the host",
-      isolation: "Choose the isolation level",
+      project: "Escolha o projeto",
+      host: "Escolha o host",
+      isolation: "Escolha o nível de isolamento",
       startingRef: "Escolha de onde começar",
-      launch: "Choose what to launch",
+      launch: "Escolha o que iniciar",
     },
     refPicker: {
       startingRef: "Ref inicial",
@@ -1452,13 +1452,13 @@ export const ptBR: TranslationResources = {
       title: "Começar de",
     },
     launch: {
-      title: "What to launch",
+      title: "O que iniciar",
       chat: "Chat",
       terminal: "Terminal",
-      manageProfiles: "Manage profiles",
-      submit: "Launch",
-      promptPlaceholder: "Prompt {{name}}",
-      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
+      manageProfiles: "Gerenciar perfis",
+      submit: "Iniciar",
+      promptPlaceholder: "Prompt para {{name}}",
+      commandPlaceholder: "Execute um comando ou deixe vazio para um terminal em branco",
     },
   },
   desktop: {
@@ -1473,7 +1473,24 @@ export const ptBR: TranslationResources = {
       detail: "Parando o daemon local.",
     },
     daemon: {
-      lifecycle: en.desktop.daemon.lifecycle,
+      lifecycle: {
+        owned: "Iniciado por esta sessão do Desktop",
+        attached: "Conectado a um daemon existente",
+        ownedMessage: "Este daemon foi iniciado por esta sessão do Desktop.",
+        attachedMessage: "Este daemon não foi iniciado por esta sessão do Desktop.",
+        stopTitle: "Parar o daemon local?",
+        stopMessage:
+          "{{ownership}}\nHome: {{home}}\nPID do supervisor: {{pid}}\nO trabalho dos agentes em execução será interrompido.",
+        stop: "Parar daemon",
+        stopping: "Parando…",
+        stopFailed: "Não foi possível parar o daemon",
+        pauseAttached:
+          "Pausar o gerenciamento automático do daemon? O daemon conectado continuará em execução.",
+        pause: "Pausar gerenciamento",
+        workerUpdated: "Worker atualizado para {{version}}",
+        supervisorRefresh:
+          "O supervisor em execução mantém o código original. Quem o iniciou precisa pará-lo e iniciá-lo de novo para atualizar o supervisor.",
+      },
       title: "Daemon",
       status: {
         title: "Status",
@@ -2347,7 +2364,48 @@ export const ptBR: TranslationResources = {
       diagnostics: "Diagnósticos",
       about: "Sobre",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "Onde abrir",
+        destinations: {
+          main: "Painel principal",
+          side: "Ao lado",
+          explorer: "Barra lateral do explorador",
+        },
+        sources: {
+          explorerFiles: {
+            label: "Clicar em um arquivo na barra lateral do explorador",
+            description:
+              "Abre ao lado do seu trabalho os arquivos selecionados na barra lateral do explorador",
+          },
+          diffs: {
+            label: "Clicar em uma alteração na barra lateral do explorador ou em um chat",
+            description:
+              "Abre ao lado do seu trabalho os diffs do explorador e das conversas com agentes",
+          },
+          chatFiles: {
+            label: "Clicar em um arquivo no chat de um agente",
+            description:
+              "Abre ao lado da conversa os links de arquivos e os arquivos das chamadas de ferramenta",
+          },
+          diffFiles: {
+            label: "Clicar em um arquivo em um diff",
+            description: "Abre ao lado do diff os arquivos-fonte selecionados nele",
+          },
+          subagents: {
+            label: "Clicar em um subagente no chat de um agente",
+            description: "Abre os subagentes ao lado do agente principal",
+          },
+          pullRequests: {
+            label: "Clicar em um pull request na barra lateral do explorador",
+            description: "Abre os detalhes do pull request ao lado de Alterações",
+          },
+          serviceUrls: {
+            label: "Clicar na URL de serviço de um script",
+          },
+        },
+      },
+    },
     editor: {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
@@ -2567,18 +2625,18 @@ export const ptBR: TranslationResources = {
       playing: "Reproduzindo...",
       playbackFailed: "Falha na reprodução: {{message}}",
       app: {
-        title: "App diagnostic",
-        rowTitle: "App diagnostic",
-        rowHint: "Collect connection, daemon, provider, desktop, and log details",
-        run: "Run",
-        running: "Running diagnostic...",
-        copyLabel: "diagnostic",
-        copyAccessibility: "Copy diagnostic",
-        copyFailed: "Failed to copy diagnostic",
-        refreshAccessibility: "Refresh diagnostic",
-        refreshingAccessibility: "Refreshing diagnostic",
+        title: "Diagnóstico do app",
+        rowTitle: "Diagnóstico do app",
+        rowHint: "Coleta detalhes de conexão, daemon, provedores, desktop e logs",
+        run: "Executar",
+        running: "Executando diagnóstico...",
+        copyLabel: "diagnóstico",
+        copyAccessibility: "Copiar diagnóstico",
+        copyFailed: "Falha ao copiar o diagnóstico",
+        refreshAccessibility: "Atualizar diagnóstico",
+        refreshingAccessibility: "Atualizando diagnóstico",
         progress: {
-          client: "Client",
+          client: "Cliente",
           desktop: "Desktop",
         },
       },
@@ -2594,7 +2652,7 @@ export const ptBR: TranslationResources = {
       releaseChannel: {
         label: "Canal de lançamento",
         description: "Troque para Beta para receber atualizações antes e ajudar a moldá-las",
-        stable: "Stable",
+        stable: "Estável",
         beta: "Beta",
       },
       updates: {
@@ -2841,7 +2899,7 @@ export const ptBR: TranslationResources = {
         removeAction: "Remover",
         removeErrorTitle: "Erro",
         removeErrorMessage: "Não foi possível remover a conexão",
-        timeout: "Timeout",
+        timeout: "Tempo limite",
       },
       pairDevices: {
         title: "Parear dispositivos",
@@ -2849,7 +2907,10 @@ export const ptBR: TranslationResources = {
         rowHint: "Escaneie um QR code ou copie um link para conectar seu celular a este host",
       },
       skills: {
-        ...en.settings.host.skills,
+        docs: "Skills",
+        openDocs: "Abrir a documentação das skills",
+        unavailable: "Conecte-se a este host para gerenciar as skills de orquestração",
+        unsupported: "Atualize este host para gerenciar as skills de orquestração",
         sectionTitle: "Skills de orquestração",
         title: "Skills de orquestração",
         description: "Ensine seus agentes a usar as ferramentas do Paseo",
@@ -3075,15 +3136,15 @@ export const ptBR: TranslationResources = {
       addErrorTitle: "Não foi possível adicionar provedor",
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
-        menu: "{{name}} actions",
-        remove: "Remove provider",
-        removing: "Removing...",
+        menu: "Ações de {{name}}",
+        remove: "Remover provedor",
+        removing: "Removendo...",
       },
       remove: {
-        confirmTitle: "Remove {{name}}?",
-        confirmMessage: "This deletes the provider entry from config.json. It cannot be undone.",
-        confirm: "Remove",
-        errorTitle: "Unable to remove provider",
+        confirmTitle: "Remover {{name}}?",
+        confirmMessage: "Isso exclui o provedor do config.json. Não é possível desfazer.",
+        confirm: "Remover",
+        errorTitle: "Não foi possível remover o provedor",
       },
       statuses: {
         disabled: "Desativado",
@@ -3098,7 +3159,7 @@ export const ptBR: TranslationResources = {
         addModel: "Adicionar modelo",
         addCustomTitle: "Adicionar modelo personalizado",
         modelId: "ID do modelo",
-        modelIdPlaceholder: "e.g. openai/gpt-5",
+        modelIdPlaceholder: "ex.: openai/gpt-5",
         add: "Adicionar",
         adding: "Adicionando...",
         failedToSave: "Falha ao salvar modelo",
@@ -3156,7 +3217,7 @@ export const ptBR: TranslationResources = {
       worktree: {
         title: "Hooks de ciclo de vida do worktree",
         info: "Comandos executados quando um worktree é criado ou desmontado para este projeto",
-        docs: "Docs",
+        docs: "Documentação",
         docsTooltip:
           "Veja a documentação para mais detalhes e as variáveis de ambiente disponíveis para estes comandos",
         setup: "Configuração",
