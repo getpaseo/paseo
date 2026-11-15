@@ -1918,6 +1918,13 @@ export const ExpandableBadge = memo(function ExpandableBadge({
     () => onDetailHoverChange?.(false),
     [onDetailHoverChange],
   );
+  const detailHoverProps = useMemo(
+    () =>
+      isWeb
+        ? { onPointerEnter: handleDetailHoverIn, onPointerLeave: handleDetailHoverOut }
+        : undefined,
+    [handleDetailHoverIn, handleDetailHoverOut],
+  );
   const handleOpenFilePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation?.();
@@ -2207,14 +2214,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         ) : null}
       </View>
       {detailContent ? (
-        <Pressable
-          ref={detailWrapperRef}
-          style={detailWrapperStyle}
-          onHoverIn={handleDetailHoverIn}
-          onHoverOut={handleDetailHoverOut}
-        >
+        <View ref={detailWrapperRef} style={detailWrapperStyle} {...detailHoverProps}>
           {detailContent}
-        </Pressable>
+        </View>
       ) : null}
     </View>
   );
