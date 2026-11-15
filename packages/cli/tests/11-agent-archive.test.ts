@@ -197,6 +197,16 @@ try {
         "the agent should be listed before it is archived",
       );
 
+      const detached = await runPaseoCli(daemon, [
+        "agent",
+        "detach",
+        TARGET_AGENT_ID,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(detached.exitCode, 0, detached.stdout + detached.stderr);
+
       const archived = await runPaseoCli(daemon, [
         "agent",
         "archive",
@@ -369,9 +379,49 @@ try {
     }
     console.log("✓ archives an agent whose workspace was deleted\n");
   }
-  // Test 11: a missing full ID never resolves to an unlisted agent titled with it
+  // Test 11: archives an agent whose provider is not available
   {
-    console.log("Test 11: a missing full ID does not archive an agent titled with it");
+    console.log("Test 11: archives an agent whose provider is not available");
+    const agentId = "22222222-2222-4333-8444-555555555555";
+    const dirs = await createTempDirs();
+    await writeFile(
+      join(dirs.paseoHome, "agents", `${agentId}.json`),
+      JSON.stringify(
+        {
+          id: agentId,
+          provider: "not-a-registered-provider",
+          cwd: dirs.workDir,
+          createdAt: "2026-09-03T18:29:21.949Z",
+          updatedAt: "2026-09-03T18:29:21.949Z",
+          title: "provider gone",
+          labels: {},
+          lastStatus: "closed",
+        },
+        null,
+        2,
+      ),
+    );
+    const daemon = await startTestDaemon(dirs);
+    const host = `127.0.0.1:${daemon.port}`;
+    try {
+      const archived = await runPaseoCli(daemon, [
+        "agent",
+        "archive",
+        agentId,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(archived.exitCode, 0, archived.stdout + archived.stderr);
+      assert.strictEqual((JSON.parse(archived.stdout) as { agentId: string }).agentId, agentId);
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ archives an agent whose provider is not available\n");
+  }
+  // Test 12: a missing full ID never resolves to an unlisted agent titled with it
+  {
+    console.log("Test 12: a missing full ID does not archive an agent titled with it");
     const missingId = "9eac296c-4d60-4189-a0b5-ae71dd9c6ad9";
     const titledId = "c9a97e5d-4a92-4646-a016-53032146d0a1";
     const dirs = await createTempDirs();
