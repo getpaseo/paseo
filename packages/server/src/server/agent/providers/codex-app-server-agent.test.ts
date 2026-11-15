@@ -1414,7 +1414,6 @@ describe("Codex app-server provider", () => {
           mode: "default",
           model: null,
           reasoning_effort: null,
-          developer_instructions: "Mode instructions",
         },
       ],
     };
@@ -1427,7 +1426,7 @@ describe("Codex app-server provider", () => {
     expect(firstTurn).toMatchObject({
       developerInstructions: "Plugin instructions",
       collaborationMode: {
-        settings: { developer_instructions: "Mode instructions\n\nPlugin instructions" },
+        settings: { developer_instructions: null },
       },
     });
     const started = waitForNextEvent(first, "thread_started");
@@ -1448,7 +1447,7 @@ describe("Codex app-server provider", () => {
       const secondTurn = await secondServer.waitForTurnStart();
       expect(secondTurn).not.toHaveProperty("developerInstructions");
       expect(secondTurn).toMatchObject({
-        collaborationMode: { settings: { developer_instructions: "Mode instructions" } },
+        collaborationMode: { settings: { developer_instructions: null } },
       });
       firstServer.assertNoErrors();
       secondServer.assertNoErrors();
@@ -1457,39 +1456,76 @@ describe("Codex app-server provider", () => {
     }
   });
 
-  test("clears restored plugin instructions when the collaboration catalog is unavailable", async () => {
+  test("keeps built-in Plan instructions while sending plugin instructions to the thread", async () => {
     const appServer = createFakeCodexAppServer({
-      "collaborationMode/list": () => ({ data: [] }),
-      "thread/resume": () => ({
-        thread: { id: "saved-thread" },
-        collaborationMode: {
-          mode: "default",
-          settings: {
-            model: "gpt-5.4",
-            reasoning_effort: "medium",
-            developer_instructions: "Old plugin",
-          },
-        },
+      "collaborationMode/list": () => ({
+        data: [
+          { name: "Plan", mode: "plan", model: null, reasoning_effort: "medium" },
+          { name: "Default", mode: "default", model: null, reasoning_effort: null },
+        ],
       }),
     });
-    const session = await createProviderWithFakeAppServer(appServer).resumeSession(
-      { sessionId: "saved-thread" },
-      { pluginAppendSystemPrompt: undefined },
+    const session = await createProviderWithFakeAppServer(appServer).createSession(
+      createConfig({
+        pluginAppendSystemPrompt: ["Plugin instructions"],
+        providerOptions: { plan_mode: true },
+      }),
     );
     try {
-      await session.startTurn("after disable");
-      const turn = await appServer.waitForTurnStart();
-      expect(turn).toMatchObject({
-        collaborationMode: {
-          mode: "default",
-          settings: { model: "gpt-5.4", developer_instructions: null },
-        },
+      await session.startTurn("make a plan");
+      const start = appServer.requests().find((request) => request.method === "thread/start");
+      expect(start?.params).toMatchObject({ developerInstructions: "Plugin instructions" });
+      expect(await appServer.waitForTurnStart()).toMatchObject({
+        collaborationMode: { mode: "plan", settings: { developer_instructions: null } },
       });
       appServer.assertNoErrors();
     } finally {
       await session.close();
     }
   });
+
+  test.each([
+    { instructions: undefined, expected: undefined },
+    { instructions: ["Current plugin"], expected: "Current plugin" },
+  ])(
+    "rebuilds restored instructions with an unavailable collaboration catalog: $expected",
+    async ({ instructions, expected }) => {
+      const appServer = createFakeCodexAppServer({
+        "collaborationMode/list": () => ({ data: [] }),
+        "thread/resume": () => ({
+          thread: { id: "saved-thread" },
+          collaborationMode: {
+            mode: "default",
+            settings: {
+              model: "gpt-5.4",
+              reasoning_effort: "medium",
+              developer_instructions: "Old plugin",
+            },
+          },
+        }),
+      });
+      const session = await createProviderWithFakeAppServer(appServer).resumeSession(
+        { sessionId: "saved-thread" },
+        { pluginAppendSystemPrompt: instructions },
+      );
+      try {
+        const resume = appServer.requests().find((request) => request.method === "thread/resume");
+        if (expected) expect(resume?.params).toMatchObject({ developerInstructions: expected });
+        else expect(resume?.params).not.toHaveProperty("developerInstructions");
+        await session.startTurn("after reopen");
+        const turn = await appServer.waitForTurnStart();
+        expect(turn).toMatchObject({
+          collaborationMode: {
+            mode: "default",
+            settings: { model: "gpt-5.4", developer_instructions: null },
+          },
+        });
+        appServer.assertNoErrors();
+      } finally {
+        await session.close();
+      }
+    },
+  );
 
   test("keeps the default effort when a session without one is resumed after a restart", async () => {
     const beforeRestart = createFakeCodexAppServer();

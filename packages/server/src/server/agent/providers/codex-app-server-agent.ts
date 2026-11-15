@@ -4052,14 +4052,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     const settings: Record<string, unknown> = {};
     if (match.model) settings.model = match.model;
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
-    const developerInstructions = composeSystemPromptParts(
-      match.developer_instructions,
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-      ...(this.config.pluginAppendSystemPrompt ?? []),
-    );
-    if (developerInstructions) settings.developer_instructions = developerInstructions;
-    else if (match === this.restoredCollaborationMode) settings.developer_instructions = null;
+    // Codex applies thread instructions separately. Null asks it to supply the
+    // built-in collaboration mode instructions instead of replacing them.
+    settings.developer_instructions = match.developer_instructions ?? null;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
@@ -4367,7 +4362,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const settings = toObjectRecord(mode?.settings);
     if (typeof mode?.mode !== "string" || typeof settings?.model !== "string") return;
     // The resumed mode can contain instructions from a previous launch. Keep its
-    // identity and model, but rebuild instructions from the current launch.
+    // identity and model, and let Codex restore the built-in mode instructions.
     this.restoredCollaborationMode = {
       name: mode.mode,
       mode: mode.mode,
