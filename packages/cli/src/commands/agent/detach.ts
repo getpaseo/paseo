@@ -57,6 +57,15 @@ export async function detachAgent(
       data: { agentId: agent.id, status: "detached" },
       schema: detachSchema,
     };
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw {
+      code: "DETACH_FAILED",
+      message: `Failed to detach agent: ${message}`,
+    } satisfies CommandError;
   } finally {
     await client.close().catch(() => undefined);
   }

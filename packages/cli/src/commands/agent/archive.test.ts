@@ -131,5 +131,9 @@ describe("unlisted agent resolution", () => {
     await expect(archiveAgent("9eac", {}, async () => failingClient)).rejects.toMatchObject({
       code: "ARCHIVE_FAILED",
     });
+    await expect(detachAgent("9eac", {}, async () => failingClient)).rejects.toMatchObject({
+      code: "DETACH_FAILED",
+      message: 'Failed to detach agent: Agent identifier "9eac" is ambiguous',
+    });
   });
 });
