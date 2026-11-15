@@ -265,25 +265,10 @@ export async function waitForAgentRunStartWithTimeout(
   agentId: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const provider = agentManager.getAgent(agentId)?.provider ?? "provider";
-  const startAbort = new AbortController();
-  const startTimeout = setTimeout(
-    () =>
-      startAbort.abort(
-        new Error(
-          `${provider} run did not start within ${AGENT_RUN_START_TIMEOUT_MS / 1000} seconds (phase: run start)`,
-        ),
-      ),
-    AGENT_RUN_START_TIMEOUT_MS,
-  );
-
-  try {
-    await agentManager.waitForAgentRunStart(agentId, {
-      signal: signal ? AbortSignal.any([startAbort.signal, signal]) : startAbort.signal,
-    });
-  } finally {
-    clearTimeout(startTimeout);
-  }
+  await agentManager.waitForAgentRunStart(agentId, {
+    signal,
+    timeoutMs: AGENT_RUN_START_TIMEOUT_MS,
+  });
 }
 
 async function resolvePromptSource(
@@ -345,6 +330,7 @@ export async function sendPreparedPromptToAgent(
       agentManager: params.agentManager,
       agentStorage: params.agentStorage,
       logger: params.logger,
+      purpose: "interactive",
     });
   } catch (error) {
     // A send that could not load the agent leaves it where it was: still archived.
@@ -367,6 +353,74 @@ export async function sendPreparedPromptToAgent(
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions: params.runOptions,
   });
+}
+
+/** An admitted start can still be loading and replaying a large conversation. */
+const ADMITTED_RUN_START_TIMEOUT_MS = 10 * 60_000;
+/** While the agent is still loading, admission waits for it so a failure has a timeline. */
+const ADMISSION_RECHECK_MS = 250;
+
+export interface SendPromptWithAdmissionParams extends SendPromptToAgentParams {
+  /** The sender's submission identity; a failure after admission is recorded under it. */
+  messageId: string;
+  /** How long the sender waits for the run to start before the send is admitted as queued. */
+  admissionGraceMs: number;
+  onAdmitted: () => void;
+  runStartTimeoutMs?: number;
+}
+
+/**
+ * A human send answers once its run starts, so a quick failure reaches the sender. A large
+ * conversation can need minutes to load and replay first, longer than a client waits. Once the
+ * agent is loaded and the start outlasts the grace, the send is admitted as queued: the start
+ * continues without the sender's connection, and a later failure is recorded beside the prompt
+ * so the sender's pending message resolves in history.
+ *
+ * The sender's connection never cancels the wait. The prompt is already handed to the agent, so
+ * a dropped phone connection must not report a delivered message as failed; the reconnecting
+ * client reads this send's outcome from its message receipt.
+ */
+export async function sendPromptWithAdmission(
+  params: SendPromptWithAdmissionParams,
+): Promise<void> {
+  let admitted = false;
+  let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+  const admitOnceLoaded = () => {
+    if (params.agentManager.getAgent(params.agentId)) {
+      admitted = true;
+      params.onAdmitted();
+      return;
+    }
+    admissionTimer = setTimeout(admitOnceLoaded, ADMISSION_RECHECK_MS);
+  };
+  admissionTimer = setTimeout(admitOnceLoaded, params.admissionGraceMs);
+  try {
+    const result = await sendPromptToAgent(params);
+    if (result.disposition === "turn_started") {
+      await params.agentManager.waitForAgentRunStart(params.agentId, {
+        timeoutMs: params.runStartTimeoutMs ?? ADMITTED_RUN_START_TIMEOUT_MS,
+      });
+    }
+  } catch (error) {
+    if (admitted) {
+      await params.agentManager
+        .recordUndeliveredPrompt({
+          agentId: params.agentId,
+          prompt: params.prompt,
+          clientMessageId: params.messageId,
+          error,
+        })
+        .catch((recordError: unknown) => {
+          params.logger.warn(
+            { err: recordError, agentId: params.agentId },
+            "Failed to record an undelivered prompt",
+          );
+        });
+    }
+    throw error;
+  } finally {
+    clearTimeout(admissionTimer);
+  }
 }
 
 export async function startCreatedAgentInitialPrompt(

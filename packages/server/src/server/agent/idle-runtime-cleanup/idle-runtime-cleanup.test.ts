@@ -143,6 +143,15 @@ test("an idle managed descendant with provider-held work vetoes its parent", asy
   expect((await s.sweep(122)).collected).toHaveLength(2);
 });
 
+test("an idle child collected first in a sweep does not hold back its idle parent", async () => {
+  const s = scenario();
+  const child = new Runtime("child");
+  child.parentAgentId = s.runtime.id;
+  s.runtimes.unshift(child);
+  const swept = await s.sweep(60);
+  expect(swept.collected.map((entry) => entry.agentId).toSorted()).toEqual(["agent", "child"]);
+});
+
 test("new caller protection during an async provider probe prevents stale collection", async () => {
   const s = scenario();
   const probe = deferred<boolean>();

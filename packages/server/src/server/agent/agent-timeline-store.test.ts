@@ -7,6 +7,33 @@ import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("prepends history without changing tail cursors or collapsed source coverage", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("paged", { nextSeq: 2 ** 40, epoch: "stable" });
+    store.append("paged", { type: "user_message", text: "new prompt", messageId: "new" });
+    store.append("paged", { type: "assistant_message", text: "hello", messageId: "reply" });
+    store.append("paged", { type: "assistant_message", text: " world", messageId: "reply" });
+    const tail = store.fetch("paged");
+    store.prepend("paged", [
+      { item: { type: "user_message", text: "old prompt", messageId: "old" } },
+      { item: { type: "assistant_message", text: "old reply", messageId: "old-reply" } },
+    ]);
+    expect(store.getHead("paged")).toEqual({ epoch: tail.epoch, seq: tail.window.maxSeq });
+    const after = store.fetch("paged", {
+      direction: "after",
+      cursor: { epoch: tail.epoch, seq: tail.startSeq! - 1 },
+    });
+    expect(after.rows).toEqual(tail.rows);
+    const before = store.fetch("paged", {
+      direction: "before",
+      cursor: { epoch: tail.epoch, seq: tail.startSeq! },
+    });
+    expect(before.rows.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "old prompt", messageId: "old" },
+      { type: "assistant_message", text: "old reply", messageId: "old-reply" },
+    ]);
+    expect(before.reset).toBe(false);
+  });
   it("resets stale forward cursors to complete available turns", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent", { epoch: "current" });

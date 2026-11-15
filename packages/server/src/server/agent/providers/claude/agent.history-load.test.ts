@@ -19,7 +19,7 @@ import { createTestPaseoDaemon } from "../../../test-utils/paseo-daemon.js";
 import type { ClaudeRewindSdk } from "./rewind.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
-import { withClaudeReplayHistory } from "./transcript-history.js";
+import { withClaudeReplayHistory, readClaudeTranscriptPage } from "./transcript-history.js";
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { ClaudeQueryFactory } from "./query.js";
 import { collectSessionTurnEvents } from "../test-utils/session-stream-adapter.js";
@@ -48,6 +48,7 @@ describe("ClaudeAgentSession persisted history load", () => {
   async function resume(
     queryFactory?: ClaudeQueryFactory,
     rewindSdk?: ClaudeRewindSdk,
+    purpose?: "history",
   ): Promise<AgentSession> {
     const client = new ClaudeAgentClient({
       logger: pino({ level: "info" }, { write: (line: string) => records.push(JSON.parse(line)) }),
@@ -60,7 +61,9 @@ describe("ClaudeAgentSession persisted history load", () => {
       resolveVersion: async () => "2.1.220",
       rewindSdk,
     });
-    return client.resumeSession({ provider: "claude", sessionId: SESSION_ID }, { cwd });
+    return client.resumeSession({ provider: "claude", sessionId: SESSION_ID }, { cwd }, undefined, {
+      purpose,
+    });
   }
 
   function replyFactory(text: string, messageId = "live-reply"): ClaudeQueryFactory {
@@ -181,6 +184,25 @@ describe("ClaudeAgentSession persisted history load", () => {
       await daemon.close();
     }
   }, 60_000);
+
+  test("lists the built-in rewind command before cold history replay", async () => {
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(
+      transcriptPath(),
+      JSON.stringify({ type: "user", uuid: "u1", message: { content: "old prompt" } }),
+    );
+    const queryFactory = vi.fn(() => {
+      throw new Error("command discovery must not start a provider query");
+    }) as unknown as ClaudeQueryFactory;
+    const session = await resume(queryFactory, undefined, "history");
+    try {
+      const commands = await session.listCommands?.();
+      expect(commands?.map((command) => command.name)).toEqual(["rewind"]);
+      expect(queryFactory).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
 
   test("rebinds ordered history before returning from rewind and accepts a live turn", async () => {
     const entries = [
@@ -669,6 +691,118 @@ describe("ClaudeAgentSession persisted history load", () => {
     await withClaudeReplayHistory(file, async (history) => {
       expect(await Array.fromAsync(history.parentEntries)).toEqual([entry]);
     });
+  });
+
+  test("opens the tail with bounded reads and pages every UTF-8 record across compaction", async () => {
+    const file = transcriptPath();
+    const raw = Array.from({ length: 600 }, (_, index) => [
+      { type: "user", uuid: `user-${index}`, message: { content: `Question ${index}` } },
+      ...(index === 300 ? [{ type: "system", subtype: "compact_boundary" }] : []),
+      {
+        type: "assistant",
+        uuid: `answer-${index}`,
+        message: { content: `${index}:é🙂${"x".repeat(8192)}` },
+      },
+    ]).flat();
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, raw.map((entry) => JSON.stringify(entry)).join("\n"));
+    const fd = await open(file, "r");
+    const reads = vi.spyOn(Object.getPrototypeOf(fd), "read");
+    await fd.close();
+    const session = await resume(undefined, undefined, "history");
+    expect(reads).not.toHaveBeenCalled();
+    const tail = await session.readHistoryPage!({ limit: 20 });
+    expect(tail?.entries[0]?.item).toMatchObject({ type: "user_message", messageId: "user-590" });
+    expect(reads.mock.calls.length).toBeLessThan(5);
+    expect(tail?.nextCursor).not.toBeNull();
+    const complete = [...tail!.entries];
+    let cursor = tail!.nextCursor;
+    while (cursor) {
+      const page = await session.readHistoryPage!({ cursor, limit: 100 });
+      const retry = await session.readHistoryPage!({ cursor, limit: 100 });
+      expect(retry).toEqual(page);
+      complete.unshift(...page!.entries);
+      cursor = page!.nextCursor;
+    }
+    expect(complete.filter((entry) => entry.item.type === "user_message")).toHaveLength(600);
+    expect(complete.filter((entry) => entry.item.type === "assistant_message")).toHaveLength(600);
+    expect(complete.filter((entry) => entry.item.type === "compaction")).toHaveLength(1);
+    const full = await Array.fromAsync(session.streamHistory());
+    expect(complete.map((entry) => entry.item)).toEqual(
+      full.flatMap((event) => (event.type === "timeline" ? [event.item] : [])),
+    );
+    await session.close();
+  });
+
+  test("repeated task notifications keep distinct identities across pages", async () => {
+    const file = transcriptPath();
+    mkdirSync(path.dirname(file), { recursive: true });
+    const note = {
+      type: "system",
+      subtype: "task_notification",
+      task_id: "watcher",
+      status: "completed",
+      summary: "Changed",
+    };
+    const raw = [0, 1, 2].flatMap((index) => [
+      { type: "user", uuid: `u${index}`, message: { content: `Check ${index}` } },
+      note,
+    ]);
+    writeFileSync(file, raw.map((entry) => JSON.stringify(entry)).join("\n"));
+    const ids: unknown[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await readClaudeTranscriptPage(
+        file,
+        { limit: 2, cursor },
+        (e) => e.type === "user",
+      );
+      ids.push(...page.entries.filter((e) => e.type === "system").map((e) => e.notificationId));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  test("failed full replay after paging keeps its error retryable", async () => {
+    const file = transcriptPath();
+    mkdirSync(path.dirname(file), { recursive: true });
+    const contents = JSON.stringify({
+      type: "user",
+      uuid: "prompt",
+      message: { content: "saved" },
+    });
+    writeFileSync(file, contents);
+    const session = await resume(undefined, undefined, "history");
+    expect((await session.readHistoryPage!({ limit: 2 }))?.entries).toHaveLength(1);
+    rmSync(file);
+    await expect(Array.fromAsync(session.streamHistory())).rejects.toThrow("disappeared");
+    writeFileSync(file, contents);
+    const history = await Array.fromAsync(session.streamHistory());
+    expect(history).toHaveLength(1);
+    await session.close();
+  });
+
+  test("page cursors ignore appends and refuse a truncated transcript", async () => {
+    const file = transcriptPath();
+    mkdirSync(path.dirname(file), { recursive: true });
+    const lines = [0, 1, 2, 3].map((i) =>
+      JSON.stringify({ type: "user", uuid: `u${i}`, message: { content: `${i}` } }),
+    );
+    writeFileSync(file, lines.join("\n") + "\n");
+    const tail = await readClaudeTranscriptPage(file, { limit: 2 }, (e) => e.type === "user");
+    appendFileSync(file, JSON.stringify({ type: "user", uuid: "new" }) + "\n");
+    const older = await readClaudeTranscriptPage(
+      file,
+      { limit: 2, cursor: tail.nextCursor! },
+      (e) => e.type === "user",
+    );
+    expect(older.entries.map((e) => e.uuid)).toEqual(["u0", "u1"]);
+    expect(older.nextCursor).toBeNull();
+    truncateSync(file, 0);
+    await expect(
+      readClaudeTranscriptPage(file, { limit: 2, cursor: tail.nextCursor! }, () => true),
+    ).rejects.toThrow("transcript changed");
   });
 
   test("replays dense history with bounded filesystem reads and keeps every record", async () => {

@@ -12,6 +12,12 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+A reply-start timeout cancels its still-pending start before returning the error. Cancel only that
+attempt; a later reply or an already accepted turn retains ownership. Failed cancellation retains
+the run until the provider settles it, so a retry cannot start a second writer. Disconnecting a
+client cancels its wait, not the reply. Codex history indexing may finish after a canceled start;
+the next attempt shares that read without submitting the canceled prompt.
+
 ## Daemon restart recovery
 
 Restart recovery is off by default. Enable `agents.resumeOnStartup` in host config or
@@ -78,7 +84,8 @@ Provider checks follow the signals their runtimes expose:
   process starts empty. CLI 2.1.292 or newer is known to support the roster; older binaries must
   demonstrate support by emitting one. Unknown versions stay resident until then.
 - Codex queries background terminals for loaded threads, including native children, and protects
-  pending provider requests. App servers without the terminal-list RPC stay resident.
+  pending provider requests. App servers without the terminal-list RPC stay resident. A read-only
+  history session never runs its thread, so it is released as soon as no history read is in flight.
 - OpenCode checks active executions and descendants. V1 checks PTYs; v2 also checks shell and
   inbox inventories. The shared server remains leased while a session vetoes collection.
 - Pi checks streaming, compaction, pending replies, and adapter-owned operations. Known native
@@ -300,9 +307,10 @@ entering that queue. Shutdown must finish before the manager releases runtime ow
 close retains the runtime for cleanup and blocks replacement through that close operation.
 
 Authoritative timeline catch-up can use a runtime-only `history` resume purpose. The retained
-history session contains only the read results and must release its provider process once replay
-finishes. Codex reads the persisted thread and child histories on a temporary app-server and never
-loads, resumes, or unarchives a native thread, including legacy records whose native archive failed.
+history session contains only the read results. Codex reads the persisted thread and child histories
+on its own app-server, which pages older history while the session stays loaded and exits when idle
+cleanup collects it; it never loads, resumes, or unarchives a native thread, including legacy records
+whose native archive failed.
 ACP providers spawn the CLI, replay the session through `session/load`, and terminate the process
 before returning. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.

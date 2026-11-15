@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { AgentProvider } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentResumeSessionOptions } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import {
@@ -41,6 +41,12 @@ export interface EnsureAgentLoadedDeps {
   validProviders?: Iterable<AgentProvider>;
   broadcastTimeline?: boolean;
   purpose?: "history" | "interactive";
+  /**
+   * Opens a cold agent read-only from a bounded history page, as every request made while a chat
+   * opens must. "tail" leaves the rest to the timeline reader. "full" then replays everything,
+   * after caching that tail so the chat's timeline read never waits for the replay.
+   */
+  history?: "tail" | "full";
   logger: Logger;
 }
 
@@ -67,20 +73,42 @@ export async function ensureUnarchivedAgentLoaded(
   return agent;
 }
 
+function resumeOptionsFor(deps: EnsureAgentLoadedDeps): AgentResumeSessionOptions | undefined {
+  if (deps.history) return { purpose: "history", progressiveHistory: true };
+  return deps.purpose ? { purpose: deps.purpose } : undefined;
+}
+
 export async function ensureAgentLoaded(
   agentId: string,
   deps: EnsureAgentLoadedDeps,
 ): Promise<ManagedAgent> {
+  const finishLoad = async (snapshot: ManagedAgent): Promise<ManagedAgent> => {
+    // Interactive sends upgrade a progressive history session in the run
+    // pipeline. Do not replay the entire provider history before dispatching
+    // the prompt; that turns a reply start into the same unbounded operation
+    // as a cold full-history read.
+    if (deps.purpose !== "interactive" && deps.history !== "tail" && !snapshot.historyPrimed) {
+      await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+        broadcast: () =>
+          pendingAgentInitializations.get(agentId)?.options.broadcastTimeline ??
+          deps.broadcastTimeline === true,
+      });
+    }
+    return deps.agentManager.getAgent(agentId) ?? snapshot;
+  };
   await deps.agentManager.waitForAgentClose?.(agentId);
 
   const inflight = pendingAgentInitializations.get(agentId);
   if (inflight) {
     inflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return inflight.promise;
+    return finishLoad(await inflight.promise);
   }
 
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
+    // A live agent already owns its provider session. Keep the historical fast
+    // path for ordinary callers; timeline readers explicitly ask for a tail or
+    // promote through the history lane when they need provider data.
     return existing;
   }
 
@@ -92,7 +120,7 @@ export async function ensureAgentLoaded(
   const laterInflight = pendingAgentInitializations.get(agentId);
   if (laterInflight) {
     laterInflight.options.broadcastTimeline ||= deps.broadcastTimeline === true;
-    return laterInflight.promise;
+    return finishLoad(await laterInflight.promise);
   }
 
   const pendingOptions = {
@@ -118,7 +146,7 @@ export async function ensureAgentLoaded(
         buildConfigOverrides(record),
         agentId,
         { ...extractTimestamps(record), attention: extractAttention(record) },
-        deps.purpose ? { purpose: deps.purpose } : undefined,
+        resumeOptionsFor(deps),
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
@@ -130,9 +158,6 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
     return deps.agentManager.getAgent(agentId) ?? snapshot;
   })();
 
@@ -140,7 +165,7 @@ export async function ensureAgentLoaded(
   pendingAgentInitializations.set(agentId, pending);
 
   try {
-    return await initPromise;
+    return await finishLoad(await initPromise);
   } finally {
     const current = pendingAgentInitializations.get(agentId);
     if (current === pending) {

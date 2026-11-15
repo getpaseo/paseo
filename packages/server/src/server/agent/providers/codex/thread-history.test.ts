@@ -1,4 +1,6 @@
 import { describe, expect, test } from "vitest";
+import { readCodexThreadHistory, readCodexThreadHistoryPage } from "./thread-history.js";
+import { CodexAppServerResponseTooLargeError } from "./app-server-transport.js";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -70,7 +72,126 @@ function historyRequests(appServer: FakeCodexAppServer) {
     .map((request) => ({ method: request.method, params: request.params }));
 }
 
+function paginatedClient(pages: Record<string, { ids: string[]; nextCursor: string | null }>) {
+  const requested: Array<string | undefined> = [];
+  return {
+    requested,
+    request: async (method: string, params?: unknown) => {
+      if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+      const { cursor } = params as { cursor?: string };
+      requested.push(cursor);
+      const page = pages[cursor ?? "first"];
+      if (!page) throw new Error(`No page at ${cursor}`);
+      return {
+        data: page.ids.map((id) => ({ turnId: "turn-1", item: agentItem(id, id) })),
+        nextCursor: page.nextCursor,
+      };
+    },
+  };
+}
+
 describe("Codex thread history", () => {
+  // Each page is a round trip through a shared event loop; on a busy daemon the wait between
+  // pages, not Codex, dominated a 141-page read. Overlap the next request with consumption.
+  test("requests the next page while the consumer still holds the current one", async () => {
+    const client = paginatedClient({
+      first: { ids: ["a", "b"], nextCursor: "p2" },
+      p2: { ids: ["c"], nextCursor: null },
+    });
+    const rows = readCodexThreadHistory(client, "thread-1");
+
+    const first = await rows.next();
+    expect(first.value?.item).toMatchObject({ id: "a" });
+    expect(client.requested).toEqual([undefined, "p2"]);
+
+    const rest: unknown[] = [];
+    for await (const row of rows) rest.push(row.item);
+    expect(rest).toEqual([
+      expect.objectContaining({ id: "b" }),
+      expect.objectContaining({ id: "c" }),
+    ]);
+    expect(client.requested).toEqual([undefined, "p2"]);
+  });
+
+  test("a consumer that stops early leaves no unhandled prefetch failure", async () => {
+    const client = paginatedClient({ first: { ids: ["a"], nextCursor: "missing" } });
+    const rows = readCodexThreadHistory(client, "thread-1");
+
+    expect((await rows.next()).value?.item).toMatchObject({ id: "a" });
+    // The prefetched page fails while nobody awaits it, then the consumer stops.
+    await new Promise((resolve) => setImmediate(resolve));
+    await rows.return(undefined);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(client.requested).toEqual([undefined, "missing"]);
+  });
+
+  test("reads the newest native page first and keeps every older item reachable", async () => {
+    const requests: { cursor?: string; limit: number; sortDirection: string }[] = [];
+    const rows = Array.from({ length: 251 }, (_, index) => ({
+      turnId: `turn-${index}`,
+      item: agentItem(`answer-${index}`, `${index}`),
+    }));
+    const client = {
+      request: async (method: string, params?: unknown) => {
+        if (method === "thread/read") return { thread: { historyMode: "paginated" } };
+        const request = params as { cursor?: string; limit: number; sortDirection: string };
+        requests.push(request);
+        expect(request.sortDirection).toBe("desc");
+        const start = Number(request.cursor ?? 0);
+        const end = Math.min(start + request.limit, rows.length);
+        return {
+          data: rows.toReversed().slice(start, end),
+          nextCursor: end < rows.length ? String(end) : null,
+        };
+      },
+    };
+    const tail = await readCodexThreadHistoryPage(client, "thread", { limit: 100 });
+    expect(tail!.rows.map((row) => row.item)).toEqual(rows.slice(151).map((row) => row.item));
+    expect(requests).toHaveLength(1);
+    const all = [...tail!.rows];
+    let cursor = tail!.nextCursor;
+    while (cursor) {
+      const page = await readCodexThreadHistoryPage(client, "thread", { cursor, limit: 100 });
+      all.unshift(...page!.rows);
+      cursor = page!.nextCursor;
+    }
+    expect(all.map((row) => row.item)).toEqual(rows.map((row) => row.item));
+    expect(requests).toHaveLength(3);
+  });
+  test("retries oversized descending pages without advancing the cursor", async () => {
+    const requests: Array<{ cursor?: string; limit: number }> = [];
+    const page = await readCodexThreadHistoryPage(
+      {
+        request: async (_method, params) => {
+          const request = params as { cursor?: string; limit: number };
+          requests.push(request);
+          if (request.limit > 12)
+            throw new CodexAppServerResponseTooLargeError("thread/items/list", 1024);
+          return {
+            data: [{ turnId: "turn", item: agentItem("answer", "saved") }],
+            nextCursor: "next",
+          };
+        },
+      },
+      "thread",
+      { cursor: "older", limit: 100 },
+    );
+    expect(requests.map((request) => request.limit)).toEqual([100, 50, 25, 12]);
+    expect(requests.every((request) => request.cursor === "older")).toBe(true);
+    expect(page?.nextCursor).toBe("next");
+    await expect(
+      readCodexThreadHistoryPage(
+        {
+          request: async () => {
+            throw new CodexAppServerResponseTooLargeError("thread/items/list", 1024);
+          },
+        },
+        "thread",
+        { cursor: "older", limit: 1 },
+      ),
+    ).rejects.toThrow("exceeds");
+  });
+
   test("loads a paginated thread through pages", async () => {
     const answers = Array.from({ length: 150 }, (_, index) =>
       agentItem(`agent-${index}`, `Answer ${index}`),

@@ -838,11 +838,12 @@ export function fakeCodexThreadHistory(
           completedAtMs: turn.completedAt === undefined ? null : turn.completedAt * 1000,
         })),
       );
+      const orderedRows = request.sortDirection === "desc" ? rows.toReversed() : rows;
       const limit = Math.min(typeof request.limit === "number" ? request.limit : 25, 100);
       const start =
         typeof request.cursor === "string" ? Number(request.cursor.slice("cursor-".length)) : 0;
       const end = Math.min(rows.length, start + limit);
-      const data = rows.slice(start, end);
+      const data = orderedRows.slice(start, end);
       if (isOversized(data.map((row) => row.item))) return OVERSIZED_RESPONSE;
       return { data, nextCursor: end < rows.length ? `cursor-${end}` : null };
     },

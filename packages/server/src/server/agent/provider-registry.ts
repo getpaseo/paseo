@@ -4,6 +4,7 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
+  AgentHistoryReplayOptions,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -459,11 +460,12 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     startTurn: (prompt, options) => inner.startTurn(prompt, options),
     steerActiveTurn: inner.steerActiveTurn?.bind(inner),
     subscribe: (callback) => inner.subscribe((event) => callback(mapStreamEvent(provider, event))),
-    async *streamHistory() {
-      for await (const event of inner.streamHistory()) {
+    async *streamHistory(options?: AgentHistoryReplayOptions) {
+      for await (const event of inner.streamHistory(options)) {
         yield mapStreamEvent(provider, event);
       }
     },
+    readHistoryPage: inner.readHistoryPage?.bind(inner),
     getRuntimeInfo: async () => mapRuntimeInfo(provider, await inner.getRuntimeInfo()),
     getAvailableModes: () => inner.getAvailableModes(),
     getCurrentMode: () => inner.getCurrentMode(),
