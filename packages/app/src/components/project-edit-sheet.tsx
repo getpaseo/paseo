@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProjectIconSource } from "@getpaseo/protocol/messages";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { ProjectGlyphPicker } from "@/components/project-glyph-picker";
 import { ProjectIconView } from "@/components/project-icon-view";
 import { Button } from "@/components/ui/button";
 import type { ControlSize } from "@/components/ui/control-geometry";
@@ -16,11 +17,15 @@ import { useFilePicker } from "@/hooks/use-file-picker";
 import {
   openProjectEditForm,
   type ProjectEditFormError,
+  type ProjectEditFormModel,
   type ProjectEditFormSnapshot,
   type ProjectEditSubmission,
   type ProjectIconIntent,
 } from "@/projects/edit-form";
 import { importProjectIconFromUrl } from "@/projects/import-project-icon";
+import { type ProjectGlyphChoice, readProjectGlyphChoice } from "@/projects/project-glyph-icon";
+import { canRenderProjectGlyph, renderProjectGlyphPng } from "@/projects/render-project-glyph";
+import { deriveIdentityColorName, identityColor } from "@/styles/identity-colors";
 import { toErrorMessage } from "@/utils/error-messages";
 
 export interface ProjectEditSheetProps {
@@ -52,6 +57,11 @@ export function ProjectEditSheet({
   const size: ControlSize = "md";
   const [form] = useState(() => openProjectEditForm(snapshot));
   const state = useSyncExternalStore(form.subscribe, form.getState, form.getState);
+  const glyph = useProjectGlyph({
+    form,
+    projectViewKey,
+    currentIconDataUri: snapshot.currentIconDataUri,
+  });
 
   const mutation = useMutation({
     mutationFn: (submission: ProjectEditSubmission) =>
@@ -77,16 +87,22 @@ export function ProjectEditSheet({
   const chooseImage = useCallback(async () => {
     const file = (await pickFiles())?.[0];
     if (!file) return;
+    glyph.forget();
     form.setPickedImage({
       fileName: file.fileName,
       mimeType: file.mimeType,
       data: Buffer.from(await file.readBytes()).toString("base64"),
     });
-  }, [form, pickFiles]);
+  }, [form, glyph, pickFiles]);
 
   const handleChooseImage = useCallback(() => {
     void chooseImage();
   }, [chooseImage]);
+
+  const handleUseAutomatic = useCallback(() => {
+    glyph.forget();
+    form.useAutomaticIcon();
+  }, [form, glyph]);
 
   const header = useMemo<SheetHeader>(() => ({ title: t("settings.project.edit.title") }), [t]);
 
@@ -145,7 +161,8 @@ export function ProjectEditSheet({
       {supportsCustomIcon ? (
         <Field
           label={t("settings.project.edit.icon")}
-          hint={state.pickedFileName ?? undefined}
+          // A picked file is named under the field; a glyph is already on the preview tile.
+          hint={glyph.choice.name === null ? (state.pickedFileName ?? undefined) : undefined}
           error={state.error?.scope === "icon" ? state.error.message : null}
         >
           <View style={styles.iconField}>
@@ -157,26 +174,40 @@ export function ProjectEditSheet({
                 size={40}
                 textStyle={styles.previewText}
               />
-              <Button
-                variant="outline"
-                size={size}
-                onPress={handleChooseImage}
-                disabled={isSaving}
-                testID="project-edit-choose-image"
-              >
-                {t("settings.project.edit.chooseImage")}
-              </Button>
-              {state.canUseAutomatic ? (
+              <View style={styles.iconActions}>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size={size}
-                  onPress={form.useAutomaticIcon}
+                  onPress={handleChooseImage}
                   disabled={isSaving}
-                  testID="project-edit-use-automatic"
+                  testID="project-edit-choose-image"
                 >
-                  {t("settings.project.edit.useAutomatic")}
+                  {t("settings.project.edit.chooseImage")}
                 </Button>
-              ) : null}
+                {canRenderProjectGlyph ? (
+                  <Button
+                    ref={glyph.anchorRef}
+                    variant="outline"
+                    size={size}
+                    onPress={glyph.openPicker}
+                    disabled={isSaving}
+                    testID="project-edit-choose-glyph"
+                  >
+                    {t("settings.project.edit.chooseGlyph")}
+                  </Button>
+                ) : null}
+                {state.canUseAutomatic ? (
+                  <Button
+                    variant="ghost"
+                    size={size}
+                    onPress={handleUseAutomatic}
+                    disabled={isSaving}
+                    testID="project-edit-use-automatic"
+                  >
+                    {t("settings.project.edit.useAutomatic")}
+                  </Button>
+                ) : null}
+              </View>
             </View>
             <FormTextInput
               size={size}
@@ -192,10 +223,90 @@ export function ProjectEditSheet({
               keyboardType="url"
             />
           </View>
+          {canRenderProjectGlyph ? (
+            <ProjectGlyphPicker
+              anchorRef={glyph.anchorRef}
+              open={glyph.isOpen}
+              onOpenChange={glyph.setOpen}
+              selectedName={glyph.choice.name}
+              color={glyph.choice.color}
+              onPickGlyph={glyph.pickGlyph}
+              onPickColor={glyph.pickColor}
+            />
+          ) : null}
         </Field>
       ) : null}
     </AdaptiveModalSheet>
   );
+}
+
+interface GlyphSelection {
+  /** Null until a glyph is picked, or once another kind of icon replaces it. */
+  name: string | null;
+  color: string;
+}
+
+/**
+ * The glyph tile being composed. Each pick flattens the tile to a PNG and hands it to the form
+ * as a picked image, so saving goes through the same upload as a chosen file. Renders can
+ * overlap when colors are clicked quickly; only the latest one reaches the form.
+ */
+function useProjectGlyph(input: {
+  form: ProjectEditFormModel;
+  projectViewKey: string;
+  currentIconDataUri: string | null;
+}) {
+  const { form } = input;
+  const anchorRef = useRef<View>(null);
+  const [isOpen, setOpen] = useState(false);
+  const [choice, setChoice] = useState<GlyphSelection>(
+    () =>
+      readProjectGlyphChoice(input.currentIconDataUri) ?? {
+        name: null,
+        color: identityColor(deriveIdentityColorName(input.projectViewKey)),
+      },
+  );
+  const latestRender = useRef(0);
+
+  const apply = useCallback(
+    async (next: ProjectGlyphChoice) => {
+      const ticket = ++latestRender.current;
+      try {
+        const data = await renderProjectGlyphPng(next);
+        if (ticket !== latestRender.current) return;
+        form.setPickedImage({ fileName: next.name, mimeType: "image/png", data });
+      } catch (error) {
+        if (ticket !== latestRender.current) return;
+        form.setError({ scope: "icon", message: toErrorMessage(error) });
+      }
+    },
+    [form],
+  );
+
+  const pickGlyph = useCallback(
+    (name: string) => {
+      setChoice({ name, color: choice.color });
+      void apply({ name, color: choice.color });
+    },
+    [apply, choice.color],
+  );
+
+  const pickColor = useCallback(
+    (color: string) => {
+      setChoice({ name: choice.name, color });
+      if (choice.name) void apply({ name: choice.name, color });
+    },
+    [apply, choice.name],
+  );
+
+  const forget = useCallback(() => {
+    latestRender.current += 1;
+    setChoice((current) => ({ ...current, name: null }));
+  }, []);
+
+  const openPicker = useCallback(() => setOpen(true), []);
+
+  return { anchorRef, isOpen, setOpen, openPicker, choice, pickGlyph, pickColor, forget };
 }
 
 function projectInitial(projectName: string): string {
@@ -261,6 +372,13 @@ const styles = StyleSheet.create((theme) => ({
   iconRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  /** Wraps beside the preview, so a wrapped button lines up under the first one. */
+  iconActions: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
     flexWrap: "wrap",
     gap: theme.spacing[2],
   },
