@@ -19,7 +19,7 @@ import {
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 import { createTerminalWorkerRecordPublisher } from "./terminal-worker-record-publisher.js";
-import { resolveTerminalWorkerSocketPath } from "./terminal-worker-socket-path.js";
+import { listenOnTerminalWorkerSocket } from "./terminal-worker-socket-path.js";
 import {
   TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV,
   TERMINAL_WORKER_PROTOCOL_VERSION,
@@ -263,7 +263,12 @@ function runWorker(argv: string[]): void {
   }
 
   function terminalMetadata(session: LocalTerminalSession) {
-    return { ...session.getSize(), hasOutput: session.hasOutput(), title: session.getTitle() };
+    return {
+      ...session.getSize(),
+      createdAt: session.createdAt,
+      hasOutput: session.hasOutput(),
+      title: session.getTitle(),
+    };
   }
 
   function toTerminalInfo(session: LocalTerminalSession): WorkerTerminalInfo {
@@ -403,9 +408,10 @@ function runWorker(argv: string[]): void {
     ]);
   }
 
-  // A terminal enters the record only with its program's birth time, so cleanup can always
-  // tell the program from a later process that reuses its pid. A program that already exited
-  // needs no entry; one whose birth time cannot be read is killed and the create fails.
+  // A terminal enters the record with its program's birth time, so cleanup can tell the
+  // program from a later process that reuses its pid. A program that already exited needs no
+  // entry. One whose birth time cannot be read is recorded without it: it still runs, and
+  // cleanup never signals it.
   async function recordTerminalProgram(session: LocalTerminalSession): Promise<void> {
     if (session.getExitInfo()) return;
     // The manager drops a session as soon as its program exits, so only a live one has a pid.
@@ -413,14 +419,17 @@ function runWorker(argv: string[]): void {
     if (pid === null) {
       throw new Error(`Terminal ${session.id} has no program pid`);
     }
-    const inspection = await inspector.inspect(pid);
-    if (inspection.status === "not-found" || session.getExitInfo()) {
+    const inspection = inspector.reportsBirthTimes ? await inspector.inspect(pid) : null;
+    if (inspection?.status === "not-found" || session.getExitInfo()) {
       return;
     }
-    if (inspection.status === "error" || !inspection.snapshot.startedAt) {
+    const startedAt = inspection?.status === "alive" ? inspection.snapshot.startedAt : null;
+    if (inspector.reportsBirthTimes && !startedAt) {
       const reason =
-        inspection.status === "error" ? errorMessage(inspection.error) : "no birth time reported";
-      throw new Error(`Cannot identify terminal program ${pid}: ${reason}`);
+        inspection?.status === "error" ? errorMessage(inspection.error) : "no birth time reported";
+      console.error(
+        `Terminal worker cannot read the birth time of terminal program ${pid}; cleanup will never signal it: ${reason}`,
+      );
     }
     if (!record) {
       throw new Error("Terminal worker record is not written yet");
@@ -429,7 +438,7 @@ function runWorker(argv: string[]): void {
       ...record,
       terminals: [
         ...record.terminals.filter((entry) => entry.id !== session.id),
-        { id: session.id, pid, startedAt: inspection.snapshot.startedAt },
+        { id: session.id, pid, startedAt },
       ],
     };
     await persistRecord();
@@ -691,41 +700,34 @@ function runWorker(argv: string[]): void {
   }
 
   async function start(): Promise<void> {
-    const socketPath = resolveTerminalWorkerSocketPath({
+    const { socketPath, listener } = await listenOnTerminalWorkerSocket({
       paseoHome: args.paseoHome,
       workerPid: process.pid,
+      recordId: args.recordId,
+      listen: (candidatePath) => {
+        if (process.platform !== "win32") {
+          rmSync(candidatePath, { force: true });
+        }
+        const listening = createServer(handleConnection);
+        return new Promise<Server>((resolve, reject) => {
+          listening.once("error", reject);
+          listening.listen(candidatePath, () => {
+            listening.off("error", reject);
+            resolve(listening);
+          });
+        });
+      },
     });
-    if (process.platform !== "win32") {
-      rmSync(socketPath, { force: true });
-    }
-    const listening = createServer(handleConnection);
-    await new Promise<void>((resolve, reject) => {
-      listening.once("error", reject);
-      listening.listen(socketPath, () => {
-        listening.off("error", reject);
-        resolve();
-      });
-    });
-    server = listening;
+    server = listener;
     if (process.platform !== "win32") {
       chmodSync(socketPath, PRIVATE_FILE_MODE);
     }
 
-    const self = await inspector.inspect(process.pid);
-    if (
-      self.status !== "alive" ||
-      !self.snapshot.startedAt ||
-      !self.snapshot.commandLine?.includes(args.recordId)
-    ) {
-      const reason = self.status === "error" ? errorMessage(self.error) : "no usable snapshot";
-      throw new Error(`Terminal worker cannot read its own process identity: ${reason}`);
-    }
     record = {
       recordId: args.recordId,
       pid: process.pid,
       bootId: currentBootId(),
       createdAt: new Date().toISOString(),
-      identity: { startedAt: self.snapshot.startedAt, commandLine: self.snapshot.commandLine },
       protocolVersion,
       paseoVersion: args.paseoVersion,
       socketPath,

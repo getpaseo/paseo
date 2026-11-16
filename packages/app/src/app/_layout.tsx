@@ -46,7 +46,7 @@ import { DownloadToast } from "@/components/download-toast";
 import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { ChangelogHost } from "@/changelog";
-import { OnboardingHost } from "@/onboarding";
+import { OnboardingHost, useIsSetupDecisionPending } from "@/onboarding";
 import { AppDiagnosticHost } from "@/components/app-diagnostic-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { LeftSidebar } from "@/components/left-sidebar";
@@ -55,6 +55,7 @@ import { DesktopWindowControls } from "@/components/desktop/window-controls";
 import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
+import { WorkspaceArchiveUndoShortcutHost } from "@/workspace/archive-undo";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
@@ -86,7 +87,10 @@ import {
   type StartupBlocker,
 } from "@/navigation/host-runtime-bootstrap";
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
-import { useSettingsRouteEntry } from "@/navigation/settings-presentation";
+import {
+  useSettingsRouteEntry,
+  useSettingsSidebarPresentation,
+} from "@/navigation/settings-presentation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
@@ -151,6 +155,7 @@ export interface HostRuntimeBootstrapState {
   splashError: string | null;
   retry: () => void;
   hasGivenUpWaitingForHost: boolean;
+  isWaitingForSetup: boolean;
   storeReady: boolean;
   startupBlocker: StartupBlocker;
 }
@@ -159,6 +164,7 @@ const HostRuntimeBootstrapContext = createContext<HostRuntimeBootstrapState>({
   splashError: null,
   retry: () => {},
   hasGivenUpWaitingForHost: false,
+  isWaitingForSetup: false,
   storeReady: false,
   startupBlocker: { kind: "none" },
 });
@@ -255,6 +261,9 @@ function useDaemonStartIsRunning(): boolean {
 }
 
 const STARTUP_GIVE_UP_TIMEOUT_MS = 5_000;
+// How long the splash waits on top of host startup to learn whether setup opens. A slow host
+// lands on the home instead, and setup opens over it once it is decided.
+const STARTUP_SETUP_WAIT_TIMEOUT_MS = 3_000;
 
 async function shouldStartBuiltInDaemon(): Promise<boolean> {
   if (!shouldUseDesktopDaemon()) {
@@ -316,6 +325,23 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     };
   }, [shouldRunGiveUpTimer]);
 
+  const isSetupDecisionPending = useIsSetupDecisionPending();
+  const [hasGivenUpWaitingForSetup, setHasGivenUpWaitingForSetup] = useState(false);
+  const isWaitingForSetup = isSetupDecisionPending && !hasGivenUpWaitingForSetup;
+  const shouldRunSetupWaitTimer = isWaitingForSetup && startupBlocker.kind === "none";
+
+  useEffect(() => {
+    if (!shouldRunSetupWaitTimer) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      setHasGivenUpWaitingForSetup(true);
+    }, STARTUP_SETUP_WAIT_TIMEOUT_MS);
+    return () => {
+      clearTimeout(handle);
+    };
+  }, [shouldRunSetupWaitTimer]);
+
   const retry = useCallback(() => {
     const daemonStartService = getDaemonStartService({ store: getHostRuntimeStore() });
     void daemonStartService.startIfEnabled({ shouldStart: shouldStartBuiltInDaemon });
@@ -326,8 +352,15 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
   const storeReady = resolveStartupNavigationReady({ startupBlocker });
 
   const state = useMemo<HostRuntimeBootstrapState>(
-    () => ({ splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker }),
-    [splashError, retry, hasGivenUpWaitingForHost, storeReady, startupBlocker],
+    () => ({
+      splashError,
+      retry,
+      hasGivenUpWaitingForHost,
+      isWaitingForSetup,
+      storeReady,
+      startupBlocker,
+    }),
+    [splashError, retry, hasGivenUpWaitingForHost, isWaitingForSetup, storeReady, startupBlocker],
   );
 
   return (
@@ -443,12 +476,16 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
       viewportWidth,
     }),
   });
-  const sidebarPresentation = resolveLeftSidebarPresentation({
-    chromeEnabled,
-    isCompactLayout,
-    isFocusModeEnabled: isWorkspaceFocusModeEnabled,
-    desktopSidebarVisible,
-  });
+  const { presentation: sidebarPresentation, visible: sidebarVisible } =
+    useSettingsSidebarPresentation({
+      visible: chromeEnabled,
+      presentation: resolveLeftSidebarPresentation({
+        chromeEnabled,
+        isCompactLayout,
+        isFocusModeEnabled: isWorkspaceFocusModeEnabled,
+        desktopSidebarVisible,
+      }),
+    });
   const applyPanelLayout = usePanelStore((state) => state.applyPanelLayout);
   // Publishes the layout to the store, which owns the panel targets each layout allows.
   useLayoutEffect(() => {
@@ -516,7 +553,11 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <DesktopWindowControls />
         <FloatingPanelPortalHost />
       </AppearanceStyleBoundary>
-      {isCompactLayout ? themedSidebarChrome : null}
+      {isCompactLayout ? (
+        <CompactSidebarHost visible={sidebarVisible} interactive={chromeEnabled}>
+          {themedSidebarChrome}
+        </CompactSidebarHost>
+      ) : null}
       <AppearanceStyleBoundary>
         <DownloadToast />
         <RosettaCalloutSource />
@@ -528,8 +569,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <PluginCommandCenterActions />
         <WorkspacePinShortcutHandler />
         <WorkspaceRenameHost />
+        <WorkspaceArchiveUndoShortcutHost />
         <CommandCenter />
-        <OnboardingHost />
         <AddProjectFlowHost />
         <HostChooserModal />
         <HostConfirmationSheet />
@@ -540,6 +581,10 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <ChangelogHost />
         <QuittingOverlay />
       </AppearanceStyleBoundary>
+      {/* Setup changes the theme while it is open, so it stays out of the remount above. Its
+          colors are CSS variables and themed props, which update in place, and setup changes no
+          font size. */}
+      <OnboardingHost />
     </View>
   );
 
@@ -547,6 +592,34 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     <AppContainerLifetime sidebarGesturesEnabled={sidebarPresentation === "overlay"}>
       <SheetHostScope enabled={isCompactLayout}>{surface}</SheetHostScope>
     </AppContainerLifetime>
+  );
+}
+
+// Keep native scroll ranges and gesture hosts intact while Settings covers the sidebar.
+function CompactSidebarHost({
+  visible,
+  interactive,
+  children,
+}: {
+  visible: boolean;
+  interactive: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View
+      collapsable={false}
+      style={[
+        layoutStyles.compactSidebarHost,
+        { opacity: visible ? 1 : 0 },
+        // DOM descendants can override pointer-events:none.
+        isWeb && !visible && { display: "none" },
+      ]}
+      pointerEvents={interactive ? "box-none" : "none"}
+      accessibilityElementsHidden={!interactive}
+      importantForAccessibility={interactive ? "auto" : "no-hide-descendants"}
+    >
+      {children}
+    </View>
   );
 }
 
@@ -580,14 +653,18 @@ function SidebarChrome({
   const isCompactLayout = useIsCompactFormFactor();
   const isMobileActive = useIsMobilePanelActive("agent-list");
   const overlay = presentation === "overlay";
-  const active = resolveSidebarActivity(presentation !== "hidden", overlay, isMobileActive);
+  const active = resolveSidebarActivity(
+    presentation !== "hidden" && presentation !== "suspended",
+    overlay,
+    isMobileActive,
+  );
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   return (
     <SidebarModelProvider
       active={active}
       keyboardNavigationActive={keyboardShortcutsEnabled && hardwareKeyboardPresent}
     >
-      {mounted ? (
+      {mounted || presentation === "suspended" ? (
         <LeftSidebar active={active} desktopOverlay={overlay && !isCompactLayout} />
       ) : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
@@ -830,6 +907,8 @@ const ROOT_STACK_SCREEN_OPTIONS = {
   animation: "none" as const,
 };
 const ROOT_STACK_NESTED_NAVIGATOR_SCREENS = ["h/[serverId]"] as const;
+// Settings owns reactive typography leaves; its scroll and form state survive appearance edits.
+const ROOT_STACK_SCREEN_OWNED_APPEARANCE = ["settings/[section]"] as const;
 
 function RootStack() {
   const storeReady = useStoreReady();
@@ -837,6 +916,7 @@ function RootStack() {
     <ThemedStack
       screenOptions={ROOT_STACK_SCREEN_OPTIONS}
       nestedNavigatorScreens={ROOT_STACK_NESTED_NAVIGATOR_SCREENS}
+      screenOwnedAppearance={ROOT_STACK_SCREEN_OWNED_APPEARANCE}
     >
       <Stack.Screen name="index" />
       <Stack.Protected guard={storeReady}>
@@ -851,7 +931,9 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
+      <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/index" />
       <Stack.Screen name="settings/hosts/[serverId]/plugins/[pluginId]/[screenId]" />
+      <Stack.Screen name="settings/hosts/[serverId]/plugin-directory/[owner]/[slug]" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/index" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/[projectId]" />
     </ThemedStack>
@@ -970,6 +1052,7 @@ export default function RootLayout() {
 }
 
 const layoutStyles = StyleSheet.create((theme) => ({
+  compactSidebarHost: { position: "absolute", top: 0, bottom: 0, left: 0, right: 0 },
   surfaceFill: {
     flex: 1,
     backgroundColor: theme.colors.surface0,

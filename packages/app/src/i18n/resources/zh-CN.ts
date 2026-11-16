@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  pluginCombobox: {
+    searching: "搜索中…",
+    empty: "无结果",
+    failed: "搜索失败：{{message}}",
+  },
   paneFind: {
     connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
     historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
@@ -85,14 +90,23 @@ export const zhCN: TranslationResources = {
       close: "关闭菜单",
     },
     commandCenter: {
-      placeholder: "搜索命令、文件、工作区和 Agent...",
+      placeholder: "搜索工作区、文件和操作...",
+      placeholderWithoutFiles: "搜索工作区和操作...",
       filePlaceholder: "搜索文件...",
+      workspacePlaceholder: "搜索工作区...",
+      actionPlaceholder: "搜索操作...",
       searchingFiles: "正在搜索文件...",
       noMatches: "没有匹配项",
       actions: "操作",
       files: "文件",
       workspaces: "工作区",
-      agents: "Agents",
+      recentWorkspaces: "最近的工作区",
+      tabs: {
+        all: "全部",
+        workspaces: "工作区",
+        files: "文件",
+        actions: "操作",
+      },
       newAgent: "新建 Agent",
       open: "打开{{name}}",
       openInSidePane: "在侧边面板中打开{{name}}",
@@ -256,7 +270,7 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重新连接主机",
+      reconnecting: "正在重新连接",
       updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
@@ -378,6 +392,24 @@ export const zhCN: TranslationResources = {
       next: "下一步",
       answerPlaceholder: "输入你的回答...",
       otherPlaceholder: "其他...",
+    },
+    backgroundWork: {
+      pillOne: "1 个后台任务",
+      pillMany: "{{count}} 个后台任务",
+      notRunning: "已不再运行",
+      dismiss: "关闭",
+      stop: "停止",
+      stopping: "正在停止…",
+      stopError: "无法确认已停止。",
+      label: "后台",
+      title: "后台任务",
+      waiting: "正在等待后台任务详情",
+      error: "无法加载后台任务",
+      retry: "重试",
+      running: "后台任务运行中",
+      shell: "Shell",
+      monitor: "监控",
+      other: "其他任务",
     },
     todo: {
       title: "任务",
@@ -922,6 +954,9 @@ export const zhCN: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "基准分支",
+        },
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
@@ -1143,6 +1178,8 @@ export const zhCN: TranslationResources = {
     title: "新功能",
     installed: "已安装",
     showMore: "显示更多",
+    showAllChanges: "显示全部变更",
+    hideAllChanges: "收起全部变更",
     openWebsite: "完整更新日志",
     error: {
       title: "无法加载更新日志",
@@ -1150,6 +1187,14 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "无法加载侧边栏视图。",
+      useDefault: "使用默认视图",
+      readFailed: "无法加载侧边栏视图偏好设置。",
+      agentUnavailable: "此智能体已不可用",
+      terminalUnavailable: "此终端已不可用",
+      projectUnavailable: "此项目已不可用",
+    },
     statusGroupAccessibility: "{{label}} 分组",
     statusBucket: {
       needsInput: "需要输入",
@@ -1225,6 +1270,7 @@ export const zhCN: TranslationResources = {
       hosts: "Hosts",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+      moreActions: "更多操作",
     },
     footer: {
       usage: "使用情况",
@@ -1326,6 +1372,9 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         hideFailed: "隐藏 workspace 失败",
         archiveFailed: "归档工作区失败",
+        archived: "工作区已归档",
+        undoArchive: "撤销",
+        undoArchiveFailed: "无法撤销归档",
       },
     },
   },
@@ -1577,6 +1626,7 @@ export const zhCN: TranslationResources = {
     openPath: "打开路径",
   },
   branchSwitcher: {
+    failedToLoad: "无法加载分支，请重新打开选择器以重试。",
     triggerTooltip: "切换工作区分支",
     currentBranch: "当前分支：{{branchName}}。按下以切换分支。",
     placeholder: "切换分支...",
@@ -1599,7 +1649,11 @@ export const zhCN: TranslationResources = {
     loadingCommands: "正在加载 commands...",
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
-    failedToLoad: "加载失败",
+    loadingProviderCommands: "正在加载 {{provider}} commands...",
+    commandsFailed: "无法加载 commands",
+    providerCommandsFailed: "无法加载 {{provider}} commands",
+    filesFailed: "无法搜索文件",
+    skillTag: "Skill",
     chooseProjectForCommands: "选择项目以查看命令",
     chooseModelForCommands: "选择模型以查看命令",
   },
@@ -2133,6 +2187,7 @@ export const zhCN: TranslationResources = {
     turnOn: "开启",
 
     options: "设置",
+    host: "主机",
     refreshFailed: "无法刷新用量",
     noHosts: "没有已连接的主机",
     agentError: "无法加载用量：{{reason}}",
@@ -2149,6 +2204,8 @@ export const zhCN: TranslationResources = {
     loginExpired: "登录已于{{relativeTime}}过期。{{remedy}}",
     title: "套餐用量",
     refresh: "刷新",
+    reorderCard: "重新排序 {{source}}",
+    showCard: "显示 {{source}}",
     refreshAll: "全部刷新",
     refreshing: "刷新中...",
     loading: "正在加载用量...",
@@ -2521,6 +2578,12 @@ export const zhCN: TranslationResources = {
         description: "显示用于在提示词之间跳转的大纲",
       },
       sidebar: {
+        view: {
+          title: "侧边栏视图",
+          label: "视图",
+          default: "默认视图",
+          unavailable: "所选视图不可用或已禁用。正在显示默认视图。",
+        },
         header: {
           title: "顶部",
           description: "选择侧边栏顶部显示的项目及其顺序",

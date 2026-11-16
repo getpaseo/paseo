@@ -88,7 +88,7 @@ const NO_UNATTENDED_SCHEDULE_POLICY: Pick<ProviderSnapshotManager, "resolveCreat
   async resolveCreateConfig(input) {
     return {
       modeId: input.unattended ? input.requestedMode : "interactive",
-      featureValues: input.featureValues,
+      providerOptions: input.providerOptions,
     };
   },
 };
@@ -232,6 +232,7 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
   await projectRegistry.initialize();
   const workspaceGitService = createNoopWorkspaceGitService();
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
@@ -1911,7 +1912,7 @@ describe("ScheduleService", () => {
           });
           return {
             modeId: input.unattended ? "bypassPermissions" : "interactive",
-            featureValues: input.featureValues,
+            providerOptions: input.providerOptions,
           };
         },
       },
@@ -1980,9 +1981,9 @@ describe("ScheduleService", () => {
           });
           return {
             modeId: input.unattended ? "build" : "interactive",
-            featureValues: input.unattended
-              ? { ...input.featureValues, auto_accept: true }
-              : input.featureValues,
+            providerOptions: input.unattended
+              ? { ...input.providerOptions, auto_accept: true }
+              : input.providerOptions,
           };
         },
       },
@@ -2010,7 +2011,7 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.error).toBeNull();
     expect(createdConfigs[0]).toMatchObject({
       modeId: "build",
-      featureValues: { auto_accept: true },
+      providerOptions: { auto_accept: true },
     });
   });
 
@@ -2052,7 +2053,7 @@ describe("ScheduleService", () => {
           });
           return {
             modeId: input.requestedMode,
-            featureValues: { ...input.featureValues, resolved: true },
+            providerOptions: { ...input.providerOptions, resolved: true },
           };
         },
       },
@@ -2099,11 +2100,13 @@ describe("ScheduleService", () => {
       model: "test-model",
       modeId: "stored-mode",
       thinkingOptionId: "think-hard",
+      // Stored schedules written before options carry `featureValues`; launch folds them.
       providerOptions: {
         allowedTools: ["Read"],
         sandbox: { enabled: true, network: { allowLocalBinding: true } },
+        auto_accept: true,
+        resolved: true,
       },
-      featureValues: { auto_accept: true, resolved: true },
       systemPrompt: "Stay concise.",
       mcpServers: {
         docs: {

@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  downloadFileFromPreview,
   expandFolder,
   openFileExplorer,
   openFileFromExplorer,
@@ -141,6 +142,29 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("downloads an assistant-linked binary outside the workspace", async ({ page }, testInfo) => {
+    const filePath = testInfo.outputPath("outside.bin");
+    const source = Buffer.from([0, 1, 128, 255]);
+    await writeFile(filePath, source);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "outside-binary-",
+      title: "Outside binary",
+      initialPrompt: "Show the file",
+      featureValues: { mockAssistantResponse: `[Open binary](${filePath})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "Open binary");
+      const downloaded = await downloadFileFromPreview(page);
+      expect(downloaded.suggestedFilename()).toBe("outside.bin");
+      const savedFile = testInfo.outputPath("downloaded.bin");
+      await downloaded.saveAs(savedFile);
+      expect(await readFile(savedFile)).toEqual(source);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",

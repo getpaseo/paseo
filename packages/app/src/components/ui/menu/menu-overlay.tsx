@@ -29,12 +29,16 @@ import type { KeyboardFocusScope } from "@/keyboard/actions";
 import { getOverlayRoot, OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
 import {
   computePosition,
+  fitSurfaceWidth,
   getTransformOrigin,
+  holdSurfaceEdge,
   measureElement,
+  surfaceFrameStyles,
   type Alignment,
   type Placement,
   type Rect,
   type Size,
+  type SurfacePosition,
 } from "../anchor";
 
 const SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const;
@@ -108,7 +112,7 @@ export function useAnchoredPosition({
 }) {
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<Size | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [position, setPosition] = useState<SurfacePosition | null>(null);
   const [actualPlacement, setActualPlacement] = useState<Placement>(side);
 
   const visibleContentSize = useMemo(() => {
@@ -173,7 +177,7 @@ export function useAnchoredPosition({
       offset,
     });
 
-    setPosition({ x: result.x, y: result.y });
+    setPosition(holdSurfaceEdge(result, visibleContentSize.height));
     setActualPlacement(result.actualPlacement);
   }, [triggerRect, visibleContentSize, side, align, offset]);
 
@@ -279,21 +283,17 @@ export function AnchoredSurface({
     return () => cancelAnimationFrame(frame);
   }, [open, placed, surfaceNativeID]);
 
+  const frame = useMemo(() => surfaceFrameStyles(position), [position]);
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const { width: screenWidth } = Dimensions.get("window");
     const resolvedWidthStyle: ViewStyle = fullWidth
       ? { width: screenWidth - horizontalPadding * 2 }
-      : {
-          ...(typeof width === "number" ? { width } : null),
-          ...(typeof minWidth === "number" ? { minWidth } : null),
-          ...(typeof maxWidth === "number" ? { maxWidth } : null),
-        };
+      : fitSurfaceWidth({ width, minWidth, maxWidth }, screenWidth);
     return [
       resolvedWidthStyle,
+      frame.surface,
       {
-        position: "absolute" as const,
-        top: position?.y ?? -9999,
-        left: fullWidth ? horizontalPadding : (position?.x ?? -9999),
+        ...(fullWidth ? { left: horizontalPadding } : null),
         transformOrigin: getTransformOrigin(actualPlacement, align),
       },
     ];
@@ -303,8 +303,7 @@ export function AnchoredSurface({
     width,
     minWidth,
     maxWidth,
-    position?.x,
-    position?.y,
+    frame.surface,
     actualPlacement,
     align,
   ]);
@@ -346,40 +345,42 @@ export function AnchoredSurface({
           testID={testID ? `${testID}-backdrop` : undefined}
         />
       ) : null}
-      <FloatingSurface
-        key={placed ? "placed" : "measuring"}
-        collapsable={false}
-        tabIndex={-1}
-        nativeID={surfaceNativeID}
-        testID={testID}
-        dataSet={surfaceDataSet}
-        style={styles.content}
-        frameStyle={frameStyle}
-        entering={placed ? nativeContentEntering : undefined}
-        exiting={
-          !placed || isWeb || !onExited
-            ? undefined
-            : contentExiting.withCallback((finished) => {
-                "worklet";
-                if (finished) {
-                  runOnJS(onExited)();
-                }
-              })
-        }
-      >
-        {scrollable ? (
-          <FloatingScrollView
-            bounces={false}
-            showsVerticalScrollIndicator
-            style={scrollViewportStyle}
-            contentContainerStyle={SCROLL_CONTENT_STYLE}
-          >
-            {measured}
-          </FloatingScrollView>
-        ) : (
-          measured
-        )}
-      </FloatingSurface>
+      <View pointerEvents="box-none" style={frame.holder}>
+        <FloatingSurface
+          key={placed ? "placed" : "measuring"}
+          collapsable={false}
+          tabIndex={-1}
+          nativeID={surfaceNativeID}
+          testID={testID}
+          dataSet={surfaceDataSet}
+          style={styles.content}
+          frameStyle={frameStyle}
+          entering={placed ? nativeContentEntering : undefined}
+          exiting={
+            !placed || isWeb || !onExited
+              ? undefined
+              : contentExiting.withCallback((finished) => {
+                  "worklet";
+                  if (finished) {
+                    runOnJS(onExited)();
+                  }
+                })
+          }
+        >
+          {scrollable ? (
+            <FloatingScrollView
+              bounces={false}
+              showsVerticalScrollIndicator
+              style={scrollViewportStyle}
+              contentContainerStyle={SCROLL_CONTENT_STYLE}
+            >
+              {measured}
+            </FloatingScrollView>
+          ) : (
+            measured
+          )}
+        </FloatingSurface>
+      </View>
     </>
   );
 }

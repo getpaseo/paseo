@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import {
   SessionInboundMessageSchema,
   type SessionInboundMessage,
@@ -985,6 +986,45 @@ test("config changes require their own event demand and cannot escape to an idle
   }
 });
 
+test("a config change push carries profiles with the legacy featureValues the unchanged app reads", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let observer: SubscriptionPeer | undefined;
+  try {
+    await admin.connect();
+    await admin.patchDaemonConfig({
+      agentProfiles: [
+        { id: "p", name: "P", provider: "codex", options: {}, featureValues: { plan_mode: true } },
+      ],
+    });
+    observer = await SubscriptionPeer.connect(daemon.port, "config-push-session");
+    await observer.request({
+      type: "session.events.set_subscription.request",
+      requestId: "config-feed",
+      events: ["status.daemon_config_changed"],
+    });
+
+    await admin.patchDaemonConfig({ autoArchiveAfterMerge: true });
+
+    const peer = observer;
+    await expect
+      .poll(() =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" &&
+          frame.message.type === "status" &&
+          frame.message.payload.status === "daemon_config_changed"
+            ? [frame.message.payload.config?.agentProfiles?.[0]?.featureValues]
+            : [],
+        ),
+      )
+      .toEqual([{ plan_mode: true }]);
+  } finally {
+    observer?.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
 test("status-shaped operation replies use actual source request provenance", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const peers: SubscriptionPeer[] = [];
@@ -1606,6 +1646,69 @@ test("request outcomes for import and attention reach only their requesting sock
   }
 });
 
+test("clearing a closed agent's attention does not resume its provider session", async () => {
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await daemon.daemon.agentManager.markAgentUnread(agent.id);
+    await client.clearAgentAttention(agent.id);
+    expect(daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+class SessionGoneAgentClient extends MockLoadTestAgentClient {
+  resumeCalls = 0;
+
+  override async resumeSession(): Promise<never> {
+    this.resumeCalls += 1;
+    throw new Error("Session not found");
+  }
+}
+
+test("clearing a closed agent's attention succeeds when its provider session is gone", async () => {
+  const agentClient = new SessionGoneAgentClient();
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: agentClient },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await client.markWorkspaceUnread(agent.workspaceId!);
+    expect((await client.fetchAgent(agent.id))?.agent.requiresAttention).toBe(true);
+
+    await withTimeout(
+      client.clearAgentAttention(agent.id),
+      5_000,
+      "clear_agent_attention got no response",
+    );
+
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+    expect(agentClient.resumeCalls).toBe(0);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("SDK import failure settles without waiting for the request timeout", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
@@ -1873,3 +1976,115 @@ test("public project subscriptions request updates and release their producer de
     await daemon.close();
   }
 });
+
+test.each([
+  { closed: false, batch: false },
+  { closed: true, batch: false },
+  { closed: false, batch: true },
+  { closed: true, batch: true },
+])(
+  "clearing workspace attention reaches independent subscribers (closed=$closed, batch=$batch)",
+  async ({ closed, batch }) => {
+    const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+    const clients = Array.from(
+      { length: 4 },
+      () => new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` }),
+    );
+    const [actor, observer, unreadObserver, quiet] = clients;
+    const updates: SessionOutboundMessage[] = [];
+    const unreadUpdates: SessionOutboundMessage[] = [];
+    const quietUpdates: SessionOutboundMessage[] = [];
+    const responses: SessionOutboundMessage[] = [];
+    try {
+      await Promise.all(clients.map((client) => client.connect()));
+      const agentIds: string[] = [];
+      for (let index = 0; index < (batch ? 2 : 1); index += 1) {
+        const cwd = path.join(daemon.staticDir, `workspace-${index}`);
+        await mkdir(cwd);
+        const agent = await actor.createAgent({ provider: "codex", cwd });
+        await actor.sendMessage(agent.id, "Reply with OK.");
+        await actor.waitForFinish(agent.id, 5000);
+        await daemon.daemon.agentManager.clearAgentAttention(agent.id);
+        if (closed) await daemon.daemon.agentManager.closeAgent(agent.id);
+        agentIds.push(agent.id);
+      }
+      const snapshot = await observer.fetchAgents({
+        filter: { includeArchived: true },
+        subscribe: {},
+      });
+      const workspaceIds = agentIds.map(
+        (id) => snapshot.entries.find((entry) => entry.agent.id === id)!.agent.workspaceId!,
+      );
+      expect(new Set(workspaceIds).size).toBe(agentIds.length);
+      await unreadObserver.fetchAgents({ filter: { requiresAttention: true }, subscribe: {} });
+      actor.subscribeRawMessages((message) => responses.push(message));
+      observer.subscribeRawMessages((message) => updates.push(message));
+      unreadObserver.subscribeRawMessages((message) => unreadUpdates.push(message));
+      quiet.subscribeRawMessages((message) => quietUpdates.push(message));
+      const attention = (id: string) =>
+        updates
+          .flatMap((message) =>
+            message.type === "agent_update" &&
+            message.payload.kind === "upsert" &&
+            message.payload.agent.id === id
+              ? [message.payload.agent.requiresAttention]
+              : [],
+          )
+          .at(-1);
+      for (const [index, id] of agentIds.entries()) {
+        await actor.markWorkspaceUnread(workspaceIds[index]);
+        await expect.poll(() => attention(id)).toBe(true);
+        await expect
+          .poll(() =>
+            unreadUpdates.some(
+              (message) =>
+                message.type === "agent_update" &&
+                message.payload.kind === "upsert" &&
+                message.payload.agent.id === id,
+            ),
+          )
+          .toBe(true);
+      }
+      updates.length = unreadUpdates.length = quietUpdates.length = 0;
+      await actor.clearWorkspaceAttention(batch ? workspaceIds : workspaceIds[0]);
+      const response = responses.findLast(
+        (message) => message.type === "workspace.clear_attention.response",
+      );
+      expect(response?.payload).toEqual({
+        requestId: expect.any(String),
+        workspaceId: batch ? workspaceIds : workspaceIds[0],
+        clearedAgentIds: agentIds,
+        results: workspaceIds.map((workspaceId, index) => ({
+          workspaceId,
+          clearedAgentIds: [agentIds[index]],
+          success: true,
+          error: null,
+        })),
+        success: true,
+        error: null,
+      });
+      const fresh = await actor.fetchAgents();
+      for (const id of agentIds) {
+        expect(fresh.entries.find((entry) => entry.agent.id === id)?.agent.requiresAttention).toBe(
+          false,
+        );
+        expect(Boolean(daemon.daemon.agentManager.getAgent(id))).toBe(!closed);
+        await expect.poll(() => attention(id)).toBe(false);
+        await expect
+          .poll(() =>
+            unreadUpdates.some(
+              (message) =>
+                message.type === "agent_update" &&
+                message.payload.kind === "remove" &&
+                message.payload.agentId === id,
+            ),
+          )
+          .toBe(true);
+      }
+      expect(quietUpdates.filter((message) => message.type === "agent_update")).toEqual([]);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await daemon.close();
+    }
+  },
+);

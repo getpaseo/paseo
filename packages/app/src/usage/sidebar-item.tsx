@@ -8,14 +8,13 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type PressableStateCallbackType,
-} from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { TriangleAlert } from "lucide-react-native";
+import { Text, View, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
+import type { Theme } from "@/styles/theme";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useAppVisible } from "@/hooks/use-app-visible";
 import { builtinSidebarNavLabelKey } from "@/sidebar-nav/model";
 import { useUsageDisplay } from "./display";
 import { useUsageInSidebar } from "./in-sidebar";
@@ -33,12 +32,20 @@ import {
 } from "./pinned";
 import { UsageModal } from "./usage-modal";
 
+const ThemedTriangleAlert = withUnistyles(TriangleAlert);
+const errorIconColor = (theme: Theme) => ({ color: theme.colors.statusDanger });
+
 /** Each summary window with data on the usage host, under its source; empty while none has. */
 export function useUsageSummary(): readonly PinnedUsageSource[] {
   const { t } = useTranslation();
+  const active = useRetainedPanelActive();
+  const isAppVisible = useAppVisible();
   const { inSidebar } = useUsageInSidebar();
   const serverId = useUsageHostId();
-  const reports = useUsageHostReports(inSidebar ? serverId : null);
+  const reports = useUsageHostReports({
+    serverId: inSidebar ? serverId : null,
+    shouldPoll: active && inSidebar && isAppVisible,
+  });
   const { preferences } = useUsageDisplay(reports);
   return useMemo(() => resolvePinnedUsage(reports, preferences, t), [preferences, reports, t]);
 }
@@ -53,7 +60,14 @@ export function UsageSidebarItem({ sources }: { sources: readonly PinnedUsageSou
   const label = t(builtinSidebarNavLabelKey("usage"));
   const openUsage = useOpenSidebarUsage();
   if (sources.length === 0) return null;
-  return <PinnedUsageTrigger label={label} sources={sources} onPress={openUsage} />;
+  return (
+    <PinnedUsageTrigger
+      label={label}
+      sources={sources}
+      errorLabel={t("providerUsage.refreshFailed")}
+      onPress={openUsage}
+    />
+  );
 }
 
 const OpenSidebarUsageContext = createContext<(() => void) | null>(null);
@@ -88,13 +102,19 @@ export function useOpenSidebarUsage(): () => void {
   return openUsage;
 }
 
-function pinnedUsageLabel(label: string, sources: readonly PinnedUsageSource[]): string {
+function pinnedUsageLabel(
+  label: string,
+  sources: readonly PinnedUsageSource[],
+  errorLabel: string,
+): string {
   const windows = sources.flatMap((source) => source.windows);
-  return `${label}: ${windows.map((window) => window.label).join(", ")}`;
+  const summary = windows.map((window) => window.label).join(", ");
+  const error = sources.some((source) => source.hasError) ? `, ${errorLabel}` : "";
+  return `${label}: ${summary}${error}`;
 }
 
 function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
-  return hovered ? [styles.trigger, styles.triggerHovered] : styles.trigger;
+  return [styles.trigger, hovered && styles.triggerHovered];
 }
 
 function layoutWidth(event: LayoutChangeEvent): number {
@@ -109,10 +129,12 @@ function layoutWidth(event: LayoutChangeEvent): number {
 function PinnedUsageTrigger({
   label,
   sources,
+  errorLabel,
   onPress,
 }: {
   label: string;
   sources: readonly PinnedUsageSource[];
+  errorLabel: string;
   onPress: () => void;
 }) {
   const [available, setAvailable] = useState<number | null>(null);
@@ -134,11 +156,12 @@ function PinnedUsageTrigger({
     windowCount: sources.reduce((count, source) => count + source.windows.length, 0),
   });
   return (
-    <Pressable
+    <PressHighlight
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={pinnedUsageLabel(label, sources)}
+      accessibilityLabel={pinnedUsageLabel(label, sources, errorLabel)}
       style={triggerStyle}
+      highlightStyle={styles.triggerPressed}
       testID="sidebar-usage"
     >
       <View style={styles.line} onLayout={handleAvailableLayout}>
@@ -158,7 +181,7 @@ function PinnedUsageTrigger({
           <PinnedUsageLine sources={sources} layout="percents" measuring />
         </View>
       </View>
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -178,10 +201,17 @@ function PinnedUsageLine({
   return sources.map((source, sourceIndex) => (
     <Fragment key={source.key}>
       <View
-        style={sourceIndex === 0 ? null : styles.sourceGap}
+        style={[styles.source, sourceIndex === 0 ? null : styles.sourceGap]}
         testID={measuring ? undefined : "sidebar-usage-source"}
       >
         <UsageSourceIcon svg={source.icon} size={14} />
+        {source.hasError ? (
+          <ThemedTriangleAlert
+            size={12}
+            uniProps={errorIconColor}
+            testID={measuring ? undefined : "sidebar-usage-error"}
+          />
+        ) : null}
       </View>
       {source.windows.map((window, windowIndex) => {
         const leadStyle = windowIndex === 0 ? styles.iconGap : styles.windowGap;
@@ -224,6 +254,9 @@ const styles = StyleSheet.create((theme) => ({
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },
+  triggerPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
   line: {
     flex: 1,
     minWidth: 0,
@@ -243,6 +276,11 @@ const styles = StyleSheet.create((theme) => ({
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
+  },
+  source: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
   },
   sourceGap: {
     marginLeft: theme.spacing[3],

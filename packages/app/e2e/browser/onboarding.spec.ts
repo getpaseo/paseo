@@ -12,11 +12,15 @@ import {
   openAppAsNewUser,
   openRelayPairingFromSetup,
   closeRelayPairing,
+  emptyHome,
+  loadingScreen,
   openTailscaleDocsFromSetup,
   paseoToolsSwitch,
   pickTheme,
   projectSuggestion,
   projectSuggestionRow,
+  readFirstLaunch,
+  recordFirstLaunch,
   setupModal,
   setupPrimaryButton,
   showSetupAgainFromSettings,
@@ -97,6 +101,139 @@ test("a new user is walked through setup once", async ({ page }, testInfo) => {
     await host.close();
     await repo.cleanup();
   }
+});
+
+test("a new user goes from the loading screen straight into setup", async ({ page }) => {
+  const host = await startSetupHost("first-launch");
+
+  try {
+    await recordFirstLaunch(page);
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+
+    const launch = await readFirstLaunch(page);
+    expect(launch.appBeforeSetup).toBe(false);
+    expect(launch.setupOpacityOnArrival).toBeLessThan(1);
+    await expect(setupModal(page)).toHaveCSS("opacity", "1");
+  } finally {
+    await host.close();
+  }
+});
+
+test("with reduced motion, setup appears without fading in", async ({ page }) => {
+  const host = await startSetupHost("reduced-motion");
+
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await recordFirstLaunch(page);
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+
+    expect((await readFirstLaunch(page)).setupOpacityOnArrival).toBe(1);
+  } finally {
+    await host.close();
+  }
+});
+
+test("changing the theme keeps the setup window in place on every step", async ({ page }) => {
+  const host = await startSetupHost("theme-change");
+
+  try {
+    await openAppAsNewUser(page, host);
+    await expectSetupStep(page, "Welcome to Paseo");
+    const setupWindow = await setupModal(page).elementHandle();
+
+    for (const title of [
+      "Welcome to Paseo",
+      "Your agents",
+      "Add your projects",
+      "Let agents use Paseo",
+      "Take your agents with you",
+    ]) {
+      if (title !== "Welcome to Paseo") await continueSetup(page);
+      await expectSetupStep(page, title);
+      const heading = setupModal(page).getByRole("heading", { name: title });
+      const headingNode = await heading.elementHandle();
+      const lightColor = await heading.evaluate((node) => getComputedStyle(node).color);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await expect(heading).not.toHaveCSS("color", lightColor);
+      await page.emulateMedia({ colorScheme: "light" });
+      await expect(heading).toHaveCSS("color", lightColor);
+      expect(await setupWindow?.evaluate((node) => node.isConnected), title).toBe(true);
+      expect(await headingNode?.evaluate((node) => node.isConnected), title).toBe(true);
+    }
+
+    await goToSetupStep(page, "Appearance");
+    await pickTheme(page, "Midnight");
+    await pickTheme(page, "Light");
+    expect(await setupWindow?.evaluate((node) => node.isConnected)).toBe(true);
+  } finally {
+    await host.close();
+  }
+});
+
+test("the loading screen stays up while the setup host loads its workspaces", async ({ page }) => {
+  const host = await startSetupHost("slow-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    await recordFirstLaunch(page);
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await expect(loadingScreen(page)).toBeVisible();
+    await expect(emptyHome(page)).toHaveCount(0);
+
+    gate.releaseHeldClientRequest();
+    await expectSetupStep(page, "Welcome to Paseo");
+    expect((await readFirstLaunch(page)).appBeforeSetup).toBe(false);
+  } finally {
+    await host.close();
+  }
+});
+
+test("a setup host that never loads its workspaces still lands on the home", async ({ page }) => {
+  const host = await startSetupHost("stuck-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+    await expect(setupModal(page)).toHaveCount(0);
+
+    // Setup still opens once the host answers.
+    gate.releaseHeldClientRequest();
+    await expectSetupStep(page, "Welcome to Paseo");
+  } finally {
+    await host.close();
+  }
+});
+
+test("a setup host that drops while loading still lands on the home", async ({ page }) => {
+  const host = await startSetupHost("dropped-workspaces");
+  const gate = await installDaemonWebSocketGate(page, { port: host.port });
+
+  try {
+    gate.holdNextClientRequest("fetch_workspaces_request");
+    await openAppAsNewUser(page, host);
+    await gate.waitForHeldClientRequest();
+    await gate.drop();
+    await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+    await expect(setupModal(page)).toHaveCount(0);
+  } finally {
+    await host.close();
+  }
+});
+
+test("an unreachable setup host lands on the home without setup", async ({ page }) => {
+  const host = await startSetupHost("unreachable");
+  await host.close();
+
+  await openAppAsNewUser(page, host);
+  await expect(emptyHome(page)).toBeVisible({ timeout: 15_000 });
+  await expect(setupModal(page)).toHaveCount(0);
 });
 
 test("setup suggests the repos the user already ran agents in", async ({ page }, testInfo) => {

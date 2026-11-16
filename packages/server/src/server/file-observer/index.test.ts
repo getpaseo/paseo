@@ -47,6 +47,34 @@ test("observes nested files while pruning excluded directories", async () => {
   await subscription.unsubscribe();
 });
 
+// macOS FSEvents can replay writes made just before the stream starts, so the
+// startup contract is only exact on the Linux backend.
+test.skipIf(process.platform !== "linux")(
+  "subscribing to a populated tree reports only later changes",
+  async () => {
+    const root = await createRoot();
+    for (const directory of ["src", join("src", "nested"), "docs"]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          writeFile(join(root, directory, `existing-${index}.txt`), `${index}`),
+        ),
+      );
+    }
+    const events: FileChange[] = [];
+    const subscription = await subscribeToFileChanges(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    const laterPath = join(root, "src", "nested", "later.txt");
+    await writeFile(laterPath, "later");
+    await expect.poll(() => events.map((event) => event.path)).toContain(laterPath);
+    expect(new Set(events.map((event) => event.path))).toEqual(new Set([laterPath]));
+    await subscription.unsubscribe();
+  },
+);
+
 test("covers files populated immediately inside a newly created directory", async () => {
   const root = await createRoot();
   const events: FileChange[] = [];
@@ -165,7 +193,11 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
+  // Native recursive delivery can be coalesced before the backend's deletion audit.
+  // Assert eventual classification without imposing Vitest's one-second default.
+  await expect
+    .poll(() => events.find((event) => event.path === target)?.type, { timeout: 10_000 })
+    .toBe("delete");
   await subscription.unsubscribe();
 });
 
@@ -293,6 +325,39 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   await writeFile(join(root, "after-burst-close.txt"), "closed");
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(callback).toHaveBeenCalledTimes(callsAtClose);
+}, 20_000);
+
+test("aborting a pending subscription stops its startup scan and rejects", async () => {
+  const root = await createRoot();
+  // More directories than the Linux backend watches: a scan that keeps walking after the abort
+  // fails on the directory limit instead of rejecting with the abort reason.
+  await Promise.all(
+    Array.from({ length: 80 }, (_, outer) =>
+      Promise.all(
+        Array.from({ length: 70 }, (__, inner) =>
+          mkdir(join(root, `dir-${outer}`, `nested-${inner}`), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const observer = createObserver();
+  const controller = new AbortController();
+  const reason = new Error("setup deadline passed");
+  const callback = vi.fn();
+
+  const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort(reason);
+
+  await expect(subscription).rejects.toBe(reason);
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    pendingReconciliationWorkCount: 0,
+  });
+  await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(callback).not.toHaveBeenCalled();
 }, 20_000);
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {

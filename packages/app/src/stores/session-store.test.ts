@@ -557,6 +557,33 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(blank.workspaceDirectory).toBe("");
   });
 
+  it("preserves informational workspace parentage", () => {
+    const payload = {
+      id: "child",
+      parentWorkspaceId: "parent",
+      projectId: "1",
+      projectDisplayName: "Project 1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "checkout",
+      name: "main",
+      archivingAt: null,
+      status: "done",
+      statusEnteredAt: null,
+      activityAt: null,
+      diffStat: null,
+      scripts: [],
+    } as WorkspaceDescriptorPayload;
+
+    const workspace = normalizeWorkspaceDescriptor(payload);
+
+    expect(workspace.parentWorkspaceId).toBe("parent");
+    expect(
+      normalizeWorkspaceDescriptor({ ...payload, parentWorkspaceId: undefined }).parentWorkspaceId,
+    ).toBeUndefined();
+  });
+
   it("defaults missing scripts to an empty array", () => {
     const payload = {
       id: "1",

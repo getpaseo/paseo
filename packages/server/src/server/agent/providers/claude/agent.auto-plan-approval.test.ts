@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { CanUseTool, PermissionMode, Query } from "@anthropic-ai/claude-agent-sdk";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import type { AgentPermissionRequest } from "../../agent-sdk-types.js";
+import type { AgentPermissionRequest, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
 
 // The injected SDK adapter supplies requests through Claude's permission callback.
@@ -88,5 +88,64 @@ test.each([
     }
   } finally {
     await plan.session.close();
+  }
+});
+
+test("bypass allows execution without publishing permission events and follows live mode changes", async () => {
+  let requestPermission: CanUseTool | undefined;
+  const query = Object.assign((async function* () {})(), {
+    async setPermissionMode(_mode: PermissionMode) {},
+    close() {},
+  });
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    queryFactory: ({ options }) => {
+      requestPermission = options.canUseTool;
+      return query as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    modeId: "bypassPermissions",
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.setMode("bypassPermissions");
+    if (!requestPermission) throw new Error("SDK permission callback was not installed");
+    const controller = new AbortController();
+    const input = { command: "echo hello" };
+    const result = requestPermission("Bash", input, {
+      signal: controller.signal,
+      toolUseID: "execution",
+      decisionReason: "Explicit ask rule",
+    });
+    // Abort also settles the pre-fix callback, so this repro never hangs.
+    controller.abort();
+    await expect(result).resolves.toMatchObject({ behavior: "allow", updatedInput: input });
+    expect(events.filter((event) => event.type.startsWith("permission_"))).toEqual([]);
+
+    for (const [mode, tool, toolInput] of [
+      ["bypassPermissions", "AskUserQuestion", { questions: [] }],
+      ["bypassPermissions", "ExitPlanMode", { plan: "Review this" }],
+      ["default", "Bash", input],
+      ["plan", "Bash", input],
+    ] as const) {
+      await session.setMode(mode);
+      const resolution = requestPermission(tool, toolInput, {
+        signal: new AbortController().signal,
+        toolUseID: tool,
+      });
+      const requestEvent = events.at(-1);
+      expect(requestEvent?.type).toBe("permission_requested");
+      if (requestEvent?.type !== "permission_requested")
+        throw new Error("Missing permission request");
+      await session.respondToPermission(requestEvent.request.id, { behavior: "deny" });
+      await expect(resolution).resolves.toMatchObject({ behavior: "deny" });
+    }
+  } finally {
+    await session.close();
   }
 });

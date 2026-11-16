@@ -1,5 +1,7 @@
 // Exact SVG paths from packages/app/src/components/icons/
 
+import { OpenCodeIcon as OpenCodeBrandIcon, PiIcon as PiBrandIcon } from "../agent-icons";
+
 /** The Paseo brand swirl — public/logo.svg, drawn as a small sidebar avatar mark. */
 export function PaseoMark({ size = 13, className }: { size?: number; className?: string }) {
   return (
@@ -109,6 +111,68 @@ export function SourceControlIcon({ size = 14, className }: { size?: number; cla
       <line x1={9} y1={9.5} x2={15} y2={9.5} />
       <line x1={12} y1={6.5} x2={12} y2={12.5} />
       <line x1={9} y1={16} x2={15} y2={16} />
+    </svg>
+  );
+}
+
+export function OpenCodeIcon({ size = 13, className }: { size?: number; className?: string }) {
+  return <OpenCodeBrandIcon width={size} height={size} className={className} />;
+}
+
+export function PiIcon({ size = 13, className }: { size?: number; className?: string }) {
+  return <PiBrandIcon width={size} height={size} className={className} />;
+}
+
+const TAILSCALE_DOTS = [3, 12, 21].flatMap((cy, row) =>
+  [3, 12, 21].map((cx, column) => ({
+    cx,
+    cy,
+    // The mark is a T: the middle row and the dot under its center are solid.
+    solid: row === 1 || (row === 2 && column === 1),
+  })),
+);
+
+/** The Tailscale mark: a three by three dot grid with a solid T. */
+export function TailscaleMark({ size = 12, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
+      {TAILSCALE_DOTS.map((dot) => (
+        <circle
+          key={`${dot.cx}:${dot.cy}`}
+          cx={dot.cx}
+          cy={dot.cy}
+          r={3}
+          opacity={dot.solid ? 1 : 0.3}
+        />
+      ))}
+    </svg>
+  );
+}
+
+/** A mouse pointer. Its tip is the top left corner of the glyph. */
+export function PointerArrow({ size = 24, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      className={`drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] ${className ?? ""}`}
+    >
+      <path
+        d="M1 1v14.6l3.9-3.7 2.7 6.1 2.7-1.2-2.7-6h5.5z"
+        fill="#0b0b0b"
+        stroke="#fff"
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

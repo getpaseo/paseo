@@ -17,6 +17,7 @@ export const KeyboardShiftContext = createContext<KeyboardShiftContextValue | nu
 export interface KeyboardTranslation {
   enabled: boolean;
   bottomClearance: number;
+  keyboardGap: number;
 }
 
 export interface WindowRect {
@@ -38,7 +39,7 @@ export interface KeyboardTranslationScope {
 
 /** Views outside a KeyboardTranslateView stay put. */
 export const KeyboardTranslationContext = createContext<KeyboardTranslationScope>({
-  translation: { enabled: false, bottomClearance: 0 },
+  translation: { enabled: false, bottomClearance: 0, keyboardGap: 0 },
   measureAtRest: measureInWindow,
 });
 

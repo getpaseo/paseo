@@ -131,6 +131,7 @@ export interface SeedDaemonClient {
         currentModeId: string | null;
         status: string;
         title?: string | null;
+        metadata?: Record<string, unknown>;
       };
     }>;
   }>;
@@ -157,8 +158,11 @@ export interface SeedDaemonClient {
   sendAgentMessage(
     agentId: string,
     text: string,
-    options?: { sourceAgentId?: string },
+    options?: { sourceAgentId?: string; activeTurnBehavior?: "interrupt" | "steer" | "queue" },
   ): Promise<void>;
+  listAgentBackgroundWork(
+    agentId: string,
+  ): Promise<import("@getpaseo/client").PaseoAgentBackgroundWorkItem[]>;
   waitForFinish(
     agentId: string,
     timeout?: number,

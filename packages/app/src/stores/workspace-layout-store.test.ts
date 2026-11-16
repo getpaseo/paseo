@@ -165,6 +165,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
   const sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
     prepare: async () => undefined,
+    canCheckFreshness: () => false,
+    applyCurrentTimeline: () => undefined,
     observe: (agentIds) => {
       observed.push(agentIds);
       return { ready: Promise.resolve(), release: async () => undefined };
@@ -174,6 +176,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
     onCatchUpEnded: () => undefined,
     reportError: () => undefined,
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
   });
   // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
   // agent behind a restored tab on the daemon.
@@ -4551,7 +4555,6 @@ describe("compact workspace sheet", () => {
             title: agent.id,
             cwd: "/repo",
             model: null,
-            features: undefined,
             thinkingOptionId: undefined,
             requiresAttention: false,
             attentionReason: null,
@@ -4566,6 +4569,24 @@ describe("compact workspace sheet", () => {
     );
   }
 
+  it("opens a subagent as a tab when a deferred request asks for one", () => {
+    const store = createCompactStore();
+    seedAgents([
+      { id: "parent", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child", parentAgentId: "parent", workspaceId: "sheet-ws" },
+    ]);
+
+    store.getState().deferOpenTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      intent: "reveal",
+      asTab: true,
+    });
+    store.getState().consumePendingOpen(workspaceKey);
+
+    expect(topSheet(store)).toBeUndefined();
+    expect(tabKinds(store)).toContain("agent");
+  });
   it("reveals a file in the sheet and leaves the tab strip unchanged", () => {
     const store = createCompactStore();
     const before = tabKinds(store);
@@ -5243,4 +5264,37 @@ describe("pending workspace opens", () => {
     expect(store.getState().pinnedAgentIdsByWorkspace["server:beta"]).toEqual(new Set(["b"]));
     expect(store.getState().pendingOpenByWorkspace).toEqual({});
   });
+});
+
+it("records repeated deliberate focus even when the selected pane and tab do not change", () => {
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
+  const workspaceKey = "server:focus";
+  const tabId = store
+    .getState()
+    .openTab({ workspaceKey, target: { kind: "agent", agentId: "agent" }, intent: "reveal" })!;
+  const paneId = store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId!;
+  for (const focus of [
+    () => store.getState().focusPane(workspaceKey, paneId),
+    () => store.getState().focusTab(workspaceKey, tabId),
+    () => store.getState().selectTabInPane(workspaceKey, paneId, tabId),
+  ]) {
+    focus();
+    const first = store.getState().focusRequest;
+    focus();
+    expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
+    expect(store.getState().focusRequest).not.toBe(first);
+  }
+});
+
+it("reentering a workspace restores its suspended pane without choosing another tab", () => {
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
+  const workspaceKey = "server:resume";
+  const tabId = store
+    .getState()
+    .openTab({ workspaceKey, target: { kind: "agent", agentId: "agent" }, intent: "reveal" })!;
+  const paneId = store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId;
+  store.getState().unfocusPane(workspaceKey);
+  store.getState().focusWorkspace(workspaceKey);
+  expect(store.getState().layoutByWorkspace[workspaceKey]!.focusedPaneId).toBe(paneId);
+  expect(store.getState().focusRequest).toEqual({ workspaceKey, tabId });
 });

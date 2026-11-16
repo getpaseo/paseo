@@ -2,12 +2,14 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import {
   holdOlderHistoryPages,
+  scrollTimelineRowIntoView,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
 import { getActiveTabTestId } from "../support/helpers/launcher";
 import type { Page, Locator } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { expectComposerVisible } from "../support/helpers/composer";
+import { withDirectoryPlugin } from "../support/helpers/plugin-timeline";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
 test.use({
@@ -49,15 +51,36 @@ async function seedAnsweredAgent(title: string) {
 }
 
 /** Chat rows between the latest turn's summary line and its reply, in document order. */
-async function rowsBetweenLatestSummaryAndReply(page: Page): Promise<number> {
-  return page.evaluate(() => {
+async function rowsBetweenLatestSummaryAndReply(
+  page: Page,
+  replyTestId = "assistant-message",
+): Promise<number> {
+  return page.evaluate((testId) => {
     const rows = [...document.querySelectorAll("[data-message-id]")];
     const summaryRow = rows.findLastIndex((row) => row.querySelector("[data-testid=turn-summary]"));
-    const replyRow = rows.findLastIndex((row) =>
-      row.querySelector("[data-testid=assistant-message]"),
-    );
+    const replyRow = rows.findLastIndex((row) => row.querySelector(`[data-testid="${testId}"]`));
     return replyRow - summaryRow - 1;
-  });
+  }, replyTestId);
+}
+
+/** The latest turn's summary line is a chat row of its own, sitting apart from its prompt. */
+async function expectSummaryLineSitsApartFromPrompt(page: Page) {
+  const summaryRow = () =>
+    page.evaluate(() => {
+      const latest = (testId: string) =>
+        [...document.querySelectorAll(`[data-testid="${testId}"]`)].at(-1)!;
+      const summary = latest("turn-summary");
+      const row = summary.closest("[data-message-id]")!;
+      return {
+        sharesRowWithPrompt: row.querySelector("[data-testid=user-message]") !== null,
+        gapBelowPrompt: Math.round(
+          summary.getBoundingClientRect().top -
+            latest("user-message").getBoundingClientRect().bottom,
+        ),
+      };
+    });
+  await expect.poll(summaryRow).toMatchObject({ sharesRowWithPrompt: false });
+  expect((await summaryRow()).gapBelowPrompt).toBeGreaterThan(0);
 }
 
 async function groupedToolsInsideLatestTurn(page: Page): Promise<string[]> {
@@ -125,6 +148,67 @@ async function expandAndCollapseLongPrompt(page: Page) {
 }
 
 test.describe("Turn collapse", () => {
+  test("folds work before a plugin-rendered reply and reopens it", async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await useChatDisplay(page, "collapseTurns");
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "plugin-reply-fold-",
+      title: "Plugin reply folding",
+      model: "ten-second-stream",
+      initialPrompt: "Make the fix and run the burst script.",
+    });
+    try {
+      await agent.client.waitForFinish(agent.agentId, 30_000);
+      await withDirectoryPlugin({
+        pluginId: "reply-fold-e2e",
+        source: `import React from "react";
+import { Text } from "react-native";
+import { z } from "zod";
+
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "reply", query: { itemType: "assistant_message" },
+    transform({ item, phase }) {
+      if (phase === "streaming") return undefined;
+      return { items: [{ type: "plugin", kind: "reply", version: 1, data: { text: item.text } }] };
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "reply", version: 1, schema: z.object({ text: z.string() }),
+    Component: ({ item }) => <Text testID="plugin-reply">{item.data.text}</Text>,
+  });
+  return () => {};
+}`,
+        run: async () => {
+          await page.setViewportSize({ width: 1280, height: 1000 });
+          await openAgentRoute(page, agent);
+          await expectComposerVisible(page);
+          for (const width of [1280, 390]) {
+            await page.setViewportSize({ width, height: 1000 });
+            const summary = page.getByTestId("turn-summary").last().getByRole("button");
+            const reply = page.getByTestId("plugin-reply").last();
+            await expect(summary).toBeVisible();
+            await expect(reply).toContainText("(end of synthetic stream)");
+            await expect.poll(() => rowsBetweenLatestSummaryAndReply(page, "plugin-reply")).toBe(0);
+            await page.screenshot({ path: info.outputPath(`plugin-reply-folded-${width}.png`) });
+            await summary.click();
+            await expect
+              .poll(() => rowsBetweenLatestSummaryAndReply(page, "plugin-reply"))
+              .toBeGreaterThan(0);
+            await expect(reply).toContainText("(end of synthetic stream)");
+            await summary.click();
+            await expect.poll(() => rowsBetweenLatestSummaryAndReply(page, "plugin-reply")).toBe(0);
+          }
+          await page.reload();
+          await expect(page.getByTestId("turn-summary").last()).toBeVisible();
+          await expect.poll(() => rowsBetweenLatestSummaryAndReply(page, "plugin-reply")).toBe(0);
+        },
+      });
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("folds each answered turn behind a summary line that opens it", async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1280, height: 1000 });
@@ -144,6 +228,7 @@ test.describe("Turn collapse", () => {
         /\(end of synthetic stream\)$/,
       );
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+      await expectSummaryLineSitsApartFromPrompt(page);
 
       await summary.click();
       await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBeGreaterThan(0);
@@ -343,7 +428,6 @@ test("opening a turn keeps the received message above it clipped on every frame"
       .getByTestId("user-message")
       .filter({ has: page.getByRole("button", { name: "Sent by Reviewer", exact: true }) });
     await expect(bubble.getByRole("button", { name: "Show more", exact: true })).toBeVisible();
-    await bubble.scrollIntoViewIfNeeded();
 
     await watchReceivedMessagePreview(page, "Sent by Reviewer");
     await page
@@ -407,34 +491,87 @@ async function seedWholeTurnHistory() {
   return agent;
 }
 
-test("loads complete long turns and preserves expansion while revealing older history", async ({
-  page,
-}) => {
+async function expectInitialFillIsConcealed(page: Page) {
+  await expect(page.getByTestId("agent-initial-fill")).toBeVisible();
+  await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "0");
+}
+
+async function expectFilledChatAtBottom(page: Page) {
+  await expect(page.getByTestId("agent-initial-fill")).toBeHidden();
+  const chat = page.getByTestId("agent-chat-scroll");
+  await expect(chat).toHaveCSS("opacity", "1");
+  await expect
+    .poll(() =>
+      chat.evaluate((element) => ({
+        hasOverflow: element.scrollHeight > element.clientHeight,
+        atBottom: Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2,
+      })),
+    )
+    .toEqual({ hasOverflow: true, atBottom: true });
+}
+
+test("fills collapsed history before revealing a fresh chat", async ({ page }) => {
   test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
   await useChatDisplay(page, "collapseTurns");
   const agent = await seedWholeTurnHistory();
   try {
     const history = await holdOlderHistoryPages(page, agent);
     await openAgentRoute(page, agent);
+    await history.expectRequestedPages(1);
+    await expectInitialFillIsConcealed(page);
+    history.releasePage(1);
+    await history.expectRequestedPages(2);
+    await expectInitialFillIsConcealed(page);
+    history.releasePage(2);
+    await expectFilledChatAtBottom(page);
+    await page.setViewportSize({ width: 1280, height: 8000 });
+    await history.expectRequestedPages(3);
+    await expect(page.getByTestId("agent-chat-scroll")).toHaveCSS("opacity", "1");
+    await expect(page.getByTestId("agent-initial-fill")).toBeHidden();
+    history.releasePage(3);
+    await history.expectSettledWithRequestedPages(3);
+    history.expectNoRepeatedEntries();
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("loads complete long turns and preserves expansion while revealing older history", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await useChatDisplay(page, "collapseTurns");
+  const agent = await seedWholeTurnHistory();
+  try {
+    const history = await holdOlderHistoryPages(page, agent);
+    await openAgentRoute(page, agent);
+    await history.expectRequestedPages(1);
+    history.releasePage(1);
+    await history.expectRequestedPages(2);
+    history.releasePage(2);
+    await expectFilledChatAtBottom(page);
     await expectComposerVisible(page);
     const latest = page
       .getByTestId("turn-summary")
       .getByRole("button", { name: "Ran 120 commands", exact: true });
     await expect(latest).toBeVisible();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
-    await latest.click();
-    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
-    await userScrollsTimelineToHistoryStart(page);
-    await history.expectRequestedPages(1);
-    history.releasePage(1);
     await expect(
       page
         .getByTestId("turn-summary")
         .getByRole("button", { name: "Ran 60 commands", exact: true }),
     ).toBeVisible();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
+    await latest.click();
+    await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
+    await userScrollsTimelineToHistoryStart(page);
+    await history.expectRequestedPages(3);
+    history.releasePage(3);
+    await page.getByTestId("scroll-to-bottom-button").click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(120);
     history.expectNoRepeatedEntries();
-    await latest.scrollIntoViewIfNeeded();
+    await scrollTimelineRowIntoView(page, latest);
     await latest.click();
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
   } finally {
@@ -529,6 +666,7 @@ async function expectThinkingPresentation(page: Page, autoExpandReasoning: boole
       .last();
     await expect(group).toContainText(/read 1 file/i);
     await expect(group.getByRole("button").first()).not.toContainText(/thought/i);
+    await scrollTimelineRowIntoView(page, group);
     await group.getByRole("button").first().click();
     // Expand thinking is off: the group opens its rows, but the thought row stays closed
     // until the reader opens it.

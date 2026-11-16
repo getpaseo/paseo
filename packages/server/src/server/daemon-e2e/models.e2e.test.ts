@@ -164,6 +164,46 @@ test("Antigravity creates an agent and answers a prompt with real agy", async ({
   }
 }, 120000);
 
+test("bundled fx requires a config entry and lists models instead of its providers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-fx-optin-"));
+  const record = path.join(root, "launches.txt");
+  await writeFile(record, "");
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["fx-provider"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.15.3",
+  });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    expect(client.getLastServerInfoMessage()?.features?.fxProvider).toBe(true);
+    const before = await client.getProvidersSnapshot();
+    expect(before.entries.some((entry) => entry.provider === "fx")).toBe(false);
+    expect(await readFile(record, "utf8")).toBe("");
+
+    await client.patchDaemonConfig({
+      providers: {
+        fx: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "fx-fixture.cjs")],
+          env: { FX_TEST_RECORD: record },
+        },
+      },
+    });
+    const { models } = await client.listProviderModels("fx", { cwd: root });
+    expect(models.map((model) => model.id)).toEqual(["fixture-small", "fixture-large"]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
+
 test("bundled Hoplite requires a config entry and removal survives restart", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-hoplite-optin-"));
   const record = path.join(root, "launches.txt");

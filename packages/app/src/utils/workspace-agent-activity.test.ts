@@ -93,6 +93,8 @@ describe("workspace agent activity index", () => {
             workspaceId: "workspace-error",
             status: "error",
             turn: { phase: "idle", cancellationRequestId: null },
+            requiresAttention: true,
+            attentionReason: "error",
             updatedAt: "2026-01-01T00:00:00.000Z",
           }),
         ],

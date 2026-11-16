@@ -17,6 +17,9 @@ final class WindowLayoutView: ExpoView {
   private var divisions: [CGRect] = []
   private var barGuide: UILayoutGuide?
   private var barEdge = "none"
+  private var bottomBarGuide: UILayoutGuide?
+  private var topBarGuide: UILayoutGuide?
+  private var occlusions: [CGRect] = []
   private var measuredBounds = CGRect.zero
 
   required init(appContext: AppContext? = nil) {
@@ -36,6 +39,8 @@ final class WindowLayoutView: ExpoView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     previousPayload = nil
+    bottomBarGuide = nil
+    topBarGuide = nil
     setNeedsUpdateConstraints()
     scheduleUpdate()
   }
@@ -60,11 +65,23 @@ final class WindowLayoutView: ExpoView {
     if #available(iOS 27.1, *) {
       // UIKit tracks these reads and invalidates constraints when regions change.
       divisions = reservedRegions(kind: .division).compactMap { $0.isActive ? $0.frame : nil }
+      // Frames already include the system's interactive margins.
+      occlusions = reservedRegions(kind: .occlusion).compactMap { $0.isActive ? $0.frame : nil }
       let edge: String
       switch traitCollection.verticalBarEdge {
       case .leading: edge = "leading"
       case .trailing: edge = "trailing"
       default: edge = "none"
+      }
+      if bottomBarGuide == nil {
+        // Where a bottom bar rests: above the home indicator, refined to the
+        // screen's corners rather than the rectangular safe area.
+        bottomBarGuide = layoutGuide(for: .bar(onEdge: UIRectEdge.bottom, extent: 44))
+      }
+      if topBarGuide == nil {
+        // Where a top bar rests. Beside a partial status region it can start above the
+        // rectangular safe area; content still keeps out of the occlusions.
+        topBarGuide = layoutGuide(for: .bar(onEdge: UIRectEdge.top, extent: 44))
       }
       if edge != barEdge {
         barEdge = edge
@@ -93,10 +110,23 @@ final class WindowLayoutView: ExpoView {
     let bar = barGuide?.layoutFrame
     var barPayload: Any = NSNull()
     if let bar, bar.width > 0, bar.height > 0 { barPayload = rect(bar) }
+    // Before UIKit resolves the guide its frame has no height: publish null (the
+    // system inset applies) rather than a false zero clearance.
+    var bottomClearance: Any = NSNull()
+    if let bottomBar = bottomBarGuide?.layoutFrame, bottomBar.height > 0 {
+      bottomClearance = max(0, bounds.maxY - bottomBar.maxY)
+    }
+    var topBar: Any = NSNull()
+    if let frame = topBarGuide?.layoutFrame, frame.width > 0, frame.height > 0 {
+      topBar = rect(frame)
+    }
     let payload: [String: Any] = [
       "bounds": rect(bounds),
       "verticalBarEdge": barEdge,
       "verticalBar": barPayload,
+      "bottomClearance": bottomClearance,
+      "topBar": topBar,
+      "occlusions": occlusions.map(rect),
       "divisions": divisions.map(rect)
     ]
     guard !NSDictionary(dictionary: payload).isEqual(to: previousPayload ?? [:]) else { return }

@@ -65,7 +65,6 @@ interface BottomAnchorControllerDriver {
     pendingVerification: AttemptContext | null;
     blockedReason: BottomAnchorBlockedReason | null;
   };
-  resetForAgent: () => void;
   applyRouteRequest: (request: BottomAnchorRouteRequest | null) => void;
   requestLocalAnchor: (request: BottomAnchorLocalRequest) => void;
   beginUserScroll: () => void;
@@ -480,17 +479,6 @@ function createBottomAnchorControllerDriver(
         blockedReason,
       };
     },
-    resetForAgent() {
-      lastRouteRequestKey = null;
-      pendingRequest = null;
-      blockedReason = null;
-      cancelPendingAttempt();
-      stickyMeasurementRevision = 0;
-      lastVerifiedStickyMeasurementRevision = 0;
-      isUserScrollActive = false;
-      mode = "sticky-bottom";
-      input.onModeChange("sticky-bottom");
-    },
     applyRouteRequest(request) {
       if (!request) {
         return;
@@ -511,11 +499,16 @@ function createBottomAnchorControllerDriver(
       cancelPendingAttempt();
       setModeInternal("detached");
     },
-    // Following resumes only for a gesture that ends at the end. Resuming from short of it would
-    // scroll the rows the finger just let go of, so a release above the end, or with output that
-    // arrived below it during the gesture, stays detached with the pill.
+    // A gesture ending short stays detached unless a newer prompt submission requested the end.
+    // Passive output must not move the rows the finger just let go of.
     endUserScroll(params) {
       isUserScrollActive = false;
+      // Submit arrives with the user's action; rewind and tail jumps can arrive after a fetch.
+      // A newer gesture would have detached again, so only a still-sticky submit owns release.
+      if (pendingRequest?.reason === "message-sent" && mode === "sticky-bottom") {
+        evaluate(false, "user_scroll_end");
+        return;
+      }
       if (params.isAtEnd) {
         if (mode === "detached") {
           setModeInternal("sticky-bottom");
@@ -740,10 +733,6 @@ export function useBottomAnchorController(input: {
       cancelFrame: (handle) => cancelScheduledAnimationFrame(handle),
     });
   }
-
-  useEffect(() => {
-    driverRef.current?.resetForAgent();
-  }, [input.agentId]);
 
   useEffect(() => {
     driverRef.current?.applyRouteRequest(input.routeRequest);
