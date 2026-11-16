@@ -17,23 +17,20 @@ export function useWorkspaceRowPress({
   const handlePress = useCallback(() => {
     const cancelled = didLongPressRef?.current ?? false;
     if (didLongPressRef) didLongPressRef.current = false;
+    const panel = usePanelStore.getState();
     acceptWorkspaceRowPress({
       cancelled,
-      isAvailable: () => {
-        const panel = usePanelStore.getState();
-        return (
-          !isNative ||
-          panel.layout.leftSidebar === "dock" ||
-          panel.mobilePanel.target === "agent-list"
-        );
-      },
+      native: isNative,
+      selected,
+      sidebar: panel.layout.leftSidebar,
+      target: panel.mobilePanel.target,
       // Paint on the native UI thread before navigation occupies JS; never wait for paint.
       acknowledge: () => {
         void feedback.current?.acknowledge();
       },
       navigate: onPress,
     });
-  }, [didLongPressRef, onPress]);
+  }, [didLongPressRef, onPress, selected]);
   return {
     onPress: handlePress,
     feedback: <RowFeedback ref={feedback} selected={selected} />,
