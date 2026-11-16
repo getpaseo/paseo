@@ -10,7 +10,7 @@ describe("shouldConfirmTerminalClose", () => {
     expect(shouldConfirmTerminalClose(true)).toBe(true);
   });
 
-  it("keeps the safe behavior for an older daemon without command state", () => {
-    expect(shouldConfirmTerminalClose(undefined)).toBe(true);
+  it("does not confirm when command state is unavailable", () => {
+    expect(shouldConfirmTerminalClose(undefined)).toBe(false);
   });
 });
