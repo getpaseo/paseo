@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import type { ComposerTouchState } from "./index";
 import { Keyboard, type GestureResponderEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useKeyboardShift } from "@/keyboard/shift";
 import { watchdog } from "@/watchdog";
 
 /** Temporary companion to Android TouchDiagnostics. No draft text or identifiers are recorded. */
@@ -10,8 +9,7 @@ export function recordComposerCommand(command: "send" | "queue" | "control" | "m
   watchdog?.record("touch.composer.command", { command });
 }
 
-export function useComposerTouchDiagnostics(state: ComposerTouchState) {
-  const keyboard = useKeyboardShift();
+function useRecordedComposerTouches(state: ComposerTouchState) {
   const insets = useSafeAreaInsets();
   const { active, disabled, sendDisabled, focused, fullscreen, voiceOverlay } = state;
   useEffect(() => {
@@ -40,9 +38,6 @@ export function useComposerTouchDiagnostics(state: ComposerTouchState) {
       voiceOverlay: String(state.voiceOverlay),
       keyboardVisible: String(Keyboard.isVisible()),
       keyboardHeight: String(Keyboard.metrics()?.height),
-      shift: String(keyboard.shift.value),
-      layoutShift: String(keyboard.layoutShift.value),
-      moving: String(keyboard.isMoving.value),
       safeBottom: String(insets.bottom),
     });
   };
@@ -57,3 +52,12 @@ export function useComposerTouchDiagnostics(state: ComposerTouchState) {
       }
     : {};
 }
+
+function useNoComposerTouches(_state: ComposerTouchState) {
+  return {};
+}
+
+// Build configuration is fixed for the module lifetime. Ordinary builds subscribe to nothing.
+export const useComposerTouchDiagnostics = watchdog
+  ? useRecordedComposerTouches
+  : useNoComposerTouches;

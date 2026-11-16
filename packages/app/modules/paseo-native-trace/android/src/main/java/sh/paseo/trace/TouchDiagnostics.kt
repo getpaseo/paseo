@@ -84,7 +84,7 @@ private class TouchCallback(
     )
     // This is a hit-test prediction, not proof that the eventual responder accepted the press.
     // Use RN's own pointer-events and transformed-coordinate rules, rather than approximating them.
-    val root = reactRootAt(window.decorView, event.rawX.toInt(), event.rawY.toInt())
+    val root = reactRootAt(window.decorView, event.x.toInt(), event.y.toInt())
     if (root != null) {
       try {
         val origin = IntArray(2)
@@ -128,6 +128,7 @@ private val diagnosticTestIds = setOf(
 // native modal windows expose a separate RootView and receive their own observation.
 private fun reactRootAt(view: View, x: Int, y: Int): ViewGroup? {
   if (view.visibility != View.VISIBLE || view.alpha == 0f) return null
+  // getGlobalVisibleRect is relative to the window root, including for offset/freeform windows.
   val bounds = Rect()
   if (!view.getGlobalVisibleRect(bounds) || !bounds.contains(x, y)) return null
   if (view is RootView && view is ViewGroup) return view
