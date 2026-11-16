@@ -8,7 +8,6 @@ import { test } from "node:test";
 const script = path.resolve("scripts", "postinstall-patches.mjs");
 const bin = path.resolve("node_modules", ".bin");
 const packageName = "react-native-draggable-flatlist";
-const patchFile = `${packageName}+4.0.3.patch`;
 
 for (const platform of ["ios", "android"]) {
   test(`patched Markdown ships ${platform} props generated from its native specs`, () => {
@@ -47,24 +46,24 @@ for (const platform of ["ios", "android"]) {
   });
 }
 
-function createCheckout() {
+function createCheckout({ name = packageName, version = "4.0.3", workspace = "" } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "postinstall-patches-"));
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "checkout" }));
-  const packageDir = path.join(root, "node_modules", packageName);
+  const packageDir = path.join(root, workspace, "node_modules", name);
   mkdirSync(packageDir, { recursive: true });
-  writeFileSync(
-    path.join(packageDir, "package.json"),
-    JSON.stringify({ name: packageName, version: "4.0.3" }),
-  );
+  if (workspace) {
+    writeFileSync(path.join(root, workspace, "package.json"), JSON.stringify({ name: "app" }));
+  }
+  writeFileSync(path.join(packageDir, "package.json"), JSON.stringify({ name, version }));
   writeFileSync(path.join(packageDir, "index.js"), "export const value = 1;\n");
   mkdirSync(path.join(root, "patches"));
   return { root, packageDir };
 }
 
-function writePatch(root, from, to) {
-  const file = `node_modules/${packageName}/index.js`;
+function writePatch(root, from, to, name = packageName, version = "4.0.3") {
+  const file = `node_modules/${name}/index.js`;
   writeFileSync(
-    path.join(root, "patches", patchFile),
+    path.join(root, "patches", `${name}+${version}.patch`),
     [
       `diff --git a/${file} b/${file}`,
       `--- a/${file}`,
@@ -84,6 +83,23 @@ function install(root, PATH = `${bin}${path.delimiter}${process.env.PATH}`) {
     env: { ...process.env, PATH },
   });
 }
+
+test("patches the app-local keyboard controller during install", () => {
+  const name = "react-native-keyboard-controller";
+  const version = "1.21.12";
+  const { root, packageDir } = createCheckout({ name, version, workspace: "packages/app" });
+  try {
+    writePatch(root, 1, 2, name, version);
+    const result = install(root);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(
+      readFileSync(path.join(packageDir, "index.js"), "utf8"),
+      "export const value = 2;\n",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("a patch that changed since it was applied removes the package for a clean reinstall", () => {
   const { root, packageDir } = createCheckout();
