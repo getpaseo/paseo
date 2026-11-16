@@ -46,7 +46,7 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { SettingsSection } from "@/components/settings/headings/settings-section";
+import { SettingsCard, SettingsDetailRow, SettingsSection } from "@/components/settings";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { OpenLocationSection } from "@/screens/settings/open-location/open-location-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
@@ -256,6 +256,172 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
   { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
   { id: "plugins", labelKey: "settings.hostSections.plugins", icon: Blocks },
+];
+
+interface SettingsSearchEntry {
+  kind: "section" | "host";
+  id: SettingsSectionSlug | HostSectionSlug;
+  labelKey: string;
+  terms: string[];
+}
+
+const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
+  {
+    kind: "section",
+    id: "general",
+    labelKey: "settings.sections.general",
+    terms: ["language", "setup", "send", "enter", "location"],
+  },
+  {
+    kind: "section",
+    id: "appearance",
+    labelKey: "settings.sections.appearance",
+    terms: ["theme", "font", "interface", "layout", "syntax", "color"],
+  },
+  {
+    kind: "section",
+    id: "sidebar",
+    labelKey: "settings.sections.sidebar",
+    terms: ["navigation", "footer", "workspace", "sidebar"],
+  },
+  {
+    kind: "section",
+    id: "chat",
+    labelKey: "settings.sections.chat",
+    terms: ["message", "markdown", "composer", "chat"],
+  },
+  {
+    kind: "section",
+    id: "terminal",
+    labelKey: "settings.sections.terminal",
+    terms: ["scrollback", "cursor", "shell", "terminal"],
+  },
+  {
+    kind: "section",
+    id: "browser",
+    labelKey: "settings.sections.browser",
+    terms: ["browser", "history", "cache", "cookies", "data"],
+  },
+  {
+    kind: "section",
+    id: "editor",
+    labelKey: "settings.sections.editor",
+    terms: ["editor", "font", "word wrap", "indent"],
+  },
+  {
+    kind: "section",
+    id: "files",
+    labelKey: "settings.sections.files",
+    terms: ["files", "icons", "explorer"],
+  },
+  {
+    kind: "section",
+    id: "shortcuts",
+    labelKey: "settings.sections.shortcuts",
+    terms: ["keyboard", "shortcut", "hotkey", "keys"],
+  },
+  {
+    kind: "section",
+    id: "integrations",
+    labelKey: "settings.sections.integrations",
+    terms: ["integration", "tools", "orchestration", "skills", "mcp"],
+  },
+  {
+    kind: "section",
+    id: "notifications",
+    labelKey: "settings.sections.notifications",
+    terms: ["notification", "sound", "alert"],
+  },
+  {
+    kind: "section",
+    id: "permissions",
+    labelKey: "settings.sections.permissions",
+    terms: ["permission", "microphone", "access"],
+  },
+  {
+    kind: "section",
+    id: "diagnostics",
+    labelKey: "settings.sections.diagnostics",
+    terms: ["diagnostic", "audio", "playback", "sound", "logs", "debug"],
+  },
+  {
+    kind: "section",
+    id: "about",
+    labelKey: "settings.sections.about",
+    terms: ["version", "update", "release", "changelog"],
+  },
+  {
+    kind: "host",
+    id: "host",
+    labelKey: "settings.hostSections.host",
+    terms: ["daemon", "connection", "pairing", "host"],
+  },
+  {
+    kind: "host",
+    id: "projects",
+    labelKey: "settings.hostSections.projects",
+    terms: ["project", "repository", "git"],
+  },
+  {
+    kind: "host",
+    id: "connections",
+    labelKey: "settings.hostSections.connections",
+    terms: ["connection", "ssh", "relay", "network"],
+  },
+  {
+    kind: "host",
+    id: "pair-device",
+    labelKey: "openProject.tiles.pairDevice.title",
+    terms: ["pair", "device", "phone", "qr"],
+  },
+  {
+    kind: "host",
+    id: "agents",
+    labelKey: "settings.hostSections.agents",
+    terms: ["agent", "provider", "model"],
+  },
+  {
+    kind: "host",
+    id: "metadata",
+    labelKey: "settings.hostSections.metadata",
+    terms: ["metadata", "generation", "summary"],
+  },
+  {
+    kind: "host",
+    id: "voice",
+    labelKey: "settings.hostSections.voice",
+    terms: ["voice", "dictation", "speech", "microphone"],
+  },
+  {
+    kind: "host",
+    id: "workspaces",
+    labelKey: "settings.hostSections.workspaces",
+    terms: ["workspace", "worktree", "setup", "scripts"],
+  },
+  {
+    kind: "host",
+    id: "providers",
+    labelKey: "settings.hostSections.providers",
+    terms: ["provider", "model", "claude", "codex", "opencode"],
+  },
+  {
+    kind: "host",
+    id: "usage",
+    labelKey: "settings.hostSections.usage",
+    terms: ["usage", "tokens", "quota", "credits"],
+  },
+  {
+    kind: "host",
+    id: "terminals",
+    labelKey: "settings.hostSections.terminals",
+    terms: ["terminal", "shell", "process"],
+  },
+  {
+    kind: "host",
+    id: "plugins",
+    labelKey: "settings.hostSections.plugins",
+    terms: ["plugin", "extension", "catalog"],
+  },
 ];
 
 function renderHostSettingsContent(
@@ -943,6 +1109,102 @@ function SidebarGroup({ label, children }: { label?: string; children: ReactNode
   );
 }
 
+interface SettingsSearchResultsProps {
+  query: string;
+  isDesktopApp: boolean;
+  hardwareKeyboardPresent: boolean;
+  hasHosts: boolean;
+  activeHostServerId: string | null;
+  onSelectSection: (section: SettingsSectionSlug) => void;
+  onSelectHostSection: (section: HostSectionSlug) => void;
+  onAddHost: () => void;
+  onClearSearch: () => void;
+}
+
+interface SettingsSearchResultRowProps {
+  entry: SettingsSearchEntry;
+  label: string;
+  hint: string;
+  onSelect: (entry: SettingsSearchEntry) => void;
+  testID: string;
+}
+
+function SettingsSearchResultRow({
+  entry,
+  label,
+  hint,
+  onSelect,
+  testID,
+}: SettingsSearchResultRowProps) {
+  const handlePress = useCallback(() => onSelect(entry), [entry, onSelect]);
+  return <SettingsDetailRow label={label} hint={hint} onPress={handlePress} testID={testID} />;
+}
+
+function SettingsSearchResults({
+  query,
+  isDesktopApp,
+  hardwareKeyboardPresent,
+  hasHosts,
+  activeHostServerId,
+  onSelectSection,
+  onSelectHostSection,
+  onAddHost,
+  onClearSearch,
+}: SettingsSearchResultsProps) {
+  const { t } = useTranslation();
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const results = useMemo(
+    () =>
+      SETTINGS_SEARCH_ENTRIES.filter((entry) => {
+        if (entry.kind === "section") {
+          const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
+          if (!item || !isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent))
+            return false;
+        } else if (!hasHosts) {
+          return false;
+        }
+        const searchableText = `${t(entry.labelKey)} ${entry.terms.join(" ")}`.toLocaleLowerCase();
+        return searchableText.includes(normalizedQuery);
+      }),
+    [hardwareKeyboardPresent, hasHosts, isDesktopApp, normalizedQuery, t],
+  );
+
+  const handleSelect = useCallback(
+    (entry: SettingsSearchEntry) => {
+      onClearSearch();
+      if (entry.kind === "section") {
+        onSelectSection(entry.id as SettingsSectionSlug);
+      } else if (activeHostServerId) {
+        onSelectHostSection(entry.id as HostSectionSlug);
+      } else {
+        onAddHost();
+      }
+    },
+    [activeHostServerId, onAddHost, onClearSearch, onSelectHostSection, onSelectSection],
+  );
+
+  return (
+    <SettingsSection title={t("settings.title")} testID="settings-search-results">
+      {results.length > 0 ? (
+        <SettingsCard>
+          {results.map((entry) => (
+            <SettingsSearchResultRow
+              key={`${entry.kind}-${entry.id}`}
+              entry={entry}
+              label={t(entry.labelKey)}
+              hint={t(entry.kind === "host" ? "settings.groups.host" : "settings.groups.app")}
+              onSelect={handleSelect}
+              testID={`settings-search-result-${entry.kind}-${entry.id}`}
+            />
+          ))}
+        </SettingsCard>
+      ) : (
+        <Text style={styles.searchNoResults}>{t("common.empty.noResults")}</Text>
+      )}
+    </SettingsSection>
+  );
+}
+
 interface SettingsSidebarProps {
   view: SettingsView;
   onSelectSection: (section: SettingsSectionSlug) => void;
@@ -952,6 +1214,8 @@ interface SettingsSidebarProps {
   onBackToWorkspace: () => void;
   activeHostServerId: string | null;
   layout: "desktop" | "mobile";
+  searchInput: string;
+  onSearchInputChange: (value: string) => void;
 }
 
 function SettingsSidebar({
@@ -963,13 +1227,14 @@ function SettingsSidebar({
   onBackToWorkspace,
   activeHostServerId,
   layout,
+  searchInput,
+  onSearchInputChange,
 }: SettingsSidebarProps) {
   const { theme, rt } = useUnistyles();
   const { t } = useTranslation();
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
-  const hasHosts = sortedHosts.length > 0;
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
@@ -979,21 +1244,6 @@ function SettingsSidebar({
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
-  const [searchInput, setSearchInput] = useState("");
-  const searchQuery = searchInput.trim().toLocaleLowerCase();
-  const filteredItems = useMemo(
-    () => items.filter((item) => t(item.labelKey).toLocaleLowerCase().includes(searchQuery)),
-    [items, searchQuery, t],
-  );
-  const filteredHostItems = useMemo(
-    () =>
-      HOST_SECTION_ITEMS.filter((item) =>
-        t(item.labelKey).toLocaleLowerCase().includes(searchQuery),
-      ),
-    [searchQuery, t],
-  );
-  const showHostGroup = hasHosts && filteredHostItems.length > 0;
-  const showAddHostGroup = !hasHosts && !searchQuery;
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -1013,7 +1263,7 @@ function SettingsSidebar({
       <View style={sidebarStyles.searchWrap}>
         <SearchField
           value={searchInput}
-          onChangeText={setSearchInput}
+          onChangeText={onSearchInputChange}
           placeholder={t("common.placeholders.search")}
           accessibilityLabel={t("common.actions.search")}
           clearAccessibilityLabel={t("sessions.actions.clearSearch")}
@@ -1021,9 +1271,9 @@ function SettingsSidebar({
           clearTestID="settings-search-clear"
         />
       </View>
-      {filteredItems.length > 0 ? (
+      {layout === "desktop" || !searchInput.trim() ? (
         <SidebarGroup label={t("settings.groups.app")}>
-          {filteredItems.map((item) => (
+          {items.map((item) => (
             <SidebarSectionButton
               key={item.id}
               itemId={item.id}
@@ -1035,7 +1285,7 @@ function SettingsSidebar({
           ))}
         </SidebarGroup>
       ) : null}
-      {showHostGroup ? (
+      {layout === "desktop" || !searchInput.trim() ? (
         <SidebarGroup label={t("settings.groups.host")}>
           <HostPicker
             activeServerId={activeHostServerId}
@@ -1044,7 +1294,7 @@ function SettingsSidebar({
             onAddHost={onAddHost}
             enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
-          {filteredHostItems.map((item) => (
+          {HOST_SECTION_ITEMS.map((item) => (
             <SidebarHostSectionButton
               key={item.id}
               itemId={item.id}
@@ -1056,7 +1306,7 @@ function SettingsSidebar({
           ))}
         </SidebarGroup>
       ) : null}
-      {showAddHostGroup ? (
+      {layout === "desktop" || !searchInput.trim() ? (
         <SidebarGroup>
           <Pressable
             accessibilityRole="button"
@@ -1093,9 +1343,6 @@ function SettingsSidebar({
             </Pressable>
           ) : null}
         </SidebarGroup>
-      ) : null}
-      {searchQuery && filteredItems.length === 0 && filteredHostItems.length === 0 ? (
-        <Text style={sidebarStyles.noResults}>{t("common.empty.noResults")}</Text>
       ) : null}
     </>
   );
@@ -1148,6 +1395,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const { t } = useTranslation();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
+  const [settingsSearchInput, setSettingsSearchInput] = useState("");
   const [isPlaybackTestRunning, setIsPlaybackTestRunning] = useState(false);
   const [playbackTestResult, setPlaybackTestResult] = useState<string | null>(null);
   const isDesktopApp = isElectronRuntime();
@@ -1304,6 +1552,10 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     returnFromSettings({ kind: "root" });
   }, []);
 
+  const handleClearSettingsSearch = useCallback(() => {
+    setSettingsSearchInput("");
+  }, []);
+
   // A plugin's page draws its own header; the compact back header names the plugin.
   const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
     if (view.kind === "plugin")
@@ -1343,6 +1595,21 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
 
   const content: ReactNode = (() => {
+    if (!isCompactLayout && settingsSearchInput.trim()) {
+      return (
+        <SettingsSearchResults
+          query={settingsSearchInput}
+          isDesktopApp={isDesktopApp}
+          hardwareKeyboardPresent={hardwareKeyboardPresent}
+          hasHosts={sortedHosts.length > 0}
+          activeHostServerId={activeHostServerId}
+          onSelectSection={handleSelectSection}
+          onSelectHostSection={handleSelectHostSection}
+          onAddHost={handleAddHost}
+          onClearSearch={handleClearSettingsSearch}
+        />
+      );
+    }
     if (pluginPage)
       return (
         <PluginPage
@@ -1423,7 +1690,22 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             onBackToWorkspace={handleBackToWorkspace}
             activeHostServerId={activeHostServerId}
             layout="mobile"
+            searchInput={settingsSearchInput}
+            onSearchInputChange={setSettingsSearchInput}
           />
+          {settingsSearchInput.trim() ? (
+            <SettingsSearchResults
+              query={settingsSearchInput}
+              isDesktopApp={isDesktopApp}
+              hardwareKeyboardPresent={hardwareKeyboardPresent}
+              hasHosts={sortedHosts.length > 0}
+              activeHostServerId={activeHostServerId}
+              onSelectSection={handleSelectSection}
+              onSelectHostSection={handleSelectHostSection}
+              onAddHost={handleAddHost}
+              onClearSearch={handleClearSettingsSearch}
+            />
+          ) : null}
         </ScrollView>
       </View>
     );
@@ -1460,6 +1742,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             onBackToWorkspace={handleBackToWorkspace}
             activeHostServerId={activeHostServerId}
             layout="desktop"
+            searchInput={settingsSearchInput}
+            onSearchInputChange={setSettingsSearchInput}
           />
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
@@ -1532,6 +1816,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
   },
+  searchNoResults: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.base,
+    paddingVertical: theme.spacing[4],
+  },
 }));
 
 const desktopStyles = StyleSheet.create({
@@ -1567,12 +1856,6 @@ const sidebarStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
     paddingTop: theme.spacing[2],
     paddingBottom: theme.spacing[1],
-  },
-  noResults: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[4],
   },
   // Compact values draw each group as an island of tiles; desktop keeps a plain list.
   group: {
