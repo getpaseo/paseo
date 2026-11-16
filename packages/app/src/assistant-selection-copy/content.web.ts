@@ -2,7 +2,7 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import {
   createCodeClipboardContent,
-  createMarkdownClipboardContent,
+  createSelectionClipboardContent,
   type MarkdownClipboardContent,
 } from "@/utils/rich-clipboard";
 import {
@@ -56,40 +56,50 @@ function copySemanticAttributes(original: Element, copy: Element): void {
   }
 }
 
-const turndown = new TurndownService({
-  bulletListMarker: "-",
-  codeBlockStyle: "fenced",
-  emDelimiter: "_",
-  strongDelimiter: "**",
-});
-turndown.use(gfm);
-turndown.addRule("escapedGfmTableCell", {
-  filter: ["th", "td"],
-  replacement: (content, node) => {
-    const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
-    const prefix = index === 0 ? "| " : " ";
-    return `${prefix}${content.replace(/\|/g, "\\|")} |`;
-  },
-});
-turndown.addRule("gfmStrikethrough", {
-  filter: ["del", "s"],
-  replacement: (content) => `~~${content}~~`,
-});
-turndown.addRule("compactListItem", {
-  filter: "li",
-  replacement: (content, node, options) => {
-    const item = content
-      .replace(/^\n+/, "")
-      .replace(/\n+$/, "\n")
-      // Every non-empty line, so indented code lines stay inside the item.
-      .replace(/\n(?=[^\n])/g, "\n    ");
-    const parent = node.parentElement;
-    if (parent?.nodeName !== "OL") {
-      return `${options.bulletListMarker} ${item}\n`;
-    }
-    return `${node.getAttribute("value")}. ${item}\n`;
-  },
-});
+function createTurndown(flavor: "markdown" | "plain"): TurndownService {
+  const turndown = new TurndownService({
+    bulletListMarker: "-",
+    codeBlockStyle: "fenced",
+    emDelimiter: "_",
+    strongDelimiter: "**",
+  });
+  turndown.use(gfm);
+  if (flavor === "markdown") {
+    turndown.addRule("escapedGfmTableCell", {
+      filter: ["th", "td"],
+      replacement: (content, node) => {
+        const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
+        const prefix = index === 0 ? "| " : " ";
+        return `${prefix}${content.replace(/\|/g, "\\|")} |`;
+      },
+    });
+  } else {
+    turndown.escape = (text) => text;
+  }
+  turndown.addRule("gfmStrikethrough", {
+    filter: ["del", "s"],
+    replacement: (content) => `~~${content}~~`,
+  });
+  turndown.addRule("compactListItem", {
+    filter: "li",
+    replacement: (content, node, options) => {
+      const item = content
+        .replace(/^\n+/, "")
+        .replace(/\n+$/, "\n")
+        // Every non-empty line, so indented code lines stay inside the item.
+        .replace(/\n(?=[^\n])/g, "\n    ");
+      const parent = node.parentElement;
+      if (parent?.nodeName !== "OL") {
+        return `${options.bulletListMarker} ${item}\n`;
+      }
+      return `${node.getAttribute("value")}. ${item}\n`;
+    },
+  });
+  return turndown;
+}
+
+const markdownTurndown = createTurndown("markdown");
+const plainTurndown = createTurndown("plain");
 
 export function createAssistantSelectionClipboardContent(
   selection: Selection | null,
@@ -117,11 +127,15 @@ export function createAssistantSelectionClipboardContent(
   }
   restoreMarkdownElements(container);
 
-  const markdown = turndown.turndown(container.innerHTML).trim();
+  const markdown = markdownTurndown.turndown(container).trim();
   if (!markdown) {
     return null;
   }
-  const content = createMarkdownClipboardContent(markdown);
+  // text/plain carries unescaped Markdown: a plain target shows backslashes literally.
+  // text/html is rendered from escaped Markdown, so literal Markdown characters stay
+  // literal in a rich target.
+  const plainText = plainTurndown.turndown(container).trim();
+  const content = createSelectionClipboardContent(markdown, plainText);
   return { ...content, html: flattenClipboardListMarkup(content.html) };
 }
 
@@ -654,10 +668,9 @@ function restoreMarkdownElements(container: HTMLElement): void {
 }
 
 /**
- * Each item carries its number before Turndown re-parses the HTML. Until then every
- * child of the list is one item, including a partly selected item demoted to a `p`.
- * The parser splits a `p` that holds a code block into several siblings, so counting
- * siblings afterwards numbers the next item too high.
+ * Assign item numbers before passing the DOM to Turndown. A partly selected item
+ * still takes its original list position when copied as a paragraph, so the following
+ * items keep their numbers.
  */
 function numberOrderedListItems(list: Element, start: number): void {
   Array.from(list.children).forEach((child, index) => {

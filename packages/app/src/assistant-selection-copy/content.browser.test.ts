@@ -851,6 +851,53 @@ it("copies a selection inside semantic inline code without Markdown escaping", (
   );
 });
 
+it("keeps intraword underscores in prose unescaped", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Set max_retries and snake_case before the call.</p>";
+  const paragraph = fixtureElement(message, "p");
+  expect(createAssistantSelectionClipboardContent(selectNodeContents(paragraph))?.plainText).toBe(
+    "Set max_retries and snake_case before the call.",
+  );
+});
+
+it("copies literal paired underscores raw in text/plain and escaped in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>literal _word_ stays literal</p>";
+  const paragraph = fixtureElement(message, "p");
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(paragraph));
+  expect(content?.plainText).toBe("literal _word_ stays literal");
+  expect(content?.html).toContain("literal _word_ stays literal");
+});
+
+it("copies a path the renderer recognized as text, and an authored link as a link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>See <a href="src/index.ts" data-paseo-markdown-unwrap="true">src/index.ts</a> and <a href="https://example.test/doc">the doc</a>.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("See src/index.ts and [the doc](https://example.test/doc).");
+  expect(content?.html).not.toContain('href="src/index.ts"');
+});
+
+it("copies a recognized inline-code path without its link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Edited <a href="src/app.tsx" data-paseo-markdown-unwrap="true"><code>src/app.tsx</code></a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Edited `src/app.tsx` today.");
+  expect(content?.html).not.toContain('href="src/app.tsx"');
+});
+
+it("copies literal table cell pipes in both clipboard flavors", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    "<table><thead><tr><th>Header | label</th></tr></thead><tbody><tr><td>Value | detail</td></tr></tbody></table>";
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toContain("Header | label");
+  expect(content?.plainText).toContain("Value | detail");
+  expect(content?.html).toContain("<th>Header | label</th>");
+  expect(content?.html).toContain("<td>Value | detail</td>");
+});
+
 it("copies a workspace image path instead of its temporary display URL", () => {
   const message = mountFixture();
   const sources = JSON.stringify({ "blob:preview": "assets/chart.png" });
