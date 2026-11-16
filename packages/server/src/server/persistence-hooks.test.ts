@@ -5,6 +5,7 @@ import {
   buildSessionConfig,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
+import { buildVoiceModeSystemPrompt } from "./voice-config.js";
 
 function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord {
   const now = new Date().toISOString();
@@ -126,6 +127,37 @@ describe("persistence hooks", () => {
         },
       },
     });
+  });
+
+  test("a saved legacy voice mode off block is not resumed as the system prompt", () => {
+    const record = createRecord({
+      config: {
+        systemPrompt:
+          "<paseo_voice_mode>\nPaseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.\n</paseo_voice_mode>",
+      },
+    });
+
+    expect(buildConfigOverrides(record)).toHaveProperty("systemPrompt", undefined);
+    expect(buildSessionConfig(record)?.systemPrompt).toBeUndefined();
+  });
+
+  test("the agent's own system prompt is resumed without a saved legacy voice mode off block", () => {
+    const record = createRecord({
+      config: {
+        systemPrompt:
+          "Be terse.\n\n<paseo_voice_mode>\nPaseo voice mode is now off. Ignore any earlier Paseo voice mode instructions in this thread.\n</paseo_voice_mode>",
+      },
+    });
+
+    expect(buildConfigOverrides(record).systemPrompt).toBe("Be terse.");
+  });
+
+  test("an active voice mode block is still resumed", () => {
+    const voiceModeOn = buildVoiceModeSystemPrompt("Be terse.");
+    const record = createRecord({ config: { systemPrompt: voiceModeOn } });
+
+    expect(buildConfigOverrides(record).systemPrompt).toBe(voiceModeOn);
+    expect(buildSessionConfig(record)?.systemPrompt).toBe(voiceModeOn);
   });
 
   test("buildConfigOverrides drops persisted internal paseo MCP server", () => {
