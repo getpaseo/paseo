@@ -156,8 +156,10 @@ keeps following.
 
 Following resumes only for a gesture that ends within 1 px of the end, either when the finger lifts
 or when momentum stops. A release past the end counts: iOS bounces back to the end, and lines that
-land during the bounce must keep scrolling in. A release anywhere short of the end stays detached
-with the scroll-to-bottom pill, so the rows the user let go of never move.
+land during the bounce must keep scrolling in. A release short of the end stays detached with the scroll-to-bottom pill unless you submitted
+another prompt during that gesture. That submit requests the end after the gesture finishes;
+a new drag after submitting takes ownership again. Rewind and tail-fetch completions do not
+override a scroll away because they can arrive after the action that requested them.
 
 ### Draw distance
 
