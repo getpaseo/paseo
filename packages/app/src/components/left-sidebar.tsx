@@ -845,8 +845,19 @@ function DesktopSidebar({
             ) : (
               <TitlebarDragRegion />
             )}
-            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
           </View>
+          <ScrollView
+            // The drag overlay stays above this viewport: Electron does not clip
+            // app-region rects to scroll viewports, so a scrolled-out row would
+            // still claim its no-drag rect.
+            dataSet={WINDOW_CONTENT_DATASET}
+            style={styles.desktopNavScroll}
+            showsVerticalScrollIndicator={false}
+            alwaysBounceVertical={false}
+            testID="sidebar-nav-scroll"
+          >
+            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+          </ScrollView>
 
           <SidebarViewSlot dismiss={closeSidebar}>
             <SidebarToastRegion active={active}>
@@ -927,6 +938,8 @@ const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
+const WINDOW_CONTENT_DATASET = { "window-content": "" };
+
 const staticStyles = RNStyleSheet.create({
   desktopSidebar: {
     position: "relative" as const,
@@ -939,8 +952,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[2],
     gap: 2,
     paddingBottom: theme.spacing[1.5],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   sidebarHeaderGroupFlush: {
     paddingTop: 0,
@@ -951,6 +962,15 @@ const styles = StyleSheet.create((theme) => ({
     flexGrow: 0,
     flexShrink: 1,
     maxHeight: "50%",
+  },
+  // Desktop applies the same cap. The border sits on the viewport so it stays
+  // put while the rows scroll.
+  desktopNavScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxHeight: "50%",
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   mobileNavRowsGroup: {
     paddingTop: theme.spacing[2],
