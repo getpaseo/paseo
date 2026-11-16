@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
+import type { DownloadedFile } from "@/downloads/share-file";
 import {
   MAX_SESSION_DOWNLOAD_BYTES,
   useDownloadStore,
@@ -73,13 +74,13 @@ function createFileReader(read: () => Promise<{ bytes: Uint8Array; size: number 
   };
 }
 
-function createFileSaver() {
+function createFileSaver(uri: string | null = null) {
   const savedFiles: DownloadedBytes[] = [];
   return {
     savedFiles,
     save: async (file: DownloadedBytes) => {
       savedFiles.push(file);
-      return null;
+      return uri;
     },
   };
 }
@@ -90,6 +91,7 @@ interface StartInput {
   token?: ReturnType<typeof createTokenRequest>;
   reader?: ReturnType<typeof createFileReader>;
   saver?: ReturnType<typeof createFileSaver>;
+  exporter?: (file: DownloadedFile) => Promise<boolean>;
 }
 
 async function startDownload(input: StartInput): Promise<Download | undefined> {
@@ -108,6 +110,7 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     requestFileDownloadToken: token.request,
     readFile: reader.read,
     saveFile: saver.save,
+    exportFile: input.exporter,
   });
   const { activeDownloadId, downloads } = useDownloadStore.getState();
   return activeDownloadId ? downloads.get(activeDownloadId) : undefined;
@@ -116,6 +119,66 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
 describe("download store transport selection", () => {
   beforeEach(() => {
     useDownloadStore.setState({ downloads: new Map(), activeDownloadId: null });
+  });
+
+  it("waits for the destination write before completing a native download", async () => {
+    const exporting = Promise.withResolvers<void>();
+    const destinationWrite = Promise.withResolvers<boolean>();
+    const exportedFiles: DownloadedFile[] = [];
+    const pendingDownload = startDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      saver: createFileSaver("file:///cache/report.bin"),
+      exporter: async (file) => {
+        exportedFiles.push(file);
+        exporting.resolve();
+        return destinationWrite.promise;
+      },
+    });
+
+    await exporting.promise;
+    const { activeDownloadId, downloads } = useDownloadStore.getState();
+    expect(downloads.get(activeDownloadId!)).toMatchObject({ status: "exporting" });
+    expect(exportedFiles).toEqual([
+      { uri: "file:///cache/report.bin", fileName: FILE_NAME, mimeType: MIME_TYPE },
+    ]);
+
+    useDownloadStore.getState().dismissAllCompleted();
+    expect(useDownloadStore.getState().downloads.get(activeDownloadId!)).toMatchObject({
+      status: "exporting",
+    });
+
+    destinationWrite.resolve(true);
+    expect(await pendingDownload).toMatchObject({ status: "complete" });
+  });
+
+  it("dismisses a cancelled export without reporting success or failure", async () => {
+    const download = await startDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      saver: createFileSaver("file:///cache/report.bin"),
+      exporter: async () => false,
+    });
+
+    expect(download).toBeUndefined();
+    expect(useDownloadStore.getState().downloads.size).toBe(0);
+    expect(useDownloadStore.getState().activeDownloadId).toBeNull();
+  });
+
+  it("reports a destination write failure instead of completing the download", async () => {
+    const download = await startDownload({
+      profile: profileWith([relayConnection]),
+      activeConnectionId: relayConnection.id,
+      saver: createFileSaver("file:///cache/report.bin"),
+      exporter: async () => {
+        throw new Error("Destination storage is full");
+      },
+    });
+
+    expect(download).toMatchObject({
+      status: "error",
+      message: "Destination storage is full",
+    });
   });
 
   it("downloads over the session when the active connection is the relay", async () => {

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { File as FSFile, Paths } from "expo-file-system";
 import * as LegacyFileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
+import { exportDownloadedFile } from "@/downloads/export-file";
 import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
 import { openExternalUrl } from "@/utils/open-external-url";
@@ -31,7 +31,7 @@ export interface Download {
   serverId: string;
   scopeId: string;
   fileName: string;
-  status: "downloading" | "complete" | "error";
+  status: "downloading" | "exporting" | "complete" | "error";
   message?: string;
   progress?: DownloadProgress;
   startedAt: number;
@@ -59,6 +59,7 @@ interface DownloadState {
     /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
     readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
     saveFile?: typeof saveDownloadedBytes;
+    exportFile?: typeof exportDownloadedFile;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -86,6 +87,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     requestFileDownloadToken,
     readFile,
     saveFile = saveDownloadedBytes,
+    exportFile = exportDownloadedFile,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -110,6 +112,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
 
       const resolvedFileName = tokenResponse.fileName ?? fileName;
       const downloadTarget = resolveDaemonDownloadTarget(daemonProfile, activeConnectionId);
+      let savedUri: string | null;
       if (!downloadTarget) {
         // Relay, SSH, socket and pipe hosts have no HTTP endpoint: read the file over the
         // session socket that is already connected (#543).
@@ -129,80 +132,89 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
             `File transfer incomplete: expected ${size} bytes, received ${bytes.byteLength}.`,
           );
         }
-        const savedUri = await saveFile({
+        savedUri = await saveFile({
           bytes,
           fileName: resolvedFileName,
           mimeType: tokenResponse.mimeType,
         });
-        get().completeDownload(id);
-        if (savedUri !== null) {
-          await shareSavedFile(savedUri, tokenResponse.mimeType, resolvedFileName);
+      } else {
+        if (!downloadTarget.baseUrl) {
+          throw new Error(i18n.t("downloads.hostUnavailable"));
         }
-        return;
-      }
-      if (!downloadTarget.baseUrl) {
-        throw new Error(i18n.t("downloads.hostUnavailable"));
-      }
 
-      const downloadUrl = buildDownloadUrl(
-        downloadTarget.baseUrl,
-        tokenResponse.token,
-        isWeb ? downloadTarget.authCredentials : null,
-      );
+        const downloadUrl = buildDownloadUrl(
+          downloadTarget.baseUrl,
+          tokenResponse.token,
+          isWeb ? downloadTarget.authCredentials : null,
+        );
 
-      if (isWeb) {
-        triggerBrowserDownload(downloadUrl, resolvedFileName);
-        get().completeDownload(id);
-        return;
-      }
+        if (isWeb) {
+          triggerBrowserDownload(downloadUrl, resolvedFileName);
+          get().completeDownload(id);
+          return;
+        }
 
-      const downloadStartTime = Date.now();
-      const targetFile = resolveDownloadTargetFile(resolvedFileName);
-      const downloadResumable = LegacyFileSystem.createDownloadResumable(
-        downloadUrl,
-        targetFile.uri,
-        downloadTarget.authHeader
-          ? { headers: { Authorization: downloadTarget.authHeader } }
-          : undefined,
-        (data) => {
-          const now = Date.now();
-          const { totalBytesWritten, totalBytesExpectedToWrite } = data;
+        const downloadStartTime = Date.now();
+        const targetFile = resolveDownloadTargetFile(resolvedFileName);
+        const downloadResumable = LegacyFileSystem.createDownloadResumable(
+          downloadUrl,
+          targetFile.uri,
+          downloadTarget.authHeader
+            ? { headers: { Authorization: downloadTarget.authHeader } }
+            : undefined,
+          (data) => {
+            const now = Date.now();
+            const { totalBytesWritten, totalBytesExpectedToWrite } = data;
 
-          if (totalBytesExpectedToWrite <= 0) {
-            return;
-          }
+            if (totalBytesExpectedToWrite <= 0) {
+              return;
+            }
 
-          const percent = totalBytesWritten / totalBytesExpectedToWrite;
-          const elapsed = (now - downloadStartTime) / 1000;
-          const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
-          const remaining = totalBytesExpectedToWrite - totalBytesWritten;
-          const eta = speed > 0 ? remaining / speed : 0;
+            const percent = totalBytesWritten / totalBytesExpectedToWrite;
+            const elapsed = (now - downloadStartTime) / 1000;
+            const speed = elapsed > 0 ? totalBytesWritten / elapsed : 0;
+            const remaining = totalBytesExpectedToWrite - totalBytesWritten;
+            const eta = speed > 0 ? remaining / speed : 0;
 
-          get().updateProgress(id, {
-            percent,
-            bytesWritten: totalBytesWritten,
-            totalBytes: totalBytesExpectedToWrite,
-            speed,
-            eta,
-          });
-        },
-      );
+            get().updateProgress(id, {
+              percent,
+              bytesWritten: totalBytesWritten,
+              totalBytes: totalBytesExpectedToWrite,
+              speed,
+              eta,
+            });
+          },
+        );
 
-      const result = await downloadResumable.downloadAsync();
-      if (!result) {
-        throw new Error(i18n.t("downloads.cancelled"));
+        const result = await downloadResumable.downloadAsync();
+        if (!result) {
+          throw new Error(i18n.t("downloads.cancelled"));
+        }
+
+        savedUri = result.uri;
       }
 
+      if (savedUri !== null) {
+        set((state) => {
+          const pendingDownload = state.downloads.get(id);
+          if (!pendingDownload) return state;
+          const downloads = new Map(state.downloads);
+          downloads.set(id, { ...pendingDownload, status: "exporting" });
+          return { downloads };
+        });
+        const exported = await exportFile({
+          uri: savedUri,
+          mimeType: tokenResponse.mimeType,
+          fileName: resolvedFileName,
+        });
+        if (!exported) {
+          get().dismissDownload(id);
+          return;
+        }
+      }
       get().completeDownload(id);
-
-      await shareSavedFile(result.uri, tokenResponse.mimeType, resolvedFileName);
     } catch (error) {
       const message = error instanceof Error ? error.message : i18n.t("downloads.failed");
-      if (isWeb) {
-        console.warn("[DownloadStore] Download failed:", message);
-        get().failDownload(id, message);
-        return;
-      }
       get().failDownload(id, message);
     }
   },
@@ -257,7 +269,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     set((state) => {
       const updated = new Map(state.downloads);
       for (const [id, download] of updated) {
-        if (download.status !== "downloading") {
+        if (download.status === "complete" || download.status === "error") {
           updated.delete(id);
         }
       }
@@ -351,7 +363,7 @@ function buildDownloadUrl(
 
 /**
  * Saves bytes read over the session. Web and Electron hand them to the browser's download
- * manager and return `null`; native writes the file and returns its URI for the share sheet.
+ * manager and return `null`; native writes the file and returns its URI for export.
  */
 async function saveDownloadedBytes({
   bytes,
@@ -373,21 +385,6 @@ async function saveDownloadedBytes({
   const targetFile = resolveDownloadTargetFile(fileName);
   targetFile.write(bytes);
   return targetFile.uri;
-}
-
-async function shareSavedFile(
-  uri: string,
-  mimeType: string | null,
-  fileName: string,
-): Promise<void> {
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(uri, {
-      mimeType: mimeType ?? undefined,
-      dialogTitle: fileName
-        ? i18n.t("downloads.shareFileNamed", { fileName })
-        : i18n.t("downloads.shareFile"),
-    });
-  }
 }
 
 function triggerBrowserDownload(url: string, fileName: string) {
