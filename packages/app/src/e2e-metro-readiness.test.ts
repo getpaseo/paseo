@@ -1,7 +1,70 @@
 import { createServer, type Server } from "node:http";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { waitForMetro, warmMetro } from "../e2e/support/global-setup";
+
+interface MetroExclusionsConfig {
+  resolver: { blockList: RegExp | RegExp[] };
+}
+
+const requireMetroConfig = createRequire(import.meta.url);
+const appDirectory = path.resolve(import.meta.dirname, "..");
+
+function metroBlocks(config: MetroExclusionsConfig, filePath: string): boolean {
+  const patterns = Array.isArray(config.resolver.blockList)
+    ? config.resolver.blockList
+    : [config.resolver.blockList];
+  // Crawling checks native paths; watcher filtering also checks normalized paths.
+  return patterns.some(
+    (pattern) => pattern.test(filePath) || pattern.test(filePath.replaceAll("\\", "/")),
+  );
+}
+
+test("Metro excludes replaced server build directories while retaining app dependencies", () => {
+  const config = requireMetroConfig("../metro.config.cjs") as MetroExclusionsConfig;
+  const serverDist = path.resolve(appDirectory, "../server/dist");
+  for (const excluded of [
+    serverDist,
+    path.join(serverDist, "server/builtin-plugins/kimi-usage-source"),
+    path.join(serverDist, "server/builtin-plugins/shared/index.js"),
+    path.join(appDirectory, "src/components/message.test.tsx"),
+  ]) {
+    expect(metroBlocks(config, excluded), excluded).toBe(true);
+  }
+  for (const included of [
+    path.join(appDirectory, "src/components/message.tsx"),
+    path.resolve(appDirectory, "../server/src/server/exports.ts"),
+    path.resolve(appDirectory, "../server/dist-extra/index.js"),
+    ...["client", "protocol", "relay"].map((name) =>
+      path.resolve(appDirectory, `../${name}/dist/index.js`),
+    ),
+  ]) {
+    expect(metroBlocks(config, included), included).toBe(false);
+  }
+});
+
+test("Metro preserves Expo's cache and native build exclusions", () => {
+  const config = requireMetroConfig("../metro.config.cjs") as MetroExclusionsConfig;
+  const { getDefaultConfig } = requireMetroConfig("expo/metro-config") as {
+    getDefaultConfig(projectRoot: string): MetroExclusionsConfig;
+  };
+  const defaults = getDefaultConfig(appDirectory);
+  const defaultPatterns = Array.isArray(defaults.resolver.blockList)
+    ? defaults.resolver.blockList
+    : [defaults.resolver.blockList];
+  expect(config.resolver.blockList).toEqual(expect.arrayContaining(defaultPatterns));
+  for (const excluded of [
+    ".expo/types",
+    ".expo/web/cache",
+    "android/app/build",
+    "android/.gradle",
+    "ios/Pods",
+  ]) {
+    expect(metroBlocks(config, excluded.split("/").join(path.sep)), excluded).toBe(true);
+  }
+});
 
 class MetroPort {
   private readonly responses = new Map<string, { status: number; body: string }>();
