@@ -5,6 +5,7 @@ import { BROWSER_TOOLS_TITLE } from "@/screens/settings/browser-tools-config";
 import {
   buildSettingsSearchIndex,
   getSettingsSearchText,
+  getSettingsSearchTextIndex,
 } from "@/screens/settings/settings-search-index";
 import type { SettingsSearchSectionSource } from "@/screens/settings/settings-search-index";
 
@@ -134,5 +135,14 @@ describe("settings search index", () => {
     expect(searchText("host.danger")).not.toContain(
       en.settings.host.daemon.restart.requestFailedMessage,
     );
+  });
+
+  it("caches translated search text per index and locale", () => {
+    const first = getSettingsSearchTextIndex(SETTINGS_SEARCH_INDEX, "en", translate);
+    const second = getSettingsSearchTextIndex(SETTINGS_SEARCH_INDEX, "en", translate);
+    const otherLocale = getSettingsSearchTextIndex(SETTINGS_SEARCH_INDEX, "da", translate);
+
+    expect(second).toBe(first);
+    expect(otherLocale).not.toBe(first);
   });
 });

@@ -153,7 +153,7 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useOpenOnboarding } from "@/onboarding";
 import {
   createSettingsSearchContent,
-  getSettingsSearchText,
+  getSettingsSearchTextIndex,
   buildSettingsSearchIndex,
   type SettingsSearchIndexEntry,
   type SettingsSearchSectionSource,
@@ -460,7 +460,7 @@ const SETTINGS_SEARCH_INDEX = buildSettingsSearchIndex([
 
 function resolveSettingsSearchResults(input: {
   query: string;
-  t: TFunction;
+  searchTextById: ReadonlyMap<string, string>;
   isDesktopApp: boolean;
   hardwareKeyboardPresent: boolean;
   hasHosts: boolean;
@@ -477,8 +477,7 @@ function resolveSettingsSearchResults(input: {
         return false;
       }
     }
-    const searchableText = getSettingsSearchText(entry, input.t).toLocaleLowerCase();
-    return searchableText.includes(normalizedQuery);
+    return input.searchTextById.get(entry.id)?.includes(normalizedQuery) ?? false;
   });
 }
 
@@ -1423,7 +1422,7 @@ export interface SettingsScreenProps {
 
 export default function SettingsScreen({ view }: SettingsScreenProps) {
   const router = useRouter();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const voiceAudioEngine = useVoiceAudioEngineOptional();
   const { settings, isLoading: settingsLoading, updateSettings } = useAppSettings();
   const [settingsSearchInput, setSettingsSearchInput] = useState("");
@@ -1441,16 +1440,26 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const selectedSettingsHostServerId = useSettingsHostSelection();
+  const searchTextById = useMemo(
+    () => getSettingsSearchTextIndex(SETTINGS_SEARCH_INDEX, i18n.language, t),
+    [i18n.language, t],
+  );
   const settingsSearchResults = useMemo(
     () =>
       resolveSettingsSearchResults({
         query: settingsSearchInput,
-        t,
+        searchTextById,
         isDesktopApp,
         hardwareKeyboardPresent,
         hasHosts: sortedHosts.length > 0,
       }),
-    [hardwareKeyboardPresent, isDesktopApp, settingsSearchInput, sortedHosts.length, t],
+    [
+      hardwareKeyboardPresent,
+      isDesktopApp,
+      searchTextById,
+      settingsSearchInput,
+      sortedHosts.length,
+    ],
   );
 
   // The host the four sections scope to: the host on the active view, otherwise

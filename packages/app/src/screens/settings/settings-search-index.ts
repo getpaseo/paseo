@@ -54,6 +54,11 @@ export interface SettingsSearchIndexEntry extends SettingsSearchGroup {
   translationPrefixes: readonly string[];
 }
 
+const SEARCH_TEXT_CACHE = new WeakMap<
+  readonly SettingsSearchIndexEntry[],
+  Map<string, ReadonlyMap<string, string>>
+>();
+
 /**
  * Builds the index from the navigation section declarations. Search groups
  * live beside the route and component that render them, so adding a settings
@@ -115,4 +120,25 @@ export function getSettingsSearchText(
   const text = Array.from(keys, (key) => translate(key));
   if (entry.getSearchText) text.push(entry.getSearchText(translate));
   return text.join(" ");
+}
+
+export function getSettingsSearchTextIndex(
+  entries: readonly SettingsSearchIndexEntry[],
+  locale: string,
+  translate: (key: string) => string,
+): ReadonlyMap<string, string> {
+  let localeCache = SEARCH_TEXT_CACHE.get(entries);
+  if (!localeCache) {
+    localeCache = new Map();
+    SEARCH_TEXT_CACHE.set(entries, localeCache);
+  }
+
+  const cached = localeCache.get(locale);
+  if (cached) return cached;
+
+  const textIndex = new Map(
+    entries.map((entry) => [entry.id, getSettingsSearchText(entry, translate).toLocaleLowerCase()]),
+  );
+  localeCache.set(locale, textIndex);
+  return textIndex;
 }
