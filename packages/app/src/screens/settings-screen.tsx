@@ -1,6 +1,7 @@
 import { useSettingsContentPresented } from "@/navigation/settings-presentation";
 import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
+import { getKeyboardShortcutSearchText } from "@/keyboard/keyboard-shortcuts";
 import { useAddHost } from "@/hosts/add-host";
 import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
@@ -105,6 +106,8 @@ import {
   HostAgentsPage,
   HostAgentsSearchPage,
   type HostAgentsSearchGroup,
+  HostTerminalsSearchPage,
+  type HostTerminalsSearchGroup,
   HostSettingsSearchPage,
   HostSettingsPage,
   HostProvidersPage,
@@ -150,17 +153,26 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useOpenOnboarding } from "@/onboarding";
 import {
   getSettingsSearchText,
-  SETTINGS_SEARCH_INDEX,
+  buildSettingsSearchIndex,
   type SettingsSearchIndexEntry,
+  type SettingsSearchSectionSource,
 } from "@/screens/settings/settings-search-index";
+import {
+  BROWSER_TOOLS_TITLE,
+  BROWSER_TOOLS_WARNING,
+} from "@/screens/settings/browser-tools-config";
+import {
+  TERMINAL_AGENTS_TITLE,
+  TERMINAL_AGENT_HOOKS_HINT,
+  TERMINAL_AGENT_HOOKS_TITLE,
+} from "@/screens/settings/terminal-agents-copy";
 
 // ---------------------------------------------------------------------------
 // View model
 // ---------------------------------------------------------------------------
 
-interface SidebarSectionItem {
+interface SidebarSectionItem extends SettingsSearchSectionSource {
   id: SettingsSectionSlug;
-  labelKey: string;
   icon: ComponentType<{ size: number; color: string; strokeWidth?: number }>;
   desktopOnly?: boolean;
   webOnly?: boolean;
@@ -170,25 +182,75 @@ interface SidebarSectionItem {
 }
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
-  { id: "general", labelKey: "settings.sections.general", icon: Settings },
+  {
+    id: "general",
+    labelKey: "settings.sections.general",
+    icon: Settings,
+    searchGroups: [
+      {
+        translationPrefixes: ["settings.general.language", "settings.general.setup"],
+      },
+      {
+        id: "general.sending",
+        titleKey: "settings.general.sending",
+        translationPrefixes: [
+          "settings.general.sending",
+          "settings.general.sendShortcut",
+          "settings.general.defaultSend",
+        ],
+      },
+      {
+        id: "general.open-location",
+        titleKey: "settings.layout.openInSidePane.title",
+        translationPrefixes: ["settings.layout.openInSidePane"],
+      },
+    ],
+  },
   {
     id: "appearance",
     labelKey: "settings.sections.appearance",
     icon: Palette,
     Content: AppearanceSection,
+    searchGroups: [
+      {
+        translationPrefixes: [
+          "settings.appearance.theme",
+          "settings.appearance.fonts",
+          "settings.appearance.layout",
+          "settings.appearance.syntax",
+        ],
+      },
+    ],
   },
   {
     id: "sidebar",
     labelKey: "settings.sections.sidebar",
     icon: PanelLeft,
     Content: SidebarNavSection,
+    searchGroups: [{ translationPrefixes: ["settings.appearance.sidebar"] }],
   },
-  { id: "chat", labelKey: "settings.sections.chat", icon: MessageSquare, Content: ChatSection },
+  {
+    id: "chat",
+    labelKey: "settings.sections.chat",
+    icon: MessageSquare,
+    Content: ChatSection,
+    searchGroups: [
+      {
+        translationPrefixes: [
+          "settings.appearance.detailLevel",
+          "settings.general.autoExpandReasoning",
+          "settings.general.chatDisplay",
+          "settings.appearance.chatOutline",
+        ],
+      },
+    ],
+  },
   {
     id: "terminal",
     labelKey: "settings.sections.terminal",
     icon: SquareTerminal,
     Content: TerminalSection,
+    searchGroups: [{ translationPrefixes: ["settings.general.terminalScrollback"] }],
   },
   {
     id: "browser",
@@ -196,6 +258,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Globe,
     desktopOnly: true,
     Content: BrowserDataSection,
+    searchGroups: [{ translationPrefixes: ["settings.general.browserData"] }],
   },
   {
     id: "editor",
@@ -203,14 +266,22 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Code2,
     webOnly: true,
     Content: EditorSection,
+    searchGroups: [{ translationPrefixes: ["settings.editor"] }],
   },
-  { id: "files", labelKey: "settings.sections.files", icon: Files, Content: FilesSection },
+  {
+    id: "files",
+    labelKey: "settings.sections.files",
+    icon: Files,
+    Content: FilesSection,
+    searchGroups: [{ translationPrefixes: ["settings.files"] }],
+  },
   {
     id: "shortcuts",
     labelKey: "settings.sections.shortcuts",
     icon: Keyboard,
     hardwareKeyboardOnly: true,
     Content: KeyboardShortcutsSection,
+    searchGroups: [{ translationPrefixes: [], getSearchText: getKeyboardShortcutSearchText }],
   },
   {
     id: "integrations",
@@ -218,6 +289,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Puzzle,
     desktopOnly: true,
     Content: IntegrationsSection,
+    searchGroups: [{ translationPrefixes: ["settings.integrations"] }],
   },
   {
     id: "notifications",
@@ -225,6 +297,7 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Bell,
     desktopOnly: true,
     Content: DesktopNotificationsSection,
+    searchGroups: [{ translationPrefixes: ["settings.notifications"] }],
   },
   {
     id: "permissions",
@@ -232,9 +305,20 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     icon: Shield,
     desktopOnly: true,
     Content: DesktopPermissionsSection,
+    searchGroups: [{ translationPrefixes: ["settings.permissions"] }],
   },
-  { id: "diagnostics", labelKey: "settings.sections.diagnostics", icon: Stethoscope },
-  { id: "about", labelKey: "settings.sections.about", icon: Info },
+  {
+    id: "diagnostics",
+    labelKey: "settings.sections.diagnostics",
+    icon: Stethoscope,
+    searchGroups: [{ translationPrefixes: ["settings.diagnostics"] }],
+  },
+  {
+    id: "about",
+    labelKey: "settings.sections.about",
+    icon: Info,
+    searchGroups: [{ translationPrefixes: ["settings.about"] }],
+  },
 ];
 
 function isSectionAvailable(
@@ -246,26 +330,156 @@ function isSectionAvailable(
   return (!item.desktopOnly || isDesktopApp) && (!item.webOnly || isWeb);
 }
 
-interface HostSectionItem {
+interface HostSectionItem extends SettingsSearchSectionSource {
   id: HostSectionSlug;
-  labelKey: string;
   icon: ComponentType<{ size: number; color: string; strokeWidth?: number }>;
 }
 
 const HOST_SECTION_ITEMS: HostSectionItem[] = [
-  { id: "host", labelKey: "settings.hostSections.host", icon: Server },
-  { id: "projects", labelKey: "settings.hostSections.projects", icon: FolderGit2 },
-  { id: "connections", labelKey: "settings.hostSections.connections", icon: Network },
-  { id: "pair-device", labelKey: "openProject.tiles.pairDevice.title", icon: Smartphone },
-  { id: "agents", labelKey: "settings.hostSections.agents", icon: Bot },
-  { id: "metadata", labelKey: "settings.hostSections.metadata", icon: Sparkles },
-  { id: "voice", labelKey: "settings.hostSections.voice", icon: Mic },
-  { id: "workspaces", labelKey: "settings.hostSections.workspaces", icon: FolderGit2 },
-  { id: "providers", labelKey: "settings.hostSections.providers", icon: Boxes },
-  { id: "usage", labelKey: "settings.hostSections.usage", icon: Gauge },
-  { id: "terminals", labelKey: "settings.hostSections.terminals", icon: SquareTerminal },
-  { id: "plugins", labelKey: "settings.hostSections.plugins", icon: Blocks },
+  {
+    id: "host",
+    labelKey: "settings.hostSections.host",
+    icon: Server,
+    searchGroups: [
+      { translationPrefixes: [] },
+      {
+        id: "host.appearance",
+        titleKey: "settings.host.appearance.title",
+        translationPrefixes: ["settings.host.appearance"],
+      },
+      {
+        id: "host.danger",
+        titleKey: "settings.host.daemon.dangerZone",
+        translationPrefixes: [
+          "settings.host.daemon.restart.title",
+          "settings.host.daemon.restart.hint",
+          "settings.host.daemon.restart.confirm",
+          "settings.host.daemon.restart.restarting",
+          "settings.host.daemon.restart.closeTerminals",
+          "settings.host.daemon.restart.closeTerminalsHint",
+          "settings.host.daemon.remove.title",
+          "settings.host.daemon.remove.localTitle",
+          "settings.host.daemon.remove.hint",
+          "settings.host.daemon.remove.localHint",
+          "settings.host.connections.removeAction",
+        ],
+      },
+    ],
+  },
+  {
+    id: "projects",
+    labelKey: "settings.hostSections.projects",
+    icon: FolderGit2,
+    searchGroups: [{ translationPrefixes: ["settings.projects"] }],
+  },
+  {
+    id: "connections",
+    labelKey: "settings.hostSections.connections",
+    icon: Network,
+    searchGroups: [{ translationPrefixes: ["settings.host.connections"] }],
+  },
+  {
+    id: "pair-device",
+    labelKey: "openProject.tiles.pairDevice.title",
+    icon: Smartphone,
+    searchGroups: [
+      { translationPrefixes: ["settings.host.pairDevices", "openProject.tiles.pairDevice"] },
+    ],
+  },
+  {
+    id: "agents",
+    labelKey: "settings.hostSections.agents",
+    icon: Bot,
+    searchGroups: [
+      {
+        translationPrefixes: [
+          "settings.host.orchestration.enableTools",
+          "settings.host.orchestration.systemPrompt.title",
+          "settings.host.orchestration.systemPrompt.hint",
+          "settings.host.orchestration.systemPrompt.edit",
+          "settings.host.agents.resumeOnStartup.title",
+          "settings.host.agents.resumeOnStartup.hint",
+          "settings.host.agents.resumeOnStartup.edit",
+          "settings.host.agents.idleRuntimeCleanup.title",
+          "settings.host.agents.idleRuntimeCleanup.hint",
+        ],
+        getSearchText: () => `${BROWSER_TOOLS_TITLE} ${BROWSER_TOOLS_WARNING}`,
+      },
+      {
+        id: "agents.skills",
+        titleKey: "settings.host.skills.sectionTitle",
+        translationPrefixes: ["settings.host.skills"],
+      },
+      {
+        id: "agents.profiles",
+        titleKey: "settings.host.agentProfiles.sectionTitle",
+        translationPrefixes: ["settings.host.agentProfiles"],
+      },
+    ],
+  },
+  {
+    id: "metadata",
+    labelKey: "settings.hostSections.metadata",
+    icon: Sparkles,
+    searchGroups: [{ translationPrefixes: ["settings.metadataGeneration"] }],
+  },
+  {
+    id: "voice",
+    labelKey: "settings.hostSections.voice",
+    icon: Mic,
+    searchGroups: [{ translationPrefixes: ["settings.voice"] }],
+  },
+  {
+    id: "workspaces",
+    labelKey: "settings.hostSections.workspaces",
+    icon: FolderGit2,
+    searchGroups: [{ translationPrefixes: ["settings.host.workspaces"] }],
+  },
+  {
+    id: "providers",
+    labelKey: "settings.hostSections.providers",
+    icon: Boxes,
+    searchGroups: [{ translationPrefixes: ["settings.providers"] }],
+  },
+  {
+    id: "usage",
+    labelKey: "settings.hostSections.usage",
+    icon: Gauge,
+    searchGroups: [{ translationPrefixes: ["providerUsage"] }],
+  },
+  {
+    id: "terminals",
+    labelKey: "settings.hostSections.terminals",
+    icon: SquareTerminal,
+    searchGroups: [
+      { translationPrefixes: ["settings.host.terminalProfiles"] },
+      {
+        id: "terminals.agents",
+        titleKey: "settings.hostSections.terminals",
+        translationPrefixes: [],
+        getSearchText: () =>
+          `${TERMINAL_AGENTS_TITLE} ${TERMINAL_AGENT_HOOKS_TITLE} ${TERMINAL_AGENT_HOOKS_HINT}`,
+      },
+    ],
+  },
+  {
+    id: "plugins",
+    labelKey: "settings.hostSections.plugins",
+    icon: Blocks,
+    searchGroups: [
+      {
+        translationPrefixes: ["settings.plugins"],
+        // The plugin gallery has its own search and navigation surface.
+        resultMode: "sidebar-only",
+      },
+    ],
+  },
 ];
+
+const SETTINGS_SEARCH_INDEX = buildSettingsSearchIndex([
+  ...SIDEBAR_SECTION_ITEMS,
+  ...HOST_SECTION_ITEMS,
+]);
 
 function resolveSettingsSearchResults(input: {
   query: string;
@@ -321,6 +535,37 @@ function renderHostSettingsContent(
     case "host":
       return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
   }
+}
+
+function renderHostSearchEntry(
+  entry: SettingsSearchIndexEntry & { section: HostSectionSlug },
+  serverId: string,
+  onHostRemoved: () => void,
+): ReactNode {
+  if (entry.id === "agents" || entry.id === "agents.skills" || entry.id === "agents.profiles") {
+    let group: HostAgentsSearchGroup;
+    if (entry.id === "agents") group = "runtime";
+    else if (entry.id === "agents.skills") group = "skills";
+    else group = "profiles";
+    return <HostAgentsSearchPage serverId={serverId} group={group} />;
+  }
+  if (entry.id === "terminals" || entry.id === "terminals.agents") {
+    const group: HostTerminalsSearchGroup = entry.id === "terminals" ? "profiles" : "agents";
+    return <HostTerminalsSearchPage serverId={serverId} group={group} />;
+  }
+  if (entry.id === "host.appearance" || entry.id === "host.danger") {
+    return (
+      <HostSettingsSearchPage
+        serverId={serverId}
+        group={entry.id === "host.appearance" ? "appearance" : "danger"}
+        onHostRemoved={onHostRemoved}
+      />
+    );
+  }
+  return renderHostSettingsContent(
+    { kind: "host", serverId, section: entry.section },
+    onHostRemoved,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1413,34 +1658,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   const renderSettingsSearchEntry = useCallback(
     (entry: SettingsSearchIndexEntry): ReactNode => {
-      if (isHostSectionSlug(entry.section)) {
+      const hostSection = isHostSectionSlug(entry.section) ? entry.section : null;
+      if (hostSection) {
         if (!activeHostServerId) return null;
-        if (
-          entry.id === "agents" ||
-          entry.id === "agents.skills" ||
-          entry.id === "agents.profiles"
-        ) {
-          let group: HostAgentsSearchGroup;
-          if (entry.id === "agents") group = "runtime";
-          else if (entry.id === "agents.skills") group = "skills";
-          else group = "profiles";
-          return <HostAgentsSearchPage serverId={activeHostServerId} group={group} />;
-        }
-        if (entry.id === "host.appearance" || entry.id === "host.danger") {
-          return (
-            <HostSettingsSearchPage
-              serverId={activeHostServerId}
-              group={entry.id === "host.appearance" ? "appearance" : "danger"}
-              onHostRemoved={handleHostRemoved}
-            />
-          );
-        }
-        return renderHostSettingsContent(
-          {
-            kind: "host",
-            serverId: activeHostServerId,
-            section: entry.section,
-          },
+        return renderHostSearchEntry(
+          { ...entry, section: hostSection },
+          activeHostServerId,
           handleHostRemoved,
         );
       }

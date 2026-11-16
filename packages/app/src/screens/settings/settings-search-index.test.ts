@@ -1,10 +1,94 @@
 import { describe, expect, it } from "vitest";
 import { en } from "@/i18n/resources/en";
+import { getKeyboardShortcutSearchText } from "@/keyboard/keyboard-shortcuts";
 import { BROWSER_TOOLS_TITLE } from "@/screens/settings/browser-tools-config";
 import {
+  buildSettingsSearchIndex,
   getSettingsSearchText,
-  SETTINGS_SEARCH_INDEX,
 } from "@/screens/settings/settings-search-index";
+import type { SettingsSearchSectionSource } from "@/screens/settings/settings-search-index";
+
+const SETTINGS_SEARCH_INDEX = buildSettingsSearchIndex([
+  {
+    id: "usage",
+    labelKey: "settings.hostSections.usage",
+    searchGroups: [{ translationPrefixes: ["providerUsage"] }],
+  },
+  {
+    id: "shortcuts",
+    labelKey: "settings.sections.shortcuts",
+    searchGroups: [
+      {
+        translationPrefixes: [],
+        getSearchText: getKeyboardShortcutSearchText,
+      },
+    ],
+  },
+  {
+    id: "agents",
+    labelKey: "settings.hostSections.agents",
+    searchGroups: [
+      {
+        translationPrefixes: ["settings.host.agents.resumeOnStartup.title"],
+        getSearchText: () => BROWSER_TOOLS_TITLE,
+      },
+      {
+        id: "agents.skills",
+        titleKey: "settings.host.skills.sectionTitle",
+        translationPrefixes: ["settings.host.skills"],
+      },
+      {
+        id: "agents.profiles",
+        titleKey: "settings.host.agentProfiles.sectionTitle",
+        translationPrefixes: ["settings.host.agentProfiles"],
+      },
+    ],
+  },
+  {
+    id: "terminals",
+    labelKey: "settings.hostSections.terminals",
+    searchGroups: [
+      {
+        id: "terminals.agents",
+        translationPrefixes: [],
+        getSearchText: () => "Terminal agents",
+      },
+    ],
+  },
+  {
+    id: "metadata",
+    labelKey: "settings.hostSections.metadata",
+    searchGroups: [{ translationPrefixes: ["settings.metadataGeneration"] }],
+  },
+  {
+    id: "notifications",
+    labelKey: "settings.sections.notifications",
+    searchGroups: [{ translationPrefixes: ["settings.notifications"] }],
+  },
+  {
+    id: "general",
+    labelKey: "settings.sections.general",
+    searchGroups: [
+      { translationPrefixes: ["settings.general.language"] },
+      {
+        id: "general.open-location",
+        titleKey: "settings.layout.openInSidePane.title",
+        translationPrefixes: ["settings.layout.openInSidePane"],
+      },
+    ],
+  },
+  {
+    id: "host",
+    labelKey: "settings.hostSections.host",
+    searchGroups: [
+      {
+        id: "host.danger",
+        titleKey: "settings.host.daemon.dangerZone",
+        translationPrefixes: ["settings.host.daemon.restart.title"],
+      },
+    ],
+  },
+] satisfies readonly SettingsSearchSectionSource[]);
 
 function translate(key: string): string {
   const value = key.split(".").reduce<unknown>((current, part) => {
@@ -33,6 +117,11 @@ describe("settings search index", () => {
     expect(searchText("agents")).not.toContain(en.settings.host.agents.resumeOnStartup.info);
     expect(searchText("agents.skills")).toContain(en.settings.host.skills.title);
     expect(searchText("agents.profiles")).toContain(en.settings.host.agentProfiles.sectionTitle);
+    expect(searchText("terminals.agents")).toContain("Terminal agents");
+    expect(searchText("metadata")).toContain(en.settings.metadataGeneration.title);
+    expect(searchText("metadata")).not.toContain(
+      en.settings.project.metadata.pullRequestPlaceholder,
+    );
   });
 
   it("keeps split groups independent", () => {

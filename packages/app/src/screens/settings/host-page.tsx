@@ -69,6 +69,11 @@ import { PaseoToolsCard } from "./paseo-tools-card";
 import { RestartRecoveryCard } from "./restart-recovery-card";
 import { IdleRuntimeCleanupCard } from "./idle-runtime-cleanup-card";
 import { restartDaemonFromSettings, updateDaemonFromSettings } from "./daemon-lifecycle";
+import {
+  TERMINAL_AGENTS_TITLE,
+  TERMINAL_AGENT_HOOKS_HINT,
+  TERMINAL_AGENT_HOOKS_TITLE,
+} from "./terminal-agents-copy";
 
 const ThemedRestart = withUnistyles(RotateCw);
 const ThemedUpdate = withUnistyles(ArrowUpToLine);
@@ -1013,16 +1018,13 @@ function EnableTerminalAgentHooksCard({ serverId }: { serverId: string }) {
     <View style={settingsStyles.card} testID="host-page-terminal-agent-hooks-card">
       <View style={settingsStyles.row}>
         <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Enable terminal agent hooks</Text>
-          <Text style={settingsStyles.rowHint}>
-            Get notifications and status from terminal agents. This installs hooks in your agent
-            config files.
-          </Text>
+          <Text style={settingsStyles.rowTitle}>{TERMINAL_AGENT_HOOKS_TITLE}</Text>
+          <Text style={settingsStyles.rowHint}>{TERMINAL_AGENT_HOOKS_HINT}</Text>
         </View>
         <Switch
           value={config?.enableTerminalAgentHooks === true}
           onValueChange={handleValueChange}
-          accessibilityLabel="Enable terminal agent hooks"
+          accessibilityLabel={TERMINAL_AGENT_HOOKS_TITLE}
           testID="host-page-terminal-agent-hooks-switch"
         />
       </View>
@@ -1706,11 +1708,39 @@ export function HostTerminalsPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <SettingsSection title="Terminal agents">
-        <EnableTerminalAgentHooksCard serverId={serverId} />
-      </SettingsSection>
+      <TerminalAgentsSection serverId={serverId} />
       <TerminalProfilesSection serverId={serverId} />
     </View>
+  );
+}
+
+function TerminalAgentsSection({ serverId }: { serverId: string }) {
+  return (
+    <SettingsSection title={TERMINAL_AGENTS_TITLE}>
+      <EnableTerminalAgentHooksCard serverId={serverId} />
+    </SettingsSection>
+  );
+}
+
+export type HostTerminalsSearchGroup = "agents" | "profiles";
+
+export function HostTerminalsSearchPage({
+  serverId,
+  group,
+}: {
+  serverId: string;
+  group: HostTerminalsSearchGroup;
+}) {
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return group === "agents" ? (
+    <TerminalAgentsSection serverId={serverId} />
+  ) : (
+    <TerminalProfilesSection serverId={serverId} />
   );
 }
 

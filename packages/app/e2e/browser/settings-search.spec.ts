@@ -18,9 +18,11 @@ test("settings search renders only matching settings groups", async ({ page }) =
 
   await search.fill("Plan");
   await expect(results.getByText("Plan usage", { exact: true })).toBeVisible();
+  await expect(results.getByText("Metadata generation", { exact: true })).not.toBeVisible();
   await expect(results.getByText("Sending", { exact: true })).not.toBeVisible();
 
   await search.fill("Profile");
   await expect(results.getByText("Agent profiles", { exact: true })).toBeVisible();
+  await expect(results.getByText("Terminal agents", { exact: true })).not.toBeVisible();
   await expect(results.getByText("Plan usage", { exact: true })).not.toBeVisible();
 });
