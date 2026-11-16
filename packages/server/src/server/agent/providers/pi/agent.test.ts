@@ -19,12 +19,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import {
-  PiProviderOptionsSchema,
-  PiRpcAgentClient,
-  PiRpcAgentSession,
-  piModelLabel,
-} from "./agent.js";
+import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
@@ -3970,31 +3965,64 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   });
 });
 
-describe("piModelLabel", () => {
-  test("drops the vendor prefix from an upstream model name", () => {
-    expect(piModelLabel({ id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" })).toBe("GPT-5.5");
-  });
-
-  test("keeps slashes and underscores that belong to the model name", () => {
-    expect(
-      piModelLabel({
+describe("Pi catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
         id: "s-q3fn(p-t)",
-        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (~60-70 tok/s, 52/56)",
-      }),
-    ).toBe("Qwen3.8 Flash Next IQ3_S, prior + tail skip (~60-70 tok/s, 52/56)");
-  });
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+      },
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+      },
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "shortens a path-like name to its last segment",
+      model: {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+      },
+      label: "gemini-2.5-flash-lite",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "openrouter", id: "google/gemini_2.5-flash-lite" },
+      label: "gemini 2.5-flash-lite",
+    },
+    {
+      name: "falls back to an id with spaces when the name is blank",
+      model: { provider: "local", id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " },
+      label: "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    },
+  ])("$name", async ({ model, label }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [model];
+    });
 
-  test("shortens a path-like name to its last segment", () => {
-    expect(
-      piModelLabel({ id: "google/gemini-2.5-flash-lite", name: "google/gemini-2.5-flash-lite" }),
-    ).toBe("gemini-2.5-flash-lite");
-  });
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
 
-  test("falls back to the last segment of a path-like id", () => {
-    expect(piModelLabel({ id: "google/gemini_2.5-flash-lite" })).toBe("gemini 2.5-flash-lite");
-    expect(piModelLabel({ id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " })).toBe(
-      "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
-    );
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
 

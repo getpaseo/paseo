@@ -320,7 +320,7 @@ function stripVendorPrefix(label: string): string {
 
 // A Pi model name is either a path ("google/gemini_2.5-flash", as OpenRouter reports it) or
 // free text that can contain slashes and underscores ("IQ3_S ... 52/56"). Only shorten paths.
-export function piModelLabel(model: Pick<PiModel, "id" | "name">): string {
+function piModelLabel(model: Pick<PiModel, "id" | "name">): string {
   const text = model.name?.trim().replace(/\s+/g, " ") || model.id.trim();
   if (/\s/.test(text)) {
     return stripVendorPrefix(text);
