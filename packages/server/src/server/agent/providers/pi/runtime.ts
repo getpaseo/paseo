@@ -1,4 +1,5 @@
 import type { PiTranscript } from "./transcript.js";
+import { z } from "zod";
 import type {
   PiModel,
   PiPromptAck,
@@ -39,6 +40,12 @@ export interface PiStartSessionInput {
   extraArgs?: string[];
 }
 
+export const PiClearedQueueSchema = z.object({
+  steering: z.array(z.string()),
+  followUp: z.array(z.string()),
+});
+export type PiClearedQueue = z.infer<typeof PiClearedQueueSchema>;
+
 export interface PiRuntimeSession {
   readonly environment: Record<string, string>;
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void;
@@ -50,7 +57,7 @@ export interface PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<void>;
-  clearQueue(): Promise<void>;
+  clearQueue(): Promise<PiClearedQueue | undefined>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;

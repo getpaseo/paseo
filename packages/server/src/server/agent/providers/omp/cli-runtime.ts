@@ -307,8 +307,8 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
   }
 
-  private requestStopWork(command: OmpRpcCommand): Promise<void> {
-    return this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
+  private async requestStopWork(command: OmpRpcCommand): Promise<void> {
+    await this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
   }
 
   private emit(event: OmpRuntimeEvent): void {

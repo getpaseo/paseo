@@ -12,10 +12,12 @@ import {
 } from "../jsonl-rpc-process.js";
 import {
   buildPiLaunch,
+  PiClearedQueueSchema,
   type PiRuntime,
   type PiRuntimeLaunch,
   type PiRuntimeSession,
   type PiStartSessionInput,
+  type PiClearedQueue,
 } from "./runtime.js";
 import type {
   PiModel,
@@ -149,8 +151,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     });
   }
 
-  async clearQueue(): Promise<void> {
-    await this.requestStopWork({ type: "clear_queue" });
+  async clearQueue(): Promise<PiClearedQueue | undefined> {
+    const result = await this.options.process.requestStopWork({ type: "clear_queue" });
+    if (result === undefined) return undefined;
+    return PiClearedQueueSchema.parse(result);
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -268,8 +272,8 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return this.options.process.request(command, timeoutMs);
   }
 
-  private requestStopWork(command: PiRpcCommand): Promise<void> {
-    return this.options.process.requestStopWork(command);
+  private async requestStopWork(command: PiRpcCommand): Promise<void> {
+    await this.options.process.requestStopWork(command);
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {
