@@ -72,7 +72,11 @@ const stripMarkdownToText = (markdown: string): string => {
   text = text.replace(/\*\*([^*]+)\*\*/g, "$1");
   text = text.replace(/__([^_]+)__/g, "$1");
   text = text.replace(/\*([^*\n]+)\*/g, "$1");
-  text = text.replace(/_([^_\n]+)_/g, "$1");
+  // CommonMark does not allow intraword emphasis with underscores, so a `_` pair
+  // only marks emphasis when neither side touches a word character. Without this
+  // guard, identifiers in a reply (`SECOND_REPLY_TOKEN`, `snake_case_name`) lose
+  // their underscores in the notification preview.
+  text = text.replace(/(^|[^\p{L}\p{N}_])_([^_\n]+)_(?=[^\p{L}\p{N}_]|$)/gu, "$1$2");
   text = text.replace(/~~([^~]+)~~/g, "$1");
 
   // Angle-bracketed URL autolinks.
