@@ -10,6 +10,10 @@
  * children whose ancestors contain the point. A strip hanging outside the
  * sidebar is dead on touch, and what remains is far too small for a finger.
  * So the touch variant sits fully inside the sidebar and is sized for a thumb.
+ *
+ * A touch screen on the web (an iPad in the browser) has neither limit, and there a
+ * grip inside the sidebar covers the row menus at its right edge, which touch rows
+ * always show. So on the web the touch grip sits just outside the sidebar.
  */
 
 export const POINTER_HANDLE_WIDTH = 10;
@@ -41,6 +45,7 @@ export interface SidebarResizeHandleGeometry {
 
 export function resolveSidebarResizeHandleGeometry(
   finePointer: boolean,
+  canOverhang = false,
 ): SidebarResizeHandleGeometry {
   if (finePointer) {
     return {
@@ -50,7 +55,7 @@ export function resolveSidebarResizeHandleGeometry(
     };
   }
   return {
-    edgeOffset: 0,
+    edgeOffset: canOverhang ? -TOUCH_HANDLE_WIDTH : 0,
     width: TOUCH_HANDLE_WIDTH,
     height: TOUCH_HANDLE_HEIGHT,
   };

@@ -12,6 +12,13 @@ describe("resolveSidebarResizeHandleGeometry", () => {
     expect(geometry.height ?? 0).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
   });
 
+  it("keeps a web touch grip outside the sidebar, clear of the rows' menu buttons", () => {
+    const geometry = resolveSidebarResizeHandleGeometry(false, true);
+
+    expect(geometry.edgeOffset).toBe(-geometry.width);
+    expect(geometry.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
+  });
+
   it("straddles the border for a fine pointer", () => {
     const geometry = resolveSidebarResizeHandleGeometry(true);
 

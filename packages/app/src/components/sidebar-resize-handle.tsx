@@ -86,7 +86,7 @@ function PointerResizeHandle({ edge, gesture, testID }: SidebarResizeHandleProps
 }
 
 function TouchResizeHandle({ edge, gesture, pressed, testID }: SidebarResizeHandleProps) {
-  const geometry = resolveSidebarResizeHandleGeometry(false);
+  const geometry = resolveSidebarResizeHandleGeometry(false, isWeb);
   // `box-none` keeps the full-height column out of hit-testing so only the
   // grab target steals taps from the rows behind it.
   const layerStyle = [
