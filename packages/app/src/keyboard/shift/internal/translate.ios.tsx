@@ -4,6 +4,7 @@ import { useKeyboardAnimation } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardTranslationContext } from "./context";
 import { useKeyboardTranslationScope } from "./measure";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 
 interface KeyboardTranslateViewProps extends ViewProps {
   children: ReactNode;
@@ -25,6 +26,7 @@ export function KeyboardTranslateView({
   style,
   ...props
 }: KeyboardTranslateViewProps) {
+  const active = useRetainedPanelActive();
   const insets = useSafeAreaInsets();
   const { height, progress } = useKeyboardAnimation();
   // Mirrors resolveKeyboardLift on the native driver: `overlap` is the negated shift.
@@ -50,7 +52,9 @@ export function KeyboardTranslateView({
   // setValue during the React commit gets overwritten by the resize. A rebuilt
   // graph (a new bottomClearance after rotation) starts from JS-side keyboard
   // values, so run it on the native frame too or it stays stale until the
-  // keyboard next moves.
+  // keyboard next moves. Reactivating a retained panel also reapplies Fabric's
+  // last transform, including keyboard motion that happened while it was hidden.
+  // Refresh the native graph when panel activity changes as well.
   const enabledValue = useAnimatedValue(enabled ? 1 : 0);
   useEffect(() => {
     const animation = Animated.timing(enabledValue, {
@@ -60,7 +64,7 @@ export function KeyboardTranslateView({
     });
     animation.start();
     return () => animation.stop();
-  }, [enabled, enabledValue, translateY]);
+  }, [active, enabled, enabledValue, translateY]);
   const keyboardStyle = useMemo(
     () => ({ transform: [{ translateY: Animated.multiply(translateY, enabledValue) }] }),
     [enabledValue, translateY],
