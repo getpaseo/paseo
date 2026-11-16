@@ -1074,6 +1074,7 @@ function WorkspaceScreenContent({
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
 
   const normalizedServerId = useMemo(() => trimNonEmpty(decodeSegment(serverId)) ?? "", [serverId]);
+  const supportsTerminalCommandState = useHostFeature(normalizedServerId, "terminalCommandState");
 
   const normalizedWorkspaceId = useMemo(
     () => resolveWorkspaceRouteId({ routeWorkspaceId: workspaceId }) ?? "",
@@ -1961,7 +1962,7 @@ function WorkspaceScreenContent({
       const { tabId, terminalId } = input;
       await closeTab(tabId, async () => {
         const terminal = terminals.find((candidate) => candidate.id === terminalId);
-        if (shouldConfirmTerminalClose(terminal?.commandRunning)) {
+        if (shouldConfirmTerminalClose(terminal?.commandRunning, supportsTerminalCommandState)) {
           const confirmed = await confirmDialog({
             title: t("workspace.tabs.confirmations.closeTerminalTitle"),
             message: t("workspace.tabs.confirmations.closeTerminalMessage"),
@@ -1993,6 +1994,7 @@ function WorkspaceScreenContent({
       killTerminalAsync,
       persistenceKey,
       removeTerminalFromCache,
+      supportsTerminalCommandState,
       terminals,
       t,
     ],
