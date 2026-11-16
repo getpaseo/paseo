@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { createWorkspaceTabInstanceId } from "@/stores/workspace-layout-ids";
 import {
   selectSheetTab,
   useWorkspaceLayoutStore,
@@ -32,6 +33,8 @@ export function useSubagentSheetTab(
   const sheets = useWorkspaceLayoutStore((state) =>
     workspaceKey ? state.sheetsByWorkspace[workspaceKey] : undefined,
   );
+  // Menu pages never enter the sheet stack. Keep their own instance ids across layout updates.
+  const tabIds = useMemo(() => new Map<string, string>(), []);
   return useMemo(() => {
     // One answer per row until the state it reads changes, so a re-render of the list hands an
     // open sheet the same tab rather than a fresh one.
@@ -43,16 +46,18 @@ export function useSubagentSheetTab(
         layoutByWorkspace: layout ? { [workspaceKey]: layout } : {},
         sheetsByWorkspace: sheets ? { [workspaceKey]: sheets } : {},
       };
-      const key = `${row.kind}:${row.id}`;
+      const key = JSON.stringify([workspaceKey, parentTabId, row.kind, row.id]);
       const known = answers.get(key);
       if (known !== undefined) return known;
       const sheet = selectSheetTab(state, {
         workspaceKey,
         target: subagentRowTarget(row),
         parentTabId,
+        preferredTabId: tabIds.get(key) ?? createWorkspaceTabInstanceId(),
       });
+      if (sheet) tabIds.set(key, sheet.tab.tabId);
       answers.set(key, sheet);
       return sheet;
     };
-  }, [layout, layoutMode, parentTabId, sheets, workspaceKey]);
+  }, [layout, layoutMode, parentTabId, sheets, tabIds, workspaceKey]);
 }
