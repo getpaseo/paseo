@@ -110,6 +110,18 @@ export class ScheduleStore {
     private readonly logger: Logger,
   ) {}
 
+  private readonly changeListeners = new Set<() => void>();
+
+  /** Calls `listener` after every write or delete, e.g. to re-plan when the next schedule is due. */
+  onChange(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  private notifyChange(): void {
+    for (const listener of this.changeListeners) listener();
+  }
+
   private filePath(id: string): string {
     return join(this.dir, `${id}.json`);
   }
@@ -219,12 +231,14 @@ export class ScheduleStore {
   private async write(schedule: StoredSchedule): Promise<void> {
     await this.ensureDir();
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
+    this.notifyChange();
   }
 
   async delete(id: string): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
       await this.ensureDir();
       await rm(this.filePath(id), { force: true });
+      this.notifyChange();
     });
   }
 
