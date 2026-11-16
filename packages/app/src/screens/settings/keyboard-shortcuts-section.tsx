@@ -23,6 +23,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
   buildKeyboardShortcutHelpSections,
+  filterKeyboardShortcutHelpSections,
   getBindingIdForAction,
   normalizeCapturedShortcutCombo,
   isShortcutCaptureComplete,
@@ -333,7 +334,7 @@ function ShortcutRow({
   );
 }
 
-export function KeyboardShortcutsSection() {
+export function KeyboardShortcutsSection({ searchQuery = "" }: { searchQuery?: string }) {
   const { t } = useTranslation();
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
@@ -347,6 +348,7 @@ export function KeyboardShortcutsSection() {
   const isFocused = useIsFocused();
   const isMac = getShortcutOs() === "mac";
   const sections = buildKeyboardShortcutHelpSections({ isMac, usesDesktopBindings });
+  const visibleSections = filterKeyboardShortcutHelpSections(sections, searchQuery, t);
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -443,7 +445,7 @@ export function KeyboardShortcutsSection() {
 
   return (
     <>
-      {sections.map(function (section, sectionIndex) {
+      {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
             key={section.id}

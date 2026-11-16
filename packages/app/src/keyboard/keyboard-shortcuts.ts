@@ -59,6 +59,33 @@ export interface KeyboardShortcutHelpSection {
   rows: KeyboardShortcutHelpRow[];
 }
 
+export function filterKeyboardShortcutHelpSections(
+  sections: readonly KeyboardShortcutHelpSection[],
+  query: string,
+  translate: (key: string) => string,
+): KeyboardShortcutHelpSection[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [...sections];
+
+  return sections.flatMap((section) => {
+    const sectionText = translate(section.titleKey).toLocaleLowerCase();
+    const rows = section.rows.filter((row) => {
+      const rowText = [
+        row.label,
+        translate(row.labelKey),
+        row.note,
+        row.noteKey ? translate(row.noteKey) : null,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase();
+      return sectionText.includes(normalizedQuery) || rowText.includes(normalizedQuery);
+    });
+
+    return rows.length > 0 ? [{ ...section, rows }] : [];
+  });
+}
+
 // --- Binding definition types ---
 
 interface KeyboardShortcutPlatformContext {

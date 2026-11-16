@@ -3,6 +3,7 @@ import { formatShortcut } from "@/utils/format-shortcut";
 import { keyboardEventToComboString } from "./shortcut-string";
 import {
   buildKeyboardShortcutHelpSections,
+  filterKeyboardShortcutHelpSections,
   buildEffectiveBindings,
   DEFAULT_BINDINGS,
   normalizeCapturedShortcutCombo,
@@ -21,6 +22,50 @@ import {
   type ParsedShortcutBinding,
   type ShortcutOverrides,
 } from "./keyboard-shortcuts";
+
+describe("filterKeyboardShortcutHelpSections", () => {
+  it("keeps only matching shortcut groups and rows", () => {
+    const sections = [
+      {
+        id: "general" as const,
+        title: "General",
+        titleKey: "general",
+        rows: [{ id: "open", label: "Open project", labelKey: "open", chord: null }],
+      },
+      {
+        id: "agent-input" as const,
+        title: "Agent Input",
+        titleKey: "agentInput",
+        rows: [
+          { id: "send", label: "Send message", labelKey: "send", chord: null },
+          { id: "queue", label: "Queue message", labelKey: "queue", chord: null },
+        ],
+      },
+    ];
+
+    expect(
+      filterKeyboardShortcutHelpSections(
+        sections,
+        "send",
+        (key) =>
+          ({
+            general: "General",
+            agentInput: "Agent Input",
+            open: "Open project",
+            send: "Send message",
+            queue: "Queue message",
+          })[key] ?? key,
+      ),
+    ).toEqual([
+      {
+        id: "agent-input",
+        title: "Agent Input",
+        titleKey: "agentInput",
+        rows: [{ id: "send", label: "Send message", labelKey: "send", chord: null }],
+      },
+    ]);
+  });
+});
 
 function keyboardInput(overrides: Partial<KeyboardShortcutInput>): KeyboardShortcutInput {
   return {

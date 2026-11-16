@@ -1,15 +1,17 @@
 import { en } from "@/i18n/resources/en";
 import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
 
+/** Search spans both settings route namespaces; host routes remain separate because they carry a server id. */
+export type SettingsSearchSectionSlug = SettingsSectionSlug | HostSectionSlug;
+
 export interface SettingsSearchIndexEntry {
   id: string;
-  kind: "section" | "host";
-  section: SettingsSectionSlug | HostSectionSlug;
+  section: SettingsSearchSectionSlug;
   titleKey: string;
   /** Translation subtrees rendered by this settings group. */
   translationPrefixes: readonly string[];
-  /** Some settings pages own a second toolbar/search surface and cannot be inlined. */
-  showInResults?: boolean;
+  /** Use sidebar-only when a page owns its own navigation surface and cannot be embedded safely. */
+  resultMode?: "inline" | "sidebar-only";
 }
 
 type TranslationTree = Record<string, unknown>;
@@ -50,14 +52,12 @@ export function getSettingsSearchText(
 export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
   {
     id: "general",
-    kind: "section",
     section: "general",
     titleKey: "settings.sections.general",
     translationPrefixes: ["settings.general.language", "settings.general.setup"],
   },
   {
     id: "general.sending",
-    kind: "section",
     section: "general",
     titleKey: "settings.general.sending",
     translationPrefixes: [
@@ -68,14 +68,12 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
   },
   {
     id: "general.open-location",
-    kind: "section",
     section: "general",
     titleKey: "settings.layout.openInSidePane.title",
     translationPrefixes: ["settings.layout.openInSidePane"],
   },
   {
     id: "appearance",
-    kind: "section",
     section: "appearance",
     titleKey: "settings.sections.appearance",
     translationPrefixes: [
@@ -87,14 +85,12 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
   },
   {
     id: "sidebar",
-    kind: "section",
     section: "sidebar",
     titleKey: "settings.sections.sidebar",
     translationPrefixes: ["settings.appearance.sidebar"],
   },
   {
     id: "chat",
-    kind: "section",
     section: "chat",
     titleKey: "settings.sections.chat",
     translationPrefixes: [
@@ -106,157 +102,136 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
   },
   {
     id: "terminal",
-    kind: "section",
     section: "terminal",
     titleKey: "settings.sections.terminal",
     translationPrefixes: ["settings.general.terminalScrollback"],
   },
   {
     id: "browser",
-    kind: "section",
     section: "browser",
     titleKey: "settings.sections.browser",
     translationPrefixes: ["settings.general.browserData"],
   },
   {
     id: "editor",
-    kind: "section",
     section: "editor",
     titleKey: "settings.sections.editor",
     translationPrefixes: ["settings.editor"],
   },
   {
     id: "files",
-    kind: "section",
     section: "files",
     titleKey: "settings.sections.files",
     translationPrefixes: ["settings.files"],
   },
   {
     id: "shortcuts",
-    kind: "section",
     section: "shortcuts",
     titleKey: "settings.sections.shortcuts",
-    translationPrefixes: ["settings.shortcuts"],
+    translationPrefixes: ["settings.shortcuts.sections", "settings.shortcuts.help"],
   },
   {
     id: "integrations",
-    kind: "section",
     section: "integrations",
     titleKey: "settings.sections.integrations",
     translationPrefixes: ["settings.integrations"],
   },
   {
     id: "notifications",
-    kind: "section",
     section: "notifications",
     titleKey: "settings.sections.notifications",
     translationPrefixes: ["settings.notifications"],
   },
   {
     id: "permissions",
-    kind: "section",
     section: "permissions",
     titleKey: "settings.sections.permissions",
     translationPrefixes: ["settings.permissions"],
   },
   {
     id: "diagnostics",
-    kind: "section",
     section: "diagnostics",
     titleKey: "settings.sections.diagnostics",
     translationPrefixes: ["settings.diagnostics"],
   },
   {
     id: "about",
-    kind: "section",
     section: "about",
     titleKey: "settings.sections.about",
     translationPrefixes: ["settings.about"],
   },
   {
     id: "host",
-    kind: "host",
     section: "host",
     titleKey: "settings.hostSections.host",
     translationPrefixes: ["settings.host"],
   },
   {
     id: "projects",
-    kind: "host",
     section: "projects",
     titleKey: "settings.hostSections.projects",
     translationPrefixes: ["settings.projects"],
   },
   {
     id: "connections",
-    kind: "host",
     section: "connections",
     titleKey: "settings.hostSections.connections",
     translationPrefixes: ["settings.host.connections"],
   },
   {
     id: "pair-device",
-    kind: "host",
     section: "pair-device",
     titleKey: "openProject.tiles.pairDevice.title",
     translationPrefixes: ["settings.host.pairDevices", "openProject.tiles.pairDevice"],
   },
   {
     id: "agents",
-    kind: "host",
     section: "agents",
     titleKey: "settings.hostSections.agents",
     translationPrefixes: ["settings.host.agents"],
   },
   {
     id: "metadata",
-    kind: "host",
     section: "metadata",
     titleKey: "settings.hostSections.metadata",
     translationPrefixes: ["settings.project.metadata"],
   },
   {
     id: "voice",
-    kind: "host",
     section: "voice",
     titleKey: "settings.hostSections.voice",
     translationPrefixes: ["settings.voice"],
   },
   {
     id: "workspaces",
-    kind: "host",
     section: "workspaces",
     titleKey: "settings.hostSections.workspaces",
     translationPrefixes: ["settings.host.workspaces"],
   },
   {
     id: "providers",
-    kind: "host",
     section: "providers",
     titleKey: "settings.hostSections.providers",
     translationPrefixes: ["settings.providers"],
   },
   {
     id: "usage",
-    kind: "host",
     section: "usage",
     titleKey: "settings.hostSections.usage",
     translationPrefixes: ["providerUsage"],
   },
   {
     id: "terminals",
-    kind: "host",
     section: "terminals",
     titleKey: "settings.hostSections.terminals",
     translationPrefixes: ["settings.host.terminalProfiles"],
   },
   {
     id: "plugins",
-    kind: "host",
     section: "plugins",
     titleKey: "settings.hostSections.plugins",
     translationPrefixes: ["settings.plugins"],
-    showInResults: false,
+    // The plugin gallery has its own search and navigation surface.
+    resultMode: "sidebar-only",
   },
 ];
