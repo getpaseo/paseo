@@ -1202,7 +1202,10 @@ describe("Claude model discovery process", () => {
       state.inputEnded = true;
     }
 
-    function startStalledDiscovery() {
+    // By default the CLI never answers: an expired OAuth token is refreshed first.
+    function startStalledDiscovery(
+      supportedModels: () => Promise<ModelInfo[]> = () => new Promise<ModelInfo[]>(() => {}),
+    ) {
       const child = new StartingClaudeProcess();
       const state: StalledDiscoveryState = { closed: false, inputEnded: false };
       const result = discoverClaudeModels(
@@ -1211,9 +1214,8 @@ describe("Claude model discovery process", () => {
           if (typeof input.prompt === "string") throw new Error("unexpected inference prompt");
           void recordInputEnd(input.prompt, state);
           context.onChildProcess?.(child);
-          // An expired OAuth token is refreshed before the CLI answers supportedModels().
           return {
-            supportedModels: () => new Promise<ModelInfo[]>(() => {}),
+            supportedModels,
             close: () => {
               state.closed = true;
             },
@@ -1244,6 +1246,27 @@ describe("Claude model discovery process", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(child.signals).toEqual(["SIGTERM"]);
       expect(state.closed).toBe(true);
+    });
+
+    async function answerAtOnce(): Promise<ModelInfo[]> {
+      return [];
+    }
+
+    it("lets the CLI finish after it answers instead of killing it", async () => {
+      // The CLI answers supportedModels() before its startup token refresh has saved the
+      // rotated refresh token, so a kill right after the answer also logs the user out.
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery(answerAtOnce);
+      await expect(result).resolves.toEqual([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.inputEnded).toBe(true);
+      expect(child.signals).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      child.exitOnItsOwn();
+      expect(state.closed).toBe(true);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(child.signals).toEqual([]);
     });
 
     it("never signals a CLI that exits on its own during the grace period", async () => {

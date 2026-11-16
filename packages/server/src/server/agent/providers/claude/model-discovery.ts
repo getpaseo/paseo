@@ -57,7 +57,6 @@ export async function discoverClaudeModels(
   };
   let query: DiscoveryQuery | undefined;
   let child: ChildProcess | undefined;
-  let answered = false;
   try {
     signal.throwIfAborted();
     const binary = await raceProviderRefreshAbort(signal, options.resolveBinary());
@@ -85,17 +84,15 @@ export async function discoverClaudeModels(
         },
       },
     );
-    const models = await raceProviderRefreshAbort(signal, query.supportedModels());
-    answered = true;
-    return models;
+    return await raceProviderRefreshAbort(signal, query.supportedModels());
   } finally {
     clearTimeout(timer);
     endInput();
-    if (!answered && query && child && !hasExited(child)) {
-      // A CLI that has not answered may be refreshing an expired OAuth token. Claude Code
-      // rotates the refresh token before saving the new pair, so killing it now leaves a
-      // revoked token on disk and logs the user out (#9314). With its input ended it exits
-      // once that work is done; the grace period and daemon shutdown bound the wait.
+    if (query && child && !hasExited(child)) {
+      // The CLI may be refreshing an expired OAuth token, even after it has answered.
+      // Claude Code rotates the refresh token before saving the new pair, so killing it now
+      // leaves a revoked token on disk and logs the user out (#9314). With its input ended
+      // it exits once that work is done; the grace period and daemon shutdown bound the wait.
       letDiscoveryExit(query, child);
     } else {
       await retireDiscovery(query, child);
