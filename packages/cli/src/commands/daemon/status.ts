@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { ServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import {
   readDaemonInstance,
@@ -38,7 +39,8 @@ export async function runStatusCommand(options: CommandOptions, _command: Comman
       columns: [],
       renderHuman: () =>
         Object.entries(data)
-          .filter(([, value]) => value !== undefined)
+          // The capability flags are for scripts (`--json`); listed here they drown the status.
+          .filter(([key, value]) => value !== undefined && key !== "features")
           .map(
             ([key, value]) =>
               `${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`,
@@ -81,8 +83,7 @@ async function probeDaemonStatus(
         "DAEMON_REPLACED",
         "Supervisor exited or was replaced during status observation.",
       );
-    const info = client.getLastServerInfoMessage();
-    live = { serverId: info?.serverId, daemonVersion: info?.version };
+    live = serverInfoFields(client.getLastServerInfoMessage());
     connectedDaemon = client.isConnected ? "reachable" : "unreachable";
     if (!status) {
       const failure = toCommandError(requestError);
@@ -110,6 +111,11 @@ async function probeDaemonStatus(
     await client.close();
   }
   return { ...live, connectedDaemon, note };
+}
+
+/** Scripts read capability flags from `features`, e.g. `features.agentMessageQueue`. */
+function serverInfoFields(info: ServerInfoStatusPayload | null) {
+  return { serverId: info?.serverId, daemonVersion: info?.version, features: info?.features };
 }
 
 function localStatus(home: string, instance: Awaited<ReturnType<typeof readDaemonInstance>>) {
