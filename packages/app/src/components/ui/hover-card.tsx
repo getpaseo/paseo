@@ -79,6 +79,8 @@ function WebHoverCard({
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Read when focus arrives: by focusout the element losing focus no longer matches :focus-visible.
   const keyboardFocusedRef = useRef(false);
+  // Whether the latest press was a touch, so the focus that tap leaves on the trigger is ignored.
+  const touchPressedRef = useRef(false);
 
   const clearGraceTimer = useCallback(() => {
     if (graceTimerRef.current) {
@@ -191,7 +193,8 @@ function WebHoverCard({
       const target = event.target as Element;
       keyboardFocusedRef.current = target.matches(":focus-visible");
       if (trigger.contains(target)) {
-        openNow();
+        // A tap focuses the trigger too. A touch is not a hover, so that focus does not open it.
+        if (!touchPressedRef.current) openNow();
       } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
         clearGraceTimer();
       }
@@ -208,6 +211,12 @@ function WebHoverCard({
         scheduleClose();
       }
     };
+    const pointerPressed = (event: PointerEvent) => {
+      touchPressedRef.current = event.pointerType === "touch";
+    };
+    const keyPressedAnywhere = () => {
+      touchPressedRef.current = false;
+    };
     const activateClosedTrigger = (event: KeyboardEvent) => {
       if (
         !open &&
@@ -221,12 +230,16 @@ function WebHoverCard({
     const scrolled = (event: Event) => {
       if ((event.target as Node).contains(trigger)) close();
     };
+    document.addEventListener("pointerdown", pointerPressed, true);
+    document.addEventListener("keydown", keyPressedAnywhere, true);
     document.addEventListener("focusin", focusEntered);
     document.addEventListener("focusout", focusLeft);
     trigger.addEventListener("keydown", activateClosedTrigger);
     document.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     return () => {
+      document.removeEventListener("pointerdown", pointerPressed, true);
+      document.removeEventListener("keydown", keyPressedAnywhere, true);
       document.removeEventListener("focusin", focusEntered);
       document.removeEventListener("focusout", focusLeft);
       trigger.removeEventListener("keydown", activateClosedTrigger);
@@ -267,16 +280,38 @@ function WebHoverCard({
   );
 }
 
+interface PointerLikeEvent {
+  nativeEvent?: { pointerType?: string };
+  pointerType?: string;
+}
+
+function isTouch(event: PointerLikeEvent): boolean {
+  return (event.nativeEvent?.pointerType ?? event.pointerType) === "touch";
+}
+
 export function HoverCardTrigger({
   children,
   focusable = false,
+  ignoreTouch = false,
   accessibilityLabel,
 }: {
   children: ReactNode;
   focusable?: boolean;
+  /**
+   * The trigger handles a tap itself, so a touch must not open the card. Opening on a touch's
+   * pointerenter changes the page under the finger, and iPad Safari then drops the tap.
+   */
+  ignoreTouch?: boolean;
   accessibilityLabel?: string;
 }): ReactNode {
   const ctx = useContext(HoverCardContext);
+  const openNow = ctx?.openNow;
+  const pointerEntered = useCallback(
+    (event: PointerLikeEvent) => {
+      if (!(ignoreTouch && isTouch(event))) openNow?.();
+    },
+    [ignoreTouch, openNow],
+  );
   if (!ctx) return children;
   return (
     <View
@@ -285,7 +320,7 @@ export function HoverCardTrigger({
       accessibilityRole={focusable ? "button" : undefined}
       accessibilityLabel={accessibilityLabel}
       collapsable={false}
-      onPointerEnter={ctx.openNow}
+      onPointerEnter={pointerEntered}
       onPointerLeave={ctx.scheduleClose}
     >
       {children}

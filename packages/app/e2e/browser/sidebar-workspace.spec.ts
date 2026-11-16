@@ -543,6 +543,26 @@ test.describe("Sidebar workspace list", () => {
   });
 });
 
+// On a wide touch screen (iPad) a tap is not a hover. Opening the card on the tap changes the page
+// under the finger, and iPad Safari then drops the tap instead of opening the workspace.
+test.describe("Sidebar workspace rows on a touch screen", () => {
+  test.use({ hasTouch: true, viewport: { width: 1180, height: 820 } });
+
+  test("tapping a workspace row opens it without the hover card", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-touch-tap-" });
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      await row.tap();
+      await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+      await expectWorkspaceHoverCardClosed(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
 test.describe("Mobile sidebar panelState transition", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
