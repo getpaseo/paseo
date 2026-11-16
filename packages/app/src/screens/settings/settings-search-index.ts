@@ -1,3 +1,4 @@
+import { en } from "@/i18n/resources/en";
 import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
 
 export interface SettingsSearchIndexEntry {
@@ -5,12 +6,45 @@ export interface SettingsSearchIndexEntry {
   kind: "section" | "host";
   section: SettingsSectionSlug | HostSectionSlug;
   titleKey: string;
-  /** Translation keys for the labels and descriptions rendered by this group. */
-  searchKeys: readonly string[];
-  /** Product names and concepts that are not literal UI strings. */
-  aliases?: readonly string[];
+  /** Translation subtrees rendered by this settings group. */
+  translationPrefixes: readonly string[];
   /** Some settings pages own a second toolbar/search surface and cannot be inlined. */
   showInResults?: boolean;
+}
+
+type TranslationTree = Record<string, unknown>;
+
+function collectTranslationKeys(value: unknown, prefix = ""): string[] {
+  if (typeof value === "string") return prefix ? [prefix] : [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+
+  return Object.entries(value as TranslationTree).flatMap(([key, child]) =>
+    collectTranslationKeys(child, prefix ? `${prefix}.${key}` : key),
+  );
+}
+
+const TRANSLATION_KEYS = collectTranslationKeys(en);
+
+function isUnderPrefix(key: string, prefix: string): boolean {
+  return key === prefix || key.startsWith(`${prefix}.`);
+}
+
+/**
+ * Builds searchable text from the same translation resource used by the UI.
+ * Groups declare ownership of translation subtrees; individual labels do not
+ * need to be copied into a second, failure-prone list.
+ */
+export function getSettingsSearchText(
+  entry: SettingsSearchIndexEntry,
+  translate: (key: string) => string,
+): string {
+  const keys = new Set<string>([entry.titleKey]);
+  for (const prefix of entry.translationPrefixes) {
+    for (const key of TRANSLATION_KEYS) {
+      if (isUnderPrefix(key, prefix)) keys.add(key);
+    }
+  }
+  return Array.from(keys, (key) => translate(key)).join(" ");
 }
 
 export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
@@ -19,302 +53,210 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
     kind: "section",
     section: "general",
     titleKey: "settings.sections.general",
-    searchKeys: [
-      "settings.sections.general",
-      "settings.general.language.label",
-      "settings.general.language.description",
-      "settings.general.setup.label",
-      "settings.general.setup.description",
-    ],
+    translationPrefixes: ["settings.general.language", "settings.general.setup"],
   },
   {
     id: "general.sending",
     kind: "section",
     section: "general",
     titleKey: "settings.general.sending",
-    searchKeys: [
+    translationPrefixes: [
       "settings.general.sending",
-      "settings.general.sendShortcut.label",
-      "settings.general.defaultSend.label",
-      "settings.general.defaultSend.descriptions.interrupt",
-      "settings.general.defaultSend.descriptions.steer",
-      "settings.general.defaultSend.descriptions.queue",
+      "settings.general.sendShortcut",
+      "settings.general.defaultSend",
     ],
-    aliases: ["send", "sending", "shortcut", "enter", "queue", "prompt"],
   },
   {
     id: "general.open-location",
     kind: "section",
     section: "general",
     titleKey: "settings.layout.openInSidePane.title",
-    searchKeys: [
-      "settings.layout.openInSidePane.title",
-      "settings.layout.openInSidePane.sources.explorerFiles.label",
-      "settings.layout.openInSidePane.sources.diffs.label",
-      "settings.layout.openInSidePane.sources.chatFiles.label",
-      "settings.layout.openInSidePane.sources.diffFiles.label",
-      "settings.layout.openInSidePane.sources.subagents.label",
-      "settings.layout.openInSidePane.sources.serviceUrls.label",
-    ],
-    aliases: ["location", "side pane", "explorer", "file", "diff"],
+    translationPrefixes: ["settings.layout.openInSidePane"],
   },
   {
     id: "appearance",
     kind: "section",
     section: "appearance",
     titleKey: "settings.sections.appearance",
-    searchKeys: [
-      "settings.sections.appearance",
-      "settings.appearance.theme.title",
-      "settings.appearance.fonts.title",
-      "settings.appearance.layout.title",
-      "settings.appearance.syntax.title",
+    translationPrefixes: [
+      "settings.appearance.theme",
+      "settings.appearance.fonts",
+      "settings.appearance.layout",
+      "settings.appearance.syntax",
     ],
-    aliases: ["theme", "font", "interface", "layout", "syntax", "color"],
   },
   {
     id: "sidebar",
     kind: "section",
     section: "sidebar",
     titleKey: "settings.sections.sidebar",
-    searchKeys: ["settings.sections.sidebar"],
-    aliases: ["navigation", "footer", "workspace", "sidebar"],
+    translationPrefixes: ["settings.appearance.sidebar"],
   },
   {
     id: "chat",
     kind: "section",
     section: "chat",
     titleKey: "settings.sections.chat",
-    searchKeys: [
-      "settings.sections.chat",
-      "settings.appearance.detailLevel.title",
-      "settings.general.autoExpandReasoning.label",
-      "settings.general.autoExpandReasoning.description",
-      "settings.general.chatDisplay.label",
-      "settings.general.chatDisplay.description",
-      "settings.appearance.chatOutline.title",
-      "settings.appearance.chatOutline.description",
+    translationPrefixes: [
+      "settings.appearance.detailLevel",
+      "settings.general.autoExpandReasoning",
+      "settings.general.chatDisplay",
+      "settings.appearance.chatOutline",
     ],
-    aliases: ["message", "markdown", "composer", "chat"],
   },
   {
     id: "terminal",
     kind: "section",
     section: "terminal",
     titleKey: "settings.sections.terminal",
-    searchKeys: [
-      "settings.sections.terminal",
-      "settings.general.terminalScrollback.label",
-      "settings.general.terminalScrollback.description",
-    ],
-    aliases: ["scrollback", "cursor", "shell", "terminal"],
+    translationPrefixes: ["settings.general.terminalScrollback"],
   },
   {
     id: "browser",
     kind: "section",
     section: "browser",
     titleKey: "settings.sections.browser",
-    searchKeys: ["settings.sections.browser", "settings.general.browserData.title"],
-    aliases: ["history", "cache", "cookies", "data"],
+    translationPrefixes: ["settings.general.browserData"],
   },
   {
     id: "editor",
     kind: "section",
     section: "editor",
     titleKey: "settings.sections.editor",
-    searchKeys: ["settings.sections.editor", "settings.editor.title"],
-    aliases: ["font", "word wrap", "indent"],
+    translationPrefixes: ["settings.editor"],
   },
   {
     id: "files",
     kind: "section",
     section: "files",
     titleKey: "settings.sections.files",
-    searchKeys: ["settings.sections.files"],
-    aliases: ["files", "icons", "explorer"],
+    translationPrefixes: ["settings.files"],
   },
   {
     id: "shortcuts",
     kind: "section",
     section: "shortcuts",
     titleKey: "settings.sections.shortcuts",
-    searchKeys: ["settings.sections.shortcuts"],
-    aliases: ["keyboard", "shortcut", "hotkey", "keys"],
+    translationPrefixes: ["settings.shortcuts"],
   },
   {
     id: "integrations",
     kind: "section",
     section: "integrations",
     titleKey: "settings.sections.integrations",
-    searchKeys: ["settings.sections.integrations", "settings.integrations.commandLine.title"],
-    aliases: ["tools", "orchestration", "skills", "mcp"],
+    translationPrefixes: ["settings.integrations"],
   },
   {
     id: "notifications",
     kind: "section",
     section: "notifications",
     titleKey: "settings.sections.notifications",
-    searchKeys: [
-      "settings.sections.notifications",
-      "settings.notifications.permission",
-      "settings.notifications.playSound",
-      "settings.notifications.playSoundHint",
-      "settings.notifications.test",
-      "settings.notifications.testHint",
-    ],
-    aliases: ["sound", "alert"],
+    translationPrefixes: ["settings.notifications"],
   },
   {
     id: "permissions",
     kind: "section",
     section: "permissions",
     titleKey: "settings.sections.permissions",
-    searchKeys: ["settings.sections.permissions", "settings.permissions.title"],
-    aliases: ["permission", "microphone", "access"],
+    translationPrefixes: ["settings.permissions"],
   },
   {
     id: "diagnostics",
     kind: "section",
     section: "diagnostics",
     titleKey: "settings.sections.diagnostics",
-    searchKeys: [
-      "settings.sections.diagnostics",
-      "settings.diagnostics.title",
-      "settings.diagnostics.app.rowTitle",
-      "settings.diagnostics.app.rowHint",
-      "settings.diagnostics.testAudio",
-      "settings.diagnostics.playTest",
-    ],
-    aliases: ["audio", "playback", "logs", "debug"],
+    translationPrefixes: ["settings.diagnostics"],
   },
   {
     id: "about",
     kind: "section",
     section: "about",
     titleKey: "settings.sections.about",
-    searchKeys: [
-      "settings.sections.about",
-      "settings.about.appVersion",
-      "settings.about.thisDevice",
-      "settings.about.whatsNew",
-      "settings.about.releaseChannel.label",
-    ],
-    aliases: ["version", "update", "release", "changelog"],
+    translationPrefixes: ["settings.about"],
   },
   {
     id: "host",
     kind: "host",
     section: "host",
     titleKey: "settings.hostSections.host",
-    searchKeys: ["settings.hostSections.host", "settings.host.connections.title"],
-    aliases: ["daemon", "connection", "pairing", "host"],
+    translationPrefixes: ["settings.host"],
   },
   {
     id: "projects",
     kind: "host",
     section: "projects",
     titleKey: "settings.hostSections.projects",
-    searchKeys: ["settings.hostSections.projects", "settings.projects"],
-    aliases: ["repository", "git"],
+    translationPrefixes: ["settings.projects"],
   },
   {
     id: "connections",
     kind: "host",
     section: "connections",
     titleKey: "settings.hostSections.connections",
-    searchKeys: ["settings.hostSections.connections", "settings.host.connections.title"],
-    aliases: ["ssh", "relay", "network"],
+    translationPrefixes: ["settings.host.connections"],
   },
   {
     id: "pair-device",
     kind: "host",
     section: "pair-device",
     titleKey: "openProject.tiles.pairDevice.title",
-    searchKeys: ["openProject.tiles.pairDevice.title"],
-    aliases: ["pair", "device", "phone", "qr"],
+    translationPrefixes: ["settings.host.pairDevices", "openProject.tiles.pairDevice"],
   },
   {
     id: "agents",
     kind: "host",
     section: "agents",
     titleKey: "settings.hostSections.agents",
-    searchKeys: ["settings.hostSections.agents"],
-    aliases: ["agent", "provider", "model"],
+    translationPrefixes: ["settings.host.agents"],
   },
   {
     id: "metadata",
     kind: "host",
     section: "metadata",
     titleKey: "settings.hostSections.metadata",
-    searchKeys: ["settings.hostSections.metadata", "settings.project.metadata.title"],
-    aliases: ["generation", "summary"],
+    translationPrefixes: ["settings.project.metadata"],
   },
   {
     id: "voice",
     kind: "host",
     section: "voice",
     titleKey: "settings.hostSections.voice",
-    searchKeys: ["settings.hostSections.voice", "settings.voice.dictation.title"],
-    aliases: ["dictation", "speech", "microphone"],
+    translationPrefixes: ["settings.voice"],
   },
   {
     id: "workspaces",
     kind: "host",
     section: "workspaces",
     titleKey: "settings.hostSections.workspaces",
-    searchKeys: ["settings.hostSections.workspaces"],
-    aliases: ["workspace", "worktree", "setup", "scripts"],
+    translationPrefixes: ["settings.host.workspaces"],
   },
   {
     id: "providers",
     kind: "host",
     section: "providers",
     titleKey: "settings.hostSections.providers",
-    searchKeys: ["settings.hostSections.providers", "settings.providers.title"],
-    aliases: [
-      "model",
-      "claude",
-      "codex",
-      "opencode",
-      "copilot",
-      "github copilot",
-      "antigravity",
-      "muse",
-      "pi",
-    ],
+    translationPrefixes: ["settings.providers"],
   },
   {
     id: "usage",
     kind: "host",
     section: "usage",
     titleKey: "settings.hostSections.usage",
-    searchKeys: [
-      "settings.hostSections.usage",
-      "providerUsage.title",
-      "providerUsage.options",
-      "providerUsage.checkUsage",
-      "providerUsage.checkUsageHint",
-      "providerUsage.showInSidebar",
-      "providerUsage.showInSidebarHint",
-      "providerUsage.displayAs",
-    ],
-    aliases: ["plan", "plan usage", "tokens", "quota", "credits"],
+    translationPrefixes: ["providerUsage"],
   },
   {
     id: "terminals",
     kind: "host",
     section: "terminals",
     titleKey: "settings.hostSections.terminals",
-    searchKeys: ["settings.hostSections.terminals"],
-    aliases: ["terminal", "shell", "process"],
+    translationPrefixes: ["settings.host.terminalProfiles"],
   },
   {
     id: "plugins",
     kind: "host",
     section: "plugins",
     titleKey: "settings.hostSections.plugins",
-    searchKeys: ["settings.hostSections.plugins"],
-    aliases: ["plugin", "extension", "catalog"],
+    translationPrefixes: ["settings.plugins"],
     showInResults: false,
   },
 ];

@@ -145,6 +145,7 @@ import { returnFromSettings, type SettingsView } from "@/navigation/settings-nav
 import { isNative, isWeb } from "@/constants/platform";
 import { useOpenOnboarding } from "@/onboarding";
 import {
+  getSettingsSearchText,
   SETTINGS_SEARCH_INDEX,
   type SettingsSearchIndexEntry,
 } from "@/screens/settings/settings-search-index";
@@ -281,9 +282,7 @@ function resolveSettingsSearchResults(input: {
     } else if (!input.hasHosts) {
       return false;
     }
-    const translatedText = entry.searchKeys.map((key) => input.t(key)).join(" ");
-    const searchableText =
-      `${translatedText} ${entry.aliases?.join(" ") ?? ""}`.toLocaleLowerCase();
+    const searchableText = getSettingsSearchText(entry, input.t).toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
 }
@@ -1510,7 +1509,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
         kind: "section",
         section: view.section,
         titleKey: item.labelKey,
-        searchKeys: [],
+        translationPrefixes: [],
       });
     }
     return null;
