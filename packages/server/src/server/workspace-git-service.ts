@@ -2699,7 +2699,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const event of events) {
       const relativePath = target.paths.relative(event.path) ?? "";
       const effect = classifyGitMetadataPath("common", relativePath);
-      if (relativePath === "config.worktree") {
+      if (relativePath === "config.worktree" || relativePath === "HEAD") {
         defaultRefsChanged = true;
         defaultRefTopologyChanged = true;
       }

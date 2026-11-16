@@ -1771,6 +1771,65 @@ test.each([true, false])(
   30_000,
 );
 
+test("default branch ref refreshes linked checkouts when canonical HEAD changes config includes", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-config-")));
+  const repo = path.join(root, "repo");
+  const worktree = path.join(root, "worktree");
+  mkdirSync(repo);
+  function git(...args: string[]) {
+    return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+  }
+  git("init", "-b", "main");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.com");
+  git("commit", "--allow-empty", "-m", "base");
+  git("branch", "release");
+  git("worktree", "add", "-b", "feature/agent", worktree);
+  for (const remote of ["company", "upstream"]) {
+    git("remote", "add", remote, path.join(root, `${remote}.git`));
+    git("update-ref", `refs/remotes/${remote}/main`, "main");
+  }
+  git("config", "branch.main.remote", "company");
+  git("config", "branch.main.merge", "refs/heads/main");
+  const includedConfig = path.join(root, "release.config");
+  git("config", "--file", includedConfig, "branch.main.remote", "upstream");
+  git("config", "includeIf.onbranch:release.path", includedConfig);
+  const service = new WorkspaceGitServiceImpl({
+    logger: pino({ enabled: false }),
+    paseoHome: path.join(root, "home"),
+    deps: { now: () => new Date(0) },
+  });
+  cleanup.push(async () => {
+    await service.dispose();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const checkouts = [repo, worktree];
+  for (const cwd of checkouts) {
+    const snapshot = await service.getSnapshot(cwd, { includeForge: false });
+    expect(snapshot.git.defaultBranchRef).toBe("refs/remotes/company/main");
+  }
+  for (const cwd of checkouts) service.registerWorkspace({ cwd }, () => {});
+  await expect.poll(() => service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+  await expect.poll(() => service.getMetrics().fetchInFlightCount).toBe(0);
+  await expect.poll(() => service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+  git("switch", "release");
+  expect((await readCheckoutStatus(repo)).defaultBranchRef).toBe("refs/remotes/upstream/main");
+  await expect
+    .poll(
+      async () => {
+        const snapshots = await Promise.all(
+          checkouts.map((cwd) => service.getSnapshot(cwd, { includeForge: false })),
+        );
+        return snapshots.map((snapshot) => snapshot.git.defaultBranchRef);
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual(["refs/remotes/upstream/main", "refs/remotes/upstream/main"]);
+}, 30_000);
+
 test("default branch ref cache invalidates when fetch snapshots consume prune events", async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-ref-fetch-")));
   const repo = path.join(root, "repo");

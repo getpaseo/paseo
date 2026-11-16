@@ -1262,7 +1262,9 @@ export function NewWorkspaceScreen({
           )
         : undefined;
       const requiresStartingRef =
-        createsWorktree && checkoutStatusForCreate?.defaultBranchRef === null && !checkoutRequest;
+        createsWorktree &&
+        (forkFromCurrentBranch || checkoutStatusForCreate?.defaultBranchRef === null) &&
+        !checkoutRequest;
       if (requiresStartingRef) throw new Error(t("newWorkspace.tooltips.startingRef"));
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
