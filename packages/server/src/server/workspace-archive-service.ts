@@ -21,6 +21,7 @@ import type {
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import { describeHookWorkspace, type PluginLifecycle } from "./plugins/lifecycle/index.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -52,6 +53,7 @@ export interface ArchiveDependencies {
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
   assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
+  lifecycle?: Pick<PluginLifecycle, "wait">;
   sessionLogger?: Logger;
 }
 
@@ -165,6 +167,17 @@ async function archiveByScopeWithPriority(
   checkpoint();
   const target = await resolveArchiveTarget(dependencies, request.scope);
   const targetWorkspaceIds = target.workspaceIds;
+
+  if (dependencies.lifecycle && dependencies.getWorkspace) {
+    for (const workspaceId of targetWorkspaceIds) {
+      const workspace = await dependencies.getWorkspace(workspaceId);
+      if (!workspace) continue;
+      await dependencies.lifecycle.wait("workspace.archive.before", {
+        workspace: describeHookWorkspace(workspace),
+      });
+    }
+    checkpoint();
+  }
 
   await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
   checkpoint();

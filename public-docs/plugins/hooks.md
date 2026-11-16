@@ -49,22 +49,23 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                   | Handler may change                                             |
-| ------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                          |
-| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                |
-| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                               |
-| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
-| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
-| `agent.create.after`      | no    | `{ agent }`                               |                                                                |
-| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
-| `agent.close.after`       | no    | `{ agent }`                               |                                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                |
+| Hook                       | Waits | Payload                                   | Handler may change                                             |
+| -------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
+| `workspace.create.before`  | yes   | `{ request }`                             | Entire create request                                          |
+| `workspace.create.after`   | no    | `{ workspace }`                           |                                                                |
+| `workspace.archive.before` | yes   | `{ workspace }`                           | Throw to abort the archive                                     |
+| `workspace.archive.after`  | no    | `{ workspace }`                           |                                                                |
+| `worktree.create.before`   | yes   | `{ request }`                             | Creation options and destination                               |
+| `worktree.create.after`    | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
+| `agent.create.before`      | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
+| `agent.create.after`       | no    | `{ agent }`                               |                                                                |
+| `agent.open.before`        | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
+| `agent.close.after`        | no    | `{ agent }`                               |                                                                |
+| `agent.archive.after`      | no    | `{ agent, archivedAt }`                   |                                                                |
+| `agent.turn.before`        | no    | `{ agent, turnId }`                       |                                                                |
+| `agent.turn.after`         | no    | `{ agent, turnId, outcome }`              |                                                                |
+| `agent.permission.before`  | no    | `{ agent, request }`                      |                                                                |
+| `agent.permission.after`   | no    | `{ agent, requestId, resolution }`        |                                                                |
 
 ## Shared payloads
 
@@ -157,6 +158,16 @@ Fires after the workspace record is created and its directory is available. Rece
 ```ts
 server.addHook("workspace.create.after", async ({ workspace }) => {
   console.log(workspace);
+});
+```
+
+## workspace.archive.before
+
+Runs before anything is archived, from the app, CLI, and MCP. Receives `{ workspace }`. Throwing, or a 30-second timeout, aborts the archive with the plugin and hook named in the error.
+
+```ts
+server.addHook("workspace.archive.before", async ({ workspace }) => {
+  if (workspace.metadata["acme.locked"]) throw new Error("Workspace is locked");
 });
 ```
 

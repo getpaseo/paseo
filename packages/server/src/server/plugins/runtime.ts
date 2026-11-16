@@ -1,6 +1,10 @@
 import { validateWorktreePath } from "../../utils/worktree-path.js";
 import type { PluginHookPayload } from "@getpaseo/plugin/server";
-import type { PluginWireBeforeRequests, PluginBeforeResults } from "./lifecycle/index.js";
+import type {
+  PluginWireBeforeRequests,
+  PluginBeforeResults,
+  PluginWaitHook,
+} from "./lifecycle/index.js";
 import type { SessionOpenWireRequest, AttachedAgentTool } from "./agent-tools.js";
 import type { UsageScope } from "@getpaseo/plugin/server/usage";
 import {
@@ -583,9 +587,9 @@ export class PluginRuntime {
     await Promise.all(this.pendingEvents);
   }
 
-  async wait(
-    name: "worktree.create.after",
-    payload: PluginHookPayload<"worktree.create.after">,
+  async wait<Name extends PluginWaitHook>(
+    name: Name,
+    payload: PluginHookPayload<Name>,
   ): Promise<void> {
     const plugins = [...this.plugins.values()].sort((left, right) =>
       left.id.localeCompare(right.id),
