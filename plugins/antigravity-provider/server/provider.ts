@@ -139,7 +139,7 @@ export function createAntigravityProvider(): ProviderRegistration {
       if (!launch) return undefined;
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
       return createHash("sha256")
-        .update(JSON.stringify([launch.command, launch.args, env]))
+        .update(JSON.stringify(["v2", launch.command, launch.args, env]))
         .digest("hex");
     },
     async connect(request) {

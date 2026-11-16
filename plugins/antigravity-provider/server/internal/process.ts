@@ -29,12 +29,8 @@ export interface Driver {
 }
 
 export function selection(config: ProviderSessionConfig): string {
-  return JSON.stringify([
-    config.model,
-    config.mode,
-    config.thinkingOption,
-    Boolean(config.settings?.sandbox),
-  ]);
+  const { model, effort } = resolveModelAndEffort(config.model, config.thinkingOption);
+  return JSON.stringify([model, config.mode, effort, Boolean(config.settings?.sandbox)]);
 }
 
 function driverArgs(options: DriverOptions): string[] {

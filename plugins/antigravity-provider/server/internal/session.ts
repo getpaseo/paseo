@@ -17,8 +17,8 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import {
-  GEMINI_THINKING_OPTIONS,
   getModelContextWindow,
+  getThinkingOptionsForModel,
   supportsEffort,
   validateSelection,
 } from "./catalog.js";
@@ -293,6 +293,9 @@ export class Session {
     this.config = {
       ...options.config,
       mode: options.config.mode ?? "full-access",
+      thinkingOption: supportsEffort(options.config.model)
+        ? options.config.thinkingOption
+        : undefined,
     };
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
@@ -414,17 +417,30 @@ export class Session {
         nextSettings.sandbox = Boolean(value);
       }
     }
+    const nextModel = changes.model === null ? undefined : (changes.model ?? this.config.model);
+    const catalog = this.options.catalog();
+    const modelThinkingOptions = getThinkingOptionsForModel(nextModel, catalog);
+    let nextThinkingOption =
+      changes.thinkingOption === null
+        ? undefined
+        : (changes.thinkingOption ?? this.config.thinkingOption);
+    if (!supportsEffort(nextModel)) {
+      nextThinkingOption = undefined;
+    } else if (
+      changes.thinkingOption === undefined &&
+      nextThinkingOption &&
+      !modelThinkingOptions.some((option) => option.id === nextThinkingOption)
+    ) {
+      nextThinkingOption = undefined;
+    }
     const config = {
       ...this.config,
-      model: changes.model === null ? undefined : (changes.model ?? this.config.model),
+      model: nextModel,
       mode: changes.mode === null ? "full-access" : (changes.mode ?? this.config.mode),
-      thinkingOption:
-        changes.thinkingOption === null
-          ? undefined
-          : (changes.thinkingOption ?? this.config.thinkingOption),
+      thinkingOption: nextThinkingOption,
       settings: nextSettings,
     };
-    validateSelection(config, this.options.catalog());
+    validateSelection(config, catalog);
     this.config = config;
     this.publishConfig();
   }
@@ -656,14 +672,15 @@ export class Session {
 
   private publishConfig(): void {
     const model = this.config.model;
-    const suffixMatch = model ? /^(gemini-[^]+)-(low|medium|high)$/.exec(model) : null;
+    const catalog = this.options.catalog();
+    const thinkingOptions = getThinkingOptionsForModel(model, catalog);
+    const suffixMatch = model ? /^(gemini-[^]+)-(low|medium|high|xhigh)$/.exec(model) : null;
     let defaultEffort: string | undefined;
-    if (suffixMatch) {
-      defaultEffort = suffixMatch[2];
-    } else if (supportsEffort(model)) {
-      defaultEffort = "high";
+    if (thinkingOptions.length > 0) {
+      defaultEffort = suffixMatch ? suffixMatch[2] : "high";
     }
-    const inferredEffort = this.config.thinkingOption ?? defaultEffort;
+    const inferredEffort =
+      thinkingOptions.length > 0 ? (this.config.thinkingOption ?? defaultEffort) : undefined;
     this.emit({
       type: "session.config",
       sessionId: this.options.id,
@@ -671,9 +688,9 @@ export class Session {
         model: this.config.model,
         mode: this.config.mode || "full-access",
         thinkingOption: inferredEffort,
-        models: this.options.catalog().models,
-        modes: this.options.catalog().modes,
-        thinkingOptions: supportsEffort(model) ? [...GEMINI_THINKING_OPTIONS] : [],
+        models: catalog.models,
+        modes: catalog.modes,
+        thinkingOptions,
         settings: [
           {
             type: "toggle",

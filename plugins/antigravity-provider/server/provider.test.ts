@@ -649,7 +649,7 @@ describe("discovery", () => {
     });
   });
 
-  it("parses tab-separated catalog and exposes modes and Gemini thinking options", async () => {
+  it("parses tab-separated catalog and exposes modes and per-model Gemini thinking options", async () => {
     const h = await harness();
     await h.request({ type: "catalog", requestId: "catalog" });
     const event = h.events[0];
@@ -661,19 +661,20 @@ describe("discovery", () => {
             id: "gemini-3.8-flash-low",
             label: "Gemini 3.8 Flash (Low)",
             contextWindowMaxTokens: 1_048_576,
+            thinkingOptions: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
+            ],
             defaultThinkingOptionId: "low",
           }),
         ]),
-        thinkingOptions: [
-          { id: "low", label: "Low" },
-          { id: "medium", label: "Medium" },
-          { id: "high", label: "High" },
-        ],
         defaultMode: "full-access",
-        defaultThinkingOption: "high",
       },
     });
     if (event.type !== "catalog") throw new Error("Missing catalog");
+    expect(event.catalog.thinkingOptions).toBeUndefined();
+    expect(event.catalog.defaultThinkingOption).toBeUndefined();
     expect(event.catalog.models).toHaveLength(13);
     expect(event.catalog.modes.map((mode) => mode.id)).toEqual([
       "full-access",
