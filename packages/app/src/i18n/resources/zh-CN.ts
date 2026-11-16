@@ -148,7 +148,7 @@ export const zhCN: TranslationResources = {
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
-      sendQueue: "Send queue",
+      sendQueue: "发送队列",
       longPressToQueue: "长按加入队列",
       longPressToSendNow: "长按立即发送",
       queue: "排队",

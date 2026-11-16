@@ -1175,7 +1175,9 @@ function ComposerSendQueueButton({
         accessibilityRole="button"
         style={buttonStyle}
       >
-        <Text style={styles.sendQueueButtonLabel}>{label}</Text>
+        <Text style={styles.sendQueueButtonLabel} numberOfLines={1}>
+          {label}
+        </Text>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
         <Text style={styles.tooltipText}>{label}</Text>
@@ -2796,8 +2798,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     justifyContent: "center",
   },
   sendQueueButton: {
-    ...toolbarSlot(),
-    minWidth: TOOLBAR_DISC_SIZE,
+    minWidth: 104,
+    height: TOOLBAR_DISC_SIZE,
     paddingHorizontal: theme.spacing[3],
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.accent,

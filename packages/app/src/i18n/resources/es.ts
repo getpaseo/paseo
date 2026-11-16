@@ -149,7 +149,7 @@ export const es: TranslationResources = {
       sendAndInterrupt: "Enviar e interrumpir",
       sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
-      sendQueue: "Send queue",
+      sendQueue: "Enviar cola",
       longPressToQueue: "Mantén pulsado para poner en cola",
       longPressToSendNow: "Mantén pulsado para enviar ahora",
       queue: "Cola",

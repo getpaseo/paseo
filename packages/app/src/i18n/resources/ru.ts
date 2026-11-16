@@ -149,7 +149,7 @@ export const ru: TranslationResources = {
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
-      sendQueue: "Send queue",
+      sendQueue: "Отправить очередь",
       longPressToQueue: "Удерживайте, чтобы поставить в очередь",
       longPressToSendNow: "Удерживайте, чтобы отправить сейчас",
       queue: "Очередь",
