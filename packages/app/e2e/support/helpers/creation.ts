@@ -258,6 +258,16 @@ export async function createCreationScenario(page: Page) {
         .filter(({ agent }) => agent.workspaceId === workspaceId)
         .map(({ agent }) => agent.id);
     },
+    async expectAgentMetadata(metadata: Record<string, unknown>) {
+      await expect
+        .poll(
+          async () =>
+            (await project.client.fetchAgents()).entries.find(
+              ({ agent }) => agent.workspaceId === workspaceId,
+            )?.agent.metadata,
+        )
+        .toEqual(metadata);
+    },
     async expectAgentTitle(title: string) {
       await expect
         .poll(

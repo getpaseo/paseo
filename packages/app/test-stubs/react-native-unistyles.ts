@@ -1,8 +1,8 @@
-import { createElement, type ComponentType } from "react";
+import { createElement, type ElementType } from "react";
 import { lightHighlightColors } from "@getpaseo/highlight";
 import { lightTheme } from "../src/styles/theme";
 
-const testTheme = {
+const pinnedTheme = {
   colorScheme: "light",
   colors: {
     syntax: lightHighlightColors,
@@ -87,6 +87,14 @@ const testTheme = {
   },
 };
 
+// Tokens a test does not pin come from the real light theme, so a style or `uniProps` mapping
+// that reads one (the markdown renderer reads `colors.terminal`) gets a value instead of crashing.
+const testTheme = {
+  ...lightTheme,
+  ...pinnedTheme,
+  colors: { ...lightTheme.colors, ...pinnedTheme.colors },
+};
+
 type StyleFactory<T> = (theme: typeof testTheme) => T;
 
 function isStyleFactory<T>(styles: T | StyleFactory<T>): styles is StyleFactory<T> {
@@ -143,19 +151,26 @@ export const StyleSheet = {
     resolveStyles(isStyleFactory(styles) ? styles(testTheme) : styles),
 };
 
+type UniPropsMapping = (
+  theme: typeof testTheme,
+  runtime: typeof UnistylesRuntime,
+) => Record<string, unknown>;
+
 /**
- * Like the real HOC, the theme-derived props go under the caller's own props, so a themed
- * control (the switch track, for one) gets real colors in a browser test.
+ * Applies the HOC's `mappings` and the `uniProps` prop with the test theme, so a themed control
+ * (the switch track, for one) gets real colors in a browser test. Explicit props win, as in
+ * Unistyles' `deepMergeObjects(mappings, uniProps, props)`.
  */
-export function withUnistyles<P extends object>(
-  Component: ComponentType<P>,
-  mappings?: (theme: typeof testTheme, runtime: typeof UnistylesRuntime) => Partial<P>,
-): ComponentType<P> {
-  if (!mappings) return Component;
-  return function WithTestTheme(props: P) {
-    return createElement(Component, { ...mappings(testTheme, UnistylesRuntime), ...props });
-  };
-}
+export const withUnistyles = <T>(Component: T, mappings?: UniPropsMapping): T => {
+  function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
+    return createElement(Component as ElementType, {
+      ...(mappings ? mappings(testTheme, UnistylesRuntime) : {}),
+      ...(uniProps ? uniProps(testTheme, UnistylesRuntime) : {}),
+      ...props,
+    });
+  }
+  return ThemedComponent as T;
+};
 
 export const useUnistyles = () => ({
   theme: testTheme,

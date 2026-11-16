@@ -47,6 +47,26 @@ export default defineConfig({
       },
     },
     {
+      name: "reanimated-web-style-helpers",
+      transform(_source, id) {
+        // Reanimated writes animated styles to the DOM through react-native-web helpers it loads
+        // with `require` inside try/catch. Vite serves ESM, so the require throws, the helpers stay
+        // undefined, and the first animated style update after mount crashes the component.
+        if (
+          !id.split("?")[0].endsWith("/lib/module/ReanimatedModule/js-reanimated/webUtils.web.js")
+        ) {
+          return;
+        }
+        return {
+          code: [
+            'export { default as createReactDOMStyle } from "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle";',
+            'export { createTransformValue, createTextShadowValue } from "react-native-web/dist/exports/StyleSheet/preprocess";',
+          ].join("\n"),
+          map: null,
+        };
+      },
+    },
+    {
       name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
@@ -199,8 +219,8 @@ export default defineConfig({
       "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
-      // Imported by test-stubs/reanimated-web-utils.ts. Discovered mid-run, they make Vite reload
-      // and fail the browser test that was importing at that moment.
+      // Imported by test-stubs/reanimated-web-utils.ts and the reanimated-web-style-helpers plugin;
+      // the dependency scan misses them, and discovering them mid-run reloads Vite and fails the test.
       "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
       "react-native-web/dist/exports/StyleSheet/preprocess",
     ],

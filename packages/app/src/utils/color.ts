@@ -104,3 +104,67 @@ export function desaturateHexColor(hex: string, amount: number): string {
 
   return `#${toHexChannel(linearToSrgb(linearR))}${toHexChannel(linearToSrgb(linearG))}${toHexChannel(linearToSrgb(linearB))}`;
 }
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+}
+
+// Derivation compares opaque colors. `#rgba` and `#rrggbbaa` are valid theme input, so their alpha
+// channel is dropped here and the colour is read as the opaque one it sits on.
+function withoutAlpha(hex: string): string {
+  if (/^#[0-9a-fA-F]{4}$/.test(hex)) return hex.slice(0, 4);
+  if (/^#[0-9a-fA-F]{8}$/.test(hex)) return hex.slice(0, 7);
+  return hex;
+}
+
+function requireRgb(hex: string): [number, number, number] {
+  const rgb = parseHexColor(withoutAlpha(hex));
+  if (!rgb) throw new TypeError(`Expected a hex color, received ${hex}`);
+  return rgb;
+}
+
+/** WCAG contrast ratio between two hex colours, from 1 (identical) to 21. */
+export function contrastRatio(a: string, b: string): number {
+  const first = relativeLuminance(requireRgb(a));
+  const second = relativeLuminance(requireRgb(b));
+  const [lighter, darker] = first >= second ? [first, second] : [second, first];
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * Moves `hex` toward `toward` until it sits at `ratio` WCAG contrast from where it started.
+ *
+ * A step is expressed as a contrast ratio rather than a lightness delta because a lightness step
+ * vanishes near black: the same OKLab delta that is obvious on mid grey changes nothing visible
+ * on `#000000`, while a contrast step stays equally visible on every base. The move is a blend in
+ * linear light, so hue stays with the base. A ratio the target cannot reach stops at the target.
+ */
+export function stepContrast(hex: string, toward: string, ratio: number): string {
+  const from = requireRgb(hex);
+  const goal = requireRgb(toward);
+  const fromLuminance = relativeLuminance(from);
+  const goalLuminance = relativeLuminance(goal);
+  if (goalLuminance === fromLuminance) return hex;
+  const lighter = goalLuminance > fromLuminance;
+  const targetLuminance = lighter
+    ? ratio * (fromLuminance + 0.05) - 0.05
+    : (fromLuminance + 0.05) / ratio - 0.05;
+  const reach = (targetLuminance - fromLuminance) / (goalLuminance - fromLuminance);
+  const amount = Math.min(1, Math.max(0, reach));
+  const channels = from.map((channel, index) => {
+    const start = srgbToLinear(channel);
+    const end = srgbToLinear(goal[index]);
+    return toHexChannel(linearToSrgb(start + (end - start) * amount));
+  });
+  return `#${channels.join("")}`;
+}
+
+/** Blends `hex` toward `toward` by `amount` (0 keeps `hex`, 1 is `toward`) in sRGB. */
+export function mixHexColors(hex: string, toward: string, amount: number): string {
+  const from = requireRgb(hex);
+  const goal = requireRgb(toward);
+  const channels = from.map((channel, index) =>
+    toHexChannel(channel + (goal[index] - channel) * amount),
+  );
+  return `#${channels.join("")}`;
+}

@@ -35,6 +35,12 @@ export function normalizeModelId(modelId: string | null | undefined): string | n
   return normalized;
 }
 
+// Drops a provider namespace ("openrouter/gpt-5.5" -> "gpt-5.5") for the compact trigger.
+// A namespace segment has no spaces, so slashes inside a display name ("52/56") survive.
+export function shortModelLabel(label: string): string {
+  return label.replace(/^(?:[^\s/]+\/)+(?=\S)/, "");
+}
+
 export function getFeatureHighlightColor(featureId: string): FeatureHighlightColor {
   switch (featureId) {
     case FAST_MODE_FEATURE_ID:
