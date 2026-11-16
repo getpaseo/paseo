@@ -1,4 +1,5 @@
 import { en } from "@/i18n/resources/en";
+import { getKeyboardShortcutSearchText } from "@/keyboard/keyboard-shortcuts";
 import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
 
 /** Search spans both settings route namespaces; host routes remain separate because they carry a server id. */
@@ -10,17 +11,21 @@ export interface SettingsSearchIndexEntry {
   titleKey: string;
   /** Translation subtrees rendered by this settings group. */
   translationPrefixes: readonly string[];
+  /** Additional text derived from dynamic UI data rendered by this settings group. */
+  getSearchText?: (translate: (key: string) => string) => string;
   /** Use sidebar-only when a page owns its own navigation surface and cannot be embedded safely. */
-  resultMode?: "inline" | "sidebar-only";
+  resultMode?: "sidebar-only";
 }
 
-type TranslationTree = Record<string, unknown>;
+function isTranslationTree(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 function collectTranslationKeys(value: unknown, prefix = ""): string[] {
   if (typeof value === "string") return prefix ? [prefix] : [];
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  if (!isTranslationTree(value)) return [];
 
-  return Object.entries(value as TranslationTree).flatMap(([key, child]) =>
+  return Object.entries(value).flatMap(([key, child]) =>
     collectTranslationKeys(child, prefix ? `${prefix}.${key}` : key),
   );
 }
@@ -46,7 +51,9 @@ export function getSettingsSearchText(
       if (isUnderPrefix(key, prefix)) keys.add(key);
     }
   }
-  return Array.from(keys, (key) => translate(key)).join(" ");
+  const text = Array.from(keys, (key) => translate(key));
+  if (entry.getSearchText) text.push(entry.getSearchText(translate));
+  return text.join(" ");
 }
 
 export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
@@ -128,7 +135,8 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
     id: "shortcuts",
     section: "shortcuts",
     titleKey: "settings.sections.shortcuts",
-    translationPrefixes: ["settings.shortcuts.sections", "settings.shortcuts.help"],
+    translationPrefixes: [],
+    getSearchText: getKeyboardShortcutSearchText,
   },
   {
     id: "integrations",
@@ -164,7 +172,31 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
     id: "host",
     section: "host",
     titleKey: "settings.hostSections.host",
-    translationPrefixes: ["settings.host"],
+    translationPrefixes: [],
+  },
+  {
+    id: "host.appearance",
+    section: "host",
+    titleKey: "settings.host.appearance.title",
+    translationPrefixes: ["settings.host.appearance"],
+  },
+  {
+    id: "host.danger",
+    section: "host",
+    titleKey: "settings.host.daemon.dangerZone",
+    translationPrefixes: [
+      "settings.host.daemon.restart.title",
+      "settings.host.daemon.restart.hint",
+      "settings.host.daemon.restart.confirm",
+      "settings.host.daemon.restart.restarting",
+      "settings.host.daemon.restart.closeTerminals",
+      "settings.host.daemon.restart.closeTerminalsHint",
+      "settings.host.daemon.remove.title",
+      "settings.host.daemon.remove.localTitle",
+      "settings.host.daemon.remove.hint",
+      "settings.host.daemon.remove.localHint",
+      "settings.host.connections.removeAction",
+    ],
   },
   {
     id: "projects",
@@ -188,7 +220,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
     id: "agents",
     section: "agents",
     titleKey: "settings.hostSections.agents",
-    translationPrefixes: ["settings.host.agents"],
+    translationPrefixes: [],
   },
   {
     id: "metadata",

@@ -390,6 +390,31 @@ export function HostSettingsPage({
   );
 }
 
+export type HostSettingsSearchGroup = "appearance" | "danger";
+
+export function HostSettingsSearchPage({
+  serverId,
+  group,
+  onHostRemoved,
+}: {
+  serverId: string;
+  group: HostSettingsSearchGroup;
+  onHostRemoved: () => void;
+}) {
+  const host = useHostProfile(serverId);
+  const isLocalDaemon = useIsLocalDaemon(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  if (group === "appearance") {
+    return <HostAppearanceSection host={host} />;
+  }
+
+  return <RemoveHostSection host={host} isLocalDaemon={isLocalDaemon} onRemoved={onHostRemoved} />;
+}
+
 function ConnectionsSection({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const { removeConnection } = useHostMutations();

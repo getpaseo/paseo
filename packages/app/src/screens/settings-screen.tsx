@@ -46,7 +46,7 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { SettingsSection } from "@/components/settings";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { OpenLocationSection } from "@/screens/settings/open-location/open-location-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
@@ -103,6 +103,7 @@ import {
   HostConnectionsPage,
   HostPairDevicePage,
   HostAgentsPage,
+  HostSettingsSearchPage,
   HostSettingsPage,
   HostProvidersPage,
   HostUsagePage,
@@ -1412,6 +1413,15 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     (entry: SettingsSearchIndexEntry): ReactNode => {
       if (isHostSectionSlug(entry.section)) {
         if (!activeHostServerId) return null;
+        if (entry.id === "host.appearance" || entry.id === "host.danger") {
+          return (
+            <HostSettingsSearchPage
+              serverId={activeHostServerId}
+              group={entry.id === "host.appearance" ? "appearance" : "danger"}
+              onHostRemoved={handleHostRemoved}
+            />
+          );
+        }
         return renderHostSettingsContent(
           {
             kind: "host",
@@ -1427,7 +1437,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       if (entry.section === "shortcuts") {
         return <KeyboardShortcutsSection searchQuery={settingsSearchInput} />;
       }
-
       switch (entry.section as SettingsSectionSlug) {
         case "general":
           return (

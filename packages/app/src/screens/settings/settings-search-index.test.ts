@@ -26,6 +26,8 @@ describe("settings search index", () => {
     expect(usageText).toContain(en.providerUsage.title);
     expect(usageText).toContain(en.providerUsage.checkUsage);
     expect(usageText).toContain(en.providerUsage.displayAs);
+    expect(searchText("shortcuts")).toContain(en.settings.shortcuts.help.openProject);
+    expect(searchText("shortcuts")).not.toContain(en.settings.shortcuts.help.sendMessage);
   });
 
   it("keeps split groups independent", () => {
@@ -33,6 +35,10 @@ describe("settings search index", () => {
     expect(searchText("general")).not.toContain(en.settings.general.sendShortcut.label);
     expect(searchText("general.open-location")).not.toContain(
       en.settings.general.sendShortcut.label,
+    );
+    expect(searchText("host.danger")).toContain(en.settings.host.daemon.restart.title);
+    expect(searchText("host.danger")).not.toContain(
+      en.settings.host.daemon.restart.requestFailedMessage,
     );
   });
 });

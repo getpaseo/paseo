@@ -59,31 +59,28 @@ export interface KeyboardShortcutHelpSection {
   rows: KeyboardShortcutHelpRow[];
 }
 
-export function filterKeyboardShortcutHelpSections(
-  sections: readonly KeyboardShortcutHelpSection[],
-  query: string,
-  translate: (key: string) => string,
-): KeyboardShortcutHelpSection[] {
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  if (!normalizedQuery) return [...sections];
-
-  return sections.flatMap((section) => {
-    const sectionText = translate(section.titleKey).toLocaleLowerCase();
-    const rows = section.rows.filter((row) => {
-      const rowText = [
-        row.label,
-        translate(row.labelKey),
-        row.note,
-        row.noteKey ? translate(row.noteKey) : null,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLocaleLowerCase();
-      return sectionText.includes(normalizedQuery) || rowText.includes(normalizedQuery);
-    });
-
-    return rows.length > 0 ? [{ ...section, rows }] : [];
-  });
+/**
+ * Returns the translated labels and notes rendered by the shortcut settings page on every
+ * supported platform. Keeping this derived from the help-section builder prevents the settings
+ * index from drifting when a shortcut is added or moved.
+ */
+export function getKeyboardShortcutSearchText(translate: (key: string) => string): string {
+  const keys = new Set<string>();
+  for (const input of [
+    { isMac: true, usesDesktopBindings: true },
+    { isMac: true, usesDesktopBindings: false },
+    { isMac: false, usesDesktopBindings: true },
+    { isMac: false, usesDesktopBindings: false },
+  ]) {
+    for (const section of buildKeyboardShortcutHelpSections(input)) {
+      keys.add(section.titleKey);
+      for (const row of section.rows) {
+        keys.add(row.labelKey);
+        if (row.noteKey) keys.add(row.noteKey);
+      }
+    }
+  }
+  return Array.from(keys, translate).join(" ");
 }
 
 // --- Binding definition types ---
