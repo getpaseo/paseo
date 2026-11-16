@@ -30,7 +30,11 @@ import {
   type AppSettings,
 } from "@/hooks/use-settings";
 import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
+import {
+  CONTROL_SIZING_PREFERENCES,
+  type ControlSizingPreference,
+} from "@/components/ui/control-sizing-preference";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
 
@@ -239,6 +243,78 @@ function ContentWidthRow({ value, onChange }: ContentWidthRowProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Control size picker (commits, then reloads: stylesheets size themselves on load)
+// ---------------------------------------------------------------------------
+
+function controlSizingLabel(t: TFunction, preference: ControlSizingPreference): string {
+  switch (preference) {
+    case "auto":
+      return t("settings.appearance.layout.controlSizeAuto");
+    case "touch":
+      return t("settings.appearance.layout.controlSizeTouch");
+    case "pointer":
+      return t("settings.appearance.layout.controlSizePointer");
+  }
+}
+
+interface ControlSizingMenuItemProps {
+  preference: ControlSizingPreference;
+  selected: boolean;
+  onChange: (preference: ControlSizingPreference) => void;
+}
+
+function ControlSizingMenuItem({ preference, selected, onChange }: ControlSizingMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(preference);
+  }, [onChange, preference]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {controlSizingLabel(t, preference)}
+    </DropdownMenuItem>
+  );
+}
+
+interface ControlSizingRowProps {
+  value: ControlSizingPreference;
+  onChange: (preference: ControlSizingPreference) => void;
+}
+
+function ControlSizingRow({ value, onChange }: ControlSizingRowProps) {
+  const { t } = useTranslation();
+  const selectedLabel = controlSizingLabel(t, value);
+  return (
+    <View style={styles.rowWithBorder}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.layout.controlSize")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.layout.controlSizeHint")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityLabel={t("settings.appearance.layout.controlSizeAccessibility", {
+            value: selectedLabel,
+          })}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {CONTROL_SIZING_PREFERENCES.map((preference) => (
+            <ControlSizingMenuItem
+              key={preference}
+              preference={preference}
+              selected={value === preference}
+              onChange={onChange}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Syntax highlight theme picker (commits immediately)
 // ---------------------------------------------------------------------------
 
@@ -338,6 +414,18 @@ export function AppearanceSection() {
       void updateSettings({ contentMaxWidth });
     },
     [updateSettings],
+  );
+
+  const handleControlSizingChange = useCallback(
+    (controlSizing: ControlSizingPreference) => {
+      if (controlSizing === settings.controlSizing) return;
+      const saveAndReload = async () => {
+        await updateSettings({ controlSizing });
+        if (isWeb) window.location.reload();
+      };
+      void saveAndReload();
+    },
+    [settings.controlSizing, updateSettings],
   );
 
   const handleSyntaxThemeChange = useCallback(
@@ -508,6 +596,9 @@ export function AppearanceSection() {
             value={settings.contentMaxWidth}
             onChange={handleContentMaxWidthChange}
           />
+          {isWeb ? (
+            <ControlSizingRow value={settings.controlSizing} onChange={handleControlSizingChange} />
+          ) : null}
         </View>
       </SettingsSection>
       <SettingsSection title={t("settings.appearance.syntax.title")}>

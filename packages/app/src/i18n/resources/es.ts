@@ -2702,6 +2702,13 @@ export const es: TranslationResources = {
         contentWidthAccessibility: "Ancho del contenido en píxeles",
         reset: "Restablecer",
         resetAccessibility: "Restablecer el ancho del contenido",
+        controlSize: "Tamaño de los controles",
+        controlSizeHint:
+          "Botones y filas más grandes para pantallas táctiles y más pequeños para el ratón. Al cambiarlo, Paseo se recarga",
+        controlSizeAccessibility: "Tamaño de los controles: {{value}}",
+        controlSizeAuto: "Automático",
+        controlSizeTouch: "Táctil",
+        controlSizePointer: "Ratón y trackpad",
       },
       syntax: {
         title: "Sintaxis",

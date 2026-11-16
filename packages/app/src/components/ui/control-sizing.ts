@@ -1,4 +1,6 @@
 import { hasTouchScreen } from "@/hooks/pointer-capabilities";
+import type { ControlSizingPreference } from "./control-sizing-preference";
+import { readStoredControlSizingPreference } from "./stored-control-sizing";
 
 // The sizing gate, apart from the control sizes so that low-level modules such as
 // `constants/layout` can size by it without loading the theme. Import it through
@@ -16,26 +18,35 @@ export interface ControlSizingFacts {
   compactLayout: boolean;
   /** The device has a touch screen; see `hasTouchScreen`. */
   touchScreen: boolean;
+  /** The user's choice in Appearance settings. */
+  preference: ControlSizingPreference;
 }
 
 /**
- * The one sizing gate: touch-sized in the compact layout or on any device with a touch screen,
- * pointer-sized otherwise. A touch screen keeps touch sizing when a mouse or keyboard is attached.
+ * The one sizing gate: touch-sized in the compact layout. On a wide layout the user's preference
+ * decides, and `auto` is touch-sized on any device with a touch screen, pointer-sized otherwise.
+ * A touch screen keeps touch sizing when a mouse or keyboard is attached.
  */
 export function resolveControlSizing({
   compactLayout,
   touchScreen,
+  preference,
 }: ControlSizingFacts): ControlSizing {
-  if (compactLayout || touchScreen) return "touch";
-  return "pointer";
+  if (compactLayout) return "touch";
+  if (preference !== "auto") return preference;
+  return touchScreen ? "touch" : "pointer";
 }
 
-// Read once, so attaching a mouse or keyboard later never flips the sizing.
-const DEVICE_HAS_TOUCH_SCREEN = hasTouchScreen();
+// Read once, so attaching a mouse or keyboard later never flips the sizing. Stylesheets are
+// sized when they load, so changing the preference reloads the app.
+const DEVICE_FACTS = {
+  touchScreen: hasTouchScreen(),
+  preference: readStoredControlSizingPreference(),
+} satisfies Omit<ControlSizingFacts, "compactLayout">;
 
 /** The sizing on this device for a layout, for code that sizes outside a stylesheet. */
 export function controlSizingForLayout(compactLayout: boolean): ControlSizing {
-  return resolveControlSizing({ compactLayout, touchScreen: DEVICE_HAS_TOUCH_SCREEN });
+  return resolveControlSizing({ compactLayout, ...DEVICE_FACTS });
 }
 
 /** A Unistyles breakpoint value: one number in the compact layout, another from `md` up. */
@@ -47,15 +58,15 @@ export type SizingValue = Record<ControlSizing, number>;
 
 /**
  * A size as a Unistyles breakpoint value. The compact layout always takes the touch value; from
- * `md` up the device decides.
+ * `md` up the device and the user's preference decide.
  */
 export function bySizing(
   sizes: SizingValue,
-  touchScreen: boolean = DEVICE_HAS_TOUCH_SCREEN,
+  device: Omit<ControlSizingFacts, "compactLayout"> = DEVICE_FACTS,
 ): LayoutValue {
   return {
-    xs: sizes[resolveControlSizing({ compactLayout: true, touchScreen })],
-    md: sizes[resolveControlSizing({ compactLayout: false, touchScreen })],
+    xs: sizes[resolveControlSizing({ compactLayout: true, ...device })],
+    md: sizes[resolveControlSizing({ compactLayout: false, ...device })],
   };
 }
 

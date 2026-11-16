@@ -2658,6 +2658,13 @@ export const ko: TranslationResources = {
         contentWidthAccessibility: "콘텐츠 너비(픽셀)",
         reset: "재설정",
         resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
+        controlSize: "컨트롤 크기",
+        controlSizeHint:
+          "터치에는 더 큰 버튼과 행을, 마우스에는 더 작은 크기를 사용합니다. 변경하면 Paseo가 다시 로드됩니다",
+        controlSizeAccessibility: "컨트롤 크기: {{value}}",
+        controlSizeAuto: "자동",
+        controlSizeTouch: "터치",
+        controlSizePointer: "마우스 및 트랙패드",
       },
       syntax: {
         title: "구문",

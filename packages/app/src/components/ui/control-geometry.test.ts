@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseStoredControlSizingPreference } from "./control-sizing-preference";
 import {
   ALERT_ICON_SIZE,
   bySizing,
@@ -69,19 +70,62 @@ const theme = {
 
 describe("control sizing gate", () => {
   it("is touch-sized in the compact layout or on a touch screen, and pointer-sized otherwise", () => {
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: true, touchScreen: false })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: true })).toBe("touch");
-    expect(resolveControlSizing({ compactLayout: false, touchScreen: false })).toBe("pointer");
+    const preference = "auto";
+    expect(resolveControlSizing({ compactLayout: true, touchScreen: true, preference })).toBe(
+      "touch",
+    );
+    expect(resolveControlSizing({ compactLayout: true, touchScreen: false, preference })).toBe(
+      "touch",
+    );
+    expect(resolveControlSizing({ compactLayout: false, touchScreen: true, preference })).toBe(
+      "touch",
+    );
+    expect(resolveControlSizing({ compactLayout: false, touchScreen: false, preference })).toBe(
+      "pointer",
+    );
+  });
+
+  it("lets the preference override the touch screen from md up, but never in the compact layout", () => {
+    for (const touchScreen of [true, false]) {
+      expect(
+        resolveControlSizing({ compactLayout: false, touchScreen, preference: "pointer" }),
+      ).toBe("pointer");
+      expect(resolveControlSizing({ compactLayout: false, touchScreen, preference: "touch" })).toBe(
+        "touch",
+      );
+      expect(
+        resolveControlSizing({ compactLayout: true, touchScreen, preference: "pointer" }),
+      ).toBe("touch");
+    }
   });
 
   it("gives a touch screen its touch sizes at every width", () => {
     const sizes = { touch: 44, pointer: 32 };
 
     // An iPad: touch-sized in the docked desktop layout too.
-    expect(bySizing(sizes, true)).toEqual({ xs: 44, md: 44 });
+    expect(bySizing(sizes, { touchScreen: true, preference: "auto" })).toEqual({ xs: 44, md: 44 });
     // A mouse-driven window: touch-sized only once it narrows into the compact layout.
-    expect(bySizing(sizes, false)).toEqual({ xs: 44, md: 32 });
+    expect(bySizing(sizes, { touchScreen: false, preference: "auto" })).toEqual({ xs: 44, md: 32 });
+    // A touch laptop driven by a mouse, with pointer sizing picked in settings.
+    expect(bySizing(sizes, { touchScreen: true, preference: "pointer" })).toEqual({
+      xs: 44,
+      md: 32,
+    });
+  });
+
+  it("reads the stored preference, falling back to auto", () => {
+    expect(parseStoredControlSizingPreference(JSON.stringify({ controlSizing: "pointer" }))).toBe(
+      "pointer",
+    );
+    for (const raw of [
+      null,
+      "{",
+      "42",
+      JSON.stringify({ theme: "dark" }),
+      JSON.stringify({ controlSizing: "huge" }),
+    ]) {
+      expect(parseStoredControlSizingPreference(raw)).toBe("auto");
+    }
   });
 
   it("keeps a device without a touch screen on pointer sizes from md up", () => {

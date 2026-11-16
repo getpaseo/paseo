@@ -2668,6 +2668,13 @@ export const ja: TranslationResources = {
         contentWidthAccessibility: "コンテンツ幅 (ピクセル)",
         reset: "リセット",
         resetAccessibility: "コンテンツ幅をデフォルトに戻す",
+        controlSize: "コントロールのサイズ",
+        controlSizeHint:
+          "タッチ操作向けに大きく、マウス向けに小さくします。変更すると Paseo が再読み込みされます",
+        controlSizeAccessibility: "コントロールのサイズ: {{value}}",
+        controlSizeAuto: "自動",
+        controlSizeTouch: "タッチ",
+        controlSizePointer: "マウスとトラックパッド",
       },
       syntax: {
         title: "構文ハイライト",

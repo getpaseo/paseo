@@ -2774,6 +2774,13 @@ export const en = {
         contentWidthAccessibility: "Content width in pixels",
         reset: "Reset",
         resetAccessibility: "Reset content width to default",
+        controlSize: "Control size",
+        controlSizeHint:
+          "Larger buttons and rows for touch, smaller for a mouse. Changing it reloads Paseo",
+        controlSizeAccessibility: "Control size: {{value}}",
+        controlSizeAuto: "Automatic",
+        controlSizeTouch: "Touch",
+        controlSizePointer: "Mouse and trackpad",
       },
       syntax: {
         title: "Syntax",
