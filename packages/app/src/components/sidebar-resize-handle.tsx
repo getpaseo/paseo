@@ -169,10 +169,10 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0,
   },
   visibleGrip: {
-    opacity: 0.3,
+    opacity: 0.55,
   },
   restingGrip: {
-    opacity: 0.15,
+    opacity: 0.35,
   },
   leftEdgeGrip: {
     alignSelf: "flex-start",
