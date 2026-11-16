@@ -1,9 +1,4 @@
-import type {
-  TerminalCommandStartedInfo,
-  TerminalExitInfo,
-  ServerMessage,
-  ClientMessage,
-} from "./terminal.js";
+import type { TerminalExitInfo, ServerMessage, ClientMessage } from "./terminal.js";
 import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
 export interface WorkerTerminalState {
   /** COMPAT(terminal-created-at): v6; v5 draining workers omit this, remove after 2027-06. */
@@ -200,7 +195,6 @@ export type TerminalWorkerEvent =
   | {
       type: "terminalCommandStarted";
       terminalId: string;
-      info: TerminalCommandStartedInfo;
     }
   | {
       type: "terminalCommandFinished";

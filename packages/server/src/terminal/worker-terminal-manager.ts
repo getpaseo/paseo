@@ -13,7 +13,6 @@ import type {
   ClientMessage,
   ServerMessage,
   TerminalActivityTransition,
-  TerminalCommandStartedInfo,
   TerminalCommandFinishedInfo,
   TerminalExitInfo,
   TerminalSession,
@@ -98,7 +97,6 @@ interface WorkerTerminalRecord {
   exitInfo: TerminalExitInfo | null;
   messageListeners: Set<(msg: ServerMessage) => void>;
   exitListeners: Set<(info: TerminalExitInfo) => void>;
-  commandStartListeners: Set<(info: TerminalCommandStartedInfo) => void>;
   commandFinishedListeners: Set<(info: TerminalCommandFinishedInfo) => void>;
   titleChangeListeners: Set<(title?: string) => void>;
   activityChangeListeners: Set<(transition: TerminalActivityTransition) => void>;
@@ -264,7 +262,6 @@ export function createWorkerTerminalManager(
       exitInfo: null,
       messageListeners: new Set(),
       exitListeners: new Set(),
-      commandStartListeners: new Set(),
       commandFinishedListeners: new Set(),
       titleChangeListeners: new Set(),
       activityChangeListeners: new Set(),
@@ -320,12 +317,6 @@ export function createWorkerTerminalManager(
         record.commandFinishedListeners.add(listener);
         return () => {
           record.commandFinishedListeners.delete(listener);
-        };
-      },
-      onCommandStart(listener: (info: TerminalCommandStartedInfo) => void): () => void {
-        record.commandStartListeners.add(listener);
-        return () => {
-          record.commandStartListeners.delete(listener);
         };
       },
       onTitleChange(listener: (title?: string) => void): () => void {
@@ -530,9 +521,6 @@ export function createWorkerTerminalManager(
       return;
     }
     record.info = { ...record.info, commandRunning: true };
-    for (const listener of Array.from(record.commandStartListeners)) {
-      listener(message.info);
-    }
     emitTerminalsChanged({
       cwd: record.info.cwd,
       terminals: listTerminalItemsForCwd(record.info.cwd),

@@ -392,11 +392,10 @@ function runWorker(argv: string[]): void {
       });
     });
     const unsubscribeCommandStart =
-      session.onCommandStart?.((info) => {
+      session.onCommandStart?.(() => {
         sendToController({
           type: "terminalCommandStarted",
           terminalId: session.id,
-          info,
         });
       }) ?? (() => {});
     const unsubscribeActivity = session.onActivityChange((transition) => {

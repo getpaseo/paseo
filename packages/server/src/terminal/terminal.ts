@@ -72,8 +72,6 @@ export interface TerminalCommandFinishedInfo {
   exitCode: number | null;
 }
 
-export type TerminalCommandStartedInfo = Record<never, never>;
-
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -99,7 +97,7 @@ export interface TerminalSession {
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
-  onCommandStart?(listener: (info: TerminalCommandStartedInfo) => void): () => void;
+  onCommandStart?(listener: () => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
@@ -781,7 +779,7 @@ export async function createTerminal(
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
-  const commandStartListeners = new Set<(info: TerminalCommandStartedInfo) => void>();
+  const commandStartListeners = new Set<() => void>();
   const titleChangeListeners = new Set<(title?: string) => void>();
   let killed = false;
   let disposed = false;
@@ -955,7 +953,7 @@ export async function createTerminal(
       commandRunning = true;
       for (const listener of Array.from(commandStartListeners)) {
         try {
-          listener({});
+          listener();
         } catch {
           // no-op
         }
@@ -1273,7 +1271,7 @@ export async function createTerminal(
     return commandRunning;
   }
 
-  function onCommandStart(listener: (info: TerminalCommandStartedInfo) => void): () => void {
+  function onCommandStart(listener: () => void): () => void {
     commandStartListeners.add(listener);
     return () => {
       commandStartListeners.delete(listener);
