@@ -1,4 +1,4 @@
-import { hasTouchScreen } from "@/hooks/pointer-capabilities";
+import { deviceUsesTouchSizing } from "./device-touch-sizing";
 
 // The sizing gate, apart from the control sizes so that low-level modules such as
 // `constants/layout` can size by it without loading the theme. Import it through
@@ -14,13 +14,15 @@ export type ControlSizing = "touch" | "pointer";
 export interface ControlSizingFacts {
   /** The layout is below the `md` breakpoint. */
   compactLayout: boolean;
-  /** The device has a touch screen; see `hasTouchScreen`. */
+  /** The device sizes for touch; see `deviceUsesTouchSizing`. */
   touchScreen: boolean;
 }
 
 /**
- * The one sizing gate: touch-sized in the compact layout or on any device with a touch screen,
- * pointer-sized otherwise. A touch screen keeps touch sizing when a mouse or keyboard is attached.
+ * The one sizing gate: touch-sized in the compact layout or on a device that sizes for touch,
+ * pointer-sized otherwise. On native and in browsers that is any device with a touch screen, which
+ * keeps touch sizing when a mouse or keyboard is attached; the desktop app asks for a touch
+ * primary pointer instead.
  */
 export function resolveControlSizing({
   compactLayout,
@@ -31,11 +33,11 @@ export function resolveControlSizing({
 }
 
 // Read once, so attaching a mouse or keyboard later never flips the sizing.
-const DEVICE_HAS_TOUCH_SCREEN = hasTouchScreen();
+const DEVICE_USES_TOUCH_SIZING = deviceUsesTouchSizing();
 
 /** The sizing on this device for a layout, for code that sizes outside a stylesheet. */
 export function controlSizingForLayout(compactLayout: boolean): ControlSizing {
-  return resolveControlSizing({ compactLayout, touchScreen: DEVICE_HAS_TOUCH_SCREEN });
+  return resolveControlSizing({ compactLayout, touchScreen: DEVICE_USES_TOUCH_SIZING });
 }
 
 /** A Unistyles breakpoint value: one number in the compact layout, another from `md` up. */
@@ -51,7 +53,7 @@ export type SizingValue = Record<ControlSizing, number>;
  */
 export function bySizing(
   sizes: SizingValue,
-  touchScreen: boolean = DEVICE_HAS_TOUCH_SCREEN,
+  touchScreen: boolean = DEVICE_USES_TOUCH_SIZING,
 ): LayoutValue {
   return {
     xs: sizes[resolveControlSizing({ compactLayout: true, touchScreen })],
