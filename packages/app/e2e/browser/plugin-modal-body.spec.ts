@@ -7,9 +7,10 @@ import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 async function openExample(page: Page, example: string) {
   await page.getByRole("button", { name: `Open ${example}`, exact: true }).click();
   const title = page.getByText(`Modal example: ${example}`, { exact: true });
-  await expect(title).toBeVisible();
   // A compact sheet holds below the viewport and then slides up, so a pointer placed before it
-  // stops lands on whatever slides under it.
+  // stops lands on whatever slides under it. The settle check starts once the slide has begun;
+  // two equal reads during the hold would otherwise count as settled.
+  await expect(title).toBeInViewport();
   await waitForSettledPosition(title);
 }
 
