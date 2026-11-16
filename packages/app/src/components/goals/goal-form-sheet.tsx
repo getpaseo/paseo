@@ -70,6 +70,8 @@ export function GoalFormSheet({
   const userWaitSupported = useHostFeature(serverId, "goalUserWait");
   // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02.
   const isolationSupported = useHostFeature(serverId, "goalIsolation");
+  // COMPAT(goalPolicyReview): added in v0.15.5, remove gate after 2027-11-11.
+  const policyReviewSupported = useHostFeature(serverId, "goalPolicyReview");
   const [snapshot] = useState(() =>
     buildSnapshot({
       serverId,
@@ -78,6 +80,7 @@ export function GoalFormSheet({
       thinkingSupported,
       userWaitSupported,
       isolationSupported,
+      policyReviewSupported,
       autoPermissionSupported,
     }),
   );
@@ -263,6 +266,7 @@ function buildSnapshot(input: {
   thinkingSupported: boolean;
   userWaitSupported: boolean;
   isolationSupported: boolean;
+  policyReviewSupported: boolean;
   autoPermissionSupported: boolean;
 }): GoalFormSnapshot {
   // Read once: the form starts from your last goal and never rebuilds when memory changes.
@@ -276,6 +280,7 @@ function buildSnapshot(input: {
     thinkingSupported: input.thinkingSupported,
     userWaitSupported: input.userWaitSupported,
     isolationSupported: input.isolationSupported,
+    policyReviewSupported: input.policyReviewSupported,
     autoPermissionSupported: input.autoPermissionSupported,
   };
 }

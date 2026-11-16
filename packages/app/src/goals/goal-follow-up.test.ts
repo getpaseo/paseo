@@ -128,6 +128,27 @@ describe("buildFollowUpPrefill", () => {
     expect(config?.limits?.deadlineAt).toBeUndefined();
   });
 
+  it("carries the policy paths to the follow-up, sent only to a host that reviews on them", () => {
+    const withPolicy = makeGoal({
+      ...failed,
+      config: { ...failed.config!, policyPaths: ["src/auth/", "**/*.policy.json"] },
+    });
+    const prefill = buildFollowUpPrefill(withPolicy, COPY);
+    expect(prefill?.policyPaths).toEqual(["src/auth/", "**/*.policy.json"]);
+
+    const supported = openGoalForm({
+      serverId: "host-a",
+      prefill: prefill ?? {},
+      policyReviewSupported: true,
+    });
+    expect(supported.getState().createInput?.config).toMatchObject({
+      policyPaths: ["src/auth/", "**/*.policy.json"],
+    });
+    // An older daemon would drop the setting and merge without the second review.
+    const older = openGoalForm({ serverId: "host-a", prefill: prefill ?? {} });
+    expect(older.getState().createInput?.config).not.toHaveProperty("policyPaths");
+  });
+
   it("keeps each criterion on one line and the follow-up suffix once", () => {
     const prefill = buildFollowUpPrefill(
       {

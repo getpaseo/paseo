@@ -59,6 +59,8 @@ export interface GoalFormValues {
   testCommand: string;
   /** Where agents work. "auto" sends nothing and lets the host choose (the checkout for GitButler). */
   isolation: GoalIsolation;
+  /** Policy-sensitive paths; carried from a follow-up, not edited in the form. */
+  policyPaths: string[];
   /** Empty means any registered provider. */
   allowedProviders: string[];
   settings: GoalSettings;
@@ -98,6 +100,7 @@ export interface GoalFormPrefill {
   verifyThinking?: string;
   testCommand?: string;
   isolation?: GoalIsolation;
+  policyPaths?: string[];
   allowedProviders?: string[];
   /** Starts from a preset; wins over `settings`. */
   preset?: GoalPresetId;
@@ -135,6 +138,8 @@ export interface GoalFormHost {
   userWaitSupported: boolean;
   /** The host takes `isolation` (`goalIsolation`). */
   isolationSupported: boolean;
+  /** The host takes `policyPaths` (`goalPolicyReview`). */
+  policyReviewSupported: boolean;
   /** The host takes the `auto` permission policy (`goalConfigEdit`). */
   autoPermissionSupported: boolean;
 }
@@ -166,6 +171,8 @@ export interface GoalFormSnapshot {
   userWaitSupported?: boolean;
   /** The host takes `isolation`. Without it the setting is neither offered nor sent. */
   isolationSupported?: boolean;
+  /** The host takes `policyPaths`. Without it they are not sent. */
+  policyReviewSupported?: boolean;
   /** The host takes the `auto` permission policy. Without it `auto` is neither offered nor sent. */
   autoPermissionSupported?: boolean;
 }
@@ -201,6 +208,7 @@ export const EMPTY_GOAL_FORM_VALUES: GoalFormValues = {
   verifyThinking: "",
   testCommand: "",
   isolation: "auto",
+  policyPaths: [],
   allowedProviders: [],
   settings: DAEMON_GOAL_SETTINGS,
   budget: NO_GOAL_BUDGET,
@@ -284,6 +292,7 @@ function buildGoalConfig(input: {
   thinkingSupported: boolean;
   userWaitSupported: boolean;
   isolationSupported: boolean;
+  policyReviewSupported: boolean;
   baseCommit?: string | null;
 }): GoalConfig {
   const { values } = input;
@@ -310,6 +319,11 @@ function buildGoalConfig(input: {
     // An older daemon drops the setting and cuts worktrees, so it is sent only to one that has it.
     ...(input.isolationSupported && values.isolation !== "auto"
       ? { isolation: values.isolation }
+      : {}),
+    // An older daemon drops the paths and merges without the second review, so only a host with
+    // `goalPolicyReview` is sent them.
+    ...(input.policyReviewSupported && values.policyPaths.length > 0
+      ? { policyPaths: [...values.policyPaths] }
       : {}),
     ...(values.allowedProviders.length > 0
       ? { allowedProviders: [...values.allowedProviders] }
@@ -354,6 +368,7 @@ export function buildGoalCreateInput(
     thinkingSupported?: boolean;
     userWaitSupported?: boolean;
     isolationSupported?: boolean;
+    policyReviewSupported?: boolean;
     cwdCheck?: GoalCwdCheck | null;
     baseCommit?: string | null;
   } = {},
@@ -369,6 +384,7 @@ export function buildGoalCreateInput(
         thinkingSupported: options.thinkingSupported ?? false,
         userWaitSupported: options.userWaitSupported ?? false,
         isolationSupported: options.isolationSupported ?? false,
+        policyReviewSupported: options.policyReviewSupported ?? false,
         baseCommit: options.baseCommit ?? null,
       })
     : null;
@@ -536,6 +552,7 @@ export interface GoalFormState {
   thinkingSupported: boolean;
   userWaitSupported: boolean;
   isolationSupported: boolean;
+  policyReviewSupported: boolean;
   autoPermissionSupported: boolean;
   /** The thinking levels each role's model offers; empty hides that role's picker. */
   thinkingOptions: Record<GoalThinkingRole, GoalThinkingOption[]>;
@@ -708,6 +725,7 @@ function withDerived(input: BaseState): GoalFormState {
       thinkingSupported: state.thinkingSupported,
       userWaitSupported: state.userWaitSupported,
       isolationSupported: state.isolationSupported,
+      policyReviewSupported: state.policyReviewSupported,
       cwdCheck: state.cwdCheck,
       baseCommit: state.baseCommit?.commit ?? null,
     }),
@@ -775,6 +793,7 @@ function valuesFromPrefill(prefill: GoalFormPrefill, settings: GoalSettings): Go
     verifyThinking: prefill.verifyThinking ?? "",
     testCommand: prefill.testCommand ?? "",
     isolation: prefill.isolation ?? "auto",
+    policyPaths: prefill.policyPaths ?? [],
     allowedProviders: prefill.allowedProviders ?? [],
     settings,
     budget: prefill.budget ?? NO_GOAL_BUDGET,
@@ -819,6 +838,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
     thinkingSupported: snapshot.thinkingSupported ?? false,
     userWaitSupported: snapshot.userWaitSupported ?? false,
     isolationSupported: snapshot.isolationSupported ?? false,
+    policyReviewSupported: snapshot.policyReviewSupported ?? false,
     autoPermissionSupported: snapshot.autoPermissionSupported ?? false,
     touched: [],
     submitAttempted: false,
@@ -942,6 +962,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
         thinkingSupported: host ? host.thinkingSupported : state.thinkingSupported,
         userWaitSupported: host ? host.userWaitSupported : state.userWaitSupported,
         isolationSupported: host ? host.isolationSupported : state.isolationSupported,
+        policyReviewSupported: host ? host.policyReviewSupported : state.policyReviewSupported,
         autoPermissionSupported: host
           ? host.autoPermissionSupported
           : state.autoPermissionSupported,
@@ -992,6 +1013,7 @@ export function openGoalForm(snapshot: GoalFormSnapshot): GoalFormModel {
         thinkingSupported: host?.thinkingSupported ?? false,
         userWaitSupported: host?.userWaitSupported ?? false,
         isolationSupported: host?.isolationSupported ?? false,
+        policyReviewSupported: host?.policyReviewSupported ?? false,
         autoPermissionSupported: host?.autoPermissionSupported ?? false,
         submitError: null,
       });

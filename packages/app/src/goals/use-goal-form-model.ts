@@ -134,6 +134,8 @@ export function useGoalFormHosts(model: GoalFormModel): void {
   const userWait = useHostFeatureMap(serverIds, "goalUserWait");
   // COMPAT(goalIsolation): added in v0.15.0, remove gate after 2027-11-02.
   const isolation = useHostFeatureMap(serverIds, "goalIsolation");
+  // COMPAT(goalPolicyReview): added in v0.15.5, remove gate after 2027-11-11.
+  const policyReview = useHostFeatureMap(serverIds, "goalPolicyReview");
   const statuses = useHostRuntimeConnectionStatuses(serverIds);
   const hosts = useMemo<GoalFormHost[]>(
     () =>
@@ -148,9 +150,10 @@ export function useGoalFormHosts(model: GoalFormModel): void {
           thinkingSupported: thinking.get(host.serverId) === true,
           userWaitSupported: userWait.get(host.serverId) === true,
           isolationSupported: isolation.get(host.serverId) === true,
+          policyReviewSupported: policyReview.get(host.serverId) === true,
           autoPermissionSupported: configEdit.get(host.serverId) === true,
         })),
-    [budgets, configEdit, goals, isolation, profiles, statuses, thinking, userWait],
+    [budgets, configEdit, goals, isolation, policyReview, profiles, statuses, thinking, userWait],
   );
 
   useEffect(() => {

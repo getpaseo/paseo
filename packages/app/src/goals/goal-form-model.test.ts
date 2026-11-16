@@ -649,6 +649,7 @@ describe("project and host", () => {
         thinkingSupported: false,
         userWaitSupported: false,
         isolationSupported: false,
+        policyReviewSupported: false,
         autoPermissionSupported: false,
       },
       {
@@ -658,6 +659,7 @@ describe("project and host", () => {
         thinkingSupported: true,
         userWaitSupported: true,
         isolationSupported: true,
+        policyReviewSupported: true,
         autoPermissionSupported: true,
       },
     ]);

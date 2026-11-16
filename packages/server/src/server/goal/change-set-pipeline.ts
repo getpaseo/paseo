@@ -688,7 +688,14 @@ export class ChangeSetPipeline {
       // to exactly the merge that was tested, so the next merge starts clean.
       await this.git.resetHard({ cwd: integration.cwd, commit: merged.headCommit });
       const review = await this.reviewIntegration({ goal, cs, integration, merged });
-      if (review.kind === "stopped") return;
+      if (review.kind === "stopped") {
+        // The goal ended during the integrated review. The merge was never approved, so the
+        // branch goes back to what had passed review; a restart merges the change again.
+        await this.git
+          .resetHard({ cwd: integration.cwd, commit: integration.headCommit })
+          .catch(() => undefined);
+        return;
+      }
       if (review.kind === "changes_requested") {
         await this.git.resetHard({ cwd: integration.cwd, commit: integration.headCommit });
         await this.transition(goalId, cs.id, "changes_requested", {

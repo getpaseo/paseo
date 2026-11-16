@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -123,6 +123,24 @@ describe("workspace commits in a plain git repository", () => {
     expect(git("show", "--name-status", "--format=", "HEAD")).toMatch(
       /^R\d*\s+base\.txt\s+renamed\.txt$/,
     );
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  test("a symlink to a target that does not exist yet is committed with the task", async () => {
+    const before = await snapshotWorkspace(cwd);
+    symlinkSync("missing-target.txt", path.join(cwd, "link"));
+    writeFileSync(path.join(cwd, "real.txt"), "x\n");
+    const result = await commitWorkspaceChanges({
+      cwd,
+      before,
+      branch: "ignored/branch",
+      message: "Task t1: link",
+    });
+    expect(result?.files.sort()).toEqual(["link", "real.txt"]);
+    expect(git("show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "link",
+      "real.txt",
+    ]);
     expect(git("status", "--porcelain")).toBe("");
   });
 

@@ -97,4 +97,26 @@ describe("integrated review of merges that change policy paths", () => {
     expect(h().git.resets).toContainEqual({ cwd: g.integration?.cwd, commit: "base0" });
     expect(g.changeSets[1]?.status).toBe("integrated");
   });
+  test("a goal cancelled during the integrated review leaves the branch where it was before the merge", async () => {
+    env.script([task("a")]);
+    h().git.changedByCommit.set("merged-1", ["src/auth/roles.ts"]);
+    const { store, manager, service } = await env.boot();
+    await env.createGoal(store, POLICY);
+    const goalId = env.goalOf(store).id;
+    let calls = 0;
+    env.stageReplies.review = () => {
+      calls += 1;
+      // The second reviewer is the integrated review: the goal ends while it works.
+      if (calls === 2) void service.cancel(goalId);
+      return { outcome: "completed", text: env.fenced(APPROVE) };
+    };
+    await env.settle(manager);
+
+    const g = env.goalOf(store);
+    expect(g.status).toBe("cancelled");
+    expect(g.changeSets[0]?.status).not.toBe("integrated");
+    expect(g.changeSets[0]?.integrationReviewedCommit).toBeUndefined();
+    // Back to the head before the unapproved merge, not left on merged-1.
+    expect(h().git.resets.at(-1)).toEqual({ cwd: g.integration?.cwd, commit: "base0" });
+  });
 });

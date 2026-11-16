@@ -80,6 +80,8 @@ export function buildFollowUpPrefill(goal: Goal, copy: FollowUpCopy): GoalFormPr
     testCommand: edit.testCommand,
     // A goal recorded before the setting ran in worktrees.
     isolation: config.isolation ?? "worktree",
+    // A goal recorded before the setting had none; the form sends them only to a host that has it.
+    policyPaths: [...(config.policyPaths ?? [])],
     allowedProviders: [...(config.allowedProviders ?? [])],
     settings: edit.settings,
     budget: edit.budget,

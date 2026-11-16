@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { execCommand } from "../../utils/spawn.js";
@@ -176,10 +176,11 @@ async function commitWithGit(input: WorkspaceCommitInput): Promise<WorkspaceComm
   const changed = await changedSince(input, await gitUncommittedPaths(input.cwd));
   if (changed.length === 0) return null;
   // `add` refuses a path that is gone from both the tree and the index, such as the source of a
-  // rename that is already staged; deleted files are staged by `rm --cached` instead.
+  // rename that is already staged; deleted files are staged by `rm --cached` instead. `lstat`,
+  // not `access`: a symlink whose target does not exist yet is still an entry git can add.
   const exists = await Promise.all(
     changed.map((filePath) =>
-      access(path.join(input.cwd, filePath)).then(
+      lstat(path.join(input.cwd, filePath)).then(
         () => true,
         () => false,
       ),
