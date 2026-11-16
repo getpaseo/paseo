@@ -824,7 +824,7 @@ index c99a52d..a84ce41 100644
          }
          impl->pushNode(node);
          break;
-@@ -427,6 +438,36 @@ public:
+@@ -427,6 +438,39 @@ public:
      }
  
      // Handle text content (normal text, code text, LaTeX math, etc.)
@@ -851,6 +851,9 @@ index c99a52d..a84ce41 100644
 +        }
 +        impl->addInlineNode(std::make_shared<MarkdownASTNode>(NodeType::LineBreak));
 +        pos = match + kLineSepLen;
++        if (pos < size && text[pos] == ' ') {
++          ++pos;
++        }
 +      }
 +      if (pos < size) {
 +        impl->currentText.append(text + pos, size - pos);
@@ -1495,7 +1498,7 @@ index 7052cba..f552f3c 100644
 +  const nextChildren = [];
 +  for (const child of node.children) {
 +    if (child.type === 'Text' && typeof child.content === 'string' && child.content.includes('\u2028')) {
-+      const parts = child.content.split(/ ?\u2028/);
++      const parts = child.content.split(/ ?\u2028 ?/);
 +      for (let i = 0; i < parts.length; i++) {
 +        const part = parts[i];
 +        if (part !== undefined && part.length > 0) {
@@ -2616,7 +2619,7 @@ index b94c8d2..6140cbf 100644
 +      typeof child.content === 'string' &&
 +      child.content.includes('\u2028')
 +    ) {
-+      const parts = child.content.split(/ ?\u2028/);
++      const parts = child.content.split(/ ?\u2028 ?/);
 +      for (let i = 0; i < parts.length; i++) {
 +        const part = parts[i];
 +        if (part !== undefined && part.length > 0) {

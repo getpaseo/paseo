@@ -181,11 +181,12 @@ function layoutBoundary(
   startsAfterBoundary: boolean,
   inTable: boolean,
 ): string | null {
-  // Inside GFM table cells, emit ` \u2028` so row boundaries stay intact while giving URLs/autolinks
-  // a whitespace terminator before the cell-scoped parser turns ` \u2028` back into a `LineBreak` node.
+  // Inside GFM table cells, emit ` \u2028 ` so row boundaries stay intact while giving flanking
+  // emphasis/strikethrough delimiters and URLs/autolinks whitespace boundaries on both sides before
+  // the cell-scoped parser turns ` \u2028 ` back into a `LineBreak` node.
   if (name === "br") {
     if (closing) return "";
-    return inTable ? " \u2028" : "  \n";
+    return inTable ? " \u2028 " : "  \n";
   }
   if (name === "summary") return closing ? "**\n\n" : "**";
   if (name === "details")

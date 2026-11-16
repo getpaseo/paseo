@@ -931,6 +931,34 @@ describe("GitHub comment HTML normalization", () => {
       "a  \nb",
     );
   });
+
+  it("preserves emphasis and strong delimiters adjacent to <br> inside table cells", async () => {
+    const source = [
+      "| A | B |",
+      "| --- | --- |",
+      "| **方案 B（最猛 · 推荐）**<br>阶梯首充 | **`基准 → 30% → 50%`**<br>*(复购：基准)* |",
+    ].join("\n");
+    const tree = await parseMarkdown(prepareMarkdownSource(source).render(), {
+      hardSoftBreaks: true,
+      latexMath: false,
+    });
+    const row = tree.children
+      ?.find((node) => node.type === "Table")
+      ?.children?.find((node) => node.type === "TableBody")?.children?.[0];
+    expect(row?.children?.[0]?.children).toEqual([
+      { type: "Strong", children: [{ type: "Text", content: "方案 B（最猛 · 推荐）" }] },
+      { type: "LineBreak" },
+      { type: "Text", content: "阶梯首充" },
+    ]);
+    expect(row?.children?.[1]?.children).toEqual([
+      {
+        type: "Strong",
+        children: [{ type: "Code", children: [{ type: "Text", content: "基准 → 30% → 50%" }] }],
+      },
+      { type: "LineBreak" },
+      { type: "Emphasis", children: [{ type: "Text", content: "(复购：基准)" }] },
+    ]);
+  });
 });
 
 it("preserves backslashes and decodes entities inside HTML code", () => {
