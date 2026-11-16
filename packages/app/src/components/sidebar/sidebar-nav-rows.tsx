@@ -1,9 +1,20 @@
 import { router, usePathname } from "expo-router";
-import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useRef, type ComponentType, type ReactNode } from "react";
+import { CalendarClock, Ellipsis, History, Plus, Search } from "lucide-react-native";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { MenuTrigger } from "@/components/ui/menu";
+import { SidebarPopoverRoot, SidebarPopoverSurface } from "@/components/sidebar/sidebar-popover";
+import { DensityIcon } from "@/components/ui/density-icon";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItem } from "@/plugins/sidebar-items";
@@ -33,6 +44,7 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   style?: StyleProp<ViewStyle>;
   /** Sits to the right of the first row, which shrinks to make room. */
   firstRowTrailing?: ReactNode;
+  maxRows?: number;
 }
 
 /**
@@ -40,14 +52,29 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
-export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
+export function SidebarNavRows({
+  style,
+  onBeforeNavigate,
+  firstRowTrailing,
+  maxRows,
+}: SidebarNavRowsProps) {
   const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const groupRef = useRef<View | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const rowLimit =
+    maxRows === undefined || visibleItems.length <= maxRows
+      ? visibleItems.length
+      : Math.max(0, maxRows - 1);
+  const overflowItems = visibleItems.slice(rowLimit);
+  const closeOverflowAndNavigate = () => {
+    setOverflowOpen(false);
+    onBeforeNavigate?.();
+  };
 
   if (visibleItems.length === 0 && !firstRowTrailing) return null;
 
-  const [firstRow, ...restRows] = visibleItems.map((item) => {
+  const renderRow = (item: (typeof visibleItems)[number], overflow = false) => {
     if (item.kind === "plugin") {
       return (
         <PluginSidebarItem
@@ -55,13 +82,38 @@ export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: Si
           group={item.group}
           section="header"
           fallbackAnchorRef={groupRef}
-          onBeforeNavigate={onBeforeNavigate}
+          onBeforeNavigate={overflow ? closeOverflowAndNavigate : onBeforeNavigate}
         />
       );
     }
     const Row = BUILTIN_ROWS[item.id];
-    return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
-  });
+    return (
+      <Row
+        key={item.key}
+        onBeforeNavigate={overflow ? closeOverflowAndNavigate : onBeforeNavigate}
+      />
+    );
+  };
+  const rows = visibleItems.slice(0, rowLimit).map((item) => renderRow(item));
+  if (overflowItems.length) {
+    rows.push(
+      <SidebarPopoverRoot key="overflow" open={overflowOpen} onOpenChange={setOverflowOpen}>
+        <MenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel="More menu items"
+          testID="sidebar-nav-overflow"
+          style={styles.overflowTrigger}
+        >
+          <DensityIcon icon={Ellipsis} size="sm" color="foregroundMuted" />
+          <Text style={styles.overflowLabel}>More</Text>
+        </MenuTrigger>
+        <SidebarPopoverSurface section="header" title="More" testID="sidebar-nav-overflow-menu">
+          {overflowItems.map((item) => renderRow(item, true))}
+        </SidebarPopoverSurface>
+      </SidebarPopoverRoot>,
+    );
+  }
+  const [firstRow, ...restRows] = rows;
 
   return (
     <View ref={groupRef} collapsable={false} style={style}>
@@ -145,13 +197,14 @@ function SidebarHistoryRow({ onBeforeNavigate }: SidebarNavRowProps) {
   );
 }
 
-function SidebarSearchRow() {
+function SidebarSearchRow({ onBeforeNavigate }: SidebarNavRowProps) {
   const { t } = useTranslation();
   const shortcutKeys = useShortcutKeys(builtinSidebarNavShortcutAction("search"));
   const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const handlePress = useCallback(() => {
+    onBeforeNavigate?.();
     setCommandCenterOpen(true);
-  }, [setCommandCenterOpen]);
+  }, [onBeforeNavigate, setCommandCenterOpen]);
 
   return (
     <SidebarHeaderRow
@@ -192,7 +245,15 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
   schedules: SidebarSchedulesRow,
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
+  overflowTrigger: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+  },
+  overflowLabel: { fontSize: theme.fontSize.base, color: theme.colors.foregroundMuted },
   firstRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -201,4 +262,4 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-});
+}));
