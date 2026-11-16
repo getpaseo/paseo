@@ -164,7 +164,38 @@ describe("mapOmpModel thinking options", () => {
 
     expect(result.provider).toBe("omp");
     expect(result.id).toBe("pioneer/canada-quant/glm-5.2");
-    expect(result.label).toBe("pioneer/GLM-5.2");
+    expect(result.label).toBe("GLM-5.2");
     expect(result.metadata).toEqual({ provider: "pioneer", modelId: "canada-quant/glm-5.2" });
+  });
+});
+
+describe("mapOmpModel labels", () => {
+  test("keeps slashes, underscores and inner colons in free-text model names", () => {
+    const labels = [
+      "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+      "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    ].map(
+      (name) =>
+        mapOmpModel(baseModel({ provider: "llama-swap", id: "s-q3fn(p-t)", name }), "omp").label,
+    );
+
+    expect(labels).toEqual([
+      "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+      "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    ]);
+  });
+
+  test("shortens path-like names and drops vendor prefixes", () => {
+    const labels = [
+      baseModel({
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash",
+        name: "google/gemini_2.5-flash",
+      }),
+      baseModel({ provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" }),
+      baseModel({ provider: "anthropic", id: "claude-haiku-5-5", name: undefined }),
+    ].map((model) => mapOmpModel(model, "omp").label);
+
+    expect(labels).toEqual(["gemini 2.5-flash", "GPT-5.5", "claude-haiku-5-5"]);
   });
 });

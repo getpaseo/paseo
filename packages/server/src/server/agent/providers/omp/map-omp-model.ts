@@ -38,12 +38,33 @@ function mapThinkingOption(
   return mapped;
 }
 
+// Drops an upstream "Vendor: " prefix ("OpenAI: GPT-5.5"). A colon inside parentheses or after a
+// comma belongs to the model name ("DeepSeek V4 (ctx: 128k)"), so it is kept.
+function stripVendorPrefix(label: string): string {
+  const vendorSeparatorIndex = label.indexOf(": ");
+  if (vendorSeparatorIndex === -1 || /[(),]/.test(label.slice(0, vendorSeparatorIndex))) {
+    return label;
+  }
+  return label.slice(vendorSeparatorIndex + 2).trim();
+}
+
+// An OMP model name is either a path ("google/gemini_2.5-flash", as OpenRouter reports it) or
+// free text that can contain slashes and underscores ("IQ3_S ... 52/56"). Only shorten paths.
+function ompModelLabel(model: Pick<OmpModel, "id" | "name">): string {
+  const text = model.name?.trim().replace(/\s+/g, " ") || model.id.trim();
+  if (/\s/.test(text)) {
+    return stripVendorPrefix(text);
+  }
+  const lastSegment = text.split("/").findLast((segment) => segment.length > 0) ?? text;
+  return stripVendorPrefix(lastSegment.replace(/_+/g, " "));
+}
+
 export function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefinition {
   const { thinkingOptions, defaultThinkingOptionId } = resolveOmpThinkingConfig(model);
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
+    label: ompModelLabel(model),
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,
