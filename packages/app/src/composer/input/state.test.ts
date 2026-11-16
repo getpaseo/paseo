@@ -537,7 +537,7 @@ describe("resolveMessageInputEnterAction", () => {
       expect(sendAction.calls).toEqual(["queued-send-all"]);
     });
 
-    it("drains queued messages when the alternate action has no content", () => {
+    it("drains queued messages from the secondary send action with no content", () => {
       const sendAction = actions();
 
       runAlternateSendAction({

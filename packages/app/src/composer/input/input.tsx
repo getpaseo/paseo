@@ -907,10 +907,10 @@ type PrimaryActionKind = "send" | "active" | "voiceMode" | "none";
 
 function hasSendableComposerContent(input: {
   hasText: boolean;
-  attachments: readonly ComposerAttachment[];
+  hasAttachments: boolean;
   hasExternalContent: boolean;
 }): boolean {
-  return input.hasText || input.attachments.length > 0 || input.hasExternalContent;
+  return input.hasText || input.hasAttachments || input.hasExternalContent;
 }
 
 function resolvePrimaryActionKind(input: {
@@ -1273,7 +1273,7 @@ function resolvePresentationSendDisabled(input: {
   standsIn: boolean;
   disabled: boolean;
   hasText: boolean;
-  attachments: ComposerAttachment[];
+  hasAttachments: boolean;
   hasExternalContent: boolean;
   allowEmpty: boolean;
 }): boolean {
@@ -1811,7 +1811,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           allowEmptySubmit ||
           hasSendableComposerContent({
             hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
-            attachments,
+            hasAttachments: attachments.length > 0,
             hasExternalContent,
           }),
         onSendQueued,
@@ -1842,7 +1842,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           allowEmptySubmit ||
           hasSendableComposerContent({
             hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
-            attachments,
+            hasAttachments: attachments.length > 0,
             hasExternalContent,
           }),
         onSendQueued,
@@ -1933,7 +1933,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const primaryActionKind = resolvePrimaryActionKind({
       hasSendableContent: hasSendableComposerContent({
         hasText: hasLiveText,
-        attachments,
+        hasAttachments: attachments.length > 0,
         hasExternalContent,
       }),
       allowEmptySubmit,
@@ -2082,7 +2082,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       standsIn: sendStandsIn,
       disabled: isSendButtonDisabled,
       hasText: hasLiveText,
-      attachments,
+      hasAttachments: attachments.length > 0,
       hasExternalContent,
       allowEmpty: allowEmptySubmit,
     });
