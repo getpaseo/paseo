@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  pluginCombobox: {
+    searching: "Recherche…",
+    empty: "Aucun résultat",
+    failed: "Échec de la recherche : {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -86,14 +91,23 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Rechercher des commandes, fichiers, espaces de travail et agents…",
+      placeholder: "Rechercher des espaces de travail, fichiers et actions…",
+      placeholderWithoutFiles: "Rechercher des espaces de travail et des actions…",
       filePlaceholder: "Rechercher des fichiers…",
+      workspacePlaceholder: "Rechercher des espaces de travail…",
+      actionPlaceholder: "Rechercher des actions…",
       searchingFiles: "Recherche de fichiers…",
       noMatches: "Aucun résultat",
       actions: "Actions",
       files: "Fichiers",
       workspaces: "Espaces de travail",
-      agents: "Agents",
+      recentWorkspaces: "Espaces de travail récents",
+      tabs: {
+        all: "Tout",
+        workspaces: "Espaces de travail",
+        files: "Fichiers",
+        actions: "Actions",
+      },
       newAgent: "Nouvel agent",
       open: "Ouvrir {{name}}",
       openInSidePane: "Ouvrir {{name}} dans le panneau latéral",
@@ -268,7 +282,7 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",
-      reconnecting: "Reconnexion à l’hôte…",
+      reconnecting: "Reconnexion…",
       updating: "Mise à jour des messages…",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
@@ -2157,6 +2171,8 @@ export const fr: TranslationResources = {
     title: "Nouveautés",
     installed: "Installée",
     showMore: "Afficher plus",
+    showAllChanges: "Afficher toutes les modifications",
+    hideAllChanges: "Masquer toutes les modifications",
     openWebsite: "Journal des modifications complet",
     error: {
       title: "Impossible de charger le journal des modifications",
@@ -3201,6 +3217,7 @@ export const fr: TranslationResources = {
     turnOn: "Activer",
 
     options: "Paramètres",
+    host: "Hôte",
     refreshFailed: "Impossible d’actualiser l’utilisation",
     noHosts: "Aucun hôte connecté",
     agentError: "Impossible de charger l’utilisation : {{reason}}",
@@ -3217,6 +3234,8 @@ export const fr: TranslationResources = {
     loginExpired: "Connexion expirée {{relativeTime}}. {{remedy}}",
     title: "Utilisation du forfait",
     refresh: "Actualiser",
+    reorderCard: "Réorganiser {{source}}",
+    showCard: "Afficher {{source}}",
     refreshAll: "Tout actualiser",
     refreshing: "Actualisation...",
     loading: "Chargement de l’utilisation...",

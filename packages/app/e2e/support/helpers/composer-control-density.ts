@@ -54,6 +54,116 @@ export async function expectNoCollapsedComposerToolbarFrame(page: Page): Promise
   expect(collapsed, `collapsed toolbar frames: ${JSON.stringify(collapsed)}`).toEqual([]);
 }
 
+/** One painted frame of the composer's trailing controls: the slot and what sits beside it. */
+export interface TrailingActionFrame {
+  atMs: number;
+  /** Every trailing action on screen, as `label` or `label (disabled)`. */
+  actions: string[];
+  slotX: number | null;
+  micX: number | null;
+  ringX: number | null;
+  ringWidth: number | null;
+}
+
+declare global {
+  interface Window {
+    __trailingActionFrames?: TrailingActionFrame[];
+    __trailingActionStop?: () => void;
+  }
+}
+
+const TRAILING_ACTION_LABELS = [
+  "Enable Voice mode",
+  "Send message",
+  "Queue message",
+  "Send and interrupt",
+  "Send and steer",
+  "Interrupt agent",
+  "Stop agent",
+];
+
+/**
+ * Records every painted frame of the visible composer's trailing controls. Takes one sample before
+ * the first paint, so input that lands right after this resolves still has a frame to compare to.
+ */
+export async function recordTrailingActionFrames(page: Page): Promise<void> {
+  await page.evaluate((labels) => {
+    const frames: TrailingActionFrame[] = [];
+    window.__trailingActionFrames = frames;
+    const start = performance.now();
+    const visibleRoot = () =>
+      Array.from(document.querySelectorAll('[data-testid="message-input-root"]')).find(
+        (root) => root.getClientRects().length > 0,
+      );
+    const sample = () => {
+      const root = visibleRoot();
+      const control = (selector: string) =>
+        Array.from(root?.querySelectorAll(selector) ?? []).find(
+          (node) => node.getClientRects().length > 0,
+        );
+      const actions = labels.flatMap((label) => {
+        const node = control(`[aria-label="${label}"]`);
+        if (!node) return [];
+        return [node.getAttribute("aria-disabled") === "true" ? `${label} (disabled)` : label];
+      });
+      const slot = labels.map((label) => control(`[aria-label="${label}"]`)).find(Boolean);
+      const mic = control('[aria-label="Start dictation"]');
+      const ring = control('[aria-label^="Context window"]');
+      frames.push({
+        atMs: Math.round(performance.now() - start),
+        actions,
+        slotX: slot ? slot.getBoundingClientRect().x : null,
+        micX: mic ? mic.getBoundingClientRect().x : null,
+        ringX: ring ? ring.getBoundingClientRect().x : null,
+        ringWidth: ring ? ring.getBoundingClientRect().width : null,
+      });
+    };
+    sample();
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      sample();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    window.__trailingActionStop = () => {
+      running = false;
+    };
+  }, TRAILING_ACTION_LABELS);
+}
+
+export async function readTrailingActionFrames(page: Page): Promise<TrailingActionFrame[]> {
+  return page.evaluate(() => {
+    window.__trailingActionStop?.();
+    return window.__trailingActionFrames ?? [];
+  });
+}
+
+/**
+ * Every frame of the span shows exactly one trailing action, in the one slot, moving straight from
+ * `from` to `to`, with the mic and context ring where they started.
+ */
+export function expectTrailingActionSwap(
+  frames: TrailingActionFrame[],
+  expected: { from: string; to: string },
+): void {
+  expect(frames.length).toBeGreaterThan(1);
+  const [first] = frames;
+  const wrongFrames = frames.filter(
+    (frame) =>
+      frame.actions.length !== 1 ||
+      frame.slotX !== first.slotX ||
+      frame.micX !== first.micX ||
+      frame.ringX !== first.ringX ||
+      frame.ringWidth !== first.ringWidth,
+  );
+  expect(wrongFrames, `frames that moved or showed the wrong action`).toEqual([]);
+  const sequence = frames
+    .map((frame) => frame.actions[0])
+    .filter((action, index, all) => action !== all[index - 1]);
+  expect(sequence).toEqual([expected.from, expected.to]);
+}
+
 /** What the folded model control's labels show, read from the DOM. */
 export interface ModelTriggerLabelState {
   thinkingShown: boolean;

@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  pluginCombobox: {
+    searching: "검색 중…",
+    empty: "결과 없음",
+    failed: "검색 실패: {{message}}",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
@@ -85,14 +90,23 @@ export const ko: TranslationResources = {
       close: "메뉴 닫기",
     },
     commandCenter: {
-      placeholder: "명령, 파일, 워크스페이스 및 에이전트 검색...",
+      placeholder: "워크스페이스, 파일 및 작업 검색...",
+      placeholderWithoutFiles: "워크스페이스 및 작업 검색...",
       filePlaceholder: "파일 검색...",
+      workspacePlaceholder: "워크스페이스 검색...",
+      actionPlaceholder: "작업 검색...",
       searchingFiles: "파일 검색 중...",
       noMatches: "일치 항목 없음",
       actions: "작업",
       files: "파일",
       workspaces: "워크스페이스",
-      agents: "에이전트",
+      recentWorkspaces: "최근 워크스페이스",
+      tabs: {
+        all: "전체",
+        workspaces: "워크스페이스",
+        files: "파일",
+        actions: "작업",
+      },
       newAgent: "새 에이전트",
       open: "{{name}} 열기",
       openInSidePane: "사이드 패널에서 {{name}} 열기",
@@ -265,7 +279,7 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "호스트에 다시 연결하는 중",
+      reconnecting: "다시 연결하는 중",
       updating: "메시지 업데이트 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
@@ -2104,6 +2118,8 @@ export const ko: TranslationResources = {
     title: "새로운 소식",
     installed: "설치됨",
     showMore: "더 보기",
+    showAllChanges: "모든 변경 사항 보기",
+    hideAllChanges: "모든 변경 사항 숨기기",
     openWebsite: "전체 변경 내역",
     error: {
       title: "변경 내역을 불러오지 못했습니다",
@@ -3131,6 +3147,7 @@ export const ko: TranslationResources = {
     turnOn: "켜기",
 
     options: "설정",
+    host: "호스트",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
     agentError: "사용량을 불러올 수 없습니다: {{reason}}",
@@ -3147,6 +3164,8 @@ export const ko: TranslationResources = {
     loginExpired: "로그인이 {{relativeTime}}에 만료되었습니다. {{remedy}}",
     title: "플랜 사용량",
     refresh: "새로 고침",
+    reorderCard: "{{source}} 순서 변경",
+    showCard: "{{source}} 표시",
     refreshAll: "모두 새로 고침",
     refreshing: "새로 고치는 중...",
     loading: "사용량 불러오는 중...",

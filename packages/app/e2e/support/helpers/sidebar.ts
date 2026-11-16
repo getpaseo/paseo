@@ -31,10 +31,13 @@ async function expectContextMenuAtPointer(
   menuTestID: string,
   anchor: ContextMenuAnchor,
 ): Promise<void> {
-  const bounds = await page.getByTestId(menuTestID).boundingBox();
-  if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
-  expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
-  expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  // The visible measuring surface is replaced when layout places the menu at its anchor.
+  await expect(async () => {
+    const bounds = await page.getByTestId(menuTestID).boundingBox();
+    if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
+    expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function openWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {

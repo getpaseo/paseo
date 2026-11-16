@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  pluginCombobox: {
+    searching: "検索中…",
+    empty: "結果がありません",
+    failed: "検索に失敗しました: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
@@ -86,14 +91,23 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
-      placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",
+      placeholder: "ワークスペース、ファイル、アクションを検索...",
+      placeholderWithoutFiles: "ワークスペースとアクションを検索...",
       filePlaceholder: "ファイルを検索...",
+      workspacePlaceholder: "ワークスペースを検索...",
+      actionPlaceholder: "アクションを検索...",
       searchingFiles: "ファイルを検索中...",
       noMatches: "一致なし",
       actions: "アクション",
       files: "ファイル",
       workspaces: "ワークスペース",
-      agents: "エージェント",
+      recentWorkspaces: "最近のワークスペース",
+      tabs: {
+        all: "すべて",
+        workspaces: "ワークスペース",
+        files: "ファイル",
+        actions: "アクション",
+      },
       newAgent: "新しいエージェント",
       open: "{{name}}を開く",
       openInSidePane: "{{name}}をサイドパネルで開く",
@@ -267,7 +281,7 @@ export const ja: TranslationResources = {
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
-      reconnecting: "ホストに再接続中",
+      reconnecting: "再接続中",
       updating: "メッセージを更新中",
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
       timelineSyncRetrying: "再試行しています…",
@@ -2124,6 +2138,8 @@ export const ja: TranslationResources = {
     title: "新着情報",
     installed: "インストール済み",
     showMore: "もっと見る",
+    showAllChanges: "すべての変更を表示",
+    hideAllChanges: "すべての変更を非表示",
     openWebsite: "変更履歴をすべて表示",
     error: {
       title: "変更履歴を読み込めません",
@@ -3157,6 +3173,7 @@ export const ja: TranslationResources = {
     turnOn: "オンにする",
 
     options: "設定",
+    host: "ホスト",
     refreshFailed: "使用状況を更新できません",
     noHosts: "接続中のホストがありません",
     agentError: "使用状況を読み込めません: {{reason}}",
@@ -3173,6 +3190,8 @@ export const ja: TranslationResources = {
     loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
     title: "プラン使用量",
     refresh: "更新",
+    reorderCard: "{{source}} を並べ替え",
+    showCard: "{{source}} を表示",
     refreshAll: "すべて更新",
     refreshing: "更新中...",
     loading: "使用状況を読み込み中...",

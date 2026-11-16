@@ -1,16 +1,20 @@
 import { setImmediate } from "node:timers/promises";
 import { ClaudeRuntimeSafety } from "./runtime-safety.js";
-import { validateProviderOptions } from "../../provider-options.js";
+import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
+import { applyProviderOptionsPatch } from "../../option-controls.js";
+import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
 import { LRUCache } from "lru-cache";
+import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookCallback,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -65,7 +69,7 @@ import { foldSubagentObservations, type SubagentObservation } from "./subagents/
 import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
 import { readClaudeWorkflowResultFile } from "./subagents/workflow-output.js";
-import { buildClaudeFeatures, claudeModelSupportsFastMode } from "./feature-definitions.js";
+import { buildClaudeControls, claudeModelSupportsFastMode } from "./feature-definitions.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -104,7 +108,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
-  type AgentFeature,
+  type AgentDraftControls,
+  type AgentOptionControl,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1761,12 +1766,11 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const claudeConfig = this.assertConfig(config);
-    return buildClaudeFeatures({
-      modelId: claudeConfig.model,
-      fastModeEnabled: claudeConfig.featureValues?.fast_mode === true,
-    });
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return {
+      controls: buildClaudeControls(this.assertConfig(config).model),
+      options: config.providerOptions ?? {},
+    };
   }
 
   async listImportableSessions(
@@ -2437,6 +2441,8 @@ class ClaudeAgentSession implements AgentSession {
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
+  /** True from the moment a query's launch options are copied until the query exists. */
+  private queryStarting = false;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -2460,6 +2466,7 @@ class ClaudeAgentSession implements AgentSession {
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
+  readonly openOptionsPatch: Record<string, unknown> = {};
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
@@ -2503,17 +2510,21 @@ class ClaudeAgentSession implements AgentSession {
     if (this.currentMode !== "plan") {
       this.planResumeMode = this.currentMode;
     }
+
+    // Fast cannot run on this model, so the session opens with it off. Off rather than removed
+    // keeps a `config.json` default of `fast_mode: true` from filling it back in.
+    if (config.providerOptions.fast_mode === true && !claudeModelSupportsFastMode(config.model)) {
+      this.config.providerOptions = { ...config.providerOptions, fast_mode: false };
+      this.openOptionsPatch = { fast_mode: false };
+    }
   }
 
   get id(): string | null {
     return this.claudeSessionId;
   }
 
-  get features(): AgentFeature[] {
-    return buildClaudeFeatures({
-      modelId: this.config.model,
-      fastModeEnabled: this.config.featureValues?.fast_mode === true,
-    });
+  get controls(): AgentOptionControl[] {
+    return buildClaudeControls(this.config.model);
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -2840,8 +2851,20 @@ class ClaudeAgentSession implements AgentSession {
     await activeQuery.setModel(normalizedModelId ?? undefined);
     this.config.model = normalizedModelId ?? undefined;
     this.reconcileThinkingOptionForModel(normalizedModelId);
-    if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
-      await this.applyFastModeFeature(false, activeQuery);
+    if (this.config.providerOptions.fast_mode) {
+      const supported = claudeModelSupportsFastMode(this.config.model);
+      await activeQuery.applyFlagSettings({ fastMode: supported });
+      if (!supported) {
+        // Fast cannot run on this model. Reporting it off rather than removed keeps a
+        // `config.json` default of `fast_mode: true` from filling it back in.
+        this.config.providerOptions = { ...this.config.providerOptions, fast_mode: false };
+        this.pushEvent({
+          type: "options_changed",
+          provider: "claude",
+          patch: { fast_mode: false },
+        });
+      }
+      this.cachedRuntimeInfo = null;
     }
     this.contextUsage.setInitialContextWindowMaxTokens(
       getClaudeContextWindowMaxTokens(this.config.model),
@@ -2894,31 +2917,36 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  async setFeature(featureId: string, value: unknown): Promise<void> {
-    if (featureId !== "fast_mode") {
-      throw new Error(`Unknown Claude feature: ${featureId}`);
+  async applyOptions(options: ProviderOptions): Promise<void> {
+    // Every option but Fast is read when the query is built, and replacing a started query would
+    // end its background work, so once it exists only Fast can change.
+    if (this.query || this.queryStarting) {
+      assertChangesAreLive({
+        provider: "claude",
+        patch: options,
+        current: this.config.providerOptions,
+        live: ["fast_mode"],
+      });
     }
-
-    const enabled = Boolean(value);
-    if (enabled && !claudeModelSupportsFastMode(this.config.model)) {
+    const providerOptions =
+      validateProviderOptions(
+        "claude",
+        ClaudeProviderOptionsSchema,
+        applyProviderOptionsPatch({ options: this.config.providerOptions, patch: options }),
+      ) ?? {};
+    if (providerOptions.fast_mode === true && !claudeModelSupportsFastMode(this.config.model)) {
       throw new Error(
         `Claude fast mode is not available for model '${this.config.model ?? "default"}'`,
       );
     }
-
-    await this.applyFastModeFeature(enabled);
-  }
-
-  private async applyFastModeFeature(enabled: boolean, query?: Query): Promise<void> {
-    this.config.featureValues = {
-      ...this.config.featureValues,
-      fast_mode: enabled,
-    };
-    const activeQuery = query ?? this.query;
-    if (activeQuery) {
-      await activeQuery.applyFlagSettings({ fastMode: enabled });
+    const fastModeChanged =
+      (providerOptions.fast_mode === true) !== (this.config.providerOptions.fast_mode === true);
+    if (fastModeChanged) {
+      await this.query?.applyFlagSettings({ fastMode: providerOptions.fast_mode === true });
+      this.cachedRuntimeInfo = null;
     }
-    this.cachedRuntimeInfo = null;
+    // Held until the runtime accepts, so a rejected change is retried instead of skipped.
+    this.config.providerOptions = providerOptions;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -3614,9 +3642,17 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
-    const options = await this.buildOptions(launchMode);
-    // Closure can finish while launch options are being prepared.
-    if (this.closed) throw new Error("Claude session is closed");
+    // buildOptions copies the launch options before it waits, so from here they are fixed.
+    this.queryStarting = true;
+    let options: ClaudeOptions;
+    try {
+      options = await this.buildOptions(launchMode);
+      // Closure can finish while launch options are being prepared.
+      if (this.closed) throw new Error("Claude session is closed");
+    } catch (error) {
+      this.queryStarting = false;
+      throw error;
+    }
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
@@ -3636,6 +3672,7 @@ class ClaudeAgentSession implements AgentSession {
         },
       },
     );
+    this.queryStarting = false;
     const fastMode = this.resolveFastModeSetting();
     if (fastMode !== null) {
       await this.query.applyFlagSettings({ fastMode });
@@ -3755,10 +3792,9 @@ class ClaudeAgentSession implements AgentSession {
   private async buildOptions(permissionMode: PermissionMode): Promise<ClaudeOptions> {
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
-    const providerOptions = applyClaudeToolPolicy(
-      this.config.providerOptions,
-      this.config.toolPolicy,
-    );
+    // `fast_mode` is a composer control the provider applies through flag settings.
+    const { fast_mode: _fastMode, ...sdkProviderOptions } = this.config.providerOptions;
+    const providerOptions = applyClaudeToolPolicy(sdkProviderOptions, this.config.toolPolicy);
     const settingsOptions = await this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.harnessEnvironment;
     assertClaudeModeCanRun(permissionMode, sdkEnv);
@@ -3819,7 +3855,7 @@ class ClaudeAgentSession implements AgentSession {
       // subagents keep running. Without this declaration an interrupt kills every one of them.
       // Claude stops a helper itself with its TaskStop tool.
       perTaskStopAffordance: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: { ...this.buildSubagentEffortHooks(), Stop: [{ hooks: [this.observeStopHook] }] },
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -3877,7 +3913,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!claudeModelSupportsFastMode(this.config.model)) {
       return null;
     }
-    return this.config.featureValues?.fast_mode === true;
+    return this.config.providerOptions.fast_mode === true;
   }
 
   private normalizeMcpServers(
@@ -5321,6 +5357,13 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options,
   ): Promise<PermissionResult> => {
+    // Decide before publishing anything: bypassed tools never enter the permission UI.
+    // Claude also routes questions and plan review through this callback.
+    const needsUserAnswer = toolName === "AskUserQuestion" || toolName === "ExitPlanMode";
+    if (this.currentMode === "bypassPermissions" && !needsUserAnswer) {
+      return { behavior: "allow", updatedInput: input, toolUseID: options.toolUseID };
+    }
+
     const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
     const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);
@@ -5346,6 +5389,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      description: readNonEmptyString(stripAnsi(options.decisionReason ?? ""))?.trim(),
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
@@ -5493,6 +5537,12 @@ class ClaudeAgentSession implements AgentSession {
       SubagentStop: [{ hooks: [observe] }],
     };
   }
+
+  // Observation-only, like the effort hooks: it never alters turn control.
+  private readonly observeStopHook: HookCallback = async (input) => {
+    if (input.hook_event_name === "Stop") this.runtimeSafety.observeStop(input.session_crons);
+    return {};
+  };
 
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =

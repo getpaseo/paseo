@@ -6,6 +6,12 @@ import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-type
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginFile } from "./file.js";
 import type {
+  PluginComposer,
+  PluginComposerItemContribution,
+  PluginComposerSelector,
+} from "./composer.js";
+import type { PluginNewWorkspaceItemContribution } from "./new-workspace.js";
+import type {
   PluginRpcContract,
   PluginSubscribeOptions,
   PluginSubscriptionContract,
@@ -115,6 +121,22 @@ export interface PluginSidebarViewContribution<Text extends PluginText = string>
   Component: ComponentType<PluginSidebarViewProps>;
 }
 
+export interface PluginWorkspaceRowBadgeItemProps extends PluginHostProps {
+  workspaceId: string;
+}
+
+/**
+ * Part of the line under a workspace's title in the sidebar, on every workspace of the plugin's host.
+ * Render `WorkspaceRowBadge`, or nothing when there is nothing to say about this workspace.
+ */
+export interface PluginWorkspaceRowBadgeItemContribution<Text extends PluginText = string> {
+  id: string;
+  /** The item's toggle in the sidebar's Show menu. */
+  title: Text;
+  icon: PluginIcon;
+  Component: ComponentType<PluginWorkspaceRowBadgeItemProps>;
+}
+
 /**
  * A Lucide icon name, inline SVG markup, or a component. Components receive the surface's size
  * and color; buttons widen the props with their host and target context.
@@ -208,6 +230,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
+  addWorkspaceRowBadgeItem(
+    contribution: PluginWorkspaceRowBadgeItemContribution<PluginText>,
+  ): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
     contribution: PluginCommandCenterItemContribution<PluginText>,
@@ -220,6 +245,8 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
     contribution: PluginComposerPillContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
+  addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;
+  addNewWorkspaceItem(contribution: PluginNewWorkspaceItemContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
@@ -334,6 +361,8 @@ export interface PluginCommandCapabilities {
     input: PluginWireInput<ZodInput<InputSchema>>,
   ): Promise<ZodOutput<OutputSchema>>;
   openScreen(input: PluginOpenScreenInput): void;
+  /** The composers `selector` names, whether or not their tabs are open; see `useComposers`. */
+  composers(selector: PluginComposerSelector): readonly PluginComposer[];
   /** @deprecated Use `openScreen`. */
   openSurface(id: string): void;
   openSettings(id: string): void;

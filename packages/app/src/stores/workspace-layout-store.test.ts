@@ -165,6 +165,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
   const sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
     prepare: async () => undefined,
+    canCheckFreshness: () => false,
+    applyCurrentTimeline: () => undefined,
     observe: (agentIds) => {
       observed.push(agentIds);
       return { ready: Promise.resolve(), release: async () => undefined };
@@ -174,6 +176,8 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
     onCatchUpEnded: () => undefined,
     reportError: () => undefined,
+    onCatchUpOwed: () => undefined,
+    onCatchUpSettled: () => undefined,
   });
   // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
   // agent behind a restored tab on the daemon.
@@ -4551,7 +4555,6 @@ describe("compact workspace sheet", () => {
             title: agent.id,
             cwd: "/repo",
             model: null,
-            features: undefined,
             thinkingOptionId: undefined,
             requiresAttention: false,
             attentionReason: null,
@@ -4566,6 +4569,24 @@ describe("compact workspace sheet", () => {
     );
   }
 
+  it("opens a subagent as a tab when a deferred request asks for one", () => {
+    const store = createCompactStore();
+    seedAgents([
+      { id: "parent", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child", parentAgentId: "parent", workspaceId: "sheet-ws" },
+    ]);
+
+    store.getState().deferOpenTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      intent: "reveal",
+      asTab: true,
+    });
+    store.getState().consumePendingOpen(workspaceKey);
+
+    expect(topSheet(store)).toBeUndefined();
+    expect(tabKinds(store)).toContain("agent");
+  });
   it("reveals a file in the sheet and leaves the tab strip unchanged", () => {
     const store = createCompactStore();
     const before = tabKinds(store);

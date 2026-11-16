@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
 const temporaryDirectories: string[] = [];
@@ -792,6 +793,170 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
+  it.each([
+    { counts: null, context: false, expected: [] },
+    {
+      counts: { totalTokens: 0, inputTokens: 0, outputTokens: 0 },
+      context: false,
+      expected: [
+        {
+          turnId: "acp:first",
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: undefined },
+        },
+      ],
+    },
+    {
+      counts: { totalTokens: 18971, inputTokens: 12152, outputTokens: 78, cachedReadTokens: 6741 },
+      context: true,
+      expected: [
+        {
+          turnId: undefined,
+          usage: { contextWindowUsedTokens: 42, contextWindowMaxTokens: 100, totalCostUsd: 0.25 },
+        },
+        {
+          turnId: "acp:first",
+          usage: {
+            inputTokens: 12152,
+            outputTokens: 78,
+            cachedInputTokens: 6741,
+            contextWindowUsedTokens: 42,
+            contextWindowMaxTokens: 100,
+            totalCostUsd: 0.25,
+          },
+        },
+      ],
+    },
+  ])(
+    "forwards prompt-result usage $counts while preserving context updates: $context",
+    async ({ counts, context, expected }) => {
+      const harness = connectorHarness({
+        handleRequest(instance, message) {
+          if (message.method !== "session/prompt") return false;
+          if (context)
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: {
+                sessionUpdate: "usage_update",
+                used: 42,
+                size: 100,
+                cost: { amount: 0.25, currency: "USD" },
+              },
+            });
+          instance.respond(message, {
+            stopReason: "end_turn",
+            ...(counts ? { usage: counts } : {}),
+          });
+          return true;
+        },
+      });
+      const registration = runAcpProvider({
+        id: "usage-acp",
+        label: "Usage ACP",
+        connector: harness.connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "first",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "hello" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        const usage = events.flatMap((event) =>
+          event.type === "session.usage" ? [{ turnId: event.turnId, usage: event.usage }] : [],
+        );
+        expect(usage).toEqual(expected);
+        const lastUsage = events.findLastIndex((event) => event.type === "session.usage");
+        const completed = events.findIndex(
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        expect(lastUsage).toBeLessThan(completed);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
+  it.each([
+    { status: "failed", output: undefined, error: { message: "Tool failed" } },
+    { status: "failed", output: null, error: { message: "Tool failed" } },
+    {
+      status: "failed",
+      output: { message: "File not found" },
+      error: { message: "File not found" },
+    },
+    { status: "failed", output: "Permission denied", error: "Permission denied" },
+    { status: "completed", output: null, error: null },
+  ] as const)(
+    "keeps a $status ACP tool with output $output valid on the history wire",
+    async ({ status, output, error }) => {
+      const harness = connectorHarness({
+        promptUpdates: () => [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "read-1",
+            title: "Read file",
+            kind: "read",
+            status: "in_progress",
+          },
+          { sessionUpdate: "tool_call_update", toolCallId: "read-1", status, rawOutput: output },
+        ],
+      });
+      const registration = runAcpProvider({
+        id: "tool-history-acp",
+        label: "Tool history ACP",
+        connector: harness.connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "first",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "Read a file" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        const rows = events.flatMap((event) =>
+          event.type === "timeline.item" && event.item.id === "read-1" ? [event.item] : [],
+        );
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+        }
+        expect(rows.at(-1)).toMatchObject({ type: "tool_call", status, error });
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
   it("serializes configuration mutations", async () => {
     let releaseMutation: (() => void) | null = null;
     const configOptions = [
@@ -1154,6 +1319,99 @@ lines.on("line", (line) => {
       await connection.close();
     },
   );
+
+  it("selects the model control when an agent files several controls under the model category", async () => {
+    const executable = await fakeAcp(`const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+let model = "small";
+const modes = { currentModeId: "auto", availableModes: [{ id: "auto", name: "Auto" }, { id: "ask", name: "Ask" }] };
+const options = () => [
+  { id: "provider", name: "Provider", category: "model", type: "select", currentValue: "gateway", options: [{ name: "Gateway", value: "gateway" }, { name: "Local", value: "local" }] },
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: model, options: [{ name: "Small", value: "small" }, { name: "Large", value: "large" }] },
+  { id: "mode", name: "Session Mode", category: "mode", type: "select", currentValue: "auto", options: [{ name: "Auto", value: "auto" }, { name: "Ask", value: "ask" }] },
+  { id: "fast", name: "Fast Mode", category: "model", type: "select", currentValue: "false", options: [{ name: "Off", value: "false" }, { name: "On", value: "true" }] },
+];
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes, configOptions: options() } });
+  else if (message.method === "session/set_config_option") {
+    if (message.params.configId === "model") model = message.params.value;
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: options() } });
+  }
+});`);
+    const { connection, events } = await connect(executable, [
+      "prompt.message",
+      "session.configure",
+    ]);
+    await connection.send({ type: "catalog", requestId: "catalog-1" });
+    await waitForEvent(events, (event) => event.type === "catalog");
+    expect(events.find((event) => event.type === "catalog")).toMatchObject({
+      catalog: {
+        defaultModel: "small",
+        models: [
+          { id: "small", label: "Small" },
+          { id: "large", label: "Large" },
+        ],
+      },
+    });
+
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure-1",
+      sessionId: "session-1",
+      changes: { model: "large" },
+    });
+    await waitForEvent(
+      events,
+      (event) => event.type === "request.completed" && event.requestId === "configure-1",
+    );
+    const config = events.findLast((event) => event.type === "session.config");
+    expect(config).toMatchObject({ config: { model: "large" } });
+    if (config?.type !== "session.config") throw new Error("Expected session.config");
+    expect(config.config.settings?.map((setting) => setting.id)).toEqual(["provider", "fast"]);
+    await connection.close();
+  });
+
+  it("applies opening configuration in the order the agent lists its options", async () => {
+    const executable = await fakeAcp(`const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+let provider = "first";
+let model = "first-saved";
+const saved = { first: "first-saved", second: "second-saved" };
+const select = (id, currentValue, values) => ({ id, name: id, category: "model", type: "select", currentValue, options: values.map((value) => ({ name: value, value })) });
+const options = () => [
+  select("provider", provider, ["first", "second"]),
+  select("model", model, ["first-saved", "second-saved", "second-chosen"]),
+];
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  else if (message.method === "session/new") send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", configOptions: options() } });
+  else if (message.method === "session/set_config_option") {
+    if (message.params.configId === "provider") { provider = message.params.value; model = saved[provider]; }
+    if (message.params.configId === "model") model = message.params.value;
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions: options() } });
+  }
+});`);
+    const { connection, events } = await connect(executable, [
+      "prompt.message",
+      "session.configure",
+    ]);
+    const input = openInput({ provider: "second" });
+
+    await connection.send({ ...input, config: { ...input.config, model: "second-chosen" } });
+
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    expect(events.findLast((event) => event.type === "session.config")).toMatchObject({
+      config: { model: "second-chosen" },
+    });
+    await connection.close();
+  });
 
   it("gives discovery transformers the discovered session configuration facade", async () => {
     const executable = await fakeAcp(`const readline = require("node:readline");

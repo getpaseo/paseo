@@ -1706,7 +1706,12 @@ test("config actions delegate to existing daemon config RPCs", async () => {
 });
 
 test("agent config maps provider/model and provider-native options to the daemon", async () => {
-  const { client, ws } = await connectClient();
+  const { client, ws } = await connectClient({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    providerOptionControls: true,
+  });
   const createdAgent = createAgent({
     model: "gpt-5.4",
     currentModeId: "full-access",
@@ -1738,8 +1743,8 @@ test("agent config maps provider/model and provider-native options to the daemon
       model: "gpt-5.4",
       modeId: "full-access",
       thinkingOptionId: "high",
-      featureValues: { webSearch: true },
       providerOptions: {
+        webSearch: true,
         approval_policy: "never",
         sandbox_mode: "workspace-write",
         sandbox_workspace_write: {

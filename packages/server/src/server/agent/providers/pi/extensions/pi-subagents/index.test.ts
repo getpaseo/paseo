@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, appendFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPiExtensionHost } from "../index.js";
@@ -30,10 +30,34 @@ function mapToolDetail(toolCall: PiTrackedToolCall, result: PiToolResult) {
   return mapping(toolCall, result)?.detail;
 }
 
-function hasChildTimeline(events: AgentStreamEvent[]) {
+function hasChildTimeline(events: AgentStreamEvent[], id?: string) {
   return events.some(
-    (event) => event.type === "provider_subagent" && event.event.type === "timeline",
+    (event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      (!id || event.event.id === id),
   );
+}
+
+function childAssistantTexts(events: AgentStreamEvent[], id: string) {
+  return events.flatMap((event) => {
+    if (
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === id &&
+      event.event.item.type === "assistant_message"
+    )
+      return [event.event.item.text];
+    return [];
+  });
+}
+
+function lastChildUpsert(events: AgentStreamEvent[], id: string) {
+  const last = events.findLast(
+    (event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" && event.event.id === id,
+  );
+  return last?.type === "provider_subagent" ? last.event : undefined;
 }
 
 function hasCompletedChild(events: AgentStreamEvent[]) {
@@ -46,6 +70,244 @@ function hasCompletedChild(events: AgentStreamEvent[]) {
 }
 
 describe("pi-subagents adapter", () => {
+  test("registers a successful resume as a new async attempt without spawn arguments", () => {
+    const host = createPiExtensionHost();
+    const resumed = host.mapToolCall({
+      callId: "resume-b",
+      toolName: "subagent",
+      args: { action: "resume", id: "run-a", message: "Continue" },
+      status: "completed",
+      result: {
+        details: {
+          mode: "single",
+          runId: "run-b",
+          asyncId: "run-b",
+          asyncDir: "/tmp/paseo-resume-b",
+          results: [],
+        },
+      },
+    });
+    expect(resumed?.subagents).toEqual([
+      {
+        type: "upsert",
+        id: "resume-b",
+        title: "Subagent",
+        description: "Continue",
+        toolCallId: "resume-b",
+        status: "running",
+      },
+    ]);
+  });
+  test.each([
+    { action: "resume", status: "running" as const, mode: "single" },
+    { action: "resume", status: "failed" as const, mode: "single" },
+    { action: "resume", status: "completed" as const, mode: "management" },
+    { action: "status", status: "completed" as const, mode: "single" },
+    { action: "steer", status: "completed" as const, mode: "single" },
+  ])("does not create phantom rows for $action/$status/$mode", ({ action, status, mode }) => {
+    expect(
+      createPiExtensionHost().mapToolCall({
+        callId: "management",
+        toolName: "subagent",
+        args: { action, id: "run-a", message: "Continue" },
+        status,
+        result: {
+          details: { mode, asyncId: "run-b", asyncDir: "/tmp/paseo-resume-b", results: [] },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  test.each([
+    { mode: "single", results: [] },
+    { mode: "single", asyncId: "run-b", results: [] },
+    { mode: "single", asyncDir: "/tmp/paseo-resume-b", results: [] },
+    {
+      mode: "single",
+      asyncId: "run-b",
+      asyncDir: "/tmp/paseo-resume-b",
+      results: [{ agent: "scout", exitCode: 0 }],
+    },
+  ])("does not register a resume without a new async launch: %j", (details) => {
+    expect(
+      createPiExtensionHost().mapToolCall({
+        callId: "not-launched",
+        toolName: "subagent",
+        args: { action: "resume", id: "run-a", message: "Continue" },
+        status: "completed",
+        result: { details },
+      }),
+    ).toBeUndefined();
+  });
+
+  test("uses the resume task alias as the follow-up description", () => {
+    expect(
+      createPiExtensionHost().mapToolCall({
+        callId: "resume-task",
+        toolName: "subagent",
+        args: { action: "resume", id: "source-prefix", task: "Continue via task" },
+        status: "completed",
+        result: {
+          details: {
+            mode: "single",
+            asyncId: "run-b",
+            asyncDir: "/tmp/paseo-resume-b",
+            results: [],
+          },
+        },
+      })?.subagents,
+    ).toEqual([
+      expect.objectContaining({
+        id: "resume-task",
+        description: "Continue via task",
+        status: "running",
+      }),
+    ]);
+  });
+
+  test("follows consecutive resumed attempts and keeps stale notices on their own rows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paseo-pi-resume-"));
+    const host = createPiExtensionHost();
+    const replay = createPiExtensionHost();
+    const received: AgentStreamEvent[] = [];
+    try {
+      host.follow((event) => received.push(event));
+      const initialTexts: string[] = [];
+      for (const [run, source] of [
+        ["b", "a"],
+        ["c", "b"],
+      ]) {
+        const dir = join(root, run);
+        const file = join(root, "shared-child.jsonl");
+        await mkdir(dir);
+        await appendFile(
+          file,
+          JSON.stringify({
+            type: "message",
+            message: { role: "assistant", content: [{ type: "text", text: `Attempt ${run}` }] },
+          }) + "\n",
+        );
+        await writeFile(
+          join(dir, "status.json"),
+          JSON.stringify({
+            state: "running",
+            revivedFrom: `run-${source}`,
+            steps: [{ agent: "scout", status: "running", sessionFile: file }],
+          }),
+        );
+        const call = {
+          callId: `resume-${run}`,
+          toolName: "subagent",
+          args: { action: "resume", id: `run-${source}`, message: `Continue ${run}` },
+          status: "completed" as const,
+          result: {
+            details: {
+              mode: "single",
+              runId: `run-${run}`,
+              asyncId: `run-${run}`,
+              asyncDir: dir,
+              results: [],
+            },
+          },
+        };
+        expect(host.mapToolCall(call)?.subagents).toEqual([
+          expect.objectContaining({ id: `resume-${run}`, status: "running" }),
+        ]);
+        replay.mapToolCall(call);
+        initialTexts.push(`Attempt ${run}`);
+        await expect
+          .poll(() => childAssistantTexts(received, `resume-${run}`))
+          .toEqual(initialTexts);
+      }
+      const oldNotice = {
+        role: "custom" as const,
+        customType: "subagent-notify",
+        content: `Background task completed: **scout**\nRetention-managed async directory: ${join(root, "b")}\nSession file: ${join(root, "shared-child.jsonl")}`,
+      };
+      expect(host.mapCustomMessage(oldNotice)?.subagents).toEqual([
+        { type: "upsert", id: "resume-b", status: "completed" },
+      ]);
+      const oldReplay = replay.mapCustomMessage(oldNotice);
+      expect(oldReplay?.subagents).toEqual([
+        { type: "upsert", id: "resume-b", status: "completed" },
+      ]);
+      expect(hasChildTimeline(await oldReplay!.hydration)).toBe(true);
+      expect(lastChildUpsert(received, "resume-c")).toEqual({
+        type: "upsert",
+        id: "resume-c",
+        title: "scout",
+        status: "running",
+      });
+      await appendFile(
+        join(root, "shared-child.jsonl"),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Attempt c follow-up" }],
+          },
+        }) + "\n",
+      );
+      const expectedCTexts = ["Attempt b", "Attempt c", "Attempt c follow-up"];
+      await expect.poll(() => childAssistantTexts(received, "resume-c")).toEqual(expectedCTexts);
+      expect(lastChildUpsert(received, "resume-c")).toEqual({
+        type: "upsert",
+        id: "resume-c",
+        title: "scout",
+        status: "running",
+      });
+      await writeFile(
+        join(root, "c", "status.json"),
+        JSON.stringify({
+          state: "complete",
+          steps: [
+            { agent: "scout", status: "complete", sessionFile: join(root, "shared-child.jsonl") },
+          ],
+        }),
+      );
+      await expect
+        .poll(() => lastChildUpsert(received, "resume-c"))
+        .toEqual(expect.objectContaining({ status: "completed" }));
+      const notice = replay.mapCustomMessage({
+        ...oldNotice,
+        content: `Background task completed: **scout**\nRetention-managed async directory: ${join(root, "c")}\nSession file: ${join(root, "shared-child.jsonl")}`,
+      });
+      expect(notice?.subagents).toEqual([{ type: "upsert", id: "resume-c", status: "completed" }]);
+      const hydration = await notice!.hydration;
+      expect(childAssistantTexts(hydration, "resume-c")).toEqual(expectedCTexts);
+      expect(hydration).toEqual(
+        expectedCTexts.map((text) => ({
+          type: "provider_subagent",
+          provider: "pi",
+          event: {
+            type: "timeline",
+            id: "resume-c",
+            item: expect.objectContaining({ type: "assistant_message", text }),
+          },
+        })),
+      );
+      expect(
+        host.mapToolCall({
+          callId: "wait-c",
+          toolName: "bg_wait",
+          args: {},
+          status: "completed",
+          result: {
+            details: {
+              mode: "wait",
+              results: [],
+              completions: [{ runId: "run-c", results: [{ agent: "scout", exitCode: 0 }] }],
+            },
+          },
+        })?.subagents,
+      ).toEqual([expect.objectContaining({ id: "resume-c", status: "completed" })]);
+    } finally {
+      host.close();
+      replay.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("follows async status and transcript without bg_wait", async () => {
     const dir = await mkdtemp(join(tmpdir(), "paseo-pi-async-"));
     const file = join(dir, "child.jsonl");

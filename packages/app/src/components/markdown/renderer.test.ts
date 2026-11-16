@@ -562,6 +562,34 @@ describe("bare URL sentence punctuation", () => {
       expect(tree.children?.[0]?.children?.[0]?.attributes?.url).toBe("https://example.com/a.");
     },
   );
+
+  it.each([
+    ["https://a.com、https://b.com！", ["https://a.com", "、", "https://b.com", "！"]],
+    ["https://a.com（说明）以及", ["https://a.com", "（说明）以及"]],
+    ["看这里：https://example.com/foo，还有", ["看这里：", "https://example.com/foo", "，还有"]],
+    ["（https://example.com/a）", ["（", "https://example.com/a", "）"]],
+    ["见【https://example.com/a】。", ["见【", "https://example.com/a", "】。"]],
+    ["“https://example.com/a”…", ["“", "https://example.com/a", "”…"]],
+    [
+      "见https://zh.wikipedia.org/wiki/人工智能。",
+      ["见", "https://zh.wikipedia.org/wiki/人工智能", "。"],
+    ],
+  ])("ends a bare URL at CJK and typographic punctuation: %s", async (source, expected) => {
+    const prepared = prepareMarkdownSource(source);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const parts = (tree.children?.[0]?.children ?? []).map((node) =>
+      node.type === "Link" ? String(node.attributes?.url) : String(node.content),
+    );
+    expect(parts).toEqual(expected);
+    expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+      isDisabled: false,
+      isDefault: false,
+    });
+  });
 });
 
 it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
@@ -1096,3 +1124,30 @@ it.each([false, true])(
     expect(markdownStyle.codeBlock?.fontSize).toBe(theme.fontSize.code);
   },
 );
+
+describe("external Markdown", () => {
+  const external = (source: string) => prepareMarkdownSource(source, undefined, { external: true });
+
+  it("recognizes no files, forge references or commands, only https URLs", () => {
+    const { linkRecognition } = external("Needs Node.js 22 and `~/.dsh/.env`, see #12");
+    expect("Needs Node.js 22, see #12".match(linkRecognition.text)).toBeNull();
+    expect(linkRecognition.inlineCode.test("~/.dsh/.env")).toBe(false);
+    expect("Docs at https://example.com/a.".match(linkRecognition.text)).toEqual([
+      "https://example.com/a",
+    ]);
+  });
+
+  it("keeps https links and leaves any other destination as its label", () => {
+    expect(
+      external(
+        "[Guide](docs/guide.md), [site](https://example.com), [mail](mailto:a@b.c), [ref][r]\n\n[r]: ./x",
+      ).render(),
+    ).toBe("Guide, [site](https://example.com), mail, ref\n\n[r]: ./x");
+  });
+
+  it("shows a relative image as its alt text", () => {
+    expect(external("![Demo](media/demo.png) ![Shot](https://x/a.png)").render()).toBe(
+      "Demo ![Shot](https://x/a.png)",
+    );
+  });
+});

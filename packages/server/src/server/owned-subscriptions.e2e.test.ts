@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import {
   SessionInboundMessageSchema,
   type SessionInboundMessage,
@@ -985,6 +986,45 @@ test("config changes require their own event demand and cannot escape to an idle
   }
 });
 
+test("a config change push carries profiles with the legacy featureValues the unchanged app reads", async () => {
+  const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
+  const admin = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let observer: SubscriptionPeer | undefined;
+  try {
+    await admin.connect();
+    await admin.patchDaemonConfig({
+      agentProfiles: [
+        { id: "p", name: "P", provider: "codex", options: {}, featureValues: { plan_mode: true } },
+      ],
+    });
+    observer = await SubscriptionPeer.connect(daemon.port, "config-push-session");
+    await observer.request({
+      type: "session.events.set_subscription.request",
+      requestId: "config-feed",
+      events: ["status.daemon_config_changed"],
+    });
+
+    await admin.patchDaemonConfig({ autoArchiveAfterMerge: true });
+
+    const peer = observer;
+    await expect
+      .poll(() =>
+        peer.frames.flatMap((frame) =>
+          frame.type === "session" &&
+          frame.message.type === "status" &&
+          frame.message.payload.status === "daemon_config_changed"
+            ? [frame.message.payload.config?.agentProfiles?.[0]?.featureValues]
+            : [],
+        ),
+      )
+      .toEqual([{ plan_mode: true }]);
+  } finally {
+    observer?.close();
+    await admin.close();
+    await daemon.close();
+  }
+});
+
 test("status-shaped operation replies use actual source request provenance", async () => {
   const daemon = await createTestPaseoDaemon({ mcpEnabled: false });
   const peers: SubscriptionPeer[] = [];
@@ -1602,6 +1642,69 @@ test("request outcomes for import and attention reach only their requesting sock
     requester.close();
     sibling.close();
     await admin.close();
+    await daemon.close();
+  }
+});
+
+test("clearing a closed agent's attention does not resume its provider session", async () => {
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await daemon.daemon.agentManager.markAgentUnread(agent.id);
+    await client.clearAgentAttention(agent.id);
+    expect(daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+class SessionGoneAgentClient extends MockLoadTestAgentClient {
+  resumeCalls = 0;
+
+  override async resumeSession(): Promise<never> {
+    this.resumeCalls += 1;
+    throw new Error("Session not found");
+  }
+}
+
+test("clearing a closed agent's attention succeeds when its provider session is gone", async () => {
+  const agentClient = new SessionGoneAgentClient();
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: agentClient },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await client.markWorkspaceUnread(agent.workspaceId!);
+    expect((await client.fetchAgent(agent.id))?.agent.requiresAttention).toBe(true);
+
+    await withTimeout(
+      client.clearAgentAttention(agent.id),
+      5_000,
+      "clear_agent_attention got no response",
+    );
+
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+    expect(agentClient.resumeCalls).toBe(0);
+  } finally {
+    await client.close();
     await daemon.close();
   }
 });

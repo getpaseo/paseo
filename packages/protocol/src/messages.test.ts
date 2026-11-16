@@ -492,6 +492,26 @@ describe("daemon update messages", () => {
 });
 
 describe("viewed timeline subscription messages", () => {
+  test("carries a cursor per chat and a freshness answer per chat", () => {
+    const cursors = { "agent-a": { epoch: "epoch-1", seq: 42 } };
+    const timelines = { "agent-a": "current", "agent-b": "behind" };
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.request",
+        agentIds: ["agent-a"],
+        requestId: "timeline-subscription-2",
+        cursors,
+      }),
+    ).toMatchObject({ cursors });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.set_subscription.response",
+        payload: { agentIds: ["agent-a"], requestId: "timeline-subscription-2", timelines },
+      }),
+    ).toMatchObject({ payload: { timelines } });
+  });
+
   test("parses a complete viewed-agent set and its acknowledgement", () => {
     const request = SessionInboundMessageSchema.parse({
       type: "agent.timeline.set_subscription.request",

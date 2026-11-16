@@ -3,6 +3,7 @@ import { setImmediate } from "node:timers/promises";
 import { highlightCodeWithBudget, HIGHLIGHT_MAX_SOURCE_BYTES } from "../budgeted-highlighter.js";
 import type { HighlightToken } from "../types.js";
 import { highlightCode, highlightCodeInSteps, highlightLine } from "../highlighter.js";
+import { getParserForFile } from "../parsers.js";
 
 describe("highlightCode", () => {
   it("highlights JavaScript code with correct token styles", () => {
@@ -341,6 +342,137 @@ const title = "Hello";
         expect(validStyles.has(token.style)).toBe(true);
       }
     }
+  });
+});
+
+describe("Terraform", () => {
+  function styleOf(line: HighlightToken[], text: string) {
+    return line.find((token) => token.text === text)?.style;
+  }
+
+  it("highlights blocks, labels, attributes, and values", () => {
+    const code = [
+      "# The web server",
+      'resource "aws_instance" "web" {',
+      "  count   = 2",
+      "  enabled = true",
+      '  tags    = merge(var.labels, { Name = "web" })',
+      "}",
+    ].join("\n");
+    const result = highlightCode(code, "main.tf");
+
+    expect(result[0][0]).toEqual({ text: "# The web server", style: "comment" });
+    expect(styleOf(result[1], "resource")).toBe("type");
+    expect(styleOf(result[1], '"aws_instance"')).toBe("string");
+    expect(styleOf(result[1], '"web"')).toBe("string");
+    expect(styleOf(result[2], "count")).toBe("definition");
+    expect(styleOf(result[2], "2")).toBe("number");
+    expect(styleOf(result[3], "true")).toBe("literal");
+    expect(styleOf(result[4], "merge")).toBe("function");
+    expect(styleOf(result[4], "var")).toBe("variable");
+    expect(styleOf(result[4], "labels")).toBe("property");
+  });
+
+  it("highlights expressions interpolated inside strings", () => {
+    const result = highlightCode('name = "app-${var.env}-web"', "main.tf");
+
+    expect(result[0].map((token) => [token.text, token.style])).toEqual([
+      ["name", "definition"],
+      [" ", null],
+      ["=", "operator"],
+      [" ", null],
+      ['"app-', "string"],
+      ["${", "punctuation"],
+      ["var", "variable"],
+      [".", "operator"],
+      ["env", "property"],
+      ["}", "punctuation"],
+      ['-web"', "string"],
+    ]);
+  });
+
+  it("highlights heredoc bodies as strings and resumes after the terminator", () => {
+    const code = ["policy = <<-EOT", '  { "Version": "2012" }', "  EOT", "retries = 3"].join("\n");
+    const result = highlightCode(code, "main.tf");
+
+    expect(styleOf(result[0], "EOT")).toBe("keyword");
+    expect(result[1].map((token) => token.style)).toEqual(["string"]);
+    expect(styleOf(result[3], "retries")).toBe("definition");
+    expect(styleOf(result[3], "3")).toBe("number");
+  });
+
+  it("ends a heredoc with a Unicode delimiter", () => {
+    const result = highlightCode("x = <<ÉOF\nfoo\nÉOF\ny = 1", "main.tf");
+
+    expect(styleOf(result[3], "y")).toBe("definition");
+    expect(styleOf(result[3], "1")).toBe("number");
+  });
+
+  it.each([
+    ['x = "$$${var.name}"', "$"],
+    ['x = "%%%{ if true }"', "%"],
+  ])("keeps escaped template text in %s as a string", (code) => {
+    const line = highlightCode(code, "main.tf")[0];
+
+    expect(line[line.length - 1]).toEqual({ text: code.slice(4), style: "string" });
+  });
+
+  it("parses a real configuration without error nodes", () => {
+    const code = [
+      "terraform {",
+      '  required_version = ">= 1.5"',
+      '  backend "s3" {}',
+      "}",
+      "",
+      'variable "subnets" {',
+      "  type    = map(object({ cidr = string }))",
+      "  default = {}",
+      "}",
+      "",
+      "locals {",
+      "  names = [for key, subnet in var.subnets : upper(key) if subnet.cidr != null]",
+      '  first = length(local.names) > 0 ? local.names[0] : "none"',
+      "  arns  = aws_instance.web[*].arn",
+      "  /* block comment */",
+      "  path  = provider::time::rfc3339_parse(timestamp()) // trailing",
+      "}",
+      "",
+      'data "aws_iam_policy_document" "assume" {',
+      '  dynamic "statement" {',
+      "    for_each = var.subnets",
+      "    content {",
+      '      sid = "${statement.key}-%{ if statement.value.cidr != "" }set%{ else }unset%{ endif }"',
+      "    }",
+      "  }",
+      "}",
+      "",
+      'output "script" {',
+      "  value = <<EOT",
+      "#!/bin/sh",
+      "echo ${local.first}",
+      "EOT",
+      "}",
+    ].join("\n");
+
+    const parser = getParserForFile("main.tf");
+    if (!parser) throw new Error("Expected a parser for .tf files");
+    const errors: number[] = [];
+    parser.parse(code).iterate({
+      enter(node) {
+        if (node.type.isError) errors.push(node.from);
+      },
+    });
+
+    expect(errors.map((from) => code.slice(from, from + 30))).toEqual([]);
+  });
+
+  it("uses the same grammar for tfvars and hcl files", () => {
+    expect(highlightCode('region = "eu-west-1"', "prod.tfvars")).toEqual(
+      highlightCode('region = "eu-west-1"', "terragrunt.hcl"),
+    );
+    expect(styleOf(highlightLine('region = "eu-west-1"', "prod.tfvars"), "region")).toBe(
+      "definition",
+    );
   });
 });
 

@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const es: TranslationResources = {
+  pluginCombobox: {
+    searching: "Buscando…",
+    empty: "Sin resultados",
+    failed: "La búsqueda falló: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "No se pudo buscar en este chat. Comprueba la conexión con el host y vuelve a intentarlo.",
@@ -86,14 +91,23 @@ export const es: TranslationResources = {
       close: "Cerrar menú",
     },
     commandCenter: {
-      placeholder: "Buscar comandos, archivos, espacios de trabajo y agentes...",
+      placeholder: "Buscar espacios de trabajo, archivos y acciones...",
+      placeholderWithoutFiles: "Buscar espacios de trabajo y acciones...",
       filePlaceholder: "Buscar archivos...",
+      workspacePlaceholder: "Buscar espacios de trabajo...",
+      actionPlaceholder: "Buscar acciones...",
       searchingFiles: "Buscando archivos...",
       noMatches: "No hay coincidencias",
       actions: "Comportamiento",
       files: "Archivos",
       workspaces: "Espacios de trabajo",
-      agents: "Agentes",
+      recentWorkspaces: "Espacios de trabajo recientes",
+      tabs: {
+        all: "Todo",
+        workspaces: "Espacios de trabajo",
+        files: "Archivos",
+        actions: "Acciones",
+      },
       newAgent: "Nuevo agente",
       open: "Abrir {{name}}",
       openInSidePane: "Abrir {{name}} en el panel lateral",
@@ -267,7 +281,7 @@ export const es: TranslationResources = {
     states: {
       notFound: "Agentno encontrado",
       failedToLoad: "No se pudo cargar el agente",
-      reconnecting: "Reconectando al host",
+      reconnecting: "Reconectando",
       updating: "Actualizando mensajes",
       timelineSyncFailed: "No se pudo actualizar el historial del agente.",
       timelineSyncRetrying: "Reintentando…",
@@ -2155,6 +2169,8 @@ export const es: TranslationResources = {
     title: "Novedades",
     installed: "Instalada",
     showMore: "Mostrar más",
+    showAllChanges: "Mostrar todos los cambios",
+    hideAllChanges: "Ocultar todos los cambios",
     openWebsite: "Registro de cambios completo",
     error: {
       title: "No se pudo cargar el registro de cambios",
@@ -3191,6 +3207,7 @@ export const es: TranslationResources = {
     turnOn: "Activar",
 
     options: "Configuración",
+    host: "Host",
     refreshFailed: "No se pudo actualizar el uso",
     noHosts: "No hay hosts conectados",
     agentError: "No se pudo cargar el uso: {{reason}}",
@@ -3207,6 +3224,8 @@ export const es: TranslationResources = {
     loginExpired: "La sesión caducó {{relativeTime}}. {{remedy}}",
     title: "Uso del plan",
     refresh: "Actualizar",
+    reorderCard: "Reordenar {{source}}",
+    showCard: "Mostrar {{source}}",
     refreshAll: "Actualizar todo",
     refreshing: "Actualizando...",
     loading: "Cargando uso...",

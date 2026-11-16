@@ -1,14 +1,14 @@
 import {
   TOOLBAR_CONTROL_SIZES,
   TOOLBAR_DISC_SIZES,
-  TOOLBAR_RINGS,
+  TOOLBAR_LABEL_PADDING,
   toolbarGlyphsFor,
   type ControlSizing,
 } from "@/components/ui/control-geometry";
 import { bySizing } from "@/components/ui/control-sizing";
 
 /** The control at one end of the composer toolbar, which decides how far the row hangs out. */
-export type ComposerToolbarEdge = "attach" | "label" | "dictation" | "voiceMode" | "disc" | "none";
+export type ComposerToolbarEdge = "attach" | "label" | "disc" | "none";
 
 /**
  * The composer's padding. Its sides are the rails: the text column and the toolbar's outer
@@ -32,22 +32,11 @@ export const COMPOSER_PADDING_BOTTOM = bySizing({
   pointer: COMPOSER_PADDING.pointer.bottom,
 });
 
-/** How much of Lucide's 24-unit grid each toolbar glyph's ink spans, centred in its box. */
-const GLYPH_INK_SPANS = { plus: 14, mic: 14, audioLines: 20 } as const;
-
-function touchGlyphInkWidth(span: number): number {
+/** The plus glyph's ink: 14 of Lucide's 24 units, plus its stroke. */
+function attachGlyphInkWidth(): number {
   const glyph = toolbarGlyphsFor("touch").icon;
-  return (span * glyph.size) / 24 + glyph.strokeWidth;
+  return (14 * glyph.size) / 24 + glyph.strokeWidth;
 }
-
-/** The width each toolbar control paints when touch-sized; the row spaces these. */
-export const COMPOSER_TOOLBAR_SHAPES = {
-  attach: touchGlyphInkWidth(GLYPH_INK_SPANS.plus),
-  dictation: touchGlyphInkWidth(GLYPH_INK_SPANS.mic),
-  voiceMode: touchGlyphInkWidth(GLYPH_INK_SPANS.audioLines),
-  ring: TOOLBAR_RINGS.touch.size,
-  disc: TOOLBAR_DISC_SIZES.touch,
-} as const;
 
 /** Pointer-sized the row hangs a flat 6px into the padding, which puts each 16pt glyph box on the rail. */
 const POINTER_OVERHANG = 6;
@@ -68,10 +57,20 @@ export const COMPOSER_CORNER_RADIUS = bySizing({
   pointer: 16,
 });
 
+/**
+ * Touch-sized each end control's highlight hangs past the rail far enough to put what it paints on
+ * the rail. The trailing disc paints its whole highlight, so it nests into the corner instead.
+ */
+const TOUCH_OVERHANGS: Record<ComposerToolbarEdge, number> = {
+  attach: (TOOLBAR_DISC_SIZES.touch - attachGlyphInkWidth()) / 2,
+  label: TOOLBAR_LABEL_PADDING,
+  disc: DISC_CORNER_NEST,
+  none: 0,
+};
+
 /** How far the composer toolbar hangs past the text column at one end. */
 export function composerToolbarOverhang(edge: ComposerToolbarEdge, sizing: ControlSizing): number {
-  if (sizing === "pointer") return POINTER_OVERHANG;
-  return edge === "disc" ? DISC_CORNER_NEST : 0;
+  return sizing === "pointer" ? POINTER_OVERHANG : TOUCH_OVERHANGS[edge];
 }
 
 /** The control that starts the toolbar on the left. */

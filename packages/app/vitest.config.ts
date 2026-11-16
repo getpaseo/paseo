@@ -36,6 +36,26 @@ export default defineConfig({
       },
     },
     {
+      name: "reanimated-web-style-helpers",
+      transform(_source, id) {
+        // Reanimated writes animated styles to the DOM through react-native-web helpers it loads
+        // with `require` inside try/catch. Vite serves ESM, so the require throws, the helpers stay
+        // undefined, and the first animated style update after mount crashes the component.
+        if (
+          !id.split("?")[0].endsWith("/lib/module/ReanimatedModule/js-reanimated/webUtils.web.js")
+        ) {
+          return;
+        }
+        return {
+          code: [
+            'export { default as createReactDOMStyle } from "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle";',
+            'export { createTransformValue, createTextShadowValue } from "react-native-web/dist/exports/StyleSheet/preprocess";',
+          ].join("\n"),
+          map: null,
+        };
+      },
+    },
+    {
       name: "compile-react-components",
       enforce: "pre",
       transform(source, id) {
@@ -187,6 +207,9 @@ export default defineConfig({
       "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
+      // Loaded by the reanimated-web-style-helpers plugin, which the dependency scan does not see.
+      "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
+      "react-native-web/dist/exports/StyleSheet/preprocess",
     ],
     exclude: [
       "react-native-enriched-markdown",
@@ -252,6 +275,14 @@ export default defineConfig({
       {
         find: /^react-native\/Libraries\/Renderer\/shims\/ReactFabric$/,
         replacement: path.resolve(__dirname, "test-stubs/react-native-fabric-shim.ts"),
+      },
+      // The CJS entry requires the real react-native, whose Flow sources do not parse.
+      {
+        find: /^@floating-ui\/react-native$/,
+        replacement: path.resolve(
+          rootNodeModules,
+          "@floating-ui/react-native/dist/floating-ui.react-native.esm.js",
+        ),
       },
       // Point to react-native-web's ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses

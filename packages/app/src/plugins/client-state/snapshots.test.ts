@@ -1,7 +1,8 @@
 import { i18n } from "@/i18n/i18next";
 import { fr } from "@/i18n/resources/fr";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   createPluginAgentSnapshot,
   createPluginWorkspaceSnapshot,
@@ -61,12 +62,16 @@ describe("plugin context snapshots", () => {
       attentionReason: "permission",
       parentAgentId: null,
       labels: { phase: "implementation" },
+      metadata: { "linear.issue": { id: "ENG-1" } },
     });
     expect(snapshot.labels).not.toBe(agent.labels);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.labels)).toBe(true);
     expect(Reflect.set(snapshot, "title", "Hostile rename")).toBe(false);
     expect(Reflect.set(snapshot.labels, "phase", "hostile")).toBe(false);
+    const issue = snapshot.metadata["linear.issue"] as { id: string };
+    expect(Reflect.set(issue, "id", "hostile")).toBe(false);
+    expect(agent.metadata?.["linear.issue"]).toEqual({ id: "ENG-1" });
     expect(snapshot.title).toBe("Implement plugin panels");
     expect(snapshot.labels).toEqual({ phase: "implementation" });
     expect(agent.title).toBe("Implement plugin panels");
@@ -103,6 +108,26 @@ describe("sidebar entity snapshots", () => {
     expect(
       createPluginWorkspaceSnapshot(idle, "host-1", { workspaceAgentActivity: activity }),
     ).toBe(after);
+  });
+
+  it("carries the background work count the host publishes for the agent", () => {
+    // Round-trip through the wire payload, the way the app receives each agent update.
+    const published = (backgroundWork: Agent["backgroundWork"]) =>
+      createPluginAgentSnapshot(
+        normalizeAgentSnapshot({ ...projectAgentSnapshot(agent), backgroundWork }, agent.serverId),
+        workspace.id,
+      ).backgroundWork;
+    expect(published(undefined)).toEqual({ count: 0 });
+    expect(published({ count: 2 })).toEqual({ count: 2 });
+    expect(published({ count: 0 })).toEqual({ count: 0 });
+    expect(Object.isFrozen(published({ count: 1 }))).toBe(true);
+  });
+
+  it("marks a background agent", () => {
+    expect(createPluginAgentSnapshot(agent, workspace.id).background).toBe(false);
+    expect(createPluginAgentSnapshot({ ...agent, background: true }, workspace.id).background).toBe(
+      true,
+    );
   });
 
   it("reads projects without requiring a workspace", () => {

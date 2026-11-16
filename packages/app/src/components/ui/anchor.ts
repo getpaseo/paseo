@@ -1,8 +1,8 @@
-import type { View } from "react-native";
+import type { View, ViewStyle } from "react-native";
 
 /**
- * Where a floating surface goes relative to the thing that opened it. Menus and hover cards
- * place themselves with it.
+ * Where a floating surface goes relative to the thing that opened it. Menus, hover cards, and
+ * tooltips place themselves with it.
  */
 
 export type Placement = "top" | "bottom" | "left" | "right";
@@ -175,6 +175,55 @@ export function computePosition({
     offset,
   });
   return { ...clampToDisplayArea({ ...anchored, contentSize, displayArea }), actualPlacement };
+}
+
+/** Where a placed surface sits: its left edge, and the edge that holds it vertically. */
+export type SurfacePosition = { left: number; top: number } | { left: number; bottomEdge: number };
+
+/**
+ * A surface above its trigger is held by its bottom edge, the edge that faces the trigger. When
+ * its content grows after it paints, it extends upward, away from the trigger. Held by its top,
+ * it would paint over the trigger until the next placement lands, a frame later on native.
+ */
+export function holdSurfaceEdge(
+  placed: { x: number; y: number; actualPlacement: Placement },
+  contentHeight: number,
+): SurfacePosition {
+  if (placed.actualPlacement === "top") {
+    return { left: placed.x, bottomEdge: placed.y + contentHeight };
+  }
+  return { left: placed.x, top: placed.y };
+}
+
+/**
+ * Styles for a surface and the holder it sits in. Both fill the display area's width, so the
+ * surface lays out exactly as it would without the holder. Render the holder with the
+ * `pointerEvents="box-none"` prop so presses outside the surface reach what is behind it;
+ * react-native-web drops `box-none` given as an inline style. A bottom-held surface sits on the
+ * bottom of a holder that ends at its bottom edge, so layout keeps that edge in place however
+ * the content changes. Until it is placed, the surface waits off-screen to be measured.
+ */
+export function surfaceFrameStyles(position: SurfacePosition | null): {
+  holder: ViewStyle;
+  surface: ViewStyle;
+} {
+  const fill: ViewStyle = { position: "absolute", top: 0, left: 0, right: 0 };
+  if (!position) {
+    return {
+      holder: { ...fill, bottom: 0 },
+      surface: { position: "absolute", top: -9999, left: -9999 },
+    };
+  }
+  if ("top" in position) {
+    return {
+      holder: { ...fill, bottom: 0 },
+      surface: { position: "absolute", top: position.top, left: position.left },
+    };
+  }
+  return {
+    holder: { ...fill, height: position.bottomEdge },
+    surface: { position: "absolute", bottom: 0, left: position.left },
+  };
 }
 
 export function getTransformOrigin(

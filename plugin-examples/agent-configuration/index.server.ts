@@ -20,7 +20,8 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.addHook("agent.open.before", async ({ request }) => {
-    if (request.provider !== "codex") {
+    // Background agents are short-lived helpers; keep the company tools for the agents users open.
+    if (request.provider !== "codex" || request.background) {
       return;
     }
 

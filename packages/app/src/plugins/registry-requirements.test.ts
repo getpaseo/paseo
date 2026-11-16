@@ -36,6 +36,7 @@ function registry(version: string) {
         },
         openScreen() {},
         openSurface() {},
+        composers: () => [],
         async playAudio() {},
         openPanel() {},
         addComposerPill: () => ({ update() {}, remove() {} }),

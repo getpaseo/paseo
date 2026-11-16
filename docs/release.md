@@ -248,6 +248,7 @@ npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
 - Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
+- The user-facing beta instructions, including the public TestFlight join link for the `Paseo Beta` group, live in `public-docs/updates.md` and its `zh-CN` pair. Update them when a beta path is added or removed.
 - Betas publish desktop assets and APKs for testing. They also build iOS, upload it to TestFlight, add it to the `Paseo Beta` external group, and submit it for Beta App Review. They do not submit mobile builds to the production stores.
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
@@ -488,7 +489,7 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 - The website download page defaults to GitHub's latest published **stable** release.
 - A published beta prerelease is offered behind the Stable/Beta switch on `/download` (`?channel=beta`), never as the default. The switch only appears while the newest prerelease leads stable on its core version, so promoting `X.Y.Z-beta.N` to `X.Y.Z` retires the beta channel from the page until the next beta line opens.
-- Homebrew, the Play Store, the App Store, and `app.paseo.sh` have no beta. The Beta view drops those rows, and the whole Web section, rather than showing an inert "stable only" placeholder. When a surface gains a beta path — say a public TestFlight link — add its row back in `packages/website/src/routes/download.tsx`.
+- Homebrew, the Play Store, and `app.paseo.sh` have no beta. The Beta view drops those rows, and the whole Web section, rather than showing an inert "stable only" placeholder. The iOS row swaps the App Store pill for the public TestFlight link (`testFlightBetaUrl` in `packages/website/src/downloads.tsx`). When another surface gains a beta path, add its row back in `packages/website/src/routes/{-$locale}/download.tsx`.
 - The default download target only moves when you publish the final stable release tag like `v0.1.41`.
 - The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **default download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The download page's "What's new" link deep-links the **minor group** anchor (`/changelog#release-0.3`), not the exact entry: the beta entry is renamed on each beta and on promotion, so the minor group remains the durable target. A version with no entry in the bundled changelog — a tag whose changelog commit hasn't redeployed the site yet — links the plain `/changelog` instead of a dead anchor.
@@ -594,7 +595,7 @@ Release notes depend on the changelog heading format. The heading **must** be st
 
 No prefix (`v`), no extra text. `Release Notes Sync` matches the `## X.Y.Z` (or `## X.Y.Z-beta.N`) line for the pushed tag to extract the version. A malformed heading breaks the release-notes sync for that tag.
 
-`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
+`CHANGELOG.md` on `main` is also what the app's **What's new** sheet fetches and renders, so the file is a shipped product surface, not just a release input. `##` starts a release and `###` starts a section; the app reads section titles from the document, so renaming or adding one needs no app change. Content between the release heading and the first `###` is the release's [highlights](#changelog-highlights). The What's new sheet, the website changelog and the GitHub release body show the highlights and keep the sections collapsed behind one control: Show all changes in the app and on the website, and an All changes `<details>` block that `Release Notes Sync` writes into the release body, so the file itself never needs HTML. A release with nothing before its first `###` shows its sections. Older entries that open with summary paragraphs are treated as highlights. The app, the website and the release scripts each parse the file with their own code, and installed apps keep the parser they shipped with, so those two heading rules are fixed: new kinds of content go inside the highlights or a section as Markdown, never behind a new heading level or marker. `scripts/test-support/changelog-structure.json` holds the cases all three parsers are tested against; change a structure rule there first. Everything under a section is rendered as Markdown: prose, lists, links, inline code, fenced code, block quotes, tables, and images. Raw HTML does not render — the shared Markdown parser runs with `html: false`, so a `<video>`, `<iframe>` or `<embed>` tag reaches the reader as visible markup. Keep media out of the changelog, or link to it. A GitHub callout renders as a block quote with its `[!NOTE]` marker still in the text. A release entry is what a user reads on a phone the moment they are offered the update — write it for them.
 
 ## Changelog policy
 
@@ -613,7 +614,7 @@ Older prerelease bodies on GitHub keep the notes they were synced with; `Release
 
 - The release agent writes the Chinese entry in the changelog commit, after the English entry is approved. Every beta that rewrites the English entry rewrites the Chinese one too, and promotion renames both. `packages/website/e2e/i18n.spec.ts` fails CI on the release commit when any entry has no current translation.
 - A translated entry uses the English heading unchanged: `## X.Y.Z - YYYY-MM-DD`. The website uses it only while the version and date both match the English entry. Otherwise it shows that release whole in English under a notice. Delete Chinese entries whose English entry was renamed.
-- Keep the English sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
+- Keep the English highlights, sections, bullets and links one to one. Section titles: Added 新增, Improved 改进, Changed 变更, Fixed 修复, Security 安全, Breaking 破坏性变更, Plugins 插件, Notes 说明. Wording follows [website-i18n.md](website-i18n.md#chinese-style).
 
 ## Changelog ownership
 
@@ -656,7 +657,7 @@ claims a general improvement, rewrite it with the concrete change.
 
 ## Changelog conciseness
 
-Every bullet must be scannable at a glance. The changelog is not release documentation — it's a list.
+Every section bullet must be scannable at a glance. The changelog is not release documentation — it's a list. [Highlights](#changelog-highlights) get more room; every other bullet follows these limits.
 
 - **One sentence per bullet, max.** If a bullet contains two sentences, the second one is doing work that belongs in product docs, not the changelog. Cut it.
 - **No trailing periods.** Bullets are list items, not prose. Drop the period at the end of every bullet, including the period inside any bolded lead-in. `**Configurable terminal scrollback**` not `**Configurable terminal scrollback.**`.
@@ -665,6 +666,57 @@ Every bullet must be scannable at a glance. The changelog is not release documen
 - **Trim qualifying clauses.** Drop "with a hint shown when…", "matching the CLI's behaviour", "across common install shapes". If the detail doesn't change whether a user cares, cut it.
 - **Stop after identifying the change.** Do not explain LAN/WAN topology, TLS handshakes, IPC, or other architecture in a changelog bullet. Put necessary background in product docs.
 - **Attribution follows the split.** When you split a dense bullet, move each PR/author to the bullet it belongs to. Never duplicate the same PR across multiple bullets.
+
+## Changelog highlights
+
+Every release entry leads with highlights: the changes a user would name first when asked what is
+new. They are a list above the first `###` section, ranked as
+[Changelog ordering](#changelog-ordering) describes. The sections below are the full record; a
+reader who stops after the highlights should have missed nothing they would ask about.
+
+```markdown
+## 0.16.0 - 2026-11-20
+
+- **Undo workspace archive:** Archiving a workspace in the app now shows a "Workspace archived" toast for six seconds. Undo, or Cmd/Ctrl+Z, restores the workspace with its tabs and agents. ([#8904](https://github.com/getpaseo/paseo/pull/8904))
+
+### Added
+```
+
+- **The lead-in names what is new in four words at most.** Bold it, colon inside the bold. A reader
+  who sees only the bold words should know what this release added or changed. A category lead-in
+  such as `**Polish:**` gathers several related changes.
+- **The lead-in is not a place or something Paseo already had.** A device, screen or area names
+  where the change landed. A feature name that was true of the last release hides the news: Paseo
+  already had keyboard shortcuts, so the lead-in says they now work on mobile.
+- **The first sentence says the plain thing.** Write what a user would tell a friend: Paseo now
+  shows the background tasks an agent is running. Leave out the conditions and mechanics that make
+  it true.
+- **Describe the new behavior, not the old one.** Say what is faster or better now, and do not
+  dwell on how slow or broken it was before. A number is welcome as a short aside after the new
+  behavior is stated: seconds, a percentage, a multiple.
+- **Do not list what a sentence already covers.** After "the same shortcuts as desktop", naming
+  five of them adds nothing. Keep a list only when it sets the scope, such as the providers a
+  feature works with.
+- **The description runs one to three sentences.** Sentences end with periods, and the attribution
+  follows the last one. [Changelog wording](#changelog-wording) applies in full.
+- **A highlight replaces the section bullets it covers.** A PR appears once in an entry, so its
+  attribution moves to the highlight.
+- **A highlight is something a user would name.** Everything else stays a section bullet. A patch
+  release still has one: the change it ships for.
+- **Fixes are routine and stay in `### Fixed`.** Do not add a summary of fixes. A fix, or a group
+  of related fixes, becomes a highlight only when it passes the same test as a feature, and then
+  it is written as what works now: `**Fewer reconnects on return:**`.
+
+| Avoid                                                                                      | Write                                                                                                            |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `**iPad and touch screens:**`                                                              | `**Touch-sized tablet controls:**`                                                                               |
+| `**Hardware keyboard shortcuts:**`                                                         | `**Keyboard shortcuts on mobile:**`                                                                              |
+| When an agent ends its turn while shells it started are still running, a pill lists them   | Paseo now shows the background tasks an agent is running                                                         |
+| A diff no longer waits 4 to 40 seconds behind worktree scans                               | Opening Changes shows the file tree right away, and diffs load about 6 times sooner on hosts with many worktrees |
+| The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                                                    |
+
+Before showing a draft, read only the bold lead-ins top to bottom. Each one must answer "what is
+new?" without its description, and each must outrank the one below it.
 
 ## Changelog attribution
 
@@ -697,7 +749,32 @@ Rules:
 
 ## Changelog ordering
 
-Entries within each section (Added, Improved, Fixed) are ordered by user impact:
+Rank highlights by how much of a user's day the change touches: how many users get it, and how
+often they meet it. Put every highlight in one of four groups, then order each group by the same
+question.
+
+1. **New capabilities.** Something a user could not see or do in the last release:
+   `Background tasks`, `Plugin sidebar views`.
+2. **Everyday things that got better.** Speed, steadiness and polish in what users already do
+   every session: `Faster diff loading`, `Polish`.
+3. **Changes for part of the audience.** They need a particular device, provider or setup:
+   `Keyboard shortcuts on mobile`, `Touch-sized tablet controls`.
+4. **Small conveniences and highlighted fixes.** A user is glad to find them and would not update
+   for them: `Undo workspace archive`, `Fewer reconnects on return`. Fixes are routine, so one
+   that earned a highlight still follows everything new or improved.
+
+- **Reach decides before kind.** A new capability that needs a hardware keyboard is in group 3.
+- **Rank the whole list in one pass.** The order you collected the pull requests in, the alphabet
+  and the order of the sections below are not rankings.
+- **Show the groups with the draft.** List each highlight under its group when you ask for
+  approval, so the maintainer corrects the test and not one position.
+- **A maintainer's note that a change is big moves that change up.** It does not rank the changes
+  it names against each other, and it does not lower the ones it leaves out.
+- **A correction to one highlight is a correction to the test.** Work out which group or question
+  you got wrong, rank every highlight again, and then edit the file. Moving only the named item
+  leaves the same mistake in the others.
+
+Bullets within each section (Added, Changed, Fixed) follow this order:
 
 1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.

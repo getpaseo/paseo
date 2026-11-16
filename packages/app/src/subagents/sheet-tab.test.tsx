@@ -60,7 +60,6 @@ const AGENT_DEFAULTS: Agent = {
   cwd: "/repo/worktree",
   workspaceId: WORKSPACE_ID,
   model: null,
-  features: undefined,
   thinkingOptionId: undefined,
   requiresAttention: false,
   attentionReason: null,

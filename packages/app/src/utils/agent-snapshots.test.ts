@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { isControlActive, readSelectOption } from "@/agent-controls/option-controls";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "./agent-snapshots";
 
 function createSnapshot(
@@ -32,10 +33,39 @@ function createSnapshot(
     persistence: input.persistence ?? null,
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
+    ...(input.controls ? { controls: input.controls } : {}),
+    ...(input.options ? { options: input.options } : {}),
   };
 }
 
 describe("normalizeAgentSnapshot", () => {
+  it("keeps a closed agent's stored options and controls, so its Fast control draws", () => {
+    const speed = {
+      type: "select" as const,
+      key: "service_tier",
+      label: "Speed",
+      defaultValue: "default",
+      choices: [
+        { value: "default", label: "Normal" },
+        { value: "priority", label: "Fast" },
+      ],
+    };
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({
+        status: "closed",
+        controls: [speed],
+        options: { service_tier: "priority", sandbox_mode: "read-only" },
+      }),
+      "server-1",
+    );
+
+    expect(agent.status).toBe("closed");
+    expect(agent.controls).toEqual([speed]);
+    expect(agent.options).toEqual({ service_tier: "priority", sandbox_mode: "read-only" });
+    expect(readSelectOption(speed, agent.options ?? {})).toBe("priority");
+    expect(isControlActive(speed, agent.options ?? {})).toBe(true);
+  });
+
   it("round-trips identified active turns through the canonical snapshot boundary", () => {
     const snapshot = createSnapshot({
       status: "running",

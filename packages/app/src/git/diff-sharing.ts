@@ -25,6 +25,10 @@ export function shareCheckoutDiff(previous: unknown, incoming: unknown): DiffPay
   const next = incoming as DiffPayload;
   const old = previous as DiffPayload | undefined;
   if (!old || old === next) return next;
+  // A new subscription announces its entries before the bodies arrive. That is
+  // progress on the first load only: once a diff has settled it stays on screen
+  // until the next revision commits, so an unchanged diff never repaints.
+  if (isLoadingSnapshot(next) && !isLoadingSnapshot(old)) return old;
   const files = retainDiffFiles(old.files, next.files);
   const error = replaceEqualDeep(old.error, next.error);
   return files === old.files &&
@@ -35,6 +39,10 @@ export function shareCheckoutDiff(previous: unknown, incoming: unknown): DiffPay
     old.diffTooLarge === next.diffTooLarge
     ? old
     : { ...next, files, error };
+}
+
+function isLoadingSnapshot(payload: DiffPayload): boolean {
+  return payload.entries !== undefined;
 }
 
 export function shareCommitFileDiff(

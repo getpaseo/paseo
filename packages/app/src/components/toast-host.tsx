@@ -4,18 +4,11 @@ import {
 } from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import {
-  Platform,
-  Pressable,
-  StyleSheet as NativeStyleSheet,
-  Text,
-  ToastAndroid,
-  View,
-} from "react-native";
+import { Platform, StyleSheet as NativeStyleSheet, Text, ToastAndroid, View } from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -59,7 +52,7 @@ export interface ToastApi {
   error: (message: string) => void;
 }
 
-type ToastViewportPlacement = "app-shell" | "panel";
+type ToastViewportPlacement = "app-shell" | "panel" | "sidebar";
 
 const DEFAULT_DURATION_MS = 2200;
 const noopDismiss: DismissToast = () => {};
@@ -219,27 +212,37 @@ export function ToastViewport({
   const topOffset =
     placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : panelClearance;
 
-  const content = (
-    <View
-      style={styles.container(placement, topOffset)}
+  // Keep the bottom anchor and its contents together while the native exit retains the view.
+  const content = toast ? (
+    <Animated.View
+      entering={toastEntering}
+      exiting={toastExiting}
+      style={
+        placement === "sidebar"
+          ? animatedStyles.sidebarContainer
+          : [
+              animatedStyles.container,
+              { top: topOffset + (placement === "app-shell" ? SPACING[2] : SPACING[3]) },
+            ]
+      }
       pointerEvents="box-none"
       collapsable={false}
     >
-      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
-        {toast ? (
-          <Animated.View
-            entering={toastEntering}
-            exiting={toastExiting}
-            style={animatedStyles.surface}
-            testID={toast.testID ?? "app-toast"}
-            accessibilityRole="alert"
-          >
-            <ToastCard toast={toast} onHoverIn={pauseDismiss} onHoverOut={resumeDismiss} />
-          </Animated.View>
-        ) : null}
+      <View
+        style={placement === "sidebar" ? styles.sidebarWidthBoundary : styles.widthBoundary}
+        pointerEvents="box-none"
+        collapsable={false}
+      >
+        <View
+          style={animatedStyles.surface}
+          testID={toast.testID ?? "app-toast"}
+          accessibilityRole="alert"
+        >
+          <ToastCard toast={toast} onPointerEnter={pauseDismiss} onPointerLeave={resumeDismiss} />
+        </View>
       </View>
-    </View>
-  );
+    </Animated.View>
+  ) : null;
 
   if (placement === "app-shell" && isWeb && typeof document !== "undefined") {
     return createPortal(content, getOverlayRoot());
@@ -250,12 +253,12 @@ export function ToastViewport({
 
 function ToastCard({
   toast,
-  onHoverIn,
-  onHoverOut,
+  onPointerEnter,
+  onPointerLeave,
 }: {
   toast: ToastState;
-  onHoverIn: () => void;
-  onHoverOut: () => void;
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
 }) {
   let defaultIcon: ReactNode = null;
   if (toast.variant === "info") {
@@ -270,10 +273,9 @@ function ToastCard({
   const icon = toast.icon ?? defaultIcon;
 
   return (
-    <Pressable
-      accessible={false}
-      onHoverIn={onHoverIn}
-      onHoverOut={onHoverOut}
+    <View
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
       style={[
         styles.toast,
         toast.variant === "info" ? styles.toastInfo : null,
@@ -291,26 +293,37 @@ function ToastCard({
           {toast.content}
         </View>
       )}
-    </Pressable>
+    </View>
   );
 }
 
 const animatedStyles = NativeStyleSheet.create({
+  container: {
+    position: "absolute",
+    left: SPACING[4],
+    right: SPACING[4],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
+  sidebarContainer: {
+    position: "absolute",
+    left: SPACING[2],
+    right: SPACING[2],
+    bottom: SPACING[2],
+    zIndex: OVERLAY_Z.toast,
+    alignItems: "center",
+  },
   surface: { alignSelf: "center", maxWidth: "100%" },
 });
 
 const styles = StyleSheet.create((theme) => ({
-  container: (placement: ToastViewportPlacement, topOffset: number) => ({
-    position: "absolute",
-    left: theme.spacing[4],
-    right: theme.spacing[4],
-    top: topOffset + (placement === "app-shell" ? theme.spacing[2] : theme.spacing[3]),
-    zIndex: OVERLAY_Z.toast,
-    alignItems: "center",
-  }),
   widthBoundary: {
     width: "92%",
     maxWidth: TOAST_MAX_WIDTH,
+    alignItems: "center",
+  },
+  sidebarWidthBoundary: {
+    width: "100%",
     alignItems: "center",
   },
   toast: {

@@ -206,6 +206,7 @@ export class AgentStoreProjection {
     const store = useSessionStore.getState();
     const removeKey = withoutAgent(agentId);
     store.setAgentTimelineCursor(this.serverId, removeKey);
+    store.setAgentTimelineUnsettledTurn(this.serverId, agentId, null);
     store.setAgentAuthoritativeHistoryApplied(this.serverId, agentId, false);
     store.setAgentStreamTail(this.serverId, removeKey);
     store.clearAgentStreamHead(this.serverId, agentId);

@@ -9,7 +9,10 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 export function WorkspaceArchivedToast({ onUndo }: { onUndo: () => void }) {
   const { t } = useTranslation();
   const undoKeys = useShortcutKeys("undo-archive-workspace");
-  const undoShortcut = useMemo(() => (undoKeys ? <Shortcut chord={undoKeys} /> : null), [undoKeys]);
+  const undoShortcut = useMemo(
+    () => (undoKeys ? <Shortcut chord={undoKeys} style={styles.shortcut} /> : null),
+    [undoKeys],
+  );
 
   return (
     <View style={styles.row}>
@@ -29,8 +32,13 @@ export function WorkspaceArchivedToast({ onUndo }: { onUndo: () => void }) {
 const styles = StyleSheet.create((theme) => ({
   row: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: theme.spacing[2],
+  },
+  // Cancels the badge's own inset, which would otherwise add to the button's gap.
+  shortcut: {
+    marginLeft: -theme.spacing[1],
   },
   message: {
     flexShrink: 1,

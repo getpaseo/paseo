@@ -89,6 +89,11 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).epoch;
   }
 
+  getHead(agentId: string): { epoch: string; seq: number } {
+    const state = this.requireState(agentId);
+    return { epoch: state.epoch, seq: state.nextSeq - 1 };
+  }
+
   fetch(agentId: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(agentId);
     const direction = options?.direction ?? "tail";

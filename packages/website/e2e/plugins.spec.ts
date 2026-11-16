@@ -1,5 +1,5 @@
 import securityPlugin from "./overview.fixture.json" with { type: "json" };
-import { expect, test, type Page, type Locator } from "./fixtures";
+import { expect, test, waitForHydration, type Page, type Locator } from "./fixtures";
 import registry from "./registry.fixture.json" with { type: "json" };
 import { CATEGORIES } from "../src/plugins/categories";
 import copy from "../src/i18n/resources/en.json" with { type: "json" };
@@ -78,15 +78,18 @@ test("browses from the directory into a category, a plugin, and its author", asy
     });
   });
   await openPlugins(page);
+  await waitForHydration(page);
 
   await page.getByRole("region", { name: "Categories" }).getByRole("link", { name: /Git/ }).click();
   await expect(page).toHaveURL(/\/plugins\/category\/git$/);
   await expect(page.getByRole("heading", { level: 1, name: /^Git/ })).toBeVisible();
+  await waitForHydration(page);
   await expect(page.getByRole("link", { name: /Dracula/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: /Fresh Worktrees/ }).click();
   await expect(page).toHaveURL(/\/plugins\/omercnet\/fresh-worktrees$/);
   await expect(page.getByRole("heading", { name: "Fresh Worktrees" })).toHaveCount(1);
+  await waitForHydration(page);
   await expect(page.getByText("paseo plugin add omercnet/fresh-worktrees")).toHaveCount(1);
   await expect(
     page.getByRole("heading", { level: 2, name: "Behavior", exact: true }),
@@ -183,7 +186,7 @@ test("keeps the directory's ranking window when searching", async ({ page }) => 
 
 test("submits the visible search term when its input event was missed", async ({ page }) => {
   await page.goto("/plugins?window=month");
-  await expect(page.getByRole("button", { name: "Language: English" }).first()).toBeEnabled();
+  await waitForHydration(page);
   await fillSearchWithMissedInputEvent(page, "graphite");
 
   await page.keyboard.press("Enter");
@@ -654,41 +657,41 @@ test.describe("registry fixture layout", () => {
     );
   });
 
-  test("features listed plugins above What's new in the registry's order", async ({ page }) => {
-    await openPlugins(page);
-    await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
-    const featured = page.getByRole("region", { name: "Featured" });
-    await expect(featured).toContainText("A selection of hand picked plugins");
-    await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
-  });
-
-  test("lists the nine categories in order with counts, and the newest plugins first", async ({
+  test("browses featured, new, and recently updated plugins from the directory", async ({
     page,
   }) => {
     await openPlugins(page);
-    const categories = page.getByRole("region", { name: "Categories" });
-    await expect(categories.getByRole("link")).toHaveText(
-      CATEGORIES.map((slug) => new RegExp(`^${copy.plugins.categories[slug].label}\\s*\\d+$`)),
+
+    await test.step("features listed plugins above What's new in the registry's order", async () => {
+      await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText("Featured");
+      const featured = page.getByRole("region", { name: "Featured" });
+      await expect(featured).toContainText("A selection of hand picked plugins");
+      await expect(pluginCards(page, "Featured")).toHaveText([/Dracula/, /Herald/, /launchd Jobs/]);
+    });
+
+    const categoriesWithCounts = CATEGORIES.map(
+      (slug) => new RegExp(`^${copy.plugins.categories[slug].label}\\s*\\d+$`),
     );
-    await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
-    await expect(pluginCards(page, "What’s new")).toHaveText([
-      /Base2Tone/,
-      /Sayr/,
-      /PromptKit/,
-      /Defer/,
-    ]);
-  });
+    await test.step("lists the nine categories in order with counts, and the newest plugins first", async () => {
+      const categories = page.getByRole("region", { name: "Categories" });
+      await expect(categories.getByRole("link")).toHaveText(categoriesWithCounts);
+      await expect(categories.getByRole("link", { name: /Extras/ })).toContainText("0");
+      await expect(pluginCards(page, "What’s new")).toHaveText([
+        /Base2Tone/,
+        /Sayr/,
+        /PromptKit/,
+        /Defer/,
+      ]);
+    });
 
-  test("lists only plugins updated since they were listed under Recently updated", async ({
-    page,
-  }) => {
-    await openPlugins(page);
-    await expect(pluginCards(page, "Recently updated")).toHaveText([/Defer/, /OMP/]);
-    await page
-      .getByRole("region", { name: "Recently updated" })
-      .getByRole("link", { name: "See all" })
-      .click();
-    await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
+    await test.step("lists only plugins updated since they were listed under Recently updated", async () => {
+      await expect(pluginCards(page, "Recently updated")).toHaveText([/Defer/, /OMP/]);
+      await page
+        .getByRole("region", { name: "Recently updated" })
+        .getByRole("link", { name: "See all" })
+        .click();
+      await expect(page).toHaveURL(/\/plugins\/all\?sort=updated$/);
+    });
   });
 });
 

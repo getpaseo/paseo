@@ -110,6 +110,18 @@ function sidebarViews(
         label: { name: "Unlabelled", color: "red" },
         assigned: true,
       });
+      // Wait for the named label folder alongside the built-in unlabelled bucket.
+      // Counts alone can match stale Inbox/Later rows from the preceding move.
+      await expect(
+        slot.getByRole("button", { name: "Toggle Unlabelled", exact: true }),
+      ).toHaveCount(2);
+      // Observe both label rows before removing Later so a stale single row
+      // cannot satisfy the final readiness check.
+      const moveWorkspace = slot.getByRole("button", {
+        name: `Move workspace ${workspaceId}`,
+        exact: true,
+      });
+      await expect(moveWorkspace).toHaveCount(2);
       await client.setWorkspaceLabel({
         workspaceId,
         label: { name: "Later", color: "red" },
@@ -122,9 +134,9 @@ function sidebarViews(
               ?.labels,
         )
         .toEqual(["Unlabelled"]);
-      await slot
-        .getByRole("button", { name: `Move workspace ${workspaceId}`, exact: true })
-        .click();
+      // The daemon reply does not guarantee the browser has applied the removal.
+      await expect(moveWorkspace).toHaveCount(1);
+      await moveWorkspace.click();
       await slot.getByRole("button", { name: "Move to Inbox", exact: true }).click();
       await expect
         .poll(

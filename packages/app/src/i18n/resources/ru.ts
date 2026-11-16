@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ru: TranslationResources = {
+  pluginCombobox: {
+    searching: "Поиск…",
+    empty: "Нет результатов",
+    failed: "Не удалось выполнить поиск: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Не удалось выполнить поиск в чате. Проверьте подключение к хосту и повторите попытку.",
@@ -86,14 +91,23 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",
+      placeholder: "Поиск рабочих пространств, файлов и действий...",
+      placeholderWithoutFiles: "Поиск рабочих пространств и действий...",
       filePlaceholder: "Поиск файлов...",
+      workspacePlaceholder: "Поиск рабочих пространств...",
+      actionPlaceholder: "Поиск действий...",
       searchingFiles: "Поиск файлов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
       files: "Файлы",
       workspaces: "Рабочие пространства",
-      agents: "Агенты",
+      recentWorkspaces: "Недавние рабочие пространства",
+      tabs: {
+        all: "Все",
+        workspaces: "Рабочие пространства",
+        files: "Файлы",
+        actions: "Действия",
+      },
       newAgent: "Новый агент",
       open: "Открыть {{name}}",
       openInSidePane: "Открыть {{name}} в боковой панели",
@@ -267,7 +281,7 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
-      reconnecting: "Повторное подключение к хосту",
+      reconnecting: "Повторное подключение",
       updating: "Обновление сообщений",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
@@ -2148,6 +2162,8 @@ export const ru: TranslationResources = {
     title: "Что нового",
     installed: "Установлена",
     showMore: "Показать ещё",
+    showAllChanges: "Показать все изменения",
+    hideAllChanges: "Скрыть все изменения",
     openWebsite: "Полный список изменений",
     error: {
       title: "Не удалось загрузить список изменений",
@@ -3189,6 +3205,7 @@ export const ru: TranslationResources = {
     turnOn: "Включить",
 
     options: "Настройки",
+    host: "Хост",
     refreshFailed: "Не удалось обновить использование",
     noHosts: "Нет подключённых хостов",
     agentError: "Не удалось загрузить использование: {{reason}}",
@@ -3205,6 +3222,8 @@ export const ru: TranslationResources = {
     loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
     title: "Использование плана",
     refresh: "Обновить",
+    reorderCard: "Переместить {{source}}",
+    showCard: "Показывать {{source}}",
     refreshAll: "Обновить всё",
     refreshing: "Обновление...",
     loading: "Загрузка данных об использовании...",

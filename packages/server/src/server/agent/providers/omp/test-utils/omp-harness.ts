@@ -467,6 +467,16 @@ export class OmpHarness {
     return this.events.map((event) => event.type);
   }
 
+  acceptFastOnNextRuntime(): void {
+    this.omp.queueSessionSetup((runtime) => {
+      runtime.fastModeResult = { enabled: true, active: true };
+    });
+  }
+
+  optionsChanges(): Record<string, unknown>[] {
+    return this.events.flatMap((event) => (event.type === "options_changed" ? [event.patch] : []));
+  }
+
   async history(): Promise<AgentTimelineItem[]> {
     const items: AgentTimelineItem[] = [];
     for await (const event of this.requireSession().streamHistory()) {
