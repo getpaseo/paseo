@@ -41,6 +41,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
+import type { WorkspaceLabelService } from "../workspace-labels/index.js";
 import {
   AgentListItemPayloadSchema,
   AgentPermissionRequestPayloadSchema,
@@ -2719,6 +2720,7 @@ describe("create_agent MCP tool", () => {
       cwd: "/tmp/paseo/worktrees/repo/feature",
       kind: "worktree",
       displayName: "feature",
+      labels: ["review"],
       createdAt: "2026-07-17T00:00:00.000Z",
       updatedAt: "2026-07-17T00:00:00.000Z",
     });
@@ -2738,8 +2740,43 @@ describe("create_agent MCP tool", () => {
     const response = await tool.handler({});
 
     expect(response.structuredContent.workspaces).toEqual([
-      expect.objectContaining({ workspaceId: "ws-feature", isolation: "worktree" }),
+      expect.objectContaining({
+        workspaceId: "ws-feature",
+        isolation: "worktree",
+        labels: ["review"],
+      }),
     ]);
+  });
+
+  it("assigns workspace labels through the label service", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const setAssignment = vi.fn(async () => ({
+      label: { name: "review", color: "violet" as const },
+      workspaceLabels: ["review"],
+    }));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceLabelService: { setAssignment } as unknown as WorkspaceLabelService,
+      logger,
+    });
+
+    const response = await invokeToolWithParsedInput(
+      registeredTool(server, "set_workspace_label"),
+      {
+        workspaceId: "ws-related",
+        name: "review",
+        assigned: true,
+      },
+    );
+
+    expect(setAssignment).toHaveBeenCalledWith({
+      workspaceId: "ws-related",
+      label: { name: "review", color: "violet" },
+      assigned: true,
+    });
+    expect(response.structuredContent).toEqual({ workspaceId: "ws-related", labels: ["review"] });
   });
 
   it("creates an background local workspace and leaves it out of list_workspaces", async () => {
