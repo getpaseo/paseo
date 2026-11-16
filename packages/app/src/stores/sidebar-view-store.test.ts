@@ -38,7 +38,27 @@ describe("sidebar view store", () => {
       hostFilters: [],
       projectFilters: [],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
+  });
+
+  it("folds the top group down and back up", () => {
+    useSidebarViewStore.getState().toggleNavCollapsed();
+    expect(useSidebarViewStore.getState().navCollapsed).toBe(true);
+
+    useSidebarViewStore.getState().toggleNavCollapsed();
+    expect(useSidebarViewStore.getState().navCollapsed).toBe(false);
+  });
+
+  it("keeps a folded top group across restarts and unfolds state written before it existed", () => {
+    expect(migrateSidebarViewState({ groupMode: "project", navCollapsed: true }).navCollapsed).toBe(
+      true,
+    );
+    expect(migrateSidebarViewState({ groupMode: "status" }).navCollapsed).toBe(false);
+    expect(migrateSidebarViewState({ groupModeByServerId: { a: "status" } }).navCollapsed).toBe(
+      false,
+    );
+    expect(migrateSidebarViewState("garbage").navCollapsed).toBe(false);
   });
 
   it("toggles multiple hosts into and out of the filter", () => {
@@ -92,6 +112,7 @@ describe("sidebar view store", () => {
       hostFilters: [],
       projectFilters: [],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
   });
 
@@ -108,6 +129,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a"],
       projectFilters: [],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
   });
 
@@ -124,6 +146,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a", "host-b"],
       projectFilters: [],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
   });
 
@@ -169,6 +192,7 @@ describe("sidebar view store", () => {
   it("drops deleted labels from the active filter but retains Unlabelled", () => {
     useSidebarViewStore.setState({
       labelFilter: { labels: [SIDEBAR_UNLABELLED_LABEL_KEY, "urgent", "removed"] },
+      navCollapsed: false,
     });
 
     useSidebarViewStore.getState().reconcileLabelFilter(["Urgent"]);
@@ -208,6 +232,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a"],
       projectFilters: ["project-a"],
       labelFilter: { labels: ["urgent"] },
+      navCollapsed: false,
     });
 
     useSidebarViewStore.getState().clearProjectFilters();
@@ -236,6 +261,7 @@ describe("sidebar view store", () => {
       hostFilters: ["host-a"],
       projectFilters: ["project-a", "project-b"],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
   });
 
@@ -247,6 +273,7 @@ describe("sidebar view store", () => {
       hostFilters: [],
       projectFilters: [],
       labelFilter: { labels: [] },
+      navCollapsed: false,
     });
   });
 
