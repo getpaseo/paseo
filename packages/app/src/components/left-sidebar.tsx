@@ -55,7 +55,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
-import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { SidebarNavRows, useVisibleSidebarNavItems } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarFooterOverflowMenu } from "@/components/sidebar/sidebar-footer-overflow-menu";
@@ -719,7 +719,7 @@ function SidebarNavScroll({ closeGestureRef, windowContent, children }: SidebarN
           {children}
         </ScrollView>
       )}
-      <SidebarSeparator />
+      <SidebarSeparator testID="sidebar-nav-separator" />
     </>
   );
 }
@@ -848,7 +848,10 @@ function DesktopSidebar({
   // Windows and Linux draw their window controls top-right, so the sidebar has no chrome
   // row there. The strip above the scrolling rows is then its window drag surface.
   const showsChromeRow = ownsTopLeft || Boolean(DEV_BUILD_LABEL);
-  const showsDragStrip = !showsChromeRow && !inTopBand;
+  // With every top item hidden the sidebar starts at the Workspaces section, as before the
+  // nav scroller existed: no strip above it and no divider below it.
+  const hasNavRows = useVisibleSidebarNavItems().length > 0;
+  const showsDragStrip = hasNavRows && !showsChromeRow && !inTopBand;
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -878,7 +881,7 @@ function DesktopSidebar({
               </View>
             ) : null}
             {showsDragStrip ? (
-              <View style={styles.desktopDragStrip}>
+              <View style={styles.desktopDragStrip} testID="sidebar-nav-drag-strip">
                 <TitlebarDragRegion />
               </View>
             ) : null}
@@ -886,9 +889,11 @@ function DesktopSidebar({
           {/* The drag overlay stays above this viewport: Electron does not clip
               app-region rects to scroll viewports, so a scrolled-out row would
               still claim its no-drag rect. */}
-          <SidebarNavScroll closeGestureRef={closeGestureRef} windowContent>
-            <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
-          </SidebarNavScroll>
+          {hasNavRows ? (
+            <SidebarNavScroll closeGestureRef={closeGestureRef} windowContent>
+              <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
+            </SidebarNavScroll>
+          ) : null}
 
           <SidebarViewSlot dismiss={closeSidebar}>
             <SidebarToastRegion active={active}>
