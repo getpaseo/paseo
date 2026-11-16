@@ -37,9 +37,12 @@ function createTextPattern(path: string, forgeReferencePattern?: string): RegExp
 
 // Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
 // Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
-const URL_CHARACTER = String.raw`[^\s<>()"'\x60]`;
+// CJK, fullwidth and typographic punctuation (、。，（）【】「」“”…) also ends it; CJK letters do not.
+const URL_BOUNDARY =
+  "\\u2018\\u2019\\u201C\\u201D\\u2026\\u3000-\\u3003\\u3008-\\u3011\\u3014-\\u301F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65";
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60${URL_BOUNDARY}]`;
 const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
-const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?]|${URL_GROUP})`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?${URL_BOUNDARY}]|${URL_GROUP})`;
 
 const TEXT_PATTERN = createTextPattern(PROSE_PATH);
 // One entry per distinct workspace forge remote; reuse keeps the engine's regex identity stable.
