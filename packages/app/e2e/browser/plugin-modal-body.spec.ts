@@ -2,10 +2,15 @@ import { copyPluginExample } from "../support/helpers/plugin-fixture";
 import { expect, test as base, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
+import { waitForSettledPosition } from "../support/helpers/sheet-layout";
 
 async function openExample(page: Page, example: string) {
   await page.getByRole("button", { name: `Open ${example}`, exact: true }).click();
-  await expect(page.getByText(`Modal example: ${example}`, { exact: true })).toBeVisible();
+  const title = page.getByText(`Modal example: ${example}`, { exact: true });
+  await expect(title).toBeVisible();
+  // A compact sheet holds below the viewport and then slides up, so a pointer placed before it
+  // stops lands on whatever slides under it.
+  await waitForSettledPosition(title);
 }
 
 async function closeExample(page: Page) {
