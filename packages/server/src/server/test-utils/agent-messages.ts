@@ -1,5 +1,6 @@
 import { createAgentMessageDelivery } from "../agent/agent-messages/index.js";
 import {
+  dispositionStartsTurn,
   sendPreparedPromptToAgent,
   waitForAgentRunStartWithTimeout,
 } from "../agent/agent-prompt.js";
@@ -49,7 +50,7 @@ export function createTestAgentMessages(params: {
         clearPendingPermissions: request.clearPendingPermissions,
         runOptions: { clientMessageId: request.messageIds[0] },
       });
-      if (result.disposition === "turn_started")
+      if (dispositionStartsTurn(result.disposition))
         await waitForAgentRunStartWithTimeout(params.agentManager, request.recipientId);
       return result.disposition;
     },

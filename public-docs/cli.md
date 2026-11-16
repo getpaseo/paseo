@@ -318,9 +318,29 @@ paseo send <id> "now run the tests"
 paseo send <id> --image screenshot.png "what's wrong here?"
 paseo send <id> --no-wait "run this task"
 paseo send <id> --behavior interrupt "stop and do this instead"
+paseo send <id> --behavior queue "when you are done, update the changelog"
 ```
 
 Agent-originated sends (`PASEO_AGENT_ID` set) default to steering the running turn. Other sends default to interrupting it. Use `--behavior steer` or `--behavior interrupt` to override the default. Steering uses the same fallback as the client: if steering is unavailable, the running turn is interrupted and replaced.
+
+`--behavior queue` leaves the running turn alone. The host holds the message and starts it as its own turn once the running turn ends, whether it finished, failed or was stopped. Several queued messages run in the order they were sent, one turn each. An idle agent starts the message at once. Queued messages survive a host restart and are shown in `paseo inspect <id> --json` under `queuedMessages`. Archiving the agent drops them. Without `--no-wait`, `paseo send` waits until the last queued message's turn ends.
+
+`--json` reports what the host did:
+
+```json
+{
+  "agentId": "…",
+  "status": "queued",
+  "message": "Message queued at position 2; …",
+  "disposition": "queued",
+  "queuePosition": 2,
+  "revived": false
+}
+```
+
+`disposition` is `turn_started`, `steered`, `interrupted`, `queued` or `out_of_band` (a command the provider ran without a turn). `revived` is true when the send loaded or unarchived the agent first. Agent-originated `steer` and `interrupt` sends report `"status": "queued"` without a `disposition`: the host collects them for two quiet seconds and delivers them together, so what they will do is not known yet.
+
+`queue` needs a host that supports it. Scripts can check `features.agentMessageQueue` in `paseo daemon status --json`; against an older host, `paseo send --behavior queue` fails without sending anything.
 
 ## Viewing logs
 

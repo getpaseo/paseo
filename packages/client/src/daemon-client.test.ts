@@ -8728,6 +8728,59 @@ test.each([false, true])(
   },
 );
 
+test.each([false, true])(
+  "queued sends require the agentMessageQueue capability (supported=%s)",
+  async (supported) => {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "message-queue",
+      transportFactory: () => transport.transport,
+      reconnect: { enabled: false },
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({ features: supported ? { agentMessageQueue: true } : {} });
+    await connecting;
+    if (!supported) {
+      await expect(
+        client.sendAgentMessage("recipient", "later", { activeTurnBehavior: "queue" }),
+      ).rejects.toThrow("Update the Paseo host to queue messages");
+      expect(transport.sent).toHaveLength(0);
+      return;
+    }
+    const send = client.sendAgentMessage("recipient", "later", {
+      messageId: "queued-message",
+      activeTurnBehavior: "queue",
+    });
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request).toMatchObject({
+      type: "send_agent_message_request",
+      text: "later",
+      activeTurnBehavior: "queue",
+    });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          disposition: "queued",
+          queuePosition: 2,
+          revived: false,
+          error: null,
+        },
+      }),
+    );
+    await expect(send).resolves.toEqual({
+      disposition: "queued",
+      queuePosition: 2,
+      revived: false,
+    });
+  },
+);
+
 test("measures an outbound message in UTF-8 bytes against the daemon's message limit", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

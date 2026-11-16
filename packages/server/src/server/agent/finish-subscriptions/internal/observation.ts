@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { AgentManager } from "../../agent-manager.js";
 import type { AgentStorage } from "../../agent-storage.js";
 import type { AgentMessageDelivery } from "../../agent-messages/index.js";
+import type { AgentMessageQueue } from "../../agent-message-queue.js";
 import { buildStoredAgentPayload, toAgentPayload } from "../../agent-projections.js";
 import { serializeSnapshotWithMetadata } from "../../mcp-shared.js";
 import { createHostObservationResolver, type ToolHosts } from "../../host-operations/index.js";
@@ -16,6 +17,8 @@ export function createFinishObservation(input: {
   /** A child chosen for restart recovery reports its state only after its resume was sent. */
   waitForResume(agentId: string, signal: AbortSignal): Promise<void>;
   messages(): AgentMessageDelivery;
+  /** The child is not finished while messages wait in its queue. */
+  messageQueue?(): Pick<AgentMessageQueue, "waitForDrain">;
   hosts(): ToolHosts;
   serverId: string;
   logger: Logger;
@@ -28,6 +31,7 @@ export function createFinishObservation(input: {
       async wait(agentId, signal) {
         await input.waitForResume(agentId, signal);
         await input.messages().waitForDispatch(agentId, signal);
+        await input.messageQueue?.().waitForDrain(agentId, signal);
         signal.throwIfAborted();
         const live = agentManager.getAgent(agentId);
         if (!live) {

@@ -3227,6 +3227,21 @@ export class AgentManager {
     yield* this.streamAgent(agentId, prompt, options);
   }
 
+  /**
+   * Start a foreground turn only when the agent has no run in flight, including an
+   * autonomous turn such as compaction or a replacement that is still canceling. The
+   * check and the run reservation happen in one synchronous step, so no other send can
+   * start a turn in between. Returns null when the agent is busy.
+   */
+  streamAgentIfIdle(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> | null {
+    if (this.hasInFlightRun(agentId) || this.agents.get(agentId)?.pendingReplacement) return null;
+    return this.streamAgent(agentId, prompt, options);
+  }
+
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,

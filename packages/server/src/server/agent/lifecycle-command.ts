@@ -7,6 +7,7 @@ import {
 } from "./agent-manager.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
 import type { AgentProviderNotice } from "./agent-sdk-types.js";
+import type { AgentMessageQueue } from "./agent-message-queue.js";
 
 export type LifecycleAgentSnapshot = Pick<ManagedAgent, "id" | "cwd" | "lifecycle" | "internal">;
 
@@ -43,6 +44,8 @@ export interface LifecycleAgentStorage {
 export interface AgentLifecycleCommandDependencies {
   agentManager: LifecycleAgentManager;
   agentStorage: LifecycleAgentStorage;
+  /** Archive drops queued messages before canceling the run they wait behind. */
+  messageQueue?: Pick<AgentMessageQueue, "clear">;
   logger: Logger;
 }
 
@@ -121,6 +124,8 @@ export async function archiveAgentCommand(
   agentId: string,
 ): Promise<ArchiveAgentResult> {
   const liveAgent = dependencies.agentManager.getAgent(agentId);
+  // Otherwise the canceled turn would hand the agent to its next queued message.
+  await dependencies.messageQueue?.clear(agentId);
   let record: StoredAgentRecord | null;
   if (liveAgent) {
     await requestAgentRunCancellation(dependencies, agentId);

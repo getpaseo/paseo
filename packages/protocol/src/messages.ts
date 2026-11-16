@@ -898,6 +898,14 @@ const AgentRuntimeInfoSchema: z.ZodType<AgentRuntimeInfo> = z.object({
   extra: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const QueuedMessagePayloadSchema = z.object({
+  id: z.string(),
+  /** The start of the message text. */
+  preview: z.string(),
+  queuedAt: z.string(),
+});
+export type QueuedMessagePayload = z.infer<typeof QueuedMessagePayloadSchema>;
+
 const AgentActiveTurnPayloadSchema = z.object({
   turnId: z.string(),
   startedAt: z.string().nullable(),
@@ -921,6 +929,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  /** Messages the daemon holds until the running turn ends, oldest first. Absent when none. */
+  queuedMessages: z.array(QueuedMessagePayloadSchema).optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
@@ -1337,7 +1347,9 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+// `queue` holds the message until the running turn ends, then starts it as its own turn.
+// Clients must check server_info.features.agentMessageQueue before sending it.
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 export const SendAgentMessageSchema = z.object({
@@ -4120,6 +4132,8 @@ export const ServerInfoStatusPayloadSchema = z
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
         agentMessageBatching: z.boolean().optional(),
+        // COMPAT(agentMessageQueue): added after v0.16.0, remove gate after 2027-05-17.
+        agentMessageQueue: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -5458,6 +5472,15 @@ export const WorkspaceMarkUnreadResponseSchema = z.object({
   }),
 });
 
+export const SendDispositionSchema = z.enum([
+  "turn_started",
+  "steered",
+  "interrupted",
+  "queued",
+  "out_of_band",
+]);
+export type SendDisposition = z.infer<typeof SendDispositionSchema>;
+
 export const SendAgentMessageResponseMessageSchema = z.object({
   type: z.literal("send_agent_message_response"),
   payload: z.object({
@@ -5465,6 +5488,12 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     deliveryStatus: z.literal("queued").optional(),
+    /** What the send did. Absent for agent sends admitted to the batched delivery window. */
+    disposition: SendDispositionSchema.optional(),
+    /** 1-based position among the agent's queued messages when `disposition` is `queued`. */
+    queuePosition: z.number().int().positive().optional(),
+    /** The send unarchived the agent or loaded it from storage before dispatch. */
+    revived: z.boolean().optional(),
     error: z.string().nullable(),
   }),
 });

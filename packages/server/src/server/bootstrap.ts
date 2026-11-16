@@ -1334,7 +1334,10 @@ export async function createPaseoDaemon(
     workspaceGitService,
     createPaseoWorktreeWorkflow: createPaseoWorktreeForTools,
     archiveAgentForClose: (agentId) =>
-      archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
+      archiveAgentCommand(
+        { agentManager, agentStorage, messageQueue: wsServer?.messageQueue, logger },
+        agentId,
+      ),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: (workspaceId) => archiveWorkspaceRecordExternal(workspaceId),
@@ -1475,6 +1478,12 @@ export async function createPaseoDaemon(
     } catch (error) {
       logger.warn({ err: error, agentId }, "Failed to complete schedules for archived agent");
     }
+    // Archiving closes the conversation, so its waiting messages go with it.
+    await wsServer?.messageQueue
+      .clear(agentId)
+      .catch((error) =>
+        logger.warn({ err: error, agentId }, "Failed to drop queued messages of archived agent"),
+      );
   });
   logger.info({ elapsed: elapsed() }, "Schedule service initialized");
   logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
@@ -1511,6 +1520,10 @@ export async function createPaseoDaemon(
         if (!wsServer) throw new Error("Daemon is not accepting agent messages");
         return wsServer.agentMessages;
       },
+      messageQueue: () => {
+        if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+        return wsServer.messageQueue;
+      },
       hosts: () => {
         if (!wsServer) throw new Error("Daemon is not accepting host operations");
         return wsServer.toolHosts();
@@ -1523,7 +1536,8 @@ export async function createPaseoDaemon(
     runtimes: () => agentManager.getRuntimeCleanupCandidates(),
     isProtected: (agentId) =>
       finishSubscriptions.hasPendingForCaller(agentId) ||
-      (wsServer?.agentMessages.hasPending(agentId) ?? false),
+      (wsServer?.agentMessages.hasPending(agentId) ?? false) ||
+      (wsServer?.messageQueue.hasPending(agentId) ?? false),
     logger,
   });
 
@@ -1539,6 +1553,10 @@ export async function createPaseoDaemon(
     agentMessages: () => {
       if (!wsServer) throw new Error("Daemon is not accepting agent messages");
       return wsServer.agentMessages;
+    },
+    messageQueue: () => {
+      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+      return wsServer.messageQueue;
     },
     serverId,
     hosts: () => {
@@ -1906,6 +1924,7 @@ export async function createPaseoDaemon(
             await pluginRuntime.start();
             providerSnapshotManager.settlePluginProviders();
             restartRecovery.resumePending();
+            await wsServer.messageQueue.start({ waitForResume: restartRecovery.waitForResume });
             await finishSubscriptions.start();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
@@ -1997,6 +2016,8 @@ export async function createPaseoDaemon(
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    // Waiting messages stay on disk for the next start; no new turn starts during shutdown.
+    await wsServer?.messageQueue.close();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();

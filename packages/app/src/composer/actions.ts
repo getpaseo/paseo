@@ -45,13 +45,16 @@ export interface AttachmentPersister {
   deleteAttachments: (metadata: AttachmentMetadata[]) => Promise<void> | void;
 }
 
+/** The composer keeps its own queue track, so it never asks the host to queue. */
+type ComposerTurnBehavior = Exclude<ActiveTurnBehavior, "queue">;
+
 export interface ComposerSendClient {
   sendAgentMessage: (
     agentId: string,
     text: string,
     options: {
       messageId: string;
-      activeTurnBehavior?: ActiveTurnBehavior;
+      activeTurnBehavior?: ComposerTurnBehavior;
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
@@ -195,7 +198,7 @@ export interface DispatchComposerAgentMessageInput {
     images: AttachmentMetadata[],
   ) => Promise<Array<{ data: string; mimeType: string }> | undefined>;
   submission: MessageSubmissionWriter;
-  activeTurnBehavior?: ActiveTurnBehavior;
+  activeTurnBehavior?: ComposerTurnBehavior;
   activeTurnId?: string;
 }
 

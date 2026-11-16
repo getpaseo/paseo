@@ -280,6 +280,7 @@ function buildAgentManagerSpies() {
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
+    streamAgentIfIdle: vi.fn(() => (async function* noop() {})()),
     waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
     respondToPermission: vi.fn(),
     cancelAgentRun: vi.fn(),
@@ -3742,7 +3743,7 @@ describe("send_agent_prompt MCP tool", () => {
           success: true,
           ...(agentScoped
             ? { deliveryStatus: "queued" }
-            : { disposition: steered ? "steered" : "turn_started" }),
+            : { disposition: steered ? "steered" : "interrupted" }),
         });
         if (queued) {
           expect(client.sessions[1]!.prompts).toHaveLength(1);

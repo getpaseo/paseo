@@ -19,24 +19,34 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "streamAgentIfIdle"
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
 };
 
 export class AgentTurnBusyError extends Error {}
 
+/** `queue` never reaches a provider dispatch; the message queue owns it. */
+export type DispatchTurnBehavior = Exclude<ActiveTurnBehavior, "queue">;
+
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
   replaceRunning?: boolean;
-  activeTurnBehavior?: ActiveTurnBehavior;
+  activeTurnBehavior?: DispatchTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
 }
 
-export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+/** `interrupted`: the running turn was replaced by a new turn carrying the prompt. */
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started" | "interrupted";
+
+/** Whether the prompt started a new turn, so callers can wait for the provider to accept it. */
+export function dispositionStartsTurn(disposition: PromptDispatchDisposition): boolean {
+  return disposition === "turn_started" || disposition === "interrupted";
+}
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -76,11 +86,19 @@ async function startOrReplaceRun(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
   replaced: boolean;
 }> {
-  const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const iterator = replaced
+  if (options?.idleOnly) {
+    const iterator = agentManager.streamAgentIfIdle(agentId, prompt, options.runOptions);
+    if (!iterator) throw new AgentTurnBusyError(`Agent ${agentId} is running`);
+    return { iterator, replaced: false };
+  }
+  const replacing = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  // A run that never got a turn (still starting, or failed to start) is not an interrupted turn.
+  const current = agentManager.getAgent(agentId);
+  const interruptsTurn = Boolean(current?.activeForegroundTurnId ?? current?.activeTurnId);
+  const iterator = replacing
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
     : agentManager.streamAgent(agentId, prompt, options?.runOptions);
-  return { iterator, replaced };
+  return { iterator, replaced: replacing && interruptsTurn };
 }
 
 async function drainAgentRunIterator(
@@ -142,9 +160,6 @@ async function startAgentRunInner(
   const steered = options?.idleOnly
     ? null
     : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
-  if (options?.idleOnly && agentManager.hasInFlightRun(agentId)) {
-    throw new AgentTurnBusyError(`Agent ${agentId} is running`);
-  }
   if (steered?.disposition === "steered") {
     options?.onDispatch?.("steered");
     return steered;
@@ -161,7 +176,8 @@ async function startAgentRunInner(
     },
     "agent.session.start_stream.iterator_returned",
   );
-  options?.onDispatch?.("turn_started");
+  const disposition = replaced ? "interrupted" : "turn_started";
+  options?.onDispatch?.(disposition);
   void (async () => {
     try {
       try {
@@ -197,7 +213,7 @@ async function startAgentRunInner(
       logger.error({ err: error, agentId }, "Agent stream failed");
     }
   })();
-  return { disposition: "turn_started" };
+  return { disposition };
 }
 
 /**
@@ -229,7 +245,7 @@ export interface SendPromptToAgentParams {
   prompt: AgentPromptInput;
   source?: AgentPromptSource;
   messageId?: string;
-  activeTurnBehavior?: ActiveTurnBehavior;
+  activeTurnBehavior?: DispatchTurnBehavior;
   runOptions?: AgentRunOptions;
   /** Optional mode to set on the agent before the run starts. */
   sessionMode?: string;
@@ -321,8 +337,7 @@ async function resolvePromptSource(
 export async function sendPromptToAgent(
   params: SendPromptToAgentParams,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
-  const source = await resolvePromptSource(params.source, params.agentManager, params.agentStorage);
-  const delivery = prepareAgentMessage(params.prompt, source, params.messageId);
+  const delivery = await preparePromptForDispatch(params);
   return sendPreparedPromptToAgent({
     ...params,
     prompt: delivery.prompt,
@@ -330,6 +345,17 @@ export async function sendPromptToAgent(
       ? { ...params.runOptions, clientMessageId: delivery.messageId }
       : params.runOptions,
   });
+}
+
+/** Wrap a prompt with its provenance envelope, as {@link sendPromptToAgent} dispatches it. */
+export async function preparePromptForDispatch(
+  params: Pick<
+    SendPromptToAgentParams,
+    "agentManager" | "agentStorage" | "prompt" | "source" | "messageId"
+  >,
+): Promise<{ prompt: AgentPromptInput; messageId?: string }> {
+  const source = await resolvePromptSource(params.source, params.agentManager, params.agentStorage);
+  return prepareAgentMessage(params.prompt, source, params.messageId);
 }
 
 /** Dispatch daemon-prepared context without reclassifying it as human input. */

@@ -14,10 +14,12 @@ import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type {
+  SendDisposition,
   SessionEventSubscription,
   UsageReportEntry,
   ProviderUsage,
 } from "@getpaseo/protocol/messages";
+import { randomUUID } from "node:crypto";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
@@ -75,7 +77,10 @@ import {
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import type { AgentMessageQueue } from "./agent/agent-message-queue.js";
 import {
+  dispositionStartsTurn,
+  preparePromptForDispatch,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
@@ -504,6 +509,8 @@ export interface SessionOptions {
   agentStorage: AgentStorage;
   messageReceipts: Pick<MessageReceipts, "send">;
   agentMessages: AgentMessageDelivery;
+  /** Daemon-owned queue behind the `queue` send behavior. */
+  messageQueue?: AgentMessageQueue;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
@@ -879,6 +886,7 @@ export class Session {
   private readonly workspaceScripts: WorkspaceScriptsService;
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
   private readonly agentMessages: AgentMessageDelivery;
+  private readonly messageQueue: AgentMessageQueue | undefined;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
@@ -966,6 +974,7 @@ export class Session {
     this.paseoHome = paseoHome;
     this.messageReceipts = options.messageReceipts;
     this.agentMessages = options.agentMessages;
+    this.messageQueue = options.messageQueue;
     this.creationService = options.creationService;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
@@ -2311,6 +2320,13 @@ export class Session {
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    return this.withQueuedMessages(payload);
+  }
+
+  private withQueuedMessages(payload: AgentSnapshotPayload): AgentSnapshotPayload {
+    const queued = this.messageQueue?.list(payload.id) ?? [];
+    if (queued.length) payload.queuedMessages = queued;
+    else delete payload.queuedMessages;
     return payload;
   }
 
@@ -3738,6 +3754,7 @@ export class Session {
       {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
+        messageQueue: this.messageQueue,
         logger: this.sessionLogger,
       },
       agentId,
@@ -5864,7 +5881,7 @@ export class Session {
     if (!settled) {
       return null;
     }
-    const payload = this.buildStoredAgentPayload(settled.record);
+    const payload = this.withQueuedMessages(this.buildStoredAgentPayload(settled.record));
     return this.isProviderVisibleToClient(payload.provider) ? payload : null;
   }
 
@@ -8937,6 +8954,7 @@ export class Session {
 
     try {
       const agentId = resolved.agentId;
+      const wasLive = Boolean(this.agentManager.getAgent(agentId));
 
       const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
       this.sessionLogger.trace(
@@ -8953,7 +8971,46 @@ export class Session {
         queued = acceptAdmission;
       });
       let deliveryStatus: "queued" | undefined;
+      let outcome: { disposition: SendDisposition; queuePosition?: number } | undefined;
+      const sourceTitle = () =>
+        !msg.sourceAgentServerId && msg.sourceAgentId
+          ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
+          : undefined;
       const send = async (beforeDispatch: () => Promise<void>) => {
+        if (msg.activeTurnBehavior === "queue") {
+          const queue = this.messageQueue;
+          if (!queue) throw new Error("This host does not support queued messages");
+          const prepared = await preparePromptForDispatch({
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            prompt,
+            messageId: msg.messageId,
+            source: msg.sourceAgentId
+              ? {
+                  kind: "agent-message",
+                  agentId: msg.sourceAgentId,
+                  serverId: msg.sourceAgentServerId,
+                  title: sourceTitle(),
+                }
+              : undefined,
+          });
+          outcome = await queue.submit({
+            agentId,
+            messageId: prepared.messageId ?? randomUUID(),
+            prompt: prepared.prompt,
+            text: msg.text,
+            sessionMode: msg.sessionMode,
+            beforeAdmission: beforeDispatch,
+          });
+          if (outcome.disposition !== "queued" && dispositionStartsTurn(outcome.disposition)) {
+            await waitForAgentRunStartWithTimeout(
+              this.agentManager,
+              agentId,
+              this.delivery.requestSignal,
+            );
+          }
+          return;
+        }
         if (msg.sourceAgentId) {
           await beforeDispatch();
           const receipt = this.agentMessages.enqueue({
@@ -8964,9 +9021,7 @@ export class Session {
               kind: "agent-message",
               agentId: msg.sourceAgentId,
               serverId: msg.sourceAgentServerId,
-              title: !msg.sourceAgentServerId
-                ? (this.agentManager.getAgent(msg.sourceAgentId)?.config.title ?? undefined)
-                : undefined,
+              title: sourceTitle(),
             },
             activeTurnBehavior: msg.activeTurnBehavior ?? "steer",
             sessionMode: msg.sessionMode,
@@ -8989,7 +9044,8 @@ export class Session {
           beforeDispatch,
           logger: this.sessionLogger,
         });
-        if (result.disposition === "turn_started") {
+        outcome = result;
+        if (dispositionStartsTurn(result.disposition)) {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,
             agentId,
@@ -9029,6 +9085,14 @@ export class Session {
           agentId,
           accepted: true,
           ...(deliveryStatus ? { deliveryStatus } : {}),
+          ...(outcome
+            ? {
+                disposition: outcome.disposition,
+                ...(outcome.queuePosition ? { queuePosition: outcome.queuePosition } : {}),
+                // An agent that was not live was loaded, and unarchived if needed, to take the turn.
+                revived: !wasLive && outcome.disposition !== "queued",
+              }
+            : {}),
           error: null,
         },
       });
@@ -9080,6 +9144,11 @@ export class Session {
 
     try {
       await this.agentMessages.waitForDispatch(
+        agentId,
+        AbortSignal.any([abortController.signal, sourceSignal]),
+      );
+      // An agent with queued messages finishes after the last of them.
+      await this.messageQueue?.waitForDrain(
         agentId,
         AbortSignal.any([abortController.signal, sourceSignal]),
       );

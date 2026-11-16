@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { registerPluginTools } from "./plugin-tools.js";
 import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
+import type { AgentMessageQueue } from "../agent-message-queue.js";
 import {
   createHostResolver,
   HostOperationRejectedError,
@@ -79,6 +81,8 @@ import {
   toScheduleSummary,
 } from "../mcp-shared.js";
 import {
+  dispositionStartsTurn,
+  preparePromptForDispatch,
   type PromptDispatchDisposition,
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -120,6 +124,7 @@ import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
+  messageQueue?: () => AgentMessageQueue;
   finishSubscriptions?: () => FinishSubscriptions;
   serverId?: string;
   hosts?: () => ToolHosts;
@@ -663,6 +668,10 @@ function createToolCatalog(
   function agentMessages(): AgentMessageDelivery {
     if (!options.agentMessages) throw new Error("Agent message delivery is not configured");
     return options.agentMessages();
+  }
+  function messageQueue(): AgentMessageQueue {
+    if (!options.messageQueue) throw new Error("The message queue is not configured");
+    return options.messageQueue();
   }
   function finishSubscriptions(): FinishSubscriptions {
     if (!options.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
@@ -1281,7 +1290,7 @@ function createToolCatalog(
     .strict();
   const commonSendAgentPromptInputSchema = {
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional().describe(
-      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt.',
+      'Agent callers: "steer" (default) waits until the current turn ends; "interrupt" replaces it. Human callers: "steer" joins the turn, falling back to interrupt; default is interrupt. Any caller: "queue" holds the prompt until the running turn and earlier queued prompts end, then runs it as its own turn; an idle agent starts it at once.',
     ),
     agentId: z.string(),
     prompt: z.string(),
@@ -1963,16 +1972,75 @@ function createToolCatalog(
   const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
     "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
 
+  /** `queue` sends from any caller go to the daemon's message queue, never the batched window. */
+  async function sendQueuedAgentPrompt(input: {
+    agentId: string;
+    prompt: string;
+    sessionMode?: string;
+    notifying: boolean;
+    onDispatch: (disposition: PromptDispatchDisposition) => void;
+    onDrop: () => void;
+  }) {
+    const { agentId } = input;
+    const wasLive = Boolean(agentManager.getAgent(agentId));
+    const prepared = await preparePromptForDispatch({
+      agentManager,
+      agentStorage,
+      prompt: input.prompt,
+      source: callerAgentId
+        ? {
+            kind: "agent-message",
+            agentId: callerAgentId,
+            title: resolveCallerAgent()?.config.title ?? undefined,
+          }
+        : undefined,
+    });
+    const messageId = prepared.messageId ?? randomUUID();
+    const outcome = await messageQueue().submit({
+      agentId,
+      messageId,
+      prompt: prepared.prompt,
+      text: input.prompt,
+      sessionMode: input.sessionMode,
+      onDispatch: input.onDispatch,
+      onDrop: input.onDrop,
+    });
+    const queued = outcome.disposition === "queued";
+    if (outcome.disposition !== "queued" && dispositionStartsTurn(outcome.disposition)) {
+      await waitForAgentRunStartWithTimeout(agentManager, agentId);
+    }
+    return ensureValidJson({
+      success: true,
+      disposition: outcome.disposition,
+      ...("queuePosition" in outcome ? { queuePosition: outcome.queuePosition } : {}),
+      revived: !wasLive && !queued,
+      messageId,
+      status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
+      guidance: [
+        queued
+          ? "Queued. It starts as its own turn after the current turn and any earlier queued prompts end."
+          : "Dispatch acknowledged.",
+        input.notifying
+          ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
+          : "Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
+      ].join(" "),
+    });
+  }
+
   registerTool(
     "send_agent_prompt",
     {
       title: "Send agent prompt",
       description:
-        "Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient and waits for the current turn to end unless interrupt is requested. Completion reports include the target’s last response by default. Paseo supplies caller identity.",
+        'Send a task. Agent callers receive an immediate queued receipt; delivery follows after two quiet seconds per recipient and waits for the current turn to end unless interrupt is requested. With activeTurnBehavior "queue", any caller gets a disposition instead: the prompt starts now if the agent is idle, else it waits in the agent\'s queue and runs as its own turn. Completion reports include the target’s last response by default. Paseo supplies caller identity.',
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
-        disposition: z.enum(["turn_started", "out_of_band", "steered"]).optional(),
+        disposition: z
+          .enum(["turn_started", "steered", "interrupted", "queued", "out_of_band"])
+          .optional(),
+        queuePosition: z.number().int().positive().optional(),
+        revived: z.boolean().optional(),
         deliveryStatus: z.literal("queued").optional(),
         messageId: z.string().optional(),
         status: AgentStatusEnum,
@@ -2014,6 +2082,22 @@ function createToolCatalog(
           );
       }
 
+      if (activeTurnBehavior === "queue") {
+        const structuredContent = await sendQueuedAgentPrompt({
+          agentId,
+          prompt,
+          sessionMode,
+          notifying,
+          onDispatch: confirmDispatch,
+          onDrop: rejectNotification,
+        }).catch((error) => {
+          rejectNotification();
+          if (error instanceof AgentNotFoundError) throw new PaseoToolInputError(error.message);
+          throw error;
+        });
+        return { content: [], structuredContent };
+      }
+
       if (callerAgentId) {
         const receipt = (() => {
           try {
@@ -2051,6 +2135,7 @@ function createToolCatalog(
         };
       }
 
+      const wasLive = Boolean(agentManager.getAgent(agentId));
       const { disposition } = await sendPromptToAgent({
         agentManager,
         agentStorage,
@@ -2070,7 +2155,7 @@ function createToolCatalog(
       });
 
       // Return once the provider has accepted the turn, so the status reports it running.
-      if (disposition === "turn_started") {
+      if (dispositionStartsTurn(disposition)) {
         await waitForAgentRunStartWithTimeout(agentManager, agentId).catch((error) => {
           rejectNotification();
           throw error;
@@ -2081,6 +2166,7 @@ function createToolCatalog(
       const responseData = {
         success: true,
         disposition,
+        revived: !wasLive,
         status: currentSnapshot?.lifecycle ?? "idle",
         guidance: notifying
           ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
@@ -2254,6 +2340,7 @@ function createToolCatalog(
         {
           agentManager,
           agentStorage,
+          messageQueue: options.messageQueue?.(),
           logger: childLogger,
         },
         agentId,

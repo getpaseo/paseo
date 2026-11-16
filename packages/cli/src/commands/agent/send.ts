@@ -1,5 +1,5 @@
 import { type Command, Option } from "commander";
-import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
+import type { ActiveTurnBehavior, SendDisposition } from "@getpaseo/protocol/messages";
 import { collectMultiple } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
 import type {
@@ -16,6 +16,12 @@ export interface AgentSendResult {
   agentId: string;
   status: "queued" | "sent" | "completed" | "timeout" | "permission" | "error";
   message: string;
+  /** What the daemon did with the message. Absent for agent sends in the batched window. */
+  disposition?: SendDisposition;
+  /** 1-based position among the agent's queued messages. */
+  queuePosition?: number;
+  /** The send unarchived the agent or loaded it from storage first. */
+  revived?: boolean;
 }
 
 /** Schema for agent send output */
@@ -47,8 +53,8 @@ export function addSendOptions(cmd: Command): Command {
     .addOption(
       new Option(
         "--behavior <behavior>",
-        "Active-turn behavior (agent default: steer waits for turn end; otherwise: interrupt)",
-      ).choices(["interrupt", "steer"]),
+        "Active-turn behavior (agent default: steer waits for turn end; otherwise: interrupt). queue: hold the message until the running turn and earlier queued messages end, then run it as its own turn",
+      ).choices(["interrupt", "steer", "queue"]),
     )
     .option("--no-wait", "Return immediately without waiting for completion");
 }
@@ -170,6 +176,18 @@ function buildSendResult(agentIdArg: string, state: SendWaitState): AgentSendRes
   return { agentId, status: "completed", message: "Agent completed processing the message" };
 }
 
+function describeReceipt(receipt: {
+  deliveryStatus?: "queued";
+  disposition?: SendDisposition;
+  queuePosition?: number;
+}): string {
+  if (receipt.deliveryStatus === "queued")
+    return "Message queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested";
+  if (receipt.disposition === "queued")
+    return `Message queued at position ${receipt.queuePosition ?? "?"}; it runs as its own turn after the running turn and earlier queued messages end`;
+  return "Message sent, not waiting for completion";
+}
+
 export async function runSendCommand(
   agentIdArg: string,
   prompt: string | undefined,
@@ -207,6 +225,12 @@ export async function runSendCommand(
       activeTurnBehavior: options.behavior ?? (sourceAgentId ? "steer" : "interrupt"),
     });
 
+    const receiptFields = {
+      ...(receipt.disposition ? { disposition: receipt.disposition } : {}),
+      ...(receipt.queuePosition ? { queuePosition: receipt.queuePosition } : {}),
+      ...(receipt.revived !== undefined ? { revived: receipt.revived } : {}),
+    };
+
     // If --no-wait, return immediately
     if (options.wait === false) {
       await client.close();
@@ -215,22 +239,21 @@ export async function runSendCommand(
         type: "single",
         data: {
           agentId: agentIdArg,
-          status: receipt.deliveryStatus ?? "sent",
-          message:
-            receipt.deliveryStatus === "queued"
-              ? "Message queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested"
-              : "Message sent, not waiting for completion",
+          status: receipt.deliveryStatus ?? (receipt.disposition === "queued" ? "queued" : "sent"),
+          message: describeReceipt(receipt),
+          ...receiptFields,
         },
         schema: agentSendSchema,
       };
     }
 
+    // The daemon's wait covers queued messages: it returns after the last one finishes.
     const state = await client.waitForFinish(agentIdArg, 600000); // 10 minute timeout
     await client.close();
 
     return {
       type: "single",
-      data: buildSendResult(agentIdArg, state),
+      data: { ...buildSendResult(agentIdArg, state), ...receiptFields },
       schema: agentSendSchema,
     };
   } catch (err) {

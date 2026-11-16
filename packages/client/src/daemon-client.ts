@@ -48,6 +48,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type SendDisposition,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -487,6 +488,27 @@ export interface SendMessageOptions {
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+/**
+ * What the daemon did with a sent message. Agent sends admitted to the batched delivery
+ * window report only `deliveryStatus: "queued"`; other sends report `disposition`.
+ */
+export interface SendMessageReceipt {
+  deliveryStatus?: "queued";
+  disposition?: SendDisposition;
+  /** 1-based, when `disposition` is `queued`. */
+  queuePosition?: number;
+  revived?: boolean;
+}
+
+function toSendMessageReceipt(payload: SendMessageReceipt): SendMessageReceipt {
+  return {
+    ...(payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {}),
+    ...(payload.disposition ? { disposition: payload.disposition } : {}),
+    ...(payload.queuePosition ? { queuePosition: payload.queuePosition } : {}),
+    ...(payload.revived !== undefined ? { revived: payload.revived } : {}),
+  };
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -4243,7 +4265,8 @@ export class DaemonClient {
     agentId: string,
     text: string,
     options: SendMessageOptions = {},
-  ): Promise<{ deliveryStatus?: "queued" }> {
+  ): Promise<SendMessageReceipt> {
+    this.assertQueueSupported(options);
     if (
       options.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
@@ -4288,14 +4311,23 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
-    return payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {};
+    return toSendMessageReceipt(payload);
+  }
+
+  private assertQueueSupported(options: SendMessageOptions): void {
+    if (
+      options.activeTurnBehavior === "queue" &&
+      this.lastServerInfoMessage?.features?.agentMessageQueue !== true
+    ) {
+      throw new Error("Update the Paseo host to queue messages until the running turn ends.");
+    }
   }
 
   async sendMessage(
     agentId: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<{ deliveryStatus?: "queued" }> {
+  ): Promise<SendMessageReceipt> {
     return this.sendAgentMessage(agentId, text, options);
   }
 

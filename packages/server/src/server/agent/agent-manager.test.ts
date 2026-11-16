@@ -4882,7 +4882,7 @@ test("a replacement prompt recovers when the retired session fails to start", as
     const dispatch = await startAgentRun(manager, created.id, "replacement", logger, {
       replaceRunning: true,
     });
-    expect(dispatch.disposition).toBe("turn_started");
+    expect(dispatch.disposition).toBe("interrupted");
     await replacement.waitForRetryStart();
     const result = await manager.waitForAgentEvent(created.id);
     expect(result.status).toBe("idle");
