@@ -329,9 +329,15 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
 
 test("aborting a pending subscription stops its startup scan and rejects", async () => {
   const root = await createRoot();
+  // More directories than the Linux backend watches: a scan that keeps walking after the abort
+  // fails on the directory limit instead of rejecting with the abort reason.
   await Promise.all(
-    Array.from({ length: 50 }, (_, index) =>
-      mkdir(join(root, `dir-${index}`, "nested"), { recursive: true }),
+    Array.from({ length: 80 }, (_, outer) =>
+      Promise.all(
+        Array.from({ length: 70 }, (__, inner) =>
+          mkdir(join(root, `dir-${outer}`, `nested-${inner}`), { recursive: true }),
+        ),
+      ),
     ),
   );
   const observer = createObserver();
@@ -340,6 +346,7 @@ test("aborting a pending subscription stops its startup scan and rejects", async
   const callback = vi.fn();
 
   const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
   controller.abort(reason);
 
   await expect(subscription).rejects.toBe(reason);
@@ -351,7 +358,7 @@ test("aborting a pending subscription stops its startup scan and rejects", async
   await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(callback).not.toHaveBeenCalled();
-});
+}, 20_000);
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
