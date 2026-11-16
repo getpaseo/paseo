@@ -58,6 +58,8 @@ interface PluginSidebarItemEntryProps {
   /** Anchors a popover opened by an item that renders no kit component. */
   fallbackAnchorRef: RefObject<View | null>;
   onBeforeNavigate?: () => void;
+  /** Rows inside the header More menu are menu items so arrow keys can reach them. */
+  menu?: boolean;
 }
 
 type PluginSidebarItemHostProps = Omit<PluginSidebarItemEntryProps, "group"> & {
@@ -69,11 +71,15 @@ type PluginSidebarItemHostProps = Omit<PluginSidebarItemEntryProps, "group"> & {
  * inside the plugin's runtime and its own error boundary: a throwing item renders nothing. A legacy
  * `addSidebarItem` group renders the app's own row.
  */
-export function PluginSidebarItem({ group, ...props }: PluginSidebarItemEntryProps) {
+export function PluginSidebarItem({ group, menu = false, ...props }: PluginSidebarItemEntryProps) {
   if (group.kind === "legacy") {
-    return <LegacyPluginSidebarRow group={group} onBeforeNavigate={props.onBeforeNavigate} />;
+    return (
+      <LegacyPluginSidebarRow group={group} menu={menu} onBeforeNavigate={props.onBeforeNavigate} />
+    );
   }
-  return <ThemedPluginSidebarItem {...props} group={group} uniProps={pluginThemeMapping} />;
+  return (
+    <ThemedPluginSidebarItem {...props} menu={menu} group={group} uniProps={pluginThemeMapping} />
+  );
 }
 
 function PluginSidebarItemHost({
@@ -81,6 +87,7 @@ function PluginSidebarItemHost({
   section,
   fallbackAnchorRef,
   onBeforeNavigate,
+  menu = false,
   theme,
 }: PluginSidebarItemHostProps & { theme: PluginTheme }) {
   const pathname = usePathname();
@@ -130,6 +137,7 @@ function PluginSidebarItemHost({
             showPopover={showPopover}
             fallbackAnchorRef={fallbackAnchorRef}
             onBeforeNavigate={onBeforeNavigate}
+            menu={menu}
           />
         </SidebarPopoverRoot>
       </PluginEnvironmentProvider>
@@ -150,6 +158,7 @@ function SidebarItemContent({
   showPopover,
   fallbackAnchorRef,
   onBeforeNavigate,
+  menu,
 }: {
   plugin: PluginSidebarTarget["plugin"];
   item: PluginSidebarTarget["item"];
@@ -161,6 +170,7 @@ function SidebarItemContent({
   showPopover: (content: PopoverContent | null) => void;
   fallbackAnchorRef: RefObject<View | null>;
   onBeforeNavigate?: () => void;
+  menu: boolean;
 }) {
   const { anchorTo, offerAnchor, releaseAnchor, anchorToFallback } =
     useSidebarPopoverAnchor("PluginSidebarItem");
@@ -205,6 +215,7 @@ function SidebarItemContent({
   const frame = useMemo<SidebarItemFrame>(
     () => ({
       section,
+      menu,
       title: plugin.i18n.resolve(item.title, plugin.locale),
       testID:
         section === "header"
@@ -214,7 +225,7 @@ function SidebarItemContent({
       offerAnchor,
       releaseAnchor,
     }),
-    [anchorTo, item.id, item.title, offerAnchor, plugin, releaseAnchor, section],
+    [anchorTo, item.id, item.title, menu, offerAnchor, plugin, releaseAnchor, section],
   );
   const itemProps = useMemo<PluginSidebarItemProps>(
     () => ({ ...hostProps, currentScreen, openScreen, openPopover }),

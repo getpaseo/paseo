@@ -1,6 +1,8 @@
 import { router, usePathname } from "expo-router";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { DensityIcon } from "@/components/ui/density-icon";
+import { MenuItem } from "@/components/ui/menu";
 import { rememberPluginContributionHost } from "../contribution-host";
 import { pluginIconComponent } from "../icons";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
@@ -13,9 +15,11 @@ import { selectPluginSidebarTarget, type PluginSidebarGroup } from "../sidebar-g
  */
 export function LegacyPluginSidebarRow({
   group,
+  menu = false,
   onBeforeNavigate,
 }: {
   group: Extract<PluginSidebarGroup, { kind: "legacy" }>;
+  menu?: boolean;
   onBeforeNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -31,13 +35,26 @@ export function LegacyPluginSidebarRow({
     onBeforeNavigate?.();
     router.push(route);
   }, [group.key, onBeforeNavigate, route, target.plugin.serverId]);
+  const testID = `plugin-sidebar-${group.pluginId}-${group.contributionId}`;
+  const icon = pluginIconComponent(group.icon);
+  const leading = useMemo(
+    () => <DensityIcon icon={icon} size="sm" color="foregroundMuted" />,
+    [icon],
+  );
+  if (menu) {
+    return (
+      <MenuItem leading={leading} onSelect={navigate} active={isActive} testID={testID}>
+        {group.title}
+      </MenuItem>
+    );
+  }
   return (
     <SidebarHeaderRow
-      icon={pluginIconComponent(group.icon)}
+      icon={icon}
       label={group.title}
       onPress={navigate}
       isActive={isActive}
-      testID={`plugin-sidebar-${group.pluginId}-${group.contributionId}`}
+      testID={testID}
       variant="compact"
     />
   );

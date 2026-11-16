@@ -1298,6 +1298,11 @@ export const ru: TranslationResources = {
       closeSidebar: "Закрыть боковую панель",
       moreActions: "Дополнительные действия",
     },
+    nav: {
+      more: "Ещё",
+      moreItems: "Другие пункты меню",
+      resize: "Изменить размер меню",
+    },
     footer: {
       usage: "Использование",
     },
@@ -2660,6 +2665,12 @@ export const ru: TranslationResources = {
         },
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
+        navLayout: {
+          title: "Макет меню",
+          description: "Как меню боковой панели помещается на невысоких экранах",
+          scroll: "Прокрутка",
+          resizable: "Изменяемый размер",
+        },
       },
       fonts: {
         title: "Шрифты",

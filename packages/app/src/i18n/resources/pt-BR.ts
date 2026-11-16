@@ -1306,6 +1306,11 @@ export const ptBR: TranslationResources = {
       closeSidebar: "Fechar barra lateral",
       moreActions: "Mais ações",
     },
+    nav: {
+      more: "Mais",
+      moreItems: "Mais itens do menu",
+      resize: "Redimensionar o menu",
+    },
     footer: {
       usage: "Uso",
     },
@@ -2654,6 +2659,12 @@ export const ptBR: TranslationResources = {
         },
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        navLayout: {
+          title: "Layout do menu",
+          description: "Como o menu da barra lateral cabe em telas baixas",
+          scroll: "Rolar",
+          resizable: "Redimensionável",
+        },
       },
       fonts: {
         title: "Fontes",

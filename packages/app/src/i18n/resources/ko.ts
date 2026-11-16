@@ -1287,6 +1287,11 @@ export const ko: TranslationResources = {
       closeSidebar: "사이드바 닫기",
       moreActions: "추가 작업",
     },
+    nav: {
+      more: "더보기",
+      moreItems: "더보기 메뉴 항목",
+      resize: "메뉴 크기 조절",
+    },
     footer: {
       usage: "사용량",
     },
@@ -2630,6 +2635,12 @@ export const ko: TranslationResources = {
         },
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
+        navLayout: {
+          title: "메뉴 레이아웃",
+          description: "낮은 화면에서 사이드바 메뉴를 맞추는 방식",
+          scroll: "스크롤",
+          resizable: "크기 조절",
+        },
       },
       fonts: {
         title: "글꼴",

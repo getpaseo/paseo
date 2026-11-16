@@ -260,6 +260,36 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.sendShortcut).toBe("enter");
   });
 
+  it("defaults the sidebar menu to the scrolling layout", async () => {
+    const result = await loadAppSettingsFromStorage(makeDeps());
+
+    expect(result.sidebarNavLayout).toBe("scroll");
+  });
+
+  it("loads the resizable sidebar menu layout", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarNavLayout: "resizable" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavLayout).toBe("resizable");
+  });
+
+  it("falls back to the scrolling sidebar menu when the stored layout is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarNavLayout: "tiles" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavLayout).toBe("scroll");
+  });
+
   it("defaults sidebar navigation items to an empty preference list", async () => {
     const deps = makeDeps();
 

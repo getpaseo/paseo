@@ -16,8 +16,10 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Shortcut } from "@/components/ui/shortcut";
 import { Switch } from "@/components/ui/switch";
+import { useAppSettings, type SidebarNavLayout } from "@/hooks/use-settings";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import {
@@ -180,11 +182,46 @@ function SidebarItemsCard({ section }: { section: SidebarSection }): ReactElemen
   );
 }
 
+function SidebarNavLayoutCard(): ReactElement {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const options = useMemo(
+    () => [
+      { value: "scroll" as const, label: t("settings.appearance.sidebar.navLayout.scroll") },
+      { value: "resizable" as const, label: t("settings.appearance.sidebar.navLayout.resizable") },
+    ],
+    [t],
+  );
+  const handleChange = useCallback(
+    (sidebarNavLayout: SidebarNavLayout) => void updateSettings({ sidebarNavLayout }),
+    [updateSettings],
+  );
+  return (
+    <SettingsSection
+      title={t("settings.appearance.sidebar.navLayout.title")}
+      info={t("settings.appearance.sidebar.navLayout.description")}
+      testID="sidebar-nav-layout-section"
+    >
+      <View style={settingsStyles.card}>
+        <View style={settingsStyles.row}>
+          <SegmentedControl
+            options={options}
+            value={settings.sidebarNavLayout}
+            onValueChange={handleChange}
+            testID="sidebar-nav-layout"
+          />
+        </View>
+      </View>
+    </SettingsSection>
+  );
+}
+
 /** Settings > Sidebar: one card per section. The footer's bottom line is fixed and not listed. */
 export function SidebarNavSection(): ReactElement {
   return (
     <>
       <SidebarViewPicker />
+      <SidebarNavLayoutCard />
       <SidebarItemsCard section="header" />
       <SidebarItemsCard section="footer" />
     </>

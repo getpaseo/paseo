@@ -1290,6 +1290,11 @@ export const en = {
       closeSidebar: "Close sidebar",
       moreActions: "More actions",
     },
+    nav: {
+      more: "More",
+      moreItems: "More menu items",
+      resize: "Resize menu",
+    },
     footer: {
       usage: "Usage",
     },
@@ -2746,6 +2751,12 @@ export const en = {
         },
         moveUp: "Move up",
         moveDown: "Move down",
+        navLayout: {
+          title: "Menu layout",
+          description: "How the sidebar menu fits on short screens",
+          scroll: "Scroll",
+          resizable: "Resizable",
+        },
       },
       fonts: {
         title: "Fonts",
