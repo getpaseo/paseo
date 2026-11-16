@@ -8,6 +8,7 @@ import { isWeb } from "@/constants/platform";
 // (detachable keyboards, tablet mode, devtools touch emulation).
 const FINE_POINTER_QUERY = "(hover: hover) and (pointer: fine)";
 const TOUCH_SCREEN_QUERY = "(any-pointer: coarse)";
+const TOUCH_PRIMARY_POINTER_QUERY = "(pointer: coarse)";
 
 export interface PointerCapabilities {
   /** A mouse-like pointer drives the UI. */
@@ -79,10 +80,12 @@ export function hasFinePointer(): boolean {
   return source.getSnapshot().finePointer;
 }
 
-/** Touch sizing remains enabled on hybrid browsers that report touch points. */
-export function hasTouchScreen(): boolean {
-  return (
-    source.getSnapshot().touchScreen ||
-    (isWeb && typeof window !== "undefined" && window.navigator.maxTouchPoints > 0)
-  );
+/**
+ * True when touch is the primary input, read at call time. iPadOS keeps touch primary with a
+ * trackpad attached; a laptop with a touch screen that its trackpad drives reports a fine primary
+ * pointer.
+ */
+export function hasTouchPrimaryPointer(): boolean {
+  if (!isWeb) return true;
+  return browserMatchMedia()?.(TOUCH_PRIMARY_POINTER_QUERY).matches ?? false;
 }
