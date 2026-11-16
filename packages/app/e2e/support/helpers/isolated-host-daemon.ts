@@ -6,7 +6,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -68,7 +68,7 @@ export async function getAvailableHostDaemonPort(): Promise<number> {
 async function waitForServer(
   port: number,
   child: ChildProcess,
-  identity: { serverId: string; password: string | undefined },
+  identity: { serverId: string; paseoHome: string },
 ): Promise<void> {
   const deadline = Date.now() + 90_000;
   let lastError: unknown = null;
@@ -76,13 +76,11 @@ async function waitForServer(
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Isolated host daemon exited before listening (code ${String(
-          child.exitCode,
-        )}, signal ${String(child.signalCode)})`,
+        `Isolated host daemon exited before listening (code ${String(child.exitCode)}, signal ${String(child.signalCode)})`,
       );
     }
     try {
-      const serverId = await readServerId(port, identity.password);
+      const serverId = await readServerId(port, identity.paseoHome);
       if (serverId === identity.serverId) return;
       lastError = new Error(`Port ${port} is served by ${serverId}, not ${identity.serverId}`);
     } catch (error) {
@@ -98,9 +96,18 @@ async function waitForServer(
   );
 }
 
-async function readServerId(port: number, password: string | undefined): Promise<string> {
+/**
+ * Reads the server id from the daemon's status route. The route needs a bearer
+ * on a password-protected daemon; the daemon accepts the local credential it
+ * writes into its home before listening, as the CLI does for local status.
+ */
+async function readServerId(port: number, paseoHome: string): Promise<string> {
+  const localCredential = await readFile(path.join(paseoHome, "local-credential"), "utf8").then(
+    (token) => token.trim(),
+    () => null,
+  );
   const response = await fetch(`http://127.0.0.1:${port}/api/status`, {
-    headers: password ? { authorization: `Bearer ${password}` } : {},
+    headers: localCredential ? { authorization: `Bearer ${localCredential}` } : {},
     signal: AbortSignal.timeout(1_000),
   });
   if (!response.ok) throw new Error(`Status request to port ${port} returned ${response.status}`);
@@ -206,20 +213,19 @@ export async function startIsolatedHostDaemon(
     await killProcessTree(child);
   };
   const spawnDaemon = async (): Promise<ChildProcess> => {
-    const env = withDisabledE2ESpeechEnv({
-      ...process.env,
-      ...options.environment,
-      PASEO_HOME: paseoHome,
-      PASEO_SERVER_ID: serverId,
-      PASEO_LISTEN: `127.0.0.1:${port}`,
-      PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-      PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
-      PASEO_NODE_ENV: "development",
-      NODE_ENV: "development",
-    });
     const spawnOptions: SpawnOptions = {
       cwd: serverDir,
-      env,
+      env: withDisabledE2ESpeechEnv({
+        ...process.env,
+        ...options.environment,
+        PASEO_HOME: paseoHome,
+        PASEO_SERVER_ID: serverId,
+        PASEO_LISTEN: `127.0.0.1:${port}`,
+        PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+        PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
+        PASEO_NODE_ENV: "development",
+        NODE_ENV: "development",
+      }),
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     };
@@ -235,10 +241,7 @@ export async function startIsolatedHostDaemon(
     });
 
     try {
-      await waitForServer(port, spawned, {
-        serverId,
-        password: env.PASEO_PASSWORD?.trim(),
-      });
+      await waitForServer(port, spawned, { serverId, paseoHome });
       return spawned;
     } catch (error) {
       throw new Error(
