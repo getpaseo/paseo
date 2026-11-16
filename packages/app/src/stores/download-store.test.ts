@@ -90,6 +90,7 @@ interface StartInput {
   token?: ReturnType<typeof createTokenRequest>;
   reader?: ReturnType<typeof createFileReader>;
   saver?: ReturnType<typeof createFileSaver>;
+  fetchFile?: typeof fetch;
 }
 
 async function startDownload(input: StartInput): Promise<Download | undefined> {
@@ -108,6 +109,7 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     requestFileDownloadToken: token.request,
     readFile: reader.read,
     saveFile: saver.save,
+    fetchFile: input.fetchFile ?? (async () => new Response(FILE_BYTES)),
   });
   const { activeDownloadId, downloads } = useDownloadStore.getState();
   return activeDownloadId ? downloads.get(activeDownloadId) : undefined;
@@ -200,7 +202,9 @@ describe("download store transport selection", () => {
 
     expect(download).toMatchObject({ status: "complete" });
     expect(reader.requested).toEqual([]);
-    expect(saver.savedFiles).toEqual([]);
+    expect(saver.savedFiles).toEqual([
+      { bytes: FILE_BYTES, fileName: FILE_NAME, mimeType: MIME_TYPE },
+    ]);
   });
 
   it("fails the download and saves nothing when the session read fails", async () => {
@@ -218,6 +222,30 @@ describe("download store transport selection", () => {
 
     expect(download).toMatchObject({ status: "error", message: "Connection lost" });
     expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("reports a Basic auth challenge without saving the error page or requesting browser credentials", async () => {
+    const saver = createFileSaver();
+    const requests: Array<RequestInit | undefined> = [];
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      saver,
+      fetchFile: async (_url, options) => {
+        requests.push(options);
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Basic realm="Paseo"' },
+        });
+      },
+    });
+
+    expect(download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.httpFailed", { status: 401 }),
+    });
+    expect(saver.savedFiles).toEqual([]);
+    expect(requests).toEqual([{ credentials: "omit", redirect: "error" }]);
   });
 
   it("refuses a file over the session size limit before reading it", async () => {

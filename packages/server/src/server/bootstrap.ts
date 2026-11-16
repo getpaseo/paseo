@@ -813,11 +813,16 @@ export async function createPaseoDaemon(
 
   app.use((req, res, next) => {
     const origin = req.headers.origin;
-    if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
+    // Download URLs carry a single-use capability token. Browser downloads may originate
+    // from any client host; fetching the bytes keeps HTTP failures out of app navigation.
+    const isFileDownload = req.path === "/api/files/download";
+    if (origin && (isFileDownload || allowedOrigins.has("*") || allowedOrigins.has(origin))) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.setHeader("Access-Control-Allow-Credentials", "true");
+      if (!isFileDownload) {
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+      }
     }
     if (req.method === "OPTIONS") {
       res.status(204).end();

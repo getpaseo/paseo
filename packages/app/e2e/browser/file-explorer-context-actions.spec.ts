@@ -10,7 +10,7 @@ import {
 } from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 let workspace: SeededWorkspace;
@@ -468,15 +468,58 @@ test("downloads a file over direct TCP with its original filename and bytes", as
 
   const downloaded = await downloadFileFromExplorer(page, fileName);
   const url = new URL(downloaded.url());
-  expect(url.protocol).toBe("http:");
-  expect(url.port).toBe(getE2EDaemonPort());
-  expect(url.pathname).toBe("/api/files/download");
-  expect(url.searchParams.get("token")).toBeTruthy();
+  expect(url.protocol).toBe("blob:");
   expect(downloaded.suggestedFilename()).toBe(fileName);
   const savedFile = testInfo.outputPath(fileName);
   await downloaded.saveAs(savedFile);
   expect(await downloaded.failure()).toBeNull();
   expect(await readFile(savedFile)).toEqual(source);
+});
+
+test("keeps a failed download visible and the workspace usable until retry", async ({
+  page,
+}, testInfo) => {
+  const fileName = "removed-during-download.bin";
+  const filePath = path.join(workspace.workspaceDirectory, fileName);
+  const source = Buffer.from([0, 1, 2, 255]);
+  await writeFile(filePath, source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  const workspaceUrl = page.url();
+
+  // Remove the real file after token issuance, before the real HTTP request reaches the daemon.
+  await page.route(
+    "**/api/files/download?*",
+    async (route) => {
+      await rm(filePath);
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByText(fileName, { exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+  const failure = page.getByText("Failed to download file (HTTP 404).", { exact: true });
+  await expect(failure).toBeVisible();
+  // Success toasts expire after three seconds; failures must remain actionable.
+  await page.waitForTimeout(3500);
+  await expect(failure).toBeVisible();
+  expect(page.url()).toBe(workspaceUrl);
+  await page.screenshot({ path: testInfo.outputPath("download-failure.png"), scale: "css" });
+  await page
+    .getByTestId("download-toast")
+    .getByRole("button", { name: "Dismiss", exact: true })
+    .click();
+  await expect(failure).toBeHidden();
+
+  await writeFile(filePath, source);
+  const downloaded = await downloadFileFromExplorer(page, fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await readFile(savedFile)).toEqual(source);
+  expect(page.url()).toBe(workspaceUrl);
 });
 
 test("downloads an unsupported binary from its preview with original filename and bytes", async ({

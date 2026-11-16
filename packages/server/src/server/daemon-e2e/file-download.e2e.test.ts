@@ -69,6 +69,40 @@ describe("daemon E2E", () => {
   }, 60000);
 
   describe("file download tokens", () => {
+    test("allows a browser on another origin to fetch only a token-authorized download", async () => {
+      const cwd = tmpCwd();
+      const origin = "https://another-client.example";
+      const baseUrl = `http://127.0.0.1:${ctx.daemon.port}`;
+      writeFileSync(path.join(cwd, "download.bin"), "download bytes");
+      try {
+        const preflight = await fetch(`${baseUrl}/api/files/download`, {
+          method: "OPTIONS",
+          headers: { Origin: origin, "Access-Control-Request-Headers": "Authorization" },
+        });
+        expect(preflight.status).toBe(204);
+        expect(preflight.headers.get("access-control-allow-origin")).toBe(origin);
+        expect(preflight.headers.get("access-control-allow-headers")).toContain("Authorization");
+        expect(preflight.headers.get("access-control-allow-credentials")).toBeNull();
+
+        const token = await ctx.client.requestDownloadToken(cwd, "download.bin");
+        expect(token.error).toBeNull();
+        const url = `${baseUrl}/api/files/download?token=${token.token}`;
+        const response = await fetch(url, { headers: { Origin: origin } });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+        expect(await response.text()).toBe("download bytes");
+
+        const reused = await fetch(url, { headers: { Origin: origin } });
+        expect(reused.status).toBe(403);
+        expect(reused.headers.get("access-control-allow-origin")).toBe(origin);
+
+        const otherRoute = await fetch(`${baseUrl}/api/status`, { headers: { Origin: origin } });
+        expect(otherRoute.headers.get("access-control-allow-origin")).toBeNull();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
     test.skipIf(process.platform !== "linux")(
       "releases file descriptors after repeated HTTP download cancellations",
       async () => {
