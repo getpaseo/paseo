@@ -144,6 +144,7 @@ export const en = {
       sendAndInterrupt: "Send and interrupt",
       sendAndSteer: "Send and steer",
       sendMessage: "Send message",
+      sendQueue: "Send queue",
       longPressToQueue: "Long press to queue",
       longPressToSendNow: "Long press to send now",
       queue: "Queue",

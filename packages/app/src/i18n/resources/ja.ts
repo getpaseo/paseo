@@ -149,6 +149,7 @@ export const ja: TranslationResources = {
       sendAndInterrupt: "送信して中断",
       sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
+      sendQueue: "Send queue",
       longPressToQueue: "長押しでキューに追加",
       longPressToSendNow: "長押しで今すぐ送信",
       queue: "キュー",

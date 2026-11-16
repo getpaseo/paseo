@@ -285,6 +285,14 @@ function buildCancelButtonStyle(
   );
 }
 
+function buildSendQueueButtonStyle(pressed: boolean, isConnected: boolean): object[] {
+  return [
+    styles.sendQueueButton,
+    pressed ? styles.discPressed : undefined,
+    !isConnected ? styles.buttonDisabled : undefined,
+  ].filter((value): value is object => Boolean(value));
+}
+
 function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: boolean): object[] {
   const pressedStyle = pressed ? styles.discPressed : undefined;
   const disabledStyle = voiceButtonDisabled ? styles.buttonDisabled : undefined;
@@ -1137,6 +1145,40 @@ function ComposerCancelButton({
           <Text style={styles.tooltipText}>{t("composer.cancel.interrupt")}</Text>
           {shortcutNode}
         </View>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface ComposerSendQueueButtonProps {
+  handleSendQueued: () => void;
+  isConnected: boolean;
+  t: TFunction;
+}
+
+function ComposerSendQueueButton({
+  handleSendQueued,
+  isConnected,
+  t,
+}: ComposerSendQueueButtonProps) {
+  const label = t("composer.input.sendQueue");
+  const buttonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => buildSendQueueButtonStyle(pressed, isConnected),
+    [isConnected],
+  );
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger
+        onPress={handleSendQueued}
+        disabled={!isConnected}
+        accessibilityLabel={label}
+        accessibilityRole="button"
+        style={buttonStyle}
+      >
+        <Text style={styles.sendQueueButtonLabel}>{label}</Text>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{label}</Text>
       </TooltipContent>
     </Tooltip>
   );
@@ -2151,24 +2193,33 @@ function ComposerContentImpl({
   );
 
   const activeActionContent = useMemo(
-    () => (
-      <ComposerCancelButton
-        discGlyphSize={discGlyphSize}
-        cancelButtonStyle={cancelButtonStyle}
-        handleCancelAgent={handleCancelAgent}
-        isConnected={isConnected}
-        isCancellingAgent={isCancellingAgent}
-        agentInterruptKeys={agentInterruptKeys}
-        t={t}
-      />
-    ),
+    () =>
+      queuedMessages.length > 0 ? (
+        <ComposerSendQueueButton
+          handleSendQueued={handleSendQueued}
+          isConnected={isConnected}
+          t={t}
+        />
+      ) : (
+        <ComposerCancelButton
+          discGlyphSize={discGlyphSize}
+          cancelButtonStyle={cancelButtonStyle}
+          handleCancelAgent={handleCancelAgent}
+          isConnected={isConnected}
+          isCancellingAgent={isCancellingAgent}
+          agentInterruptKeys={agentInterruptKeys}
+          t={t}
+        />
+      ),
     [
       agentInterruptKeys,
       discGlyphSize,
       cancelButtonStyle,
+      handleSendQueued,
       handleCancelAgent,
       isCancellingAgent,
       isConnected,
+      queuedMessages.length,
       t,
     ],
   );
@@ -2743,6 +2794,20 @@ const styles = StyleSheet.create((theme: Theme) => ({
     backgroundColor: theme.colors.palette.red[600],
     alignItems: "center",
     justifyContent: "center",
+  },
+  sendQueueButton: {
+    ...toolbarSlot(),
+    minWidth: TOOLBAR_DISC_SIZE,
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendQueueButtonLabel: {
+    color: theme.colors.accentForeground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
   },
   rightControls: {
     flexDirection: "row",
