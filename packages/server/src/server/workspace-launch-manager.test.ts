@@ -16,6 +16,10 @@ import {
 } from "../terminal/terminal-manager.js";
 import { createServiceProxySubsystem } from "./service-proxy.js";
 import {
+  createTerminalWorkerPool,
+  NoTerminalWorkerAvailableError,
+} from "../terminal/terminal-worker-pool.js";
+import {
   WorkspaceLaunchManager,
   type WorkspaceLaunchManagerDependencies,
 } from "./workspace-launch-manager.js";
@@ -869,6 +873,66 @@ describe("WorkspaceLaunchManager", () => {
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
     }
+  });
+
+  it("releases a stopped launch block after its terminal worker has been retired", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-retired-worker-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    const terminals = createTerminalManager();
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const deps: WorkspaceLaunchManagerDependencies = {
+      terminalManager: terminals.manager,
+      serviceProxy: null,
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    };
+    const manager = new WorkspaceLaunchManager(deps);
+    const context = {
+      workspaceId: "retired-worker",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    const launch = await manager.start(context, "dev");
+    expect(launch.terminalId).toBe("terminal-1");
+    terminals.created[0]!.triggerExit(1);
+    // After confirmed worker death the pool owns no terminals, while the
+    // stopped launch still remembers the terminal that produced its output.
+    const emptyPool = createTerminalWorkerPool({
+      current: null,
+      draining: [],
+      incompatible: null,
+      closeAll: async () => {},
+    });
+    deps.terminalManager = emptyPool;
+    await expect(emptyPool.killTerminalAndWait("terminal-1")).rejects.toThrow(
+      NoTerminalWorkerAvailableError,
+    );
+    await expect(manager.disposeWorkspace(context.workspaceId)).resolves.toBeUndefined();
+    expect(environment.get(context.workspaceId)).toBeNull();
+    await expect(
+      environment.ensure({
+        workspaceId: "replacement-workspace",
+        cwd: directory,
+        branchName: null,
+        allocation: { range: "43000-43003", blockSize: 4 },
+      }),
+    ).resolves.toMatchObject({ portBase: 43000, portCount: 4 });
+    environment.release("replacement-workspace");
   });
 
   it("allows empty disposal but preserves leases when the terminal worker is unavailable", async () => {

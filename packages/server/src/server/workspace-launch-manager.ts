@@ -460,7 +460,11 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (terminalManager) {
       const terminalIds = new Set<string>();
       for (const runtime of runtimes?.values() ?? []) {
-        if (runtime.terminalId) terminalIds.add(runtime.terminalId);
+        // Cached IDs survive confirmed worker death; only close terminals
+        // still owned by a worker. Hidden closing owners are collected below.
+        if (runtime.terminalId && terminalManager.getTerminal(runtime.terminalId)) {
+          terminalIds.add(runtime.terminalId);
+        }
       }
       for (const terminal of await this.getWorkspaceTerminals(workspaceId)) {
         if (terminal.workspacePortBlock || terminal.workspaceLaunch) {
