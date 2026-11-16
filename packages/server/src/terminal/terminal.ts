@@ -72,6 +72,8 @@ export interface TerminalCommandFinishedInfo {
   exitCode: number | null;
 }
 
+export type TerminalCommandStartedInfo = Record<never, never>;
+
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -97,6 +99,7 @@ export interface TerminalSession {
   send(msg: ClientMessage): void;
   subscribe(listener: (msg: ServerMessage) => void): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
+  onCommandStart?(listener: (info: TerminalCommandStartedInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   onActivityChange(listener: (transition: TerminalActivityTransition) => void): () => void;
@@ -105,6 +108,7 @@ export interface TerminalSession {
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   getActivity(): TerminalActivity | null;
+  getCommandRunning?(): boolean;
   setActivity(state: TerminalActivityState): void;
   clearActivityAttention(): boolean;
   setTitle(title: string): void;
@@ -138,6 +142,10 @@ function parseCommandFinishedOsc(data: string): TerminalCommandFinishedInfo | nu
     return null;
   }
   return { exitCode: Number(parts[1]) };
+}
+
+function isCommandStartOsc(data: string): boolean {
+  return data === "B";
 }
 
 export interface CreateTerminalOptions {
@@ -773,11 +781,13 @@ export async function createTerminal(
   const listeners = new Set<(msg: ServerMessage) => void>();
   const exitListeners = new Set<(info: TerminalExitInfo) => void>();
   const commandFinishedListeners = new Set<(info: TerminalCommandFinishedInfo) => void>();
+  const commandStartListeners = new Set<(info: TerminalCommandStartedInfo) => void>();
   const titleChangeListeners = new Set<(title?: string) => void>();
   let killed = false;
   let disposed = false;
   let exitEmitted = false;
   let processExited = false;
+  let commandRunning = false;
   const processExitWaiters = new Set<() => void>();
   let exitInfo: TerminalExitInfo | null = null;
   // Recent output is retained as whole chunks plus a running char length so we
@@ -941,10 +951,23 @@ export async function createTerminal(
   }
 
   const disposeCommandLifecycleSubscription = terminal.parser.registerOscHandler(633, (data) => {
+    if (isCommandStartOsc(data)) {
+      commandRunning = true;
+      for (const listener of Array.from(commandStartListeners)) {
+        try {
+          listener({});
+        } catch {
+          // no-op
+        }
+      }
+      return true;
+    }
     const commandFinished = parseCommandFinishedOsc(data);
     if (!commandFinished) {
       return true;
     }
+
+    commandRunning = false;
 
     for (const listener of Array.from(commandFinishedListeners)) {
       try {
@@ -1246,6 +1269,17 @@ export async function createTerminal(
     };
   }
 
+  function getCommandRunning(): boolean {
+    return commandRunning;
+  }
+
+  function onCommandStart(listener: (info: TerminalCommandStartedInfo) => void): () => void {
+    commandStartListeners.add(listener);
+    return () => {
+      commandStartListeners.delete(listener);
+    };
+  }
+
   function onTitleChange(listener: (title?: string) => void): () => void {
     titleChangeListeners.add(listener);
     if (title !== undefined) {
@@ -1389,6 +1423,8 @@ export async function createTerminal(
     subscribe,
     onExit,
     onCommandFinished,
+    onCommandStart,
+    getCommandRunning,
     onTitleChange,
     onActivityChange,
     getSize,

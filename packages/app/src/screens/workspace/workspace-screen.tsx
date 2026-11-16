@@ -1961,7 +1961,7 @@ function WorkspaceScreenContent({
       const { tabId, terminalId } = input;
       await closeTab(tabId, async () => {
         const terminal = terminals.find((candidate) => candidate.id === terminalId);
-        if (shouldConfirmTerminalClose(terminal?.activity)) {
+        if (shouldConfirmTerminalClose(terminal?.commandRunning)) {
           const confirmed = await confirmDialog({
             title: t("workspace.tabs.confirmations.closeTerminalTitle"),
             message: t("workspace.tabs.confirmations.closeTerminalMessage"),

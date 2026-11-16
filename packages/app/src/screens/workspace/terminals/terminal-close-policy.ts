@@ -1,5 +1,5 @@
-import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
-
-export function shouldConfirmTerminalClose(activity: TerminalActivity | null | undefined): boolean {
-  return activity?.state === "working" || activity?.attentionReason === "needs_input";
+export function shouldConfirmTerminalClose(commandRunning: boolean | undefined): boolean {
+  // Older daemons do not send commandRunning, so keep the existing safe behavior until they
+  // reconnect with a daemon that can observe shell command lifecycle.
+  return commandRunning !== false;
 }

@@ -1,4 +1,9 @@
-import type { TerminalExitInfo, ServerMessage, ClientMessage } from "./terminal.js";
+import type {
+  TerminalCommandStartedInfo,
+  TerminalExitInfo,
+  ServerMessage,
+  ClientMessage,
+} from "./terminal.js";
 import type { TerminalReplayEvent, TerminalReplayOptions } from "./terminal-replay.js";
 export interface WorkerTerminalState {
   /** COMPAT(terminal-created-at): v6; v5 draining workers omit this, remove after 2027-06. */
@@ -18,6 +23,7 @@ export interface WorkerTerminalInfo {
   workspaceId?: string;
   title?: string;
   activity: TerminalActivity | null;
+  commandRunning?: boolean;
 }
 
 export interface WorkerCreateTerminalOptions {
@@ -45,7 +51,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 6;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 7;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.
@@ -190,6 +196,11 @@ export type TerminalWorkerEvent =
       type: "terminalTitleChange";
       terminalId: string;
       title?: string;
+    }
+  | {
+      type: "terminalCommandStarted";
+      terminalId: string;
+      info: TerminalCommandStartedInfo;
     }
   | {
       type: "terminalCommandFinished";

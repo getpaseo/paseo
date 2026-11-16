@@ -6913,6 +6913,7 @@ const TerminalInfoSchema = z.object({
   workspaceId: z.string().optional(),
   title: z.string().optional(),
   activity: TerminalActivitySchema.nullable().optional(),
+  commandRunning: z.boolean().optional(),
 });
 
 export const TerminalCellSchema = z.object({
