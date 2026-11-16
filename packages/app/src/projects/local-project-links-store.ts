@@ -124,6 +124,7 @@ export function createLocalProjectLinksStore(
 ) {
   let hydrationError: unknown;
   let resolveHydration: () => void;
+  let mutationTail = Promise.resolve();
   const hydration = new Promise<void>((resolve) => {
     resolveHydration = resolve;
   });
@@ -134,23 +135,30 @@ export function createLocalProjectLinksStore(
         const updateLinks = async (
           update: (links: readonly LocalProjectLink[]) => LocalProjectLink[],
         ): Promise<void> => {
-          // Validated storage deliberately skips writes during its initial read. Wait until that
-          // read has settled so this update applies to the saved links and can be acknowledged.
-          await hydration;
-          // A write after a failed read would replace saved links that were never loaded.
-          if (hydrationError != null) throw hydrationError;
-          const previousLinks = get().links;
-          const nextLinks = update(previousLinks);
-          try {
-            // Zustand's persist middleware returns the storage write from this wrapped set call.
-            // Await it so callers do not acknowledge a device-local link before it is durable.
-            await Promise.resolve(set({ links: nextLinks }));
-          } catch (error) {
-            // The storage still holds the prior value when its write rejects. Restore the in-memory
-            // view as well, and ignore a second storage failure while preserving the original error.
-            await Promise.resolve(set({ links: previousLinks })).catch(() => undefined);
-            throw error;
-          }
+          const operation = mutationTail.then(async () => {
+            // Validated storage deliberately skips writes during its initial read. Wait until that
+            // read has settled so this update applies to the saved links and can be acknowledged.
+            await hydration;
+            // A write after a failed read would replace saved links that were never loaded.
+            if (hydrationError != null) throw hydrationError;
+            const previousLinks = get().links;
+            const nextLinks = update(previousLinks);
+            try {
+              // Zustand's persist middleware returns the storage write from this wrapped set call.
+              // Await it so callers do not acknowledge a device-local link before it is durable.
+              await Promise.resolve(set({ links: nextLinks }));
+            } catch (error) {
+              // The storage still holds the prior value when its write rejects. Restore the in-memory
+              // view as well, and ignore a second storage failure while preserving the original error.
+              await Promise.resolve(set({ links: previousLinks })).catch(() => undefined);
+              throw error;
+            }
+            return undefined;
+          });
+          // Every mutation must observe a settled predecessor. Otherwise a failed earlier write can
+          // restore stale links over a later mutation that already reported success.
+          mutationTail = operation.catch(() => undefined);
+          return operation;
         };
 
         return {

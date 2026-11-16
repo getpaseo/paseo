@@ -49,6 +49,30 @@ function storageWithPendingRead() {
   };
 }
 
+function storageWithPendingFirstWrite() {
+  let failFirstWrite: (error: Error) => void = () => {
+    throw new Error("pending storage write was not initialized");
+  };
+  const firstWrite = new Promise<void>((_resolve, reject) => {
+    failFirstWrite = reject;
+  });
+  let writes = 0;
+  const setItem = vi.fn(() => {
+    writes += 1;
+    return writes === 1 ? firstWrite : Promise.resolve();
+  });
+
+  return {
+    storage: {
+      getItem: () => null,
+      setItem,
+      removeItem: () => undefined,
+    } satisfies PersistStorage<LocalProjectLinksPersistedState>,
+    failFirstWrite,
+    setItem,
+  };
+}
+
 const input = {
   members: [
     { serverId: "host-a", projectId: "project-a" },
@@ -178,6 +202,31 @@ describe("local project links store", () => {
 
     await expect(store.getState().linkProjects(input)).rejects.toThrow("storage unavailable");
     expect(store.getState().links).toEqual([]);
+  });
+
+  test("does not roll back a later mutation when an earlier write fails", async () => {
+    const pendingStorage = storageWithPendingFirstWrite();
+    const store = createLocalProjectLinksStore(pendingStorage.storage);
+    const first = store.getState().linkProjects(input);
+    await vi.waitFor(() => expect(pendingStorage.setItem).toHaveBeenCalledOnce());
+
+    const laterInput = {
+      members: [
+        { serverId: "host-c", projectId: "project-c" },
+        { serverId: "host-d", projectId: "project-d" },
+      ],
+      identity: { repository: "github.com/acme/other", subdirectory: "" },
+    };
+    const later = store.getState().linkProjects(laterInput);
+    expect(pendingStorage.setItem).toHaveBeenCalledOnce();
+
+    pendingStorage.failFirstWrite(new Error("storage unavailable"));
+
+    await expect(first).rejects.toThrow("storage unavailable");
+    await expect(later).resolves.toBeUndefined();
+    expect(store.getState().links).toEqual([
+      expect.objectContaining({ identity: laterInput.identity, members: laterInput.members }),
+    ]);
   });
 
   test("keeps a saved link available for retry when its removal cannot be persisted", async () => {

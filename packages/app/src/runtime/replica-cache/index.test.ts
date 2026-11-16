@@ -369,6 +369,37 @@ describe("ReplicaCache", () => {
     expect(restored.workspaces.get(workspace.id)?.forgeWeb).toEqual(forgeWeb);
   });
 
+  it("preserves workspace checkout facts across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const project = {
+      projectKey: "remote:github.com/acme/paseo",
+      projectName: "paseo",
+      checkout: {
+        cwd: "/repo/paseo",
+        isGit: true as const,
+        currentBranch: "main",
+        remoteUrl: "https://github.com/acme/paseo.git",
+        worktreeRoot: "/repo/paseo",
+        isPaseoOwnedWorktree: false as const,
+        mainRepoRoot: null,
+      },
+    };
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      gitRuntime: { remoteUrl: "https://github.com/acme/paseo.git" },
+      project,
+    });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.get(workspace.id)?.project).toEqual(project);
+  });
+
   it("preserves workspace sorting timestamps across cache reopen", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
