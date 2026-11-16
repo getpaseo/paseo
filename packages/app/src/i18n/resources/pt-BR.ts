@@ -2682,6 +2682,13 @@ export const ptBR: TranslationResources = {
         contentWidthAccessibility: "Largura do conteúdo em pixels",
         reset: "Redefinir",
         resetAccessibility: "Redefinir a largura do conteúdo",
+        controlSize: "Tamanho dos controles",
+        controlSizeHint:
+          "Botões e linhas maiores para toque, menores para mouse. Alterar recarrega o Paseo",
+        controlSizeAccessibility: "Tamanho dos controles: {{value}}",
+        controlSizeAuto: "Automático",
+        controlSizeTouch: "Toque",
+        controlSizePointer: "Mouse e trackpad",
       },
       syntax: {
         title: "Sintaxe",

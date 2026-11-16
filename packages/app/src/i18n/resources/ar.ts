@@ -2679,6 +2679,12 @@ export const ar: TranslationResources = {
         contentWidthAccessibility: "عرض المحتوى بالبكسل",
         reset: "إعادة تعيين",
         resetAccessibility: "إعادة عرض المحتوى إلى الافتراضي",
+        controlSize: "حجم عناصر التحكم",
+        controlSizeHint: "أزرار وصفوف أكبر للمس وأصغر للفأرة. يؤدي تغييره إلى إعادة تحميل Paseo",
+        controlSizeAccessibility: "حجم عناصر التحكم: {{value}}",
+        controlSizeAuto: "تلقائي",
+        controlSizeTouch: "اللمس",
+        controlSizePointer: "الفأرة ولوحة اللمس",
       },
       syntax: {
         title: "بناء الجملة",

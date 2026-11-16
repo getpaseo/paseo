@@ -2689,6 +2689,13 @@ export const ru: TranslationResources = {
         contentWidthAccessibility: "Ширина содержимого в пикселях",
         reset: "Сбросить",
         resetAccessibility: "Сбросить ширину содержимого",
+        controlSize: "Размер элементов управления",
+        controlSizeHint:
+          "Крупные кнопки и строки для сенсорного экрана, компактные для мыши. При изменении Paseo перезагрузится",
+        controlSizeAccessibility: "Размер элементов управления: {{value}}",
+        controlSizeAuto: "Автоматически",
+        controlSizeTouch: "Сенсорный экран",
+        controlSizePointer: "Мышь и трекпад",
       },
       syntax: {
         title: "Синтаксис",

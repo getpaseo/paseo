@@ -2614,6 +2614,12 @@ export const zhCN: TranslationResources = {
         contentWidthAccessibility: "内容宽度（像素）",
         reset: "重置",
         resetAccessibility: "将内容宽度重置为默认值",
+        controlSize: "控件大小",
+        controlSizeHint: "触控时使用更大的按钮和行，鼠标时使用更小的尺寸。更改后会重新加载 Paseo",
+        controlSizeAccessibility: "控件大小：{{value}}",
+        controlSizeAuto: "自动",
+        controlSizeTouch: "触控",
+        controlSizePointer: "鼠标和触控板",
       },
       syntax: {
         title: "语法",

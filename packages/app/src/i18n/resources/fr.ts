@@ -2704,6 +2704,13 @@ export const fr: TranslationResources = {
         contentWidthAccessibility: "Largeur du contenu en pixels",
         reset: "Réinitialiser",
         resetAccessibility: "Réinitialiser la largeur du contenu",
+        controlSize: "Taille des contrôles",
+        controlSizeHint:
+          "Boutons et lignes plus grands pour le tactile, plus petits pour la souris. La modifier recharge Paseo",
+        controlSizeAccessibility: "Taille des contrôles : {{value}}",
+        controlSizeAuto: "Automatique",
+        controlSizeTouch: "Tactile",
+        controlSizePointer: "Souris et pavé tactile",
       },
       syntax: {
         title: "Syntaxe",

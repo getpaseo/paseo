@@ -20,6 +20,11 @@ import {
 } from "@/components/sidebar/display-preferences/row-items";
 import { isNative } from "@/constants/platform";
 import {
+  CONTROL_SIZING_PREFERENCES,
+  DEFAULT_CONTROL_SIZING_PREFERENCE,
+  type ControlSizingPreference,
+} from "@/components/ui/control-sizing-preference";
+import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
   PLUGIN_THEME_PREFERENCE,
@@ -92,6 +97,8 @@ export interface AppSettings {
   /** Max width of chat and markdown content in px; null follows the current default. */
   contentMaxWidth: number | null;
   syntaxTheme: SyntaxThemeId; // default "one"
+  /** Touch or pointer sizing on wide layouts; read when the app loads. Web only. */
+  controlSizing: ControlSizingPreference;
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
@@ -154,6 +161,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   contentMaxWidth: null,
   syntaxTheme: "one",
+  controlSizing: DEFAULT_CONTROL_SIZING_PREFERENCE,
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "timestamp",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
@@ -249,6 +257,7 @@ const StoredAppSettingsSchema = z
       .or(clampedNumber(MIN_CONTENT_MAX_WIDTH, MAX_CONTENT_MAX_WIDTH))
       .catch(null),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
+    controlSizing: z.enum(CONTROL_SIZING_PREFERENCES).catch(DEFAULT_CONTROL_SIZING_PREFERENCE),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),
     sidebarRowItems: SidebarRowItemsSchema,

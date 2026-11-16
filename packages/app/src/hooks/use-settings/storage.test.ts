@@ -25,6 +25,7 @@ import {
   SIDEBAR_ROW_ITEMS,
 } from "@/components/sidebar/display-preferences/row-items";
 import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
+import { parseStoredControlSizingPreference } from "@/components/ui/control-sizing-preference";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
@@ -465,6 +466,29 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.workspaceTitleSource).toBe("title");
+  });
+
+  it("drops an unknown control sizing back to auto", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ controlSizing: "huge" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.controlSizing).toBe("auto");
+  });
+
+  it("saves control sizing where the startup read finds it", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({ queryClient, deps, updates: { controlSizing: "pointer" } });
+
+    const raw = await deps.storage.getItem(APP_SETTINGS_KEY);
+    expect(parseStoredControlSizingPreference(raw)).toBe("pointer");
+    expect((await loadAppSettingsFromStorage(deps)).controlSizing).toBe("pointer");
   });
 
   it("normalizes terminal scrollback lines from storage", async () => {
