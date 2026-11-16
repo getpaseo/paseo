@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import { createWorkspaceTabInstanceId } from "@/stores/workspace-layout-ids";
 import {
   selectSheetTab,
   useWorkspaceLayoutStore,
   type SheetTab,
 } from "@/stores/workspace-layout-store";
+import { buildDeterministicWorkspaceTabId } from "@/workspace-tabs/identity";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { SubagentRow } from "./select";
 
@@ -33,7 +33,8 @@ export function useSubagentSheetTab(
   const sheets = useWorkspaceLayoutStore((state) =>
     workspaceKey ? state.sheetsByWorkspace[workspaceKey] : undefined,
   );
-  // Menu pages never enter the sheet stack. Keep their own instance ids across layout updates.
+  // Menu pages never enter the sheet stack. Each starts from the subagent's own tab id, so opening
+  // it as a tab lands on that id, and keeps the id it was given across layout updates.
   const tabIds = useMemo(() => new Map<string, string>(), []);
   return useMemo(() => {
     // One answer per row until the state it reads changes, so a re-render of the list hands an
@@ -49,11 +50,12 @@ export function useSubagentSheetTab(
       const key = JSON.stringify([workspaceKey, parentTabId, row.kind, row.id]);
       const known = answers.get(key);
       if (known !== undefined) return known;
+      const target = subagentRowTarget(row);
       const sheet = selectSheetTab(state, {
         workspaceKey,
-        target: subagentRowTarget(row),
+        target,
         parentTabId,
-        preferredTabId: tabIds.get(key) ?? createWorkspaceTabInstanceId(),
+        preferredTabId: tabIds.get(key) ?? buildDeterministicWorkspaceTabId(target),
       });
       if (sheet) tabIds.set(key, sheet.tab.tabId);
       answers.set(key, sheet);

@@ -170,36 +170,27 @@ describe("useSubagentSheetTab", () => {
     expect(result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
   });
 
-  it("keeps menu instances distinct from each other and the live sheet stack", () => {
+  it("promotes a menu sheet to the subagent's own tab", () => {
     const row = seedParentWithChild();
     const store = useWorkspaceLayoutStore.getState();
     store.setLayoutMode("compact");
-    const first = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
-    const second = renderHook(() => useSubagentSheetTab(workspaceKey, "other-parent-tab")(row));
-    const firstId = first.result.current?.tab.tabId;
-    const secondId = second.result.current?.tab.tabId;
-    expect(first.result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
-    expect(second.result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
-    expect(firstId).not.toBe(secondId);
+    const { result } = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
+    const sheet = result.current;
+    if (!sheet) throw new Error("Expected a menu sheet");
 
-    let sheetId: string | null = null;
+    let promotedId: string | null = null;
     act(() => {
-      sheetId = store.openTab({
-        workspaceKey,
+      promotedId = store.openTabInFront(workspaceKey, sheet);
+    });
+    expect(promotedId).toBe("agent_child");
+    expect(
+      store.getWorkspaceTabs(workspaceKey).filter((tab) => tab.target.kind === "agent"),
+    ).toEqual([
+      expect.objectContaining({
+        tabId: "agent_child",
         target: { kind: "agent", agentId: "child" },
-        intent: "reveal",
-      });
-    });
-    expect(sheetId).not.toBeNull();
-    expect(new Set([firstId, secondId, sheetId]).size).toBe(3);
-    expect(first.result.current?.tab.tabId).toBe(firstId);
-    expect(second.result.current?.tab.tabId).toBe(secondId);
-
-    act(() => {
-      store.closeTab(workspaceKey, sheetId ?? "");
-    });
-    expect(first.result.current?.tab.tabId).toBe(firstId);
-    expect(second.result.current?.tab.tabId).toBe(secondId);
+      }),
+    ]);
   });
 
   it("does not reuse a menu id retained by a promoted tab showing another target", () => {
