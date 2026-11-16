@@ -151,6 +151,27 @@ describe("claude tool-call mapper", () => {
     });
   });
 
+  it("keeps a shell call's description in its detail, and leaves no field when it has none", () => {
+    const detailOf = (input: Record<string, unknown>) =>
+      expectMapped(
+        mapClaudeRunningToolCall({ callId: "claude-call-d", name: "Bash", input, output: null }),
+      ).detail;
+
+    expect(detailOf({ command: "git status", description: "Check what changed" })).toEqual({
+      type: "shell",
+      command: "git status",
+      description: "Check what changed",
+    });
+    expect(detailOf({ command: "git status", description: "" })).toEqual({
+      type: "shell",
+      command: "git status",
+    });
+    expect(detailOf({ command: "git status" })).toEqual({
+      type: "shell",
+      command: "git status",
+    });
+  });
+
   it("maps running known tool variants with detail for early summaries", () => {
     const readItem = expectMapped(
       mapClaudeRunningToolCall({
