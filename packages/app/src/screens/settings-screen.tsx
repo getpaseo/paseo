@@ -152,6 +152,7 @@ import { returnFromSettings, type SettingsView } from "@/navigation/settings-nav
 import { isNative, isWeb } from "@/constants/platform";
 import { useOpenOnboarding } from "@/onboarding";
 import {
+  createSettingsSearchContent,
   getSettingsSearchText,
   buildSettingsSearchIndex,
   type SettingsSearchIndexEntry,
@@ -177,8 +178,6 @@ interface SidebarSectionItem extends SettingsSearchSectionSource {
   desktopOnly?: boolean;
   webOnly?: boolean;
   hardwareKeyboardOnly?: boolean;
-  /** The page body, for pages that need nothing from the settings screen. */
-  Content?: ComponentType;
 }
 
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
@@ -210,102 +209,80 @@ const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
     id: "appearance",
     labelKey: "settings.sections.appearance",
     icon: Palette,
-    Content: AppearanceSection,
-    searchGroups: [
-      {
-        translationPrefixes: [
-          "settings.appearance.theme",
-          "settings.appearance.fonts",
-          "settings.appearance.layout",
-          "settings.appearance.syntax",
-        ],
-      },
-    ],
+    Content: createSettingsSearchContent(AppearanceSection, "AppearanceSection"),
   },
   {
     id: "sidebar",
     labelKey: "settings.sections.sidebar",
     icon: PanelLeft,
-    Content: SidebarNavSection,
-    searchGroups: [{ translationPrefixes: ["settings.appearance.sidebar"] }],
+    Content: createSettingsSearchContent(SidebarNavSection, "SidebarNavSection"),
   },
   {
     id: "chat",
     labelKey: "settings.sections.chat",
     icon: MessageSquare,
-    Content: ChatSection,
-    searchGroups: [
-      {
-        translationPrefixes: [
-          "settings.appearance.detailLevel",
-          "settings.general.autoExpandReasoning",
-          "settings.general.chatDisplay",
-          "settings.appearance.chatOutline",
-        ],
-      },
-    ],
+    Content: createSettingsSearchContent(ChatSection, "ChatSection"),
   },
   {
     id: "terminal",
     labelKey: "settings.sections.terminal",
     icon: SquareTerminal,
-    Content: TerminalSection,
-    searchGroups: [{ translationPrefixes: ["settings.general.terminalScrollback"] }],
+    Content: createSettingsSearchContent(TerminalSection, "TerminalSection"),
   },
   {
     id: "browser",
     labelKey: "settings.sections.browser",
     icon: Globe,
     desktopOnly: true,
-    Content: BrowserDataSection,
-    searchGroups: [{ translationPrefixes: ["settings.general.browserData"] }],
+    Content: createSettingsSearchContent(BrowserDataSection, "BrowserDataSection"),
   },
   {
     id: "editor",
     labelKey: "settings.sections.editor",
     icon: Code2,
     webOnly: true,
-    Content: EditorSection,
-    searchGroups: [{ translationPrefixes: ["settings.editor"] }],
+    Content: createSettingsSearchContent(EditorSection, "EditorSection"),
   },
   {
     id: "files",
     labelKey: "settings.sections.files",
     icon: Files,
-    Content: FilesSection,
-    searchGroups: [{ translationPrefixes: ["settings.files"] }],
+    Content: createSettingsSearchContent(FilesSection, "FilesSection"),
   },
   {
     id: "shortcuts",
     labelKey: "settings.sections.shortcuts",
     icon: Keyboard,
     hardwareKeyboardOnly: true,
-    Content: KeyboardShortcutsSection,
-    searchGroups: [{ translationPrefixes: [], getSearchText: getKeyboardShortcutSearchText }],
+    Content: createSettingsSearchContent(
+      KeyboardShortcutsSection,
+      "KeyboardShortcutsSection",
+      getKeyboardShortcutSearchText,
+    ),
   },
   {
     id: "integrations",
     labelKey: "settings.sections.integrations",
     icon: Puzzle,
     desktopOnly: true,
-    Content: IntegrationsSection,
-    searchGroups: [{ translationPrefixes: ["settings.integrations"] }],
+    Content: createSettingsSearchContent(IntegrationsSection, "IntegrationsSection"),
   },
   {
     id: "notifications",
     labelKey: "settings.sections.notifications",
     icon: Bell,
     desktopOnly: true,
-    Content: DesktopNotificationsSection,
-    searchGroups: [{ translationPrefixes: ["settings.notifications"] }],
+    Content: createSettingsSearchContent(
+      DesktopNotificationsSection,
+      "DesktopNotificationsSection",
+    ),
   },
   {
     id: "permissions",
     labelKey: "settings.sections.permissions",
     icon: Shield,
     desktopOnly: true,
-    Content: DesktopPermissionsSection,
-    searchGroups: [{ translationPrefixes: ["settings.permissions"] }],
+    Content: createSettingsSearchContent(DesktopPermissionsSection, "DesktopPermissionsSection"),
   },
   {
     id: "diagnostics",
@@ -1701,7 +1678,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           );
         default: {
           const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.section);
-          return item?.Content ? <item.Content /> : null;
+          return item?.Content ? <item.Content.component /> : null;
         }
       }
     },

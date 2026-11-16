@@ -1,5 +1,7 @@
 import { en } from "@/i18n/resources/en";
+import type { ComponentType } from "react";
 import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
+import { SETTINGS_CONTENT_TRANSLATION_KEYS } from "./settings-search-source.generated";
 
 /** Search spans both settings route namespaces; host routes remain separate because they carry a server id. */
 export type SettingsSearchSectionSlug = SettingsSectionSlug | HostSectionSlug;
@@ -15,10 +17,34 @@ export interface SettingsSearchGroup {
   resultMode?: "sidebar-only";
 }
 
+export interface SettingsSearchContent {
+  component: ComponentType;
+  searchGroups: readonly SettingsSearchGroup[];
+}
+
+type SettingsContentName = keyof typeof SETTINGS_CONTENT_TRANSLATION_KEYS;
+
+export function createSettingsSearchContent(
+  component: ComponentType,
+  sourceName: SettingsContentName,
+  getSearchText?: (translate: (key: string) => string) => string,
+): SettingsSearchContent {
+  return {
+    component,
+    searchGroups: [
+      {
+        translationPrefixes: SETTINGS_CONTENT_TRANSLATION_KEYS[sourceName],
+        getSearchText,
+      },
+    ],
+  };
+}
+
 export interface SettingsSearchSectionSource {
   id: SettingsSearchSectionSlug;
   labelKey: string;
-  searchGroups: readonly SettingsSearchGroup[];
+  Content?: SettingsSearchContent;
+  searchGroups?: readonly SettingsSearchGroup[];
 }
 
 export interface SettingsSearchIndexEntry extends SettingsSearchGroup {
@@ -36,14 +62,20 @@ export interface SettingsSearchIndexEntry extends SettingsSearchGroup {
 export function buildSettingsSearchIndex(
   sources: readonly SettingsSearchSectionSource[],
 ): readonly SettingsSearchIndexEntry[] {
-  return sources.flatMap((source) =>
-    source.searchGroups.map((group) => ({
-      ...group,
-      id: group.id ?? source.id,
-      section: source.id,
-      titleKey: group.titleKey ?? source.labelKey,
-    })),
-  );
+  return sources.flatMap((source) => {
+    const searchGroups = source.Content?.searchGroups ?? source.searchGroups ?? [];
+    return searchGroups.map((group) => {
+      const entry: SettingsSearchIndexEntry = {
+        id: group.id ?? source.id,
+        section: source.id,
+        titleKey: group.titleKey ?? source.labelKey,
+        translationPrefixes: group.translationPrefixes,
+      };
+      if (group.getSearchText) entry.getSearchText = group.getSearchText;
+      if (group.resultMode) entry.resultMode = group.resultMode;
+      return entry;
+    });
+  });
 }
 
 function isTranslationTree(value: unknown): value is Record<string, unknown> {
