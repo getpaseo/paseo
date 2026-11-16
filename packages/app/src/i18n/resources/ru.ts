@@ -2516,6 +2516,11 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
+      queueDrain: {
+        label: "Отправка очереди",
+        description: "Отправлять сообщения из очереди все сразу или по одному",
+        options: { all: "Отправить всю очередь", next: "Отправить следующее" },
+      },
       sendShortcut: {
         label: "Сочетание клавиш для отправки",
         options: {

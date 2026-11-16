@@ -2489,6 +2489,11 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      queueDrain: {
+        label: "대기열 전송",
+        description: "대기열 메시지를 한 번에 모두 보낼지 하나씩 보낼지 선택합니다",
+        options: { all: "대기열 모두 보내기", next: "다음 메시지 보내기" },
+      },
       sendShortcut: {
         label: "전송 단축키",
         options: {

@@ -2448,6 +2448,11 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      queueDrain: {
+        label: "发送队列",
+        description: "选择一次发送全部排队消息，还是一次发送一条",
+        options: { all: "发送全部排队消息", next: "发送下一条" },
+      },
       sendShortcut: {
         label: "发送快捷键",
         options: {

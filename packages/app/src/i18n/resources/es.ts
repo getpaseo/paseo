@@ -2530,6 +2530,11 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      queueDrain: {
+        label: "Envío de la cola",
+        description: "Al enviar mensajes en cola, envíalos todos juntos o de uno en uno",
+        options: { all: "Enviar toda la cola", next: "Enviar el siguiente" },
+      },
       sendShortcut: {
         label: "Atajo de envío",
         options: {

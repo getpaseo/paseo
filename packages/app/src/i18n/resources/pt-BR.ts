@@ -2512,6 +2512,11 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      queueDrain: {
+        label: "Envio da fila",
+        description: "Envie as mensagens da fila juntas ou uma por vez",
+        options: { all: "Enviar toda a fila", next: "Enviar a próxima" },
+      },
       sendShortcut: {
         label: "Atalho de envio",
         options: {

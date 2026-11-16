@@ -2498,6 +2498,11 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      queueDrain: {
+        label: "キューの送信",
+        description: "キュー内のメッセージをまとめて送信するか、1件ずつ送信するかを選択します",
+        options: { all: "キューをすべて送信", next: "次のメッセージを送信" },
+      },
       sendShortcut: {
         label: "送信ショートカット",
         options: {

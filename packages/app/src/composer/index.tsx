@@ -96,6 +96,7 @@ import {
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
+  sendQueuedComposerMessagesNow,
   toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
@@ -129,7 +130,7 @@ import {
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { useIsInputLive } from "./input/use-input-live";
-import { drainQueuedMessages, resolveActiveSendBehavior } from "./input/state";
+import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -1153,15 +1154,14 @@ function ComposerCancelButton({
 interface ComposerSendQueueButtonProps {
   handleSendQueued: () => void;
   isConnected: boolean;
-  t: TFunction;
+  label: string;
 }
 
 function ComposerSendQueueButton({
   handleSendQueued,
   isConnected,
-  t,
+  label,
 }: ComposerSendQueueButtonProps) {
-  const label = t("composer.input.sendQueue");
   const buttonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => buildSendQueueButtonStyle(pressed, isConnected),
     [isConnected],
@@ -2133,9 +2133,35 @@ function ComposerContentImpl({
       return false;
     }
     const queuedMessageIds = queuedMessages.map((message) => message.id);
-    void drainQueuedMessages(queuedMessageIds, handleSendQueuedNow);
+    void sendQueuedComposerMessagesNow({
+      agentId,
+      messageIds: queuedMessageIds,
+      queue: queueWriter,
+      submitMessage: ({ text, attachments: queuedAttachments }) =>
+        submitMessage(text, queuedAttachments),
+      failedToSendMessage: t("composer.errors.failedToSend"),
+    }).then((result) => {
+      if (result.status === "failed") setSendError(result.errorMessage);
+      return result;
+    });
+    return true;
+  }, [agentId, queuedMessages, queueWriter, submitMessage, t]);
+
+  const handleSendNextQueued = useCallback(() => {
+    if (
+      queuedMessages.length === 0 ||
+      (!sendAgentMessageRef.current && !onSubmitMessageRef.current)
+    ) {
+      return false;
+    }
+    void handleSendQueuedNow(queuedMessages[0].id);
     return true;
   }, [handleSendQueuedNow, queuedMessages]);
+
+  const handleEmptySendQueued = useCallback(
+    () => (appSettings.queueDrainBehavior === "next" ? handleSendNextQueued() : handleSendQueued()),
+    [appSettings.queueDrainBehavior, handleSendNextQueued, handleSendQueued],
+  );
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
@@ -2198,9 +2224,13 @@ function ComposerContentImpl({
     () =>
       queuedMessages.length > 0 ? (
         <ComposerSendQueueButton
-          handleSendQueued={handleSendQueued}
+          handleSendQueued={handleEmptySendQueued}
           isConnected={isConnected}
-          t={t}
+          label={t(
+            appSettings.queueDrainBehavior === "next"
+              ? "composer.input.sendNext"
+              : "composer.input.sendQueue",
+          )}
         />
       ) : (
         <ComposerCancelButton
@@ -2217,11 +2247,12 @@ function ComposerContentImpl({
       agentInterruptKeys,
       discGlyphSize,
       cancelButtonStyle,
-      handleSendQueued,
+      handleEmptySendQueued,
       handleCancelAgent,
       isCancellingAgent,
       isConnected,
       queuedMessages.length,
+      appSettings.queueDrainBehavior,
       t,
     ],
   );
@@ -2685,7 +2716,7 @@ function ComposerContentImpl({
                   defaultSendBehavior={activeSendBehavior}
                   sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
-                  onSendQueued={handleSendQueued}
+                  onSendQueued={handleEmptySendQueued}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}

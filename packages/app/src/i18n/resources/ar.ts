@@ -2511,6 +2511,11 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      queueDrain: {
+        label: "إرسال قائمة الانتظار",
+        description: "عند إرسال الرسائل في قائمة الانتظار، أرسلها معًا أو رسالة واحدة في كل مرة",
+        options: { all: "إرسال كل الرسائل المنتظرة", next: "إرسال الرسالة التالية" },
+      },
       sendShortcut: {
         label: "اختصار الإرسال",
         options: {

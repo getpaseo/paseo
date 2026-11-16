@@ -2530,6 +2530,11 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
+      queueDrain: {
+        label: "Envoi de la file",
+        description: "Envoyez les messages en file ensemble ou un par un",
+        options: { all: "Envoyer toute la file", next: "Envoyer le suivant" },
+      },
       sendShortcut: {
         label: "Raccourci d’envoi",
         options: {

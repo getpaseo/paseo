@@ -2602,6 +2602,14 @@ export const en = {
           queue: "Queue",
         },
       },
+      queueDrain: {
+        label: "Queue sending",
+        description: "When queued messages are sent, send them all together or one at a time",
+        options: {
+          all: "Send all queued",
+          next: "Send next queued",
+        },
+      },
       sendShortcut: {
         label: "Send shortcut",
         options: {
