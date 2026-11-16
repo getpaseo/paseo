@@ -899,7 +899,8 @@ export interface CheckoutStatusGitNonPaseo {
   aheadBehind: AheadBehind | null;
   // Remote-tracking ref for currentBranch, e.g. "refs/remotes/origin/main". Null when the
   // branch has no upstream or git could not resolve it. aheadOfOrigin/behindOfOrigin are
-  // measured against exactly this ref.
+  // measured against exactly this ref. On a detached HEAD aheadOfOrigin counts the commits no
+  // branch, tag or remote-tracking ref holds.
   upstreamRef: string | null;
   aheadOfOrigin: number | null;
   behindOfOrigin: number | null;
@@ -1425,6 +1426,29 @@ async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promi
     },
   );
   return stdout.trim().length > 0;
+}
+
+// The commits a detached HEAD reaches that no branch, tag or remote-tracking ref does. Removing
+// the worktree drops HEAD, their only ref. An unborn HEAD has none.
+async function countCommitsOnlyOnHead(cwd: string, context?: CheckoutContext): Promise<number> {
+  const { stdout } = await getRunGitCommand(context)(
+    [
+      "rev-list",
+      "--count",
+      "--ignore-missing",
+      "HEAD",
+      "--not",
+      "--branches",
+      "--tags",
+      "--remotes",
+    ],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    },
+  );
+  return Number.parseInt(stdout.trim(), 10);
 }
 
 export async function getOriginRemoteUrl(
@@ -2433,7 +2457,11 @@ export async function getCheckoutStatus(
   // comparisons and actions read it.
   const displayBaseRef = baseRef ? branchNameFromRef(baseRef) : null;
   const upstreamRef = upstreamStatus?.ref ?? null;
-  const aheadOfOrigin = upstreamStatus?.aheadBehind.ahead ?? null;
+  // A detached HEAD has no upstream. Its unpushed commits are the ones only HEAD holds, which
+  // archiving the worktree would lose.
+  const aheadOfOrigin = currentBranch
+    ? (upstreamStatus?.aheadBehind.ahead ?? null)
+    : await countCommitsOnlyOnHead(cwd, context);
   const behindOfOrigin = upstreamStatus?.aheadBehind.behind ?? null;
 
   if (paseoWorktree.isPaseoOwnedWorktree && baseRef) {

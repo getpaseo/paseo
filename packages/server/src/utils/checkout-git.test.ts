@@ -1196,6 +1196,52 @@ const x = 1;
     });
   });
 
+  it("counts the commits only a worktree's detached HEAD holds as unpushed", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "detached-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "detached-feature",
+      paseoHome,
+    });
+    execFileSync("git", ["checkout", "--detach"], { cwd: worktree.worktreePath });
+    commitFile(worktree.worktreePath, "detached.txt", "detached\n", "detached commit");
+
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status).toMatchObject({
+      isGit: true,
+      isPaseoOwnedWorktree: true,
+      currentBranch: null,
+      upstreamRef: null,
+      aheadOfOrigin: 1,
+      behindOfOrigin: null,
+    });
+  });
+
+  it("reports nothing unpushed for a detached HEAD on a commit a local branch holds", async () => {
+    setupRemoteTrackingMain(repoDir, tempDir);
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "detached-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "detached-feature",
+      paseoHome,
+    });
+    commitFile(worktree.worktreePath, "feature.txt", "feature\n", "feature commit");
+    execFileSync("git", ["checkout", "--detach"], { cwd: worktree.worktreePath });
+
+    const status = await getCheckoutStatus(worktree.worktreePath, { paseoHome });
+    expect(status).toMatchObject({
+      isGit: true,
+      isPaseoOwnedWorktree: true,
+      currentBranch: null,
+      upstreamRef: null,
+      aheadOfOrigin: 0,
+      behindOfOrigin: null,
+    });
+  });
+
   it("does not report incoming additions when the base branch is behind its remote", async () => {
     const { cloneDir } = setupRemoteTrackingMain(repoDir, tempDir);
     commitFile(cloneDir, "file.txt", "remote one\nremote two\n", "remote update");

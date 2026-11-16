@@ -65,6 +65,32 @@ async function seedRiskyWorktree(client: DaemonClient, worktreeDirectory: string
   await refreshCheckout(client, worktreeDirectory);
 }
 
+function readHead(worktreeDirectory: string): string {
+  return execSync("git rev-parse HEAD", { cwd: worktreeDirectory, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+// Detaches the worktree's HEAD from its branch and, with `commit`, adds a commit that no branch,
+// tag or remote-tracking ref holds. Returns HEAD.
+async function seedDetachedHead(
+  client: DaemonClient,
+  worktreeDirectory: string,
+  input: { commit: boolean },
+): Promise<string> {
+  execSync("git checkout --detach", { cwd: worktreeDirectory, stdio: "ignore" });
+  if (input.commit) {
+    await writeFile(path.join(worktreeDirectory, "DETACHED.md"), "# detached\n");
+    execSync("git add DETACHED.md", { cwd: worktreeDirectory, stdio: "ignore" });
+    execSync('git commit -m "Commit on a detached HEAD"', {
+      cwd: worktreeDirectory,
+      stdio: "ignore",
+    });
+  }
+  await refreshCheckout(client, worktreeDirectory);
+  return readHead(worktreeDirectory);
+}
+
 async function refreshCheckout(client: DaemonClient, directory: string): Promise<void> {
   const refreshed = await client.checkoutRefresh(directory);
   if (!refreshed.success) {
@@ -360,6 +386,57 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
 
     await expectWorktreeKept(page, worktree);
     expect(existsSync(path.join(worktree.workspaceDirectory, "NEW.md"))).toBe(true);
+  });
+
+  test("a worktree on a detached HEAD warns about the commits only that HEAD holds", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-detached");
+    const detachedCommit = await seedDetachedHead(client, worktree.workspaceDirectory, {
+      commit: true,
+    });
+    await openSidebarRow(page, worktree.workspaceId);
+
+    const rowWarning = await answerArchiveWarning(page, "dismiss", () =>
+      clickRowArchiveButton(page, worktree.workspaceId),
+    );
+    expect(rowWarning.message()).toContain(`Archive "${worktree.workspaceName}"?`);
+    expect(rowWarning.message()).toContain("1 unpushed commit");
+    expect(rowWarning.message()).not.toContain("Uncommitted changes");
+    await expectWorktreeKept(page, worktree);
+
+    // Push needs a branch, so the git actions keep Archive as the primary action.
+    await workspaceRow(page, worktree.workspaceId).click();
+    await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), worktree.workspaceId));
+    const gitActionsWarning = await answerArchiveWarning(page, "dismiss", () =>
+      gitActionsArchiveButton(page).click(),
+    );
+    expect(gitActionsWarning.message()).toContain("1 unpushed commit");
+
+    await expectWorktreeKept(page, worktree);
+    expect(readHead(worktree.workspaceDirectory)).toBe(detachedCommit);
+  });
+
+  test("a worktree on a detached HEAD at a commit its branch holds archives without a warning", async ({
+    page,
+  }) => {
+    const worktree = await createWorktree("archive-risk-detached-held");
+    await seedDetachedHead(client, worktree.workspaceDirectory, { commit: false });
+    await openSidebarRow(page, worktree.workspaceId);
+    const warnings: string[] = [];
+    page.on("dialog", (dialog) => {
+      warnings.push(dialog.message());
+      void dialog.dismiss();
+    });
+
+    await clickRowArchiveButton(page, worktree.workspaceId);
+
+    await expectWorkspaceAbsentFromSidebar(page, worktree.workspaceId);
+    await expect
+      .poll(() => existsSync(worktree.workspaceDirectory), { timeout: 30_000 })
+      .toBe(false);
+    expect(warnings).toEqual([]);
+    createdWorktreeDirectories.delete(worktree.workspaceDirectory);
   });
 
   test("a failed git read shows its error and keeps the worktree", async ({ page }) => {

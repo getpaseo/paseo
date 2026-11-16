@@ -1387,6 +1387,71 @@ describe("WorkspaceGitServiceImpl", () => {
     service.dispose();
   });
 
+  test("a detached HEAD keeps its unpushed count when its base remote ref moves", async () => {
+    const releaseFetch = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      currentBranch: null,
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+      resolvedBaseRef: "origin/main",
+      branchRemoteName: null,
+      branchMergeRef: null,
+      upstreamStatus: null,
+      pullRequestLookupTarget: null,
+    }));
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, {
+        currentBranch: null,
+        aheadBehind: null,
+        upstreamRef: null,
+        aheadOfOrigin: 1,
+        behindOfOrigin: null,
+      }),
+    );
+    const getCheckoutRefDerivedState = vi.fn(async (_cwd, facts, current) => ({
+      ...current,
+      upstreamStatus: facts.upstreamStatus,
+    }));
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutRefDerivedState,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote: vi.fn(async () => true),
+      runGitFetch: vi.fn(async () => {
+        await releaseFetch.promise;
+        return {
+          changes: [{ kind: "moved" as const, ref: "origin/main", beforeOid: "a", afterOid: "b" }],
+          error: null,
+        };
+      }),
+    });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+      expect(service.getMetrics().fetchInFlightCount).toBe(1);
+    });
+    expect((await service.getSnapshot(REPO_CWD)).git.aheadOfOrigin).toBe(1);
+
+    releaseFetch.resolve();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // The moved base reaches the workspace through one refresh, narrow or structural.
+    await vi.waitFor(() => {
+      expect(
+        getCheckoutRefDerivedState.mock.calls.length + getCheckoutSnapshotFacts.mock.calls.length,
+      ).toBe(3);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    expect((await service.getSnapshot(REPO_CWD)).git.aheadOfOrigin).toBe(1);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("explicit forced snapshot refresh recomputes github state and notifies listeners", async () => {
     const getPullRequestStatus = vi
       .fn<() => Promise<PullRequestStatusResult>>()

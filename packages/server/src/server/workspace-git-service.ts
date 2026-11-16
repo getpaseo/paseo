@@ -3551,7 +3551,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     let facts = target.latestFacts;
     if (request.movedRemoteRefs.size > 0 && !request.refreshStructure && !request.refreshWorktree) {
-      if (facts?.isGit && target.latestGit?.isGit) {
+      // A detached HEAD's aheadOfOrigin counts the commits no ref holds, which the narrow refresh
+      // doesn't recount, so it takes the structural refresh.
+      if (facts?.isGit && facts.currentBranch !== null && target.latestGit?.isGit) {
         try {
           await this.refreshRefDerivedSnapshot(
             target,
