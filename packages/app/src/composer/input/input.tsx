@@ -200,7 +200,7 @@ export interface MessageInputProps {
   sendShortcut: SendShortcut;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
-  /** Sends all queued messages when the composer is empty. Returns whether it started a send. */
+  /** Sends all queued messages. Returns whether it started a send. */
   onSendQueued?: () => boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
@@ -1197,7 +1197,6 @@ interface ResolvedMessageInputProps {
   defaultSendBehavior: "interrupt" | "steer" | "queue";
   sendShortcut: SendShortcut;
   onQueue: ((payload: MessagePayload) => void) | undefined;
-  onSendQueued: (() => boolean) | undefined;
   onSubmitLoadingPress: (() => void) | undefined;
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   onSelectionChangeCallback: ((selection: { start: number; end: number }) => void) | undefined;
@@ -1246,7 +1245,6 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     defaultSendBehavior: props.defaultSendBehavior,
     sendShortcut: props.sendShortcut,
     onQueue: props.onQueue,
-    onSendQueued: props.onSendQueued,
     onSubmitLoadingPress: props.onSubmitLoadingPress,
     onKeyPressCallback: props.onKeyPress,
     onSelectionChangeCallback: props.onSelectionChange,
@@ -1329,7 +1327,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       defaultSendBehavior,
       sendShortcut,
       onQueue,
-      onSendQueued,
       onSubmitLoadingPress,
       onKeyPressCallback,
       onSelectionChangeCallback,
@@ -1342,6 +1339,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       textReplacement,
       submitLabel,
     } = resolveMessageInputProps(props);
+    const onSendQueued = props.onSendQueued;
     const { isPaneFocused } = useComposerKeyboardScope();
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
