@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UsagePreferences } from "./preferences";
+import { DEFAULT_USAGE_PREFERENCES, type UsagePreferences } from "./preferences";
 import {
   choosePinnedUsageLayout,
   resolvePinnedUsage,
@@ -49,7 +49,7 @@ function preferences(
   pinned: UsagePreferences["pins"],
   displayAs: UsagePreferences["displayAs"] = "used",
 ): UsagePreferences {
-  return { displayAs, pins: pinned, serverId: null };
+  return { ...DEFAULT_USAGE_PREFERENCES, displayAs, pins: pinned };
 }
 
 describe("choosePinnedUsageLayout", () => {
@@ -114,7 +114,7 @@ describe("resolvePinnedUsage", () => {
     ]);
   });
 
-  it("groups pinned windows by source in report order, not pin order", () => {
+  it("lists pinned windows in card order, not pin order", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -159,6 +159,28 @@ describe("resolvePinnedUsage", () => {
         },
       ],
     });
+  });
+
+  it("follows the arranged card order, even when it separates a source's accounts", () => {
+    const work = report({
+      sourceId: "claude",
+      sourceLabel: "Claude",
+      account: "work",
+      windows: [{ id: "weekly", label: "Weekly", usedPct: 90 }],
+    });
+    const sources = resolvePinnedUsage([claude, codex, work], {
+      ...preferences([
+        { sourceId: "claude", windowId: "weekly" },
+        { sourceId: "codex", windowId: "weekly" },
+      ]),
+      cardOrder: ["claude:default", "codex:default", "claude:work"],
+    });
+
+    expect(sources.map((source) => source.key)).toEqual([
+      "claude:default",
+      "codex:default",
+      "claude:work",
+    ]);
   });
 
   it("names a window by its label when the source gives no short label", () => {

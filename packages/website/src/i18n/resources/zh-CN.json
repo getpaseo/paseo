@@ -446,7 +446,8 @@
     },
     "mockup": {
       "alt": "Paseo 桌面应用，并排打开了编程 Agent、一段对话和一份代码 diff",
-      "build": "并行 Agent",
+      "orchestrate": "编排",
+      "remote": "远程",
       "review": "代码审查",
       "ship": "Pull Request",
       "extend": "插件",
@@ -459,6 +460,15 @@
         "working": "运行中",
         "done": "已完成",
         "addProject": "添加 project",
+        "addHost": "添加主机",
+        "hosts": "主机",
+        "agentCount": "{{count}} 个 Agent",
+        "hostLinks": {
+          "local": "本地",
+          "relay": "中继",
+          "tailscale": "Tailscale",
+          "ssh": "SSH"
+        },
         "files": "文件",
         "changes": "变更",
         "uncommitted": "未 commit",
@@ -473,6 +483,11 @@
         "tasksProgress": "{{completed}}/{{total}} 项任务",
         "composerPlaceholder": "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
         "mobileComposerPlaceholder": "发消息，@files，/commands",
+        "reviewCommentPlaceholder": "留下评论",
+        "reviewCancel": "取消",
+        "reviewSave": "评论",
+        "sendFeedback": "发送反馈 ({{count}})",
+        "feedbackSent": "已向 {{recipient}} 发送反馈",
         "plugin": "插件",
         "mergedWeek": "已合并 · 7 天",
         "inReview": "审查中",
@@ -482,7 +497,8 @@
         "minutesAgo": "{{count}} 分钟前",
         "hoursAgo": "{{count}} 小时前",
         "reviewing": "审查中",
-        "subagents": "{{count}} 个 subagent",
+        "subagents_one": "{{count}} 个 subagent",
+        "subagents_other": "{{count}} 个 subagent",
         "checksPassedShort": "通过"
       }
     }

@@ -641,7 +641,83 @@ describe("WorkspaceReconciliationService", () => {
 
     expect(workspaces.get("w1")).toMatchObject({
       archivedAt,
-      branch: "new-branch",
+      branch: "old-branch",
+    });
+  });
+
+  test("keeps a worktree restorable when it is archived while its checkout read is in flight", async () => {
+    const projectRoot = "/reconcile/archive-worktree/root";
+    const worktreeCwd = "/reconcile/archive-worktree/worktrees/feature";
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: projectRoot,
+        projectKey: deriveProjectKey({
+          rootPath: projectRoot,
+          remoteUrl: null,
+          worktreeRoot: projectRoot,
+          mainRepoRoot: null,
+        }),
+        kind: "git",
+        displayName: "archive-worktree",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: worktreeCwd,
+        kind: "worktree",
+        displayName: "feature",
+        branch: "feature",
+        worktreeRoot: worktreeCwd,
+        isPaseoOwnedWorktree: true,
+        mainRepoRoot: projectRoot,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const worktreeReadStarted = deferred();
+    const allowWorktreeRead = deferred();
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+      inspectDirectory: async () => "directory",
+      workspaceGitService: {
+        getCheckout: async (cwd) => {
+          if (cwd === projectRoot) {
+            return createCheckout(cwd, { isGit: true, currentBranch: "main", worktreeRoot: cwd });
+          }
+          worktreeReadStarted.resolve();
+          await allowWorktreeRead.promise;
+          // Archive deletes the worktree after archiving its record, so a read that
+          // lands mid-deletion no longer sees a Git checkout there.
+          return createCheckout(cwd);
+        },
+      },
+    });
+
+    const reconciliation = service.runOnce();
+    await worktreeReadStarted.promise;
+    const archivedAt = "2025-01-02T00:00:00.000Z";
+    await workspaceRegistry.archive("w1", archivedAt);
+    allowWorktreeRead.resolve();
+    const result = await reconciliation;
+
+    expect(result.changesApplied).toEqual([]);
+    expect(workspaces.get("w1")).toMatchObject({
+      archivedAt,
+      kind: "worktree",
+      branch: "feature",
+      worktreeRoot: worktreeCwd,
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: projectRoot,
     });
   });
 

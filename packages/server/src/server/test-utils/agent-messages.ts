@@ -12,12 +12,31 @@ export function createTestAgentMessages(params: {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
+  schedule?: (delayMs: number, callback: () => void) => () => void;
 }) {
   return createAgentMessageDelivery({
-    schedule: (_delay, callback) => {
-      const timer = setTimeout(callback, 0);
-      return () => clearTimeout(timer);
-    },
+    tryRunOutOfBand: (request, onAccepted) =>
+      params.agentManager.tryRunOutOfBand(
+        request.recipientId,
+        request.prompt,
+        { clientMessageId: request.messageIds[0] },
+        onAccepted,
+      ),
+    isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),
+    hasPendingPermission: (agentId) => params.agentManager.hasPendingPermissions(agentId),
+    subscribe: (notify) =>
+      params.agentManager.subscribe(
+        (event) => {
+          if (event.type === "agent_state") notify(event.agent.id);
+        },
+        { replayState: false },
+      ),
+    schedule:
+      params.schedule ??
+      ((_delay, callback) => {
+        const timer = setTimeout(callback, 0);
+        return () => clearTimeout(timer);
+      }),
     dispatch: async (request) => {
       const result = await sendPreparedPromptToAgent({
         ...params,
@@ -26,8 +45,8 @@ export function createTestAgentMessages(params: {
         sessionMode: request.sessionMode,
         unarchive: request.unarchive,
         activeTurnBehavior: request.activeTurnBehavior,
+        idleOnly: request.idleOnly,
         clearPendingPermissions: request.clearPendingPermissions,
-        onDispatch: request.onDispatch,
         runOptions: { clientMessageId: request.messageIds[0] },
       });
       if (result.disposition === "turn_started")

@@ -15,7 +15,6 @@ import {
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
-  type AgentModelDefinition,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentProviderNotice,
@@ -252,36 +251,6 @@ interface OmpSlashCommandInvocation {
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
-function normalizeOmpModelLabel(label: string): string {
-  const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
-  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
-  if (vendorSeparatorIndex === -1) {
-    return normalizedLabel;
-  }
-
-  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
-}
-
-export function transformOmpModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
-  return models.map((model) => {
-    if (!model.label.includes("/")) {
-      return model;
-    }
-
-    const segments = model.label.split("/").filter((segment) => segment.length > 0);
-    const rawLabel = segments.at(-1);
-    if (!rawLabel) {
-      return model;
-    }
-
-    return {
-      ...model,
-      label: normalizeOmpModelLabel(rawLabel),
-      description: model.description ?? model.label,
-    };
-  });
-}
-
 function isOmpThinkingLevel(value: string | null | undefined): value is OmpThinkingLevel {
   return (
     value === "off" ||
@@ -466,6 +435,7 @@ function buildResumeStartInput(input: {
     systemPrompt: composeSystemPromptParts(
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
+      ...(input.resumeConfig.config.pluginAppendSystemPrompt ?? []),
     ),
   };
 }
@@ -2370,7 +2340,11 @@ export class OmpAgentClient implements AgentClient {
       noSession: config.internal === true,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
-      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      systemPrompt: composeSystemPromptParts(
+        config.systemPrompt,
+        config.daemonAppendSystemPrompt,
+        ...(config.pluginAppendSystemPrompt ?? []),
+      ),
       env: launchContext?.env,
     };
     const runtimeSession = await this.resolveRuntime(config.providerOptions).startSession(
@@ -2571,13 +2545,11 @@ export class OmpAgentClient implements AgentClient {
       });
       if (!runtimeSession) throw new Error("OMP catalog runtime did not start");
       const catalogSession = runtimeSession;
-      const models = transformOmpModels(
-        (
-          await runProviderRefreshActivity(context, "get_available_models", () =>
-            catalogSession.getAvailableModels(null),
-          )
-        ).map((model) => mapOmpModel(model, this.provider)),
-      );
+      const models = (
+        await runProviderRefreshActivity(context, "get_available_models", () =>
+          catalogSession.getAvailableModels(null),
+        )
+      ).map((model) => mapOmpModel(model, this.provider));
       return { models, modes: [...OMP_MODES] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);

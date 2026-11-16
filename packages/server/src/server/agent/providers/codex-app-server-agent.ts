@@ -55,7 +55,8 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
-import { composeSystemPromptParts } from "../system-prompt.js";
+import { composeAgentSystemPrompt } from "../system-prompt.js";
+import { CodexInstructionSnapshot } from "./codex/instruction-snapshot.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
   fileChangesToPreview,
@@ -3591,9 +3592,12 @@ interface ConsumedRootCompaction {
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
+  readonly persistenceUpdatedOnResume = true;
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
+  private readonly instructionSnapshot: CodexInstructionSnapshot;
+  private supportsInstructionSnapshots = false;
   private readonly asyncQuestions: CodexAsyncQuestions;
   private readonly codexHome: string;
   private currentMode: string;
@@ -3706,6 +3710,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     reasoning_effort?: string | null;
     developer_instructions?: string | null;
   }> = [];
+  private restoredCollaborationMode: {
+    name: string;
+    mode: string;
+    model: string;
+    reasoning_effort: string | null;
+    developer_instructions?: never;
+  } | null = null;
   private resolvedCollaborationMode: {
     mode: string;
     settings: Record<string, unknown>;
@@ -3751,6 +3762,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.providerOptions =
       validateProviderOptions("codex", CodexProviderOptionsSchema, config.providerOptions) ?? {};
     this.config = config;
+    this.instructionSnapshot = new CodexInstructionSnapshot(
+      composeAgentSystemPrompt(config),
+      resumeHandle?.metadata?.paseoInstructionReceipt,
+    );
     this.harnessEnvironment = deps.environment ?? buildCodexAppServerEnv();
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
@@ -3827,6 +3842,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       throw this.createClosedError();
     }
     this.client = client;
+    // Resume can emit autonomous commands before connection setup finishes. Their
+    // ownership must live for the whole connection, including startup notifications.
+    this.background.start({ client, thread: null });
     client.setUnexpectedTerminationHandler((error) => {
       this.pendingNotifications = this.queueUnexpectedTermination(error);
     });
@@ -3834,9 +3852,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.registerRequestHandlers();
 
     try {
-      this.threadRollbackAvailable = codexServerHasThreadRollback(
-        toObjectRecord(initialized)?.userAgent,
-      );
+      const userAgent = toObjectRecord(initialized)?.userAgent;
+      this.threadRollbackAvailable = codexServerHasThreadRollback(userAgent);
+      this.supportsInstructionSnapshots =
+        typeof userAgent === "string" && codexVersionAtLeast(userAgent, [0, 121, 0]);
+      if (
+        !this.currentThreadId &&
+        this.config.pluginAppendSystemPrompt?.length &&
+        !this.supportsInstructionSnapshots
+      ) {
+        throw new Error("Update Codex to 0.121.0 or newer to apply agent instruction updates.");
+      }
 
       this.speedModels =
         CodexModelListResponseSchema.parse(await client.request("model/list", {})).data ?? [];
@@ -3854,7 +3880,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         throw this.createClosedError();
       }
       this.connectionState = "connected";
-      this.background.start({ client, thread: this.currentThreadId });
+      this.background.changed(this.currentThreadId);
     } catch (error) {
       try {
         if (this.client === client) {
@@ -4034,18 +4060,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     settings: Record<string, unknown>;
     name: string;
   } | null {
-    const match = this.findCollaborationMode(this.planModeEnabled ? "plan" : "code");
+    const match =
+      this.findCollaborationMode(this.planModeEnabled ? "plan" : "code") ??
+      this.restoredCollaborationMode;
     if (!match) return null;
 
     const settings: Record<string, unknown> = {};
     if (match.model) settings.model = match.model;
     if (match.reasoning_effort) settings.reasoning_effort = match.reasoning_effort;
-    const developerInstructions = composeSystemPromptParts(
-      match.developer_instructions,
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    if (developerInstructions) settings.developer_instructions = developerInstructions;
+    // Codex applies thread instructions separately. Null asks it to supply the
+    // built-in collaboration mode instructions instead of replacing them.
+    settings.developer_instructions = match.developer_instructions ?? null;
     if (this.config.model) settings.model = this.config.model;
     const thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (thinkingOptionId) settings.reasoning_effort = thinkingOptionId;
@@ -4305,10 +4330,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       // the unnamespaced key emitted by earlier Paseo versions.
       params.modelProvider = this.deps.customCodexConfig.model_provider;
     }
-    const developerInstructions = composeSystemPromptParts(
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
+    const developerInstructions = composeAgentSystemPrompt(this.config);
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
     }
@@ -4319,11 +4341,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
-      if (ids.includes(this.currentThreadId)) {
-        return;
+      if (!ids.includes(this.currentThreadId)) {
+        const response = await this.client.request("thread/resume", params);
+        this.rememberResolvedSandboxPolicy(response);
+        this.rememberRestoredCollaborationMode(response);
       }
-      const response = await this.client.request("thread/resume", params);
-      this.rememberResolvedSandboxPolicy(response);
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -4337,12 +4359,34 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
         const response = await this.client.request("thread/resume", params);
         this.rememberResolvedSandboxPolicy(response);
+        this.rememberRestoredCollaborationMode(response);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
-        return;
+      } else {
+        this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
+        throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
       }
-      this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
-      throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
+    await this.instructionSnapshot.apply(
+      this.currentThreadId,
+      this.client.request.bind(this.client),
+      this.supportsInstructionSnapshots,
+    );
+  }
+
+  private rememberRestoredCollaborationMode(response: unknown): void {
+    const mode = toObjectRecord(toObjectRecord(response)?.collaborationMode);
+    const settings = toObjectRecord(mode?.settings);
+    if (typeof mode?.mode !== "string" || typeof settings?.model !== "string") return;
+    // The resumed mode can contain instructions from a previous launch. Keep its
+    // identity and model, and let Codex restore the built-in mode instructions.
+    this.restoredCollaborationMode = {
+      name: mode.mode,
+      mode: mode.mode,
+      model: settings.model,
+      reasoning_effort:
+        typeof settings.reasoning_effort === "string" ? settings.reasoning_effort : null,
+    };
+    this.refreshResolvedCollaborationMode();
   }
 
   private parseSlashCommandInput(text: string): { commandName: string; args?: string } | null {
@@ -4458,13 +4502,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (options?.outputSchema) {
       params.outputSchema = normalizeCodexOutputSchema(options.outputSchema);
     }
-    const developerInstructions = composeSystemPromptParts(
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
-    if (developerInstructions) {
-      params.developerInstructions = developerInstructions;
-    }
+    const developerInstructions = composeAgentSystemPrompt(this.config);
     const codexConfig = this.buildCodexInnerConfig();
     if (codexConfig) {
       params.config = codexConfig;
@@ -5223,6 +5261,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
         asyncQuestions: this.asyncQuestions.serialize(),
+        ...(this.instructionSnapshot.describe(threadId)
+          ? { paseoInstructionReceipt: this.instructionSnapshot.describe(threadId) }
+          : {}),
       },
     };
   }
@@ -5253,9 +5294,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
       config: this.buildCodexInnerConfig(),
+      developerInstructions: composeAgentSystemPrompt(this.config),
       userMessageTurns: this.codexUserMessageTurns(),
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
+        await this.instructionSnapshot.apply(
+          threadId,
+          this.client!.request.bind(this.client),
+          this.supportsInstructionSnapshots,
+        );
         this.currentThreadId = threadId;
         // Codex writes a forked thread's rollout when it forks it, even before any turn.
         this.savedThreadId = threadId;
@@ -5338,6 +5385,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async canStopRuntime(): Promise<boolean> {
+    // A history session released its app-server once it read the thread, so nothing runs.
+    if (this.connectionState === "history-ready") return true;
     if (
       !this.client ||
       this.client.hasPendingRequests() ||
@@ -5789,6 +5838,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.cachedRuntimeInfo = null;
     }
     this.currentThreadId = threadId;
+    this.instructionSnapshot.recordNewThread(threadId);
   }
 
   private buildThreadStartRequest(model: string): {
@@ -5800,10 +5850,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
     const innerConfig = this.buildCodexInnerConfig();
-    const developerInstructions = composeSystemPromptParts(
-      this.config.systemPrompt,
-      this.config.daemonAppendSystemPrompt,
-    );
+    const developerInstructions = composeAgentSystemPrompt(this.config);
     const params: Record<string, unknown> = {
       model,
       cwd: this.config.cwd ?? null,
@@ -5944,15 +5991,34 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       this.settleStreamRetry({ status: "completed" });
     }
-    if (
-      parsed.kind === "turn_completed" ||
-      parsed.kind === "exec_command_started" ||
+    this.observeBackgroundWork(parsed);
+    await this.dispatchParsedNotification(parsed);
+  }
+
+  private observeBackgroundWork(parsed: ParsedCodexNotification): void {
+    const backgroundThread = getCodexNotificationThreadId(parsed) ?? this.currentThreadId;
+    if (backgroundThread && parsed.kind === "turn_started")
+      this.background.turnStarted(backgroundThread);
+    else if (backgroundThread && parsed.kind === "turn_completed")
+      this.background.turnSettled(backgroundThread);
+    else if (backgroundThread && parsed.kind === "exec_command_started")
+      this.background.commandStarted({ thread: backgroundThread, itemId: parsed.callId });
+    else if (
+      backgroundThread &&
+      parsed.kind === "item_started" &&
+      normalizeCodexThreadItemType(parsed.item.type) === "commandExecution"
+    )
+      this.background.commandStarted({
+        thread: backgroundThread,
+        itemId: parsed.item.id ?? null,
+        processId: typeof parsed.item.processId === "string" ? parsed.item.processId : undefined,
+      });
+    else if (
       parsed.kind === "exec_command_completed" ||
       ((parsed.kind === "item_started" || parsed.kind === "item_completed") &&
         normalizeCodexThreadItemType(parsed.item.type) === "commandExecution")
     )
       this.background.changed(this.currentThreadId);
-    await this.dispatchParsedNotification(parsed);
   }
 
   private async dispatchSubAgentNotification(

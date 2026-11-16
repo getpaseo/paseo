@@ -4,7 +4,15 @@ import {
   type BottomSheetBackdropProps,
 } from "@gorhom/bottom-sheet";
 import React from "react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDismissibleOverlay } from "@/components/ui/overlay-dismissal";
 import type { ElementRef, ReactNode } from "react";
 import { systemBackPress } from "./back-press";
@@ -12,7 +20,11 @@ import {
   type BottomSheetController,
   createBottomSheetVisibilityTracker,
 } from "./visibility-tracker";
-import { BottomSheetScope } from "@/components/ui/bottom-sheet-scope";
+import {
+  BottomSheetScope,
+  type AttachSheetContentDrag,
+  type SheetContentDragGesture,
+} from "@/components/ui/bottom-sheet-scope";
 import { SheetBackdrop } from "./sheet-backdrop";
 
 type GorhomBottomSheetModalMethods = ElementRef<typeof GorhomBottomSheetModal>;
@@ -93,8 +105,31 @@ export const IsolatedBottomSheetModal = forwardRef<
     contextBridge,
     backdropOpacity,
     enableDismissOnClose = true,
+    waitFor,
+    simultaneousHandlers,
     ...bottomSheetProps
   } = props;
+  // State, not a ref the child fills in: Gorhom builds its pan once per `waitFor`, and RNGH reads
+  // the ref's handler tag only then. Registering hands Gorhom a new `waitFor`, so a drag that
+  // mounts after the sheet (content still loading) still gets the relation.
+  const [contentDragGesture, setContentDragGesture] = useState<SheetContentDragGesture>();
+  const attachContentDrag = useCallback<AttachSheetContentDrag>((gesture) => {
+    setContentDragGesture(gesture);
+    return () => setContentDragGesture((current) => (current === gesture ? undefined : current));
+  }, []);
+  // RNGH Android's shouldBeCancelledByActiveHandler treats a waiting ancestor's raw ACTIVE
+  // state as ownership and cancels its child at activation. Simultaneity lets the child activate;
+  // waitFor still keeps the sheet stationary until the child fails.
+  const contentDragHandlers = useMemo(() => {
+    if (!contentDragGesture) return { waitFor, simultaneousHandlers };
+    return {
+      waitFor: [...(waitFor ? [waitFor].flat() : []), contentDragGesture],
+      simultaneousHandlers: [
+        ...(simultaneousHandlers ? [simultaneousHandlers].flat() : []),
+        contentDragGesture,
+      ],
+    };
+  }, [contentDragGesture, waitFor, simultaneousHandlers]);
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
       <SheetBackdrop
@@ -112,8 +147,12 @@ export const IsolatedBottomSheetModal = forwardRef<
       enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
+      waitFor={contentDragHandlers.waitFor}
+      simultaneousHandlers={contentDragHandlers.simultaneousHandlers}
     >
-      <BottomSheetScope>{contextBridge ? contextBridge(children) : children}</BottomSheetScope>
+      <BottomSheetScope attachContentDrag={attachContentDrag}>
+        {contextBridge ? contextBridge(children) : children}
+      </BottomSheetScope>
     </GorhomBottomSheetModal>
   );
 

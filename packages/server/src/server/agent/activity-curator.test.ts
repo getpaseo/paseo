@@ -3,6 +3,7 @@ import { buildAgentForkContextAttachment, curateAgentActivity } from "./activity
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { formatAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
+import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 function toolCallItem(params: {
   callId: string;
@@ -37,6 +38,29 @@ function row(seq: number, item: AgentTimelineItem): AgentTimelineRow {
     timestamp: `2026-06-28T00:00:${String(seq).padStart(2, "0")}.000Z`,
     item,
   };
+}
+
+/** Rows as the daemon hands them to a fork: projected by the timeline store. */
+function storeTimeline(items: readonly AgentTimelineItem[]) {
+  const store = new InMemoryAgentTimelineStore();
+  store.initialize("agent-1");
+  for (const item of items) store.append("agent-1", item);
+  const { epoch, rows } = store.fetch("agent-1", { limit: 0 });
+  return { epoch, rows };
+}
+
+function backgroundTaskItem(input: { status: "running" | "completed"; log: string }) {
+  return toolCallItem({
+    callId: "background-task",
+    name: "Task",
+    status: input.status,
+    detail: {
+      type: "sub_agent",
+      subAgentType: "Explore",
+      description: "Audit the migrations",
+      log: input.log,
+    },
+  });
 }
 
 describe("curateAgentActivity", () => {
@@ -414,44 +438,48 @@ second line'`,
     expect(result.attachment.text).toContain("[Assistant] Done.");
   });
 
-  it("rejects a checkpoint whose projected tool state changed later", () => {
-    expect(() =>
-      buildAgentForkContextAttachment({
-        boundaryMessageId: "assistant-1",
-        rows: [
-          row(1, { type: "user_message", text: "Run it", messageId: "user-1" }),
-          row(
-            2,
-            toolCallItem({
-              callId: "terminal-1",
-              name: "terminal",
-              status: "running",
-              detail: {
-                type: "plain_text",
-                label: "before boundary",
-              },
-            }),
-          ),
-          row(3, {
-            type: "assistant_message",
-            text: "Partial result.",
-            messageId: "assistant-1",
-          }),
-          row(
-            4,
-            toolCallItem({
-              callId: "terminal-1",
-              name: "terminal",
-              status: "completed",
-              detail: {
-                type: "plain_text",
-                label: "after boundary",
-              },
-            }),
-          ),
-        ],
-      }),
-    ).toThrow("Fork from a later completed response");
+  it("forks at a response that background work outlives, by message id", () => {
+    const { rows } = storeTimeline([
+      { type: "user_message", text: "Audit in the background", messageId: "user-1" },
+      backgroundTaskItem({ status: "running", log: "scanning" }),
+      { type: "assistant_message", text: "Audit started.", messageId: "assistant-1" },
+      backgroundTaskItem({ status: "completed", log: "FINAL REPORT after the response" }),
+      { type: "user_message", text: "Any findings?", messageId: "user-2" },
+    ]);
+    expect(rows[1]).toMatchObject({ seqStart: 2, seqEnd: 4 });
+
+    const result = buildAgentForkContextAttachment({ boundaryMessageId: "assistant-1", rows });
+
+    expect(result.itemCount).toBe(3);
+    expect(result.boundaryMessageId).toBe("assistant-1");
+    expect(result.attachment.text).toContain(
+      "[User] Audit in the background\n[Explore] Audit the migrations\n[Assistant] Audit started.\n",
+    );
+    expect(result.attachment.text).not.toContain("FINAL REPORT");
+    expect(result.attachment.text).not.toContain("Any findings?");
+  });
+
+  it("forks at a response that background work outlives, by timeline cursor", () => {
+    const { epoch, rows } = storeTimeline([
+      { type: "user_message", text: "Audit in the background", messageId: "user-1" },
+      backgroundTaskItem({ status: "running", log: "scanning" }),
+      { type: "assistant_message", text: "Audit started." },
+      backgroundTaskItem({ status: "completed", log: "FINAL REPORT after the response" }),
+      { type: "assistant_message", text: "The audit finished." },
+    ]);
+
+    const result = buildAgentForkContextAttachment({
+      cursorBoundary: { timelineEpoch: epoch, cursor: { epoch, seq: 3 } },
+      rows,
+    });
+
+    expect(result.boundaryCursor).toEqual({ epoch, seq: 3 });
+    expect(result.itemCount).toBe(3);
+    expect(result.attachment.text).toContain(
+      "[User] Audit in the background\n[Explore] Audit the migrations\n[Assistant] Audit started.\n",
+    );
+    expect(result.attachment.text).not.toContain("FINAL REPORT");
+    expect(result.attachment.text).not.toContain("The audit finished.");
   });
 
   it("forks from a checkpoint when a plugin card was updated after it", () => {

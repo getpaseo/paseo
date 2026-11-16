@@ -121,7 +121,7 @@ export async function startIsolatedHostDaemon(
   serverId: string,
   options: IsolatedHostDaemonOptions = {},
 ): Promise<IsolatedHostDaemon> {
-  const port = await getAvailableHostDaemonPort();
+  let port = await getAvailableHostDaemonPort();
 
   const metroPort = process.env.E2E_METRO_PORT;
   if (!metroPort) throw new Error("E2E_METRO_PORT is required to start an isolated host daemon");
@@ -231,8 +231,25 @@ export async function startIsolatedHostDaemon(
     }
   };
 
+  // The reserved port is released before the daemon binds it, so another
+  // process can take it in between. Only the first start picks a new port:
+  // restart() keeps the endpoint the app already knows.
+  const startOnFreePort = async (): Promise<void> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await spawnDaemon();
+        return;
+      } catch (error) {
+        const lostPort = error instanceof Error && error.message.includes("EADDRINUSE");
+        if (!lostPort || attempt === 3) throw error;
+        await stopDaemon();
+        port = await getAvailableHostDaemonPort();
+      }
+    }
+  };
+
   try {
-    await spawnDaemon();
+    await startOnFreePort();
   } catch (error) {
     await stopDaemon();
     if (!options.preserveHome) {

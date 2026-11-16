@@ -577,6 +577,111 @@ describe("registry plugin sources", () => {
   });
 });
 
+it("reads the registry directory and a listing with the registry's credentials, without install intent", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-browse-home-"));
+  roots.push(home);
+  const listing = {
+    id: "acme/example",
+    name: "Example",
+    description: "Test",
+    categories: ["tools"],
+    author: { github: "acme" },
+    repository: { url: "https://github.com/acme/example" },
+    artifact: {
+      kind: "git",
+      remote: "https://github.com/acme/example.git",
+      commit: "a".repeat(40),
+    },
+    media: [],
+    submittedAt: "2026-10-03",
+    reviewedAt: "2026-10-03",
+    updatedAt: "2026-10-03",
+    publishedAt: "2026-10-03",
+  };
+  const documents: Record<string, unknown> = {
+    "/internal/index.json": {
+      schemaVersion: 1,
+      registry: { name: "Internal", url: "http://registry.test" },
+      categories: [{ slug: "tools", label: "Tools" }],
+      // A listing this host cannot read is left out; the rest stay browsable.
+      plugins: [listing, { ...listing, id: "acme/future", artifact: { kind: "oci" } }],
+      featured: ["acme/example"],
+      generatedAt: "2026-10-03",
+    },
+    "/internal/plugins/acme/example.json": { ...listing, readme: "# Example" },
+    "/internal/plugins/acme/other.json": { ...listing, readme: "# Example" },
+  };
+  const requests: Array<{ path?: string; intent?: string | string[]; authorization?: string }> = [];
+  const server = createServer((req, res) => {
+    requests.push({
+      path: req.url,
+      intent: req.headers["x-paseo-install"],
+      authorization: req.headers.authorization,
+    });
+    const document = req.url ? documents[req.url] : undefined;
+    if (!document) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(document));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing registry address");
+  const host = `127.0.0.1:${address.port}`;
+  try {
+    const sources = new ManagedPluginSources(home, {
+      defaultUrl: `http://${host}/internal/`,
+      registries: { [host]: { authorization: "Bearer test" } },
+    });
+    const index = await sources.listRegistry();
+    expect(index.plugins.map((plugin) => plugin.id)).toEqual(["acme/example"]);
+    expect(index.featured).toEqual(["acme/example"]);
+    expect((await sources.getRegistryPlugin("acme/example")).readme).toBe("# Example");
+    await expect(sources.getRegistryPlugin("acme/other")).rejects.toThrow(
+      "Registry returned a different plugin ID",
+    );
+    await expect(sources.getRegistryPlugin("acme/missing")).rejects.toThrow(
+      "Plugin registry returned 404 for plugins/acme/missing.json",
+    );
+    await expect(sources.getRegistryPlugin("../index")).rejects.toThrow();
+    expect(requests).toEqual([
+      { path: "/internal/index.json", intent: undefined, authorization: "Bearer test" },
+      {
+        path: "/internal/plugins/acme/example.json",
+        intent: undefined,
+        authorization: "Bearer test",
+      },
+      {
+        path: "/internal/plugins/acme/other.json",
+        intent: undefined,
+        authorization: "Bearer test",
+      },
+      {
+        path: "/internal/plugins/acme/missing.json",
+        intent: undefined,
+        authorization: "Bearer test",
+      },
+    ]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it("reports a misconfigured registry instead of asking the user to retry", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-registry-browse-config-"));
+  roots.push(home);
+  const sources = new ManagedPluginSources(home, {
+    defaultUrl: "http://registry.example",
+    registries: { "registry.example": { authorization: "Bearer test" } },
+  });
+  await expect(sources.listRegistry()).rejects.toThrow("Registry credentials require HTTPS");
+  await expect(sources.getRegistryPlugin("acme/example")).rejects.toThrow(
+    "Registry credentials require HTTPS",
+  );
+});
+
 it("installs and updates only the npm artifacts pinned by the plugin registry", async () => {
   const { startNpmRegistry, npmPluginPackages } =
     await import("../../../../../scripts/test-support/npm-registry.mjs");
