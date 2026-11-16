@@ -1117,6 +1117,10 @@ export class AgentManager {
     return new Date(nextMs).toISOString();
   }
 
+  hasPendingPermissions(agentId: string): boolean {
+    return (this.agents.get(agentId)?.pendingPermissions.size ?? 0) > 0;
+  }
+
   hasInFlightRun(agentId: string): boolean {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -3030,6 +3034,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
+    onAccepted?: () => void,
   ): Promise<boolean> {
     if (this.collectingRuntimes.has(agentId) || !this.agents.has(agentId)) {
       await this.waitForAgentClose(agentId);
@@ -3049,6 +3054,7 @@ export class AgentManager {
     if (!handler) {
       return false;
     }
+    onAccepted?.();
     this.touchUpdatedAt(agent);
     if (options?.clientMessageId) {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
@@ -5121,6 +5127,9 @@ export class AgentManager {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
+        } else if (terminalDisposition !== "stale" && !agent.activeForegroundTurnId) {
+          // Publish autonomous readiness only after the tracked run has settled.
+          this.emitState(agent);
         }
       }
 
@@ -5390,7 +5399,6 @@ export class AgentManager {
       !agent.pendingReplacement
     ) {
       (agent as ActiveManagedAgent).lifecycle = "idle";
-      this.emitState(agent);
     }
     void this.refreshRuntimeInfo(agent);
   }
@@ -5431,9 +5439,6 @@ export class AgentManager {
       options,
     );
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
-    if (!isForegroundEvent && !agent.activeForegroundTurnId) {
-      this.emitState(agent);
-    }
   }
 
   private onStreamTurnCanceled(params: {
@@ -5467,9 +5472,6 @@ export class AgentManager {
     }
     agent.lastError = undefined;
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Interrupted");
-    if (!isForegroundEvent && !agent.activeForegroundTurnId) {
-      this.emitState(agent);
-    }
   }
 
   private onStreamTurnStarted(params: {
