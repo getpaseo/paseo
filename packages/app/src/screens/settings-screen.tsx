@@ -144,6 +144,10 @@ import {
 import { returnFromSettings, type SettingsView } from "@/navigation/settings-navigation";
 import { isNative, isWeb } from "@/constants/platform";
 import { useOpenOnboarding } from "@/onboarding";
+import {
+  SETTINGS_SEARCH_INDEX,
+  type SettingsSearchIndexEntry,
+} from "@/screens/settings/settings-search-index";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -258,208 +262,28 @@ const HOST_SECTION_ITEMS: HostSectionItem[] = [
   { id: "plugins", labelKey: "settings.hostSections.plugins", icon: Blocks },
 ];
 
-interface SettingsSearchEntry {
-  kind: "section" | "host";
-  id: SettingsSectionSlug | HostSectionSlug;
-  labelKey: string;
-  terms: string[];
-  searchKey?: string;
-}
-
-const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
-  {
-    kind: "section",
-    id: "general",
-    labelKey: "settings.sections.general",
-    terms: ["language", "setup"],
-  },
-  {
-    kind: "section",
-    id: "general",
-    searchKey: "general.sending",
-    labelKey: "settings.general.sending",
-    terms: ["send", "sending", "shortcut", "enter", "queue", "prompt"],
-  },
-  {
-    kind: "section",
-    id: "general",
-    searchKey: "general.open-location",
-    labelKey: "settings.layout.openInSidePane.title",
-    terms: ["location", "side pane", "explorer", "file", "diff"],
-  },
-  {
-    kind: "section",
-    id: "appearance",
-    labelKey: "settings.sections.appearance",
-    terms: ["theme", "font", "interface", "layout", "syntax", "color"],
-  },
-  {
-    kind: "section",
-    id: "sidebar",
-    labelKey: "settings.sections.sidebar",
-    terms: ["navigation", "footer", "workspace", "sidebar"],
-  },
-  {
-    kind: "section",
-    id: "chat",
-    labelKey: "settings.sections.chat",
-    terms: ["message", "markdown", "composer", "chat"],
-  },
-  {
-    kind: "section",
-    id: "terminal",
-    labelKey: "settings.sections.terminal",
-    terms: ["scrollback", "cursor", "shell", "terminal"],
-  },
-  {
-    kind: "section",
-    id: "browser",
-    labelKey: "settings.sections.browser",
-    terms: ["browser", "history", "cache", "cookies", "data"],
-  },
-  {
-    kind: "section",
-    id: "editor",
-    labelKey: "settings.sections.editor",
-    terms: ["editor", "font", "word wrap", "indent"],
-  },
-  {
-    kind: "section",
-    id: "files",
-    labelKey: "settings.sections.files",
-    terms: ["files", "icons", "explorer"],
-  },
-  {
-    kind: "section",
-    id: "shortcuts",
-    labelKey: "settings.sections.shortcuts",
-    terms: ["keyboard", "shortcut", "hotkey", "keys"],
-  },
-  {
-    kind: "section",
-    id: "integrations",
-    labelKey: "settings.sections.integrations",
-    terms: ["integration", "tools", "orchestration", "skills", "mcp"],
-  },
-  {
-    kind: "section",
-    id: "notifications",
-    labelKey: "settings.sections.notifications",
-    terms: ["notification", "sound", "alert"],
-  },
-  {
-    kind: "section",
-    id: "permissions",
-    labelKey: "settings.sections.permissions",
-    terms: ["permission", "microphone", "access"],
-  },
-  {
-    kind: "section",
-    id: "diagnostics",
-    labelKey: "settings.sections.diagnostics",
-    terms: ["diagnostic", "audio", "playback", "logs", "debug"],
-  },
-  {
-    kind: "section",
-    id: "about",
-    labelKey: "settings.sections.about",
-    terms: ["version", "update", "release", "changelog"],
-  },
-  {
-    kind: "host",
-    id: "host",
-    labelKey: "settings.hostSections.host",
-    terms: ["daemon", "connection", "pairing", "host"],
-  },
-  {
-    kind: "host",
-    id: "projects",
-    labelKey: "settings.hostSections.projects",
-    terms: ["project", "repository", "git"],
-  },
-  {
-    kind: "host",
-    id: "connections",
-    labelKey: "settings.hostSections.connections",
-    terms: ["connection", "ssh", "relay", "network"],
-  },
-  {
-    kind: "host",
-    id: "pair-device",
-    labelKey: "openProject.tiles.pairDevice.title",
-    terms: ["pair", "device", "phone", "qr"],
-  },
-  {
-    kind: "host",
-    id: "agents",
-    labelKey: "settings.hostSections.agents",
-    terms: ["agent", "provider", "model"],
-  },
-  {
-    kind: "host",
-    id: "metadata",
-    labelKey: "settings.hostSections.metadata",
-    terms: ["metadata", "generation", "summary"],
-  },
-  {
-    kind: "host",
-    id: "voice",
-    labelKey: "settings.hostSections.voice",
-    terms: ["voice", "dictation", "speech", "microphone"],
-  },
-  {
-    kind: "host",
-    id: "workspaces",
-    labelKey: "settings.hostSections.workspaces",
-    terms: ["workspace", "worktree", "setup", "scripts"],
-  },
-  {
-    kind: "host",
-    id: "providers",
-    labelKey: "settings.hostSections.providers",
-    terms: ["provider", "model", "claude", "codex", "opencode"],
-  },
-  {
-    kind: "host",
-    id: "usage",
-    labelKey: "settings.hostSections.usage",
-    terms: ["usage", "tokens", "quota", "credits"],
-  },
-  {
-    kind: "host",
-    id: "terminals",
-    labelKey: "settings.hostSections.terminals",
-    terms: ["terminal", "shell", "process"],
-  },
-  {
-    kind: "host",
-    id: "plugins",
-    labelKey: "settings.hostSections.plugins",
-    terms: ["plugin", "extension", "catalog"],
-  },
-];
-
 function resolveSettingsSearchResults(input: {
   query: string;
   t: TFunction;
   isDesktopApp: boolean;
   hardwareKeyboardPresent: boolean;
   hasHosts: boolean;
-}): SettingsSearchEntry[] {
+}): SettingsSearchIndexEntry[] {
   const normalizedQuery = input.query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return [];
 
-  return SETTINGS_SEARCH_ENTRIES.filter((entry) => {
+  return SETTINGS_SEARCH_INDEX.filter((entry) => {
     if (entry.kind === "section") {
-      const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
+      const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.section);
       if (!item || !isSectionAvailable(item, input.isDesktopApp, input.hardwareKeyboardPresent)) {
         return false;
       }
     } else if (!input.hasHosts) {
       return false;
     }
+    const translatedText = entry.searchKeys.map((key) => input.t(key)).join(" ");
     const searchableText =
-      `${input.t(entry.labelKey)} ${entry.terms.join(" ")}`.toLocaleLowerCase();
+      `${translatedText} ${entry.aliases?.join(" ") ?? ""}`.toLocaleLowerCase();
     return searchableText.includes(normalizedQuery);
   });
 }
@@ -1150,21 +974,18 @@ function SidebarGroup({ label, children }: { label?: string; children: ReactNode
 }
 
 interface SettingsSearchResultsProps {
-  results: SettingsSearchEntry[];
-  renderEntry: (entry: SettingsSearchEntry) => ReactNode;
+  results: SettingsSearchIndexEntry[];
+  renderEntry: (entry: SettingsSearchIndexEntry) => ReactNode;
 }
 
 function SettingsSearchResults({ results, renderEntry }: SettingsSearchResultsProps) {
   const { t } = useTranslation();
+  const visibleResults = results.filter((entry) => entry.showInResults !== false);
 
   return (
     <View testID="settings-search-results">
-      {results.length > 0 ? (
-        results.map((entry) => (
-          <Fragment key={entry.searchKey ?? `${entry.kind}-${entry.id}`}>
-            {renderEntry(entry)}
-          </Fragment>
-        ))
+      {visibleResults.length > 0 ? (
+        visibleResults.map((entry) => <Fragment key={entry.id}>{renderEntry(entry)}</Fragment>)
       ) : (
         <SettingsSection title={t("settings.title")}>
           <Text style={styles.searchNoResults}>{t("common.empty.noResults")}</Text>
@@ -1184,7 +1005,7 @@ interface SettingsSidebarProps {
   activeHostServerId: string | null;
   layout: "desktop" | "mobile";
   searchInput: string;
-  searchResults: SettingsSearchEntry[];
+  searchResults: SettingsSearchIndexEntry[];
   onSearchInputChange: (value: string) => void;
 }
 
@@ -1214,7 +1035,7 @@ function SettingsSidebar({
     isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent),
   );
   const searchResultIds = useMemo(
-    () => new Set(searchResults.map((entry) => `${entry.kind}:${entry.id}`)),
+    () => new Set(searchResults.map((entry) => `${entry.kind}:${entry.section}`)),
     [searchResults],
   );
   const visibleItems = searchInput.trim()
@@ -1588,19 +1409,23 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
 
   const renderSettingsSearchEntry = useCallback(
-    (entry: SettingsSearchEntry): ReactNode => {
+    (entry: SettingsSearchIndexEntry): ReactNode => {
       if (entry.kind === "host") {
         if (!activeHostServerId) return null;
         return renderHostSettingsContent(
-          { kind: "host", serverId: activeHostServerId, section: entry.id as HostSectionSlug },
+          {
+            kind: "host",
+            serverId: activeHostServerId,
+            section: entry.section as HostSectionSlug,
+          },
           handleHostRemoved,
         );
       }
 
-      if (entry.searchKey === "general.sending") return <SendingSection />;
-      if (entry.searchKey === "general.open-location") return <OpenLocationSection />;
+      if (entry.id === "general.sending") return <SendingSection />;
+      if (entry.id === "general.open-location") return <OpenLocationSection />;
 
-      switch (entry.id as SettingsSectionSlug) {
+      switch (entry.section as SettingsSectionSlug) {
         case "general":
           return (
             <>
@@ -1627,7 +1452,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             />
           );
         default: {
-          const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
+          const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.section);
           return item?.Content ? <item.Content /> : null;
         }
       }
@@ -1681,10 +1506,11 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
       const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === view.section);
       if (!item || !isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent)) return null;
       return renderSettingsSearchEntry({
-        kind: "section",
         id: view.section,
-        labelKey: item.labelKey,
-        terms: [],
+        kind: "section",
+        section: view.section,
+        titleKey: item.labelKey,
+        searchKeys: [],
       });
     }
     return null;
