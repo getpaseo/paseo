@@ -809,12 +809,11 @@ function DesktopSidebar({
     ],
     [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
-  // Below the window controls' row, or in the top band's place, the first row starts flush.
   const inTopBand = useTopBand() !== null;
-  const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, (ownsTopLeft || inTopBand) && styles.sidebarHeaderGroupFlush],
-    [ownsTopLeft, inTopBand],
-  );
+  // Windows and Linux draw their window controls top-right, so the sidebar has no chrome
+  // row there. The strip above the scrolling rows is then its window drag surface.
+  const showsChromeRow = ownsTopLeft || Boolean(DEV_BUILD_LABEL);
+  const showsDragStrip = !showsChromeRow && !inTopBand;
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -825,7 +824,7 @@ function DesktopSidebar({
       <Animated.View style={desktopSidebarStyle}>
         <View style={desktopSidebarBorderStyle}>
           <View style={styles.sidebarDragArea}>
-            {ownsTopLeft || DEV_BUILD_LABEL ? (
+            {showsChromeRow ? (
               <View style={styles.desktopChromeRow}>
                 <TitlebarDragRegion />
                 {DEV_BUILD_LABEL ? (
@@ -842,9 +841,12 @@ function DesktopSidebar({
                   </View>
                 ) : null}
               </View>
-            ) : (
-              <TitlebarDragRegion />
-            )}
+            ) : null}
+            {showsDragStrip ? (
+              <View style={styles.desktopDragStrip}>
+                <TitlebarDragRegion />
+              </View>
+            ) : null}
           </View>
           <ScrollView
             // The drag overlay stays above this viewport: Electron does not clip
@@ -856,7 +858,7 @@ function DesktopSidebar({
             alwaysBounceVertical={false}
             testID="sidebar-nav-scroll"
           >
-            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+            <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
           </ScrollView>
 
           <SidebarViewSlot dismiss={closeSidebar}>
@@ -948,13 +950,14 @@ const staticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
+  // The rows start flush: the chrome row, drag strip, or top band above them gives the inset.
   sidebarHeaderGroup: {
-    paddingTop: theme.spacing[2],
     gap: 2,
     paddingBottom: theme.spacing[1.5],
   },
-  sidebarHeaderGroupFlush: {
-    paddingTop: 0,
+  desktopDragStrip: {
+    position: "relative",
+    height: theme.spacing[2],
   },
   // The nav block caps at half the sidebar; a long item list scrolls inside the
   // cap instead of crowding the workspace list off a short screen.
