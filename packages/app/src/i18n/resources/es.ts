@@ -149,6 +149,7 @@ export const es: TranslationResources = {
       sendAndInterrupt: "Enviar e interrumpir",
       sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
+      sendQueue: "Enviar cola",
       longPressToQueue: "Mantén pulsado para poner en cola",
       longPressToSendNow: "Mantén pulsado para enviar ahora",
       queue: "Cola",
@@ -2528,6 +2529,11 @@ export const es: TranslationResources = {
           steer: "Dirigir",
           queue: "Cola",
         },
+      },
+      queueDrain: {
+        label: "Envío de la cola",
+        description: "Al enviar mensajes en cola, envíalos todos juntos o de uno en uno",
+        options: { all: "Enviar toda la cola", next: "Enviar el siguiente" },
       },
       sendShortcut: {
         label: "Atajo de envío",
