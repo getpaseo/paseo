@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  resolveSidebarResizeHandleGeometry,
-  WEB_TOUCH_HANDLE_TOP,
-} from "./sidebar-resize-handle-layout";
+import { resolveSidebarResizeHandleGeometry } from "./sidebar-resize-handle-layout";
 
 const MIN_TOUCH_TARGET = 24;
 
@@ -22,7 +19,7 @@ describe("resolveSidebarResizeHandleGeometry", () => {
     expect(geometry.edgeOffset).toBeGreaterThanOrEqual(0);
     expect(geometry.width).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
     // Not centred, where it would cover a row's menu button.
-    expect(geometry.top).toBe(WEB_TOUCH_HANDLE_TOP);
+    expect(geometry.top).toBe(48);
   });
 
   it("centres the native touch grip", () => {
