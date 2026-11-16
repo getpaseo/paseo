@@ -60,6 +60,15 @@ describe.skipIf(process.platform === "win32")("resolveInstalledOpenCodeBinary", 
     await expect(resolveInstalledOpenCodeBinary(binary)).resolves.toBe(binary);
   });
 
+  test("keeps a native executable even when a cached binary exists beside it", async () => {
+    const root = tempDir();
+    const binary = path.join(root, "opencode");
+    write(binary, "native");
+    write(path.join(root, ".opencode"), "cached native");
+
+    await expect(resolveInstalledOpenCodeBinary(binary)).resolves.toBe(binary);
+  });
+
   test("warns when a wrapper's native binary cannot be resolved", async () => {
     const root = tempDir();
     const script = path.join(root, "opencode");

@@ -64,12 +64,12 @@ async function resolveWindowsOpenCodeBinary(found: string): Promise<string | nul
 
 async function resolvePosixOpenCodeBinary(found: string): Promise<string | null> {
   const real = await realpath(found).catch(() => found);
+  // A native install is already the process we need to track. Only wrappers
+  // should resolve a cached binary or search for an npm platform package.
+  if (!(await hasShebang(real))) return null;
   // The npm wrapper prefers this cached native binary over the platform package.
   const cached = path.join(path.dirname(real), ".opencode");
   if (await pathExists(cached)) return cached;
-  // A native `opencode` install has no wrapper. Don't walk its parents looking
-  // for an unrelated npm platform package.
-  if (!(await hasShebang(real))) return null;
   return findPlatformBinary(path.dirname(real));
 }
 
