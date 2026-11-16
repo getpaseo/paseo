@@ -10,6 +10,7 @@ import { cloneAndFreeze } from "../freeze";
 
 import { entityRefs } from "./refs";
 import { deriveEffectiveWorkspaceStatus } from "@/workspace-status";
+import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
 interface CachedWorkspace {
   language: string;
@@ -51,6 +52,7 @@ export function createPluginWorkspaceSnapshot(
     createdAt: serializeTimestamp(workspace.createdAt),
     lastPromptAt: serializeTimestamp(workspace.lastUserMessageAt),
     parentAgent,
+    parentWorkspaceId: normalizeWorkspaceOpaqueId(workspace.parentWorkspaceId),
     indicator,
     indicatorLabel: i18n.t(indicatorLabelKeys[indicator]),
     id: workspace.id,

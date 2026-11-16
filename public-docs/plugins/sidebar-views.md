@@ -116,8 +116,10 @@ Existing workspace panels can continue passing a host-local string ID to `useWor
 `serverId`, `label` and connection `status` fields.
 
 Workspace snapshots include `project`, `pinnedAt`, `labels`, `background`, `branch`,
-`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). Use `indicator` and the
-localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
+`lastPromptAt`, `parentAgent` and `createdAt` (null on older hosts). `parentWorkspaceId` is the
+id of the workspace on the same host whose agent created this one. It is null for root workspaces
+and on older hosts, and the parent may be archived or missing from the list. Use `indicator` and
+the localized `indicatorLabel` to display the status Paseo shows. `status` remains the raw daemon
 status. Agent snapshots include their workspace and parent refs, `background`, and
 `backgroundWork.count`. Project snapshots provide
 `displayName`, `rootPath`, `kind` and `iconRevision`.

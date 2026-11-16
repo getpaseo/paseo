@@ -130,6 +130,18 @@ describe("sidebar entity snapshots", () => {
     );
   });
 
+  it("exposes the workspace that created this one, and null for a root workspace", () => {
+    expect(createPluginWorkspaceSnapshot(workspace, "host-1").parentWorkspaceId).toBeNull();
+    const child: WorkspaceDescriptor = {
+      ...workspace,
+      id: "workspace-2",
+      parentWorkspaceId: workspace.id,
+    };
+    const snapshot = createPluginWorkspaceSnapshot(child, "host-1");
+    expect(snapshot.parentWorkspaceId).toBe(workspace.id);
+    expect(snapshot.parentWorkspaceId).toBe(createPluginWorkspaceSnapshot(workspace, "host-1").id);
+  });
+
   it("reads projects without requiring a workspace", () => {
     const project = {
       projectId: "empty",

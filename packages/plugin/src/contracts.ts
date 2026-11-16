@@ -34,6 +34,11 @@ export interface PluginWorkspaceSnapshot {
   readonly createdAt: string | null;
   readonly lastPromptAt: string | null;
   readonly parentAgent: AgentRef | null;
+  /**
+   * Id of the workspace whose agent created this one, on the same host. Null for root
+   * workspaces and on older hosts. The parent may be archived or missing from the list.
+   */
+  readonly parentWorkspaceId: string | null;
   readonly indicator: WorkspaceIndicator;
   readonly indicatorLabel: string | null;
   readonly id: string;
