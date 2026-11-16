@@ -762,7 +762,7 @@ function ChatAgentContent({
   });
   const reportAttentionError = useCallback(
     (error: unknown) => {
-      toastApi.error(error);
+      toastApi.error(toErrorMessage(error));
     },
     [toastApi],
   );

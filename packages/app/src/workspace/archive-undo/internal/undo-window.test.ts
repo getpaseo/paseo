@@ -71,8 +71,7 @@ function createToastHost() {
       return entry.dismiss;
     },
     copied: () => {},
-    error: (error) => {
-      const message = error instanceof Error ? error.message : String(error);
+    error: (message) => {
       errors.push(message);
       api.show(message);
     },
