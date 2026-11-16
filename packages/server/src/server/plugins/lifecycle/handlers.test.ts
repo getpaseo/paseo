@@ -160,7 +160,7 @@ test("a workspace create hook that omits metadata passes on what an earlier hook
   ).resolves.toMatchObject({ metadata: {} });
 });
 
-test("a session-open hook that returns its own object without metadata leaves metadata unchanged", async () => {
+test("a session-open hook that returns its own object without metadata or background leaves them unchanged", async () => {
   const hooks = new PluginHookHandlers(() => {});
   hooks.addHook("agent.open.before", async ({ request }) => ({
     agentId: request.agentId,
@@ -184,6 +184,7 @@ test("a session-open hook that returns its own object without metadata leaves me
       provider: "codex",
       cwd: "/project",
       title: null,
+      background: true,
       labels: {},
       metadata: { "linear.issue": { id: "ENG-1" } },
       tools: [],
@@ -196,11 +197,12 @@ test("a session-open hook that returns its own object without metadata leaves me
   );
   expect(result).toMatchObject({
     env: { HOOK: "1" },
+    background: true,
     metadata: { "linear.issue": { id: "ENG-1" } },
   });
 });
 
-test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
+test.each([{ title: "Changed" }, { labels: { changed: "true" } }, { background: true }])(
   "session-open targeting metadata is read-only: %j",
   async (patch) => {
     const hooks = new PluginHookHandlers(() => {});
@@ -215,6 +217,7 @@ test.each([{ title: "Changed" }, { labels: { changed: "true" } }])(
           provider: "codex",
           cwd: "/project",
           title: "Original",
+          background: false,
           labels: {},
           metadata: {},
           tools: [],

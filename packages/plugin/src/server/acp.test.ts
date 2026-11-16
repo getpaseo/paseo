@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
 const temporaryDirectories: string[] = [];
@@ -791,6 +792,170 @@ lines.on("line", (line) => {
     expect(rows.at(-1)).toMatchObject({ type: "tool_call", status: "canceled", error: null });
     await connection.close();
   });
+
+  it.each([
+    { counts: null, context: false, expected: [] },
+    {
+      counts: { totalTokens: 0, inputTokens: 0, outputTokens: 0 },
+      context: false,
+      expected: [
+        {
+          turnId: "acp:first",
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: undefined },
+        },
+      ],
+    },
+    {
+      counts: { totalTokens: 18971, inputTokens: 12152, outputTokens: 78, cachedReadTokens: 6741 },
+      context: true,
+      expected: [
+        {
+          turnId: undefined,
+          usage: { contextWindowUsedTokens: 42, contextWindowMaxTokens: 100, totalCostUsd: 0.25 },
+        },
+        {
+          turnId: "acp:first",
+          usage: {
+            inputTokens: 12152,
+            outputTokens: 78,
+            cachedInputTokens: 6741,
+            contextWindowUsedTokens: 42,
+            contextWindowMaxTokens: 100,
+            totalCostUsd: 0.25,
+          },
+        },
+      ],
+    },
+  ])(
+    "forwards prompt-result usage $counts while preserving context updates: $context",
+    async ({ counts, context, expected }) => {
+      const harness = connectorHarness({
+        handleRequest(instance, message) {
+          if (message.method !== "session/prompt") return false;
+          if (context)
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: {
+                sessionUpdate: "usage_update",
+                used: 42,
+                size: 100,
+                cost: { amount: 0.25, currency: "USD" },
+              },
+            });
+          instance.respond(message, {
+            stopReason: "end_turn",
+            ...(counts ? { usage: counts } : {}),
+          });
+          return true;
+        },
+      });
+      const registration = runAcpProvider({
+        id: "usage-acp",
+        label: "Usage ACP",
+        connector: harness.connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "first",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "hello" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        const usage = events.flatMap((event) =>
+          event.type === "session.usage" ? [{ turnId: event.turnId, usage: event.usage }] : [],
+        );
+        expect(usage).toEqual(expected);
+        const lastUsage = events.findLastIndex((event) => event.type === "session.usage");
+        const completed = events.findIndex(
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        expect(lastUsage).toBeLessThan(completed);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
+  it.each([
+    { status: "failed", output: undefined, error: { message: "Tool failed" } },
+    { status: "failed", output: null, error: { message: "Tool failed" } },
+    {
+      status: "failed",
+      output: { message: "File not found" },
+      error: { message: "File not found" },
+    },
+    { status: "failed", output: "Permission denied", error: "Permission denied" },
+    { status: "completed", output: null, error: null },
+  ] as const)(
+    "keeps a $status ACP tool with output $output valid on the history wire",
+    async ({ status, output, error }) => {
+      const harness = connectorHarness({
+        promptUpdates: () => [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "read-1",
+            title: "Read file",
+            kind: "read",
+            status: "in_progress",
+          },
+          { sessionUpdate: "tool_call_update", toolCallId: "read-1", status, rawOutput: output },
+        ],
+      });
+      const registration = runAcpProvider({
+        id: "tool-history-acp",
+        label: "Tool history ACP",
+        connector: harness.connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "first",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "Read a file" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        const rows = events.flatMap((event) =>
+          event.type === "timeline.item" && event.item.id === "read-1" ? [event.item] : [],
+        );
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+        }
+        expect(rows.at(-1)).toMatchObject({ type: "tool_call", status, error });
+      } finally {
+        await connection.close();
+      }
+    },
+  );
 
   it("serializes configuration mutations", async () => {
     let releaseMutation: (() => void) | null = null;

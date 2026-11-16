@@ -232,6 +232,7 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
   await projectRegistry.initialize();
   const workspaceGitService = createNoopWorkspaceGitService();
   const workspaceProvisioning = createWorkspaceProvisioningService({
+    unarchiveWorkspaceAgents: async () => {},
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,

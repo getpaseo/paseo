@@ -1936,6 +1936,38 @@ export default function contribute(plugin: any) {
     );
   });
 
+  it("reports and removes a plugin it terminated for an invalid message", async () => {
+    const directory = await createPlugin(
+      "invalid-message",
+      `export default function contribute(plugin: unknown) {
+  void plugin;
+  setTimeout(() => process.send?.({ type: "not-a-plugin-message" }), 20);
+  return () => undefined;
+}`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    const exited = new Promise<string>((resolve) => {
+      runtime.subscribe((pluginId, error) => {
+        if (pluginId === "invalid-message" && error) resolve(error);
+      });
+    });
+    await runtime.startPlugin("invalid-message", directory);
+
+    // The runtime kills the process; it must then treat it like any other exited plugin.
+    await expect(exited).resolves.toBe("Plugin process exited: invalid-message");
+    expect(sessions.active.size).toBe(0);
+    expect(runtime.catalog()).toEqual([]);
+    expect(
+      pluginMessages(runtime, "invalid-message").some((message) =>
+        message.includes("sent an invalid message"),
+      ),
+    ).toBe(true);
+    await expect(runtime.invoke("invalid-message", "anything", {})).rejects.toThrow(
+      "Plugin is not available",
+    );
+  });
+
   it("re-attaches a plugin session when the daemon closes the socket under a live child", async () => {
     const directory = await createPlugin(
       "reattaching",

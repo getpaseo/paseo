@@ -29,6 +29,7 @@ import {
   openCompactSidebar,
   openUsageFromIcon,
   openUsageFromItem,
+  openUsageFromItemWithPressFeedback,
   pinRow,
   scrollUsageToWindow,
   setSummaryInSidebar,
@@ -197,7 +198,7 @@ test.describe("Usage item", () => {
     });
 
     await test.step("the summary opens the same sheet", async () => {
-      await openUsageFromItem(page);
+      await openUsageFromItemWithPressFeedback(page);
       await expect(usageModal(page).getByText("Codex", { exact: true })).toBeVisible();
       await expect(page).toHaveURL(startingUrl);
       await qaScreenshot(page, "compact-usage-summary-sheet");
@@ -317,10 +318,11 @@ test.describe("Usage item", () => {
 
     await test.step("pinning Claude 5-hour and Codex weekly shows both in the Usage item", async () => {
       await expect(screen.getByText("Claude", { exact: true })).toBeVisible({ timeout: 10_000 });
-      // One host: no host filter, as on History.
-      await expect(page.locator('[data-testid="usage-host-filter-trigger"]:visible')).toHaveCount(
-        0,
-      );
+      // One host: Settings has no Host row, and the title no host under it.
+      await expect(page.getByTestId("usage-modal-host")).toHaveCount(0);
+      await openUsageOptions(page);
+      await expect(page.getByTestId("usage-options-host")).toHaveCount(0);
+      await closeUsageOptions(page);
       await togglePin(screen, "Claude", "Weekly");
       await expectPinnedUsage(page, ["31% 5h", "7% 5h", "12% wk"]);
       await expect(pinRow(screen, "Claude", "Session")).toBeChecked();

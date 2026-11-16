@@ -125,12 +125,15 @@ test.describe("Tab creation", () => {
   }) => {
     await gotoWorkspace(page, workspace.workspaceId);
     await assertNewTabMenuTriggerVisible(page);
-    await pressNewTabShortcut(page);
     const newTabs = page
       .locator('[data-testid^="workspace-tab-tab_"]')
       .filter({ hasText: "New tab" });
+    // The workspace opens on a New tab of its own; count from the tab the shortcut adds.
     await expect(newTabs.first()).toBeVisible();
-    const countBefore = await newTabs.count();
+    const openedCount = await newTabs.count();
+    await pressNewTabShortcut(page);
+    await expect(newTabs).toHaveCount(openedCount + 1);
+    const countBefore = openedCount + 1;
     const draftCount = await countTabsOfKind(page, "draft");
 
     await test.step("opening the plus menu leaves the current tabs intact", async () => {

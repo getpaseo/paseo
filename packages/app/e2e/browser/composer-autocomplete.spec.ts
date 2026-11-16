@@ -787,9 +787,13 @@ test.describe("Composer autocomplete", () => {
       await input.press("ArrowDown");
       await input.press("ArrowDown");
       await input.press("h");
-      await expect(popover.getByText("/help", { exact: true }).first()).toBeVisible();
+      // On web the search reads the cursor after paint, so the input's value runs ahead of
+      // the list. Wait on the list itself: /tdd is hidden only while the search is "h", and
+      // back only once the search is "" again.
+      await expect(popover.getByText("/tdd", { exact: true })).toHaveCount(0);
       await input.press("Backspace");
       await expect(input).toHaveValue("/");
+      await expect(popover.getByText("/tdd", { exact: true }).first()).toBeVisible();
       await input.press("Enter");
 
       await expect(input).toHaveValue("/tdd ");

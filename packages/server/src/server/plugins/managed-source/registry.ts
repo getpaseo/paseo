@@ -1,7 +1,12 @@
 import {
+  DEFAULT_PLUGIN_REGISTRY_URL,
   PluginRegistryArtifactSchema,
   PluginRegistryIdSchema,
+  PluginRegistryIndexSchema,
+  PublishedPluginDetailSchema,
+  PublishedPluginSchema,
   type PluginRegistries,
+  type PluginRegistryIndex,
   type PluginRegistryIdentity,
 } from "@getpaseo/protocol/plugin-registry";
 import type { PluginUpdateTarget } from "@getpaseo/protocol/messages";
@@ -17,12 +22,9 @@ export interface RegistryOptions {
   defaultUrl?: string;
   registries?: PluginRegistries;
 }
-export async function resolveRegistryPlugin(
-  identity: PluginRegistryIdentity,
-  options: RegistryOptions,
-  install: boolean,
-) {
-  const base = new URL(identity.url);
+/** Request headers for a registry, with its configured credentials. Rejects unsafe bases. */
+function registryHeaders(url: string, options: RegistryOptions): Record<string, string> {
+  const base = new URL(url);
   if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
     throw new Error("Registry base must be an HTTP(S) URL without credentials");
   const authorization = options.registries?.[base.host]?.authorization;
@@ -32,8 +34,67 @@ export async function resolveRegistryPlugin(
     !["localhost", "127.0.0.1", "[::1]"].includes(base.hostname)
   )
     throw new Error("Registry credentials require HTTPS");
-  const headers: Record<string, string> = {};
-  if (authorization) headers.Authorization = authorization;
+  return authorization ? { Authorization: authorization } : {};
+}
+
+function defaultRegistryUrl(options: RegistryOptions): string {
+  return (options.defaultUrl ?? DEFAULT_PLUGIN_REGISTRY_URL).replace(/\/+$/, "");
+}
+
+/** Reads a display document from the default registry; never used to choose what installs. */
+async function readRegistryDocument(options: RegistryOptions, path: string): Promise<unknown> {
+  const base = defaultRegistryUrl(options);
+  const url = `${base}/${path}`;
+  // Built before the request, so a registry setup error reaches the user instead of "Retry later".
+  const headers = registryHeaders(base, options);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (cause) {
+    throw new Error(`Could not reach plugin registry ${url}. Retry later.`, { cause });
+  }
+  if (!response.ok) throw new Error(`Plugin registry returned ${response.status} for ${path}`);
+  return response.json();
+}
+
+// Listings are read one by one, so a listing this host cannot read leaves the rest browsable.
+const RegistryIndexDocumentSchema = PluginRegistryIndexSchema.extend({
+  plugins: z.array(z.unknown()),
+});
+
+/** The default registry's plugin directory, for browsing, without listings this host cannot read. */
+export async function listRegistryPlugins(options: RegistryOptions): Promise<PluginRegistryIndex> {
+  const index = RegistryIndexDocumentSchema.parse(
+    await readRegistryDocument(options, "index.json"),
+  );
+  const plugins = index.plugins.flatMap((listing) => {
+    const parsed = PublishedPluginSchema.safeParse(listing);
+    return parsed.success ? [parsed.data] : [];
+  });
+  return { ...index, plugins };
+}
+
+/** One listing with its overview, for the plugin's page. */
+export async function getRegistryPlugin(id: string, options: RegistryOptions) {
+  const pluginId = PluginRegistryIdSchema.parse(id);
+  const plugin = PublishedPluginDetailSchema.parse(
+    await readRegistryDocument(options, `plugins/${pluginId}.json`),
+  );
+  if (plugin.id !== pluginId) throw new Error("Registry returned a different plugin ID");
+  return plugin;
+}
+
+export async function resolveRegistryPlugin(
+  identity: PluginRegistryIdentity,
+  options: RegistryOptions,
+  install: boolean,
+) {
+  const base = new URL(identity.url);
+  const headers = registryHeaders(identity.url, options);
   if (install) headers["X-Paseo-Install"] = "1";
   const url = `${identity.url.replace(/\/+$/, "")}/plugins/${identity.id}.json`;
   let response: Response;

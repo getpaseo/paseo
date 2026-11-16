@@ -1,3 +1,5 @@
+import { pluginGallery } from "./plugin-gallery";
+
 export const en = {
   pluginCombobox: {
     searching: "Searching…",
@@ -86,14 +88,23 @@ export const en = {
       close: "Close menu",
     },
     commandCenter: {
-      placeholder: "Search commands, files, workspaces, and agents...",
+      placeholder: "Search workspaces, files, and actions...",
+      placeholderWithoutFiles: "Search workspaces and actions...",
       filePlaceholder: "Search files...",
+      workspacePlaceholder: "Search workspaces...",
+      actionPlaceholder: "Search actions...",
       searchingFiles: "Searching files...",
       noMatches: "No matches",
       actions: "Actions",
       files: "Files",
       workspaces: "Workspaces",
-      agents: "Agents",
+      recentWorkspaces: "Recent workspaces",
+      tabs: {
+        all: "All",
+        workspaces: "Workspaces",
+        files: "Files",
+        actions: "Actions",
+      },
       newAgent: "New agent",
       open: "Open {{name}}",
       openInSidePane: "Open {{name}} in side pane",
@@ -257,7 +268,7 @@ export const en = {
     states: {
       notFound: "Agent not found",
       failedToLoad: "Failed to load agent",
-      reconnecting: "Reconnecting to host",
+      reconnecting: "Reconnecting",
       updating: "Updating messages",
       timelineSyncFailed: "Couldn't refresh agent history.",
       timelineSyncRetrying: "Retrying…",
@@ -2227,6 +2238,7 @@ export const en = {
     turnOn: "Turn on",
 
     options: "Settings",
+    host: "Host",
     refreshFailed: "Unable to refresh usage",
     noHosts: "No connected hosts",
     agentError: "Unable to load usage: {{reason}}",
@@ -2243,6 +2255,8 @@ export const en = {
     loginExpired: "Login expired {{relativeTime}}. {{remedy}}",
     title: "Plan usage",
     refresh: "Refresh",
+    reorderCard: "Reorder {{source}}",
+    showCard: "Show {{source}}",
     refreshAll: "Refresh all",
     refreshing: "Refreshing...",
     loading: "Loading usage...",
@@ -2409,6 +2423,7 @@ export const en = {
       host: "Overview",
     },
     plugins: {
+      gallery: pluginGallery.en,
       title: "Plugins",
       screens: {
         open: "Open",
@@ -2446,21 +2461,22 @@ export const en = {
         enabling: "Enabling…",
         disable: "Disable",
         disabling: "Disabling…",
-        remove: "Remove",
-        removing: "Removing…",
+        remove: "Uninstall",
+        removing: "Uninstalling…",
       },
       feedback: {
         installed: "Installed {{name}}",
         reload: "Reloaded {{name}}",
         enable: "Enabled {{name}}",
         disable: "Disabled {{name}}",
-        remove: "Removed {{name}}",
+        remove: "Uninstalled {{name}}",
         kept: "Kept {{name}}",
         globalEnabled: "Plugins enabled",
         globalDisabled: "Plugins disabled",
       },
-      removeConfirmTitle: "Remove {{name}}?",
-      removeConfirmMessage: "This removes the configuration. The source directory is not deleted.",
+      removeConfirmTitle: "Uninstall {{name}}?",
+      removeConfirmMessage: "Its download and settings on this host are deleted.",
+      removeConfirmLocalMessage: "Its settings are deleted. Its folder stays on disk.",
       states: {
         offlineTitle: "Plugin host is offline",
         offlineDescription: "Reconnect to this host to manage its plugins.",

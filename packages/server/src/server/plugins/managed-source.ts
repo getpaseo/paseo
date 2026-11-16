@@ -2,7 +2,12 @@ import {
   PluginRegistryIdentitySchema,
   parsePluginRegistryReference,
 } from "@getpaseo/protocol/plugin-registry";
-import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
+import {
+  getRegistryPlugin,
+  listRegistryPlugins,
+  resolveRegistryPlugin,
+  type RegistryOptions,
+} from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, realpath, rename, rm } from "node:fs/promises";
@@ -355,6 +360,14 @@ export class ManagedPluginSources {
       if (!isSameNpmArtifact({ installed: artifact, target }))
         throw new Error("Preparation changed the reviewed npm artifact");
     }
+  }
+
+  listRegistry() {
+    return listRegistryPlugins(this.registryOptions);
+  }
+
+  getRegistryPlugin(id: string) {
+    return getRegistryPlugin(id, this.registryOptions);
   }
 
   async status(pluginId: string, configuredPath: string): Promise<PluginSourceStatusItem> {

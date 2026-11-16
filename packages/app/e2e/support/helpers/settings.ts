@@ -106,6 +106,33 @@ export async function changeSettingsInterfaceFontSize(page: Page, size: number):
   await input.fill(String(size));
   await input.press("Tab");
   await expect(input).toHaveValue(String(size));
+  await expect(
+    page.getByRole("navigation", { name: "Settings" }).getByText("Appearance", { exact: true }),
+  ).toHaveCSS("font-size", `${size}px`);
+}
+
+export async function changeSettingsInterfaceFontSizeKeepingSidebarPosition(
+  page: Page,
+  size: number,
+): Promise<number> {
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  const anchor = navigation.getByRole("button", { name: "About", exact: true });
+  const before = await anchor.evaluate((node) => ({
+    top: node.getBoundingClientRect().top,
+    height: node.getBoundingClientRect().height,
+  }));
+  await changeSettingsInterfaceFontSize(page, size);
+  // Larger fonts reflow rows. Preserve the visible destination, rather than its old pixel offset.
+  await expect
+    .poll(() =>
+      anchor.evaluate((node, top) => Math.abs(node.getBoundingClientRect().top - top), before.top),
+    )
+    .toBeLessThan(before.height);
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
 }
 
 export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
@@ -612,4 +639,193 @@ export async function expectRestartRecoveryPrompt(page: Page, prompt: string) {
   );
   await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(sheet).toHaveCount(0);
+}
+
+export async function revealSettingsSyntaxTheme(page: Page) {
+  await page.getByLabel(/Highlight theme:/).scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-detail-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  const keywordColor = await page
+    .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+    .getByText("export", { exact: true })
+    .first()
+    .evaluate((node) => getComputedStyle(node).color);
+  return { offset, keywordColor };
+}
+
+export async function changeSettingsSyntaxTheme(page: Page, theme: string): Promise<void> {
+  await page.getByLabel(/Highlight theme:/).click();
+  await page.getByRole("menuitem", { name: theme, exact: true }).click();
+  await expect(page.getByLabel(`Highlight theme: ${theme}`, { exact: true })).toBeVisible();
+}
+
+export async function expectSettingsSyntaxColorChanged(
+  page: Page,
+  previousColor: string,
+): Promise<void> {
+  await expect(
+    page
+      .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+      .getByText("export", { exact: true })
+      .first(),
+  ).not.toHaveCSS("color", previousColor);
+}
+
+export async function changeSettingsTypography(page: Page): Promise<void> {
+  const input = page.getByRole("textbox", { name: "Interface font size", exact: true });
+  await input.fill("18");
+  await input.press("Enter");
+  await expect(input).toHaveValue("18");
+  await expect(input).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Code size", { exact: true })).toHaveCSS("font-size", "18px");
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  await expect(navigation.getByText("Appearance", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(navigation.getByText("Providers", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Dracula", { exact: true })).toHaveCSS("font-size", "18px");
+  const familyInput = page.getByRole("textbox", { name: "Code font family", exact: true });
+  await familyInput.fill("Courier New, Courier, monospace");
+  await familyInput.press("Enter");
+  const codeInput = page.getByRole("textbox", { name: "Code font size", exact: true });
+  await codeInput.fill("16");
+  await codeInput.press("Enter");
+  await expect(codeInput).toHaveValue("16");
+  const preview = page.getByRole("img", {
+    name: "Live preview of content typography, syntax theme, and code font",
+  });
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS("font-size", "16px");
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "line-height",
+    "24px",
+  );
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "font-family",
+    /Courier/,
+  );
+  const contentInput = page.getByRole("textbox", { name: "Content font size", exact: true });
+  await contentInput.fill("20");
+  await contentInput.press("Enter");
+  await expect(preview.getByText("Readable content and code preview", { exact: true })).toHaveCSS(
+    "font-size",
+    "20px",
+  );
+}
+
+export async function normalizeSettingsFontSizes(page: Page): Promise<void> {
+  for (const [name, minimum, maximum] of [
+    ["Interface font size", "10", "21"],
+    ["Content font size", "10", "21"],
+    ["Code font size", "9", "22"],
+  ] as const) {
+    const input = page.getByRole("textbox", { name, exact: true });
+    await input.fill("999");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    // Clamp again when the saved value is already at the maximum.
+    await input.fill("999");
+    await input.press("Tab");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("1");
+    await input.press("Enter");
+    await expect(input).toHaveValue(minimum);
+    await input.fill("1");
+    await input.press("Tab");
+    await expect(input).toHaveValue(minimum);
+  }
+}
+
+/** Sample actual paints, including the first workspace frame after Settings. */
+export async function captureCompactSidebarReturn(page: Page, returnAction: () => Promise<void>) {
+  await page.evaluate(() => {
+    const capture = {
+      frames: [] as {
+        time: number;
+        pathname: string;
+        sidebarVisible: boolean;
+        settingsVisible: boolean;
+        closeX: number | null;
+      }[],
+      stopped: false,
+    };
+    Object.assign(window, { __sidebarFrameCapture: capture });
+    const start = performance.now();
+    function sample() {
+      if (capture.stopped) return;
+      const close = document.querySelector('[data-testid="sidebar-close"]');
+      capture.frames.push({
+        time: performance.now() - start,
+        pathname: location.pathname,
+        settingsVisible:
+          document
+            .querySelector('[data-testid="settings-sidebar"]')
+            ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false,
+        sidebarVisible:
+          (close?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false) &&
+          close!.getBoundingClientRect().x >= 0 &&
+          close!.getBoundingClientRect().right <= innerWidth,
+        closeX: close?.getBoundingClientRect().x ?? null,
+      });
+      requestAnimationFrame(sample);
+    }
+    requestAnimationFrame(sample);
+  });
+  await returnAction();
+  return page.evaluate(async () => {
+    const capture = (
+      window as typeof window & {
+        __sidebarFrameCapture: {
+          frames: {
+            time: number;
+            pathname: string;
+            sidebarVisible: boolean;
+            settingsVisible: boolean;
+            closeX: number | null;
+          }[];
+          stopped: boolean;
+        };
+      }
+    ).__sidebarFrameCapture;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+    capture.stopped = true;
+    return capture.frames;
+  });
+}
+
+export async function captureCompactSidebarContext(page: Page) {
+  const sidebar = await page.getByTestId("sidebar-project-workspace-list-scroll").elementHandle();
+  if (!sidebar) throw new Error("Open sidebar has no workspace list");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
+  const offset = await sidebar.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop;
+  });
+  expect(offset).toBeGreaterThan(0);
+  return async () => {
+    expect(await sidebar.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(offset);
+    await sidebar.dispose();
+  };
+}
+
+export async function expectCompactSidebarOpen(page: Page) {
+  await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeInViewport();
+}
+
+export async function closeCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Close sidebar", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open menu", exact: true }).first(),
+  ).toBeInViewport();
+}
+
+export async function openSettingsFromCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectAppRoute(page, buildSettingsRoute());
+  await expectCompactSettingsList(page);
 }

@@ -770,7 +770,11 @@
   --color-mock-tile-violet: #7a6aa8;
   --color-mock-tile-amber: #8f7838;
   --color-mock-tile-teal: #368080;
+  /* Host badge ink — the identity colors as foreground, IDENTITY_FOREGROUND_DARK in the
+     same file. */
   --color-mock-host-teal: #6cacab;
+  --color-mock-host-violet: #a392d5;
+  --color-mock-host-orange: #cc8f64;
 
   /* Status *dot* band (dark: L=0.72, chroma 90%). Sidebar row state dots only.
      theme.ts:198-204. */

@@ -370,6 +370,17 @@ describe("plugin agent tools SDK boundary", () => {
             ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
           } };
         });
+        server.addHook("agent.open.before", async ({ request }) => {
+          const background: boolean = request.background;
+          if (background) return;
+          // A hook written before background and metadata returns its own object without them.
+          return {
+            agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+            cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+            labels: request.labels, tools: request.tools, env: request.env,
+            mcpServers: request.mcpServers,
+          };
+        });
         return () => {};
       }
     `),
@@ -382,6 +393,7 @@ describe("lifecycle hook SDK types", () => {
     expect(
       typeErrors(`
       import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
           if (request.kind === "checkout-branch") {
@@ -415,8 +427,17 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
-        server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
+        server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
+          const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
+          // @ts-expect-error Turn payloads carry no history; read it from the agent's timeline.
+          event.timeline;
+          const turn = await paseo.agents
+            .ref(agent.id)
+            .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+          const items: readonly AgentTimelineItem[] = turn.entries
+            .filter((entry) => entry.turnId === event.turnId)
+            .map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });
@@ -429,6 +450,12 @@ describe("lifecycle hook SDK types", () => {
         // @ts-expect-error A prepare handler must return the whole request or undefined.
         server.addHook("agent.create.before", async () => ({ invalid: true }));
         server.before("agent.session_open", ({ request }) => request);
+        server.before("agent.session_open", ({ request }) => ({
+          agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+          cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+          labels: request.labels, metadata: request.metadata, tools: request.tools, env: request.env,
+          mcpServers: request.mcpServers,
+        }));
         server.on("agent.turn_ended", () => {});
         return () => {};
       }
