@@ -105,7 +105,7 @@ paseo workspace create \
 
 插件可以通过 [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) 在 setup、终端和第一个 Agent 运行之前写入文件。
 
-`setup` 在 worktree 创建后运行一次。使用 setup 安装依赖并初始化项目。使用 [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) 复制 `.env` 等被忽略的文件。`teardown` 在归档期间、目录被删除之前运行。
+`setup` 在 worktree 创建后运行一次。使用 setup 安装依赖并初始化项目。使用 [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) 复制 `.env` 等被忽略的文件。`teardown` 在归档期间、目录被删除之前运行。它的所有命令共用 45 秒的时限。如果某个命令失败，或到时限仍在运行而被停止，工作区仍会归档，worktree 则保留在磁盘上。
 
 ```json
 {

@@ -146,6 +146,20 @@ export class WorktreeSetupError extends Error {
 
 export type WorktreeTeardownCommandResult = WorktreeSetupCommandResult;
 
+// Archive waits for teardown before it answers, and the app gives up on an archive request after
+// 60 seconds (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). Keep this deadline under that.
+const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 45_000;
+let worktreeTeardownTimeoutMs = DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS;
+
+// Daemon tests archive in process and can't wait out the real deadline.
+export function __setWorktreeTeardownTimeoutForTests(timeoutMs: number): void {
+  worktreeTeardownTimeoutMs = timeoutMs;
+}
+
+export function __resetWorktreeTeardownTimeoutForTests(): void {
+  worktreeTeardownTimeoutMs = DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS;
+}
+
 export class WorktreeTeardownError extends Error {
   readonly results: WorktreeTeardownCommandResult[];
 
@@ -767,17 +781,27 @@ export async function runWorktreeTeardownCommands(options: {
     }),
   );
 
+  // One deadline covers every command. A command still running then is stopped with its process
+  // tree and counts as failed, which keeps the worktree. Output streams instead of filling a
+  // buffer, so a command that prints a lot still succeeds.
+  const timeoutMs = worktreeTeardownTimeoutMs;
+  const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
+  for (const [index, cmd] of teardownCommands.entries()) {
+    const result = await execSetupCommandStreamed({
+      command: cmd,
       cwd: teardownCwd,
       env: teardownEnv,
+      index: index + 1,
+      total: teardownCommands.length,
+      signal: deadline,
     });
     results.push(result);
 
     if (result.exitCode !== 0) {
+      const reason = deadline.aborted ? `Timed out after ${timeoutMs / 1000}s` : result.stderr;
       throw new WorktreeTeardownError(
-        `Worktree teardown command failed: ${cmd}\n${result.stderr}`.trim(),
+        `Worktree teardown command failed: ${cmd}\n${reason}`.trim(),
         results,
       );
     }
