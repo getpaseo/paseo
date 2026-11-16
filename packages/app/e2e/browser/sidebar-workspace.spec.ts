@@ -718,3 +718,31 @@ test.describe("Half-screen desktop layout", () => {
     }
   });
 });
+
+// An iPad in the browser runs the desktop layout with the sidebar pinned, but it can't hover,
+// and iOS Safari fires no contextmenu event for a long press. The kebab is the only way in.
+test.describe("Workspace row menu on a wide touch screen", () => {
+  test.use({ viewport: { width: 1194, height: 834 }, isMobile: true, hasTouch: true });
+
+  test("shows the row's menu button without hovering and opens it with a tap", async ({
+    page,
+  }, info) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-touch-menu-" });
+    const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarWorkspace(page, workspace.workspaceId);
+      const kebab = page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`);
+      await expect(kebab).toBeVisible({ timeout: 30_000 });
+      await expect(kebab).toHaveCSS("opacity", "1");
+      await page.screenshot({ path: info.outputPath("touch-sidebar-row-menu.png") });
+      await kebab.tap();
+      await expect(
+        page.getByTestId(`sidebar-workspace-menu-copy-path-${workspaceKey}`),
+      ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});

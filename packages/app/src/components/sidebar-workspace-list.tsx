@@ -55,6 +55,7 @@ import {
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { useProjectIcons } from "@/projects/icons";
 import {
   buildNewWorkspaceRoute,
@@ -427,7 +428,10 @@ function ProjectRowTrailingActions({
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint;
+  // A touch screen can't hover, so its row actions are always shown (an iPad in the browser
+  // runs the desktop layout but has no other way to reach them).
+  const { touchScreen } = usePointerCapabilities();
+  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || touchScreen;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -1079,6 +1083,9 @@ function WorkspaceRowInner({
   const isCompact = useIsCompactFormFactor();
   const [isHighlighted, setIsHighlighted] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
+  const { touchScreen } = usePointerCapabilities();
+  // The row menu opens from the kebab only; a touch screen can't hover to reveal it.
+  const showsTouchActions = isTouchPlatform || touchScreen;
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1173,7 +1180,7 @@ function WorkspaceRowInner({
                   workspace={workspace}
                   backdrop={backdrop}
                   isHovered={isHovered}
-                  isTouchPlatform={isTouchPlatform}
+                  isTouchPlatform={showsTouchActions}
                   isCreating={isCreating}
                   showShortcutBadge={showShortcutBadge}
                   shortcutNumber={shortcutNumber}
