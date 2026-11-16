@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -39,7 +39,7 @@ afterEach(async () => {
   );
 });
 
-async function harness(env: Record<string, string> = {}) {
+async function harness(env: Record<string, string> = {}, registration = provider) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "antigravity-test-"));
   temporary.push(cwd);
   const log = path.join(cwd, "argv.ndjson");
@@ -48,7 +48,7 @@ async function harness(env: Record<string, string> = {}) {
     args: [fake, "--launch-prefix"],
     env: { AGY_TEST_LOG: log, ...env },
   };
-  const connection = await provider.connect({
+  const connection = await registration.connect({
     versions: [1],
     capabilities: PROVIDER_CAPABILITIES,
     launch,
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -508,7 +512,7 @@ it("defers model and mode changes until the next prompt, then respawns with vali
   );
 });
 
-it("resumes after connection close without replay or another system prefix", async () => {
+it("resumes after connection close without another system prefix", async () => {
   const first = await harness();
   await first.open();
   await first.completed(await first.prompt("HELLO"));
@@ -516,7 +520,6 @@ it("resumes after connection close without replay or another system prefix", asy
   await first.connection.close();
   const second = await harness();
   await second.open(persistence);
-  expect(second.events.filter((event) => event.type === "timeline.item")).toEqual([]);
   await second.completed(await second.prompt("RESUME"));
   expect(
     (await second.records())
@@ -565,6 +568,240 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
       },
     }),
   ).rejects.toThrow(/prompt.steer/);
+});
+
+describe("history replay", () => {
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const stored: ProviderPersistence = { version: 1, data: { conversationId } };
+  const fullAccess = (event: ProviderEvent) =>
+    event.type === "session.notice" && event.notice.id === "s:full-access";
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+      throw error;
+    }
+  }
+  function opening(events: ProviderEvent[]) {
+    const opened = events.findIndex((event) => event.type === "session.opened");
+    const ready = events.findIndex((event) => event.type === "session.ready");
+    expect(opened).toBeGreaterThanOrEqual(0);
+    expect(ready).toBeGreaterThan(opened);
+    return events.slice(opened + 1, ready);
+  }
+  function items(events: ProviderEvent[]) {
+    return events.flatMap((event) => (event.type === "timeline.item" ? [event.item] : []));
+  }
+
+  it("replays the stored conversation between opened and ready, then starts the native driver", async () => {
+    const h = await harness();
+    await h.open(stored);
+    const id = (index: number) => `${conversationId}:history:${index}`;
+    const between = opening(h.events);
+    expect(items(between)).toEqual([
+      { type: "user_message", id: id(0), messageId: id(0), text: "List the files." },
+      { type: "reasoning", id: id(1), text: "Listing the workspace.\n\nThen reading README." },
+      {
+        type: "tool_call",
+        id: id(2),
+        callId: "call_1001",
+        name: "run_command",
+        detail: {
+          type: "shell",
+          command: "ls",
+          output: "Command exited with code 0.\n\nCommand output:\nREADME.md\n",
+        },
+        status: "completed",
+        error: null,
+      },
+      {
+        type: "tool_call",
+        id: id(3),
+        callId: "call_1002",
+        name: "view_file",
+        detail: { type: "read", filePath: "/workspace/README.md", content: "# Fixture\n" },
+        status: "completed",
+        error: null,
+      },
+      { type: "reasoning", id: id(4), text: "Reading README." },
+      {
+        type: "assistant_message",
+        id: id(5),
+        messageId: id(5),
+        text: "There is one file, README.md.",
+      },
+      { type: "user_message", id: id(6), messageId: id(6), text: "Edit it. Then stop." },
+      {
+        type: "tool_call",
+        id: id(7),
+        callId: "call_1003",
+        name: "write_to_file",
+        detail: { type: "write", filePath: "/workspace/README.md" },
+        status: "completed",
+        error: null,
+      },
+      {
+        type: "tool_call",
+        id: id(8),
+        callId: "call_1004",
+        name: "run_command",
+        detail: {
+          type: "shell",
+          command: "sleep 100",
+          output: "Command was terminated by signal or canceled.\n\nNo output from the command.",
+        },
+        status: "failed",
+        error: "Command was terminated by signal or canceled.\n\nNo output from the command.",
+      },
+      {
+        type: "tool_call",
+        id: id(9),
+        callId: "call_1005",
+        name: "manage_task",
+        detail: { type: "unknown", input: { Action: "list" }, output: "" },
+        status: "canceled",
+        error: null,
+      },
+      { type: "assistant_message", id: id(10), messageId: id(10), text: "Done." },
+    ]);
+    // History precedes this open's warning, and replay never forms a live run.
+    expect(between.findIndex(fullAccess)).toBe(
+      between.findLastIndex((e) => e.type === "timeline.item") + 1,
+    );
+    expect(
+      h.events.filter((event) =>
+        ["session.turn", "session.usage", "session.prompt_result"].includes(event.type),
+      ),
+    ).toEqual([]);
+    expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(1);
+    expect(h.persistence()).toEqual(stored);
+
+    const records = await h.records();
+    const acp = records.find((entry) => entry.args?.includes("acp"));
+    expect(acp).toEqual({ args: ["--launch-prefix", "acp"], pid: acp.pid, env: "session-overlay" });
+    expect(records.filter((entry) => entry.acp)).toEqual([
+      {
+        acp: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: false, writeTextFile: false },
+            terminal: false,
+          },
+        },
+      },
+      { acp: "session/load", params: { sessionId: conversationId, cwd: h.cwd, mcpServers: [] } },
+      {
+        acp: "response",
+        message: {
+          jsonrpc: "2.0",
+          id: "agent-1",
+          error: { code: -32601, message: "Paseo only reads Antigravity history" },
+        },
+      },
+      { acp: "eof" },
+    ]);
+    // The ACP process is gone before the driver resumes the same conversation.
+    expect(alive(acp.pid)).toBe(false);
+    const eof = records.findIndex((entry) => entry.acp === "eof");
+    const driver = records.findIndex((entry) => entry.args?.includes("--input-format"));
+    expect(driver).toBeGreaterThan(eof);
+    expect(records[driver].args.slice(-2)).toEqual(["--conversation", conversationId]);
+    await h.completed(await h.prompt("RESUME"));
+    expect(
+      records.filter((entry) => entry.input).map((entry) => entry.input.message.content),
+    ).toEqual([]);
+    expect(
+      (await h.records())
+        .filter((entry) => entry.input)
+        .map((entry) => entry.input.message.content),
+    ).toEqual(["RESUME"]);
+  });
+
+  it("starts no ACP process for skip or for a conversation that does not exist yet", async () => {
+    const h = await harness();
+    await h.open(stored, "s", "skip");
+    await h.open(undefined, "fresh");
+    expect(h.events.filter((event) => event.type === "session.ready")).toHaveLength(2);
+    expect(h.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+    expect(
+      h.events
+        .filter((event) => event.type === "session.notice")
+        .map((event) => event.type === "session.notice" && event.notice.id),
+    ).toEqual(["s:full-access", "fresh:full-access"]);
+    const records = await h.records();
+    expect(records.filter((entry) => entry.args?.includes("acp") || entry.acp)).toEqual([]);
+    expect(records.filter((entry) => entry.args?.includes("--version"))).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "a failed load",
+      env: { AGY_TEST_ACP: "error" },
+      reason: "Antigravity authentication failed. Run `agy` and sign in, then retry.",
+      signals: [],
+    },
+    {
+      name: "a load that never answers",
+      env: { AGY_TEST_ACP: "hang" },
+      reason: "Antigravity did not load the conversation in time",
+      // A hung server ignores EOF; Windows ends the tree without signal handlers.
+      signals: process.platform === "win32" ? [] : [{ signal: "SIGTERM" }],
+    },
+  ])(
+    "opens without history after $name and ends the ACP process",
+    async ({ env, reason, signals }) => {
+      const h = await harness(
+        env,
+        createAntigravityProvider({ historyTimeoutMs: 300, historySettleMs: 1000 }),
+      );
+      await h.open(stored);
+      const between = opening(h.events);
+      expect(between.filter((event) => event.type === "timeline.item")).toEqual([]);
+      expect(between.filter((event) => event.type === "session.notice")).toEqual([
+        expect.objectContaining({ notice: expect.objectContaining({ id: "s:full-access" }) }),
+        {
+          type: "session.notice",
+          sessionId: "s",
+          notice: {
+            id: "s:history",
+            severity: "warning",
+            title: "Earlier Antigravity messages could not be loaded",
+            description: reason,
+          },
+        },
+      ]);
+      const records = await h.records();
+      const acp = records.find((entry) => entry.args?.includes("acp"));
+      expect(alive(acp.pid)).toBe(false);
+      expect(records.filter((entry) => entry.signal)).toEqual(signals);
+      const eof = records.findIndex((entry) => entry.acp === "eof");
+      const driver = records.findIndex((entry) => entry.args?.includes("--input-format"));
+      expect(driver).toBeGreaterThan(eof);
+      await h.completed(await h.prompt("RESUME"));
+    },
+  );
+
+  it("explains that agy before 1.5.0 cannot replay, without starting ACP", async () => {
+    const h = await harness({ AGY_TEST_VERSION: "1.4.12" });
+    await h.open(stored);
+    expect(h.events.filter((event) => event.type === "timeline.item")).toEqual([]);
+    expect(h.events).toContainEqual({
+      type: "session.notice",
+      sessionId: "s",
+      notice: {
+        id: "s:history",
+        severity: "warning",
+        title: "Earlier Antigravity messages could not be loaded",
+        description:
+          "Update `agy` to 1.5.0 or later to show messages from before this chat reopened.",
+      },
+    });
+    expect((await h.records()).filter((entry) => entry.args?.includes("acp"))).toEqual([]);
+    expect(h.events.filter((event) => event.type === "session.ready")).toHaveLength(1);
+  });
 });
 
 describe("discovery", () => {
@@ -688,6 +925,25 @@ describe("process signal plans", () => {
       });
     },
   );
+  it.each(["ESRCH", "EPERM"])("accepts a group the OS refuses with %s", (code) => {
+    const sent: Array<[number, NodeJS.Signals]> = [];
+    const kill = (pid: number, signal: NodeJS.Signals) => {
+      sent.push([pid, signal]);
+      throw Object.assign(new Error(`kill ${code}`), { code });
+    };
+    expect(() =>
+      signalProcess({ platform: "darwin", pid: 123, signal: "SIGKILL", kill }),
+    ).not.toThrow();
+    expect(sent).toEqual([[-123, "SIGKILL"]]);
+  });
+  it("reports any other failure to signal the group", () => {
+    const kill = () => {
+      throw Object.assign(new Error("kill EINVAL"), { code: "EINVAL" });
+    };
+    expect(() => signalProcess({ platform: "darwin", pid: 123, signal: "SIGTERM", kill })).toThrow(
+      "kill EINVAL",
+    );
+  });
 });
 
 describe("image prompts", () => {

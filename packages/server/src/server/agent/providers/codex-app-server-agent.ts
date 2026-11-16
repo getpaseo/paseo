@@ -8,6 +8,7 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
+  type AgentHistoryReplayOptions,
   type AgentOptionControl,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
@@ -102,6 +103,7 @@ import {
   type CodexHistoryRow,
   CodexThreadHistoryTooLargeError,
   readCodexThreadHistory,
+  readCodexThreadHistoryPage,
 } from "./codex/thread-history.js";
 import {
   materializeProviderImage,
@@ -2204,9 +2206,13 @@ async function projectCodexThreadHistory(
     timeline: PersistedTimelineEntry[];
     subAgentTimelineIndexByThreadId: Map<string, number>;
   },
+  rows: AsyncIterable<CodexHistoryRow> | Iterable<CodexHistoryRow> = readCodexThreadHistory(
+    params.client,
+    params.threadId,
+  ),
 ): Promise<void> {
   const { timeline, subAgentTimelineIndexByThreadId } = projection;
-  for await (const row of readCodexThreadHistory(params.client, params.threadId)) {
+  for await (const row of rows) {
     const { item } = row;
     const historicalSubAgentActivity = readCodexSubAgentActivity(item);
     if (historicalSubAgentActivity) {
@@ -3617,6 +3623,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     promise: Promise<void>;
     resolve: () => void;
     cancelRequested: boolean;
+    cancel: () => void;
   } | null = null;
   private client: CodexAppServerClient | null = null;
   private readonly background = new CodexBackgroundInventory((event) => this.emitEvent(event));
@@ -3638,8 +3645,13 @@ export class CodexAppServerAgentSession implements AgentSession {
   private stagedHistory: CodexThreadHistory | null = null;
   // Collects provider subagent events emitted while a thread history read rebuilds routes.
   private historySubagentEvents: AgentStreamEvent[] | null = null;
+  private initialHistoryTask: Promise<CodexThreadHistory> | null = null;
+  private initialHistoryClaimed = false;
+  private historicalChildRestoreTask: Promise<void> | null = null;
+  private historicalChildrenPending = false;
   // A resumed thread's earlier turns and sub-agents are known only after reading its history.
   private historyIndexed = true;
+  private historyIndexTask: Promise<void> | null = null;
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
   private mcpElicitationPermissionIds = new Map<number, string>();
   private pendingPermissionHandlers = new Map<string, CodexPendingPermissionHandler>();
@@ -3697,6 +3709,12 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionItemCompletions = 0;
   private connectionState: "disconnected" | "history-ready" | "connected" = "disconnected";
   private connectionPromise: Promise<void> | null = null;
+  // Progressive history pages share one read-only app-server. Starting a new
+  // process for every page serializes large threads behind the global startup
+  // lane and can make a tail read exceed the client timeout.
+  private historyClient: CodexAppServerClientLike | null = null;
+  private historyReadsInFlight = 0;
+  private historyClientPromise: Promise<CodexAppServerClientLike> | null = null;
   private readonly startupAbort = new AbortController();
   private closed = false;
   private collaborationModes: Array<{
@@ -3753,6 +3771,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.config = config;
     this.harnessEnvironment = deps.environment ?? buildCodexAppServerEnv();
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
+    this.historicalChildrenPending = resumeHandle?.metadata?.codexHistoryChildrenPending === true;
     this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     this.requestedServiceTier = readCodexServiceTier(this.providerOptions);
@@ -3809,7 +3828,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private async establishConnection(): Promise<void> {
     if (this.initialResumePurpose === "history") {
-      this.stagedHistory = await this.readArchivedHistory();
+      // The history caller must choose its replay mode before any child reads.
       this.connectionState = "history-ready";
       return;
     }
@@ -4192,7 +4211,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private async readArchivedHistory(): Promise<CodexThreadHistory> {
+  private async readArchivedHistory(deferChildren = false): Promise<CodexThreadHistory> {
     const { client } = await codexAppServerStartup.start({
       stateDirKey: codexStartupStateDirKey(this.harnessEnvironment),
       spawn: this.spawnAppServer,
@@ -4202,10 +4221,32 @@ export class CodexAppServerAgentSession implements AgentSession {
       logger: this.logger,
       signal: this.startupAbort.signal,
     });
-    try {
-      return await this.readThreadHistory(client);
-    } finally {
+    if (this.closed) {
       await client.dispose();
+      throw this.createClosedError();
+    }
+    this.client = client;
+    let disposeAfterChildren = false;
+    try {
+      const history = await this.readThreadHistory(client, deferChildren);
+      const children = this.historicalChildRestoreTask;
+      if (children) {
+        disposeAfterChildren = true;
+        void children
+          .finally(async () => {
+            if (this.client === client) this.client = null;
+            await client.dispose();
+          })
+          .catch((error: unknown) => {
+            this.logger.warn({ err: error }, "Failed to close Codex history reader");
+          });
+      }
+      return history;
+    } finally {
+      if (!disposeAfterChildren) {
+        if (this.client === client) this.client = null;
+        await client.dispose();
+      }
     }
   }
 
@@ -4213,7 +4254,9 @@ export class CodexAppServerAgentSession implements AgentSession {
   // sub-agent routes. The caller owns the returned history; nothing retains it.
   private async readThreadHistory(
     client: CodexAppServerClientLike | null,
+    deferChildren = false,
   ): Promise<CodexThreadHistory> {
+    if (!deferChildren) await this.historicalChildRestoreTask;
     if (!client || !this.currentThreadId) {
       return { timeline: [], providerSubagentEvents: [] };
     }
@@ -4226,11 +4269,33 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.subAgentCallIdByChildThreadId.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
     const providerSubagentEvents: AgentStreamEvent[] = [];
-    this.historySubagentEvents = providerSubagentEvents;
-    try {
-      await this.loadPersistedSubAgentHistories(client, subAgentRoutes);
-    } finally {
-      this.historySubagentEvents = null;
+    if (deferChildren && subAgentRoutes.length > 0) {
+      // Commit the parent independently; child history continues over the existing
+      // subagent event stream. Retain a checkpoint if the runtime closes mid-read.
+      this.historicalChildrenPending = true;
+      const task = this.loadPersistedSubAgentHistories(client, subAgentRoutes);
+      this.historicalChildRestoreTask = task;
+      void task
+        .then(
+          () => {
+            if (!this.closed) this.historicalChildrenPending = false;
+            return undefined;
+          },
+          (error: unknown) => {
+            this.logger.warn({ err: error }, "Historical Codex subagent replay failed");
+          },
+        )
+        .finally(() => {
+          if (this.historicalChildRestoreTask === task) this.historicalChildRestoreTask = null;
+        });
+    } else {
+      this.historySubagentEvents = providerSubagentEvents;
+      try {
+        await this.loadPersistedSubAgentHistories(client, subAgentRoutes);
+        this.historicalChildrenPending = false;
+      } finally {
+        this.historySubagentEvents = null;
+      }
     }
     this.resetCodexUserMessageTurns();
     for (const entry of timeline) {
@@ -4248,8 +4313,13 @@ export class CodexAppServerAgentSession implements AgentSession {
   // Turns and rewind route by the thread's earlier turns and sub-agents. A resumed
   // session whose projection Paseo already holds reads them here and drops the rest.
   private async ensureHistoryIndexed(): Promise<void> {
-    if (this.historyIndexed) return;
-    await this.readThreadHistory(this.client);
+    this.historyIndexTask ??= (async () => {
+      await this.historicalChildRestoreTask;
+      if (!this.historyIndexed) await this.readThreadHistory(this.client);
+    })().finally(() => {
+      this.historyIndexTask = null;
+    });
+    await this.historyIndexTask;
   }
 
   private async loadPersistedSubAgentHistories(
@@ -4602,12 +4672,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
 
     let resolveStart!: () => void;
+    let cancelStart!: () => void;
+    const canceled = new Promise<void>((resolve) => {
+      cancelStart = resolve;
+    });
     const pendingStart = {
       promise: new Promise<void>((resolve) => {
         resolveStart = resolve;
       }),
       resolve: () => resolveStart(),
       cancelRequested: false,
+      cancel: () => cancelStart(),
     };
     this.pendingForegroundStart = pendingStart;
 
@@ -4627,7 +4702,14 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       if (this.currentThreadId) {
         await this.ensureThreadLoaded();
-        await this.ensureHistoryIndexed();
+        // Indexing is shared read-only work. Release a canceled prompt immediately while
+        // letting a retry reuse that work; never let the canceled prompt reach turn/start.
+        await Promise.race([
+          this.ensureHistoryIndexed(),
+          canceled.then(() => {
+            throw new Error("Codex turn start was interrupted before reaching Codex");
+          }),
+        ]);
       } else {
         await this.ensureThread();
       }
@@ -4809,13 +4891,86 @@ export class CodexAppServerAgentSession implements AgentSession {
     for (const event of startupEvents ?? []) this.notifySubscribers(event);
     const background = this.background.snapshot();
     if (background) callback(background);
+    if (this.historicalChildrenPending && this.initialResumePurpose !== "history") {
+      const task = this.startInitialHistory();
+      void task
+        .then(() => {
+          if (!this.initialHistoryClaimed && this.initialHistoryTask === task) {
+            this.initialHistoryTask = null;
+          }
+          return undefined;
+        })
+        .catch((error: unknown) => {
+          this.logger.warn({ err: error }, "Historical Codex child recovery failed");
+        });
+    }
     return () => {
       this.subscribers.delete(callback);
     };
   }
 
-  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    const history = this.stagedHistory ?? (await this.readThreadHistory(this.client));
+  async readHistoryPage(input: { cursor?: string; limit: number }) {
+    if (this.initialResumePurpose !== "history" || !this.currentThreadId) return null;
+    const threadId = this.currentThreadId;
+    this.historyReadsInFlight += 1;
+    try {
+      const client = await this.getHistoryClient();
+      if (this.closed) throw this.createClosedError();
+      const page = await readCodexThreadHistoryPage(client, threadId, input);
+      if (!page) return null;
+      const entries: PersistedTimelineEntry[] = [];
+      await projectCodexThreadHistory(
+        { client, threadId, cwd: this.config.cwd ?? null },
+        { timeline: entries, subAgentTimelineIndexByThreadId: new Map() },
+        page.rows,
+      );
+      return { entries, nextCursor: page.nextCursor };
+    } finally {
+      this.historyReadsInFlight -= 1;
+    }
+  }
+
+  private async getHistoryClient(): Promise<CodexAppServerClientLike> {
+    if (this.historyClient) return this.historyClient;
+    if (!this.historyClientPromise) {
+      const promise = codexAppServerStartup
+        .start({
+          stateDirKey: codexStartupStateDirKey(this.harnessEnvironment),
+          spawn: this.spawnAppServer,
+          createClient: (child) =>
+            new CodexAppServerClient(child, this.logger, () => this.traceContext()),
+          initializeParams: buildCodexAppServerInitializeParams(),
+          logger: this.logger,
+          signal: this.startupAbort.signal,
+        })
+        .then(({ client }) => {
+          if (this.closed) {
+            void client.dispose();
+            throw this.createClosedError();
+          }
+          this.historyClient = client;
+          return client;
+        })
+        .finally(() => {
+          if (this.historyClientPromise === promise) this.historyClientPromise = null;
+        });
+      this.historyClientPromise = promise;
+    }
+    return this.historyClientPromise;
+  }
+
+  async *streamHistory(options?: AgentHistoryReplayOptions): AsyncGenerator<AgentStreamEvent> {
+    this.initialHistoryClaimed = true;
+    let history = this.stagedHistory;
+    if (!history) {
+      if (this.initialResumePurpose === "history") {
+        history = await this.readArchivedHistory(options?.backgroundSubagents === true);
+      } else if (options?.backgroundSubagents) {
+        history = await this.startInitialHistory();
+      } else {
+        history = await this.readThreadHistory(this.client);
+      }
+    }
     this.stagedHistory = null;
     for (const event of history.providerSubagentEvents) {
       yield event;
@@ -4828,6 +4983,12 @@ export class CodexAppServerAgentSession implements AgentSession {
         timestamp: entry.timestamp,
       };
     }
+    this.initialHistoryTask = null;
+  }
+
+  private startInitialHistory(): Promise<CodexThreadHistory> {
+    this.initialHistoryTask ??= this.readThreadHistory(this.client, true);
+    return this.initialHistoryTask;
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -5226,6 +5387,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
         asyncQuestions: this.asyncQuestions.serialize(),
+        ...(this.historicalChildrenPending ? { codexHistoryChildrenPending: true } : {}),
       },
     };
   }
@@ -5273,6 +5435,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const pendingStart = this.pendingForegroundStart;
     if (pendingStart) {
       pendingStart.cancelRequested = true;
+      pendingStart.cancel();
       await pendingStart.promise;
     }
     if (!this.client || !this.currentThreadId) {
@@ -5341,7 +5504,19 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async canStopRuntime(): Promise<boolean> {
+    // A history session reads on its own app-server and never resumes or runs the native thread,
+    // so it owns no turns or terminals. It holds an app-server process for as long as it stays
+    // loaded, so it must be releasable once no read is in flight.
+    if (this.initialResumePurpose === "history") {
+      return (
+        !this.historicalChildRestoreTask &&
+        !this.client &&
+        !this.historyClientPromise &&
+        this.historyReadsInFlight === 0
+      );
+    }
     if (
+      this.historicalChildRestoreTask ||
       !this.client ||
       this.client.hasPendingRequests() ||
       !this.currentThreadId ||
@@ -5514,6 +5689,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     await this.disposeClient();
+    const historyClient = this.historyClient;
+    this.historyClient = null;
+    await historyClient?.dispose();
     this.currentThreadId = null;
   }
 

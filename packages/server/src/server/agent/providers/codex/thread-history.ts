@@ -98,6 +98,46 @@ export async function* readCodexThreadHistory(
   }
 }
 
+/** Descending native pages, returned in display order. Cursors stay private to the provider. */
+export async function readCodexThreadHistoryPage(
+  client: CodexThreadHistoryClient,
+  threadId: string,
+  input: { cursor?: string; limit: number },
+): Promise<{ rows: CodexHistoryRow[]; nextCursor: string | null } | null> {
+  if (!input.cursor && (await readCodexThreadHistoryMode(client, threadId)) !== "paginated") {
+    return null;
+  }
+  let limit = Math.max(1, Math.min(PAGE_SIZE, input.limit));
+  for (;;) {
+    let response: unknown;
+    try {
+      response = await client.request("thread/items/list", {
+        threadId,
+        limit,
+        sortDirection: "desc",
+        cursor: input.cursor,
+      });
+    } catch (error) {
+      if (!(error instanceof CodexAppServerResponseTooLargeError) || limit === 1) throw error;
+      limit = Math.max(1, Math.floor(limit / 2));
+      continue;
+    }
+    const page = CodexItemsPageSchema.parse(response);
+    if (page.nextCursor != null && page.nextCursor === input.cursor) {
+      throw new Error(`Codex repeated history cursor for thread ${threadId}`);
+    }
+    return {
+      rows: page.data.toReversed().map((row) => ({
+        item: row.item,
+        turnId: row.turnId,
+        startedAt: row.startedAtMs,
+        completedAt: row.completedAtMs,
+      })),
+      nextCursor: page.nextCursor ?? null,
+    };
+  }
+}
+
 async function* readLegacyHistory(
   client: CodexThreadHistoryClient,
   threadId: string,
@@ -125,20 +165,30 @@ async function* readPaginatedHistory(
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let limit = PAGE_SIZE;
+  // Request the next page before the consumer takes this one, so Codex's read overlaps the
+  // projection. A full read is ~126 sequential round trips through the daemon's event loop.
+  const requestPage = (): Promise<unknown> => {
+    const response = client.request("thread/items/list", {
+      threadId,
+      limit,
+      sortDirection: "asc",
+      cursor,
+    });
+    // Marks the prefetch handled while nobody awaits it; awaiting it still rejects.
+    response.catch(() => undefined);
+    return response;
+  };
+  let pending = requestPage();
   for (;;) {
     let response: unknown;
     try {
-      response = await client.request("thread/items/list", {
-        threadId,
-        limit,
-        sortDirection: "asc",
-        cursor,
-      });
+      response = await pending;
     } catch (error) {
       if (!(error instanceof CodexAppServerResponseTooLargeError)) throw error;
       // Image-heavy items can push a full page past the line cap; retry the same cursor smaller.
       if (limit > 1) {
         limit = Math.max(1, Math.floor(limit / 2));
+        pending = requestPage();
         continue;
       }
       throw new CodexThreadHistoryTooLargeError(
@@ -146,6 +196,14 @@ async function* readPaginatedHistory(
       );
     }
     const page = CodexItemsPageSchema.parse(response);
+    const nextCursor = page.nextCursor ?? null;
+    // Codex's own client guards against a cursor that does not advance.
+    const repeated = nextCursor !== null && seenCursors.has(nextCursor);
+    if (nextCursor !== null && !repeated) {
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+      pending = requestPage();
+    }
     for (const row of page.data) {
       yield {
         item: row.item,
@@ -154,13 +212,8 @@ async function* readPaginatedHistory(
         completedAt: row.completedAtMs,
       };
     }
-    if (page.nextCursor == null) return;
-    // Codex's own client guards against a cursor that does not advance.
-    if (seenCursors.has(page.nextCursor)) {
-      throw new Error(`Codex repeated history cursor for thread ${threadId}`);
-    }
-    seenCursors.add(page.nextCursor);
-    cursor = page.nextCursor;
+    if (nextCursor === null) return;
+    if (repeated) throw new Error(`Codex repeated history cursor for thread ${threadId}`);
   }
 }
 

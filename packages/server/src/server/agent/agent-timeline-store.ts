@@ -154,6 +154,25 @@ export class InMemoryAgentTimelineStore {
     return cloneRow(row);
   }
 
+  /** Reserve sequence space at initial hydration so loading older rows never moves live cursors. */
+  prepend(
+    agentId: string,
+    entries: readonly { item: AgentTimelineItem; timestamp?: string }[],
+  ): void {
+    if (entries.length === 0) return;
+    const state = this.requireState(agentId);
+    const firstSeq = (state.minSeq || state.nextSeq) - entries.length;
+    if (firstSeq < 1) throw new Error("History exhausted reserved timeline sequence space");
+    const rows = entries.map((entry, index) => ({
+      seq: firstSeq + index,
+      timestamp: entry.timestamp ?? new Date().toISOString(),
+      item: limitAgentTimelineItemContent(entry.item),
+    }));
+    // Projection rows retain their source ranges, including merged text and completed tools.
+    state.projection = new TimelineProjection([...rows, ...state.projection.getRows()]);
+    state.minSeq = firstSeq;
+  }
+
   getLastItem(agentId: string): AgentTimelineItem | null {
     const state = this.requireState(agentId);
     return state.projection.getLastItem(state.nextSeq - 1);

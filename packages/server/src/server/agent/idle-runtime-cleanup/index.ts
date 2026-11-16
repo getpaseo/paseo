@@ -77,10 +77,15 @@ export function createIdleRuntimeCleanup(options: Options) {
     if (!isCurrent()) return result;
     const timestamp = now();
     const runtimes = options.runtimes();
+    // A child collected earlier in this sweep is gone, not a working member of its parent's family.
+    const collectedThisSweep = new Set<object>();
     for (const runtime of runtimes) {
       if (!isCurrent()) break;
-      if (!runtime.sessionId) continue;
-      const family = familyOf(runtime, runtimes);
+      if (!runtime.sessionId || collectedThisSweep.has(runtime.identity)) continue;
+      const family = familyOf(
+        runtime,
+        runtimes.filter((candidate) => !collectedThisSweep.has(candidate.identity)),
+      );
       try {
         const allowed = baselineAllows(family) && (await providersAllow(family, isCurrent));
         if (!isCurrent()) break;
@@ -118,6 +123,7 @@ export function createIdleRuntimeCleanup(options: Options) {
             sessionId: runtime.sessionId,
           };
           result.collected.push(entry);
+          collectedThisSweep.add(runtime.identity);
           options.logger.info(entry, "Collected idle agent runtime");
         } else if (isCurrent()) {
           protectedAt.set(runtime.identity, { at: timestamp, protected: true });

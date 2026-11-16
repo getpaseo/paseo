@@ -37,7 +37,6 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -54,7 +53,12 @@ import {
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
 import { parsePartialJsonObject } from "./partial-json.js";
-import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
+import {
+  withClaudeReplayHistory,
+  readClaudeTranscriptPage,
+  type ClaudeReplayHistory,
+} from "./transcript-history.js";
+import { ClaudeReplayFacts } from "./subagents/replay-facts.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
@@ -62,9 +66,7 @@ import {
   ClaudeTaskProtocolSource,
   type ClaudeHookObservationInput,
 } from "./subagents/live-source.js";
-import { observeReplaySubagents, type ClaudeReplayParentFacts } from "./subagents/replay-source.js";
-import { mapTaskStatus } from "./subagents/task-status.js";
-import type { ProviderSubagentStatus } from "../../provider-subagents/store.js";
+import { observeReplaySubagents } from "./subagents/replay-source.js";
 import { foldSubagentObservations, type SubagentObservation } from "./subagents/observation.js";
 import { observeReplayWorkflows } from "./subagents/workflow-replay-source.js";
 import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
@@ -1668,6 +1670,7 @@ export class ClaudeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: import("../../agent-sdk-types.js").AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = coerceSessionMetadata(handle.metadata);
     const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
@@ -1691,7 +1694,7 @@ export class ClaudeAgentClient implements AgentClient {
       resolveBinary: this.resolveBinary,
       rewindSdk: this.rewindSdk,
     });
-    await session.ensureHistoryReady();
+    if (options?.purpose !== "history") await session.ensureHistoryReady();
     return session;
   }
 
@@ -2379,6 +2382,7 @@ class ClaudeAgentSession implements AgentSession {
   private historyPending = false;
   // Readiness never rejects; history/rebind failures are logged at their owning boundary.
   private historyReady: Promise<void> | null = null;
+  private hasPagedHistory = false;
   private historySessionId: string | null = null;
   private replayingHistory = false;
   private turnState: TurnState = "idle";
@@ -3081,7 +3085,7 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
-    await this.ensureHistoryReady();
+    await this.historyReady;
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     // AgentManager settles the run after runtime release. Preserve cleanup records
     // without reporting this closure as an explicit turn cancellation.
@@ -3148,6 +3152,15 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
+    // Opening a cold chat may already have a readable paged tail while the full
+    // Claude transcript is still replaying. supportedCommands() rides the
+    // provider query and would otherwise wait behind that replay until the
+    // client's command request times out. The built-in rewind command is safe
+    // to expose immediately; a later request after history settles discovers
+    // the complete command set.
+    if (this.replayingHistory || (this.historySessionId && !this.historyReady)) {
+      return [REWIND_COMMAND];
+    }
     const q = await this.ensureQuery();
     const commands = await q.supportedCommands();
     const commandMap = new Map<string, AgentSlashCommand>();
@@ -5541,11 +5554,49 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  async readHistoryPage(input: { cursor?: string; limit: number }) {
+    if (!this.historySessionId || this.historyReady) return null;
+    const file = await this.resolveHistoryPath(this.historySessionId);
+    if (!file || !(await transcriptExists(file))) return null;
+    const page = await readClaudeTranscriptPage(
+      file,
+      input,
+      (entry) =>
+        entry.type === "user" &&
+        !isSyntheticHistoryUserEntry(entry) &&
+        !isToolResultUserEntry(entry),
+    );
+    // Each page converts forwards in an isolated replay. A failed page cannot mutate the
+    // session's tool, task, rewind, or full-history caches, and retrying a cursor is safe.
+    const replay = new ClaudeAgentSession(this.config, {
+      logger: this.logger,
+      resolveBinary: this.resolveBinary,
+      runtimeSettings: this.runtimeSettings,
+      launchEnv: this.launchEnv,
+    });
+    const facts = new ClaudeReplayFacts();
+    for (const entry of page.entries) facts.observe(entry);
+    const entries: PersistedTimelineEntry[] = [];
+    for (const entry of page.entries) {
+      await replay.ingestPersistedHistoryEntry(entry, entries, {
+        restoredIds: new Set(),
+        toolOwners: new Map(),
+        subagentToolCalls: facts.snapshot().toolCalls,
+      });
+    }
+    this.hasPagedHistory = true;
+    return { entries, nextCursor: page.nextCursor };
+  }
+
   ensureHistoryReady(): Promise<void> {
     if (!this.historyReady) {
       this.historyReady = this.historySessionId
         ? this.loadPersistedHistory(this.historySessionId)
         : Promise.resolve();
+      const pending = this.historyReady;
+      void pending.catch(() => {
+        if (this.historyReady === pending) this.historyReady = null;
+      });
     }
     return this.historyReady;
   }
@@ -5557,6 +5608,8 @@ class ClaudeAgentSession implements AgentSession {
       this.taskState.reset();
       historyPath = await this.resolveHistoryPath(sessionId);
       if (!historyPath || !(await transcriptExists(historyPath))) {
+        if (this.hasPagedHistory)
+          throw new Error("Claude transcript disappeared during history loading");
         this.logger.info(
           { sessionId, cwd: this.config.cwd, historyPath },
           "No Claude transcript to load history from",
@@ -5572,6 +5625,16 @@ class ClaudeAgentSession implements AgentSession {
         { err: error, sessionId, historyPath },
         "Failed to load Claude history from transcript",
       );
+      if (this.hasPagedHistory) {
+        // A failed full replay must leave the manager's readable tail intact and be retryable.
+        this.persistedHistory = [];
+        this.persistedProviderSubagentEvents = [];
+        this.toolUseCache.clear();
+        this.userMessageIds = [];
+        this.emittedUserMessageIds.clear();
+        this.rewindTurnAnchors.length = 0;
+        throw error;
+      }
     } finally {
       this.replayingHistory = false;
     }
@@ -5595,19 +5658,12 @@ class ClaudeAgentSession implements AgentSession {
   private async ingestPersistedSidechains(
     history: ClaudeReplayHistory,
   ): Promise<ClaudeReplayOwnership> {
-    const parentFacts = await readClaudeReplayParentFacts(history.parentEntries);
+    const parentFacts = history.parentFacts;
 
-    // Replay produces the same observations the live task protocol produces, then folds them
-    // with the same function, so identity and status are derived once for both paths.
-    const subagents = [];
-    for (const subagent of history.subagents) {
-      subagents.push({
-        ...subagent,
-        parentFacts: await readClaudeReplayParentFacts(subagent.entries),
-      });
-    }
+    // Indexing already collected ownership facts from every source. Only replay
+    // their visible payloads here; a facts-only pass rereads the whole transcript.
     const subagentReplay = await observeReplaySubagents({
-      subagents,
+      subagents: history.subagents,
       parent: parentFacts,
       convertEntry: (entry) => this.convertHistoryEntry(entry),
     });
@@ -6473,80 +6529,6 @@ function labelReplayedSubagentCard(
   const facts = subagentToolCalls.get(item.callId);
   if (!facts) return item;
   return { ...item, detail: buildClaudeSubagentCardDetail(facts) };
-}
-
-/**
- * Collect what the parent transcript knows about its Task calls, in the shape the shared replay
- * source consumes. The agentId scrape is kept only as a fallback for sessions recorded before
- * Claude Code wrote the meta sidecar.
- */
-async function readClaudeReplayParentFacts(
-  entries: Iterable<ClaudeHistoryEntry> | AsyncIterable<ClaudeHistoryEntry>,
-): Promise<ClaudeReplayParentFacts> {
-  const toolCalls = new Map<string, { title?: string; description?: string }>();
-  const linksByAgentId = new Map<string, { toolCallId: string }>();
-  const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
-  for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
-    }
-    const content = toObjectRecord(entry.message)?.content;
-    if (!Array.isArray(content)) continue;
-    for (const value of content) {
-      const block = toObjectRecord(value);
-      const declaration = readClaudeReplayTaskDeclaration(entry.type, block);
-      if (declaration) toolCalls.set(declaration.id, declaration.identity);
-      if (
-        entry.type !== "user" ||
-        block?.type !== "tool_result" ||
-        typeof block.tool_use_id !== "string"
-      )
-        continue;
-      if (toObjectRecord(entry.toolUseResult)?.status !== "async_launched")
-        outcomes.set(block.tool_use_id, {
-          status: block.is_error === true ? "failed" : "completed",
-        });
-      const agentId = readLegacyClaudeSubagentId(block.content);
-      if (agentId)
-        linksByAgentId.set(agentId, {
-          toolCallId: block.tool_use_id,
-        });
-    }
-  }
-  return {
-    toolCalls,
-    linksByAgentId,
-    outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
-  };
-}
-
-function readClaudeReplayTaskDeclaration(
-  entryType: unknown,
-  block: Record<string, unknown> | undefined,
-): {
-  id: string;
-  identity: { title?: string; description?: string };
-} | null {
-  if (
-    entryType !== "assistant" ||
-    block?.type !== "tool_use" ||
-    (block.name !== "Task" && block.name !== "Agent") ||
-    typeof block.id !== "string"
-  )
-    return null;
-  const input = toObjectRecord(block.input);
-  const title = readNonEmptyString(input?.name) ?? readNonEmptyString(input?.subagent_type);
-  const description = readNonEmptyString(input?.description);
-  return {
-    id: block.id,
-    identity: { ...(title ? { title } : {}), ...(description ? { description } : {}) },
-  };
-}
-
-function readLegacyClaudeSubagentId(content: unknown): string | undefined {
-  return /agentId:\s*([\w-]+)/.exec(JSON.stringify(content))?.[1];
 }
 
 interface ClaudeHistoryEntry {

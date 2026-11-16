@@ -54,6 +54,7 @@ class SlowStartAgentSession implements AgentSession {
   readonly id = randomUUID();
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private releaseStartTurn!: () => void;
+  private rejectStartTurn: ((error: Error) => void) | null = null;
   private readonly released = new Promise<void>((resolve) => {
     this.releaseStartTurn = resolve;
   });
@@ -70,12 +71,17 @@ class SlowStartAgentSession implements AgentSession {
   }
 
   async startTurn(): Promise<{ turnId: string }> {
-    await new Promise<void>((resolve) => {
-      if (this.startDelayMs !== null) {
-        setTimeout(resolve, this.startDelayMs);
-      }
-      void this.released.then(resolve);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        this.rejectStartTurn = reject;
+        if (this.startDelayMs !== null) {
+          setTimeout(resolve, this.startDelayMs);
+        }
+        void this.released.then(resolve);
+      });
+    } finally {
+      this.rejectStartTurn = null;
+    }
     const turnId = "turn-1";
     setTimeout(() => {
       this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
@@ -123,7 +129,9 @@ class SlowStartAgentSession implements AgentSession {
     return { provider: this.provider, sessionId: this.id };
   }
 
-  async interrupt(): Promise<void> {}
+  async interrupt(): Promise<void> {
+    this.rejectStartTurn?.(new Error("Start interrupted before acceptance"));
+  }
 
   async close(): Promise<void> {}
 }
@@ -160,6 +168,7 @@ class SlowStartAgentClient implements AgentClient {
  */
 async function createRunStartScenario(startDelayMs: number | null): Promise<{
   agentManager: AgentManager;
+  client: SlowStartAgentClient;
   agentId: string;
   startRun: () => Promise<void>;
   cleanup: () => Promise<void>;
@@ -177,6 +186,7 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
   let drained: Promise<void> = Promise.resolve();
   return {
     agentManager,
+    client,
     agentId: snapshot.id,
     // streamAgent registers the pending run synchronously, so the wait always observes it.
     startRun: async () => {
@@ -250,8 +260,36 @@ test("waiting for a run start still gives up at the run start budget", async () 
     await vi.advanceTimersByTimeAsync(1);
     await rejection;
     expect(settled).toBe(true);
+    expect(scenario.agentManager.hasInFlightRun(scenario.agentId)).toBe(false);
+    scenario.client.sessions[0]!.release();
+    await scenario.startRun();
+    await waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId);
+    expect(scenario.client.sessions).toHaveLength(1);
+    expect(scenario.agentManager.getAgent(scenario.agentId)?.lifecycle).toBe("running");
   } finally {
     vi.useRealTimers();
+    await scenario.cleanup();
+  }
+});
+
+test("canceling a run-start observer leaves the pending reply intact", async () => {
+  const scenario = await createRunStartScenario(null);
+  const observer = new AbortController();
+  try {
+    await scenario.startRun();
+    const wait = waitForAgentRunStartWithTimeout(
+      scenario.agentManager,
+      scenario.agentId,
+      observer.signal,
+    );
+    observer.abort(new Error("observer disconnected"));
+    await expect(wait).rejects.toThrow("observer disconnected");
+    expect(scenario.agentManager.hasInFlightRun(scenario.agentId)).toBe(true);
+    scenario.client.sessions[0]!.release();
+    await waitForAgentRunStartWithTimeout(scenario.agentManager, scenario.agentId);
+    expect(scenario.client.sessions).toHaveLength(1);
+    expect(scenario.agentManager.getAgent(scenario.agentId)?.lifecycle).toBe("running");
+  } finally {
     await scenario.cleanup();
   }
 });
@@ -374,4 +412,96 @@ test("schedule trigger identity survives the provider assigning a message ID", (
   expect(projectAgentMessages({ type: "user_message", text })).toEqual(
     projectAgentMessages({ type: "user_message", text, messageId: "provider-message" }),
   );
+});
+
+// A large conversation can need minutes to load before its run starts, longer than a client
+// waits for a send. The send is then admitted as queued instead of failing at the client.
+async function sendWithAdmission(
+  scenario: Awaited<ReturnType<typeof createRunStartScenario>>,
+  options: { admissionGraceMs: number; runStartTimeoutMs?: number },
+) {
+  const { AgentStorage } = await import("./agent-storage.js");
+  const { sendPromptWithAdmission } = await import("./agent-prompt.js");
+  const storageDir = mkdtempSync(join(tmpdir(), "agent-admission-storage-"));
+  const admitted = Promise.withResolvers<void>();
+  let admissions = 0;
+  const sending = sendPromptWithAdmission({
+    agentManager: scenario.agentManager,
+    agentStorage: new AgentStorage(storageDir, createTestLogger()),
+    agentId: scenario.agentId,
+    prompt: "hello from the phone",
+    messageId: "client-message-1",
+    logger: createTestLogger(),
+    admissionGraceMs: options.admissionGraceMs,
+    ...(options.runStartTimeoutMs ? { runStartTimeoutMs: options.runStartTimeoutMs } : {}),
+    onAdmitted: () => {
+      admissions++;
+      admitted.resolve();
+    },
+  });
+  void sending.catch(() => undefined);
+  return {
+    sending,
+    admitted: admitted.promise,
+    admissions: () => admissions,
+    submitted: () =>
+      scenario.agentManager
+        .fetchTimeline(scenario.agentId)
+        .rows.filter(
+          (row) =>
+            row.item.type === "user_message" && row.item.clientMessageId === "client-message-1",
+        ),
+    systemErrors: () =>
+      scenario.agentManager
+        .fetchTimeline(scenario.agentId)
+        .rows.filter(
+          (row) =>
+            row.item.type === "assistant_message" && row.item.text.startsWith("[System Error]"),
+        ),
+    cleanup: () => rmSync(storageDir, { recursive: true, force: true }),
+  };
+}
+
+test("a human send that outlasts the admission grace is admitted and still starts", async () => {
+  const scenario = await createRunStartScenario(null);
+  const send = await sendWithAdmission(scenario, { admissionGraceMs: 20 });
+  try {
+    await send.admitted;
+    scenario.client.sessions[0]!.release();
+    await expect(send.sending).resolves.toBeUndefined();
+    expect(send.admissions()).toBe(1);
+    expect(scenario.agentManager.getAgent(scenario.agentId)?.lifecycle).toBe("running");
+    expect(send.submitted()).toHaveLength(1);
+    expect(send.systemErrors()).toHaveLength(0);
+  } finally {
+    await scenario.cleanup();
+    send.cleanup();
+  }
+});
+
+test("a human send that starts within the grace is answered without admission", async () => {
+  const scenario = await createRunStartScenario(0);
+  const send = await sendWithAdmission(scenario, { admissionGraceMs: 10_000 });
+  try {
+    await expect(send.sending).resolves.toBeUndefined();
+    expect(send.admissions()).toBe(0);
+  } finally {
+    await scenario.cleanup();
+    send.cleanup();
+  }
+});
+
+test("a send that fails after admission records the prompt and the failure", async () => {
+  const scenario = await createRunStartScenario(null);
+  const send = await sendWithAdmission(scenario, { admissionGraceMs: 20, runStartTimeoutMs: 200 });
+  try {
+    await send.admitted;
+    await expect(send.sending).rejects.toThrow("did not start");
+    // Exactly one submitted row, so the sender's pending message resolves, and the reason.
+    expect(send.submitted()).toHaveLength(1);
+    expect(send.systemErrors().length).toBeGreaterThan(0);
+  } finally {
+    await scenario.cleanup();
+    send.cleanup();
+  }
 });

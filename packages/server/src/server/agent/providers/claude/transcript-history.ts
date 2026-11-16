@@ -2,12 +2,15 @@ import { assignTaskNotificationReplayIds } from "./task-notification-tool-call.j
 import fs, { type FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import path from "node:path";
+import { z } from "zod";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import {
   parseClaudeSubagentMeta,
   type ClaudeReplayEntry,
+  type ClaudeReplayParentFacts,
   type ClaudeSubagentMeta,
 } from "./subagents/replay-source.js";
+import { ClaudeReplayFacts } from "./subagents/replay-facts.js";
 import {
   parseClaudeWorkflowRun,
   type ClaudeWorkflowRun,
@@ -96,22 +99,53 @@ function indexedRecords(
     },
   };
   async function* readEntries(): AsyncGenerator<TranscriptEntry> {
-    for (const location of locations) {
-      const fd = descriptors.get(location.file)!;
-      const buffer = Buffer.allocUnsafe(location.length);
-      let read = 0;
-      while (read < buffer.length) {
-        const { bytesRead: count } = await fd.read(
-          buffer,
-          read,
-          buffer.length - read,
-          location.offset + read,
-        );
-        if (count === 0)
-          throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
-        read += count;
+    // Ownership and visible history are separate passes. Read ahead within each
+    // pass rather than issuing a filesystem request for every indexed JSON line.
+    // Keep one bounded window, including when workflows interleave source files.
+    let windowFile: string | undefined;
+    let windowOffset = 0;
+    let windowLength = 0;
+    let buffer = Buffer.alloc(0);
+    for (let index = 0; index < locations.length; index++) {
+      const location = locations[index]!;
+      const end = location.offset + location.length;
+      if (
+        windowFile !== location.file ||
+        location.offset < windowOffset ||
+        end > windowOffset + windowLength
+      ) {
+        const fd = descriptors.get(location.file)!;
+        let windowEnd = end;
+        for (let nextIndex = index + 1; nextIndex < locations.length; nextIndex++) {
+          const next = locations[nextIndex]!;
+          if (
+            next.file !== location.file ||
+            next.offset < windowEnd ||
+            next.offset + next.length - location.offset > 64 * 1024
+          )
+            break;
+          windowEnd = next.offset + next.length;
+        }
+        buffer = Buffer.allocUnsafe(windowEnd - location.offset);
+        windowFile = location.file;
+        windowOffset = location.offset;
+        windowLength = 0;
+        do {
+          const { bytesRead: count } = await fd.read(
+            buffer,
+            windowLength,
+            buffer.length - windowLength,
+            windowOffset + windowLength,
+          );
+          if (count === 0)
+            throw new Error(`Claude transcript was truncated during replay: ${location.file}`);
+          windowLength += count;
+        } while (windowLength < buffer.length);
+        // Cache hits otherwise only yield microtasks, starving sockets and timers.
+        await setImmediate();
       }
-      const entry = parseRecord(buffer.toString("utf8"));
+      const start = location.offset - windowOffset;
+      const entry = parseRecord(buffer.toString("utf8", start, start + location.length));
       if (entry) yield entry;
     }
   }
@@ -135,6 +169,106 @@ function parseRecord(line: string): TranscriptEntry | null {
   }
 }
 
+const ClaudePageCursorSchema = z.object({
+  offset: z.number().int().nonnegative(),
+  size: z.number().int().nonnegative(),
+  ino: z.number(),
+  notifications: z
+    .array(z.tuple([z.string(), z.array(z.tuple([z.string(), z.number().int().nonnegative()]))]))
+    .default([]),
+});
+
+/** The snapshot excludes later appends, but never silently reads a replaced or truncated file. */
+function readPagePosition(cursor: string | undefined, stat: { size: number; ino: number }) {
+  const value = ClaudePageCursorSchema.parse(
+    cursor ? JSON.parse(cursor) : { offset: stat.size, size: stat.size, ino: stat.ino },
+  );
+  if (value.ino !== stat.ino || value.offset > value.size || value.size > stat.size) {
+    throw new Error("Claude transcript changed; reopen the conversation to refresh history");
+  }
+  return value;
+}
+
+async function* reverseRecords(fd: FileHandle, end: number) {
+  let position = end;
+  let pieces: Buffer[] = [];
+  while (position > 0) {
+    const start = Math.max(0, position - 64 * 1024);
+    const chunk = Buffer.allocUnsafe(position - start);
+    let read = 0;
+    while (read < chunk.length) {
+      const { bytesRead } = await fd.read(chunk, read, chunk.length - read, start + read);
+      if (!bytesRead) throw new Error("Claude transcript was truncated during replay");
+      read += bytesRead;
+    }
+    let lineEnd = chunk.length;
+    for (let index = chunk.length - 1; index >= 0; index--) {
+      if (chunk[index] !== 10) continue;
+      pieces.push(chunk.subarray(index + 1, lineEnd));
+      const entry = parseRecord(Buffer.concat(pieces.toReversed()).toString("utf8"));
+      if (entry) yield { entry, offset: start + index + 1 };
+      pieces = [];
+      lineEnd = index;
+    }
+    pieces.push(chunk.subarray(0, lineEnd));
+    position = start;
+    await setImmediate();
+  }
+  const entry = parseRecord(Buffer.concat(pieces.toReversed()).toString("utf8"));
+  if (entry) yield { entry, offset: 0 };
+}
+
+/** Seek from the end; parse only the requested turns, including pre-compaction turns. */
+export async function readClaudeTranscriptPage(
+  file: string,
+  input: { cursor?: string; limit: number },
+  startsTurn: (entry: TranscriptEntry) => boolean,
+): Promise<{ entries: TranscriptEntry[]; nextCursor: string | null }> {
+  const fd = await fs.open(file, "r");
+  try {
+    const stat = await fd.stat();
+    if (!stat.isFile()) throw new Error(`Not a transcript file: ${file}`);
+    const snapshot = readPagePosition(input.cursor, stat);
+    const entries: TranscriptEntry[] = [];
+    let nextOffset = 0;
+    for await (const { entry, offset } of reverseRecords(fd, snapshot.offset)) {
+      if (entry.isSidechain === true) continue;
+      entries.push(entry);
+      if (entries.length >= input.limit && startsTurn(entry)) {
+        nextOffset = offset;
+        break;
+      }
+    }
+    // Count mirrored task notifications backwards across page boundaries. Resetting this
+    // counter per page would reuse IDs and erase repeated notifications in the projection.
+    const occurrences = new Map(
+      snapshot.notifications.map(([signature, counts]) => [signature, new Map(counts)]),
+    );
+    const assigned: TranscriptEntry[] = [];
+    async function* reverseEntries() {
+      yield* entries;
+    }
+    for await (const entry of assignTaskNotificationReplayIds(reverseEntries(), occurrences))
+      assigned.push(entry);
+    return {
+      entries: assigned.toReversed(),
+      nextCursor:
+        nextOffset > 0
+          ? JSON.stringify({
+              ...snapshot,
+              offset: nextOffset,
+              notifications: [...occurrences].map(([signature, counts]) => [
+                signature,
+                [...counts],
+              ]),
+            })
+          : null,
+    };
+  } finally {
+    await fd.close();
+  }
+}
+
 async function readOptionalFile(file: string): Promise<string | null> {
   try {
     return await fs.readFile(file, "utf8");
@@ -147,10 +281,12 @@ async function readOptionalFile(file: string): Promise<string | null> {
  * by the replay ownership resolver; workflow children retain their separate run ownership. */
 export interface ClaudeReplayHistory {
   parentEntries: AsyncIterable<TranscriptEntry>;
+  parentFacts: ClaudeReplayParentFacts;
   subagents: {
     agentId: string;
     meta: ClaudeSubagentMeta | null;
     entries: AsyncIterable<TranscriptEntry>;
+    parentFacts: ClaudeReplayParentFacts;
   }[];
   workflows: ClaudeWorkflowRun[];
   workflowEntriesByRunId: Map<string, AsyncIterable<TranscriptEntry>>;
@@ -217,6 +353,8 @@ async function indexHistory(
   }
   const parentLocations: RecordLocation[] = [];
   const locationsByAgentId = new Map<string, RecordLocation[]>();
+  const parentFacts = new ClaudeReplayFacts();
+  const factsByAgentId = new Map<string, ClaudeReplayFacts>();
   async function scan(
     file: string,
     visit: (entry: TranscriptEntry, location: RecordLocation) => void,
@@ -227,11 +365,17 @@ async function indexHistory(
   }
   for (const file of sidechainFiles) {
     await scan(file, (entry, location) => {
-      if (file === historyPath && entry.isSidechain !== true) parentLocations.push(location);
+      if (file === historyPath && entry.isSidechain !== true) {
+        parentLocations.push(location);
+        parentFacts.observe(entry);
+      }
       if (entry.isSidechain !== true || typeof entry.agentId !== "string") return;
       const locations = locationsByAgentId.get(entry.agentId) ?? [];
       locations.push(location);
       locationsByAgentId.set(entry.agentId, locations);
+      const facts = factsByAgentId.get(entry.agentId) ?? new ClaudeReplayFacts();
+      facts.observe(entry);
+      factsByAgentId.set(entry.agentId, facts);
     });
   }
   const workflowEntriesByRunId = new Map<string, AsyncIterable<TranscriptEntry>>();
@@ -251,10 +395,12 @@ async function indexHistory(
   }
   return {
     parentEntries: indexedRecords(parentLocations, descriptors),
+    parentFacts: parentFacts.snapshot(),
     subagents: [...locationsByAgentId].map(([agentId, locations]) => ({
       agentId,
       meta: metaByAgentId.get(agentId) ?? null,
       entries: indexedRecords(locations, descriptors),
+      parentFacts: factsByAgentId.get(agentId)!.snapshot(),
     })),
     workflows: await readWorkflows(sessionDirectory),
     workflowEntriesByRunId,

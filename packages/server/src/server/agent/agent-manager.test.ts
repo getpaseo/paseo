@@ -12972,7 +12972,9 @@ test("concurrent native restores run once before resuming the same agent", async
       options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> {
       operations.push(`resume:${options?.purpose}`);
-      return super.resumeSession(handle, config);
+      const session = await super.resumeSession(handle, config);
+      // A real provider resumes the native session the handle names.
+      return Object.assign(session, { describePersistence: () => handle });
     }
   })();
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });

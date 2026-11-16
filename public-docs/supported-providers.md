@@ -32,8 +32,9 @@ including shell commands, runs without asking. Each session starts with a warnin
 this, including when you reopen a chat. Antigravity's own policy can still deny
 an action.
 
-After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts
-fresh because `agy` does not replay its history.
+When Paseo reopens a chat, such as after a daemon restart, it reloads the earlier messages through
+`agy` 1.5.0 or later. With an older `agy`, or when `agy` cannot load the conversation, the chat
+opens without them and shows a warning.
 
 This integration uses your installed CLI and sign-in. It is not endorsed by Google.
 

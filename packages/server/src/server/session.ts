@@ -77,6 +77,7 @@ import {
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
+  sendPromptWithAdmission,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -325,6 +326,8 @@ const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
 const FULL_AGENT_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
+/** Well inside the client's 60 s request timeout; quick start failures still reach the sender. */
+const SEND_ADMISSION_GRACE_MS = 10_000;
 function errorToFriendlyMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -5523,12 +5526,16 @@ export class Session {
     try {
       const existing = this.agentManager.getAgent(agentId);
       const stored = existing ? null : await this.agentStorage.get(agentId);
+      // Clients list commands while opening a chat, often before its timeline request.
       const agent =
         existing || (stored && !stored.archivedAt)
           ? await ensureAgentLoaded(agentId, {
               agentManager: this.agentManager,
               agentStorage: this.agentStorage,
               logger: this.sessionLogger,
+              // Command discovery only needs the current provider session. A
+              // bounded tail keeps opening the chat independent of transcript size.
+              history: "tail",
             })
           : null;
 
@@ -8419,20 +8426,25 @@ export class Session {
       : undefined;
 
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-        purpose: "history",
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
-
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchOptions = {
         direction,
         cursor,
         limit: msg.limit,
         wholeTurns: msg.wholeTurns,
-      });
+      };
+      const cached = this.agentManager.fetchCachedTimeline(msg.agentId, fetchOptions);
+      const snapshot = cached
+        ? cached.agent
+        : await ensureAgentLoaded(msg.agentId, {
+            agentManager: this.agentManager,
+            agentStorage: this.agentStorage,
+            logger: this.sessionLogger,
+            history: "tail",
+          });
+      const fetchedControlTimeline = cached
+        ? cached.timeline
+        : await this.agentManager.fetchTimelinePage(msg.agentId, fetchOptions);
+      const agentPayload = await this.buildAgentPayload(snapshot);
       const selectedTimeline = {
         timeline: fetchedControlTimeline,
         entries: fetchedControlTimeline.rows,
@@ -8653,10 +8665,14 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
+      // Clients list children while opening a chat, often before its timeline request.
       await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        // Child discovery only needs the current provider session. Keep it
+        // independent of the parent's full transcript size.
+        history: "tail",
       });
       this.emit({
         type: "agent.provider_subagents.list.response",
@@ -8759,6 +8775,9 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        // A child timeline read is bounded as well; older rows are paged by the
+        // child timeline request instead of replaying the whole parent here.
+        history: "tail",
       });
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
@@ -8977,18 +8996,32 @@ export class Session {
           await receipt.dispatched;
           return;
         }
-        const result = await sendPromptToAgent({
+        const humanSend = {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,
           prompt,
-          messageId: msg.messageId,
-          activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          activeTurnBehavior: msg.activeTurnBehavior ?? ("interrupt" as const),
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
           beforeDispatch,
           logger: this.sessionLogger,
-        });
+        };
+        if (msg.messageId) {
+          // Every client keeps a submitted message pending until its canonical row arrives, so
+          // a slow start can answer "queued" well inside the client's request timeout.
+          await sendPromptWithAdmission({
+            ...humanSend,
+            messageId: msg.messageId,
+            admissionGraceMs: SEND_ADMISSION_GRACE_MS,
+            onAdmitted: () => {
+              deliveryStatus = "queued";
+              queued();
+            },
+          });
+          return;
+        }
+        const result = await sendPromptToAgent(humanSend);
         if (result.disposition === "turn_started") {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,

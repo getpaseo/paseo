@@ -10,10 +10,36 @@ then replaces the previous tool state or merges into the current text item. Inte
 are never retained for history or catch-up. Provider history is the durable transcript authority
 and rebuilds the projection when an agent resumes.
 
-Pagination bounds each read, not total resident history. Active and idle agents retain their
-projected transcript; archive releases it and later history reads rebuild it from the provider.
-Streaming overhead must remain proportional to the retained transcript. Cumulative text snapshots
-must be released after their deltas have been consumed.
+Cold Claude and paginated Codex conversations open with a read-only provider session and a recent
+history page. Older pages extend the in-memory projection without changing its epoch or existing
+positions. The native continuation belongs to that session; closing it discards the continuation,
+never the transcript. These pages use the existing timeline protocol, including on older clients.
+
+Paging bounds each read, not total resident history. Claude pages target 100 records and extend to
+the preceding user prompt so tool results retain their context; one very long turn can exceed the
+target. Codex pages contain at most 100 native items and retry oversized replies at the same cursor
+with a smaller limit. Legacy Codex threads still require a full native read.
+
+A paged parent is not complete provider history. Full-history operations, including search, child
+ownership replay and promotion to an interactive session, finish the authoritative replay first.
+Promotion hands the readable page to the interactive session and replays there, once: replaying on
+the read-only session as well read a large thread twice before a send could start, because Codex
+indexes the new session's turns from its own read and Claude parses its transcript on resume.
+That replacement gets a new epoch; a client action carrying an old history anchor must refresh it.
+A failed replay retains the readable page. Existing clients can eagerly request commands or child
+lists while opening a chat. Those inventory requests use a read-only tail load and never wait for
+the complete transcript; Claude returns its built-in rewind command while a cold replay is pending.
+Child ownership and search still require the complete replay, and can continue in the background or
+on a later request. These requests usually reach the daemon before the timeline fetch, so the first
+request decides how a cold agent loads and must establish the same bounded tail.
+An interactive cold load cannot serve a tail at all: Claude replays the whole transcript before
+its resume returns, which on a large conversation outlasts the client's request timeout. Serve
+cached pages before entering the loader's lifecycle barrier: promotion holds that barrier while
+replaying history. Keep the barrier for reads that need to load a session so a concurrent close
+cannot create a second provider writer. Browsing and full replay do not stamp user activity.
+Active sessions retain their projected transcript and use the live stream as before. Archive
+releases it and later reads rebuild it from the provider. Streaming overhead must remain
+proportional to retained history; release cumulative text snapshots after consuming their deltas.
 
 The invariants are:
 
@@ -278,6 +304,11 @@ prevents a later transport error from rolling back a prompt already observed.
 The daemon's accepted response waits for the correlated run start and guarantees that the canonical
 submitted row has been recorded. It publishes the accepted turn's liveness before that row, so the
 client applies authoritative activity before canonical acknowledgement retires optimistic activity.
+A large conversation can need minutes to load and replay before its run starts, longer than a client
+waits for the response. A human send whose run has not started ten seconds after its agent loaded is
+answered `accepted` with `deliveryStatus: "queued"` instead; every client keeps the message pending
+until its canonical row arrives. The start then continues without the sender's connection, and a
+failure after that answer records the prompt as rejected beside the error so the message resolves.
 Timeline render batching does not delay lifecycle application. Directory status never settles a
 submission. Overlapping sends settle independently rather than collapsing to one newest pending
 message.

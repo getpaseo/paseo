@@ -223,8 +223,8 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
  * independently so the second event is not merged with the first. */
 export async function* assignTaskNotificationReplayIds<T>(
   entries: AsyncIterable<T>,
+  occurrences = new Map<string, Map<string, number>>(),
 ): AsyncGenerator<T> {
-  const occurrences = new Map<string, Map<string, number>>();
   for await (const entry of entries) {
     const record = TaskNotificationHistoryRecordSchema.safeParse(entry);
     if (!record.success) {

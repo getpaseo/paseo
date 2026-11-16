@@ -666,6 +666,8 @@ export type AgentResumePurpose = "interactive" | "history";
 
 /** Runtime-only intent for a persisted-session resume. Never persist this option. */
 export interface AgentResumeSessionOptions {
+  /** Keep a timeline-only open read-only even when its working directory still exists. */
+  progressiveHistory?: boolean;
   /** Defaults to interactive. History loading may be read-only for archived native sessions. */
   purpose?: AgentResumePurpose;
   /** See AgentCreateSessionOptions.configuredModelIds. */
@@ -685,6 +687,17 @@ export interface AgentUsageSession {
   model?: string;
   env: Record<string, string>;
   sessionKey: string;
+}
+
+/** A read-only provider page. The opaque cursor must be replayable after a failed request. */
+export interface AgentHistoryPage {
+  entries: { item: AgentTimelineItem; timestamp?: string }[];
+  nextCursor: string | null;
+}
+
+export interface AgentHistoryReplayOptions {
+  /** The consumer is subscribed and can receive historical child events after the parent. */
+  backgroundSubagents?: boolean;
 }
 
 export interface AgentSession {
@@ -708,7 +721,9 @@ export interface AgentSession {
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
-  streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  streamHistory(options?: AgentHistoryReplayOptions): AsyncGenerator<AgentStreamEvent>;
+  /** Optional tail-first reader for history-only sessions; null selects the full replay path. */
+  readHistoryPage?(input: { cursor?: string; limit: number }): Promise<AgentHistoryPage | null>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;

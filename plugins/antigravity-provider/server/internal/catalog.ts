@@ -34,18 +34,30 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
   return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
 }
 
+type Version = readonly [number, number, number];
+
+function parseVersion(text: string): Version | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isAtLeast(version: Version, minimum: Version): boolean {
+  for (const [index, part] of version.entries())
+    if (part !== minimum[index]) return part > minimum[index];
+  return true;
+}
+
 export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {
   try {
     const version = (await probe({ launch, args: ["--version"] })).trim();
-    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-    if (!match)
+    const parsed = parseVersion(version);
+    if (!parsed)
       return {
         available: false,
         diagnostic: "Could not read the Antigravity version. Update `agy` to 1.1.15 or later.",
       };
-    const [, major, minor, patch] = match.map(Number);
-    const supported = major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 15)));
-    if (!supported)
+    if (!isAtLeast(parsed, [1, 1, 15]))
       return {
         available: false,
         diagnostic: `Antigravity ${version} is unsupported. Update \`agy\` to 1.1.15 or later.`,
@@ -56,6 +68,12 @@ export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus>
     if (!(error instanceof AntigravityError)) throw error;
     return { available: false, diagnostic: error.message };
   }
+}
+
+/** `agy acp`, which can replay a stored conversation, first shipped in 1.5.0. */
+export async function supportsHistory(launch: ProviderLaunch): Promise<boolean> {
+  const version = parseVersion((await probe({ launch, args: ["--version"] })).trim());
+  return version !== null && isAtLeast(version, [1, 5, 0]);
 }
 
 export function validateSelection(
