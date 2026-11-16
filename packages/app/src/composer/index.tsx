@@ -129,7 +129,7 @@ import {
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { useIsInputLive } from "./input/use-input-live";
-import { resolveActiveSendBehavior } from "./input/state";
+import { drainQueuedMessages, resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -2081,10 +2081,15 @@ function ComposerContentImpl({
     [agentId, queueWriter, submitMessage, t],
   );
 
-  const handleSendNextQueued = useCallback(() => {
-    const next = queuedMessages[0];
-    if (!next || (!sendAgentMessageRef.current && !onSubmitMessageRef.current)) return false;
-    void handleSendQueuedNow(next.id);
+  const handleSendQueued = useCallback(() => {
+    if (
+      queuedMessages.length === 0 ||
+      (!sendAgentMessageRef.current && !onSubmitMessageRef.current)
+    ) {
+      return false;
+    }
+    const queuedMessageIds = queuedMessages.map((message) => message.id);
+    void drainQueuedMessages(queuedMessageIds, handleSendQueuedNow);
     return true;
   }, [handleSendQueuedNow, queuedMessages]);
 
@@ -2627,7 +2632,7 @@ function ComposerContentImpl({
                   defaultSendBehavior={activeSendBehavior}
                   sendShortcut={appSettings.sendShortcut}
                   onQueue={handleQueue}
-                  onSendNextQueued={handleSendNextQueued}
+                  onSendQueued={handleSendQueued}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}
                   onSelectionChange={handleSelectionChange}

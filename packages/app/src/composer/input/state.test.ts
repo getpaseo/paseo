@@ -3,6 +3,7 @@ import {
   applyDictationTranscript,
   computeCanStartDictation,
   type MessageInputEnterContext,
+  drainQueuedMessages,
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
@@ -195,6 +196,16 @@ describe("dictation transcript behavior", () => {
 });
 
 describe("composer send behavior", () => {
+  it("drains queued messages in order", async () => {
+    const messageIds: string[] = [];
+
+    await drainQueuedMessages(["first", "second", "third"], async (messageId) => {
+      messageIds.push(messageId);
+    });
+
+    expect(messageIds).toEqual(["first", "second", "third"]);
+  });
+
   it("sends immediately when queue mode cannot advance past a permission", () => {
     expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
     expect(resolveActiveSendBehavior("queue", false)).toBe("queue");
@@ -507,7 +518,7 @@ describe("resolveMessageInputEnterAction", () => {
       expect(sendAction.calls).toEqual(["send"]);
     });
 
-    it("sends the next queued message when the default action has no content", () => {
+    it("drains queued messages when the default action has no content", () => {
       const sendAction = actions();
 
       runDefaultSendAction({
@@ -517,16 +528,16 @@ describe("resolveMessageInputEnterAction", () => {
         handleSendMessage: sendAction.handleSendMessage,
         handleQueueMessage: sendAction.handleQueueMessage,
         hasSendableContent: false,
-        onSendNextQueued: () => {
-          sendAction.calls.push("queued-send");
+        onSendQueued: () => {
+          sendAction.calls.push("queued-send-all");
           return true;
         },
       });
 
-      expect(sendAction.calls).toEqual(["queued-send"]);
+      expect(sendAction.calls).toEqual(["queued-send-all"]);
     });
 
-    it("sends the next queued message when the alternate action has no content", () => {
+    it("drains queued messages when the alternate action has no content", () => {
       const sendAction = actions();
 
       runAlternateSendAction({
@@ -536,13 +547,13 @@ describe("resolveMessageInputEnterAction", () => {
         handleSendMessage: sendAction.handleSendMessage,
         handleQueueMessage: sendAction.handleQueueMessage,
         hasSendableContent: false,
-        onSendNextQueued: () => {
-          sendAction.calls.push("queued-send");
+        onSendQueued: () => {
+          sendAction.calls.push("queued-send-all");
           return true;
         },
       });
 
-      expect(sendAction.calls).toEqual(["queued-send"]);
+      expect(sendAction.calls).toEqual(["queued-send-all"]);
     });
 
     it.each([{ defaultSendBehavior: "steer" }, { defaultSendBehavior: "interrupt" }] as const)(
