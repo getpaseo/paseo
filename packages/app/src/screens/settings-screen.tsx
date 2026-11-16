@@ -75,6 +75,7 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { EditorSection } from "@/screens/settings/editor-section";
 import { FilesSection } from "@/screens/settings/files-section";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -978,6 +979,21 @@ function SettingsSidebar({
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
+  const [searchInput, setSearchInput] = useState("");
+  const searchQuery = searchInput.trim().toLocaleLowerCase();
+  const filteredItems = useMemo(
+    () => items.filter((item) => t(item.labelKey).toLocaleLowerCase().includes(searchQuery)),
+    [items, searchQuery, t],
+  );
+  const filteredHostItems = useMemo(
+    () =>
+      HOST_SECTION_ITEMS.filter((item) =>
+        t(item.labelKey).toLocaleLowerCase().includes(searchQuery),
+      ),
+    [searchQuery, t],
+  );
+  const showHostGroup = hasHosts && filteredHostItems.length > 0;
+  const showAddHostGroup = !hasHosts && !searchQuery;
   const outerContainerStyle = useMemo(
     () => [isDesktop ? sidebarStyles.desktopContainer : sidebarStyles.mobileContainer],
     [isDesktop],
@@ -994,19 +1010,32 @@ function SettingsSidebar({
 
   const sidebarBody = (
     <>
-      <SidebarGroup label={t("settings.groups.app")}>
-        {items.map((item) => (
-          <SidebarSectionButton
-            key={item.id}
-            itemId={item.id}
-            label={t(item.labelKey)}
-            icon={item.icon}
-            isSelected={selectedSectionId === item.id}
-            onSelect={onSelectSection}
-          />
-        ))}
-      </SidebarGroup>
-      {hasHosts ? (
+      <View style={sidebarStyles.searchWrap}>
+        <SearchField
+          value={searchInput}
+          onChangeText={setSearchInput}
+          placeholder={t("common.placeholders.search")}
+          accessibilityLabel={t("common.actions.search")}
+          clearAccessibilityLabel={t("sessions.actions.clearSearch")}
+          testID="settings-search"
+          clearTestID="settings-search-clear"
+        />
+      </View>
+      {filteredItems.length > 0 ? (
+        <SidebarGroup label={t("settings.groups.app")}>
+          {filteredItems.map((item) => (
+            <SidebarSectionButton
+              key={item.id}
+              itemId={item.id}
+              label={t(item.labelKey)}
+              icon={item.icon}
+              isSelected={selectedSectionId === item.id}
+              onSelect={onSelectSection}
+            />
+          ))}
+        </SidebarGroup>
+      ) : null}
+      {showHostGroup ? (
         <SidebarGroup label={t("settings.groups.host")}>
           <HostPicker
             activeServerId={activeHostServerId}
@@ -1015,7 +1044,7 @@ function SettingsSidebar({
             onAddHost={onAddHost}
             enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
-          {HOST_SECTION_ITEMS.map((item) => (
+          {filteredHostItems.map((item) => (
             <SidebarHostSectionButton
               key={item.id}
               itemId={item.id}
@@ -1026,7 +1055,8 @@ function SettingsSidebar({
             />
           ))}
         </SidebarGroup>
-      ) : (
+      ) : null}
+      {showAddHostGroup ? (
         <SidebarGroup>
           <Pressable
             accessibilityRole="button"
@@ -1063,7 +1093,10 @@ function SettingsSidebar({
             </Pressable>
           ) : null}
         </SidebarGroup>
-      )}
+      ) : null}
+      {searchQuery && filteredItems.length === 0 && filteredHostItems.length === 0 ? (
+        <Text style={sidebarStyles.noResults}>{t("common.empty.noResults")}</Text>
+      ) : null}
     </>
   );
 
@@ -1529,6 +1562,17 @@ const sidebarStyles = StyleSheet.create((theme) => ({
   mobileContainer: {
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
+  },
+  searchWrap: {
+    paddingHorizontal: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  noResults: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
   },
   // Compact values draw each group as an island of tiles; desktop keeps a plain list.
   group: {
