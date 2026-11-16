@@ -829,9 +829,9 @@ function StatusWorkspaceRowInnerContent({
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
-  const { touchScreen } = usePointerCapabilities();
-  // The row menu opens from the kebab only; a touch screen can't hover to reveal it.
-  const showsTouchActions = isTouchPlatform || touchScreen;
+  const { finePointer } = usePointerCapabilities();
+  // Without a hovering pointer the kebab is the only way to the row menu, so it stays shown.
+  const showsTouchActions = isTouchPlatform || !finePointer;
   const [isHighlighted, setIsHighlighted] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const {

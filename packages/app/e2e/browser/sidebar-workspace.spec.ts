@@ -781,3 +781,45 @@ test.describe("Workspace row menu on a wide touch screen", () => {
     await page.screenshot({ path: info.outputPath("touch-sidebar-resized.png") });
   });
 });
+
+// A touch-screen laptop driven by a mouse reports a coarse pointer among its pointers, but its
+// primary pointer hovers, so rows keep revealing their menu on hover.
+test.describe("Workspace row menu on a touch-screen laptop with a mouse", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const browserMatchMedia = window.matchMedia.bind(window);
+      window.matchMedia = (query: string) => {
+        const result = browserMatchMedia(query);
+        if (query !== "(any-pointer: coarse)") return result;
+        return new Proxy(result, {
+          get: (target, key) => {
+            if (key === "matches") return true;
+            const value: unknown = Reflect.get(target, key, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+    });
+  });
+
+  test("keeps the row's menu button behind hover", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hybrid-menu-" });
+    const workspaceKey = `${getServerId()}:${workspace.workspaceId}`;
+
+    try {
+      await gotoAppShell(page);
+      const row = await waitForSidebarWorkspace(page, workspace.workspaceId);
+      expect(await page.evaluate(() => window.matchMedia("(any-pointer: coarse)").matches)).toBe(
+        true,
+      );
+      const kebab = page.getByTestId(`sidebar-workspace-kebab-${workspaceKey}`);
+      await expect(kebab).toHaveCount(0);
+      await row.hover();
+      await expect(kebab).toBeVisible({ timeout: 10_000 });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});

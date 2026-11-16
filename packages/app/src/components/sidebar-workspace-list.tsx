@@ -428,10 +428,10 @@ function ProjectRowTrailingActions({
   onRemoveProject?: () => void;
   removeProjectStatus: "idle" | "pending" | "success";
 }) {
-  // A touch screen can't hover, so its row actions are always shown (an iPad in the browser
-  // runs the desktop layout but has no other way to reach them).
-  const { touchScreen } = usePointerCapabilities();
-  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || touchScreen;
+  // Without a hovering pointer the row actions are always shown (an iPad in the browser runs
+  // the desktop layout but has no other way to reach them).
+  const { finePointer } = usePointerCapabilities();
+  const actionsVisible = isHovered || platformIsNative || isMobileBreakpoint || !finePointer;
   return (
     <View style={styles.projectTrailingActions}>
       {worktreeTarget ? (
@@ -1083,9 +1083,9 @@ function WorkspaceRowInner({
   const isCompact = useIsCompactFormFactor();
   const [isHighlighted, setIsHighlighted] = useState(false);
   const isTouchPlatform = platformIsNative || isCompact;
-  const { touchScreen } = usePointerCapabilities();
-  // The row menu opens from the kebab only; a touch screen can't hover to reveal it.
-  const showsTouchActions = isTouchPlatform || touchScreen;
+  const { finePointer } = usePointerCapabilities();
+  // Without a hovering pointer the kebab is the only way to the row menu, so it stays shown.
+  const showsTouchActions = isTouchPlatform || !finePointer;
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
