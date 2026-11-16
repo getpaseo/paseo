@@ -15,4 +15,12 @@ test("settings search renders only matching settings groups", async ({ page }) =
   await expect(results.getByText("Open project", { exact: true })).not.toBeVisible();
   await expect(results.getByText("Appearance", { exact: true })).not.toBeVisible();
   await expect(results.getByText("Danger zone", { exact: true })).not.toBeVisible();
+
+  await search.fill("Plan");
+  await expect(results.getByText("Plan usage", { exact: true })).toBeVisible();
+  await expect(results.getByText("Sending", { exact: true })).not.toBeVisible();
+
+  await search.fill("Profile");
+  await expect(results.getByText("Agent profiles", { exact: true })).toBeVisible();
+  await expect(results.getByText("Plan usage", { exact: true })).not.toBeVisible();
 });

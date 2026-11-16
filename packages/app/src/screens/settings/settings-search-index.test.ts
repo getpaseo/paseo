@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { en } from "@/i18n/resources/en";
+import { BROWSER_TOOLS_TITLE } from "@/screens/settings/browser-tools-config";
 import {
   getSettingsSearchText,
   SETTINGS_SEARCH_INDEX,
@@ -28,6 +29,10 @@ describe("settings search index", () => {
     expect(usageText).toContain(en.providerUsage.displayAs);
     expect(searchText("shortcuts")).toContain(en.settings.shortcuts.help.openProject);
     expect(searchText("shortcuts")).not.toContain(en.settings.shortcuts.help.sendMessage);
+    expect(searchText("agents")).toContain(BROWSER_TOOLS_TITLE);
+    expect(searchText("agents")).not.toContain(en.settings.host.agents.resumeOnStartup.info);
+    expect(searchText("agents.skills")).toContain(en.settings.host.skills.title);
+    expect(searchText("agents.profiles")).toContain(en.settings.host.agentProfiles.sectionTitle);
   });
 
   it("keeps split groups independent", () => {

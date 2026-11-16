@@ -1,5 +1,9 @@
 import { en } from "@/i18n/resources/en";
 import { getKeyboardShortcutSearchText } from "@/keyboard/keyboard-shortcuts";
+import {
+  BROWSER_TOOLS_TITLE,
+  BROWSER_TOOLS_WARNING,
+} from "@/screens/settings/browser-tools-config";
 import type { HostSectionSlug, SettingsSectionSlug } from "@/utils/host-routes";
 
 /** Search spans both settings route namespaces; host routes remain separate because they carry a server id. */
@@ -220,7 +224,30 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchIndexEntry[] = [
     id: "agents",
     section: "agents",
     titleKey: "settings.hostSections.agents",
-    translationPrefixes: [],
+    translationPrefixes: [
+      "settings.host.orchestration.enableTools",
+      "settings.host.orchestration.systemPrompt.title",
+      "settings.host.orchestration.systemPrompt.hint",
+      "settings.host.orchestration.systemPrompt.edit",
+      "settings.host.agents.resumeOnStartup.title",
+      "settings.host.agents.resumeOnStartup.hint",
+      "settings.host.agents.resumeOnStartup.edit",
+      "settings.host.agents.idleRuntimeCleanup.title",
+      "settings.host.agents.idleRuntimeCleanup.hint",
+    ],
+    getSearchText: () => `${BROWSER_TOOLS_TITLE} ${BROWSER_TOOLS_WARNING}`,
+  },
+  {
+    id: "agents.skills",
+    section: "agents",
+    titleKey: "settings.host.skills.sectionTitle",
+    translationPrefixes: ["settings.host.skills"],
+  },
+  {
+    id: "agents.profiles",
+    section: "agents",
+    titleKey: "settings.host.agentProfiles.sectionTitle",
+    translationPrefixes: ["settings.host.agentProfiles"],
   },
   {
     id: "metadata",

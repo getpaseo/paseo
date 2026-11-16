@@ -279,9 +279,7 @@ export function HostPairDevicePage({ serverId }: { serverId: string }) {
 }
 
 export function HostAgentsPage({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
   const host = useHostProfile(serverId);
-  const isConnected = useHostRuntimeIsConnected(serverId);
 
   if (!host) {
     return <HostNotFound />;
@@ -289,23 +287,50 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      {isConnected ? (
-        <SettingsSection title={t("settings.hostSections.agents")}>
-          <PaseoToolsCard serverId={serverId} />
-          <BrowserToolsOptInCard serverId={serverId} />
-          <AppendSystemPromptCard serverId={serverId} />
-          <RestartRecoveryCard serverId={serverId} />
-          <IdleRuntimeCleanupCard serverId={serverId} />
-        </SettingsSection>
-      ) : (
-        <View style={[settingsStyles.card, styles.emptyCard]}>
-          <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
-        </View>
-      )}
+      <HostAgentsRuntimeSection serverId={serverId} />
       <AgentSkillsSection serverId={serverId} />
       <AgentProfilesSection serverId={serverId} />
     </View>
   );
+}
+
+function HostAgentsRuntimeSection({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const isConnected = useHostRuntimeIsConnected(serverId);
+
+  return isConnected ? (
+    <SettingsSection title={t("settings.hostSections.agents")}>
+      <PaseoToolsCard serverId={serverId} />
+      <BrowserToolsOptInCard serverId={serverId} />
+      <AppendSystemPromptCard serverId={serverId} />
+      <RestartRecoveryCard serverId={serverId} />
+      <IdleRuntimeCleanupCard serverId={serverId} />
+    </SettingsSection>
+  ) : (
+    <View style={[settingsStyles.card, styles.emptyCard]}>
+      <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
+    </View>
+  );
+}
+
+export type HostAgentsSearchGroup = "runtime" | "skills" | "profiles";
+
+export function HostAgentsSearchPage({
+  serverId,
+  group,
+}: {
+  serverId: string;
+  group: HostAgentsSearchGroup;
+}) {
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  if (group === "runtime") return <HostAgentsRuntimeSection serverId={serverId} />;
+  if (group === "skills") return <AgentSkillsSection serverId={serverId} />;
+  return <AgentProfilesSection serverId={serverId} />;
 }
 
 export function HostWorkspacesPage({ serverId }: { serverId: string }) {

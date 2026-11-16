@@ -103,6 +103,8 @@ import {
   HostConnectionsPage,
   HostPairDevicePage,
   HostAgentsPage,
+  HostAgentsSearchPage,
+  type HostAgentsSearchGroup,
   HostSettingsSearchPage,
   HostSettingsPage,
   HostProvidersPage,
@@ -1413,6 +1415,17 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     (entry: SettingsSearchIndexEntry): ReactNode => {
       if (isHostSectionSlug(entry.section)) {
         if (!activeHostServerId) return null;
+        if (
+          entry.id === "agents" ||
+          entry.id === "agents.skills" ||
+          entry.id === "agents.profiles"
+        ) {
+          let group: HostAgentsSearchGroup;
+          if (entry.id === "agents") group = "runtime";
+          else if (entry.id === "agents.skills") group = "skills";
+          else group = "profiles";
+          return <HostAgentsSearchPage serverId={activeHostServerId} group={group} />;
+        }
         if (entry.id === "host.appearance" || entry.id === "host.danger") {
           return (
             <HostSettingsSearchPage
