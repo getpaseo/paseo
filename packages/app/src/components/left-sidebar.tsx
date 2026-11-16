@@ -24,7 +24,10 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-nativ
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  WINDOW_CONTENT_DATASET,
+} from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import {
   resolveDesktopSidebarInsetLeft,
@@ -940,8 +943,6 @@ const workspacesSectionHeaderElement = <WorkspacesSectionHeader />;
 // Static styles for Animated.Views — must NOT use Unistyles dynamic theme to
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
-const WINDOW_CONTENT_DATASET = { "window-content": "" };
-
 const staticStyles = RNStyleSheet.create({
   desktopSidebar: {
     position: "relative" as const,
