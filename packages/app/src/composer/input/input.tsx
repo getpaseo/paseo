@@ -906,11 +906,11 @@ function SendButtonTooltip({
 type PrimaryActionKind = "send" | "active" | "voiceMode" | "none";
 
 function hasSendableComposerContent(input: {
-  text: string;
-  attachments: readonly ComposerAttachment[];
+  hasText: boolean;
+  hasAttachments: boolean;
   hasExternalContent: boolean;
 }): boolean {
-  return input.text.trim().length > 0 || input.attachments.length > 0 || input.hasExternalContent;
+  return input.hasText || input.hasAttachments || input.hasExternalContent;
 }
 
 function resolvePrimaryActionKind(input: {
@@ -1272,8 +1272,8 @@ function extractErrorMessage(error: unknown): string | null {
 function resolvePresentationSendDisabled(input: {
   standsIn: boolean;
   disabled: boolean;
-  text: string;
-  attachments: readonly ComposerAttachment[];
+  hasText: boolean;
+  hasAttachments: boolean;
   hasExternalContent: boolean;
   allowEmpty: boolean;
 }): boolean {
@@ -1810,8 +1810,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         hasSendableContent:
           allowEmptySubmit ||
           hasSendableComposerContent({
-            text: textInputRef.current?.getText() ?? valueRef.current,
-            attachments,
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            hasAttachments: attachments.length > 0,
             hasExternalContent,
           }),
         onSendQueued,
@@ -1841,8 +1841,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         hasSendableContent:
           allowEmptySubmit ||
           hasSendableComposerContent({
-            text: textInputRef.current?.getText() ?? valueRef.current,
-            attachments,
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            hasAttachments: attachments.length > 0,
             hasExternalContent,
           }),
         onSendQueued,
@@ -1932,8 +1932,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const primaryActionKind = resolvePrimaryActionKind({
       hasSendableContent: hasSendableComposerContent({
-        text: valueRef.current,
-        attachments,
+        hasText: hasLiveText,
+        hasAttachments: attachments.length > 0,
         hasExternalContent,
       }),
       allowEmptySubmit,
@@ -2081,8 +2081,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const isPresentedSendDisabled = resolvePresentationSendDisabled({
       standsIn: sendStandsIn,
       disabled: isSendButtonDisabled,
-      text: valueRef.current,
-      attachments,
+      hasText: hasLiveText,
+      hasAttachments: attachments.length > 0,
       hasExternalContent,
       allowEmpty: allowEmptySubmit,
     });
