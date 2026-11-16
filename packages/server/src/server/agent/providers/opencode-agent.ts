@@ -3751,10 +3751,17 @@ class OpenCodeAgentSession implements AgentSession {
     const requestIds = Array.from(this.pendingPermissions.keys());
     for (const requestId of requestIds) {
       if (!this.pendingPermissions.has(requestId)) continue;
-      await this.respondToPermission(requestId, {
-        behavior: "deny",
-        message: "The user answered with a message instead of approving. Their message follows.",
-      });
+      try {
+        await this.respondToPermission(requestId, {
+          behavior: "deny",
+          message: "The user answered with a message instead of approving. Their message follows.",
+        });
+      } catch {
+        // Best effort: drop the local entry so the prompt cannot get stuck even
+        // if the provider call failed.
+        this.pendingPermissions.delete(requestId);
+        this.pendingPermissionDirectories.delete(requestId);
+      }
     }
   }
 
@@ -5018,7 +5025,11 @@ class OpenCodeAgentSession implements AgentSession {
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
-      throw new Error(`No pending permission request with id '${requestId}'`);
+      // Idempotent no-op: OpenCode may already have resolved or canceled this
+      // request (for example, a new user message supersedes a pending question).
+      // Throwing here surfaces an error and leaves the client's prompt stuck,
+      // because the daemon still lists it until this late response succeeds.
+      return;
     }
 
     const directory = this.pendingPermissionDirectories.get(requestId) ?? this.config.cwd;
