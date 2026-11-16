@@ -59,33 +59,36 @@ export async function getAvailableHostDaemonPort(): Promise<number> {
   return port;
 }
 
-async function waitForServer(port: number, child: ChildProcess): Promise<void> {
+/**
+ * Resolves once this daemon answers on its port. An open TCP port is not
+ * enough: the port is released before the daemon binds it, and whatever takes
+ * it in between also accepts connections while the daemon exits with
+ * EADDRINUSE. Only the daemon's own status reports its server id.
+ */
+async function waitForServer(
+  port: number,
+  child: ChildProcess,
+  identity: { serverId: string; password: string | undefined },
+): Promise<void> {
   const deadline = Date.now() + 90_000;
   let lastError: unknown = null;
 
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
-        `Isolated host daemon exited before listening (code ${String(child.exitCode)}, signal ${String(child.signalCode)})`,
+        `Isolated host daemon exited before listening (code ${String(
+          child.exitCode,
+        )}, signal ${String(child.signalCode)})`,
       );
     }
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.connect(port, "127.0.0.1", () => {
-          socket.end();
-          resolve();
-        });
-        socket.setTimeout(1_000, () => {
-          socket.destroy();
-          reject(new Error(`Connection timed out to isolated daemon port ${port}`));
-        });
-        socket.on("error", reject);
-      });
-      return;
+      const serverId = await readServerId(port, identity.password);
+      if (serverId === identity.serverId) return;
+      lastError = new Error(`Port ${port} is served by ${serverId}, not ${identity.serverId}`);
     } catch (error) {
       lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   throw new Error(
@@ -93,6 +96,16 @@ async function waitForServer(port: number, child: ChildProcess): Promise<void> {
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
+}
+
+async function readServerId(port: number, password: string | undefined): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${port}/api/status`, {
+    headers: password ? { authorization: `Bearer ${password}` } : {},
+    signal: AbortSignal.timeout(1_000),
+  });
+  if (!response.ok) throw new Error(`Status request to port ${port} returned ${response.status}`);
+  const status = (await response.json()) as { serverId?: unknown };
+  return String(status.serverId);
 }
 
 function withMutableRelay(
@@ -193,19 +206,20 @@ export async function startIsolatedHostDaemon(
     await killProcessTree(child);
   };
   const spawnDaemon = async (): Promise<ChildProcess> => {
+    const env = withDisabledE2ESpeechEnv({
+      ...process.env,
+      ...options.environment,
+      PASEO_HOME: paseoHome,
+      PASEO_SERVER_ID: serverId,
+      PASEO_LISTEN: `127.0.0.1:${port}`,
+      PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
+      PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
+      PASEO_NODE_ENV: "development",
+      NODE_ENV: "development",
+    });
     const spawnOptions: SpawnOptions = {
       cwd: serverDir,
-      env: withDisabledE2ESpeechEnv({
-        ...process.env,
-        ...options.environment,
-        PASEO_HOME: paseoHome,
-        PASEO_SERVER_ID: serverId,
-        PASEO_LISTEN: `127.0.0.1:${port}`,
-        PASEO_CORS_ORIGINS: `http://localhost:${metroPort}`,
-        PASEO_RELAY_ENABLED: options.mutableRelay ? undefined : "0",
-        PASEO_NODE_ENV: "development",
-        NODE_ENV: "development",
-      }),
+      env,
       stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     };
@@ -221,7 +235,10 @@ export async function startIsolatedHostDaemon(
     });
 
     try {
-      await waitForServer(port, spawned);
+      await waitForServer(port, spawned, {
+        serverId,
+        password: env.PASEO_PASSWORD?.trim(),
+      });
       return spawned;
     } catch (error) {
       throw new Error(
