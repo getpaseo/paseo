@@ -1,7 +1,10 @@
 import type { createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
-import { delayBrowserWorkspaceCreatedResponse } from "../support/helpers/new-workspace";
+import {
+  delayBrowserWorkspaceCreatedResponse,
+  selectWorkspaceIsolation,
+} from "../support/helpers/new-workspace";
 
 test("an edited background failure reuses its ready workspace and restored metadata after reload", async ({
   creation,
@@ -26,6 +29,17 @@ test("an edited background failure reuses its ready workspace and restored metad
     ).toBeVisible();
     await creation.expectOneCreatedWorkspace();
     await creation.returnToWorkspaceForm();
+    await selectWorkspaceIsolation(page, "worktree");
+    await creation.submitPrompt("Edited background task", "Create");
+    await expect(
+      page
+        .getByText(/Workspace placement has changed/)
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
+    await creation.expectAgentCount(0);
+    await creation.expectOneCreatedWorkspace();
+    await selectWorkspaceIsolation(page, "local");
     await creation.submitPrompt("Edited background task", "Create");
     await creation.expectPromptVisible("Edited background task");
     await creation.expectOneCreatedWorkspace();

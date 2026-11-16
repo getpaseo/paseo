@@ -92,7 +92,15 @@ describe("draft creation retry admission", () => {
     });
     let workspaceCreates = 0;
     const original = creationsFor(disk);
-    const workspaceRequest = { source: { kind: "directory", path: "/repo" }, agent: request };
+    const source = {
+      kind: "worktree",
+      cwd: "/repo",
+      projectId: "project",
+      worktreeSlug: "retained",
+      branchName: "original",
+      baseBranch: "main",
+    };
+    const workspaceRequest = { source, agent: request };
     await original.submit({
       ...scope,
       kind: "workspace",
@@ -119,6 +127,20 @@ describe("draft creation retry admission", () => {
         request: { ...workspaceRequest, agent: { ...request, initialPrompt: "Edited" } },
       }),
     ).toEqual({ kind: "reuse", workspace });
+    for (const changedSource of [
+      { ...source, projectId: "other-project" },
+      { ...source, cwd: "/other-repo" },
+      { ...source, branchName: "other-branch" },
+      { ...source, baseBranch: "other-base" },
+      { kind: "directory", path: "/repo", projectId: "project" },
+    ]) {
+      await expect(
+        restored.workspaceRetry({
+          ...scope,
+          request: { ...workspaceRequest, source: changedSource },
+        }),
+      ).rejects.toThrow("Workspace placement has changed");
+    }
     const result = await restored.submit({
       ...scope,
       kind: "agent",
@@ -131,6 +153,62 @@ describe("draft creation retry admission", () => {
     });
     expect(result).toBe("agent-in-existing-workspace");
     expect(workspaceCreates).toBe(1);
+  });
+
+  it("retains a committed workspace when its separate legacy agent frame is not sent", async () => {
+    const disk = storage();
+    const workspace = WorkspaceDescriptorPayloadSchema.parse({
+      id: "workspace-1",
+      projectId: "project",
+      projectDisplayName: "Project",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "Existing workspace",
+      status: "running",
+      statusEnteredAt: null,
+      activityAt: null,
+      archivingAt: null,
+      scripts: [],
+    });
+    const workspaceRequest = { source: { kind: "directory", path: "/repo" }, agent: request };
+    await expect(
+      creationsFor(disk).submit({
+        ...scope,
+        kind: "workspace",
+        request: workspaceRequest,
+        send: async ({ idempotencyKey, onEvent }) => {
+          onEvent({
+            ...failure({ kind: "workspace", idempotencyKey, unknown: false }),
+            phase: "workspace_ready",
+            revision: 1,
+            error: null,
+            workspace,
+          });
+          throw new NotSentError("Message is too large to send");
+        },
+      }),
+    ).rejects.toThrow("Message is too large to send");
+    const restored = creationsFor(disk);
+    expect(await restored.workspaceRetry({ ...scope, request: workspaceRequest })).toEqual({
+      kind: "reuse",
+      workspace,
+    });
+    expect(
+      await restored.workspaceRetry({
+        ...scope,
+        request: { ...workspaceRequest, agent: { ...request, initialPrompt: "Smaller prompt" } },
+      }),
+    ).toEqual({ kind: "reuse", workspace });
+    expect(
+      await restored.submit({
+        ...scope,
+        kind: "agent",
+        request: { ...request, initialPrompt: "Smaller prompt" },
+        send: async () => "created-in-retained-workspace",
+      }),
+    ).toBe("created-in-retained-workspace");
   });
 
   it("does not send when admission cannot be persisted", async () => {

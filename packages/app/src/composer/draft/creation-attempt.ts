@@ -23,8 +23,15 @@ const RecordSchema = z.object({
   attempt: AttemptSchema.nullable(),
   worktreeSlug: z.string().optional(),
   workspace: WorkspaceDescriptorPayloadSchema.optional(),
+  workspacePlacementKey: z.string().optional(),
 });
 type Record = z.infer<typeof RecordSchema>;
+
+function workspacePlacementKey(request: object): string {
+  return draftCreationKey("workspace-placement", {
+    source: "source" in request ? request.source : null,
+  });
+}
 
 interface Scope {
   key: string;
@@ -134,6 +141,11 @@ export function createDraftCreations(deps: Dependencies) {
     const sameRequest =
       prior?.kind === "workspace" && prior.key === draftCreationKey(input.draftId, input.request);
     if (sameRequest) return { kind: "replay" };
+    if (scope.record.workspacePlacementKey !== workspacePlacementKey(input.request)) {
+      throw new Error(
+        "Workspace placement has changed. Restore the original project, branch, and isolation, or open a new draft.",
+      );
+    }
     return { kind: "reuse", workspace: scope.record.workspace };
   }
 
@@ -150,7 +162,13 @@ export function createDraftCreations(deps: Dependencies) {
       }
       const revision = sameRequest ? prior.revision : 0;
       const attempt: Attempt = { kind: input.kind, key, outcome: "pending", revision, error: null };
-      const pending = { ...previous, attempt };
+      const pending = {
+        ...previous,
+        attempt,
+        ...(input.kind === "workspace"
+          ? { workspacePlacementKey: workspacePlacementKey(input.request) }
+          : {}),
+      };
       try {
         await deps.storage.setItem(scope.key, JSON.stringify(pending));
       } catch (error) {
@@ -191,7 +209,12 @@ export function createDraftCreations(deps: Dependencies) {
       try {
         return await input.send({ idempotencyKey: key, onEvent });
       } catch (error) {
-        if (deps.isNotSent(error)) await restore(scope, previous);
+        if (deps.isNotSent(error)) {
+          // Legacy workspace creation sends the agent separately. Its local rejection cannot
+          // undo a confirmed workspace, and the next retry must skip provisioning entirely.
+          const stagedWorkspace = scope.record.workspace && !previous.workspace;
+          await restore(scope, stagedWorkspace ? { ...scope.record, attempt: null } : previous);
+        }
         throw error;
       } finally {
         await scope.writes;
