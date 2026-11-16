@@ -46,7 +46,7 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { HostPicker as SharedHostPicker } from "@/components/hosts/host-picker";
 import { HostStatusDot } from "@/components/host-status-dot";
-import { SettingsCard, SettingsDetailRow, SettingsSection } from "@/components/settings";
+import { SettingsSection } from "@/components/settings";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
 import { OpenLocationSection } from "@/screens/settings/open-location/open-location-section";
 import { TerminalSection } from "@/screens/settings/terminal/terminal-section";
@@ -342,7 +342,7 @@ const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     kind: "section",
     id: "diagnostics",
     labelKey: "settings.sections.diagnostics",
-    terms: ["diagnostic", "audio", "playback", "sound", "logs", "debug"],
+    terms: ["diagnostic", "audio", "playback", "logs", "debug"],
   },
   {
     kind: "section",
@@ -423,6 +423,31 @@ const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     terms: ["plugin", "extension", "catalog"],
   },
 ];
+
+function resolveSettingsSearchResults(input: {
+  query: string;
+  t: TFunction;
+  isDesktopApp: boolean;
+  hardwareKeyboardPresent: boolean;
+  hasHosts: boolean;
+}): SettingsSearchEntry[] {
+  const normalizedQuery = input.query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return [];
+
+  return SETTINGS_SEARCH_ENTRIES.filter((entry) => {
+    if (entry.kind === "section") {
+      const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
+      if (!item || !isSectionAvailable(item, input.isDesktopApp, input.hardwareKeyboardPresent)) {
+        return false;
+      }
+    } else if (!input.hasHosts) {
+      return false;
+    }
+    const searchableText =
+      `${input.t(entry.labelKey)} ${entry.terms.join(" ")}`.toLocaleLowerCase();
+    return searchableText.includes(normalizedQuery);
+  });
+}
 
 function renderHostSettingsContent(
   view: Extract<SettingsView, { kind: "host" }>,
@@ -1110,98 +1135,23 @@ function SidebarGroup({ label, children }: { label?: string; children: ReactNode
 }
 
 interface SettingsSearchResultsProps {
-  query: string;
-  isDesktopApp: boolean;
-  hardwareKeyboardPresent: boolean;
-  hasHosts: boolean;
-  activeHostServerId: string | null;
-  onSelectSection: (section: SettingsSectionSlug) => void;
-  onSelectHostSection: (section: HostSectionSlug) => void;
-  onAddHost: () => void;
-  onClearSearch: () => void;
+  results: SettingsSearchEntry[];
+  renderEntry: (entry: SettingsSearchEntry) => ReactNode;
 }
 
-interface SettingsSearchResultRowProps {
-  entry: SettingsSearchEntry;
-  label: string;
-  hint: string;
-  onSelect: (entry: SettingsSearchEntry) => void;
-  testID: string;
-}
-
-function SettingsSearchResultRow({
-  entry,
-  label,
-  hint,
-  onSelect,
-  testID,
-}: SettingsSearchResultRowProps) {
-  const handlePress = useCallback(() => onSelect(entry), [entry, onSelect]);
-  return <SettingsDetailRow label={label} hint={hint} onPress={handlePress} testID={testID} />;
-}
-
-function SettingsSearchResults({
-  query,
-  isDesktopApp,
-  hardwareKeyboardPresent,
-  hasHosts,
-  activeHostServerId,
-  onSelectSection,
-  onSelectHostSection,
-  onAddHost,
-  onClearSearch,
-}: SettingsSearchResultsProps) {
+function SettingsSearchResults({ results, renderEntry }: SettingsSearchResultsProps) {
   const { t } = useTranslation();
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  const results = useMemo(
-    () =>
-      SETTINGS_SEARCH_ENTRIES.filter((entry) => {
-        if (entry.kind === "section") {
-          const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
-          if (!item || !isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent))
-            return false;
-        } else if (!hasHosts) {
-          return false;
-        }
-        const searchableText = `${t(entry.labelKey)} ${entry.terms.join(" ")}`.toLocaleLowerCase();
-        return searchableText.includes(normalizedQuery);
-      }),
-    [hardwareKeyboardPresent, hasHosts, isDesktopApp, normalizedQuery, t],
-  );
-
-  const handleSelect = useCallback(
-    (entry: SettingsSearchEntry) => {
-      onClearSearch();
-      if (entry.kind === "section") {
-        onSelectSection(entry.id as SettingsSectionSlug);
-      } else if (activeHostServerId) {
-        onSelectHostSection(entry.id as HostSectionSlug);
-      } else {
-        onAddHost();
-      }
-    },
-    [activeHostServerId, onAddHost, onClearSearch, onSelectHostSection, onSelectSection],
-  );
 
   return (
-    <SettingsSection title={t("settings.title")} testID="settings-search-results">
+    <View testID="settings-search-results">
       {results.length > 0 ? (
-        <SettingsCard>
-          {results.map((entry) => (
-            <SettingsSearchResultRow
-              key={`${entry.kind}-${entry.id}`}
-              entry={entry}
-              label={t(entry.labelKey)}
-              hint={t(entry.kind === "host" ? "settings.groups.host" : "settings.groups.app")}
-              onSelect={handleSelect}
-              testID={`settings-search-result-${entry.kind}-${entry.id}`}
-            />
-          ))}
-        </SettingsCard>
+        results.map((entry) => <View key={`${entry.kind}-${entry.id}`}>{renderEntry(entry)}</View>)
       ) : (
-        <Text style={styles.searchNoResults}>{t("common.empty.noResults")}</Text>
+        <SettingsSection title={t("settings.title")}>
+          <Text style={styles.searchNoResults}>{t("common.empty.noResults")}</Text>
+        </SettingsSection>
       )}
-    </SettingsSection>
+    </View>
   );
 }
 
@@ -1215,6 +1165,7 @@ interface SettingsSidebarProps {
   activeHostServerId: string | null;
   layout: "desktop" | "mobile";
   searchInput: string;
+  searchResults: SettingsSearchEntry[];
   onSearchInputChange: (value: string) => void;
 }
 
@@ -1228,6 +1179,7 @@ function SettingsSidebar({
   activeHostServerId,
   layout,
   searchInput,
+  searchResults,
   onSearchInputChange,
 }: SettingsSidebarProps) {
   const { theme, rt } = useUnistyles();
@@ -1235,12 +1187,26 @@ function SettingsSidebar({
   const hosts = useHosts();
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
+  const hasHosts = sortedHosts.length > 0;
   const enableBuiltInDaemonOption = useEnableBuiltInDaemonOption();
   const isDesktopApp = isElectronRuntime();
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   const items = SIDEBAR_SECTION_ITEMS.filter((item) =>
     isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent),
   );
+  const searchResultIds = useMemo(
+    () => new Set(searchResults.map((entry) => `${entry.kind}:${entry.id}`)),
+    [searchResults],
+  );
+  const visibleItems = searchInput.trim()
+    ? items.filter((item) => searchResultIds.has(`section:${item.id}`))
+    : items;
+  const visibleHostItems = searchInput.trim()
+    ? HOST_SECTION_ITEMS.filter((item) => searchResultIds.has(`host:${item.id}`))
+    : HOST_SECTION_ITEMS;
+  const showAppGroup = !searchInput.trim() || visibleItems.length > 0;
+  const showHostGroup = hasHosts && (!searchInput.trim() || visibleHostItems.length > 0);
+  const showAddHostGroup = !hasHosts && !searchInput.trim();
   const insets = useSafeAreaInsets();
   const isDesktop = layout === "desktop";
   const sidebarScroll = useSettingsSidebarScroll(isDesktop);
@@ -1271,9 +1237,9 @@ function SettingsSidebar({
           clearTestID="settings-search-clear"
         />
       </View>
-      {layout === "desktop" || !searchInput.trim() ? (
+      {showAppGroup ? (
         <SidebarGroup label={t("settings.groups.app")}>
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <SidebarSectionButton
               key={item.id}
               itemId={item.id}
@@ -1285,7 +1251,7 @@ function SettingsSidebar({
           ))}
         </SidebarGroup>
       ) : null}
-      {layout === "desktop" || !searchInput.trim() ? (
+      {showHostGroup ? (
         <SidebarGroup label={t("settings.groups.host")}>
           <HostPicker
             activeServerId={activeHostServerId}
@@ -1294,7 +1260,7 @@ function SettingsSidebar({
             onAddHost={onAddHost}
             enableBuiltInDaemonOption={enableBuiltInDaemonOption}
           />
-          {HOST_SECTION_ITEMS.map((item) => (
+          {visibleHostItems.map((item) => (
             <SidebarHostSectionButton
               key={item.id}
               itemId={item.id}
@@ -1306,7 +1272,7 @@ function SettingsSidebar({
           ))}
         </SidebarGroup>
       ) : null}
-      {layout === "desktop" || !searchInput.trim() ? (
+      {showAddHostGroup ? (
         <SidebarGroup>
           <Pressable
             accessibilityRole="button"
@@ -1410,6 +1376,17 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const localServerId = useLocalDaemonServerId();
   const sortedHosts = useSortedHosts(hosts, localServerId);
   const selectedSettingsHostServerId = useSettingsHostSelection();
+  const settingsSearchResults = useMemo(
+    () =>
+      resolveSettingsSearchResults({
+        query: settingsSearchInput,
+        t,
+        isDesktopApp,
+        hardwareKeyboardPresent,
+        hasHosts: sortedHosts.length > 0,
+      }),
+    [hardwareKeyboardPresent, isDesktopApp, settingsSearchInput, sortedHosts.length, t],
+  );
 
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
@@ -1552,10 +1529,6 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     returnFromSettings({ kind: "root" });
   }, []);
 
-  const handleClearSettingsSearch = useCallback(() => {
-    setSettingsSearchInput("");
-  }, []);
-
   // A plugin's page draws its own header; the compact back header names the plugin.
   const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
     if (view.kind === "plugin")
@@ -1594,19 +1567,69 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // The gallery and a plugin's page share one width, so opening a plugin keeps the page edges put.
   const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
 
+  const renderSettingsSearchEntry = useCallback(
+    (entry: SettingsSearchEntry): ReactNode => {
+      if (entry.kind === "host") {
+        if (!activeHostServerId) return null;
+        return renderHostSettingsContent(
+          { kind: "host", serverId: activeHostServerId, section: entry.id as HostSectionSlug },
+          handleHostRemoved,
+        );
+      }
+
+      switch (entry.id as SettingsSectionSlug) {
+        case "general":
+          return (
+            <>
+              <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
+              <SendingSection />
+              {isDesktopApp ? <OpenLocationSection /> : null}
+            </>
+          );
+        case "diagnostics":
+          return (
+            <DiagnosticsSection
+              voiceAudioEngine={voiceAudioEngine}
+              isPlaybackTestRunning={isPlaybackTestRunning}
+              playbackTestResult={playbackTestResult}
+              handlePlaybackTest={handlePlaybackTest}
+            />
+          );
+        case "about":
+          return (
+            <AboutSection
+              appVersion={appVersion}
+              appVersionText={appVersionText}
+              isDesktopApp={isDesktopApp}
+            />
+          );
+        default: {
+          const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === entry.id);
+          return item?.Content ? <item.Content /> : null;
+        }
+      }
+    },
+    [
+      activeHostServerId,
+      appVersion,
+      appVersionText,
+      handleHostRemoved,
+      handleLanguageChange,
+      handlePlaybackTest,
+      isDesktopApp,
+      isPlaybackTestRunning,
+      playbackTestResult,
+      settings,
+      voiceAudioEngine,
+    ],
+  );
+
   const content: ReactNode = (() => {
     if (!isCompactLayout && settingsSearchInput.trim()) {
       return (
         <SettingsSearchResults
-          query={settingsSearchInput}
-          isDesktopApp={isDesktopApp}
-          hardwareKeyboardPresent={hardwareKeyboardPresent}
-          hasHosts={sortedHosts.length > 0}
-          activeHostServerId={activeHostServerId}
-          onSelectSection={handleSelectSection}
-          onSelectHostSection={handleSelectHostSection}
-          onAddHost={handleAddHost}
-          onClearSearch={handleClearSettingsSearch}
+          results={settingsSearchResults}
+          renderEntry={renderSettingsSearchEntry}
         />
       );
     }
@@ -1634,35 +1657,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     if (view.kind === "section") {
       const item = SIDEBAR_SECTION_ITEMS.find((candidate) => candidate.id === view.section);
       if (!item || !isSectionAvailable(item, isDesktopApp, hardwareKeyboardPresent)) return null;
-      switch (view.section) {
-        case "general":
-          return (
-            <>
-              <GeneralSection settings={settings} handleLanguageChange={handleLanguageChange} />
-              <SendingSection />
-              {isDesktopApp ? <OpenLocationSection /> : null}
-            </>
-          );
-        case "diagnostics":
-          return (
-            <DiagnosticsSection
-              voiceAudioEngine={voiceAudioEngine}
-              isPlaybackTestRunning={isPlaybackTestRunning}
-              playbackTestResult={playbackTestResult}
-              handlePlaybackTest={handlePlaybackTest}
-            />
-          );
-        case "about":
-          return (
-            <AboutSection
-              appVersion={appVersion}
-              appVersionText={appVersionText}
-              isDesktopApp={isDesktopApp}
-            />
-          );
-        default:
-          return item.Content ? <item.Content /> : null;
-      }
+      return renderSettingsSearchEntry({
+        kind: "section",
+        id: view.section,
+        labelKey: item.labelKey,
+        terms: [],
+      });
     }
     return null;
   })();
@@ -1691,19 +1691,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             activeHostServerId={activeHostServerId}
             layout="mobile"
             searchInput={settingsSearchInput}
+            searchResults={settingsSearchResults}
             onSearchInputChange={setSettingsSearchInput}
           />
           {settingsSearchInput.trim() ? (
             <SettingsSearchResults
-              query={settingsSearchInput}
-              isDesktopApp={isDesktopApp}
-              hardwareKeyboardPresent={hardwareKeyboardPresent}
-              hasHosts={sortedHosts.length > 0}
-              activeHostServerId={activeHostServerId}
-              onSelectSection={handleSelectSection}
-              onSelectHostSection={handleSelectHostSection}
-              onAddHost={handleAddHost}
-              onClearSearch={handleClearSettingsSearch}
+              results={settingsSearchResults}
+              renderEntry={renderSettingsSearchEntry}
             />
           ) : null}
         </ScrollView>
@@ -1743,6 +1737,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
             activeHostServerId={activeHostServerId}
             layout="desktop"
             searchInput={settingsSearchInput}
+            searchResults={settingsSearchResults}
             onSearchInputChange={setSettingsSearchInput}
           />
         </WindowChromeRegion>
