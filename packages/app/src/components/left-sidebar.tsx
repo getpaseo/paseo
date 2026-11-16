@@ -9,7 +9,16 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   Pressable,
   ScrollView,
@@ -19,7 +28,11 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Gesture, ScrollView as GHScrollView } from "react-native-gesture-handler";
+import {
+  Gesture,
+  type GestureType,
+  ScrollView as GHScrollView,
+} from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -625,29 +638,7 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        {platformIsNative ? (
-          <GHScrollView
-            // Same contract as the workspace list: vertical drags scroll the nav
-            // block, a clear horizontal intent still activates the close pan.
-            simultaneousHandlers={closeGestureRef}
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </GHScrollView>
-        ) : (
-          <ScrollView
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </ScrollView>
-        )}
-        <SidebarSeparator />
+        <SidebarNavScroll closeGestureRef={closeGestureRef}>{navRows}</SidebarNavScroll>
 
         <SidebarViewSlot dismiss={handleWorkspacePress}>
           <SidebarToastRegion active={active}>
@@ -689,6 +680,47 @@ function MobileSidebar({
         />
       </View>
     </MobilePanelOverlay>
+  );
+}
+
+interface SidebarNavScrollProps {
+  closeGestureRef: RefObject<GestureType | undefined>;
+  /** Web only: the viewport emits no window regions (see WINDOW_CONTENT_DATASET). */
+  windowContent?: boolean;
+  children: ReactNode;
+}
+
+// The capped, scrolling nav block shared by the mobile and desktop sidebars, with the
+// divider below it. The divider is a sibling because Unistyles does not patch the
+// gesture-handler ScrollView.
+function SidebarNavScroll({ closeGestureRef, windowContent, children }: SidebarNavScrollProps) {
+  return (
+    <>
+      {platformIsNative ? (
+        <GHScrollView
+          // Same contract as the workspace list: vertical drags scroll the nav
+          // block, a clear horizontal intent still activates the close pan.
+          simultaneousHandlers={closeGestureRef}
+          style={styles.navScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {children}
+        </GHScrollView>
+      ) : (
+        <ScrollView
+          dataSet={windowContent ? WINDOW_CONTENT_DATASET : undefined}
+          style={styles.navScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {children}
+        </ScrollView>
+      )}
+      <SidebarSeparator />
+    </>
   );
 }
 
@@ -851,18 +883,12 @@ function DesktopSidebar({
               </View>
             ) : null}
           </View>
-          <ScrollView
-            // The drag overlay stays above this viewport: Electron does not clip
-            // app-region rects to scroll viewports, so a scrolled-out row would
-            // still claim its no-drag rect.
-            dataSet={WINDOW_CONTENT_DATASET}
-            style={styles.desktopNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
+          {/* The drag overlay stays above this viewport: Electron does not clip
+              app-region rects to scroll viewports, so a scrolled-out row would
+              still claim its no-drag rect. */}
+          <SidebarNavScroll closeGestureRef={closeGestureRef} windowContent>
             <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
-          </ScrollView>
+          </SidebarNavScroll>
 
           <SidebarViewSlot dismiss={closeSidebar}>
             <SidebarToastRegion active={active}>
@@ -962,19 +988,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The nav block caps at half the sidebar; a long item list scrolls inside the
   // cap instead of crowding the workspace list off a short screen.
-  mobileNavScroll: {
+  navScroll: {
     flexGrow: 0,
     flexShrink: 1,
     maxHeight: "50%",
-  },
-  // Desktop applies the same cap. The border sits on the viewport so it stays
-  // put while the rows scroll.
-  desktopNavScroll: {
-    flexGrow: 0,
-    flexShrink: 1,
-    maxHeight: "50%",
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
   mobileNavRowsGroup: {
     paddingTop: theme.spacing[2],
