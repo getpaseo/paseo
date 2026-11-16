@@ -24,6 +24,8 @@ export interface UseFileLinkResult {
   onHoverIn: () => void;
   onPress: () => void;
   open: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
+  resolve: () => Promise<InlinePathTarget | null>;
+  canResolveFile: boolean;
 }
 
 export interface AssistantFileLinkActions {
@@ -132,6 +134,37 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     open(stableSource, "preferred");
   });
 
+  const resolve = useStableEvent(async () => {
+    const captured = context.configRef.current;
+    let resolved: InlinePathTarget | null;
+    if (resolution.kind === "resolved") {
+      resolved = resolution.value.kind === "file" ? resolution.value.target : null;
+    } else {
+      resolved = await queryClient.fetchQuery({
+        queryKey,
+        queryFn: () =>
+          fetchDaemonResolution({
+            ambiguousQuery: resolution.ambiguousQuery,
+            token: resolution.token,
+            target: resolution.target,
+            workspaceRoot: captured.workspaceRoot,
+            getDirectorySuggestions: context.getDirectorySuggestions,
+          }),
+        retry: 0,
+        staleTime: Infinity,
+      });
+    }
+    const current = context.configRef.current;
+    const changed =
+      current.serverId !== captured.serverId ||
+      current.workspaceId !== captured.workspaceId ||
+      current.workspaceRoot !== captured.workspaceRoot ||
+      current.relativePathBase !== captured.relativePathBase ||
+      current.client !== captured.client;
+    return changed ? null : resolved;
+  });
+  const canResolveFile = resolution.kind === "needsLookup" || resolution.value.kind === "file";
+
   const target = useMemo(() => {
     if (resolution.kind === "resolved") {
       return resolution.value.kind === "file" ? resolution.value.target : null;
@@ -141,8 +174,8 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
 
   const tooltipPath = target ? formatFileLinkTooltipPath({ target, workspaceRoot }) : null;
   return useMemo(
-    () => ({ target, tooltipPath, onHoverIn, onPress, open }),
-    [target, tooltipPath, onHoverIn, onPress, open],
+    () => ({ target, tooltipPath, onHoverIn, onPress, open, resolve, canResolveFile }),
+    [target, tooltipPath, onHoverIn, onPress, open, resolve, canResolveFile],
   );
 }
 

@@ -3902,6 +3902,7 @@ function WorkspaceScreenContent({
         client={client}
         serverId={normalizedServerId}
         workspaceRoot={workspaceDirectory ?? undefined}
+        workspaceId={normalizedWorkspaceId}
         onOpenWorkspaceFile={openMarkdownPath}
         toast={toast}
       >

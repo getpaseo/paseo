@@ -39,25 +39,32 @@ index 0a1c6c2..5935112 100644
  
    struct OnLinkLongPress {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-index c12937c..8105833 100644
+index c12937c..f82c2a0 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-@@ -95,7 +95,7 @@ class EnrichedMarkdown(
+@@ -95,8 +95,8 @@ class EnrichedMarkdown(
    private var accessibilityLabels = AccessibilityLabels()
    private var textBreakStrategy: String = BreakStrategyUtils.DEFAULT_STRATEGY
  
 -  private var onLinkPressCallback: ((String) -> Unit)? = null
+-  private var onLinkLongPressCallback: ((String) -> Unit)? = null
 +  private var onLinkPressCallback: ((String, String) -> Unit)? = null
-   private var onLinkLongPressCallback: ((String) -> Unit)? = null
++  private var onLinkLongPressCallback: ((String, String) -> Unit)? = null
    private var onTaskListItemPressCallback: ((Int, Boolean, String) -> Unit)? = null
    private var onLatexErrorCallback: LatexErrorReporter? = null
-@@ -296,7 +296,7 @@ class EnrichedMarkdown(
+ 
+@@ -296,11 +296,11 @@ class EnrichedMarkdown(
      }
    }
  
 -  fun setOnLinkPressCallback(callback: (String) -> Unit) {
 +  fun setOnLinkPressCallback(callback: (String, String) -> Unit) {
      onLinkPressCallback = callback
+   }
+ 
+-  fun setOnLinkLongPressCallback(callback: (String) -> Unit) {
++  fun setOnLinkLongPressCallback(callback: (String, String) -> Unit) {
+     onLinkLongPressCallback = callback
    }
  
 @@ -405,7 +405,7 @@ class EnrichedMarkdown(
@@ -112,10 +119,10 @@ index c12937c..8105833 100644
    }
  
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
-index 5dd5828..757d2bd 100644
+index 5dd5828..1ceb100 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
-@@ -50,8 +50,8 @@ class EnrichedMarkdownManager :
+@@ -50,12 +50,12 @@ class EnrichedMarkdownManager :
        emitContextMenuItemPress(view, itemText, selectedText, selectionStart, selectionEnd)
      }
  
@@ -125,21 +132,29 @@ index 5dd5828..757d2bd 100644
 +      emitLinkPress(view, url, sourceType)
      }
  
-     view.setOnLinkLongPressCallback { url ->
+-    view.setOnLinkLongPressCallback { url ->
+-      emitLinkLongPress(view, url)
++    view.setOnLinkLongPressCallback { url, sourceType ->
++      emitLinkLongPress(view, url, sourceType)
+     }
+ 
+     view.setOnTaskListItemPressCallback { taskIndex, checked, itemText ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
-index 8745349..f3275b9 100644
+index 8745349..c9d5c74 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
-@@ -69,7 +69,7 @@ class EnrichedMarkdownText
+@@ -69,8 +69,8 @@ class EnrichedMarkdownText
      CodeBlockPressHost {
      private val parser = Parser.shared
      private val renderer = Renderer()
 -    private var onLinkPressCallback: ((String) -> Unit)? = null
+-    private var onLinkLongPressCallback: ((String) -> Unit)? = null
 +    private var onLinkPressCallback: ((String, String) -> Unit)? = null
-     private var onLinkLongPressCallback: ((String) -> Unit)? = null
++    private var onLinkLongPressCallback: ((String, String) -> Unit)? = null
      private var onLatexErrorCallback: LatexErrorReporter? = null
  
-@@ -455,8 +455,8 @@ class EnrichedMarkdownText
+     private val reportedLatexErrors = HashSet<String>()
+@@ -455,12 +455,12 @@ class EnrichedMarkdownText
        }
      }
  
@@ -149,8 +164,14 @@ index 8745349..f3275b9 100644
 +      emitLinkPressEvent(url, sourceType)
      }
  
-     fun emitOnLinkLongPress(url: String) {
-@@ -491,7 +491,7 @@ class EnrichedMarkdownText
+-    fun emitOnLinkLongPress(url: String) {
+-      emitLinkLongPressEvent(url)
++    fun emitOnLinkLongPress(url: String, sourceType: String = "markdown") {
++      emitLinkLongPressEvent(url, sourceType)
+     }
+ 
+     override var imagePressEnabled: Boolean = false
+@@ -491,11 +491,11 @@ class EnrichedMarkdownText
        codeBlockPressEnabled = enabled
      }
  
@@ -159,11 +180,16 @@ index 8745349..f3275b9 100644
        onLinkPressCallback = callback
      }
  
+-    fun setOnLinkLongPressCallback(callback: (String) -> Unit) {
++    fun setOnLinkLongPressCallback(callback: (String, String) -> Unit) {
+       onLinkLongPressCallback = callback
+     }
+ 
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
-index f1e3345..2549508 100644
+index f1e3345..c455a1a 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
-@@ -47,8 +47,8 @@ class EnrichedMarkdownTextManager :
+@@ -47,12 +47,12 @@ class EnrichedMarkdownTextManager :
        emitContextMenuItemPress(view, itemText, selectedText, selectionStart, selectionEnd)
      }
  
@@ -173,7 +199,13 @@ index f1e3345..2549508 100644
 +      emitLinkPress(view, url, sourceType)
      }
  
-     view.setOnLinkLongPressCallback { url ->
+-    view.setOnLinkLongPressCallback { url ->
+-      emitLinkLongPress(view, url)
++    view.setOnLinkLongPressCallback { url, sourceType ->
++      emitLinkLongPress(view, url, sourceType)
+     }
+ 
+     view.setOnTaskListItemPressCallback { taskIndex, checked, itemText ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkPressEvent.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkPressEvent.kt
 index 93c763e..fbe1c68 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkPressEvent.kt
@@ -194,368 +226,426 @@ index 93c763e..fbe1c68 100644
    }
  
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BaselineShiftRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BaselineShiftRenderer.kt
-index cb4605a..510af94 100644
+index cb4605a..4bf1b47 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BaselineShiftRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BaselineShiftRenderer.kt
-@@ -14,7 +14,7 @@ abstract class BaselineShiftRenderer : NodeRenderer {
+@@ -14,8 +14,8 @@ abstract class BaselineShiftRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val start = builder.length
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlankLineRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlankLineRenderer.kt
-index 0a57557..25eb0dc 100644
+index 0a57557..7f8acfc 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlankLineRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlankLineRenderer.kt
-@@ -15,7 +15,7 @@ class BlankLineRenderer(
+@@ -15,8 +15,8 @@ class BlankLineRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val count = node.getAttribute("count")?.toIntOrNull() ?: 0
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt
-index f5804a5..6292452 100644
+index f5804a5..15cfd13 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt
-@@ -19,7 +19,7 @@ class BlockquoteRenderer(
+@@ -19,8 +19,8 @@ class BlockquoteRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     if (builder.isNotEmpty() && builder.last() != '\n') {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteTextRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteTextRenderer.kt
-index 91f4a7c..4eacec8 100644
+index 91f4a7c..36663ff 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteTextRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteTextRenderer.kt
-@@ -24,7 +24,7 @@ class BlockquoteTextRenderer(
+@@ -24,8 +24,8 @@ class BlockquoteTextRenderer(
    fun render(
      renderer: Renderer,
      nodes: List<MarkdownASTNode>,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
    ): SpannableStringBuilder = renderer.renderContent(nodes, onLinkPress, onLinkLongPress, block = this)
  
+   fun push(context: BlockStyleContext) {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeBlockRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeBlockRenderer.kt
-index 4fcf57d..606c1a5 100644
+index 4fcf57d..16630d7 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeBlockRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeBlockRenderer.kt
-@@ -18,7 +18,7 @@ class CodeBlockRenderer(
+@@ -18,8 +18,8 @@ class CodeBlockRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     if (builder.isNotEmpty() && builder.last() != '\n') {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
-index 0008d9b..6b54eff 100644
+index 0008d9b..5fd7f03 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
-@@ -12,7 +12,7 @@ class CodeRenderer(
+@@ -12,8 +12,8 @@ class CodeRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     if (node.children.isEmpty() || node.children.all { it.content.isEmpty() }) return
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/EmphasisRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/EmphasisRenderer.kt
-index 8029d2d..6811dc4 100644
+index 8029d2d..dfbffe1 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/EmphasisRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/EmphasisRenderer.kt
-@@ -11,7 +11,7 @@ class EmphasisRenderer(
+@@ -11,8 +11,8 @@ class EmphasisRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HeadingRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HeadingRenderer.kt
-index 1a8c71b..432cfae 100644
+index 1a8c71b..f7b7149 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HeadingRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HeadingRenderer.kt
-@@ -17,7 +17,7 @@ class HeadingRenderer(
+@@ -17,8 +17,8 @@ class HeadingRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     if (builder.isNotEmpty() && builder.last() != '\n') {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HighlightRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HighlightRenderer.kt
-index a99a31f..acfcce5 100644
+index a99a31f..28743c2 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HighlightRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/HighlightRenderer.kt
-@@ -9,7 +9,7 @@ class HighlightRenderer : NodeRenderer {
+@@ -9,8 +9,8 @@ class HighlightRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ImageRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ImageRenderer.kt
-index 0047361..58e07f3 100644
+index 0047361..47fa283 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ImageRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ImageRenderer.kt
-@@ -9,7 +9,7 @@ class ImageRenderer : NodeRenderer {
+@@ -9,8 +9,8 @@ class ImageRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val imageUrl = node.getAttribute("url") ?: return
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LineBreakRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LineBreakRenderer.kt
-index 0cfad74..df88c5d 100644
+index 0cfad74..dfe7f17 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LineBreakRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LineBreakRenderer.kt
-@@ -7,7 +7,7 @@ class LineBreakRenderer : NodeRenderer {
+@@ -7,8 +7,8 @@ class LineBreakRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     builder.append("\n")
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
-index b849f78..24c06f3 100644
+index b849f78..48141fc 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
-@@ -19,7 +19,7 @@ class ListItemRenderer(
+@@ -19,8 +19,8 @@ class ListItemRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val styleContext = factory.blockStyleContext
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
-index 2bac5b1..ff2d2c2 100644
+index 2bac5b1..59d9947 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
-@@ -16,7 +16,7 @@ class ListRenderer(
+@@ -16,8 +16,8 @@ class ListRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val start = builder.length
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
-index 354b31a..77b1e14 100644
+index 354b31a..431f114 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
-@@ -15,7 +15,7 @@ interface NodeRenderer {
+@@ -15,8 +15,8 @@ interface NodeRenderer {
    fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    )
-@@ -175,7 +175,7 @@ class RendererFactory(
+ }
+@@ -175,8 +175,8 @@ class RendererFactory(
    fun renderChildren(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
    ) {
      renderNodes(node.children, builder, onLinkPress, onLinkLongPress)
-@@ -190,7 +190,7 @@ class RendererFactory(
+   }
+@@ -190,8 +190,8 @@ class RendererFactory(
    fun renderNodes(
      nodes: List<MarkdownASTNode>,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
    ) {
      nodes.forEach { node ->
+       getRenderer(node).render(node, builder, onLinkPress, onLinkLongPress, this)
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ParagraphRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ParagraphRenderer.kt
-index 305acc9..cda43ac 100644
+index 305acc9..63eaea6 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ParagraphRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ParagraphRenderer.kt
-@@ -16,7 +16,7 @@ class ParagraphRenderer(
+@@ -16,8 +16,8 @@ class ParagraphRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val context = factory.blockStyleContext
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
-index ae4be04..01dac8a 100644
+index ae4be04..db7745f 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/Renderer.kt
-@@ -36,7 +36,7 @@ class Renderer {
+@@ -36,8 +36,8 @@ class Renderer {
  
    fun renderDocument(
      document: MarkdownASTNode,
 -    onLinkPress: ((String) -> Unit)? = null,
+-    onLinkLongPress: ((String) -> Unit)? = null,
 +    onLinkPress: ((String, String) -> Unit)? = null,
-     onLinkLongPress: ((String) -> Unit)? = null,
++    onLinkLongPress: ((String, String) -> Unit)? = null,
    ): SpannableStringBuilder = renderContent(document.children, onLinkPress, onLinkLongPress)
  
-@@ -59,7 +59,7 @@ class Renderer {
+   /**
+@@ -59,8 +59,8 @@ class Renderer {
     */
    fun renderContent(
      nodes: List<MarkdownASTNode>,
 -    onLinkPress: ((String) -> Unit)? = null,
+-    onLinkLongPress: ((String) -> Unit)? = null,
 +    onLinkPress: ((String, String) -> Unit)? = null,
-     onLinkLongPress: ((String) -> Unit)? = null,
++    onLinkLongPress: ((String, String) -> Unit)? = null,
      block: BlockquoteTextRenderer? = null,
    ): SpannableStringBuilder {
+     val factory =
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SoftBreakRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SoftBreakRenderer.kt
-index 334b545..3ae58ff 100644
+index 334b545..6edae31 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SoftBreakRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SoftBreakRenderer.kt
-@@ -7,7 +7,7 @@ class SoftBreakRenderer : NodeRenderer {
+@@ -7,8 +7,8 @@ class SoftBreakRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     builder.append(" ")
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpoilerRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpoilerRenderer.kt
-index 430f98e..8dbdca7 100644
+index 430f98e..aeccb53 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpoilerRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/SpoilerRenderer.kt
-@@ -9,7 +9,7 @@ class SpoilerRenderer : NodeRenderer {
+@@ -9,8 +9,8 @@ class SpoilerRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrikethroughRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrikethroughRenderer.kt
-index 8ffa61e..c6b562c 100644
+index 8ffa61e..6d74d8a 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrikethroughRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrikethroughRenderer.kt
-@@ -11,7 +11,7 @@ class StrikethroughRenderer(
+@@ -11,8 +11,8 @@ class StrikethroughRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrongRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrongRenderer.kt
-index 584d79b..702b41e 100644
+index 584d79b..22ae601 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrongRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/StrongRenderer.kt
-@@ -11,7 +11,7 @@ class StrongRenderer(
+@@ -11,8 +11,8 @@ class StrongRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, blockStyle ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/TextRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/TextRenderer.kt
-index 54e324e..f2856d2 100644
+index 54e324e..beef519 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/TextRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/TextRenderer.kt
-@@ -9,7 +9,7 @@ class TextRenderer : NodeRenderer {
+@@ -9,8 +9,8 @@ class TextRenderer : NodeRenderer {
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     val content = node.content
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ThematicBreakRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ThematicBreakRenderer.kt
-index fa63d17..7c43b57 100644
+index fa63d17..a6e4cdb 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ThematicBreakRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ThematicBreakRenderer.kt
-@@ -11,7 +11,7 @@ class ThematicBreakRenderer(
+@@ -11,8 +11,8 @@ class ThematicBreakRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     builder.ensureNewline()
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/UnderlineRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/UnderlineRenderer.kt
-index d658913..4437eb0 100644
+index d658913..7738daf 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/UnderlineRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/UnderlineRenderer.kt
-@@ -11,7 +11,7 @@ class UnderlineRenderer(
+@@ -11,8 +11,8 @@ class UnderlineRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
+     factory.renderWithSpan(builder, { factory.renderChildren(node, builder, onLinkPress, onLinkLongPress) }) { start, end, _ ->
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/RenderedSegment.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/RenderedSegment.kt
-index 0afa2c0..4454e2c 100644
+index 0afa2c0..173a031 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/RenderedSegment.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/RenderedSegment.kt
-@@ -64,7 +64,7 @@ object MarkdownSegmentRenderer {
+@@ -64,8 +64,8 @@ object MarkdownSegmentRenderer {
      segments: List<MarkdownSegment>,
      style: StyleConfig,
      context: Context,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      blockquoteStyle: BlockquoteStyle? = null,
      onLatexError: LatexErrorReporter? = null,
-@@ -107,7 +107,7 @@ object MarkdownSegmentRenderer {
+   ): List<RenderedSegment> =
+@@ -107,8 +107,8 @@ object MarkdownSegmentRenderer {
      nodes: List<MarkdownASTNode>,
      style: StyleConfig,
      context: Context,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      blockquoteStyle: BlockquoteStyle?,
      onLatexError: LatexErrorReporter?,
+   ): RenderedSegment.Text {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/SegmentViewCreators.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/SegmentViewCreators.kt
-index c9644d1..58b2f4e 100644
+index c9644d1..161caed 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/SegmentViewCreators.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/SegmentViewCreators.kt
-@@ -67,7 +67,7 @@ data class SegmentViewConfig(
+@@ -67,8 +67,8 @@ data class SegmentViewConfig(
    val selectionHandleColor: Int?,
    val contextMenuItemTexts: List<String>,
    val dynamicProps: DynamicBlockProps,
 -  val onLinkPress: ((String) -> Unit)?,
+-  val onLinkLongPress: ((String) -> Unit)?,
 +  val onLinkPress: ((String, String) -> Unit)?,
-   val onLinkLongPress: ((String) -> Unit)?,
++  val onLinkLongPress: ((String, String) -> Unit)?,
    val onTaskListItemPress: ((taskIndex: Int, checked: Boolean, itemText: String) -> Unit)?,
    val onContextMenuItemPress: ((itemText: String, selectedText: String, selectionStart: Int, selectionEnd: Int) -> Unit)?,
+   val onLatexError: LatexErrorReporter? = null,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-index e190548..b2e6cf2 100644
+index e190548..2c6aa36 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 @@ -19,7 +19,6 @@ import android.view.Gravity
@@ -574,15 +664,17 @@ index e190548..b2e6cf2 100644
  import com.swmansion.enriched.markdown.views.ContextMenuPopup
  import kotlin.math.ceil
  import kotlin.math.max
-@@ -57,7 +57,7 @@ class TableContainerView(
+@@ -57,8 +57,8 @@ class TableContainerView(
  
    var allowFontScaling = true
    var maxFontSizeMultiplier = 0f
 -  var onLinkPress: ((String) -> Unit)? = null
+-  var onLinkLongPress: ((String) -> Unit)? = null
 +  var onLinkPress: ((String, String) -> Unit)? = null
-   var onLinkLongPress: ((String) -> Unit)? = null
++  var onLinkLongPress: ((String, String) -> Unit)? = null
    var accessibilityLabels: AccessibilityLabels = AccessibilityLabels()
      set(value) {
+       if (field == value) return
 @@ -70,7 +70,7 @@ class TableContainerView(
    var dynamicProps: DynamicBlockProps = DynamicBlockProps()
  
@@ -593,10 +685,10 @@ index e190548..b2e6cf2 100644
        overScrollMode = View.OVER_SCROLL_NEVER
        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
-index b4d3cdc..4652b10 100644
+index b4d3cdc..20847a5 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
-@@ -37,11 +37,12 @@ fun markdownEventTypeConstants(): MutableMap<String, Any> {
+@@ -37,21 +37,23 @@ fun markdownEventTypeConstants(): MutableMap<String, Any> {
  fun emitLinkPress(
    view: View,
    url: String,
@@ -610,8 +702,20 @@ index b4d3cdc..4652b10 100644
  }
  
  fun emitLinkLongPress(
+   view: View,
+   url: String,
++  sourceType: String,
+ ) {
+   val context = view.context as com.facebook.react.bridge.ReactContext
+   val surfaceId = UIManagerHelper.getSurfaceId(context)
+   val eventDispatcher = UIManagerHelper.getEventDispatcherForReactTag(context, view.id)
+-  eventDispatcher?.dispatchEvent(LinkLongPressEvent(surfaceId, view.id, url))
++  eventDispatcher?.dispatchEvent(LinkLongPressEvent(surfaceId, view.id, url, sourceType))
+ }
+ 
+ fun emitTaskListItemPress(
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt
-index fde4b04..b524ea7 100644
+index fde4b04..f66483c 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt
 @@ -10,11 +10,11 @@ import com.swmansion.enriched.markdown.events.ImagePressEvent
@@ -628,6 +732,20 @@ index fde4b04..b524ea7 100644
  }
  
  fun View.emitImagePressEvent(
+@@ -27,11 +27,11 @@ fun View.emitImagePressEvent(
+   dispatcher?.dispatchEvent(ImagePressEvent(surfaceId, id, url, altText))
+ }
+ 
+-fun View.emitLinkLongPressEvent(url: String) {
++fun View.emitLinkLongPressEvent(url: String, sourceType: String) {
+   val reactContext = context as? ReactContext ?: return
+   val surfaceId = UIManagerHelper.getSurfaceId(reactContext)
+   val dispatcher = UIManagerHelper.getEventDispatcherForReactTag(reactContext, id)
+-  dispatcher?.dispatchEvent(LinkLongPressEvent(surfaceId, id, url))
++  dispatcher?.dispatchEvent(LinkLongPressEvent(surfaceId, id, url, sourceType))
+ }
+ 
+ /**
 diff --git a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
 index 44d5134..5bc5529 100644
 --- a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
@@ -790,19 +908,21 @@ index c99a52d..c93aaf7 100644
          impl->pushNode(node);
          break;
 diff --git a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
-index 5a0b7e3..be7b30a 100644
+index 5a0b7e3..741a233 100644
 --- a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
 +++ b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdown.mm
-@@ -82,7 +82,7 @@ static char kENRMSegmentFadeAnimatorKey;
+@@ -82,8 +82,8 @@ static char kENRMSegmentFadeAnimatorKey;
  
  @interface EnrichedMarkdown () <RCTEnrichedMarkdownViewProtocol, UITextViewDelegate, ENRMImageLayoutObserver>
  + (ENRMMd4cFlags *)flagsFromProps:(const EnrichedMarkdownMd4cFlagsStruct &)props;
 -- (void)emitLinkPress:(NSString *)url;
+-- (void)emitLinkLongPress:(NSString *)url;
 +- (void)emitLinkPress:(NSString *)url sourceType:(NSString *)sourceType;
- - (void)emitLinkLongPress:(NSString *)url;
++- (void)emitLinkLongPress:(NSString *)url sourceType:(NSString *)sourceType;
  - (void)emitLinkContextMenuItemPress:(NSString *)itemText pattern:(NSString *)pattern url:(NSString *)url;
  - (void)emitImagePress:(NSString *)url altText:(NSString *)altText;
-@@ -411,10 +411,10 @@ static char kENRMSegmentFadeAnimatorKey;
+ - (void)emitTaskListItemPress:(NSInteger)index checked:(BOOL)checked text:(NSString *)text;
+@@ -411,15 +411,15 @@ static char kENRMSegmentFadeAnimatorKey;
      if (strongSelf)
        [strongSelf emitCodeBlockPress:code language:language];
    };
@@ -813,9 +933,16 @@ index 5a0b7e3..be7b30a 100644
 -      [strongSelf emitLinkPress:url];
 +      [strongSelf emitLinkPress:url sourceType:sourceType];
    };
-   view.onLinkLongPress = ^(NSString *url) {
+-  view.onLinkLongPress = ^(NSString *url) {
++  view.onLinkLongPress = ^(NSString *url, NSString *sourceType) {
      EnrichedMarkdown *strongSelf = weakSelf;
-@@ -986,10 +986,10 @@ static char kENRMSegmentFadeAnimatorKey;
+     if (strongSelf && url)
+-      [strongSelf emitLinkLongPress:url];
++      [strongSelf emitLinkLongPress:url sourceType:sourceType];
+   };
+ 
+   view.onImagePress = ^(NSString *url, NSString *altText) {
+@@ -986,16 +986,16 @@ static char kENRMSegmentFadeAnimatorKey;
  
    __weak EnrichedMarkdown *weakSelf = self;
  
@@ -827,7 +954,15 @@ index 5a0b7e3..be7b30a 100644
 +      [strongSelf emitLinkPress:url sourceType:sourceType];
    };
  
-   tableView.onLinkLongPress = ^(NSString *url) {
+-  tableView.onLinkLongPress = ^(NSString *url) {
++  tableView.onLinkLongPress = ^(NSString *url, NSString *sourceType) {
+     EnrichedMarkdown *strongSelf = weakSelf;
+     if (strongSelf && url)
+-      [strongSelf emitLinkLongPress:url];
++      [strongSelf emitLinkLongPress:url sourceType:sourceType];
+   };
+ 
+   tableView.onImagePress = ^(NSString *url, NSString *altText) {
 @@ -1475,11 +1475,11 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownCls(void)
  }
  #endif
@@ -842,6 +977,20 @@ index 5a0b7e3..be7b30a 100644
  }
  
  - (void)emitImagePress:(NSString *)url altText:(NSString *)altText
+@@ -1489,11 +1489,11 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownCls(void)
+     emitter->onImagePress({.url = std::string(url.UTF8String ?: ""), .altText = std::string(altText.UTF8String ?: "")});
+ }
+ 
+-- (void)emitLinkLongPress:(NSString *)url
++- (void)emitLinkLongPress:(NSString *)url sourceType:(NSString *)sourceType
+ {
+   auto emitter = std::static_pointer_cast<EnrichedMarkdownEventEmitter const>(_eventEmitter);
+   if (emitter)
+-    emitter->onLinkLongPress({.url = std::string(url.UTF8String)});
++    emitter->onLinkLongPress({.url = std::string(url.UTF8String), .sourceType = std::string(sourceType.UTF8String)});
+ }
+ 
+ - (void)emitLinkContextMenuItemPress:(NSString *)itemText pattern:(NSString *)pattern url:(NSString *)url
 @@ -1575,7 +1575,9 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownCls(void)
      }
    }
@@ -853,20 +1002,40 @@ index 5a0b7e3..be7b30a 100644
      return;
    }
  
+@@ -1617,7 +1619,7 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownCls(void)
+ {
+   __weak EnrichedMarkdown *weakSelf = self;
+   return ENRMLinkMenuConfigurationForTextItem(textView, textItem, defaultMenu, _linkContextMenus, _enableLinkPreview,
+-                                              ^(NSString *url) { [weakSelf emitLinkLongPress:url]; });
++                                              ^(NSString *url, NSString *sourceType) { [weakSelf emitLinkLongPress:url sourceType:sourceType]; });
+ }
+ 
+ - (ENRMLinkContextMenus *)linkContextMenusForTextView:(UITextView *)textView
+@@ -1644,7 +1646,7 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownCls(void)
+     return YES;
+   }
+ 
+-  [self emitLinkLongPress:urlString];
++  [self emitLinkLongPress:urlString sourceType:linkSourceTypeAtRange(textView, characterRange)];
+   return NO;
+ }
+ #endif
 diff --git a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
-index b7b588b..2fa091f 100644
+index b7b588b..adca8d4 100644
 --- a/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
 +++ b/node_modules/react-native-enriched-markdown/ios/EnrichedMarkdownText.mm
-@@ -62,7 +62,7 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
+@@ -62,8 +62,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
  - (void)applyRenderedText:(NSMutableAttributedString *)attributedText;
  - (void)textTapped:(ENRMTapRecognizer *)recognizer;
  - (void)setupLayoutManager;
 -- (void)emitLinkPress:(NSString *)url;
+-- (void)emitLinkLongPress:(NSString *)url;
 +- (void)emitLinkPress:(NSString *)url sourceType:(NSString *)sourceType;
- - (void)emitLinkLongPress:(NSString *)url;
++- (void)emitLinkLongPress:(NSString *)url sourceType:(NSString *)sourceType;
  - (void)emitLinkContextMenuItemPress:(NSString *)itemText pattern:(NSString *)pattern url:(NSString *)url;
  - (void)emitImagePress:(NSString *)url altText:(NSString *)altText;
-@@ -909,11 +909,11 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownTextCls(void)
+ - (void)emitCodeBlockPress:(NSString *)code language:(NSString *)language;
+@@ -909,18 +909,18 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownTextCls(void)
    return [super touchEventEmitterAtPoint:point];
  }
  
@@ -879,7 +1048,16 @@ index b7b588b..2fa091f 100644
 +    emitter->onLinkPress({.url = std::string(url.UTF8String), .sourceType = std::string(sourceType.UTF8String)});
  }
  
- - (void)emitLinkLongPress:(NSString *)url
+-- (void)emitLinkLongPress:(NSString *)url
++- (void)emitLinkLongPress:(NSString *)url sourceType:(NSString *)sourceType
+ {
+   auto emitter = std::static_pointer_cast<EnrichedMarkdownTextEventEmitter const>(_eventEmitter);
+   if (emitter)
+-    emitter->onLinkLongPress({.url = std::string(url.UTF8String)});
++    emitter->onLinkLongPress({.url = std::string(url.UTF8String), .sourceType = std::string(sourceType.UTF8String)});
+ }
+ 
+ - (void)emitLinkContextMenuItemPress:(NSString *)itemText pattern:(NSString *)pattern url:(NSString *)url
 @@ -994,7 +994,9 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownTextCls(void)
      return;
    }
@@ -890,6 +1068,24 @@ index b7b588b..2fa091f 100644
 +      })) {
      return;
    }
+ 
+@@ -1026,7 +1028,7 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownTextCls(void)
+ {
+   __weak EnrichedMarkdownText *weakSelf = self;
+   return ENRMLinkMenuConfigurationForTextItem(textView, textItem, defaultMenu, _linkContextMenus, _enableLinkPreview,
+-                                              ^(NSString *url) { [weakSelf emitLinkLongPress:url]; });
++                                              ^(NSString *url, NSString *sourceType) { [weakSelf emitLinkLongPress:url sourceType:sourceType]; });
+ }
+ 
+ - (ENRMLinkContextMenus *)linkContextMenusForTextView:(UITextView *)textView
+@@ -1053,7 +1055,7 @@ Class<RCTComponentViewProtocol> EnrichedMarkdownTextCls(void)
+     return YES;
+   }
+ 
+-  [self emitLinkLongPress:urlString];
++  [self emitLinkLongPress:urlString sourceType:linkSourceTypeAtRange(textView, characterRange)];
+   return NO;
+ }
  
 diff --git a/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/EventEmitters.cpp b/node_modules/react-native-enriched-markdown/ios/generated/ReactCodegen/EnrichedMarkdownTextSpec/EventEmitters.cpp
 index 77465ad..94997f7 100644
@@ -945,9 +1141,18 @@ index c9fd57d..66daf6b 100644
                                newAttributes[ENRMRecognizedLinkAttributeName] = @YES;
                                newAttributes[ENRMRecognizedLinkOriginalUnderlineAttributeName] =
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.h b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.h
-index 1657128..85b0c54 100644
+index 1657128..95c58fe 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.h
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.h
+@@ -9,7 +9,7 @@
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+-typedef void (^ENRMBlockquoteLinkBlock)(NSString *url);
++typedef void (^ENRMBlockquoteLinkBlock)(NSString *url, NSString *sourceType);
+ 
+ /**
+  * A GFM blockquote rendered as a recursive container (issue #608): it splits its
 @@ -68,7 +68,7 @@ typedef void (^ENRMBlockquoteLinkBlock)(NSString *url);
  
  // Bridged up to the JS onLinkPress/onLinkLongPress events; propagated to nested
@@ -958,10 +1163,10 @@ index 1657128..85b0c54 100644
  @property (nonatomic, copy, nullable) void (^onImagePress)(NSString *url, NSString *altText);
  
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
-index 79c79cf..96c7a70 100644
+index 79c79cf..8425a0d 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMBlockquoteContainerView.mm
-@@ -229,10 +229,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+@@ -229,15 +229,15 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
                              if (strongSelf) {
                                view.dynamicProps = strongSelf.dynamicProps;
                                view.accessibilityLabels = strongSelf.accessibilityLabels;
@@ -972,9 +1177,16 @@ index 79c79cf..96c7a70 100644
 -                                  s.onLinkPress(url);
 +                                  s.onLinkPress(url, sourceType);
                                };
-                               view.onLinkLongPress = ^(NSString *url) {
+-                              view.onLinkLongPress = ^(NSString *url) {
++                              view.onLinkLongPress = ^(NSString *url, NSString *sourceType) {
                                  ENRMBlockquoteContainerView *s = weakSelf;
-@@ -299,10 +299,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
+                                 if (s.onLinkLongPress && url)
+-                                  s.onLinkLongPress(url);
++                                  s.onLinkLongPress(url, sourceType);
+                               };
+                               view.onImagePress = ^(NSString *url, NSString *altText) {
+                                 ENRMBlockquoteContainerView *s = weakSelf;
+@@ -299,15 +299,15 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
                                  if (s.onImagePress && url)
                                    s.onImagePress(url, altText);
                                };
@@ -985,8 +1197,15 @@ index 79c79cf..96c7a70 100644
 -                                  s.onLinkPress(url);
 +                                  s.onLinkPress(url, sourceType);
                                };
-                               view.onLinkLongPress = ^(NSString *url) {
+-                              view.onLinkLongPress = ^(NSString *url) {
++                              view.onLinkLongPress = ^(NSString *url, NSString *sourceType) {
                                  ENRMBlockquoteContainerView *s = weakSelf;
+                                 if (s.onLinkLongPress && url)
+-                                  s.onLinkLongPress(url);
++                                  s.onLinkLongPress(url, sourceType);
+                               };
+                             }
+                             [view applyBlockquoteNode:segment.blockquoteSegment.blockquoteNode];
 @@ -374,10 +374,10 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
  {
    ENRMPlatformTextView *textView = (ENRMPlatformTextView *)recognizer.view;
@@ -1001,9 +1220,18 @@ index 79c79cf..96c7a70 100644
      return;
    }
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.h b/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.h
-index bda3a64..0960bad 100644
+index bda3a64..dd6085e 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.h
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.h
+@@ -7,7 +7,7 @@
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+-typedef void (^ENRMTableIOSLinkBlock)(NSString *url);
++typedef void (^ENRMTableIOSLinkBlock)(NSString *url, NSString *sourceType);
+ 
+ typedef NS_ENUM(NSInteger, ENRMTableIOSItemKind) {
+   ENRMTableIOSItemKindLink,
 @@ -18,6 +18,7 @@ typedef NS_ENUM(NSInteger, ENRMTableIOSItemKind) {
  @interface ENRMTableIOSItemHit : NSObject
  @property (nonatomic, assign) ENRMTableIOSItemKind kind;
@@ -1022,7 +1250,7 @@ index bda3a64..0960bad 100644
  @property (nonatomic, copy, nullable) void (^onImageTap)(NSString *url, NSString *altText);
  /// Asked when a touch lands on a link: a link with a menu is left to the context-menu
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.m b/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.m
-index 3d7bee5..8b31c8b 100644
+index 3d7bee5..bd71100 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.m
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/ENRMTableIOSGridView.m
 @@ -193,6 +193,7 @@ static ENRMTableIOSItemHit *itemInAttributedString(NSAttributedString *text, CGR
@@ -1033,6 +1261,19 @@ index 3d7bee5..8b31c8b 100644
    hit.title = linkURL ? linkTitleAtIndex(text, charIndex)
                        : [text attribute:@"imageAltText" atIndex:charIndex effectiveRange:NULL];
    hit.frame = CGRectOffset(frame, textRect.origin.x, textRect.origin.y);
+@@ -225,9 +226,9 @@ static ENRMTableIOSItemHit *itemInAttributedString(NSAttributedString *text, CGR
+ - (void)handleLinkGesture:(UIGestureRecognizer *)recognizer block:(ENRMTableIOSLinkBlock)block
+ {
+   CGPoint point = [recognizer locationInView:self];
+-  NSString *url = [self linkAtPoint:point].url;
+-  if (url && block) {
+-    block(url);
++  ENRMTableIOSItemHit *hit = [self linkAtPoint:point];
++  if (hit.url && block) {
++    block(hit.url, hit.sourceType);
+   }
+ }
+ 
 @@ -240,7 +241,7 @@ static ENRMTableIOSItemHit *itemInAttributedString(NSAttributedString *text, CGR
      return;
    if (hit.kind == ENRMTableIOSItemKindLink) {
@@ -1043,9 +1284,18 @@ index 3d7bee5..8b31c8b 100644
      self.onImageTap(hit.url, hit.title ?: @"");
    }
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.h b/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.h
-index 0da3e9b..b8f9856 100644
+index 0da3e9b..09dbf5f 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.h
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.h
+@@ -9,7 +9,7 @@
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+-typedef void (^TableLinkPressBlock)(NSString *url);
++typedef void (^TableLinkPressBlock)(NSString *url, NSString *sourceType);
+ 
+ @interface TableContainerView : RCTUIView
+ 
 @@ -38,7 +38,7 @@ typedef void (^TableLinkPressBlock)(NSString *url);
  @property (nonatomic, assign) BOOL allowFontScaling;
  @property (nonatomic, assign) CGFloat maxFontSizeMultiplier;
@@ -1056,7 +1306,7 @@ index 0da3e9b..b8f9856 100644
  @property (nonatomic, copy, nullable) void (^onImagePress)(NSString *url, NSString *altText);
  
 diff --git a/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.m b/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.m
-index 987eb21..ec93a4e 100644
+index 987eb21..a048206 100644
 --- a/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.m
 +++ b/node_modules/react-native-enriched-markdown/ios/segments/TableContainerView.m
 @@ -315,10 +315,10 @@ static void ENRMTableComputeLayout(NSArray<NSArray<TableCellData *> *> *rows, NS
@@ -1072,6 +1322,19 @@ index 987eb21..ec93a4e 100644
    };
    iosGridView.onImageTap = ^(NSString *url, NSString *altText) {
      TableContainerView *strongSelf = weakSelf;
+@@ -327,10 +327,10 @@ static void ENRMTableComputeLayout(NSArray<NSArray<TableCellData *> *> *rows, NS
+   };
+   iosGridView.hasLinkContextMenu =
+       ^BOOL(NSString *url) { return [weakSelf.dynamicProps.linkContextMenus hasMenuForURL:url]; };
+-  iosGridView.onLinkLongTap = ^(NSString *url) {
++  iosGridView.onLinkLongTap = ^(NSString *url, NSString *sourceType) {
+     TableContainerView *strongSelf = weakSelf;
+     if (strongSelf && strongSelf.onLinkLongPress)
+-      strongSelf.onLinkLongPress(url);
++      strongSelf.onLinkLongPress(url, sourceType);
+   };
+   _gridContainer = iosGridView;
+   [_scrollView addSubview:_gridContainer];
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTextInteractionUtils.h b/node_modules/react-native-enriched-markdown/ios/utils/ENRMTextInteractionUtils.h
 index 65dc272..c5af8c1 100644
 --- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTextInteractionUtils.h
@@ -1107,27 +1370,36 @@ index 88d69da..7bb3234 100644
    return YES;
  }
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.h b/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.h
-index 3bab20f..136d07e 100644
+index 3bab20f..e8a2240 100644
 --- a/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.h
 +++ b/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.h
-@@ -11,6 +11,9 @@ extern "C" {
+@@ -11,6 +11,10 @@ extern "C" {
  /// Returns the link URL at the tap location, or nil if no link was tapped.
  NSString *_Nullable linkURLAtTapLocation(ENRMPlatformTextView *textView, ENRMTapRecognizer *recognizer);
  
 +/// Returns the syntax of the link at the tap location.
++NSString *linkSourceTypeAtRange(ENRMPlatformTextView *textView, NSRange range);
 +NSString *linkSourceTypeAtTapLocation(ENRMPlatformTextView *textView, ENRMTapRecognizer *recognizer);
 +
  /// Returns the original link URL at a point in text-view coordinates.
  NSString *_Nullable linkURLAtPoint(ENRMPlatformTextView *textView, CGPoint point);
  
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.m b/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.m
-index 20d8739..6a6ffaa 100644
+index 20d8739..d5f6f51 100644
 --- a/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.m
 +++ b/node_modules/react-native-enriched-markdown/ios/utils/LinkTapUtils.m
-@@ -13,6 +13,14 @@ NSString *_Nullable linkURLAtTapLocation(ENRMPlatformTextView *textView, ENRMTap
+@@ -13,6 +13,22 @@ NSString *_Nullable linkURLAtTapLocation(ENRMPlatformTextView *textView, ENRMTap
    return [attrText attribute:@"linkURL" atIndex:characterIndex effectiveRange:NULL];
  }
  
++NSString *linkSourceTypeAtRange(ENRMPlatformTextView *textView, NSRange range)
++{
++  NSAttributedString *text = ENRMGetAttributedText(textView);
++  if (range.location >= text.length)
++    return @"markdown";
++  return [text attribute:@"linkSourceType" atIndex:range.location effectiveRange:NULL] ?: @"markdown";
++}
++
 +NSString *linkSourceTypeAtTapLocation(ENRMPlatformTextView *textView, ENRMTapRecognizer *recognizer)
 +{
 +  NSUInteger index = ENRMCharacterIndexForTap(textView, recognizer);
@@ -1140,10 +1412,10 @@ index 20d8739..6a6ffaa 100644
  {
    NSUInteger index = ENRMCharacterIndexAtPoint(textView, point);
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
-index 32ff768..8e89249 100644
+index 32ff768..752f5b9 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownNativeComponent.ts
-@@ -275,6 +275,7 @@ export interface MarkdownStyleInternal {
+@@ -275,10 +275,12 @@ export interface MarkdownStyleInternal {
  
  export interface LinkPressEvent {
    url: string;
@@ -1151,11 +1423,16 @@ index 32ff768..8e89249 100644
  }
  
  export interface LinkLongPressEvent {
+   url: string;
++  sourceType: string;
+ }
+ 
+ export interface ImagePressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
-index 6f31ccc..7b08b62 100644
+index 6f31ccc..7934322 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/module/EnrichedMarkdownTextNativeComponent.ts
-@@ -276,6 +276,7 @@ export interface MarkdownStyleInternal {
+@@ -276,10 +276,12 @@ export interface MarkdownStyleInternal {
  
  export interface LinkPressEvent {
    url: string;
@@ -1163,6 +1440,11 @@ index 6f31ccc..7b08b62 100644
  }
  
  export interface LinkLongPressEvent {
+   url: string;
++  sourceType: string;
+ }
+ 
+ export interface ImagePressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/index.js.map b/node_modules/react-native-enriched-markdown/lib/module/index.js.map
 index bef09da..c23b50f 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/index.js.map
@@ -1178,7 +1460,7 @@ index 2691825..acac81c 100644
 -{"version":3,"names":["EnrichedMarkdownText","default"],"sourceRoot":"../../src","sources":["index.web.tsx"],"mappings":";;AAAA,SAASA,oBAAoB,EAAEC,OAAO,QAAQ,+BAA4B","ignoreList":[]}
 +{"version":3,"names":["EnrichedMarkdownText","default"],"sourceRoot":"../../src","sources":["index.web.tsx"],"mappings":";;AAIA,SAASA,oBAAoB,EAAEC,OAAO,QAAQ,+BAA4B","ignoreList":[]}
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
-index 9fb1ad2..2532d7c 100644
+index 9fb1ad2..d697efc 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js
 @@ -106,6 +106,7 @@ export const EnrichedMarkdownText = ({
@@ -1189,7 +1471,7 @@ index 9fb1ad2..2532d7c 100644
    ...rest
  }) => {
    // An equal config keeps the previous object, so an inline literal does not
-@@ -205,10 +206,12 @@ export const EnrichedMarkdownText = ({
+@@ -205,19 +206,17 @@ export const EnrichedMarkdownText = ({
    }, []);
    const handleLinkPress = useCallback(e => {
      const {
@@ -1204,6 +1486,17 @@ index 9fb1ad2..2532d7c 100644
      });
    }, [onLinkPress]);
    const handleLinkLongPress = useCallback(e => {
+-    const {
+-      url
+-    } = e.nativeEvent;
+-    onLinkLongPress?.({
+-      url
+-    });
++    const { url, sourceType } = e.nativeEvent;
++    onLinkLongPress?.({ url, sourceType });
+   }, [onLinkLongPress]);
+   const handleImagePress = useCallback(e => {
+     const {
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js.map b/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js.map
 index 2f27901..fc55b09 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/native/EnrichedMarkdownText.js.map
@@ -2044,16 +2337,20 @@ index df50221..5b15656 100644
 +{"version":3,"file":"MarkdownTextProps.web.d.ts","sourceRoot":"","sources":["../../../../src/types/MarkdownTextProps.web.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,qBAAqB,CAAC;AAC7D,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,qBAAqB,CAAC;AAC3D,OAAO,KAAK,EAAE,aAAa,EAAE,cAAc,EAAE,MAAM,OAAO,CAAC;AAC3D,OAAO,KAAK,EAAE,aAAa,EAAE,SAAS,EAAE,MAAM,iBAAiB,CAAC;AAChE,OAAO,KAAK,EACV,cAAc,EACd,kBAAkB,EAClB,eAAe,EACf,sBAAsB,EACtB,mBAAmB,EACpB,MAAM,UAAU,CAAC;AAElB,MAAM,WAAW,yBAA0B,SAAQ,IAAI,CACrD,cAAc,CAAC,cAAc,CAAC,EAC9B,OAAO,GAAG,KAAK,CAChB;IACC;;;OAGG;IACH,MAAM,CAAC,EAAE,MAAM,CAAC;IAChB;;;OAGG;IACH,QAAQ,EAAE,MAAM,CAAC;IACjB,gEAAgE;IAChE,SAAS,CAAC,EAAE,iBAAiB,CAAC;IAC9B;;;OAGG;IACH,aAAa,CAAC,EAAE,aAAa,CAAC;IAC9B;;;OAGG;IACH,cAAc,CAAC,EAAE,aAAa,CAAC;IAC/B;;;;OAIG;IACH,SAAS,CAAC,EAAE,SAAS,CAAC;IACtB;;;;OAIG;IACH,eAAe,CAAC,EAAE,eAAe,CAAC;IAClC;;;;OAIG;IACH,WAAW,CAAC,EAAE,CAAC,KAAK,EAAE,cAAc,KAAK,IAAI,CAAC;IAC9C;;;;;;;;OAQG;IACH,eAAe,CAAC,EAAE,CAAC,KAAK,EAAE,kBAAkB,KAAK,IAAI,CAAC;IACtD;;;;;;;;;;OAUG;IACH,YAAY,CAAC,EAAE,CAAC,KAAK,EAAE,eAAe,KAAK,IAAI,CAAC;IAChD;;;;;;;;;OASG;IACH,mBAAmB,CAAC,EAAE,CAAC,KAAK,EAAE,sBAAsB,KAAK,IAAI,CAAC;IAC9D;;;;;OAKG;IACH,gBAAgB,CAAC,EAAE,CAAC,KAAK,EAAE,mBAAmB,KAAK,IAAI,CAAC;IACxD;;;;;;;;;;;;;;;;;OAiBG;IACH,wBAAwB,CAAC,EAAE,OAAO,CAAC;IACnC;;;;;;;OAOG;IACH,UAAU,CAAC,EAAE,OAAO,CAAC;IACrB;;;OAGG;IACH,cAAc,CAAC,EAAE,MAAM,CAAC;IACxB;;;;;;OAMG;IACH,mBAAmB,CAAC,EAAE,OAAO,CAAC;IAC9B;;;;;OAKG;IACH,GAAG,CAAC,EAAE,KAAK,GAAG,KAAK,GAAG,MAAM,CAAC;CAC9B"}
 \ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts
-index 135693c..56b5327 100644
+index 135693c..7487a59 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts
-@@ -1,5 +1,7 @@
+@@ -1,8 +1,11 @@
  export interface LinkPressEvent {
      url: string;
 +    /** Syntax of the tapped occurrence, independent of other links with the same URL. */
 +    sourceType?: 'markdown' | 'text' | 'inline-code';
  }
  export interface LinkLongPressEvent {
+     url: string;
++    sourceType?: LinkPressEvent["sourceType"];
+ }
+ export interface ImagePressEvent {
      url: string;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts.map b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/events.d.ts.map
 index b09b7ee..f3268e5 100644
@@ -2167,9 +2464,10 @@ index a32ca4e..279b944 100644
 +{"version":3,"file":"types.d.ts","sourceRoot":"","sources":["../../../../src/web/types.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,4BAA4B,CAAC;AACpE,OAAO,KAAK,EAAE,aAAa,EAAE,SAAS,EAAE,MAAM,OAAO,CAAC;AACtD,OAAO,KAAK,EAAE,qBAAqB,EAAE,MAAM,gCAAgC,CAAC;AAC5E,OAAO,KAAK,EAAE,MAAM,EAAE,MAAM,UAAU,CAAC;AACvC,OAAO,KAAK,EACV,cAAc,EACd,kBAAkB,EAClB,eAAe,EACf,sBAAsB,EACtB,mBAAmB,EACpB,MAAM,iBAAiB,CAAC;AACzB,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,SAAS,CAAC;AAE7C,MAAM,MAAM,QAAQ,GAChB,UAAU,GACV,WAAW,GACX,MAAM,GACN,MAAM,GACN,SAAS,GACT,WAAW,GACX,WAAW,GACX,QAAQ,GACR,UAAU,GACV,eAAe,GACf,WAAW,GACX,aAAa,GACb,WAAW,GACX,WAAW,GACX,MAAM,GACN,OAAO,GACP,YAAY,GACZ,eAAe,GACf,aAAa,GACb,UAAU,GACV,WAAW,GACX,eAAe,GACf,OAAO,GACP,WAAW,GACX,WAAW,GACX,UAAU,GACV,iBAAiB,GACjB,WAAW,GACX,iBAAiB,GACjB,kBAAkB,GAClB,WAAW,GACX,YAAY,GACZ,OAAO,CAAC;AAEZ,MAAM,WAAW,cAAc;IAC7B,KAAK,CAAC,EAAE,MAAM,CAAC;IACf,KAAK,CAAC,EAAE,MAAM,CAAC;IACf,GAAG,CAAC,EAAE,MAAM,CAAC;IACb,4EAA4E;IAC5E,cAAc,CAAC,EAAE,MAAM,CAAC;IACxB,KAAK,CAAC,EAAE,MAAM,CAAC;IACf,QAAQ,CAAC,EAAE,MAAM,CAAC;IAClB,SAAS,CAAC,EAAE,MAAM,CAAC;IACnB,MAAM,CAAC,EAAE,MAAM,CAAC;IAChB,WAAW,CAAC,EAAE,MAAM,CAAC;IACrB,wEAAwE;IACxE,SAAS,CAAC,EAAE,MAAM,CAAC;IACnB,0EAA0E;IAC1E,QAAQ,CAAC,EAAE,OAAO,CAAC;IACnB,QAAQ,CAAC,EAAE,MAAM,CAAC;IAClB,YAAY,CAAC,EAAE,MAAM,CAAC;IACtB,YAAY,CAAC,EAAE,MAAM,CAAC;IACtB,8EAA8E;IAC9E,cAAc,CAAC,EAAE,MAAM,CAAC;IACxB,KAAK,CAAC,EAAE,MAAM,GAAG,QAAQ,GAAG,OAAO,GAAG,SAAS,CAAC;IAChD,2EAA2E;IAC3E,KAAK,CAAC,EAAE,MAAM,CAAC;CAChB;AAED,MAAM,WAAW,OAAO;IACtB,IAAI,EAAE,QAAQ,CAAC;IACf,sEAAsE;IACtE,OAAO,CAAC,EAAE,MAAM,CAAC;IACjB,6EAA6E;IAC7E,UAAU,CAAC,EAAE,cAAc,CAAC;IAC5B,qFAAqF;IACrF,QAAQ,CAAC,EAAE,OAAO,EAAE,CAAC;CACtB;AAED,MAAM,WAAW,iBAAiB;IAChC,WAAW,CAAC,EAAE,CAAC,KAAK,EAAE,cAAc,KAAK,IAAI,CAAC;IAC9C,eAAe,CAAC,EAAE,CAAC,KAAK,EAAE,kBAAkB,KAAK,IAAI,CAAC;IACtD,YAAY,CAAC,EAAE,CAAC,KAAK,EAAE,eAAe,KAAK,IAAI,CAAC;IAChD,mBAAmB,CAAC,EAAE,CAAC,KAAK,EAAE,sBAAsB,KAAK,IAAI,CAAC;IAC9D,gBAAgB,CAAC,EAAE,CAAC,KAAK,EAAE,mBAAmB,KAAK,IAAI,CAAC;CACzD;AAED,MAAM,WAAW,kBAAkB;IACjC,SAAS,CAAC,EAAE,iBAAiB,CAAC;IAC9B,KAAK,EAAE,aAAa,GAAG,IAAI,CAAC;IAC5B,2EAA2E;IAC3E,wBAAwB,EAAE,OAAO,CAAC;CACnC;AAED,MAAM,WAAW,aAAa;IAC5B,IAAI,EAAE,OAAO,CAAC;IACd,KAAK,EAAE,qBAAqB,CAAC;IAC7B,MAAM,EAAE,MAAM,CAAC;IACf,UAAU,CAAC,EAAE,QAAQ,CAAC;IACtB,iDAAiD;IACjD,KAAK,CAAC,EAAE,MAAM,CAAC;IACf,SAAS,EAAE,iBAAiB,CAAC;IAC7B,YAAY,EAAE,kBAAkB,CAAC;IACjC,cAAc,EAAE,CAAC,IAAI,EAAE,OAAO,KAAK,SAAS,CAAC;CAC9C;AAED,MAAM,MAAM,WAAW,GAAG,OAAO,CAC/B,MAAM,CAAC,QAAQ,EAAE,aAAa,CAAC,aAAa,CAAC,CAAC,CAC/C,CAAC"}
 \ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
+index 32ff768..ce55546 100644
 --- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNativeComponent.ts
-@@ -138,6 +138,7 @@
+@@ -138,6 +138,7 @@ interface UnderlineStyleInternal {
  interface CodeStyleInternal {
    fontFamily: string;
    fontSize: CodegenTypes.Float;
@@ -2177,7 +2475,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNat
    color: ColorValue;
    backgroundColor: ColorValue;
    borderColor: ColorValue;
-@@ -275,6 +276,7 @@
+@@ -275,10 +276,12 @@ export interface MarkdownStyleInternal {
  
  export interface LinkPressEvent {
    url: string;
@@ -2185,10 +2483,16 @@ diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownNat
  }
  
  export interface LinkLongPressEvent {
+   url: string;
++  sourceType: string;
+ }
+ 
+ export interface ImagePressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
+index 6f31ccc..b799c4c 100644
 --- a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
 +++ b/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTextNativeComponent.ts
-@@ -138,6 +138,7 @@
+@@ -138,6 +138,7 @@ interface UnderlineStyleInternal {
  interface CodeStyleInternal {
    fontFamily: string;
    fontSize: CodegenTypes.Float;
@@ -2196,7 +2500,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTex
    color: ColorValue;
    backgroundColor: ColorValue;
    borderColor: ColorValue;
-@@ -276,6 +277,7 @@
+@@ -276,10 +277,12 @@ export interface MarkdownStyleInternal {
  
  export interface LinkPressEvent {
    url: string;
@@ -2204,8 +2508,13 @@ diff --git a/node_modules/react-native-enriched-markdown/src/EnrichedMarkdownTex
  }
  
  export interface LinkLongPressEvent {
+   url: string;
++  sourceType: string;
+ }
+ 
+ export interface ImagePressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
-index ca7157e..40581c1 100644
+index ca7157e..7cf3064 100644
 --- a/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/native/EnrichedMarkdownText.tsx
 @@ -170,6 +170,7 @@ export const EnrichedMarkdownText = ({
@@ -2216,7 +2525,7 @@ index ca7157e..40581c1 100644
    ...rest
  }: EnrichedMarkdownTextProps) => {
    // An equal config keeps the previous object, so an inline literal does not
-@@ -297,9 +298,12 @@ export const EnrichedMarkdownText = ({
+@@ -297,17 +298,20 @@ export const EnrichedMarkdownText = ({
    );
  
    const handleLinkPress = useCallback(
@@ -2231,6 +2540,16 @@ index ca7157e..40581c1 100644
 +      });
      },
      [onLinkPress]
+   );
+ 
+   const handleLinkLongPress = useCallback(
+     (e: NativeSyntheticEvent<LinkLongPressEvent>) => {
+-      const { url } = e.nativeEvent;
+-      onLinkLongPress?.({ url });
++      const { url, sourceType } = e.nativeEvent;
++      onLinkLongPress?.({ url, sourceType });
+     },
+     [onLinkLongPress]
    );
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
 index cac90b4..c308537 100644
@@ -2251,10 +2570,10 @@ index cac90b4..c308537 100644
     * Style configuration for markdown elements.
     * @platform ios, android, web
 diff --git a/node_modules/react-native-enriched-markdown/src/types/events.ts b/node_modules/react-native-enriched-markdown/src/types/events.ts
-index 9df94ed..c726533 100644
+index 9df94ed..91ba918 100644
 --- a/node_modules/react-native-enriched-markdown/src/types/events.ts
 +++ b/node_modules/react-native-enriched-markdown/src/types/events.ts
-@@ -1,5 +1,7 @@
+@@ -1,9 +1,12 @@
  export interface LinkPressEvent {
    url: string;
 +  /** Syntax of the tapped occurrence, independent of other links with the same URL. */
@@ -2262,6 +2581,11 @@ index 9df94ed..c726533 100644
  }
  
  export interface LinkLongPressEvent {
+   url: string;
++  sourceType?: LinkPressEvent["sourceType"];
+ }
+ 
+ export interface ImagePressEvent {
 diff --git a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 index 08dc7df..11fbd16 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
@@ -3271,15 +3595,17 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
      val isItalic = (currentTypeface.style) and Typeface.ITALIC != 0
      val style = if (isItalic) Typeface.BOLD_ITALIC else Typeface.BOLD
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
+index ff00069..f48eb25 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
-@@ -12,14 +12,14 @@
+@@ -12,14 +12,14 @@ import com.swmansion.enriched.markdown.utils.text.extensions.applyBlockStyleFont
  
  class LinkSpan(
    val url: String,
 -  private val onLinkPress: ((String) -> Unit)?,
+-  private val onLinkLongPress: ((String) -> Unit)?,
 +  private val onLinkPress: ((String, String) -> Unit)?,
-   private val onLinkLongPress: ((String) -> Unit)?,
++  private val onLinkLongPress: ((String, String) -> Unit)?,
    private val styleCache: SpanStyleCache,
    private val blockStyle: BlockStyle,
    private val context: Context,
@@ -3291,7 +3617,7 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
  ) : ClickableSpan() {
    @Volatile
    private var longPressTriggered = false
-@@ -30,7 +30,8 @@
+@@ -30,15 +30,19 @@ class LinkSpan(
        return
      }
  
@@ -3301,7 +3627,21 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
    }
  
    fun onLongClick(widget: View): Boolean {
-@@ -50,11 +51,7 @@
+     longPressTriggered = true
+ 
+-    (widget as? EnrichedMarkdownText)?.emitOnLinkLongPress(url)
+-
+-    onLinkLongPress?.invoke(url)
++    val sourceType = if (recognizedInlineCodeLink) "inline-code" else if (recognizedLink) "text" else "markdown"
++    if (widget is EnrichedMarkdownText) {
++      widget.emitOnLinkLongPress(url, sourceType)
++    } else {
++      onLinkLongPress?.invoke(url, sourceType)
++    }
+ 
+     return true
+   }
+@@ -50,11 +54,7 @@ class LinkSpan(
  
      val fontFamily = variant?.fontFamily?.takeIf { it.isNotEmpty() } ?: styleCache.linkFontFamily
      if (fontFamily.isNotEmpty()) {
@@ -3314,18 +3654,21 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
  
      textPaint.color = variant?.color ?: styleCache.linkColor
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
+index 360a436..a7227c2 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/LinkRenderer.kt
-@@ -19,7 +19,7 @@
+@@ -19,8 +19,8 @@ class LinkRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
 -    onLinkPress: ((String) -> Unit)?,
+-    onLinkLongPress: ((String) -> Unit)?,
 +    onLinkPress: ((String, String) -> Unit)?,
-     onLinkLongPress: ((String) -> Unit)?,
++    onLinkLongPress: ((String, String) -> Unit)?,
      factory: RendererFactory,
    ) {
-@@ -56,7 +56,7 @@
+     val url = node.getAttribute("url") ?: return
+@@ -56,7 +56,7 @@ class LinkRenderer(
            blockStyle,
            factory.context,
            recognizedLink = recognizedLink,
@@ -3336,9 +3679,10 @@ diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/c
          end,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt
 new file mode 100644
+index 0000000..c31d169
 --- /dev/null
 +++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/InlineCodeFormattingTest.kt
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,110 @@
 +package com.swmansion.enriched.markdown
 +
 +import android.text.TextPaint
@@ -3427,6 +3771,27 @@ new file mode 100644
 +    }
 +  }
 +
++
++  @Test fun longPressPreservesInlineCodeSyntaxWithoutOpeningTheLink() {
++    val context = RuntimeEnvironment.getApplication()
++    val selected = mutableListOf<Pair<String, String>>()
++    var opens = 0
++    val span = com.swmansion.enriched.markdown.spans.LinkSpan(
++      url = "notes%20file.md",
++      onLinkPress = { _, _ -> opens++ },
++      onLinkLongPress = { url, sourceType -> selected.add(url to sourceType) },
++      styleCache = cache(),
++      blockStyle = BlockStyle(14f, "", "normal", -16777216),
++      context = context,
++      recognizedLink = true,
++      recognizedInlineCodeLink = true,
++    )
++    val view = android.view.View(context)
++    assertTrue(span.onLongClick(view))
++    span.onClick(view)
++    assertEquals(listOf("notes%20file.md" to "inline-code"), selected)
++    assertEquals(0, opens)
++  }
 +}
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
 --- a/node_modules/react-native-enriched-markdown/src/types/MarkdownStyle.ts
@@ -3996,3 +4361,57 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/utils.js
 +}
  //# sourceMappingURL=utils.js.map
 \ No newline at end of file
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkLongPressEvent.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkLongPressEvent.kt
+index 3de3edb..6a3ed38 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkLongPressEvent.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/events/LinkLongPressEvent.kt
+@@ -8,12 +8,14 @@ class LinkLongPressEvent(
+   surfaceId: Int,
+   viewId: Int,
+   private val url: String,
++  private val sourceType: String = "markdown",
+ ) : Event<LinkLongPressEvent>(surfaceId, viewId) {
+   override fun getEventName(): String = EVENT_NAME
+ 
+   override fun getEventData(): WritableMap {
+     val eventData: WritableMap = Arguments.createMap()
+     eventData.putString("url", url)
++    eventData.putString("sourceType", sourceType)
+     return eventData
+   }
+ 
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.h b/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.h
+index 939cb7f..b9c64a7 100644
+--- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.h
++++ b/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.h
+@@ -83,7 +83,7 @@ extern "C" {
+  */
+ UITextItemMenuConfiguration *_Nullable ENRMLinkMenuConfigurationForTextItem(
+     UITextView *textView, UITextItem *textItem, UIMenu *defaultMenu, ENRMLinkContextMenus *_Nullable menus,
+-    BOOL linkPreviewEnabled, void (^_Nullable onLinkLongPress)(NSString *url)) API_AVAILABLE(ios(17.0));
++    BOOL linkPreviewEnabled, void (^_Nullable onLinkLongPress)(NSString *url, NSString *sourceType)) API_AVAILABLE(ios(17.0));
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.m b/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.m
+index cd9ce73..e066198 100644
+--- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.m
++++ b/node_modules/react-native-enriched-markdown/ios/utils/ENRMLinkContextMenus.m
+@@ -159,7 +159,7 @@
+ UITextItemMenuConfiguration *ENRMLinkMenuConfigurationForTextItem(UITextView *textView, UITextItem *textItem,
+                                                                   UIMenu *defaultMenu, ENRMLinkContextMenus *menus,
+                                                                   BOOL linkPreviewEnabled,
+-                                                                  void (^onLinkLongPress)(NSString *url))
++                                                                  void (^onLinkLongPress)(NSString *url, NSString *sourceType))
+ {
+   if ([textView conformsToProtocol:@protocol(ENRMLinkMenuPresenting)] &&
+       [(id<ENRMLinkMenuPresenting>)textView presentsLinkMenuAtIndex:textItem.range.location])
+@@ -170,7 +170,7 @@ UITextItemMenuConfiguration *ENRMLinkMenuConfigurationForTextItem(UITextView *te
+     return [UITextItemMenuConfiguration configurationWithMenu:menu];
+   if (url && !linkPreviewEnabled) {
+     if (onLinkLongPress)
+-      onLinkLongPress(url);
++      onLinkLongPress(url, linkSourceTypeAtRange(textView, textItem.range));
+     return nil;
+   }
+   return [UITextItemMenuConfiguration configurationWithMenu:defaultMenu];

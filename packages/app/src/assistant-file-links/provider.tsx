@@ -21,6 +21,7 @@ export interface AssistantFileLinkDaemonClient {
 export interface AssistantFileLinkResolverConfig {
   client?: AssistantFileLinkDaemonClient | null;
   serverId?: string;
+  workspaceId?: string;
   workspaceRoot?: string;
   relativePathBase?: string;
   onOpenWorkspaceFile?: (target: InlinePathTarget, disposition: OpenFileDisposition) => void;
@@ -54,6 +55,7 @@ export function useAssistantFileLinkEnvironmentBridge() {
 export function AssistantFileLinkResolverProvider({
   client,
   serverId,
+  workspaceId,
   workspaceRoot,
   relativePathBase,
   onOpenWorkspaceFile,
@@ -63,6 +65,7 @@ export function AssistantFileLinkResolverProvider({
   const configRef = useRef<AssistantFileLinkResolverConfig>({
     client,
     serverId,
+    workspaceId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,
@@ -71,6 +74,7 @@ export function AssistantFileLinkResolverProvider({
   configRef.current = {
     client,
     serverId,
+    workspaceId,
     workspaceRoot,
     relativePathBase,
     onOpenWorkspaceFile,

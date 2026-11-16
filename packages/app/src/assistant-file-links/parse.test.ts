@@ -65,6 +65,23 @@ describe("parseInlinePathToken", () => {
 });
 
 describe("parseFileProtocolUrl", () => {
+  it("separates line ranges from file URL paths before decoding the filename", () => {
+    expect(
+      parseFileProtocolUrl("file:///C:/reports/r%C3%A9sum%C3%A9%20final.md:12-18#preview"),
+    ).toEqual({
+      raw: "file:///C:/reports/r%C3%A9sum%C3%A9%20final.md:12-18#preview",
+      path: "C:/reports/résumé final.md",
+      lineStart: 12,
+      lineEnd: 18,
+    });
+    expect(parseFileProtocolUrl("file:///tmp/report%3A12.md#L5")).toEqual({
+      raw: "file:///tmp/report%3A12.md#L5",
+      path: "/tmp/report:12.md",
+      lineStart: 5,
+      lineEnd: undefined,
+    });
+  });
+
   it("parses file URLs with line fragments", () => {
     expect(parseFileProtocolUrl("file:///Users/test/project/src/app.tsx#L81")).toEqual({
       raw: "file:///Users/test/project/src/app.tsx#L81",
