@@ -313,9 +313,14 @@ interface PiSlashCommandInvocation {
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
 
+// Drops an upstream "Vendor: " prefix ("OpenAI: GPT-5.5"). A colon inside parentheses or after a
+// comma belongs to the model name ("DeepSeek V4 (ctx: 128k)"), so it is kept.
 function stripVendorPrefix(label: string): string {
   const vendorSeparatorIndex = label.indexOf(": ");
-  return vendorSeparatorIndex === -1 ? label : label.slice(vendorSeparatorIndex + 2).trim();
+  if (vendorSeparatorIndex === -1 || /[(),]/.test(label.slice(0, vendorSeparatorIndex))) {
+    return label;
+  }
+  return label.slice(vendorSeparatorIndex + 2).trim();
 }
 
 // A Pi model name is either a path ("google/gemini_2.5-flash", as OpenRouter reports it) or
