@@ -590,6 +590,36 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test("follows the thinking level OMP switches to on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "low" });
+    const runtime = omp.runtime();
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({ type: "thinking_level_changed", thinkingLevel: "high" }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("high");
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("auto");
+    expect(omp.eventTypes().filter((type) => type === "thinking_option_changed")).toHaveLength(2);
+  });
+
   test("shows OMP's fallback model without persisting it as the selected model", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
