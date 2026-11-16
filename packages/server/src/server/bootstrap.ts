@@ -146,6 +146,7 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
+import { createBasePathMiddleware, normalizeBasePath } from "./base-path.js";
 import {
   createPaseoToolCatalog,
   createPaseoAgentToolManifest,
@@ -457,6 +458,8 @@ export interface PaseoDaemonConfig {
     enabled: boolean;
     distDir: string | null;
   };
+  /** URL path prefix the daemon is served under (e.g. "/user/alice/paseo"). "" or unset for none. */
+  basePath?: string;
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
@@ -555,6 +558,7 @@ function mountWebUi(app: express.Application, config: PaseoDaemonConfig, logger:
       enabled: config.webUi?.enabled ?? false,
       distDir: config.webUi?.distDir ?? null,
       label: getHostName(),
+      basePath: normalizeBasePath(config.basePath),
       logger,
     }),
   );
@@ -713,6 +717,7 @@ export async function createPaseoDaemon(
   const agentMcpAuthToken = randomUUID();
 
   const listenTarget = parseListenString(config.listen);
+  const basePath = normalizeBasePath(config.basePath);
 
   const app = express();
   app.set("trust proxy", resolveExpressTrustProxySetting(config));
@@ -776,6 +781,13 @@ export async function createPaseoDaemon(
   // Registered service hosts proxy directly; known service namespaces without a
   // route return 404 and never reach daemon APIs.
   app.use(serviceProxy.middleware());
+
+  // Base path: requests under the configured prefix are routed as if served at
+  // the root. Unprefixed requests pass through, so proxies that strip the
+  // prefix keep working.
+  if (basePath) {
+    app.use(createBasePathMiddleware(basePath));
+  }
 
   // Host allowlist / DNS rebinding protection (vite-like semantics).
   // For non-TCP (unix sockets), skip host validation.
@@ -1844,6 +1856,7 @@ export async function createPaseoDaemon(
                 daemonStatusRpc: dependencies.serverFeatureOverrides?.daemonStatusRpc,
                 relayConfig: dependencies.serverFeatureOverrides?.relayConfig,
                 startPaused: true,
+                basePath,
               },
               workspaceAutoName,
               workspaceRuntimeStore,

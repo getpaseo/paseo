@@ -78,6 +78,37 @@ describe("normalizeStoredHostProfile", () => {
     expect(profile?.connections[0]).not.toHaveProperty("password");
   });
 
+  it("reloads a direct TCP connection served under a base path as its own connection", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_hub",
+      connections: [
+        { type: "directTcp", endpoint: "hub.example.com:443", useTls: true },
+        {
+          type: "directTcp",
+          endpoint: "hub.example.com:443",
+          useTls: true,
+          basePath: "/user/alice/paseo/",
+        },
+      ],
+    });
+
+    expect(profile?.connections).toEqual([
+      {
+        id: "direct:hub.example.com:443",
+        type: "directTcp",
+        endpoint: "hub.example.com:443",
+        useTls: true,
+      },
+      {
+        id: "direct:hub.example.com:443/user/alice/paseo",
+        type: "directTcp",
+        endpoint: "hub.example.com:443",
+        useTls: true,
+        basePath: "/user/alice/paseo",
+      },
+    ]);
+  });
+
   it("moves a stored direct TCP password to the host profile", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_legacy",

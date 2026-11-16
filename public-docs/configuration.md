@@ -262,6 +262,7 @@ Set the persisted value in `config.json`:
 - `PASEO_ALLOWED_HOSTS`, deprecated alias for `PASEO_HOSTNAMES`
 - `PASEO_WEB_UI_ENABLED`, enable or disable the daemon-served web UI
 - `PASEO_WEB_UI_DIST_DIR`, override the daemon web UI build directory
+- `PASEO_BASE_PATH`, serve the daemon under a URL path prefix, see [Serving under a path prefix](/docs/web-ui#serving-under-a-path-prefix)
 - `PASEO_TRUSTED_PROXIES`, configure trusted reverse proxy ranges for `X-Forwarded-*` headers
 - `PASEO_LOG_CONSOLE_LEVEL`, override `log.console.level`
 - `PASEO_LOG_FILE_LEVEL`, override `log.file.level`

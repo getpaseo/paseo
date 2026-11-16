@@ -12,6 +12,9 @@ const appVariant = process.env.APP_VARIANT ?? "production";
 const isFdroidBuild = process.env.PASEO_FDROID_BUILD === "1";
 const isWatchdogBuild = process.env.PASEO_WATCHDOG_BUILD === "1";
 const isProfileBuild = process.env.PASEO_PROFILE_BUILD === "1";
+// URL path prefix for a browser build served by a daemon under PASEO_BASE_PATH.
+// Set by scripts/build-daemon-web-ui.mjs; unset builds for the root.
+const webBaseUrl = process.env.PASEO_WEB_BASE_URL?.trim().replace(/\/+$/, "") || undefined;
 
 const buildProfile = isFdroidBuild
   ? {
@@ -189,6 +192,7 @@ export default {
       typedRoutes: true,
       reactCompiler: true,
       autolinkingModuleResolution: true,
+      ...(webBaseUrl ? { baseUrl: webBaseUrl } : {}),
     },
     extra: {
       fdroidBuild: isFdroidBuild,

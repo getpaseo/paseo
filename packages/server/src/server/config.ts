@@ -25,6 +25,7 @@ import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
+import { normalizeBasePath } from "./base-path.js";
 
 export {
   loadPersistedConfig,
@@ -625,6 +626,7 @@ export function resolveConfigFromPersisted(
   return {
     ...settings,
     listen: resolveListenAddress(env, cli, persisted),
+    basePath: normalizeBasePath(env.PASEO_BASE_PATH ?? persisted.daemon?.basePath),
     paseoHome,
     desktopManaged: env.PASEO_DESKTOP_MANAGED === "1",
     worktreesRoot: resolveWorktreesRoot(paseoHome, persisted),
@@ -742,6 +744,7 @@ function resolveCoreDaemonOverridePaths(
   if (cli?.listen !== undefined || env.PASEO_LISTEN !== undefined) {
     paths.push("daemon.listen");
   }
+  if (env.PASEO_BASE_PATH !== undefined) paths.push("daemon.basePath");
   if (cli?.mcpEnabled !== undefined) paths.push("daemon.mcp.enabled");
   if (cli?.mcpInjectIntoAgents !== undefined) paths.push("daemon.mcp.injectIntoAgents");
   // Hostname sources append instead of replacing one another, so a launch value

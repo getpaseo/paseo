@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
+import {
+  applyWebBaseUrlToIndexHtml,
+  applyWebBaseUrlToManifest,
+  normalizeWebBaseUrl,
+} from "./web-base-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -12,6 +17,9 @@ const APP_DIR = path.join(REPO_ROOT, "packages", "app");
 const SOURCE_DIST = path.join(APP_DIR, "dist");
 const TARGET_DIST = path.join(REPO_ROOT, "packages", "server", "dist", "server", "web-ui");
 const COMPRESS_EXTENSIONS = new Set([".html", ".js", ".css", ".json", ".svg", ".map"]);
+// Optional URL path prefix the daemon serves the web UI under (PASEO_BASE_PATH on
+// the daemon). Unset builds for the root.
+const WEB_BASE_URL = normalizeWebBaseUrl(process.env.PASEO_WEB_BASE_URL);
 
 function fmtMiB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
@@ -36,10 +44,30 @@ function run(command, args, options) {
 }
 
 async function exportBrowserWebApp() {
-  console.log("Exporting browser web app...");
+  console.log(
+    WEB_BASE_URL
+      ? `Exporting browser web app for base URL ${WEB_BASE_URL}...`
+      : "Exporting browser web app...",
+  );
   await run("npm", ["run", "build:web", "--workspace=@getpaseo/app"], {
     cwd: REPO_ROOT,
+    env: { ...process.env, PASEO_WEB_BASE_URL: WEB_BASE_URL },
   });
+}
+
+async function applyWebBaseUrl() {
+  if (!WEB_BASE_URL) {
+    return;
+  }
+  const indexPath = path.join(TARGET_DIST, "index.html");
+  const html = await readFile(indexPath, "utf8");
+  await writeFile(indexPath, applyWebBaseUrlToIndexHtml(html, WEB_BASE_URL));
+  const manifestPath = path.join(TARGET_DIST, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(applyWebBaseUrlToManifest(manifest, WEB_BASE_URL), null, 2)}\n`,
+  );
 }
 
 async function cleanTarget() {
@@ -126,6 +154,7 @@ async function main() {
 
   await cleanTarget();
   await copyAssets();
+  await applyWebBaseUrl();
   await precompressAssets(TARGET_DIST);
 
   const sizes = await measureBundle(TARGET_DIST);

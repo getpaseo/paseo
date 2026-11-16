@@ -5,6 +5,8 @@ export const DirectTcpHostConnectionSchema = z.object({
   type: z.literal("directTcp"),
   endpoint: z.string(),
   useTls: z.boolean().optional().default(false),
+  /** URL path prefix the daemon is served under, e.g. "/user/alice/paseo". */
+  basePath: z.string().optional(),
   password: z.string().optional(),
 });
 

@@ -223,13 +223,33 @@ export function deriveLabelFromEndpoint(endpoint: string): string {
 
 export interface WebSocketUrlOptions {
   useTls: boolean;
+  /** URL path prefix the daemon is served under, e.g. "/user/alice/paseo". */
+  basePath?: string;
 }
 
 export function buildDaemonWebSocketUrl(endpoint: string, opts: WebSocketUrlOptions): string {
   const { host, port, isIpv6 } = parseHostPort(endpoint);
   const protocol = opts.useTls ? "wss" : "ws";
   const hostPart = isIpv6 ? `[${host}]` : host;
-  return new URL(`${protocol}://${hostPart}:${port}/ws`).toString();
+  return new URL(
+    `${protocol}://${hostPart}:${port}${normalizeUrlBasePath(opts.basePath)}/ws`,
+  ).toString();
+}
+
+/**
+ * Normalizes a URL path prefix to "" or "/a/b" (leading slash, no trailing
+ * slash). Returns "" for input that is not a plain absolute path.
+ */
+export function normalizeUrlBasePath(input: string | null | undefined): string {
+  const trimmed = input?.trim() ?? "";
+  if (!trimmed.startsWith("/") || /[?#\\\s]/.test(trimmed)) {
+    return "";
+  }
+  const segments = trimmed.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return "";
+  }
+  return segments.length > 0 ? `/${segments.join("/")}` : "";
 }
 
 export function buildRelayWebSocketUrl(params: {

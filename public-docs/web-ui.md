@@ -162,6 +162,27 @@ paseo.example.com {
 
 That's the whole config. Caddy provisions a certificate automatically and preserves `Host` and `X-Forwarded-Proto` by default.
 
+## Serving under a path prefix
+
+Some proxies publish the daemon under a path instead of a whole domain, for example `https://hub.example.com/user/alice/paseo/` behind JupyterHub's jupyter-server-proxy. Two settings have to agree on that prefix:
+
+1. **The daemon** routes API, MCP and WebSocket requests under the prefix and tells the app about it:
+
+   ```bash
+   PASEO_BASE_PATH=/user/alice/paseo PASEO_WEB_UI_ENABLED=true paseo daemon run
+   ```
+
+   Or persist it as `daemon.basePath` in `config.json`. Requests that arrive without the prefix are still served, so the proxy may forward the path as-is or strip the prefix.
+
+2. **The web UI build** has the prefix compiled in. Expo bakes asset URLs and routes into the bundle, so the bundled UI only works at the root. Build one for your prefix from a checkout and point the daemon at it:
+
+   ```bash
+   PASEO_WEB_BASE_URL=/user/alice/paseo npm run build:daemon-web-ui
+   PASEO_WEB_UI_DIST_DIR=/path/to/paseo/packages/server/dist/server/web-ui
+   ```
+
+The WebSocket moves to `<prefix>/ws`. Everything in [Reverse proxy](#reverse-proxy) still applies, including the `Host` header and the [host allowlist](/docs/security#dns-rebinding-protection).
+
 ## HTTPS and TLS
 
 Terminate TLS at the proxy (or tunnel) and forward to the daemon over plain HTTP on localhost, that's what the configs above do. When the page is served over HTTPS and the proxy passes `X-Forwarded-Proto: https`, the app automatically connects back over `wss://`. You don't configure the scheme anywhere; it follows the edge.

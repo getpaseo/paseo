@@ -160,11 +160,14 @@ export interface WebUiMiddlewareOptions {
   enabled: boolean;
   distDir: string | null;
   label: string;
+  /** Normalized base path advertised to the app in the connection hint. */
+  basePath?: string;
   logger: Logger;
 }
 
 export function createWebUiMiddleware(options: WebUiMiddlewareOptions): RequestHandler {
   const { enabled, distDir, label, logger } = options;
+  const basePath = options.basePath ?? "";
   const childLogger = logger.child({ module: "web-ui" });
 
   if (!enabled || !distDir) {
@@ -192,7 +195,7 @@ export function createWebUiMiddleware(options: WebUiMiddlewareOptions): RequestH
       return;
     }
 
-    serveWebUiFile({ distDir, requestPath: req.path, label, req, res });
+    serveWebUiFile({ distDir, requestPath: req.path, label, basePath, req, res });
   };
 }
 
@@ -200,12 +203,13 @@ interface ServeWebUiFileOptions {
   distDir: string;
   requestPath: string;
   label: string;
+  basePath: string;
   req: Parameters<RequestHandler>[0];
   res: Parameters<RequestHandler>[1];
 }
 
 function serveWebUiFile(options: ServeWebUiFileOptions): void {
-  const { distDir, requestPath, label, req, res } = options;
+  const { distDir, requestPath, label, basePath, req, res } = options;
 
   const wellKnown = isWellKnownPath(requestPath);
   const target = resolveTargetFile({ distDir, requestPath, spaFallback: !wellKnown });
@@ -235,7 +239,7 @@ function serveWebUiFile(options: ServeWebUiFileOptions): void {
   }
 
   if (isIndexHtml) {
-    sendIndexHtml(res, finalFile, req, label);
+    sendIndexHtml({ res, filePath: finalFile, req, label, basePath });
     return;
   }
 
@@ -250,15 +254,19 @@ function serveWebUiFile(options: ServeWebUiFileOptions): void {
   stream.pipe(res);
 }
 
-function sendIndexHtml(
-  res: Response,
-  filePath: string,
-  req: Parameters<RequestHandler>[0],
-  label: string,
-): void {
+interface SendIndexHtmlOptions {
+  res: Response;
+  filePath: string;
+  req: Parameters<RequestHandler>[0];
+  label: string;
+  basePath: string;
+}
+
+function sendIndexHtml(options: SendIndexHtmlOptions): void {
+  const { res, filePath, req, label, basePath } = options;
   try {
     const html = readFileSync(filePath, "utf-8");
-    const injected = injectConnectionHint(html, req, label);
+    const injected = injectConnectionHint({ html, req, label, basePath });
     res.status(200).send(injected);
   } catch {
     res.status(500).end();
@@ -288,11 +296,15 @@ function hasExplicitPort(host: string): boolean {
   return colon !== -1 && colon === host.lastIndexOf(":") && /^\d{1,5}$/.test(host.slice(colon + 1));
 }
 
-function injectConnectionHint(
-  html: string,
-  req: Parameters<RequestHandler>[0],
-  label: string,
-): string {
+interface InjectConnectionHintOptions {
+  html: string;
+  req: Parameters<RequestHandler>[0];
+  label: string;
+  basePath: string;
+}
+
+function injectConnectionHint(options: InjectConnectionHintOptions): string {
+  const { html, req, label, basePath } = options;
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
   let listen = host;
@@ -307,6 +319,8 @@ function injectConnectionHint(
     listen,
     useTls,
     label,
+    // Only present when configured, so the default hint is unchanged.
+    ...(basePath ? { basePath } : {}),
   };
   const script = `<script>window.__PASEO_INITIAL_DAEMON_CONNECTION__=${serializeInlineScriptJson(hint)}</script>`;
   const headClose = /<\/head>/i;

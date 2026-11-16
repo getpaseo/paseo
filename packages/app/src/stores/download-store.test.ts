@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import { i18n } from "@/i18n/i18next";
 import {
+  buildDownloadUrl,
   MAX_SESSION_DOWNLOAD_BYTES,
+  resolveDaemonDownloadTarget,
   useDownloadStore,
   type Download,
   type DownloadedBytes,
@@ -261,5 +263,32 @@ describe("download store transport selection", () => {
       message: "File transfer incomplete: expected 6 bytes, received 0.",
     });
     expect(saver.savedFiles).toEqual([]);
+  });
+});
+
+describe("daemon HTTP download URL", () => {
+  it("targets the daemon root for a direct connection", () => {
+    const target = resolveDaemonDownloadTarget(
+      profileWith([localTcpConnection]),
+      localTcpConnection.id,
+    );
+    expect(target?.baseUrl).toBe("http://localhost:6767/");
+    expect(buildDownloadUrl(target?.baseUrl ?? "", "tok", null)).toBe(
+      "http://localhost:6767/api/files/download?token=tok",
+    );
+  });
+
+  it("keeps the base path of a daemon served under a URL prefix", () => {
+    const prefixed: DirectTcpHostConnection = {
+      id: "direct:hub.example.com:443/user/alice/paseo",
+      type: "directTcp",
+      endpoint: "hub.example.com:443",
+      useTls: true,
+      basePath: "/user/alice/paseo",
+    };
+    const target = resolveDaemonDownloadTarget(profileWith([prefixed]), prefixed.id);
+    expect(buildDownloadUrl(target?.baseUrl ?? "", "tok", null)).toBe(
+      "https://hub.example.com/user/alice/paseo/api/files/download?token=tok",
+    );
   });
 });
