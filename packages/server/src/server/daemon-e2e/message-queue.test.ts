@@ -207,6 +207,13 @@ test("an agent queues through send_agent_prompt and the message keeps its proven
   });
   expect(result.structuredContent).not.toHaveProperty("deliveryStatus");
   expect(await queued()).toEqual(["review when done"]);
+  const status = await mcp.callTool({
+    name: "get_agent_status",
+    arguments: { agentId: agent.id },
+  });
+  expect(status.structuredContent).toMatchObject({
+    snapshot: { queuedMessages: [{ preview: "review when done" }] },
+  });
 
   work.resolve();
   await expect.poll(() => prompts.length, { timeout: 10_000 }).toBe(2);

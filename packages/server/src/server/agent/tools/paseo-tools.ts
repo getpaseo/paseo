@@ -673,6 +673,11 @@ function createToolCatalog(
     if (!options.messageQueue) throw new Error("The message queue is not configured");
     return options.messageQueue();
   }
+
+  function withQueuedMessages<T extends { id: string }>(snapshot: T): T {
+    const queued = options.messageQueue?.().list(snapshot.id) ?? [];
+    return queued.length ? { ...snapshot, queuedMessages: queued } : snapshot;
+  }
   function finishSubscriptions(): FinishSubscriptions {
     if (!options.finishSubscriptions) throw new Error("Finish subscriptions are not configured");
     return options.finishSubscriptions();
@@ -2187,7 +2192,7 @@ function createToolCatalog(
     {
       title: "Get agent status",
       description:
-        "Return the latest snapshot for an agent, including lifecycle state, capabilities, and pending permissions.",
+        "Return the latest snapshot for an agent, including lifecycle state, capabilities, pending permissions, and messages queued behind the running turn.",
       inputSchema: {
         agentId: z.string(),
       },
@@ -2208,7 +2213,7 @@ function createToolCatalog(
           content: [],
           structuredContent: ensureValidJson({
             status: snapshot.lifecycle,
-            snapshot: structuredSnapshot,
+            snapshot: withQueuedMessages(structuredSnapshot),
           }),
         };
       }
@@ -2227,7 +2232,7 @@ function createToolCatalog(
         content: [],
         structuredContent: ensureValidJson({
           status: structuredSnapshot.status,
-          snapshot: structuredSnapshot,
+          snapshot: withQueuedMessages(structuredSnapshot),
         }),
       };
     },

@@ -44,6 +44,11 @@ interface AgentInspect {
     id: string;
     tool: string;
   }>;
+  QueuedMessages: Array<{
+    id: string;
+    preview: string;
+    queuedAt: string;
+  }>;
   Worktree: string | null;
   ParentAgentId: string | null;
 }
@@ -149,6 +154,11 @@ function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
       id: p.id,
       tool: p.name ?? "unknown",
     })),
+    QueuedMessages: (snapshot.queuedMessages ?? []).map((m) => ({
+      id: m.id,
+      preview: m.preview,
+      queuedAt: m.queuedAt,
+    })),
     Worktree: snapshot.labels?.["paseo.worktree"] ?? null,
     ParentAgentId: snapshot.labels?.[PARENT_AGENT_ID_LABEL] ?? null,
   };
@@ -197,6 +207,14 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
     value:
       agent.PendingPermissions.length > 0
         ? agent.PendingPermissions.map((p) => `${p.id} (${p.tool})`).join(", ")
+        : "[]",
+  });
+
+  rows.push({
+    key: "QueuedMessages",
+    value:
+      agent.QueuedMessages.length > 0
+        ? agent.QueuedMessages.map((m, index) => `${index + 1}. ${m.preview}`).join(", ")
         : "[]",
   });
 
