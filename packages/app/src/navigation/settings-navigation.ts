@@ -35,7 +35,8 @@ export function openSettingsFromSidebar(input: {
 }
 
 export type SettingsView =
-  | { kind: "plugin"; serverId: string; pluginId: string; screenId: string }
+  | { kind: "plugin"; serverId: string; pluginId: string; screenId?: string }
+  | { kind: "pluginListing"; serverId: string; listingId: string }
   | { kind: "root" }
   | { kind: "section"; section: SettingsSectionSlug }
   | { kind: "host"; serverId: string; section: HostSectionSlug }
@@ -61,13 +62,17 @@ export function returnFromSettings(view: SettingsView): void {
       return;
     }
     if (!navigateToLastWorkspace()) {
+      // Detail pages such as a plugin's page are pushed onto Settings; replacing only the top
+      // entry would leave the rest of Settings mounted underneath.
+      if (router.canDismiss()) router.dismissAll();
       router.replace(buildOpenProjectRoute());
     }
     return;
   }
 
   let parent: Href = buildSettingsRoute();
-  if (view.kind === "plugin") parent = buildSettingsHostSectionRoute(view.serverId, "plugins");
+  if (view.kind === "plugin" || view.kind === "pluginListing")
+    parent = buildSettingsHostSectionRoute(view.serverId, "plugins");
   if (view.kind === "project") parent = buildProjectsSettingsRoute(view.serverId);
   router.dismissTo(parent as Href);
 }

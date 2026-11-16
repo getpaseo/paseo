@@ -232,8 +232,11 @@ export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<voi
   });
 }
 
-export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
-  await page.keyboard.press("Control+P");
+export async function openNewWorkspaceProjectPickerWithShortcut(
+  page: Page,
+  shortcut = "Control+P",
+): Promise<void> {
+  await page.keyboard.press(shortcut);
 
   const searchInput = page.getByPlaceholder("Search projects");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });

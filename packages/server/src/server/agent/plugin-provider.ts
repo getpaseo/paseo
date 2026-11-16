@@ -1202,6 +1202,8 @@ class PluginAgentSession implements AgentSession {
     { session: ProviderRuntimeSession; unsubscribe: () => void }
   >();
   private readonly childSnapshots = new Map<string, Map<string, TimelineTextSnapshot>>();
+  // Outcome of each child's latest finished turn, so a plain close does not report it as completed.
+  private readonly childTurnOutcomes = new Map<string, "completed" | "canceled" | "failed">();
   private unsubscribe: (() => void) | null = null;
   /** How the opened session differs from the options it was given. */
   readonly openOptionsPatch: Record<string, JsonValue>;
@@ -1766,6 +1768,11 @@ class PluginAgentSession implements AgentSession {
       return;
     }
     if (event.type === "session.turn") {
+      if (event.state === "started") {
+        this.childTurnOutcomes.delete(childId);
+      } else {
+        this.childTurnOutcomes.set(childId, event.state);
+      }
       this.publish({
         type: "provider_subagent",
         provider: this.provider,
@@ -1784,7 +1791,10 @@ class PluginAgentSession implements AgentSession {
         event: {
           type: "upsert",
           id: childId,
-          status: event.type === "session.runtime_failed" || event.error ? "failed" : "completed",
+          status:
+            event.type === "session.runtime_failed" || event.error
+              ? "failed"
+              : (this.childTurnOutcomes.get(childId) ?? "completed"),
         },
       });
     }
@@ -1802,6 +1812,7 @@ class PluginAgentSession implements AgentSession {
     this.history.clear();
     this.timelineSnapshots.clear();
     this.childSnapshots.clear();
+    this.childTurnOutcomes.clear();
     this.revertTokens.clear();
     this.pendingPermissions.clear();
     this.permissionResponses.clear();

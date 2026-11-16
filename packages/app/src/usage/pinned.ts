@@ -1,8 +1,13 @@
 import type { TFunction } from "i18next";
 import { i18n } from "@/i18n/i18next";
-import { formatPct, formatDisplayPct, formatProviderUsageLabel } from "./format";
+import {
+  formatPct,
+  formatDisplayPct,
+  formatProviderUsageLabel,
+  formatUsageAccountName,
+} from "./format";
 import { displayPercent, resolveUsageSnapshot } from "./model";
-import { effectiveUsagePins, type UsagePreferences } from "./preferences";
+import { effectiveUsagePins, usageReportsOn, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageReportEntry, UsageTone } from "./types";
 
@@ -55,19 +60,12 @@ export function choosePinnedUsageLayout(input: {
 }
 
 function describe(entry: UsageReportEntry, windowLabel: string): string {
-  const account = entry.account.label ? ` (${entry.account.label})` : "";
-  return `${entry.sourceLabel}${account} ${windowLabel}`;
-}
-
-/** Reports with every account of a source together, sources in the order they first appear. */
-function groupBySource(reports: readonly UsageReportEntry[]): UsageReportEntry[] {
-  const sourceIds = [...new Set(reports.map((entry) => entry.sourceId))];
-  return sourceIds.flatMap((sourceId) => reports.filter((entry) => entry.sourceId === sourceId));
+  return `${formatUsageAccountName(entry)} ${windowLabel}`;
 }
 
 /**
- * The sidebar Usage item's summary: one group per account, grouped by source, each with its
- * windows in its report's order. Accounts with nothing to show are left out.
+ * The sidebar Usage item's summary: one group per account in card order, each with its windows in
+ * its report's order. Accounts turned off or with nothing to show are left out.
  */
 export function resolvePinnedUsage(
   reports: readonly UsageReportEntry[],
@@ -75,7 +73,7 @@ export function resolvePinnedUsage(
   t: TFunction = i18n.t,
 ): PinnedUsageSource[] {
   const pins = effectiveUsagePins(preferences, reports);
-  return groupBySource(reports).flatMap((entry) => {
+  return usageReportsOn(reports, preferences).flatMap((entry) => {
     const snapshot = resolveUsageSnapshot(entry);
     if (!snapshot) return [];
     const windows = snapshot.report.windows

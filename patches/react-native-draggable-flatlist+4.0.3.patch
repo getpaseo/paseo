@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
-index d3a4f1f..083bf19 100644
+index d3a4f1f..66e5124 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/components/DraggableFlatList.d.ts
-@@ -16,12 +16,14 @@ declare const _default: <T>(props: Omit<FlatListProps<T>, "keyExtractor" | "data
+@@ -16,12 +16,15 @@ declare const _default: <T>(props: Omit<FlatListProps<T>, "keyExtractor" | "data
      keyExtractor: (item: T, index: number) => string;
      onDragBegin?: ((index: number) => void) | undefined;
      onDragEnd?: ((params: import("../types").DragEndParams<T>) => void) | undefined;
@@ -14,14 +14,15 @@ index d3a4f1f..083bf19 100644
      renderPlaceholder?: import("../types").RenderPlaceholder<T> | undefined;
      simultaneousHandlers?: React.Ref<any> | React.Ref<any>[] | undefined;
 +    dragGestureHostPresented?: boolean | undefined;
++    dragGestureRef?: React.MutableRefObject<any> | undefined;
      outerScrollOffset?: Animated.SharedValue<number> | undefined;
      onAnimValInit?: ((animVals: {
          activeCellOffset: import("react-native-reanimated").SharedValue<number>;
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
-index d3c6cbb..36e9645 100644
+index d3c6cbb..a586a09 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/components/NestableDraggableFlatList.d.ts
-@@ -15,12 +15,14 @@ export declare const NestableDraggableFlatList: <T>(props: Omit<import("react-na
+@@ -15,12 +15,15 @@ export declare const NestableDraggableFlatList: <T>(props: Omit<import("react-na
      keyExtractor: (item: T, index: number) => string;
      onDragBegin?: ((index: number) => void) | undefined;
      onDragEnd?: ((params: import("../types").DragEndParams<T>) => void) | undefined;
@@ -33,14 +34,15 @@ index d3c6cbb..36e9645 100644
      renderPlaceholder?: import("../types").RenderPlaceholder<T> | undefined;
      simultaneousHandlers?: React.Ref<any> | React.Ref<any>[] | undefined;
 +    dragGestureHostPresented?: boolean | undefined;
++    dragGestureRef?: React.MutableRefObject<any> | undefined;
      outerScrollOffset?: Animated.SharedValue<number> | undefined;
      onAnimValInit?: ((animVals: {
          activeCellOffset: import("react-native-reanimated").SharedValue<number>;
 diff --git a/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts b/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
-index 2abb4a2..8ca967f 100644
+index 2abb4a2..c60dedf 100644
 --- a/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
 +++ b/node_modules/react-native-draggable-flatlist/lib/typescript/types.d.ts
-@@ -23,12 +23,16 @@ export declare type DraggableFlatListProps<T> = Modify<FlatListProps<T>, {
+@@ -23,12 +23,21 @@ export declare type DraggableFlatListProps<T> = Modify<FlatListProps<T>, {
      keyExtractor: (item: T, index: number) => string;
      onDragBegin?: (index: number) => void;
      onDragEnd?: (params: DragEndParams<T>) => void;
@@ -54,6 +56,11 @@ index 2abb4a2..8ca967f 100644
      simultaneousHandlers?: React.Ref<any> | React.Ref<any>[];
 +    /** @internal Forces handler reattachment when a retained native host is presented. */
 +    dragGestureHostPresented?: boolean;
++    /**
++     * Ref for the drag pan, so an enclosing gesture can wait for it to fail. The pan then arbitrates
++     * manually, as with `simultaneousHandlers`: it fails on a move unless a row is armed.
++     */
++    dragGestureRef?: React.MutableRefObject<any>;
      outerScrollOffset?: Animated.SharedValue<number>;
      onAnimValInit?: (animVals: ReturnType<typeof useAnimatedValues>) => void;
      itemEnteringAnimation?: AnimateProps<Animated.View>["entering"];
@@ -174,7 +181,7 @@ index e4e861a..f485139 100644
  
  declare global {
 diff --git a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
-index 7c88afc..ad75714 100644
+index 7c88afc..05618ec 100644
 --- a/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 +++ b/node_modules/react-native-draggable-flatlist/src/components/DraggableFlatList.tsx
 @@ -16,9 +16,11 @@ import {
@@ -220,7 +227,37 @@ index 7c88afc..ad75714 100644
    const [layoutAnimationDisabled, setLayoutAnimationDisabled] = useState(
      !propsRef.current.enableLayoutAnimationExperimental
    );
-@@ -144,19 +163,88 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -113,10 +132,26 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+ 
+   const dataRef = useRef(props.data);
+   const dataHasChanged =
+-    dataRef.current.map(keyExtractor).join("") !==
+-    props.data.map(keyExtractor).join("");
+-  dataRef.current = props.data;
++    dataRef.current.map(keyExtractor).join("") !== props.data.map(keyExtractor).join("");
++  // Sheet portals can deliver reordered data after the drop callback commits.
++  // Keep the held transforms until that data arrives, then renew moved hosts
++  // in the same render as their new slots.
+   if (dataHasChanged) {
++    const wasDragging = activeKey !== null;
++    const previousIndices = new Map(
++      dataRef.current.map((item, index) => [keyExtractor(item, index), index]),
++    );
++    setTransformHostKeys((previous) => {
++      const next = new Map<string, number>();
++      props.data.forEach((item, index) => {
++        const key = keyExtractor(item, index);
++        const generation = previous.get(key) ?? 0;
++        next.set(key, generation + (wasDragging && previousIndices.get(key) !== index ? 1 : 0));
++      });
++      return next;
++    });
++    dataRef.current = props.data;
++    setActiveKey(null);
+     // When data changes make sure `activeKey` is nulled out in the same render pass
+     activeKey = null;
+     InteractionManager.runAfterInteractions(() => {
+@@ -144,19 +179,88 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      });
    }, [props.data, keyExtractor, keyToIndexRef]);
  
@@ -316,7 +353,7 @@ index 7c88afc..ad75714 100644
        setActiveKey(activeKey);
        onDragBegin?.(index);
      }
-@@ -218,14 +306,46 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -218,8 +322,25 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
      props.onRelease?.(index);
    });
  
@@ -343,28 +380,18 @@ index 7c88afc..ad75714 100644
        const { onDragEnd, data } = props;
  
        const newData = [...data];
-       if (from !== to) {
-         newData.splice(from, 1);
-         newData.splice(to, 0, data[from]);
-+        const movedKeys = data
-+          .slice(Math.min(from, to), Math.max(from, to) + 1)
-+          .map((item, offset) => keyExtractor(item, Math.min(from, to) + offset));
-+        setTransformHostKeys((previous) => {
-+          const next = new Map<string, number>();
-+          data.forEach((item, index) => {
-+            const itemKey = keyExtractor(item, index);
-+            const hostKey = previous.get(itemKey);
-+            if (hostKey !== undefined) next.set(itemKey, hostKey);
-+          });
-+          for (const movedKey of movedKeys) {
-+            next.set(movedKey, (previous.get(movedKey) ?? 0) + 1);
-+          }
-+          return next;
-+        });
-       }
+@@ -230,34 +351,15 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
  
        onDragEnd?.({ from, to, data: newData });
-@@ -238,26 +358,6 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+ 
+-      setActiveKey(null);
+-    }
++      // A drop in place doesn't change data, so no data-change reset will clear the armed index.
++      if (from === to) reset();
++    },
+   );
+ 
+   const onPlaceholderIndexChange = useStableCallback((index: number) => {
      props.onPlaceholderIndexChange?.(index);
    });
  
@@ -391,14 +418,16 @@ index 7c88afc..ad75714 100644
    useAnimatedReaction(
      () => {
        return spacerIndexAnim.value;
-@@ -271,11 +371,24 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -271,11 +373,26 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
    );
  
    const gestureDisabled = useSharedValue(false);
 +  const touchStartX = useSharedValue(0);
 +  const touchStartY = useSharedValue(0);
 +  const manualPanActivated = useSharedValue(false);
-+  const coordinatesDragWithExternalGesture = Boolean(props.simultaneousHandlers);
++  const coordinatesDragWithExternalGesture = Boolean(
++    props.simultaneousHandlers || props.dragGestureRef
++  );
  
 -  const panGesture = Gesture.Pan()
 +  let panGesture = Gesture.Pan()
@@ -417,7 +446,7 @@ index 7c88afc..ad75714 100644
        panGestureState.value = evt.state;
      })
      .onUpdate((evt) => {
-@@ -286,8 +399,15 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -286,8 +403,15 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
          : evt.translationY;
        touchTranslate.value = translation;
      })
@@ -434,7 +463,7 @@ index 7c88afc..ad75714 100644
        // Set touch val to current translate val
        isTouchActiveNative.value = false;
        const translation = horizontalAnim.value
-@@ -299,6 +419,7 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -299,6 +423,7 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
  
        // Only call onDragEnd if actually dragging a cell
        if (activeIndexAnim.value === -1 || disabled.value) return;
@@ -442,7 +471,7 @@ index 7c88afc..ad75714 100644
        disabled.value = true;
        runOnJS(onRelease)(activeIndexAnim.value);
        const springTo = placeholderOffset.value - activeCellOffset.value;
-@@ -309,22 +430,84 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -309,22 +434,85 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
            runOnJS(onDragEnd)({
              from: activeIndexAnim.value,
              to: spacerIndexAnim.value,
@@ -524,13 +553,14 @@ index 7c88afc..ad75714 100644
  
    if (dragHitSlop) panGesture.hitSlop(dragHitSlop);
 -  if (activationDistanceProp) {
++  if (props.dragGestureRef) panGesture.withRef(props.dragGestureRef);
 +  if (coordinatesDragWithExternalGesture) {
 +    panGesture = panGesture.manualActivation(true);
 +  } else if (activationDistanceProp) {
      const activeOffset = [-activationDistanceProp, activationDistanceProp];
      if (props.horizontal) {
        panGesture.activeOffsetX(activeOffset);
-@@ -332,6 +515,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -332,6 +520,21 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        panGesture.activeOffsetY(activeOffset);
      }
    }
@@ -552,7 +582,7 @@ index 7c88afc..ad75714 100644
  
    const onScroll = useStableCallback((scrollOffset: number) => {
      props.onScrollOffsetChange?.(scrollOffset);
-@@ -372,9 +570,11 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
+@@ -372,9 +575,11 @@ function DraggableFlatListInner<T>(props: DraggableFlatListProps<T>) {
        keyExtractor={keyExtractor}
        horizontal={!!props.horizontal}
        layoutAnimationDisabled={layoutAnimationDisabled}
@@ -636,10 +666,10 @@ index 75f7db7..e99faf3 100644
  
    return (
 diff --git a/node_modules/react-native-draggable-flatlist/src/types.ts b/node_modules/react-native-draggable-flatlist/src/types.ts
-index d6755c8..1b244a6 100644
+index d6755c8..af70a01 100644
 --- a/node_modules/react-native-draggable-flatlist/src/types.ts
 +++ b/node_modules/react-native-draggable-flatlist/src/types.ts
-@@ -36,12 +36,16 @@ export type DraggableFlatListProps<T> = Modify<
+@@ -36,12 +36,21 @@ export type DraggableFlatListProps<T> = Modify<
      keyExtractor: (item: T, index: number) => string;
      onDragBegin?: (index: number) => void;
      onDragEnd?: (params: DragEndParams<T>) => void;
@@ -653,6 +683,11 @@ index d6755c8..1b244a6 100644
      simultaneousHandlers?: React.Ref<any> | React.Ref<any>[];
 +    /** @internal Forces handler reattachment when a retained native host is presented. */
 +    dragGestureHostPresented?: boolean;
++    /**
++     * Ref for the drag pan, so an enclosing gesture can wait for it to fail. The pan then arbitrates
++     * manually, as with `simultaneousHandlers`: it fails on a move unless a row is armed.
++     */
++    dragGestureRef?: React.MutableRefObject<any>;
      outerScrollOffset?: Animated.SharedValue<number>;
      onAnimValInit?: (animVals: ReturnType<typeof useAnimatedValues>) => void;
      itemEnteringAnimation?: AnimateProps<Animated.View>["entering"];
