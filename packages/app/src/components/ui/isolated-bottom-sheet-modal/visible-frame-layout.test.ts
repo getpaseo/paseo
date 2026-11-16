@@ -2,7 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   getBottomSheetSafeAreaPaddingBottom,
   getBottomSheetVisibleContentHeight,
+  getMotionFrameLayout,
 } from "./visible-frame-layout";
+
+describe("getMotionFrameLayout", () => {
+  it("keeps the body at the largest viewport while a sheet moves and positions the footer at the visible edge", () => {
+    expect(getMotionFrameLayout(576, 876, true)).toEqual({ bodyHeight: 876, footerOffset: -300 });
+    expect(getMotionFrameLayout(726, 876, true)).toEqual({ bodyHeight: 876, footerOffset: -150 });
+    expect(getMotionFrameLayout(876, 876, true)).toEqual({ bodyHeight: 876, footerOffset: 0 });
+  });
+
+  it("gives the scroller its actual viewport at rest, including after a cancellation", () => {
+    expect(getMotionFrameLayout(576, 876, false)).toEqual({ bodyHeight: 576, footerOffset: 0 });
+    expect(getMotionFrameLayout(876, 876, false)).toEqual({ bodyHeight: 876, footerOffset: 0 });
+  });
+
+  it("does not clip the body when the keyboard or a temporary position makes the visible area larger", () => {
+    expect(getMotionFrameLayout(900, 876, true)).toEqual({ bodyHeight: 900, footerOffset: 0 });
+    expect(getMotionFrameLayout(0, 0, true)).toEqual({ bodyHeight: 0, footerOffset: 0 });
+  });
+});
 
 describe("getBottomSheetVisibleContentHeight", () => {
   it("stops subtracting the retained keyboard height after the keyboard hides", () => {

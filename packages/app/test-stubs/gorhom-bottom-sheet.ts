@@ -44,8 +44,12 @@ export function useBottomSheetModalInternal() {
 // The app imports the internal layout values to compute the visible sheet body. Browser unit tests
 // never render the native sheet, but Vite still validates this module's export surface.
 export const KEYBOARD_STATUS = { SHOWN: "SHOWN" };
+export const ANIMATION_STATUS = { RUNNING: 1 };
 export function useBottomSheetInternal() {
   return {
+    animatedAnimationState: sharedValue({ status: 2 }),
+    animatedContentGestureState: sharedValue(0),
+    animatedHandleGestureState: sharedValue(0),
     animatedDetentsState: sharedValue({ detents: [] as number[] }),
     animatedKeyboardState: sharedValue({ heightWithinContainer: 0, status: "HIDDEN" }),
     animatedLayoutState: sharedValue({ containerHeight: 0, handleHeight: 0 }),
