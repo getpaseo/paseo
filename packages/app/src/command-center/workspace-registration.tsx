@@ -203,7 +203,7 @@ export function useWorkspaceCommandCenterActions(): void {
     supportsSetupObservation,
   );
   const { overrides } = useKeyboardShortcutOverrides();
-  const { gitActions, isGit } = useGitActions({
+  const { gitActions, isGit, archiveWorkspace } = useGitActions({
     serverId: serverId ?? "",
     cwd: cwd ?? "",
     icons: GIT_ACTION_ICONS,
@@ -270,6 +270,7 @@ export function useWorkspaceCommandCenterActions(): void {
           toggleFocusMode: t("settings.shortcuts.help.toggleFocusMode"),
           toggleExplorerSidebar: t("workspace.tabs.explorerSidebar.toggle"),
           // Workspace management labels
+          archiveWorkspace: t("workspace.git.actions.archive.label"),
           rename: t("sidebar.workspace.actions.rename"),
           copyPath: t("workspace.header.actions.copyPath"),
           copyBranchName: t("workspace.header.actions.copyBranchName"),
@@ -280,6 +281,7 @@ export function useWorkspaceCommandCenterActions(): void {
         },
         icons: {
           ...WORKSPACE_COMMAND_CENTER_ICONS,
+          archiveWorkspace: staticIcon(GIT_ACTION_ICONS.archive),
           git: (action) => staticIcon(action.icon),
         },
         shortcuts: resolveWorkspaceShortcuts(overrides),
@@ -301,12 +303,14 @@ export function useWorkspaceCommandCenterActions(): void {
           keyboardActionDispatcher.dispatch(action);
         },
         runGitAction,
+        archiveWorkspace,
         copyPath,
         copyBranchName,
         toggleLabel,
       }),
     [
       activeTabIndex,
+      archiveWorkspace,
       activeTabKind,
       canPin,
       canShowSetup,

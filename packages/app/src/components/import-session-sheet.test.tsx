@@ -164,6 +164,25 @@ vi.mock("@/components/adaptive-modal-sheet", () => ({
         {children}
       </section>
     ) : null,
+  SheetHeaderIconButton: ({
+    label,
+    onPress,
+    busy,
+    testID,
+  }: {
+    label: string;
+    onPress: () => void;
+    busy?: boolean;
+    testID?: string;
+  }) => (
+    <button
+      type="button"
+      aria-label={label}
+      disabled={busy}
+      onClick={onPress}
+      data-testid={testID}
+    />
+  ),
 }));
 
 vi.mock("react-native", async () => {

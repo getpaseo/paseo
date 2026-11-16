@@ -14,6 +14,9 @@ const SOCKET_PATH_BYTE_BUDGET: Partial<Record<NodeJS.Platform, number>> = {
 };
 const DEFAULT_SOCKET_PATH_BYTE_BUDGET = 103;
 const OWNER_ONLY_MODE = 0o700;
+// Bind errors that mean the directory's filesystem cannot hold a Unix socket. AFS and some other
+// network filesystems pass the directory checks and then refuse AF_UNIX bind with EPERM.
+const SOCKET_UNSUPPORTED_BIND_CODES = new Set(["EPERM", "EACCES", "EOPNOTSUPP", "ENOTSUP"]);
 
 export interface TerminalWorkerSocketPathInput {
   paseoHome: string;
@@ -22,6 +25,16 @@ export interface TerminalWorkerSocketPathInput {
   platform?: NodeJS.Platform;
   tmpDir?: string;
   uid?: number;
+}
+
+export interface TerminalWorkerSocketListenInput<T> extends TerminalWorkerSocketPathInput {
+  /** Binds a fresh listener at the path, removing any stale socket there first. */
+  listen: (socketPath: string) => Promise<T>;
+}
+
+export interface TerminalWorkerSocketListener<T> {
+  socketPath: string;
+  listener: T;
 }
 
 export interface RejectedSocketCandidate {
@@ -36,7 +49,7 @@ export class TerminalWorkerSocketPathError extends Error {
   constructor(rejected: RejectedSocketCandidate[], budget: number) {
     super(
       [
-        `No terminal worker socket path fits ${budget} bytes in an owner-only directory:`,
+        `No terminal worker socket path fits ${budget} bytes in an owner-only directory that accepts a socket:`,
         ...rejected.map(
           (candidate) => `  ${candidate.path} (${candidate.byteLength} bytes): ${candidate.reason}`,
         ),
@@ -57,18 +70,73 @@ export function terminalWorkerSocketId(paseoHome: string, workerPid: number): st
  * Picks (and creates) the socket path a worker listens on. Windows uses a named pipe; POSIX
  * tries $PASEO_HOME/terminal-worker/sock, then <tmpdir>/paseo-<uid>, then /tmp/paseo-<uid>.
  * A shared root is never chmodded: an existing directory there is used only when it is a real
- * directory owned by this user with mode 0700.
+ * directory owned by this user with mode 0700. It does not bind; the worker listens through
+ * `listenOnTerminalWorkerSocket`, which also skips directories that refuse a socket.
  */
 export function resolveTerminalWorkerSocketPath(input: TerminalWorkerSocketPathInput): string {
   const platform = input.platform ?? process.platform;
-  const id = terminalWorkerSocketId(input.paseoHome, input.workerPid) + "-" + input.recordId;
   if (platform === "win32") {
-    return `\\\\.\\pipe\\paseo-tw-${id}`;
+    return windowsPipePath(input);
   }
+  const budget = socketPathByteBudget(platform);
+  const rejected: RejectedSocketCandidate[] = [];
+  for (const candidate of eligibleUnixSocketPaths(input, budget, rejected)) {
+    return candidate.path;
+  }
+  throw new TerminalWorkerSocketPathError(rejected, budget);
+}
 
+/**
+ * Listens on the first candidate path that accepts a socket. A bind refused by the filesystem
+ * moves on to the next candidate; any other listen error (EADDRINUSE, ...) is thrown as is.
+ */
+export async function listenOnTerminalWorkerSocket<T>(
+  input: TerminalWorkerSocketListenInput<T>,
+): Promise<TerminalWorkerSocketListener<T>> {
+  const { listen } = input;
+  const platform = input.platform ?? process.platform;
+  if (platform === "win32") {
+    const socketPath = windowsPipePath(input);
+    return { socketPath, listener: await listen(socketPath) };
+  }
+  const budget = socketPathByteBudget(platform);
+  const rejected: RejectedSocketCandidate[] = [];
+  for (const candidate of eligibleUnixSocketPaths(input, budget, rejected)) {
+    try {
+      return { socketPath: candidate.path, listener: await listen(candidate.path) };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !SOCKET_UNSUPPORTED_BIND_CODES.has(code)) throw error;
+      rejected.push({
+        path: candidate.path,
+        byteLength: candidate.byteLength,
+        reason: `cannot bind a socket here (${code})`,
+      });
+    }
+  }
+  throw new TerminalWorkerSocketPathError(rejected, budget);
+}
+
+function windowsPipePath(input: TerminalWorkerSocketPathInput): string {
+  return `\\\\.\\pipe\\paseo-tw-${socketFileId(input)}`;
+}
+
+function socketFileId(input: TerminalWorkerSocketPathInput): string {
+  return terminalWorkerSocketId(input.paseoHome, input.workerPid) + "-" + input.recordId;
+}
+
+function socketPathByteBudget(platform: NodeJS.Platform): number {
+  return SOCKET_PATH_BYTE_BUDGET[platform] ?? DEFAULT_SOCKET_PATH_BYTE_BUDGET;
+}
+
+/** Yields each candidate that fits the budget in an owner-only directory, in order. */
+function* eligibleUnixSocketPaths(
+  input: TerminalWorkerSocketPathInput,
+  budget: number,
+  rejected: RejectedSocketCandidate[],
+): Generator<{ path: string; byteLength: number }> {
   const uid = input.uid ?? process.getuid?.() ?? 0;
-  const budget = SOCKET_PATH_BYTE_BUDGET[platform] ?? DEFAULT_SOCKET_PATH_BYTE_BUDGET;
-  const fileName = `tw-${id}.sock`;
+  const fileName = `tw-${socketFileId(input)}.sock`;
   const homeSocketDirectory = path.join(terminalWorkerDirectory(input.paseoHome), "sock");
   const candidates: Array<{ directory: string; prepare: () => string | null }> = [
     {
@@ -87,7 +155,6 @@ export function resolveTerminalWorkerSocketPath(input: TerminalWorkerSocketPathI
     }),
   ];
 
-  const rejected: RejectedSocketCandidate[] = [];
   const seen = new Set<string>();
   for (const candidate of candidates) {
     const socketPath = path.join(candidate.directory, fileName);
@@ -108,9 +175,8 @@ export function resolveTerminalWorkerSocketPath(input: TerminalWorkerSocketPathI
       rejected.push({ path: socketPath, byteLength, reason: problem });
       continue;
     }
-    return socketPath;
+    yield { path: socketPath, byteLength };
   }
-  throw new TerminalWorkerSocketPathError(rejected, budget);
 }
 
 function prepareSharedRootDirectory(directory: string, uid: number): string | null {

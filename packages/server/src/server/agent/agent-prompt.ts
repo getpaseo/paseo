@@ -24,7 +24,10 @@ export type AgentRunController = Pick<
   reloadAgentSession(agentId: string): Promise<unknown>;
 };
 
+export class AgentTurnBusyError extends Error {}
+
 export interface StartAgentRunOptions {
+  idleOnly?: boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
   replaceRunning?: boolean;
@@ -153,13 +156,12 @@ async function startAgentRunInner(
   startOptions: ForegroundRunStartOptions,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
-  const steered = await steerOrReplaceActiveRun(
-    agentManager,
-    agentId,
-    prompt,
-    options,
-    startOptions,
-  );
+  const steered = options?.idleOnly
+    ? null
+    : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options, startOptions);
+  if (options?.idleOnly && agentManager.hasInFlightRun(agentId)) {
+    throw new AgentTurnBusyError(`Agent ${agentId} is running`);
+  }
   if (steered?.disposition === "steered") {
     options?.onDispatch?.("steered");
     return steered;
@@ -239,6 +241,9 @@ export async function unarchiveAgentState(
 }
 
 export interface SendPromptToAgentParams {
+  idleOnly?: boolean;
+  /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
+  beforeDispatch?: () => Promise<void>;
   onDispatch?: StartAgentRunOptions["onDispatch"];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
@@ -382,12 +387,17 @@ export async function sendPreparedPromptToAgent(
     throw error;
   }
 
+  if (params.idleOnly && params.agentManager.hasInFlightRun(params.agentId)) {
+    throw new AgentTurnBusyError(`Agent ${params.agentId} is running`);
+  }
   if (params.sessionMode) {
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
+  await params.beforeDispatch?.();
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
-    replaceRunning: true,
+    replaceRunning: !params.idleOnly,
+    idleOnly: params.idleOnly,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
