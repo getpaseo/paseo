@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultHostAppearance } from "@/hosts/appearance";
 import {
   createRemoteSshHostConnection,
+  importHostProfilesInProfiles,
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   pinRelayProtectedSecurityInProfiles,
@@ -534,5 +535,67 @@ describe("resolveActiveHostServerId", () => {
         orderedHosts: [makeHost("srv_local"), makeHost("srv_remote")],
       }),
     ).toBe("srv_local");
+  });
+});
+
+describe("importHostProfilesInProfiles", () => {
+  const relay: HostConnection = {
+    id: "relay:wss:relay.example.test:443",
+    type: "relay",
+    relayEndpoint: "relay.example.test:443",
+    useTls: true,
+    daemonPublicKeyB64: "AAAA",
+  };
+
+  it("adds an imported host with its appearance and no password", () => {
+    const imported: HostProfile = {
+      ...makeHost("srv_work"),
+      label: "Work laptop",
+      appearance: { color: "violet", badgeDisplay: "name" },
+      connections: [relay],
+      preferredConnectionId: relay.id,
+    };
+
+    const next = importHostProfilesInProfiles({
+      profiles: [],
+      imported: [{ ...imported, password: "should-not-travel" }],
+      now: "2026-10-28T00:00:00.000Z",
+    });
+
+    expect(next).toEqual([
+      {
+        serverId: "srv_work",
+        label: "Work laptop",
+        appearance: { color: "violet", badgeDisplay: "name" },
+        lifecycle: {},
+        connections: [relay],
+        preferredConnectionId: relay.id,
+        createdAt: "2026-10-28T00:00:00.000Z",
+        updatedAt: "2026-10-28T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("merges into a host already on this device and keeps its saved password", () => {
+    const existing: HostProfile = { ...makeHost("srv_work"), password: "local-secret" };
+
+    const [merged] = importHostProfilesInProfiles({
+      profiles: [existing],
+      imported: [
+        {
+          ...makeHost("srv_work"),
+          appearance: { color: "sky", badgeDisplay: "icon" },
+          connections: [relay],
+        },
+      ],
+      now: "2026-10-28T00:00:00.000Z",
+    });
+
+    expect(merged).toMatchObject({
+      serverId: "srv_work",
+      password: "local-secret",
+      appearance: { color: "sky", badgeDisplay: "icon" },
+      connections: [relay],
+    });
   });
 });

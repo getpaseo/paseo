@@ -12,7 +12,7 @@ const STORAGE_KEY = "@paseo:keyboard-shortcut-overrides";
 const QUERY_KEY = ["keyboard-shortcut-overrides"];
 
 const EMPTY_OVERRIDES: ShortcutOverrides = {};
-const ShortcutOverridesSchema = z.record(z.string(), z.string().nullable());
+export const ShortcutOverridesSchema = z.record(z.string(), z.string().nullable());
 
 export interface UseKeyboardShortcutOverridesReturn {
   overrides: ShortcutOverrides;
@@ -21,6 +21,7 @@ export interface UseKeyboardShortcutOverridesReturn {
   clearOverride: (bindingId: string) => Promise<void>;
   removeOverride: (bindingId: string) => Promise<void>;
   resetAll: () => Promise<void>;
+  replaceAll: (next: ShortcutOverrides) => Promise<void>;
   hasOverrides: boolean;
 }
 
@@ -43,6 +44,7 @@ export function useKeyboardShortcutOverrides(): UseKeyboardShortcutOverridesRetu
     clearOverride: store.clear,
     removeOverride: store.remove,
     resetAll: store.resetAll,
+    replaceAll: store.replaceAll,
     hasOverrides: Object.keys(overrides).length > 0,
   };
 }
