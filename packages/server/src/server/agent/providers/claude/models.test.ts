@@ -1,3 +1,4 @@
+import { ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -1172,5 +1173,105 @@ describe("Claude model discovery process", () => {
     );
     await expect(result).rejects.toBe(failure);
     expect(closed).toBe(true);
+  });
+
+  describe("when the CLI is still starting up at the deadline", () => {
+    // Without a pid, terminateWithTreeKill signals the child directly instead of a real tree.
+    class StartingClaudeProcess extends ChildProcess {
+      readonly signals: string[] = [];
+      override kill(signal?: NodeJS.Signals | number): boolean {
+        this.signals.push(String(signal));
+        this.emit("exit", null, signal);
+        return true;
+      }
+      exitOnItsOwn(): void {
+        this.emit("exit", 0, null);
+      }
+    }
+
+    interface StalledDiscoveryState {
+      closed: boolean;
+      inputEnded: boolean;
+    }
+
+    async function recordInputEnd(
+      prompt: AsyncIterable<unknown>,
+      state: StalledDiscoveryState,
+    ): Promise<void> {
+      await prompt[Symbol.asyncIterator]().next();
+      state.inputEnded = true;
+    }
+
+    function startStalledDiscovery() {
+      const child = new StartingClaudeProcess();
+      const state: StalledDiscoveryState = { closed: false, inputEnded: false };
+      const result = discoverClaudeModels(
+        { resolveBinary: async () => "/claude", env: {} },
+        (input, context) => {
+          if (typeof input.prompt === "string") throw new Error("unexpected inference prompt");
+          void recordInputEnd(input.prompt, state);
+          context.onChildProcess?.(child);
+          // An expired OAuth token is refreshed before the CLI answers supportedModels().
+          return {
+            supportedModels: () => new Promise<ModelInfo[]>(() => {}),
+            close: () => {
+              state.closed = true;
+            },
+          };
+        },
+      );
+      return { child, state, result };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("stops waiting at the limit but lets the CLI finish instead of killing it", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+      expect(state.inputEnded).toBe(true);
+      expect(child.signals).toEqual([]);
+      expect(state.closed).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(child.signals).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.signals).toEqual(["SIGTERM"]);
+      expect(state.closed).toBe(true);
+    });
+
+    it("never signals a CLI that exits on its own during the grace period", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      child.exitOnItsOwn();
+      expect(state.closed).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(child.signals).toEqual([]);
+    });
+
+    it("tree-kills a still-running CLI when the daemon shuts down", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+      expect(child.signals).toEqual([]);
+
+      await new ClaudeAgentClient({ logger: createTestLogger() }).shutdown();
+      expect(child.signals).toEqual(["SIGTERM"]);
+      expect(state.closed).toBe(true);
+    });
   });
 });
