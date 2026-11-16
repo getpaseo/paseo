@@ -49,7 +49,7 @@ export type DismissToast = () => void;
 export interface ToastApi {
   show: (content: ReactNode, options?: ToastShowOptions) => DismissToast;
   copied: (label?: string) => void;
-  error: (message: string) => void;
+  error: (error: unknown) => void;
 }
 
 type ToastViewportPlacement = "app-shell" | "panel" | "sidebar";
@@ -132,7 +132,11 @@ export function useToastHost(): {
           variant: "success",
           icon: <ThemedCheckCircle size={18} uniProps={foregroundIcon} />,
         }),
-      error: (message: string) => show(message, { variant: "error", durationMs: 3200 }),
+      error: (error: unknown) =>
+        show(error instanceof Error ? error.message : String(error), {
+          variant: "error",
+          durationMs: 3200,
+        }),
     }),
     [show, t],
   );

@@ -5,6 +5,18 @@ import { describe, expect, it } from "vitest";
 import { useToastHost } from "./toast-host";
 
 describe("useToastHost", () => {
+  it("shows error messages without the exception prefix and with a finite duration", () => {
+    const { result } = renderHook(() => useToastHost());
+    const error = new Error("No response to clear_agent_attention after 60000ms");
+    act(() => result.current.api.error(error));
+    expect(result.current.toast).toMatchObject({
+      content: error.message,
+      nativeMessage: error.message,
+      variant: "error",
+      durationMs: 3200,
+    });
+  });
+
   it("dismisses the toast that show returned the dismiss for", () => {
     const { result } = renderHook(() => useToastHost());
 
