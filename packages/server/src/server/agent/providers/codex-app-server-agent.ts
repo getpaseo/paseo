@@ -5385,6 +5385,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async canStopRuntime(): Promise<boolean> {
+    // A history session released its app-server once it read the thread, so nothing runs.
+    if (this.connectionState === "history-ready") return true;
     if (
       !this.client ||
       this.client.hasPendingRequests() ||
