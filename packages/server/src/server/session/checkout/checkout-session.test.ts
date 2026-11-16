@@ -30,6 +30,7 @@ import {
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
+import { capturePrCheckoutState, createPullRequest } from "../../../utils/checkout-git.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
   return msg.type === "checkout.forge.get_check_details.response";
@@ -1995,6 +1996,16 @@ it("previews related issues and creates only explicitly approved issue links", a
         error: { message: expect.stringContaining("issue-closing directives") },
       },
     });
+    generatedBody = "Change the background to #123456 and #0f172a.";
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: created.worktreePath,
+      previewOnly: true,
+      requestId: "color-literals",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      payload: { error: null, proposal: { body: generatedBody } },
+    });
     generatedBody = "Retries transient failures.";
     duringGeneration = () => {
       git(created.worktreePath, "commit", "--allow-empty", "-m", "concurrent change");
@@ -2033,6 +2044,27 @@ it("previews related issues and creates only explicitly approved issue links", a
       payload: { error: { message: "Branch changed since the PR preview; preview the PR again" } },
     });
     expect(requests).toHaveLength(2);
+    git(repo, "checkout", "--detach");
+    git(repo, "branch", "-D", "main");
+    const approved = await capturePrCheckoutState(created.worktreePath, "main", { paseoHome });
+    expect(approved.baseSha).toBe(git(repo, "rev-parse", "origin/main"));
+    git(created.worktreePath, "commit", "--allow-empty", "-m", "after approval");
+    await createPullRequest(
+      created.worktreePath,
+      {
+        title: "Approved change",
+        body: "Approved only",
+        head: approved.head,
+        base: approved.base,
+        approvedHeadSha: approved.headSha,
+      },
+      service,
+      { paseoHome },
+    );
+    expect(git(root, "--git-dir", remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(
+      approved.headSha,
+    );
+    expect(git(created.worktreePath, "rev-parse", "HEAD")).not.toBe(approved.headSha);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -106,6 +106,7 @@ interface PrIssueCandidate {
 }
 
 interface PrCreateInput {
+  approvedHeadSha?: string;
   head?: string;
   title: string;
   body: string;
@@ -1064,6 +1065,7 @@ export class CheckoutSession {
           draft: input.draft,
           base: input.baseRef,
           ...(input.head ? { head: input.head } : {}),
+          ...(input.approvedHeadSha ? { approvedHeadSha: input.approvedHeadSha } : {}),
         },
         service,
         { paseoHome: this.paseoHome, worktreesRoot: this.worktreesRoot },
@@ -1108,7 +1110,9 @@ export class CheckoutSession {
       checkoutState.base,
     );
     if (
-      /#\d+|https?:\/\/\S*\/(?:issues?|work_items)\//i.test(`${generated.title}\n${generated.body}`)
+      /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:#\d+\b|[\w.-]+\/[\w.-]+#\d+\b|https?:\/\/\S+)/i.test(
+        `${generated.title}\n${generated.body}`,
+      )
     ) {
       throw new Error(
         "Generated PR text contains issue-closing directives; regenerate without issue directives and select relationships in the preview",
@@ -1176,6 +1180,7 @@ export class CheckoutSession {
     }
     return {
       head: proposal.checkoutState.head,
+      approvedHeadSha: proposal.checkoutState.headSha,
       title: proposal.title,
       body: appendIssueLinks(proposal.body, issueLinks, proposal.issues),
       draft: proposal.draft,
