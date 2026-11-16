@@ -1741,6 +1741,9 @@ export class AgentManager {
           ? (session.describePersistence() ?? handle)
           : handle,
       restoring: true,
+      // A stored agent is already settled. Clients count `initializing` as busy, so publishing
+      // it mid-resume made a plain history read flash the agent as working.
+      publishWhenReady: true,
     });
   }
 
