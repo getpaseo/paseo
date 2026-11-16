@@ -263,6 +263,7 @@ interface SettingsSearchEntry {
   id: SettingsSectionSlug | HostSectionSlug;
   labelKey: string;
   terms: string[];
+  searchKey?: string;
 }
 
 const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
@@ -270,7 +271,21 @@ const SETTINGS_SEARCH_ENTRIES: SettingsSearchEntry[] = [
     kind: "section",
     id: "general",
     labelKey: "settings.sections.general",
-    terms: ["language", "setup", "send", "enter", "location"],
+    terms: ["language", "setup"],
+  },
+  {
+    kind: "section",
+    id: "general",
+    searchKey: "general.sending",
+    labelKey: "settings.general.sending",
+    terms: ["send", "sending", "shortcut", "enter", "queue", "prompt"],
+  },
+  {
+    kind: "section",
+    id: "general",
+    searchKey: "general.open-location",
+    labelKey: "settings.layout.openInSidePane.title",
+    terms: ["location", "side pane", "explorer", "file", "diff"],
   },
   {
     kind: "section",
@@ -1146,7 +1161,9 @@ function SettingsSearchResults({ results, renderEntry }: SettingsSearchResultsPr
     <View testID="settings-search-results">
       {results.length > 0 ? (
         results.map((entry) => (
-          <Fragment key={`${entry.kind}-${entry.id}`}>{renderEntry(entry)}</Fragment>
+          <Fragment key={entry.searchKey ?? `${entry.kind}-${entry.id}`}>
+            {renderEntry(entry)}
+          </Fragment>
         ))
       ) : (
         <SettingsSection title={t("settings.title")}>
@@ -1579,6 +1596,9 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           handleHostRemoved,
         );
       }
+
+      if (entry.searchKey === "general.sending") return <SendingSection />;
+      if (entry.searchKey === "general.open-location") return <OpenLocationSection />;
 
       switch (entry.id as SettingsSectionSlug) {
         case "general":
