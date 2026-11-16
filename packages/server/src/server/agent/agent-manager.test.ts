@@ -6494,6 +6494,33 @@ test("archiveSnapshot dispatches archived state for stored-only agents", async (
   expect(last.lifecycle).toBe("closed");
 });
 
+test("archiveSnapshot moves a stored-only agent's updatedAt to its archive time, as a live archive does", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-snapshot-updated-at-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Stored archive updatedAt" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(created.id);
+  const before = await storage.get(created.id);
+  expect(before?.updatedAt).toEqual(expect.any(String));
+
+  // Later than anything the agent did: lists sorted by updated_at put it first, as they do
+  // for an agent archived while loaded.
+  const archivedAt = new Date(Date.parse(before!.updatedAt) + 60_000).toISOString();
+  const archived = await manager.archiveSnapshot(created.id, archivedAt);
+
+  expect(archived.updatedAt).toBe(archivedAt);
+  expect((await storage.get(created.id))?.updatedAt).toBe(archivedAt);
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
