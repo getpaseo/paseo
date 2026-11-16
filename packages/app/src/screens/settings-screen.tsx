@@ -2,7 +2,7 @@ import { useSettingsContentPresented } from "@/navigation/settings-presentation"
 import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
@@ -1145,7 +1145,9 @@ function SettingsSearchResults({ results, renderEntry }: SettingsSearchResultsPr
   return (
     <View testID="settings-search-results">
       {results.length > 0 ? (
-        results.map((entry) => <View key={`${entry.kind}-${entry.id}`}>{renderEntry(entry)}</View>)
+        results.map((entry) => (
+          <Fragment key={`${entry.kind}-${entry.id}`}>{renderEntry(entry)}</Fragment>
+        ))
       ) : (
         <SettingsSection title={t("settings.title")}>
           <Text style={styles.searchNoResults}>{t("common.empty.noResults")}</Text>
@@ -1556,6 +1558,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     }
     return undefined;
   })();
+  const pageTitle = settingsSearchInput.trim() ? t("settings.searchResults") : detailTitle;
 
   const pluginGalleryServerId =
     view.kind === "host" && view.section === "plugins" ? view.serverId : null;
@@ -1709,7 +1712,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     return (
       <View style={styles.container} onLayout={onContentLayout}>
         <PageLayout
-          title={detailTitle}
+          title={pageTitle}
           onBack={handleBackFromDetail}
           actions={detailActions}
           width={detailWidth}
@@ -1744,7 +1747,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
         <WindowChromeRegion corners="top-right">
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
             <PageLayout
-              title={detailTitle}
+              title={pageTitle}
               actions={detailActions}
               width={detailWidth}
               titleTestID="settings-detail-header-title"
