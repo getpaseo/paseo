@@ -245,6 +245,37 @@ describe("Claude runtime exit", () => {
     expect(events.some((event) => event.type === "turn_failed")).toBe(false);
   });
 
+  test("kills the only Claude process started by overlapping control calls", async () => {
+    const launches: Options[] = [];
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      launches.push(options);
+      return createQueryMock([]);
+    });
+    const children: ReturnType<typeof createChildProcessStub>[] = [];
+    vi.spyOn(spawnUtils, "spawnProcess").mockImplementation(() => {
+      const child = createChildProcessStub();
+      children.push(child);
+      return child;
+    });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    // Settings restored right after an import race a client listing commands, so
+    // both calls ask for a query before either one exists.
+    await Promise.all([session.setModel("opus"), session.listCommands()]);
+    // The SDK spawns one Claude process per query.
+    for (const options of launches) options.spawnClaudeCodeProcess?.(SPAWN_OPTIONS);
+    // Archiving an agent closes its session, which must kill every process it started.
+    await session.close();
+
+    expect(children.map((child) => child.killSignals.length > 0)).toEqual([true]);
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+  });
+
   test("stays quiet when a query restart retires the process", async () => {
     let capturedOptions: Options | undefined;
     const child = createChildProcessStub();
