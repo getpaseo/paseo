@@ -260,7 +260,23 @@ async function createUnobservedWorkspace(journeyOptions?: {
     metrics: () => service.getMetrics(),
     isActive: () => active,
     advanceRemoteHead: () => {
-      remoteHeadSha = "a".repeat(40);
+      remoteHeadSha = execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit-tree",
+          "HEAD^{tree}",
+          "-p",
+          "HEAD",
+          "-m",
+          "remote update",
+        ],
+        { cwd, encoding: "utf8" },
+      ).trim();
+      run(cwd, ["update-ref", "refs/remotes/origin/workspace", remoteHeadSha]);
     },
     makeDirty: () => writeFileSync(path.join(cwd, "README.md"), "uncommitted work\n"),
     commitUnpushed: () => {
@@ -307,7 +323,7 @@ describe("workspace auto-archive behavior", () => {
     expect(workspace.isActive()).toBe(true);
   });
 
-  test("keeps a merged PR visible and the workspace active when its remote head advances", async () => {
+  test("archives a clean workspace contained in the advanced merged PR head", async () => {
     const workspace = await createUnobservedWorkspace();
     const open = await workspace.observe("open");
     workspace.advanceRemoteHead();
@@ -315,8 +331,9 @@ describe("workspace auto-archive behavior", () => {
     await vi.waitFor(() => expect(workspace.archiveDecisions()).toBe(1));
     expect(merged.forge.pullRequest?.url).toBe(open.forge.pullRequest?.url);
     expect(merged.forge.pullRequest?.headSha).not.toBe(merged.git.headSha);
-    expect(workspace.isActive()).toBe(true);
-    expect(workspace.archives).toEqual([]);
+    expect(merged.git.behindOfOrigin).toBe(1);
+    expect(workspace.isActive()).toBe(false);
+    expect(workspace.archives).toHaveLength(1);
   });
 
   test("archives a clean owned workspace on an unobserved open-to-merged transition only once", async () => {

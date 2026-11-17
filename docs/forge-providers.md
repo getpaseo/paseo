@@ -97,12 +97,18 @@ Register the adapter in `defaultForgeRegistry` with:
 - `matchesHost` from manifest `cloudHosts`
 - `probeHost` when self-hosted/Enterprise detection is supported
 
-Current change-request lookup matches the branch and repository for both open and
-terminal requests. Prefer an open request, then a terminal request at the local
-HEAD, then the most recently updated terminal request. A reused branch can show
-its previous request until a new one opens. Auto-archive separately requires an
-observed open-to-merged transition and a fresh exact match between checkout HEAD
-and the PR head, along with the existing workspace safety checks.
+Current change-request lookup prefers an open request for the branch and repository.
+Closed and merged requests belong to a checkout only when their head contains the
+checkout commit. Display and auto-archive share this ancestry rule. This retains a
+request after a server-side branch update while rejecting historical requests on
+reused branch names. Auto-archive still requires an observed open-to-merged
+transition and fresh workspace safety checks; being behind the remote alone does
+not block archive when the merged request contains the checkout commit.
+
+Containment uses Git objects, fetching a missing PR head from origin without
+moving refs or writing FETCH_HEAD. This keeps ancestry reads outside the GitHub
+GraphQL budget. If history or remote access cannot establish containment, hide
+the terminal request and leave the workspace active.
 
 Keep checkout HEAD in adapter cache and poll identities so checkout changes
 refresh the facts used by archive eligibility.

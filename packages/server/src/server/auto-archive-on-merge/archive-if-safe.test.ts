@@ -349,7 +349,7 @@ afterEach(() => {
 
 describe("archiveIfSafe", () => {
   test("denies archive when checkout facts do not establish safety", async () => {
-    for (const git of [{ headSha: undefined }, { behindOfOrigin: 1 }, { isDirty: null }]) {
+    for (const git of [{ headSha: undefined }, { isDirty: null }]) {
       const harness = createHarness({ snapshot: createSnapshot({ git }) });
       await runArchiveIfSafe(harness);
       expect(harness.deps.archiveByScope).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import { pullRequestContainsCommit } from "../../services/pull-request-contains-commit.js";
 import type { Logger } from "pino";
 
 import type { AgentManager } from "../agent/agent-manager.js";
@@ -63,23 +64,24 @@ export async function archiveIfSafe(input: {
   const cwd = snapshot.cwd;
   const pullRequest = snapshot.forge.pullRequest;
 
-  if (
-    !pullRequest?.isMerged ||
-    !snapshot.git.headSha ||
-    snapshot.git.headSha !== pullRequest.headSha ||
-    snapshot.forge.error
-  ) {
+  if (!pullRequest?.isMerged || !snapshot.git.headSha || snapshot.forge.error) {
     return;
   }
   if (snapshot.git.isDirty !== false) {
     return;
   }
-  if (
-    (snapshot.git.aheadOfOrigin !== null && snapshot.git.aheadOfOrigin !== 0) ||
-    (snapshot.git.behindOfOrigin !== null && snapshot.git.behindOfOrigin !== 0)
-  ) {
+  if (snapshot.git.aheadOfOrigin !== null && snapshot.git.aheadOfOrigin !== 0) {
     return;
   }
+
+  if (
+    !(await pullRequestContainsCommit({
+      cwd,
+      workspaceCommit: snapshot.git.headSha,
+      pullRequestCommit: pullRequest.headSha,
+    }))
+  )
+    return;
 
   const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
     paseoHome: options.paseoHome,

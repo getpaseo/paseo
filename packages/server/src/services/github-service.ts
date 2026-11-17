@@ -1,3 +1,4 @@
+import { pullRequestContainsCommit } from "./pull-request-contains-commit.js";
 import { z } from "zod";
 import {
   isGitHubHost,
@@ -1661,7 +1662,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return;
     }
 
-    const distribution = distributeGitHubPollBatch({
+    const distribution = await distributeGitHubPollBatch({
       entries: addressedEntries,
       aliases: response.aliases,
       args,
@@ -1702,12 +1703,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
   }
 
-  function distributeGitHubPollBatch(input: {
+  async function distributeGitHubPollBatch(input: {
     entries: GitHubBatchPollEntry[];
     aliases: Record<string, unknown>;
     args: string[];
     startedAt: number;
-  }): GitHubBatchDistribution {
+  }): Promise<GitHubBatchDistribution> {
     const distribution: GitHubBatchDistribution = {
       pendingChecks: [],
       legacyFallback: [],
@@ -1738,7 +1739,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         distribution.redirected.push(entry);
         continue;
       }
-      const node = selectBatchPollNode(entry, repository.data);
+      const node = await selectBatchPollNode(entry, repository.data);
       if (!node) {
         // Legacy fallback covers the two ways "no match" can be wrong: a fork
         // whose PR lives in the parent repository, and a full candidate page —
@@ -1802,10 +1803,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     return `${entry.host}\n${entry.originOwner}/${entry.originName}`;
   }
 
-  function selectBatchPollNode(
+  async function selectBatchPollNode(
     entry: GitHubBatchPollEntry,
     repository: BatchPollRepository,
-  ): BatchPollPrNode | null {
+  ): Promise<BatchPollPrNode | null> {
     // Prefer the canonical owner from the response: the origin slug can carry
     // stale casing or a pre-transfer owner that repository() redirects from.
     const selfOwner = (repository.owner?.login ?? entry.owner).toLowerCase();
@@ -1830,7 +1831,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       nodeByCandidate.set(candidate, node);
       candidates.push(candidate);
     }
-    const match = pickPullRequestCandidate({
+    const match = await pickPullRequestCandidate({
+      cwd: entry.target.cwd,
       candidates,
       headRef: entry.target.headRef,
       headSha: entry.target.headSha,
@@ -2993,7 +2995,8 @@ async function resolveCurrentPullRequestView(options: {
 }): Promise<CurrentPullRequestStatus | null> {
   const viewCandidate = await tryCurrentPullRequestView(options);
   const viewMatch = viewCandidate
-    ? pickPullRequestCandidate({
+    ? await pickPullRequestCandidate({
+        cwd: options.cwd,
         candidates: [viewCandidate],
         headRef: options.headRef,
         headSha: options.headSha,
@@ -3030,7 +3033,8 @@ async function resolveCurrentPullRequestView(options: {
     headRef: options.headRef,
     run: options.run,
   });
-  const match = pickPullRequestCandidate({
+  const match = await pickPullRequestCandidate({
+    cwd: options.cwd,
     candidates: viewMatch ? [...candidates, viewMatch] : candidates,
     headRef: options.headRef,
     headSha: options.headSha,
@@ -3067,7 +3071,8 @@ async function resolveForkPullRequestView(options: {
       }),
     ),
   );
-  const match = pickPullRequestCandidate({
+  const match = await pickPullRequestCandidate({
+    cwd: options.cwd,
     candidates: [
       ...candidates.filter(
         (candidate): candidate is ResolvedPullRequestCandidate =>
@@ -3442,12 +3447,13 @@ function hasResolvedRepoIdentity(status: CurrentPullRequestStatus): boolean {
   return Boolean(status.repoOwner && status.repoName);
 }
 
-function pickPullRequestCandidate(options: {
+async function pickPullRequestCandidate(options: {
+  cwd: string;
   candidates: ResolvedPullRequestCandidate[];
   headRef: string;
   headSha?: string;
   headRepositoryOwner?: string;
-}): ResolvedPullRequestCandidate | null {
+}): Promise<ResolvedPullRequestCandidate | null> {
   const matching = options.candidates.filter((candidate) => {
     if (!isCandidateForHeadRef(candidate, options.headRef)) {
       return false;
@@ -3460,7 +3466,18 @@ function pickPullRequestCandidate(options: {
   matching.sort((left, right) =>
     comparePullRequestCandidatePreference(left, right, options.headSha),
   );
-  return matching[0] ?? null;
+  for (const candidate of matching) {
+    if (
+      candidate.status.state === "open" ||
+      (await pullRequestContainsCommit({
+        cwd: options.cwd,
+        workspaceCommit: options.headSha,
+        pullRequestCommit: candidate.headSha,
+      }))
+    )
+      return candidate;
+  }
+  return null;
 }
 
 function comparePullRequestCandidatePreference(

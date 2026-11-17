@@ -1,3 +1,5 @@
+import { createPullRequestHistory } from "../test-utils/pull-request-history.js";
+import { onTestFinished } from "vitest";
 import { describe, expect, it } from "vitest";
 
 import type { PullRequestCommandStatus } from "./forge-service.js";
@@ -390,11 +392,14 @@ describe("createGitLabService", () => {
   });
 
   it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
+    const history = createPullRequestHistory();
+    onTestFinished(history.dispose);
+    const { cwd, workspaceCommit, pullRequestCommit } = history;
     const stale = {
       ...OPEN_MR,
       state: "merged",
       source_branch: "dev",
-      sha: "1111111111111111111111111111111111111111",
+      sha: pullRequestCommit,
     };
     const { service, calls } = makeService((args) =>
       ok(JSON.stringify(args[1] === "list" ? [stale] : stale)),
@@ -402,9 +407,9 @@ describe("createGitLabService", () => {
 
     await expect(
       service.getCurrentPullRequestStatus({
-        cwd: "/repo",
+        cwd,
         headRef: "dev",
-        headSha: "2222222222222222222222222222222222222222",
+        headSha: workspaceCommit,
       }),
     ).resolves.toMatchObject({ state: "merged" });
     expect(calls[0]).toEqual(currentMrListArgs("dev"));

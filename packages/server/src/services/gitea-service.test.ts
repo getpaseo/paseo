@@ -1,3 +1,5 @@
+import { createPullRequestHistory } from "../test-utils/pull-request-history.js";
+import { onTestFinished } from "vitest";
 import { describe, expect, it } from "vitest";
 
 import type { PullRequestCommandStatus, PullRequestTimelineItem } from "./forge-service.js";
@@ -2100,11 +2102,14 @@ describe("createGiteaService", () => {
   });
 
   it("keeps a merged PR when its remote head advances beyond the checkout", async () => {
+    const history = createPullRequestHistory();
+    onTestFinished(history.dispose);
+    const { cwd, workspaceCommit, pullRequestCommit } = history;
     const stale = currentPullRequestApi({
       number: 8,
       state: "closed",
       headRef: "dev",
-      headSha: "1111111111111111111111111111111111111111",
+      headSha: pullRequestCommit,
       merged: true,
     });
     const { service } = makeService((args) => {
@@ -2117,9 +2122,9 @@ describe("createGiteaService", () => {
 
     await expect(
       service.getCurrentPullRequestStatus({
-        cwd: "/repo",
+        cwd,
         headRef: "dev",
-        headSha: "2222222222222222222222222222222222222222",
+        headSha: workspaceCommit,
       }),
     ).resolves.toMatchObject({ number: 8, state: "merged" });
   });

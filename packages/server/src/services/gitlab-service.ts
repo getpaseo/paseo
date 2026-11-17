@@ -1,3 +1,4 @@
+import { pullRequestContainsCommit } from "./pull-request-contains-commit.js";
 import { z } from "zod";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -992,15 +993,21 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
   ): Promise<GitLabMergeRequest | null> {
     const mergeRequests = await listMergeRequestsBySourceBranch(cwd, headRef);
     const candidates = mergeRequests.filter((mr) => mr.source_branch === headRef);
-    const match =
-      candidates.find((mr) => mapMergeRequestState(mr.state) === "open") ??
-      candidates.find(
-        (mr) =>
-          mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
-      ) ??
-      candidates[0] ??
-      null;
-    return match ? viewMergeRequest(cwd, String(match.iid)) : null;
+    const open = candidates.find((candidate) => mapMergeRequestState(candidate.state) === "open");
+    if (open) return viewMergeRequest(cwd, String(open.iid));
+    candidates.sort((left, right) => Number(right.sha === headSha) - Number(left.sha === headSha));
+    for (const mr of candidates) {
+      if (
+        await pullRequestContainsCommit({
+          cwd,
+          workspaceCommit: headSha,
+          pullRequestCommit: mr.sha,
+        })
+      ) {
+        return viewMergeRequest(cwd, String(mr.iid));
+      }
+    }
+    return null;
   }
 
   /**

@@ -1,3 +1,5 @@
+import { createPullRequestHistory } from "../test-utils/pull-request-history.js";
+import { onTestFinished } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1109,6 +1111,45 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
+  });
+
+  it("filters terminal PRs by containment in a batched poll without per-target API calls", async () => {
+    vi.useRealTimers();
+    const history = createPullRequestHistory();
+    onTestFinished(history.dispose);
+    const { cwd, workspaceCommit, pullRequestCommit } = history;
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({ headRefName: "feature", headRefOid: pullRequestCommit }),
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+    });
+    onTestFinished(() => service.dispose?.());
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd,
+      headRef: "feature",
+      headSha: workspaceCommit,
+      onStatus: (status) => statuses.push(status),
+    });
+    onTestFinished(() => subscription?.unsubscribe());
+    await vi.waitFor(() => expect(statuses).toHaveLength(1));
+    expect(statuses[0]).toMatchObject({ state: "merged", headSha: pullRequestCommit });
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls.every((call) => call.args[0] === "api" && call.args[1] === "graphql")).toBe(
+      true,
+    );
+    expect(history.git(["rev-parse", "HEAD"])).toBe(workspaceCommit);
+    expect(history.git(["rev-parse", "@{upstream}"])).toBe(workspaceCommit);
+    expect(() => history.git(["rev-parse", "--verify", "FETCH_HEAD"])).toThrow();
   });
 
   it("batches PR status polls across workspaces into one GraphQL request", async () => {
@@ -3303,11 +3344,14 @@ describe("ForgeService", () => {
   });
 
   it("keeps a merged PR when its remote head advances beyond the checkout", async () => {
+    const history = createPullRequestHistory();
+    onTestFinished(history.dispose);
+    const { cwd, workspaceCommit, pullRequestCommit } = history;
     const stale = currentPullRequestJson({
       headRepositoryOwner: { login: "parentOwner" },
       state: "MERGED",
       mergedAt: "2026-07-17T12:00:00Z",
-      headRefOid: "1111111111111111111111111111111111111111",
+      headRefOid: pullRequestCommit,
     });
     const runner = createScriptedRunner([
       stale,
@@ -3321,9 +3365,9 @@ describe("ForgeService", () => {
 
     await expect(
       service.getCurrentPullRequestStatus({
-        cwd: "/repo",
+        cwd,
         headRef: "feature/fork",
-        headSha: "2222222222222222222222222222222222222222",
+        headSha: workspaceCommit,
       }),
     ).resolves.toMatchObject({ state: "merged" });
     expect(runner.calls.some((call) => call.args[0] === "pr" && call.args[1] === "list")).toBe(
@@ -3331,7 +3375,36 @@ describe("ForgeService", () => {
     );
   });
 
-  it("prefers an exact terminal head and otherwise the most recently updated terminal PR", async () => {
+  it.each(["CLOSED", "MERGED"])(
+    "hides a %s PR when a reused branch is ahead of its head",
+    async (state) => {
+      const history = createPullRequestHistory();
+      onTestFinished(history.dispose);
+      const candidate = JSON.parse(
+        currentPullRequestJson({
+          state,
+          mergedAt: state === "MERGED" ? "2026-07-17T12:00:00Z" : null,
+          headRefOid: history.workspaceCommit,
+          headRepositoryOwner: { login: "forkOwner" },
+        }),
+      );
+      const runner = createScriptedRunner([JSON.stringify(candidate), JSON.stringify([candidate])]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+      await expect(
+        service.getCurrentPullRequestStatus({
+          cwd: history.remote,
+          headRef: "feature/fork",
+          headRepositoryOwner: "forkOwner",
+          headSha: history.pullRequestCommit,
+        }),
+      ).resolves.toBeNull();
+    },
+  );
+
+  it("rejects an unrelated terminal PR on a reused branch", async () => {
     const owner = { login: "forkOwner" };
     const terminal = ({
       number,
@@ -3368,7 +3441,7 @@ describe("ForgeService", () => {
     });
     for (const [headSha, expected] of [
       ["old", 41],
-      ["other", 42],
+      ["other", undefined],
     ] as const) {
       const runner = createScriptedRunner([JSON.stringify(older), JSON.stringify([older, newer])]);
       const service = createGitHubService({
@@ -3510,7 +3583,7 @@ describe("ForgeService", () => {
     for (const [state, headSha, updatedAt, expected] of [
       ["OPEN", "other", "2026-07-16T12:00:00Z", 8],
       ["CLOSED", "other", "2026-07-18T12:00:00Z", 7],
-      ["CLOSED", "other", "2026-07-18T12:00:00Z", 8],
+      ["CLOSED", "other", "2026-07-18T12:00:00Z", undefined],
     ] as const) {
       const parent = {
         ...local,

@@ -1,3 +1,4 @@
+import { pullRequestContainsCommit } from "./pull-request-contains-commit.js";
 import { z } from "zod";
 import { CHECK_TRAIT_ACTION_REQUIRED, CHECK_TRAIT_WARNING } from "@getpaseo/protocol/check-traits";
 import { mapGiteaCommitState } from "@getpaseo/protocol/gitea-status";
@@ -1656,17 +1657,24 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       // owner gate.
       return input.headSha !== undefined && item.head.sha === input.headSha;
     });
-    const match =
-      candidates.find((item) => mapGiteaState(item.state) === "open") ??
-      candidates.find(
-        (item) =>
-          mapGiteaState(item.state) !== "open" &&
-          input.headSha !== undefined &&
-          item.head.sha === input.headSha,
-      ) ??
-      candidates[0] ??
-      null;
-    return match ? currentPullRequestApiToListItem(match) : null;
+    const open = candidates.find((candidate) => mapGiteaState(candidate.state) === "open");
+    if (open) return currentPullRequestApiToListItem(open);
+    candidates.sort(
+      (left, right) =>
+        Number(right.head.sha === input.headSha) - Number(left.head.sha === input.headSha),
+    );
+    for (const item of candidates) {
+      if (
+        await pullRequestContainsCommit({
+          cwd: input.cwd,
+          workspaceCommit: input.headSha,
+          pullRequestCommit: item.head.sha,
+        })
+      ) {
+        return currentPullRequestApiToListItem(item);
+      }
+    }
+    return null;
   }
 
   async function findOpenPullRequestForHeadRef(
