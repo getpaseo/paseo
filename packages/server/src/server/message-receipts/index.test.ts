@@ -72,6 +72,10 @@ test("a send that fails before beforeDispatch can be retried with the same messa
     },
   };
   await expect(requests.send(input)).rejects.toThrow("mode change failed");
+  expect(await new MessageReceipts(directory).getStatus(input)).toMatchObject({
+    status: "rejected",
+    failure: { outcome: "not_submitted" },
+  });
   available = true;
   await new MessageReceipts(directory).send(input);
   available = false;

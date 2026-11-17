@@ -61,8 +61,8 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
-A direct send rejected before provider dispatch leaves no pending receipt. A definitive provider
-refusal retains a negative outcome, so a retry with the same identity can dispatch again. A lost
+A direct send rejected before provider dispatch or a definitive provider refusal retains a negative
+outcome, so a retry with the same identity can dispatch again. A lost
 reply or transport failure after dispatch remains unknown; it is not permission to resend.
 
 For unfinished delivery, the daemon checks the durable provider-acceptance journal. The manager

@@ -19,7 +19,7 @@ interface SendMessageInput {
   onCompleted?: () => Promise<void>;
   /**
    * Delivers the message. It awaits `beforeDispatch` immediately before the provider can receive
-   * the message; a failure before that call proves nothing was submitted and leaves no receipt.
+   * the message; a failure before that call proves nothing was submitted and records negative evidence.
    */
   send: (beforeDispatch: () => Promise<void>) => Promise<void>;
 }
@@ -124,7 +124,7 @@ export class MessageReceipts {
     } catch (error) {
       if (!(await input.isAccepted?.())) {
         const outcome = deliveryFailureOutcome(error, pending ? "unknown" : "not_submitted");
-        if (pending && outcome !== "unknown") {
+        if (outcome !== "unknown") {
           await writeJsonFileAtomic(file, {
             ...receipt,
             state: "pending",
