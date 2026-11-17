@@ -58,6 +58,17 @@ export function formatInstallCount(count: number): string {
   return `${Math.round(count / 1000)}k`;
 }
 
+/**
+ * The icon to draw for a plugin: the directory's, or the installed manifest's when the plugin did
+ * not come from the directory (a Git, npm or local install).
+ */
+export function pluginIcon(
+  plugin: PluginListItem | undefined,
+  listing: PluginListing | undefined,
+): string | undefined {
+  return listing?.icon ?? plugin?.iconDataUrl;
+}
+
 /** The registry listing an installed plugin came from, if it came from one. */
 export function installedListingId(plugin: PluginListItem): string | undefined {
   const identity = plugin.installation?.identity;

@@ -17,7 +17,7 @@ import { usePluginEvaluationError } from "@/plugins/registry";
 import { pluginDisplayName } from "@/plugins/plugin-list";
 import { settingsStyles } from "@/styles/settings";
 import { usePluginActions } from "./actions";
-import { listingAuthor, listingAuthorAvatar, installedListingId } from "./listing";
+import { listingAuthor, listingAuthorAvatar, installedListingId, pluginIcon } from "./listing";
 import { updatePlugins, usePluginOperation } from "./operations";
 import { PluginRow } from "./plugin-row";
 import { usePluginUpdates } from "./queries";
@@ -102,7 +102,7 @@ function UpdateRow({
   return (
     <PluginRow
       name={name}
-      icon={listing?.icon}
+      icon={pluginIcon(plugin, listing)}
       description={plugin.description ?? listing?.description}
       meta={current && target ? `${current} → ${target}` : target}
       error={operation?.status === "failed" ? operation.error : undefined}
@@ -149,7 +149,7 @@ function InstalledRow({
   return (
     <PluginRow
       name={name}
-      icon={listing?.icon}
+      icon={pluginIcon(plugin, listing)}
       badge={badge}
       description={plugin.description ?? listing?.description}
       meta={installedMeta(plugin, listing)}
