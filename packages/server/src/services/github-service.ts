@@ -1737,12 +1737,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           node.commits = { ...cachedCommits, nodes: [...cachedCommits.nodes] };
         if (node.state !== "OPEN" && !node.commits)
           node.commits = { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: null } };
-        if (
-          node.state !== "OPEN" &&
-          entry.target.headSha &&
-          node.commits?.pageInfo?.hasPreviousPage
-        )
-          pending.push({ entry, node });
+        if (node.state !== "OPEN" && entry.target.headSha) pending.push({ entry, node });
       }
     }
     return pending;
@@ -1753,15 +1748,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     aliases: Record<string, unknown>,
   ): Promise<Set<GitHubBatchPollEntry>> {
     const pending = collectBatchCommitPages(entries, aliases);
-    const failedNodes = new Set<BatchPollPrNode>();
-    const errors = new Map<GitHubBatchPollEntry, unknown>();
+    const errors = new Map<BatchPollPrNode, unknown>();
     while (pending.length) {
-      const needing = pending.filter(
-        ({ entry, node }) =>
-          !failedNodes.has(node) &&
-          node.commits?.pageInfo?.hasPreviousPage &&
-          !node.commits.nodes.some(({ commit }) => commit.oid === entry.target.headSha),
-      );
+      const blocked = new Set<GitHubBatchPollEntry>();
+      const needing = unresolvedBatchCommitPages(pending).filter(({ entry, node }) => {
+        if (errors.has(node)) blocked.add(entry);
+        return !blocked.has(entry);
+      });
       if (!needing.length) break;
       const fields = needing.map(
         ({ entry, node }, index) =>
@@ -1779,13 +1772,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         firstEntry: needingEntries[0]!,
         args,
         onError: (affected, error) => {
-          for (const entry of affected) errors.set(entry, error);
+          for (const { entry, node } of needing)
+            if (affected.includes(entry)) errors.set(node, error);
         },
       });
       if (!response) {
         if ((pollPausedUntilByHost.get(needingEntries[0]!.host) ?? 0) > deps.now())
           return new Set(entries);
-        for (const { node } of needing) failedNodes.add(node);
         break;
       }
       const rateLimit = parseGraphqlBatchRateLimit(response.stdout);
@@ -1800,8 +1793,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           })
           .safeParse(response.aliases[batchAlias(index)]);
         if (!parsed.success) {
-          failedNodes.add(node);
-          errors.set(entry, parsed.error);
+          errors.set(node, parsed.error);
           continue;
         }
         const page = parsed.data.pullRequest.commits;
@@ -1814,18 +1806,32 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           terminalCommitPages.delete(terminalCommitPages.keys().next().value!);
       }
     }
-    return reportUnresolvedCommitReads(errors);
+    return reportUnresolvedCommitReads(pending, errors);
+  }
+
+  function unresolvedBatchCommitPages(
+    candidates: Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }>,
+  ): Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }> {
+    const byEntry = new Map<GitHubBatchPollEntry, BatchPollPrNode[]>();
+    for (const { entry, node } of candidates) {
+      const nodes = byEntry.get(entry) ?? [];
+      nodes.push(node);
+      byEntry.set(entry, nodes);
+    }
+    return [...byEntry].flatMap(([entry, nodes]) =>
+      inspectBatchPollCandidates(entry, nodes).pending.map((node) => ({ entry, node })),
+    );
   }
 
   function reportUnresolvedCommitReads(
-    errors: Map<GitHubBatchPollEntry, unknown>,
+    candidates: Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }>,
+    errors: Map<BatchPollPrNode, unknown>,
   ): Set<GitHubBatchPollEntry> {
     const failed = new Set<GitHubBatchPollEntry>();
-    for (const [entry, error] of errors) {
-      // An unread candidate could outrank a known match. Preserve the prior
-      // snapshot until membership can be established for this workspace.
+    for (const { entry, node } of unresolvedBatchCommitPages(candidates)) {
+      if (!errors.has(node) || failed.has(entry)) continue;
       failed.add(entry);
-      updatePollTargetAfterError(entry.target, error);
+      updatePollTargetAfterError(entry.target, errors.get(node));
     }
     return failed;
   }
@@ -1952,27 +1958,47 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     entry: GitHubBatchPollEntry,
     repository: BatchPollRepository,
   ): BatchPollPrNode | null {
-    const headRepositoryOwner = entry.target.headRepositoryOwner ?? entry.headRepositoryOwner;
+    const resolution = inspectBatchPollCandidates(
+      entry,
+      batchPollNodesForWorkspace(entry, repository),
+    );
+    return resolution.pending.length ? null : resolution.match;
+  }
+
+  function inspectBatchPollCandidates(
+    entry: GitHubBatchPollEntry,
+    nodes: BatchPollPrNode[],
+  ): { match: BatchPollPrNode | null; pending: BatchPollPrNode[] } {
     const nodeByCandidate = new Map<ResolvedPullRequestCandidate, BatchPollPrNode>();
     const candidates: ResolvedPullRequestCandidate[] = [];
-    for (const node of batchPollNodesForWorkspace(entry, repository)) {
+    for (const node of nodes) {
       const candidate = toCurrentPullRequestCandidate(
         toBatchCurrentPullRequestItem(node, undefined),
         entry.target.headRef,
       );
-      if (!candidate) {
-        continue;
+      if (!candidate) continue;
+      if (
+        node.commits?.pageInfo?.hasPreviousPage &&
+        !pullRequestContainsCommit({
+          workspaceCommit: entry.target.headSha,
+          pullRequestCommits: candidate.status.commitOids,
+        })
+      ) {
+        delete candidate.status.commitOids;
       }
       nodeByCandidate.set(candidate, node);
       candidates.push(candidate);
     }
-    const match = pickPullRequestCandidate({
+    const resolution = inspectPullRequestCandidates({
       candidates,
       headRef: entry.target.headRef,
       headSha: entry.target.headSha,
-      headRepositoryOwner,
+      headRepositoryOwner: entry.target.headRepositoryOwner ?? entry.headRepositoryOwner,
     });
-    return match ? (nodeByCandidate.get(match) ?? null) : null;
+    return {
+      match: resolution.match ? nodeByCandidate.get(resolution.match)! : null,
+      pending: resolution.pending.map((candidate) => nodeByCandidate.get(candidate)!),
+    };
   }
 
   async function loadBatchPullRequestChecks(
@@ -3316,20 +3342,12 @@ async function loadAndPickPullRequestCandidate(
     run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
   },
 ): Promise<ResolvedPullRequestCandidate | null> {
-  const matching = matchingPullRequestCandidates(options);
-  const open = matching.find((candidate) => candidate.status.state === "open");
-  if (open) return open;
-  for (const candidate of matching) {
-    await completeCandidateCommits(candidate, options);
-    if (
-      pullRequestContainsCommit({
-        workspaceCommit: options.headSha,
-        pullRequestCommits: candidate.status.commitOids,
-      })
-    )
-      return candidate;
+  for (;;) {
+    const resolution = inspectPullRequestCandidates(options);
+    const next = resolution.pending[0];
+    if (!next) return resolution.match;
+    await completeCandidateCommits(next, options);
   }
-  return null;
 }
 
 async function completeCandidateCommits(
@@ -3652,17 +3670,30 @@ function pickPullRequestCandidate(options: {
   headSha?: string;
   headRepositoryOwner?: string;
 }): ResolvedPullRequestCandidate | null {
+  const result = inspectPullRequestCandidates(options);
+  return result.pending.length ? null : result.match;
+}
+
+function inspectPullRequestCandidates(options: Parameters<typeof pickPullRequestCandidate>[0]): {
+  match: ResolvedPullRequestCandidate | null;
+  pending: ResolvedPullRequestCandidate[];
+} {
   const matching = matchingPullRequestCandidates(options);
   const open = matching.find((candidate) => candidate.status.state === "open");
-  if (open) return open;
-  return (
-    matching.find((candidate) =>
+  if (open) return { match: open, pending: [] };
+  const pending: ResolvedPullRequestCandidate[] = [];
+  if (!options.headSha) return { match: null, pending };
+  for (const candidate of matching) {
+    if (
       pullRequestContainsCommit({
         workspaceCommit: options.headSha,
         pullRequestCommits: candidate.status.commitOids,
-      }),
-    ) ?? null
-  );
+      })
+    )
+      return { match: candidate, pending };
+    if (candidate.status.commitOids === undefined) pending.push(candidate);
+  }
+  return { match: null, pending };
 }
 
 function matchingPullRequestCandidates(

@@ -1139,6 +1139,7 @@ describe("ForgeService", () => {
         batchPollStatusJson({
           t0: batchPollRepositoryJson([
             batchPollPrNodeJson({
+              number: 60,
               headRefName: "a",
               commits: { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: "next" } },
             }),
@@ -1188,6 +1189,89 @@ describe("ForgeService", () => {
       expect(statusesA).toEqual([]);
       expect(errorsB).toEqual([]);
       expect(statusesB).toEqual([expect.objectContaining({ state: "open" })]);
+    },
+  );
+
+  it.each(["cached", "failed-lower", "paged-lower", "pending-higher"])(
+    "ignores a lower-ranked unresolved PR after the preferred match (%s)",
+    async (scenario) => {
+      const cold = scenario !== "cached";
+      const pendingHigher = scenario === "pending-higher";
+      const own = batchPollPrNodeJson({
+        number: 50,
+        headRefName: "a",
+        commits: cold ? undefined : { nodes: [{ commit: { oid: "own-a" } }] },
+      });
+      const older = batchPollPrNodeJson({ number: 42, headRefName: "a", commits: undefined });
+      const runner = createScriptedRunner([
+        batchPollStatusJson({ t0: batchPollRepositoryJson([older, own]) }),
+        ...(cold
+          ? [
+              batchPollStatusJson({
+                t0: {
+                  pullRequest: {
+                    commits: {
+                      nodes: [{ commit: { oid: pendingHigher ? "another" : "own-a" } }],
+                      pageInfo: {
+                        hasPreviousPage: pendingHigher,
+                        startCursor: pendingHigher ? "next" : null,
+                      },
+                    },
+                  },
+                },
+                t1:
+                  scenario === "failed-lower" || pendingHigher
+                    ? null
+                    : {
+                        pullRequest: {
+                          commits: {
+                            nodes: [{ commit: { oid: "other" } }],
+                            pageInfo: { hasPreviousPage: true, startCursor: "older-page" },
+                          },
+                        },
+                      },
+              }),
+            ]
+          : []),
+        ...(pendingHigher
+          ? [
+              batchPollStatusJson({
+                t0: {
+                  pullRequest: {
+                    commits: {
+                      nodes: [{ commit: { oid: "own-a" } }],
+                      pageInfo: { hasPreviousPage: false, startCursor: null },
+                    },
+                  },
+                },
+              }),
+            ]
+          : []),
+        batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveRepoSlug: async () => "acme/widgets",
+      });
+      const statuses: Array<CurrentPullRequestStatus | null> = [],
+        errors: unknown[] = [];
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/a",
+        headRef: "a",
+        headSha: "own-a",
+        onStatus: (status) => statuses.push(status),
+        onError: (error) => errors.push(error),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+      service.dispose?.();
+      expect(errors).toEqual([]);
+      expect(statuses).toEqual([expect.objectContaining({ number: 50 })]);
+      expect(
+        runner.calls.filter(({ args }) => args.join(" ").includes("PaseoBatchCommitPages")),
+      ).toHaveLength(Number(cold) + Number(pendingHigher));
     },
   );
 
