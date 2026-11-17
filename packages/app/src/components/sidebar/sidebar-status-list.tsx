@@ -21,7 +21,6 @@ import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { usePointerCapabilities } from "@/hooks/pointer-capabilities";
 import { StyleSheet } from "react-native-unistyles";
 import { density, densityIconBox, densityIconProps } from "@/styles/density";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
@@ -47,6 +46,7 @@ import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
   resolveTrailingActionVisibility,
+  useRowActionsAlwaysVisible,
   type SidebarWorkspaceTrailingPresentation,
   SidebarWorkspaceTrailingActionBase,
   SidebarWorkspaceTrailingActionOverlay,
@@ -829,9 +829,7 @@ function StatusWorkspaceRowInnerContent({
 }) {
   const isCompact = useIsCompactFormFactor();
   const isTouchPlatform = platformIsNative || isCompact;
-  const { finePointer } = usePointerCapabilities();
-  // Without a hovering pointer the kebab is the only way to the row menu, so it stays shown.
-  const showsTouchActions = isTouchPlatform || !finePointer;
+  const actionsAlwaysVisible = useRowActionsAlwaysVisible();
   const [isHighlighted, setIsHighlighted] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const {
@@ -878,7 +876,7 @@ function StatusWorkspaceRowInnerContent({
           trailing,
           hasArchiveAction: Boolean(onArchive),
           isHovered,
-          isTouchPlatform: showsTouchActions,
+          actionsAlwaysVisible,
           showShortcut,
         });
         const workspaceRowStyle = getStatusWorkspaceRowStyle({
