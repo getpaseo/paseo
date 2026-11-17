@@ -172,6 +172,17 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     payload: { requestId: "message-duplicate", agentId, accepted: true, error: null },
   });
   expect(
+    await hub.requestOrdinary({
+      ...message,
+      type: "agent.message.get_delivery_status.request",
+      requestId: "read-delivery",
+    }),
+  ).toMatchObject({
+    type: "agent.message.get_delivery_status.response",
+    payload: { status: "accepted", error: null },
+  });
+
+  expect(
     hub
       .hubMessages()
       .some((event) => event.type === "agent_stream" && event.payload.agentId === agentId),
@@ -194,7 +205,11 @@ test("Hub retries a message whose send failed before reaching the provider", asy
   };
   hub.failNextProviderModeChange();
   expect(await hub.requestOrdinary({ ...message, requestId: "first-attempt" })).toMatchObject({
-    payload: { accepted: false, error: expect.stringContaining("mode change failure") },
+    payload: {
+      accepted: false,
+      deliveryOutcome: "not_submitted",
+      error: expect.stringContaining("mode change failure"),
+    },
   });
   expect(hub.providerPromptTexts().filter((text) => text === "retry me")).toHaveLength(0);
 

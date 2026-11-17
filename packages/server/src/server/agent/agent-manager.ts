@@ -1436,6 +1436,10 @@ export class AgentManager {
     return (await this.messageAcceptanceStore?.has(input)) ?? false;
   }
 
+  async forgetAcceptedSubmittedMessage(input: SubmittedMessageIdentity): Promise<void> {
+    await this.messageAcceptanceStore?.forget(input);
+  }
+
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.list(parentAgentId);
@@ -4107,6 +4111,14 @@ export class AgentManager {
   async deleteAgentState(agentId: string): Promise<void> {
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
+    try {
+      await this.messageAcceptanceStore?.forgetAgent(agentId);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "Could not clean message acceptance records for the removed agent",
+      );
+    }
   }
 
   notifyAgentRemoved(agent: Pick<StoredAgentRecord, "id" | "workspaceId" | "internal">): void {

@@ -2626,7 +2626,10 @@ class ClaudeAgentSession implements AgentSession {
       this.finishForegroundTurn(
         this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
       );
-      throw error;
+      throw Object.assign(
+        new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+        { deliveryOutcome: "not_submitted" as const },
+      );
     }
 
     return { turnId };

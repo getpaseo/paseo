@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -43,6 +43,34 @@ export class MessageAcceptanceStore {
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
       throw error;
+    }
+  }
+
+  async forget(input: SubmittedMessageIdentity): Promise<void> {
+    await rm(this.fileFor(this.recordFor(input)), { force: true });
+  }
+
+  async forgetAgent(agentId: string): Promise<void> {
+    let files: string[];
+    try {
+      files = await readdir(this.directory);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw error;
+    }
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const target = path.join(this.directory, file);
+      let record: unknown;
+      try {
+        record = JSON.parse(await readFile(target, "utf8"));
+      } catch (error) {
+        if (error instanceof SyntaxError) continue;
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+        throw error;
+      }
+      const parsed = AcceptanceSchema.safeParse(record);
+      if (parsed.success && parsed.data.agentId === agentId) await rm(target, { force: true });
     }
   }
 

@@ -1,3 +1,4 @@
+import { MessageReceipts } from "./message-receipts/index.js";
 import {
   createWorkspaceRuntimeStore,
   type WorkspaceRuntimeStore,
@@ -306,6 +307,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  messageReceipts?: SessionOptions["messageReceipts"];
   workspaceRuntimeStore?: WorkspaceRuntimeStore;
   sendToSource?: SessionOptions["onMessageToSource"];
   clientId?: string;
@@ -388,7 +390,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     workspaceRuntimeStore: options.workspaceRuntimeStore ?? createWorkspaceRuntimeStore(),
-    messageReceipts: createMessageReceiptsStub(),
+    messageReceipts: options.messageReceipts ?? createMessageReceiptsStub(),
     agentMessages: createAgentMessageDeliveryStub(),
     creationService: createTestCreationService(),
     clientId: options.clientId ?? "test-client",
@@ -6384,4 +6386,78 @@ test("does not publish internal agents' background work to subscribed clients", 
     ],
   });
   expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
+});
+
+test("delivery status reads a completed receipt without dispatching another message", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const directory = mkdtempSync(join(tmpdir(), "session-delivery-status-"));
+  const receipts = new MessageReceipts(directory);
+  let sends = 0;
+  const messages: unknown[] = [];
+  const session = createSessionForTest({
+    messages,
+    messageReceipts: receipts,
+    agentManager: {
+      getAgent: vi.fn(() => ({ id: agentId, provider: "codex", lifecycle: "idle" })),
+      hasAcceptedSubmittedMessage: async () => false,
+    },
+  });
+  try {
+    await receipts.send({
+      agentId,
+      messageId: "stable",
+      request: { prompt: "hello", activeTurnBehavior: "interrupt" },
+      send: async (beforeDispatch) => {
+        await beforeDispatch();
+        sends += 1;
+      },
+    });
+    await session.handleMessage({
+      type: "agent.message.get_delivery_status.request",
+      requestId: "check",
+      agentId,
+      messageId: "stable",
+      text: "hello",
+    });
+    expect(messages).toContainEqual({
+      type: "agent.message.get_delivery_status.response",
+      payload: {
+        requestId: "check",
+        agentId,
+        messageId: "stable",
+        status: "accepted",
+        error: null,
+      },
+    });
+    expect(sends).toBe(1);
+  } finally {
+    await session.cleanup();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("an unknown target reports that a message was not submitted", async () => {
+  const messages: unknown[] = [];
+  const session = createSessionForTest({
+    messages,
+    agentManager: { getAgent: () => null, getRetiredInternalAgent: () => null },
+    agentStorage: { listAll: async () => [] },
+  });
+  try {
+    await session.handleMessage({
+      type: "send_agent_message_request",
+      requestId: "send-missing",
+      agentId: "missing",
+      messageId: "stable",
+      text: "hello",
+    });
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "send_agent_message_response",
+        payload: expect.objectContaining({ accepted: false, deliveryOutcome: "not_submitted" }),
+      }),
+    );
+  } finally {
+    await session.cleanup();
+  }
 });

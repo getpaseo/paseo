@@ -203,3 +203,162 @@ test("positive acceptance cannot override a conflicting retry payload", async ()
   ).rejects.toThrow("agent_request_key_conflict");
   expect(sends).toBe(1);
 });
+
+test("a definitive rejection permits a same-ID retry after restart", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "receipt-outcomes-"));
+  try {
+    const receipts = new MessageReceipts(directory);
+    let sends = 0;
+    const identity = { agentId: "agent", messageId: "stable", request: { prompt: "hello" } };
+    await expect(
+      receipts.send({
+        ...identity,
+        send: async (beforeDispatch) => {
+          await beforeDispatch();
+          sends += 1;
+          throw Object.assign(new Error("Provider refused"), { deliveryOutcome: "rejected" });
+        },
+      }),
+    ).rejects.toThrow("Provider refused");
+    await expect(
+      new MessageReceipts(directory).send({
+        ...identity,
+        send: async (beforeDispatch) => {
+          await beforeDispatch();
+          sends += 1;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(sends).toBe(2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("delivery status observes in-flight work and durable acceptance without resending", async () => {
+  const { requests, directory } = await fixture();
+  let release!: () => void;
+  let dispatched!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    dispatched = resolve;
+  });
+  const identity = { agentId: "agent", messageId: "slow", request: { prompt: "hello" } };
+  let sends = 0;
+  const send = requests.send({
+    ...identity,
+    send: async (beforeDispatch) => {
+      await beforeDispatch();
+      sends += 1;
+      dispatched();
+      await gate;
+    },
+  });
+  try {
+    await entered;
+    await expect(requests.getStatus(identity)).resolves.toEqual({ status: "in_flight" });
+    release();
+    await send;
+    await expect(new MessageReceipts(directory).getStatus(identity)).resolves.toEqual({
+      status: "accepted",
+    });
+    expect(sends).toBe(1);
+    await expect(
+      requests.getStatus({ ...identity, request: { prompt: "different" } }),
+    ).rejects.toThrow("agent_request_key_conflict");
+  } finally {
+    release();
+    await send;
+  }
+});
+
+test("a pending receipt without positive evidence remains unknown and is never resent", async () => {
+  const { requests, directory } = await fixture();
+  const identity = { agentId: "agent", messageId: "uncertain", request: { prompt: "hello" } };
+  let sends = 0;
+  const send = async (beforeDispatch: () => Promise<void>) => {
+    await beforeDispatch();
+    sends += 1;
+    throw new Error("connection lost after submission");
+  };
+  await expect(requests.send({ ...identity, send })).rejects.toMatchObject({
+    deliveryOutcome: "unknown",
+  });
+  const restored = new MessageReceipts(directory);
+  await expect(restored.getStatus(identity)).resolves.toEqual({ status: "unknown" });
+  await expect(restored.getStatus({ ...identity, isAccepted: async () => true })).resolves.toEqual({
+    status: "accepted",
+  });
+  await expect(restored.send({ ...identity, send })).rejects.toMatchObject({
+    deliveryOutcome: "unknown",
+  });
+  await expect(restored.getStatus({ ...identity, messageId: "legacy-missing" })).resolves.toEqual({
+    status: "unknown",
+  });
+  expect(sends).toBe(1);
+});
+
+test("completed receipts retire acceptance journals and agent cleanup preserves other agents", async () => {
+  const { requests, directory } = await fixture();
+  const acceptance = new MessageAcceptanceStore(path.join(directory, "acceptance"));
+  const identity = { agentId: "agent", clientMessageId: "stable", prompt: "hello" };
+  const other = { ...identity, agentId: "other" };
+  for (const item of [identity, other])
+    await acceptance.record({
+      agentId: item.agentId,
+      clientMessageId: item.clientMessageId,
+      promptFingerprint: messageFingerprint(item.prompt),
+    });
+  await requests.send({
+    agentId: identity.agentId,
+    messageId: identity.clientMessageId,
+    request: { prompt: identity.prompt },
+    send: async (beforeDispatch) => {
+      await beforeDispatch();
+    },
+    onCompleted: () => acceptance.forget(identity),
+  });
+  await expect(acceptance.has(identity)).resolves.toBe(false);
+  await expect(
+    requests.getStatus({
+      agentId: identity.agentId,
+      messageId: identity.clientMessageId,
+      request: { prompt: identity.prompt },
+    }),
+  ).resolves.toEqual({ status: "accepted" });
+  await acceptance.forgetAgent("agent");
+  await expect(acceptance.has(other)).resolves.toBe(true);
+  await acceptance.forgetAgent("other");
+  await expect(acceptance.has(other)).resolves.toBe(false);
+});
+
+test("status stays accepted when its journal is replaced by a completed receipt during the check", async () => {
+  const { requests } = await fixture();
+  const identity = { agentId: "agent", messageId: "racing-commit", request: { prompt: "hello" } };
+  await expect(
+    requests.send({
+      ...identity,
+      send: async (beforeDispatch) => {
+        await beforeDispatch();
+        throw new Error("reply lost");
+      },
+    }),
+  ).rejects.toThrow("reply lost");
+  await expect(
+    requests.getStatus({
+      ...identity,
+      isAccepted: async () => {
+        await requests.send({
+          ...identity,
+          isAccepted: async () => true,
+          send: async () => {
+            throw new Error("must not resend");
+          },
+        });
+        return false;
+      },
+    }),
+  ).resolves.toEqual({ status: "accepted" });
+});
