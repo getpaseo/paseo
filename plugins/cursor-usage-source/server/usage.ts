@@ -235,9 +235,10 @@ async function readUsage(res: Response): Promise<CursorUsageResponse | UsageRepo
 
 async function isEnterpriseLogin(token: string, fetchApi: typeof fetch): Promise<boolean> {
   const res = await fetchDashboard({ method: "GetMe", token, fetchApi, timeoutMs: 15_000 });
+  // Only a successful answer decides the plan; a failed lookup must not refresh to an empty card.
   if (!res.ok) {
     await res.body?.cancel();
-    return false;
+    throw new Error(`Cursor account API returned ${res.status}`);
   }
   const me = CursorMeResponseSchema.safeParse(await res.json());
   return me.success && me.data.isEnterpriseUser === true;

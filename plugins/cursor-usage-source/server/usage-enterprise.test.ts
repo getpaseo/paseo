@@ -55,7 +55,7 @@ interface RecordedRequest {
 function cursorApi(routes: {
   plain: unknown;
   pooled?: () => Response;
-  me?: unknown;
+  me?: unknown | (() => Response);
   planName?: string;
 }): {
   fetchApi: typeof fetch;
@@ -67,7 +67,8 @@ function cursorApi(routes: {
     requests.push({ url: String(url), body });
     if (String(url) === PLAN_URL)
       return Response.json({ planInfo: { planName: routes.planName ?? "Enterprise" } });
-    if (String(url) === ME_URL) return Response.json(routes.me);
+    if (String(url) === ME_URL)
+      return typeof routes.me === "function" ? routes.me() : Response.json(routes.me);
     if (String(url) !== USAGE_URL) throw new Error(`Unmocked fetch: ${String(url)}`);
     if (JSON.stringify(body) === "{}") return Response.json(routes.plain);
     if (!routes.pooled) throw new Error("Unexpected pooled usage request");
@@ -185,6 +186,19 @@ it("does not ask for pooled usage when a login without plan usage is not Enterpr
     balances: [],
     details: [],
   });
+});
+
+// An empty refresh would replace the last report that showed the limits.
+it.each([429, 502])("fails the fetch when GetMe returns HTTP %i", async (status) => {
+  const { fetchApi, requests } = cursorApi({
+    plain: enterprisePlainUsage,
+    me: () => new Response(null, { status }),
+  });
+
+  await expect(fetchUsage(input, fetchApi, lookup)).rejects.toThrow(
+    `Cursor account API returned ${status}`,
+  );
+  expect(requests.map((request) => request.url)).toEqual([PLAN_URL, USAGE_URL, ME_URL]);
 });
 
 it("fails the fetch when Cursor rejects the pooled usage request", async () => {
