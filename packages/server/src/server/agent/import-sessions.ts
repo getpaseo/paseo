@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import type { z } from "zod";
 import type { Logger } from "pino";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
@@ -66,6 +67,7 @@ export interface ListImportableProviderSessionsInput {
   agentManager: Pick<AgentManager, "listAgents" | "listImportableSessions">;
   agentStorage: Pick<AgentStorage, "listAll">;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
+  directoryExists?: (cwd: string) => Promise<boolean>;
 }
 
 export interface ListImportableProviderSessionsResult {
@@ -161,7 +163,17 @@ export async function listImportableProviderSessions(
     candidates.push(session);
   }
 
+  const directoryExists = input.directoryExists ?? isExistingDirectory;
+  const candidateDirectories = [...new Set(candidates.map((session) => session.cwd))];
+  const existingDirectories = new Set(
+    (
+      await Promise.all(
+        candidateDirectories.map(async (cwd) => ((await directoryExists(cwd)) ? cwd : null)),
+      )
+    ).filter((cwd): cwd is string => cwd !== null),
+  );
   const entries = candidates
+    .filter((session) => existingDirectories.has(session.cwd))
     .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
     .slice(0, limit)
     .map((descriptor) =>
@@ -175,6 +187,14 @@ export async function listImportableProviderSessions(
     filteredAlreadyImportedCount,
     providerErrors: listing.providerErrors,
   };
+}
+
+async function isExistingDirectory(cwd: string): Promise<boolean> {
+  try {
+    return (await stat(cwd)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function normalizeImportSessionQuery(query: string | undefined): string | null {

@@ -146,6 +146,10 @@ function makeRequest(
   };
 }
 
+function listSessions(input: Parameters<typeof listImportableProviderSessions>[0]) {
+  return listImportableProviderSessions({ directoryExists: async () => true, ...input });
+}
+
 test("listImportableProviderSessions filters, sorts, limits, and projects importable sessions", async () => {
   const cwd = "/tmp/project";
   const sessions = [
@@ -233,7 +237,7 @@ test("listImportableProviderSessions filters, sorts, limits, and projects import
     ],
   } satisfies Pick<AgentStorage, "listAll">;
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({
       cwd,
       providers: ["codex"],
@@ -296,7 +300,7 @@ test("listImportableProviderSessions looks past already-imported rows to fill th
     makeImportableSessionsResult([imported, available].slice(0, options?.limit)),
   );
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ cwd, providers: ["claude"], limit: 1 }),
     agentManager: {
       listAgents: () => [],
@@ -357,7 +361,7 @@ test("listImportableProviderSessions requests a bounded deep scan for search res
   ];
   const listImportableSessions = vi.fn(async () => makeImportableSessionsResult(matchingSessions));
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ query: "INVOICE", limit: 10 }),
     agentManager: { listAgents: () => [], listImportableSessions },
     agentStorage: { listAll: async () => [] },
@@ -390,7 +394,7 @@ test("listImportableProviderSessions includes a provider session after its Paseo
     firstPrompt: "import me again",
   });
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
       listAgents: () => [],
@@ -427,7 +431,7 @@ test("listImportableProviderSessions includes an archived provider session still
     firstPrompt: "import the loaded session again",
   });
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ cwd, providers: ["claude"] }),
     agentManager: {
       listAgents: () => [
@@ -482,7 +486,7 @@ test("listImportableProviderSessions filters out metadata generation sessions", 
     }),
   ];
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ cwd, providers: ["codex"] }),
     agentManager: {
       listAgents: () => [],
@@ -507,7 +511,7 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   symlinkSync(realCwd, linkedCwd, directorySymlinkType);
   const persistedCwd = realpathSync(linkedCwd);
 
-  const result = await listImportableProviderSessions({
+  const result = await listSessions({
     request: makeRequest({ cwd: linkedCwd, providers: ["pi"] }),
     agentManager: {
       listAgents: () => [],
@@ -533,9 +537,45 @@ test("listImportableProviderSessions keeps realpath-equivalent cwd matches", asy
   expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["pi-handle"]);
 });
 
+test("listImportableProviderSessions hides sessions whose working directory was deleted", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-import-deleted-cwd-"));
+  importTestDirectories.push(root);
+  const existingCwd = path.join(root, "existing-project");
+  const deletedCwd = path.join(root, "deleted-project");
+  mkdirSync(existingCwd);
+  mkdirSync(deletedCwd);
+  rmSync(deletedCwd, { recursive: true });
+
+  const result = await listImportableProviderSessions({
+    request: makeRequest({ providers: ["claude"] }),
+    agentManager: {
+      listAgents: () => [],
+      listImportableSessions: async () =>
+        makeImportableSessionsResult([
+          makeImportableSession({
+            provider: "claude",
+            sessionId: "deleted-directory",
+            cwd: deletedCwd,
+            lastActivityAt: "2026-04-30T12:01:00.000Z",
+          }),
+          makeImportableSession({
+            provider: "claude",
+            sessionId: "available-directory",
+            cwd: existingCwd,
+            lastActivityAt: "2026-04-30T12:00:00.000Z",
+          }),
+        ]),
+    },
+    agentStorage: { listAll: async () => [] },
+    providerSnapshotManager: { getProviderLabel: () => "Claude Code" },
+  });
+
+  expect(result.entries.map((entry) => entry.providerHandleId)).toEqual(["available-directory"]);
+});
+
 test("listImportableProviderSessions rejects invalid since values", async () => {
   await expect(
-    listImportableProviderSessions({
+    listSessions({
       request: makeRequest({ since: "not-a-date" }),
       agentManager: {
         listAgents: () => [],

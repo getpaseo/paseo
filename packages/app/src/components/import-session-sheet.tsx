@@ -142,6 +142,7 @@ interface SheetStatusMessagesProps {
   isLoadingSessions: boolean;
   hasRows: boolean;
   importErrored: boolean;
+  importErrorMessage?: string | null;
 }
 
 function SheetStatusMessages({
@@ -151,6 +152,7 @@ function SheetStatusMessages({
   isLoadingSessions,
   hasRows,
   importErrored,
+  importErrorMessage,
 }: SheetStatusMessagesProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -172,7 +174,9 @@ function SheetStatusMessages({
         </View>
       ) : null}
       {importErrored ? (
-        <Text style={styles.statusText}>{t("importSession.status.failedImport")}</Text>
+        <Text style={styles.statusText}>
+          {t("importSession.status.failedImport")} {importErrorMessage}
+        </Text>
       ) : null}
     </>
   );
@@ -844,6 +848,9 @@ export function ImportSessionSheet({
             isLoadingSessions={isLoadingSessions}
             hasRows={visibleEntries.length > 0}
             importErrored={importMutation.isError}
+            importErrorMessage={
+              importMutation.error instanceof Error ? importMutation.error.message : null
+            }
           />
           {providerErrorRows.length > 0 ? (
             <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
@@ -869,6 +876,7 @@ export function ImportSessionSheet({
       isLoadingSessions,
       visibleEntries.length,
       importMutation.isError,
+      importMutation.error,
       providerErrorRows,
       handleRetryProvider,
     ],

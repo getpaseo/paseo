@@ -637,13 +637,13 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an import error state without closing when selected session import fails", async () => {
+  it("shows the daemon error without closing when selected session import fails", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
     }));
     const importAgent = vi.fn(async () => {
-      throw new Error("import unavailable");
+      throw new Error("Working directory does not exist: /deleted/worktree");
     });
     const onClose = vi.fn();
     const onImportedAgent = vi.fn();
@@ -662,7 +662,9 @@ describe("ImportSessionSheet", () => {
 
     fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
 
-    await screen.findByText("Could not import selected session.");
+    await screen.findByText(
+      "Could not import selected session. Working directory does not exist: /deleted/worktree",
+    );
     expect(importAgent).toHaveBeenCalledWith({
       providerId: "claude",
       providerHandleId: "provider-thread-1",

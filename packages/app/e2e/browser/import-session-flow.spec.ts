@@ -124,6 +124,18 @@ test.afterAll(async () => {
   await rm(claudeConfigDirectory, { recursive: true, force: true });
 });
 
+test("a session whose working directory was deleted is not listed", async ({ page }) => {
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+  await flow.openGlobally();
+  await flow.search("fixture-deleted-directory");
+
+  await expect(page.getByTestId("import-session-empty-state")).toBeVisible();
+  await expect(
+    page.getByTestId("import-session-session-claude-fixture-deleted-directory"),
+  ).toHaveCount(0);
+});
+
 test("an open Import Session row keeps its age current", async ({ page }) => {
   await page.clock.install({ time: scenario.importSessionTimestamp + 60_000 });
   const flow = new ImportSessionFlow(page);
@@ -404,6 +416,12 @@ async function seedClaudeSessions(input: {
       title: `Root session ${String(index + 1).padStart(2, "0")}`,
       prompt: index === 7 ? "Investigate invoice rendering" : `Review fixture item ${index + 1}`,
     })),
+    {
+      cwd: path.join(input.worktreeDirectory, "deleted"),
+      id: "fixture-deleted-directory",
+      title: "Deleted worktree session",
+      prompt: "fixture-deleted-directory",
+    },
   ];
   const newest = Date.now() - 60_000;
   for (const [index, session] of sessions.entries()) {
