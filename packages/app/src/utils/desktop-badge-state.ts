@@ -24,6 +24,8 @@ export function selectMacDockBadgeCount(state: WorkspaceStatusSource): number | 
   for (const session of Object.values(state.sessions)) {
     if (!session) continue;
     for (const workspace of session.workspaces.values()) {
+      // Background workspaces are hidden from the sidebar, so a badge for one leads nowhere.
+      if (workspace.background) continue;
       if (isWorkspaceActionableForDesktopBadge(workspace.status)) actionableCount += 1;
     }
   }
@@ -35,7 +37,7 @@ export function createMacDockBadgeCountSelector(): (
   state: WorkspaceStatusSource,
 ) => number | undefined {
   return memoizeOnSessionMaps<WorkspaceStatusSession, WorkspaceStatusSource, number | undefined>(
-    (session) => session.workspaces,
+    (session) => [session.workspaces],
     selectMacDockBadgeCount,
   );
 }

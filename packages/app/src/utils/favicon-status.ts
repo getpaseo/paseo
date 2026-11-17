@@ -1,10 +1,11 @@
-import type { Agent } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 import { memoizeOnSessionMaps } from "./memoize-on-session-maps";
 
 export type FaviconStatus = "none" | "running" | "attention";
 
 interface FaviconAgentSession {
   agents: ReadonlyMap<string, Agent>;
+  workspaces: ReadonlyMap<string, Pick<WorkspaceDescriptor, "background">>;
 }
 
 interface FaviconAgentSource {
@@ -23,6 +24,8 @@ export function deriveFaviconStatus(state: FaviconAgentSource): FaviconStatus {
     if (!session) continue;
     for (const agent of session.agents.values()) {
       if (agent.background || agent.archivedAt) continue;
+      // An agent in a background workspace is effectively background: the sidebar hides it.
+      if (agent.workspaceId && session.workspaces.get(agent.workspaceId)?.background) continue;
       if (agent.status === "running") return "running";
       if (agent.requiresAttention) hasAttention = true;
       if (agent.pendingPermissions.length > 0) hasNeedsInput = true;
@@ -31,10 +34,10 @@ export function deriveFaviconStatus(state: FaviconAgentSource): FaviconStatus {
   return hasAttention || hasNeedsInput ? "attention" : "none";
 }
 
-/** A session-store selector for the favicon status that rescans only when an agent map changes. */
+/** A session-store selector for the favicon status that rescans only when an agent or workspace map changes. */
 export function createFaviconStatusSelector(): (state: FaviconAgentSource) => FaviconStatus {
   return memoizeOnSessionMaps<FaviconAgentSession, FaviconAgentSource, FaviconStatus>(
-    (session) => session.agents,
+    (session) => [session.agents, session.workspaces],
     deriveFaviconStatus,
   );
 }
