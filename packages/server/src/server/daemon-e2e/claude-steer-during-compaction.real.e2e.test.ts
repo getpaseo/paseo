@@ -17,8 +17,12 @@ type TimelineItem = Awaited<
   ReturnType<DaemonClient["fetchAgentTimeline"]>
 >["entries"][number]["item"];
 
-function isCompaction(item: TimelineItem): boolean {
-  return item.type === "compaction";
+// The steer must land while the compaction is still running, or it takes the idle path.
+function isCompacting(items: TimelineItem[]): boolean {
+  const statuses = new Set(
+    items.flatMap((item) => (item.type === "compaction" ? [item.status] : [])),
+  );
+  return statuses.has("loading") && !statuses.has("completed");
 }
 
 function hasAssistantText(items: TimelineItem[], text: string): boolean {
@@ -91,13 +95,7 @@ describe("daemon E2E (real claude) - steer during compaction", () => {
       expect(firstFinish.status, firstFinish.error).toBe("idle");
 
       await client.sendAgentMessage(agent.id, "/compact");
-      await waitForTimeline(
-        client,
-        agent.id,
-        (items) => items.some(isCompaction),
-        60_000,
-        "Claude reports compacting",
-      );
+      await waitForTimeline(client, agent.id, isCompacting, 60_000, "Claude reports compacting");
 
       await client.sendAgentMessage(agent.id, "Reply exactly: AFTER_COMPACT", {
         activeTurnBehavior: "steer",
