@@ -3,10 +3,14 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import {
+  answerFolderPickerWithOriginStorage,
   downloadFileFromExplorer,
   downloadFileFromPreview,
+  openExplorerContextMenu,
   openFileFromExplorer,
   openFileExplorer,
+  readOriginStorage,
+  removeFolderPicker,
 } from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
@@ -534,4 +538,100 @@ test("downloads an unsupported binary from its preview with original filename an
   await downloaded.saveAs(savedFile);
   expect(await downloaded.failure()).toBeNull();
   expect(await readFile(savedFile)).toEqual(source);
+});
+
+async function seedFolderToDownload(): Promise<Record<string, Buffer>> {
+  const folder = path.join(workspace.workspaceDirectory, "rapports");
+  const files: Record<string, Buffer> = {
+    "rapports/.env": Buffer.from("TOKEN=1\n"),
+    "rapports/résumé.md": Buffer.from("# Résumé\n"),
+    "rapports/plots/figure.bin": Buffer.from([0, 1, 2, 127, 128, 255, 10]),
+    // Spans many HTTP chunks, so the response streams into the file.
+    "rapports/plots/large.bin": Buffer.alloc(3 * 1024 * 1024 + 17, 7),
+  };
+  await mkdir(path.join(folder, "plots"), { recursive: true });
+  await mkdir(path.join(folder, "empty"), { recursive: true });
+  for (const [relativePath, contents] of Object.entries(files)) {
+    await writeFile(path.join(workspace.workspaceDirectory, relativePath), contents);
+  }
+  return files;
+}
+
+function expectedStorage(files: Record<string, Buffer>, folders: string[]): Record<string, string> {
+  const expected: Record<string, string> = {};
+  for (const folder of folders) expected[folder] = "";
+  for (const [relativePath, contents] of Object.entries(files)) {
+    expected[relativePath] = contents.toString("base64");
+  }
+  return expected;
+}
+
+test("downloads a folder file by file into the folder the user picks", async ({ page }) => {
+  const files = await seedFolderToDownload();
+  await answerFolderPickerWithOriginStorage(page);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const httpDownloads: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/files/download") httpDownloads.push(url);
+  });
+  await openExplorerContextMenu(page, "rapports");
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+
+  await expect(page.getByText("Download complete", { exact: true })).toBeVisible();
+  // A direct connection downloads every file over HTTP, as a single-file download does.
+  expect(httpDownloads.map((url) => url.port)).toEqual(
+    Object.keys(files).map(() => getE2EDaemonPort()),
+  );
+  expect(await readOriginStorage(page)).toEqual(
+    expectedStorage(files, ["rapports/", "rapports/empty/", "rapports/plots/"]),
+  );
+});
+
+test("reports how many files a folder download could not copy and keeps the rest", async ({
+  page,
+}) => {
+  const files = await seedFolderToDownload();
+  await answerFolderPickerWithOriginStorage(page);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  await page.route(
+    "**/api/files/download?*",
+    (route) => route.fulfill({ status: 404, body: "File not found" }),
+    { times: 1 },
+  );
+  await openExplorerContextMenu(page, "rapports");
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+
+  await expect(
+    page.getByText("1 of 4 files could not be downloaded", { exact: true }),
+  ).toBeVisible();
+  // Files copy concurrently, so the rejected request can belong to any of them.
+  const expected = expectedStorage(files, ["rapports/", "rapports/empty/", "rapports/plots/"]);
+  const stored = await readOriginStorage(page);
+  const missing = Object.keys(expected).filter((entry) => !(entry in stored));
+  expect(missing).toHaveLength(1);
+  expect(Object.keys(files)).toContain(missing[0]);
+  expect(stored).toEqual(
+    Object.fromEntries(Object.entries(expected).filter(([entry]) => entry !== missing[0])),
+  );
+});
+
+test("offers folder download only where the browser can save folders", async ({ page }) => {
+  await seedFolderToDownload();
+  await writeFile(path.join(workspace.workspaceDirectory, "notes.txt"), "notes");
+  await removeFolderPicker(page);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  await openExplorerContextMenu(page, "rapports");
+  await expect(page.getByRole("menuitem", { name: "Copy path", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  await openExplorerContextMenu(page, "notes.txt");
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toBeVisible();
 });

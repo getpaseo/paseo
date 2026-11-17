@@ -12,6 +12,12 @@ const AUTO_DISMISS_DELAY = 3000;
 
 function getDownloadStatusText(download: Download, t: TFunction): string {
   if (download.status === "downloading") {
+    if (download.files) {
+      return t("downloads.folderProgress", {
+        completed: download.files.completed,
+        count: download.files.total,
+      });
+    }
     if (download.progress) {
       return `${Math.round(download.progress.percent * 100)}% · ${formatSpeed(download.progress.speed)} · ${formatEta(download.progress.eta)}`;
     }
@@ -57,14 +63,20 @@ export function DownloadToast() {
   );
 
   const handleDismiss = useCallback(() => {
-    if (activeDownload) {
-      dismissDownload(activeDownload.id);
+    if (!activeDownload) {
+      return;
     }
+    if (activeDownload.status === "downloading") {
+      activeDownload.cancel?.();
+      return;
+    }
+    dismissDownload(activeDownload.id);
   }, [activeDownload, dismissDownload]);
 
   if (!activeDownload) {
     return null;
   }
+  const progressPercent = downloadProgressPercent(activeDownload);
 
   return (
     <View style={containerStyle} pointerEvents="box-none">
@@ -83,20 +95,35 @@ export function DownloadToast() {
             {activeDownload.fileName}
           </Text>
           <Text style={styles.status}>{getDownloadStatusText(activeDownload, t)}</Text>
-          {activeDownload.status === "downloading" && activeDownload.progress && (
+          {activeDownload.status === "downloading" && progressPercent !== null && (
             <View style={styles.progressBar}>
-              <ProgressFill percent={activeDownload.progress.percent} />
+              <ProgressFill percent={progressPercent} />
             </View>
           )}
         </View>
-        {activeDownload.status !== "downloading" && (
-          <Pressable onPress={handleDismiss} hitSlop={8} style={styles.dismiss}>
+        {(activeDownload.status !== "downloading" || activeDownload.cancel) && (
+          <Pressable
+            onPress={handleDismiss}
+            hitSlop={8}
+            style={styles.dismiss}
+            accessibilityRole="button"
+            accessibilityLabel={
+              activeDownload.status === "downloading" ? t("common.actions.cancel") : undefined
+            }
+          >
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>
         )}
       </View>
     </View>
   );
+}
+
+function downloadProgressPercent(download: Download): number | null {
+  if (download.files) {
+    return download.files.total > 0 ? download.files.completed / download.files.total : 0;
+  }
+  return download.progress?.percent ?? null;
 }
 
 function ProgressFill({ percent }: { percent: number }) {
