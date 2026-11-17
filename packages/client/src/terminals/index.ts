@@ -18,6 +18,7 @@ export interface PaseoTerminalCreateOptions {
   command?: string;
   args?: string[];
   size?: { rows: number; cols: number };
+  defaultColors?: { foreground: string; background: string; cursor?: string };
   requestId?: string;
 }
 

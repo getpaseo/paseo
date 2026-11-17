@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Composer } from "@/composer";
@@ -28,6 +28,8 @@ import { useForgeSearchQuery } from "@/git/use-forge-search-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useAppSettings } from "@/hooks/use-settings";
+import { resolveTerminalPalette } from "@/styles/theme";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
@@ -858,6 +860,12 @@ export function NewWorkspaceScreen({
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const theme = UnistylesRuntime.getTheme();
+  const { settings } = useAppSettings();
+  const terminalPalette = useMemo(
+    () => resolveTerminalPalette(settings.terminalTheme, theme),
+    [settings.terminalTheme, theme],
+  );
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const composerEditing = useNewWorkspaceComposerEditing();
@@ -1392,7 +1400,16 @@ export function NewWorkspaceScreen({
             input.workspaceDirectory,
             input.name,
             undefined,
-            { command: input.command, args: input.args, workspaceId: input.workspaceId },
+            {
+              command: input.command,
+              args: input.args,
+              workspaceId: input.workspaceId,
+              defaultColors: {
+                foreground: terminalPalette.foreground,
+                background: terminalPalette.background,
+                cursor: terminalPalette.cursor,
+              },
+            },
           );
           const terminal = createdTerminal.terminal;
           if (!terminal) {
@@ -1444,6 +1461,7 @@ export function NewWorkspaceScreen({
     selectedTerminalProfile,
     t,
     terminalPromptText,
+    terminalPalette,
     toast,
     leaveFullscreen,
     updateFormPreferences,

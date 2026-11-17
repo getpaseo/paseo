@@ -5,6 +5,8 @@ import {
   FONT_SIZE,
   getNextThemePreference,
   lightTheme,
+  resolveTerminalPalette,
+  resolveTerminalTheme,
   THEME_OPTIONS,
 } from "./theme";
 
@@ -38,6 +40,13 @@ describe("Theme catalog", () => {
     ]);
     expect(getNextThemePreference("dark")).toBe("auto");
     expect(getNextThemePreference("pureBlack")).toBe("light");
+  });
+
+  it("resolves the terminal palette independently from the active app theme", () => {
+    expect(resolveTerminalTheme("match", lightTheme)).toBe(lightTheme);
+    expect(resolveTerminalTheme("dark", lightTheme)).toBe(darkTheme);
+    expect(resolveTerminalPalette("match", lightTheme)).toBe(lightTheme.colors.terminal);
+    expect(resolveTerminalPalette("dark", lightTheme)).toBe(darkTheme.colors.terminal);
   });
 });
 

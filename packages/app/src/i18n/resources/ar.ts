@@ -2695,6 +2695,13 @@ export const ar: TranslationResources = {
           "معاينة مباشرة لطباعة المحتوى وموضوع بناء الجملة وخط التعليمات البرمجية",
         previewContent: "معاينة المحتوى والرمز",
       },
+      terminal: {
+        sectionTitle: "المحطة الطرفية",
+        title: "سمة المحطة الطرفية",
+        hint: "ألوان للمحطات الطرفية مستقلة عن سمة التطبيق",
+        matchApp: "مطابقة سمة التطبيق",
+        themeAccessibility: "سمة المحطة الطرفية: {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "الاختصارات",

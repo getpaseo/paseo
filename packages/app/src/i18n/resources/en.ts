@@ -2792,6 +2792,13 @@ export const en = {
         previewAccessibility: "Live preview of content typography, syntax theme, and code font",
         previewContent: "Readable content and code preview",
       },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Terminal theme",
+        hint: "Colours for terminals, independent of the app theme",
+        matchApp: "Match app theme",
+        themeAccessibility: "Terminal theme: {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "Shortcuts",

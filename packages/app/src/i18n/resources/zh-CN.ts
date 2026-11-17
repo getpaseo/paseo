@@ -2629,6 +2629,13 @@ export const zhCN: TranslationResources = {
         previewAccessibility: "内容排版、语法主题和代码字体的实时预览",
         previewContent: "内容和代码预览",
       },
+      terminal: {
+        sectionTitle: "终端",
+        title: "终端主题",
+        hint: "独立于应用主题的终端配色",
+        matchApp: "跟随应用主题",
+        themeAccessibility: "终端主题：{{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "快捷键",

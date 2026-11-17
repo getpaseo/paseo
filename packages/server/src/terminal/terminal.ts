@@ -36,17 +36,42 @@ import type { TerminalReplayOptions, TerminalReplayMetadata } from "./terminal-r
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
+import type { CreateTerminalRequest } from "@getpaseo/protocol/messages";
 
 const require = createRequire(import.meta.url);
 let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
-const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
+const DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
   [10, "rgb:e6e6/e6e6/e6e6"],
   [11, "rgb:0b0b/0b0b/0b0b"],
   [12, "rgb:e6e6/e6e6/e6e6"],
 ]);
+
+function terminalOscColor(value: string | undefined, fallback: string): string {
+  const hex = value?.trim().match(/^#?([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  if (!hex) return fallback;
+  const digits = hex.length === 3 ? [...hex].map((digit) => digit + digit).join("") : hex;
+  return `rgb:${digits.slice(0, 2)}${digits.slice(0, 2)}/${digits.slice(2, 4)}${digits.slice(2, 4)}/${digits.slice(4, 6)}${digits.slice(4, 6)}`;
+}
+
+function terminalOscColorQueryResponses(
+  colors: CreateTerminalRequest["defaultColors"],
+): Map<number, string> {
+  if (!colors) return DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES;
+  return new Map([
+    [10, terminalOscColor(colors.foreground, DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(10)!)],
+    [11, terminalOscColor(colors.background, DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(11)!)],
+    [
+      12,
+      terminalOscColor(
+        colors.cursor ?? colors.foreground,
+        DEFAULT_TERMINAL_OSC_COLOR_QUERY_RESPONSES.get(12)!,
+      ),
+    ],
+  ]);
+}
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -159,6 +184,7 @@ export interface CreateTerminalOptions {
   title?: string;
   command?: string;
   args?: string[];
+  defaultColors?: CreateTerminalRequest["defaultColors"];
   // Environment the terminal starts from instead of this process's own. A detached terminal
   // worker outlives the daemon that launched it, so each create carries the controlling
   // daemon's environment and its resolved Paseo CLI path.
@@ -772,6 +798,7 @@ export async function createTerminal(
     args = [],
     baseEnv,
     paseoCliPath,
+    defaultColors,
   } = options;
   const resolvedShell = shell ?? resolveDefaultTerminalShell({ env: baseEnv });
 
@@ -921,7 +948,7 @@ export async function createTerminal(
     ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
     return true;
   });
-  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+  for (const [code, response] of terminalOscColorQueryResponses(defaultColors)) {
     terminal.parser.registerOscHandler(code, (data) => {
       if (data.trim() !== "?") {
         return false;

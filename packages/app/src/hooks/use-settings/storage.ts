@@ -23,12 +23,16 @@ import {
   DEFAULT_CONTENT_MAX_WIDTH,
   FONT_SIZE,
   PLUGIN_THEME_PREFERENCE,
+  TERMINAL_THEME_PREFERENCES,
   THEME_OPTIONS,
+  type TerminalThemePreference,
   type ThemePreference,
 } from "@/styles/theme";
 import { z } from "zod";
 import { APP_SETTINGS_KEY, LEGACY_SETTINGS_KEY } from "./keys";
 import { migrateAppSettings } from "./migrations";
+
+export type { TerminalThemePreference } from "@/styles/theme";
 
 export { APP_SETTINGS_KEY } from "./keys";
 export const APP_SETTINGS_QUERY_KEY = ["app-settings"];
@@ -50,8 +54,10 @@ const ThemePreferenceSchema = z.enum([
   ...THEME_OPTIONS.map((option) => option.name),
   PLUGIN_THEME_PREFERENCE,
 ]);
+const TerminalThemePreferenceSchema = z.enum(TERMINAL_THEME_PREFERENCES);
 /** Where the theme picker lands when the persisted preference cannot be honoured. */
 export const DEFAULT_THEME_PREFERENCE = "auto" satisfies ThemePreference;
+export const DEFAULT_TERMINAL_THEME_PREFERENCE = "match" satisfies TerminalThemePreference;
 export const DEFAULT_TERMINAL_SCROLLBACK_LINES = 10_000;
 export const MIN_TERMINAL_SCROLLBACK_LINES = 0;
 export const MAX_TERMINAL_SCROLLBACK_LINES = 1_000_000;
@@ -79,6 +85,7 @@ export const MAX_CONTENT_MAX_WIDTH = 4000;
 
 export interface AppSettings {
   theme: ThemePreference;
+  terminalTheme: TerminalThemePreference;
   /** Which contributed theme `theme: "plugin"` selects. */
   pluginThemeId: string | null;
   language: AppLanguage;
@@ -144,6 +151,7 @@ export interface Settings extends AppSettings {
 
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
+  terminalTheme: DEFAULT_TERMINAL_THEME_PREFERENCE,
   pluginThemeId: null,
   language: "system",
   sendBehavior: "queue",
@@ -224,6 +232,7 @@ const DEFAULT_STORED_APP_SETTINGS = {
 const StoredAppSettingsSchema = z
   .looseObject({
     theme: ThemePreferenceSchema.catch(DEFAULT_THEME_PREFERENCE),
+    terminalTheme: TerminalThemePreferenceSchema.catch(DEFAULT_TERMINAL_THEME_PREFERENCE),
     pluginThemeId: z.string().nullable().catch(null),
     language: z
       .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])

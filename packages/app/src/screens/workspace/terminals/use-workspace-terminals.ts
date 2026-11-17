@@ -5,6 +5,9 @@ import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { resolveTerminalProfileLaunch } from "@getpaseo/protocol/terminal-profiles";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useTranslation } from "react-i18next";
+import { UnistylesRuntime } from "react-native-unistyles";
+import { useAppSettings } from "@/hooks/use-settings";
+import { resolveTerminalPalette } from "@/styles/theme";
 import { useReplicaQuery } from "@/data/query";
 import { workspaceTerminalsPushRoute } from "@/data/push-router";
 import {
@@ -63,6 +66,14 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
     onTerminalCreateFailed,
   } = input;
   const { t } = useTranslation();
+  // Settings changes re-render this hook; read the active theme without subscribing the whole
+  // terminal-management subtree to every Unistyles runtime update.
+  const theme = UnistylesRuntime.getTheme();
+  const { settings } = useAppSettings();
+  const terminalPalette = useMemo(
+    () => resolveTerminalPalette(settings.terminalTheme, theme),
+    [settings.terminalTheme, theme],
+  );
   const queryClient = useQueryClient();
   const [pendingCreateInput, setPendingCreateInput] = useState<PendingTerminalCreateInput | null>(
     null,
@@ -139,9 +150,19 @@ export function useWorkspaceTerminals(input: UseWorkspaceTerminalsInput) {
             command: profile.command,
             args: profile.args,
             workspaceId: normalizedWorkspaceId || undefined,
+            defaultColors: {
+              foreground: terminalPalette.foreground,
+              background: terminalPalette.background,
+              cursor: terminalPalette.cursor,
+            },
           })
         : await client.createTerminal(workspaceDirectory, undefined, undefined, {
             workspaceId: normalizedWorkspaceId || undefined,
+            defaultColors: {
+              foreground: terminalPalette.foreground,
+              background: terminalPalette.background,
+              cursor: terminalPalette.cursor,
+            },
           });
       // The daemon reports a failed spawn (e.g. a profile command that isn't
       // installed) via payload.error with a null terminal. Surface it instead

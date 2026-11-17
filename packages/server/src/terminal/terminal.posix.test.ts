@@ -198,6 +198,28 @@ process.stdin.on("data", (chunk) => {
 process.stdout.write("\\x1b]11;?\\x07");
 `;
 
+function oscColorHelperScript(code: number): string {
+  return `process.stdin.setRawMode(true);
+process.stdin.resume();
+let buf = "";
+const timer = setTimeout(() => {
+  process.stdout.write("OSC${code}_TIMEOUT\\n");
+  process.exit(2);
+}, 2500);
+process.stdin.on("data", (chunk) => {
+  buf += chunk.toString("binary");
+  const match = buf.match(/\\x1b\\]${code};rgb:[0-9a-f/]+\\x1b\\\\/);
+  if (!match) {
+    return;
+  }
+  clearTimeout(timer);
+  process.stdout.write("OSC${code}_OK:" + match[0].replace(/\\x1b/g, "ESC") + "\\n");
+  process.exit(0);
+});
+process.stdout.write("\\x1b]${code};?\\x07");
+`;
+}
+
 function writeDaHelper(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   temporaryDirs.push(dir);
@@ -219,6 +241,14 @@ function writeOsc11Helper(prefix: string): string {
   temporaryDirs.push(dir);
   const path = join(dir, "helper.cjs");
   writeFileSync(path, OSC11_HELPER_SCRIPT);
+  return path;
+}
+
+function writeOscColorHelper(prefix: string, code: number): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirs.push(dir);
+  const path = join(dir, "helper.cjs");
+  writeFileSync(path, oscColorHelperScript(code));
   return path;
 }
 
@@ -1071,6 +1101,38 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
 
       const ack = getLines(await readTerminalState(session)).find(isOsc11OkLine) ?? "";
       expect(ack).toBe("OSC11_OK:ESC]11;rgb:0b0b/0b0b/0b0bESC\\");
+    });
+
+    it("uses creation-time terminal colors for OSC 10, 11, and 12 replies", async () => {
+      const session = trackSession(
+        await createTerminal({
+          workspaceId: "ws-test",
+          cwd: "/tmp",
+          shell: "/bin/sh",
+          env: { PS1: "$ " },
+          defaultColors: { foreground: "#262626", background: "#fff", cursor: "#20744a" },
+        }),
+      );
+      await waitForLines(session, ["$"]);
+
+      const expected = new Map([
+        [10, "rgb:2626/2626/2626"],
+        [11, "rgb:ffff/ffff/ffff"],
+        [12, "rgb:2020/7474/4a4a"],
+      ]);
+      for (const [code, response] of expected) {
+        const helperPath = writeOscColorHelper("terminal-osc-color-helper-", code);
+        session.send({ type: "input", data: `${process.execPath} ${helperPath}\r` });
+        await waitForState(session, (state) =>
+          getLines(state).some((line) => line.startsWith(`OSC${code}_OK:`)),
+        );
+
+        const ack =
+          getLines(await readTerminalState(session)).find((line) =>
+            line.startsWith(`OSC${code}_OK:`),
+          ) ?? "";
+        expect(ack).toBe(`OSC${code}_OK:ESC]${code};${response}ESC\\`);
+      }
     });
   });
 

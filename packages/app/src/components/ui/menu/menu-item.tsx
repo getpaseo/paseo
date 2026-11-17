@@ -11,6 +11,7 @@ import {
   Text,
   View,
   type PressableStateCallbackType,
+  type StyleProp,
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -234,12 +235,16 @@ export interface MenuItemProps {
   selected?: boolean;
   /** Reserves a leading check column so a group of items stays aligned whether ticked or not. */
   showSelectedCheck?: boolean;
+  /** Stacks the leading visual above the label for menu tiles. */
+  stacked?: boolean;
   /**
    * This row's submenu is open. Distinct from `selected`: it is about where you are, not what
    * you picked, so it takes the background that `selected` gives up.
    */
   active?: boolean;
+  style?: StyleProp<ViewStyle>;
   leading?: ReactElement | null;
+  leadingStyle?: StyleProp<ViewStyle>;
   trailing?: ReactElement | null;
   /** @deprecated Use `status` instead */
   loading?: boolean;
@@ -262,8 +267,11 @@ export function MenuItem({
   destructive,
   selected,
   showSelectedCheck = false,
+  stacked = false,
   active = false,
+  style,
   leading,
+  leadingStyle,
   trailing,
   loading,
   status,
@@ -302,6 +310,7 @@ export function MenuItem({
     () => (selected === undefined ? undefined : { checked: selected }),
     [selected],
   );
+  const layoutStyles = useMemo(() => getItemLayoutStyles(stacked), [stacked]);
 
   const itemPressableStyle = useCallback(
     ({
@@ -310,14 +319,16 @@ export function MenuItem({
       focused = false,
     }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
       styles.item,
+      layoutStyles.item,
       active ? styles.itemActive : null,
       isDisabled ? styles.itemDisabled : null,
       muted && !isDisabled ? styles.itemMuted : null,
       hovered && !pressed && !isDisabled ? styles.itemHovered : null,
       focused && !isDisabled ? styles.itemHovered : null,
       pressed && !isDisabled ? styles.itemPressed : null,
+      style,
     ],
-    [active, isDisabled, muted],
+    [active, isDisabled, layoutStyles.item, muted, style],
   );
 
   const itemTextStyle = useMemo(
@@ -333,7 +344,6 @@ export function MenuItem({
     () => ({ menuItem: "true", menuDisabled: isDisabled ? "true" : "false" }),
     [isDisabled],
   );
-
   const content = (
     <Pressable
       testID={testID}
@@ -351,18 +361,20 @@ export function MenuItem({
           {selected ? <ThemedCheck size={16} uniProps={foregroundMapping} /> : null}
         </View>
       ) : null}
-      {leadingContent ? <View style={styles.leadingSlot}>{leadingContent}</View> : null}
-      <View style={styles.itemContent}>
+      {leadingContent ? (
+        <View style={[styles.leadingSlot, layoutStyles.leadingSlot, leadingStyle]}>
+          {leadingContent}
+        </View>
+      ) : null}
+      <View style={[styles.itemContent, layoutStyles.itemContent]}>
         <Text numberOfLines={1} style={itemTextStyle}>
           {label}
         </Text>
-        {description && !isPending && !isSuccess ? (
-          <Text numberOfLines={2} style={styles.itemDescription}>
-            {description}
-          </Text>
-        ) : null}
+        {renderDescription(description, isPending, isSuccess)}
       </View>
-      {trailingContent ? <View style={styles.trailingSlot}>{trailingContent}</View> : null}
+      {trailingContent ? (
+        <View style={[styles.trailingSlot, layoutStyles.trailingSlot]}>{trailingContent}</View>
+      ) : null}
     </Pressable>
   );
 
@@ -452,6 +464,12 @@ const styles = StyleSheet.create((theme) => ({
     outlineWidth: 0,
     outlineColor: "transparent",
   },
+  itemStacked: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
   // The same box as `item`, filled the way a hovered row is filled, so the field sits in the
   // column of rows rather than beside it. Every number here is `item`'s: change one, change both.
   field: {
@@ -523,6 +541,10 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  leadingSlotStacked: {
+    width: "100%",
+    alignItems: "stretch",
+  },
   trailingSlot: {
     marginLeft: "auto",
     alignItems: "center",
@@ -532,4 +554,42 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
   },
+  itemContentStacked: {
+    width: "100%",
+  },
+  trailingSlotStacked: {
+    position: "absolute",
+    top: theme.spacing[2],
+    right: theme.spacing[2],
+  },
 }));
+
+function getItemLayoutStyles(stacked: boolean) {
+  if (!stacked) {
+    return {
+      item: null,
+      leadingSlot: null,
+      itemContent: null,
+      trailingSlot: null,
+    };
+  }
+  return {
+    item: styles.itemStacked,
+    leadingSlot: styles.leadingSlotStacked,
+    itemContent: styles.itemContentStacked,
+    trailingSlot: styles.trailingSlotStacked,
+  };
+}
+
+function renderDescription(
+  description: string | undefined,
+  isPending: boolean | undefined,
+  isSuccess: boolean | undefined,
+): ReactElement | null {
+  if (!description || isPending || isSuccess) return null;
+  return (
+    <Text numberOfLines={2} style={styles.itemDescription}>
+      {description}
+    </Text>
+  );
+}

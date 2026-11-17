@@ -2720,6 +2720,13 @@ export const fr: TranslationResources = {
           "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police du code",
         previewContent: "Aperçu du contenu et du code",
       },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Thème du terminal",
+        hint: "Couleurs du terminal, indépendantes du thème de l’application",
+        matchApp: "Utiliser le thème de l’application",
+        themeAccessibility: "Thème du terminal : {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "Raccourcis",

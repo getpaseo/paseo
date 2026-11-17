@@ -20,6 +20,18 @@ describe("CreateTerminalRequest size", () => {
     expect(parsed.size).toEqual({ rows: 55, cols: 136 });
   });
 
+  it("parses optional creation-time terminal colors", () => {
+    const parsed = CreateTerminalRequestSchema.parse({
+      ...base,
+      defaultColors: { foreground: "#262626", background: "#ffffff", cursor: "#20744a" },
+    });
+    expect(parsed.defaultColors).toEqual({
+      foreground: "#262626",
+      background: "#ffffff",
+      cursor: "#20744a",
+    });
+  });
+
   it("rejects a non-positive or non-integer size", () => {
     expect(() =>
       CreateTerminalRequestSchema.parse({ ...base, size: { rows: 0, cols: 80 } }),

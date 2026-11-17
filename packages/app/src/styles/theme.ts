@@ -838,6 +838,18 @@ export type ThemePreference =
 export type ThemeName = Exclude<ThemePreference, "auto" | typeof PLUGIN_THEME_PREFERENCE>;
 type ConcreteThemeOption = Exclude<(typeof THEME_OPTIONS)[number], { name: "auto" }>;
 export type Theme = ConcreteThemeOption["theme"];
+export type TerminalThemePreference = "match" | ThemeName;
+
+export const TERMINAL_THEME_PREFERENCES = [
+  "match",
+  "light",
+  "dark",
+  "zinc",
+  "midnight",
+  "claude",
+  "ghostty",
+  "pureBlack",
+] as const satisfies readonly TerminalThemePreference[];
 
 const CONCRETE_THEME_OPTIONS = THEME_OPTIONS.filter(
   (option): option is ConcreteThemeOption => option.name !== "auto",
@@ -873,6 +885,23 @@ export const REGISTERED_THEMES = {
   [PLUGIN_THEME_NAMES.light]: lightTheme,
   [PLUGIN_THEME_NAMES.dark]: darkTheme,
 } as RegisteredThemes;
+
+export function resolveTerminalTheme(
+  preference: TerminalThemePreference,
+  activeTheme: Theme,
+): Theme {
+  if (preference === "match") {
+    return activeTheme;
+  }
+  return CONCRETE_THEME_OPTIONS.find((option) => option.name === preference)?.theme ?? activeTheme;
+}
+
+export function resolveTerminalPalette(
+  preference: TerminalThemePreference,
+  activeTheme: Theme,
+): Theme["colors"]["terminal"] {
+  return resolveTerminalTheme(preference, activeTheme).colors.terminal;
+}
 
 export function getNextThemePreference(current: ThemePreference): ThemePreference {
   const currentIndex = THEME_OPTIONS.findIndex((option) => option.name === current);

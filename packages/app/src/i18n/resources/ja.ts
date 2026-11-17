@@ -2684,6 +2684,13 @@ export const ja: TranslationResources = {
           "コンテンツの文字組み、構文ハイライトテーマ、コードフォントのライブプレビュー",
         previewContent: "コンテンツとコードのプレビュー",
       },
+      terminal: {
+        sectionTitle: "ターミナル",
+        title: "ターミナルテーマ",
+        hint: "アプリのテーマとは独立したターミナルの配色",
+        matchApp: "アプリのテーマに合わせる",
+        themeAccessibility: "ターミナルテーマ: {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "ショートカット",

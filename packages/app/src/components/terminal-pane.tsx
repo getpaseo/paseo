@@ -76,6 +76,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useBlockMobilePanelOpenGestures } from "@/mobile-panels/provider";
 import { useSessionStore } from "@/stores/session-store";
 import { toXtermTheme } from "@/utils/to-xterm-theme";
+import { resolveTerminalPalette } from "@/styles/theme";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { TerminalFloatingCopyAction, TerminalPasteAction } from "./terminal-copy-paste-actions";
 import {
@@ -271,7 +272,11 @@ export function TerminalPane({
   const isAppActivelyVisible = useAppActivelyVisible();
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
-  const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const terminalPalette = useMemo(
+    () => resolveTerminalPalette(settings.terminalTheme, theme),
+    [settings.terminalTheme, theme],
+  );
+  const xtermTheme = useMemo(() => toXtermTheme(terminalPalette), [terminalPalette]);
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;

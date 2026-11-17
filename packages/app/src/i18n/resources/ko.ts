@@ -2673,6 +2673,13 @@ export const ko: TranslationResources = {
         previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
         previewContent: "콘텐츠 및 코드 미리보기",
       },
+      terminal: {
+        sectionTitle: "터미널",
+        title: "터미널 테마",
+        hint: "앱 테마와 독립적인 터미널 색상",
+        matchApp: "앱 테마 사용",
+        themeAccessibility: "터미널 테마: {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "단축키",

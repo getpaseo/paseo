@@ -2698,6 +2698,13 @@ export const ptBR: TranslationResources = {
           "Prévia ao vivo da tipografia de conteúdo, do tema de sintaxe e da fonte de código",
         previewContent: "Prévia de conteúdo e código",
       },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Tema do terminal",
+        hint: "Cores para terminais, independentes do tema do app",
+        matchApp: "Usar o tema do app",
+        themeAccessibility: "Tema do terminal: {{value}}",
+      },
     },
     shortcuts: {
       dialogTitle: "Atalhos",
