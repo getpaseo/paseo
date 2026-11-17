@@ -65,6 +65,11 @@ export class MessageReceipts {
     if (existing?.failure) return this.rejectedStatus(existing.failure);
     // A completed receipt may replace the acceptance record during this read.
     const latest = await readReceipt(path.join(this.directory, `${key}.json`));
+    if (latest && latest.fingerprint !== messageFingerprint(input.request))
+      throw new MessageDeliveryError({
+        outcome: "not_submitted",
+        message: "agent_request_key_conflict",
+      });
     if (latest?.state === "completed") return { status: "accepted" };
     if (latest?.failure) return this.rejectedStatus(latest.failure);
     // Absence is not proof of non-delivery: the message may predate durable receipts.

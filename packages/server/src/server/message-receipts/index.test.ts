@@ -366,3 +366,23 @@ test("status stays accepted when its journal is replaced by a completed receipt 
     }),
   ).resolves.toEqual({ status: "accepted" });
 });
+
+test("rechecks payload identity when a receipt appears during a status read", async () => {
+  const { requests } = await fixture();
+  const identity = { agentId: "agent", messageId: "racing", request: { text: "Never sent" } };
+  await expect(
+    requests.getStatus({
+      ...identity,
+      isAccepted: async () => {
+        await requests.send({
+          ...identity,
+          request: { text: "Actually sent" },
+          send: async (before) => {
+            await before();
+          },
+        });
+        return false;
+      },
+    }),
+  ).rejects.toThrow("agent_request_key_conflict");
+});
