@@ -14,18 +14,19 @@ const BASE_RECORD: StoredAgentRecord = {
   config: null,
 };
 
+const ARCHIVE = {
+  archivedAt: "2025-01-03T00:00:00.000Z",
+  updatedAt: "2025-01-03T00:00:00.000Z",
+};
+
 test("archives a stored agent without changing terminal statuses", () => {
   const statuses: Array<StoredAgentRecord["lastStatus"]> = ["idle", "error", "closed"];
 
   for (const status of statuses) {
-    const archived = buildArchivedAgentRecord(
-      { ...BASE_RECORD, lastStatus: status },
-      { archivedAt: "2025-01-03T00:00:00.000Z" },
-    );
+    const archived = buildArchivedAgentRecord({ ...BASE_RECORD, lastStatus: status }, ARCHIVE);
 
     expect(archived.lastStatus).toBe(status);
     expect(archived.archivedAt).toBe("2025-01-03T00:00:00.000Z");
-    expect(archived.updatedAt).toBe(BASE_RECORD.updatedAt);
   }
 });
 
@@ -33,10 +34,7 @@ test("archives busy stored agents as idle", () => {
   const statuses: Array<StoredAgentRecord["lastStatus"]> = ["initializing", "running"];
 
   for (const status of statuses) {
-    const archived = buildArchivedAgentRecord(
-      { ...BASE_RECORD, lastStatus: status },
-      { archivedAt: "2025-01-03T00:00:00.000Z" },
-    );
+    const archived = buildArchivedAgentRecord({ ...BASE_RECORD, lastStatus: status }, ARCHIVE);
 
     expect(archived.lastStatus).toBe("idle");
   }
@@ -50,7 +48,7 @@ test("clears persisted attention when archiving", () => {
       attentionReason: "finished",
       attentionTimestamp: "2025-01-02T12:00:00.000Z",
     },
-    { archivedAt: "2025-01-03T00:00:00.000Z" },
+    ARCHIVE,
   );
 
   expect(archived).toMatchObject({
@@ -60,11 +58,19 @@ test("clears persisted attention when archiving", () => {
   });
 });
 
-test("can stamp updatedAt to the archive timestamp", () => {
-  const archived = buildArchivedAgentRecord(BASE_RECORD, {
-    archivedAt: "2025-01-03T00:00:00.000Z",
-    updatedAt: "2025-01-03T00:00:00.000Z",
-  });
+test("moves updatedAt to the archive time", () => {
+  const archived = buildArchivedAgentRecord(BASE_RECORD, ARCHIVE);
 
   expect(archived.updatedAt).toBe("2025-01-03T00:00:00.000Z");
+});
+
+test("keeps a later updatedAt when the archive time is earlier", () => {
+  // Putting an original archive back after a failed unarchive must not move updatedAt backwards.
+  const archived = buildArchivedAgentRecord(
+    { ...BASE_RECORD, updatedAt: "2025-01-04T00:00:00.000Z" },
+    ARCHIVE,
+  );
+
+  expect(archived.archivedAt).toBe("2025-01-03T00:00:00.000Z");
+  expect(archived.updatedAt).toBe("2025-01-04T00:00:00.000Z");
 });

@@ -377,8 +377,8 @@ function UnmodifiedGroupRow({
 
 export function DiffViewer({
   diffLines,
-  maxHeight,
   emptyLabel,
+  maxHeight,
   fillAvailableHeight = false,
 }: DiffViewerProps) {
   const { t } = useTranslation();
@@ -466,6 +466,10 @@ export function DiffViewer({
       {lines}
     </View>
   );
+
+  // Capped tool details own vertical scrolling outside the diff.
+  // Hover previews still pass maxHeight and scroll inside this view.
+  if (!fillAvailableHeight && maxHeight === undefined) return horizontalContent;
 
   return (
     <ScrollView

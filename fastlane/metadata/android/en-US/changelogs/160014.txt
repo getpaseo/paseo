@@ -1,0 +1,6 @@
+Fixed
+- Fixed Claude Bypass approving actions without a permission card when a permissions.ask rule or a hook that returns ask required one
+- Fixed controls being touch-sized on a touch-screen laptop when a trackpad or mouse is its primary input
+- Fixed Claude sessions failing until /login when Paseo refreshed the Claude model list while Claude Code was renewing an expired access token
+
+Full notes: https://paseo.sh/changelog
