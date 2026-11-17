@@ -15847,3 +15847,62 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("out-of-band agent delivery journals the original identity while a turn is running", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "out-of-band-acceptance-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class CommandSession extends TestAgentSession {
+    override async startTurn() {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId: "running-turn" });
+      return { turnId: "running-turn" };
+    }
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      return prompt === "/handled" ? { run: async () => {} } : null;
+    }
+  }
+  let session!: CommandSession;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      session = new CommandSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    messageAcceptanceStore: new MessageAcceptanceStore(join(workdir, "acceptance")),
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const delivery = createTestAgentMessages({
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+  });
+  const running = manager.runAgent(agent.id, "keep running");
+  try {
+    await manager.waitForAgentRunStart(agent.id);
+    const receipt = delivery.enqueue({
+      recipientId: agent.id,
+      messageId: "original-command",
+      prompt: "/handled",
+      source: { kind: "agent-message", agentId: "sender" },
+    });
+    await expect(receipt.dispatched).resolves.toBe("out_of_band");
+    await expect(
+      manager.hasAcceptedSubmittedMessage({
+        agentId: agent.id,
+        clientMessageId: "original-command",
+        prompt: "/handled",
+      }),
+    ).resolves.toBe(true);
+  } finally {
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "running-turn" });
+    await running;
+    await delivery.close();
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

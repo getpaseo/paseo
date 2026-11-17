@@ -732,7 +732,7 @@ export class VoiceAssistantWebSocketServer {
         agentManager.tryRunOutOfBand(
           request.recipientId,
           request.prompt,
-          { clientMessageId: request.messageIds[0] },
+          { clientMessageId: request.messageIds[0], submittedMessages: request.submittedMessages },
           onAccepted,
         ),
       isRunning: (agentId) => agentManager.hasInFlightRun(agentId),

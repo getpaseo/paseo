@@ -242,7 +242,6 @@ export class SessionTurns {
       this.finish(turn, snapshot, execution);
     } catch (error) {
       if (this.turn === turn) this.fail(new Error(toDiagnosticErrorMessage(error)));
-      throw error;
     }
   }
   private async dispatch(

@@ -19,7 +19,7 @@ export function createTestAgentMessages(params: {
       params.agentManager.tryRunOutOfBand(
         request.recipientId,
         request.prompt,
-        { clientMessageId: request.messageIds[0] },
+        { clientMessageId: request.messageIds[0], submittedMessages: request.submittedMessages },
         onAccepted,
       ),
     isRunning: (agentId) => params.agentManager.hasInFlightRun(agentId),

@@ -2153,3 +2153,27 @@ test("turn start rejects discovery failures before sending a native prompt", asy
     await client.shutdown();
   }
 });
+
+test("terminal output validation failure during Stop leaves OpenCode able to start another turn", async () => {
+  const harness = new V2Harness();
+  harness.autoComplete = false;
+  harness.interrupt = async () => {
+    harness.finishExecution("succeeded");
+    return { interrupted: false };
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("produce structured output", { outputSchema: { type: "object" } });
+    await expect(session.interrupt()).resolves.toBeUndefined();
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+    await expect(session.startTurn("next prompt")).resolves.toEqual({ turnId: expect.any(String) });
+  } finally {
+    await session.close();
+  }
+});
