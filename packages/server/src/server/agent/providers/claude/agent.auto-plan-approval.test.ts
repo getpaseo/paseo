@@ -182,6 +182,7 @@ test.each([
     "an organization's ask limit",
     { decisionReasonType: "workingDir", decisionReasonCode: "org_ask_ceiling" },
   ],
+  ["a sandbox override the user's read block raised", { decisionReasonType: "sandboxOverride" }],
   ["a Claude Code that does not say why it asks", {}],
 ])("bypass still asks the user about %s", async (_source, why) => {
   const { session, events, requestPermission } = await createBypassSession();

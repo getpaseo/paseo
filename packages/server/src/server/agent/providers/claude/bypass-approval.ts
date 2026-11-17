@@ -7,11 +7,11 @@ type PermissionOptions = Parameters<CanUseTool>[2];
 // needs an answer, or when one of its own checks fires. Bypass approves only Claude's own
 // checks. A missing or unknown reason type stays with the user.
 // `subcommandResults` is left out: a compound or piped command uses it as a container,
-// including when a user's ask rule matched one of its parts.
+// including when a user's ask rule matched one of its parts. `sandboxOverride` is left
+// out: in Bypass, Claude Code forwards it only when the user's read block or hook raised it.
 const CLAUDE_OWN_CHECK_TYPES: ReadonlySet<string> = new Set([
   "safetyCheck",
   "workingDir",
-  "sandboxOverride",
   "mode",
   "classifier",
   "asyncAgent",
