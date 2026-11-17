@@ -14,6 +14,7 @@ import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { getWorkspaceTabTestIds } from "../support/helpers/workspace-tabs";
 import {
+  archivedToast,
   archiveFromRowButton,
   createGatedTeardown,
   expectDirectoryPresence,
@@ -25,6 +26,7 @@ import {
   resizeSidebarToMinimum,
   rowArchiveButton,
   rowKebab,
+  scrollSidebarListToEnd,
   undoButton,
   workspaceRow,
   workspaceTitleWidth,
@@ -117,6 +119,41 @@ test.describe("Workspace archive undo", () => {
     ]);
     if (!labelBox || !shortcutBox) throw new Error("Undo button is not laid out");
     expect(shortcutBox.x - (labelBox.x + labelBox.width)).toBeLessThanOrEqual(8.5);
+  });
+
+  test("a long list ends just below its last row, and the toast over it moves no row", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: Date.now() });
+    const fillers: Array<{ path: string; cleanup: () => Promise<void> }> = [];
+    const fillerProjectIds: string[] = [];
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        const repo = await createTempGitRepo(`archive-toast-filler-${index}-`);
+        fillers.push(repo);
+        fillerProjectIds.push((await openProjectViaDaemon(client, repo.path)).projectId);
+      }
+      const worktree = await seedWorktree(page, "archive-toast-long-list");
+
+      const resting = await scrollSidebarListToEnd(page);
+      expect(resting.listBottom - resting.rowBottoms.at(-1)!).toBeLessThan(resting.rowHeight);
+
+      await archiveFromRowButton(page, worktree.workspaceId);
+      await page.mouse.move(0, 0);
+      const withToast = await scrollSidebarListToEnd(page);
+      const toastBox = await archivedToast(page).boundingBox();
+      if (!toastBox) throw new Error("Toast is not laid out");
+      expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(withToast.listBottom);
+
+      await outlastUndoWindow(page);
+      await expect(archivedToast(page)).toHaveCount(0);
+      expect(await scrollSidebarListToEnd(page)).toEqual(withToast);
+    } finally {
+      for (const projectId of fillerProjectIds) {
+        await client.removeProject(projectId).catch(() => undefined);
+      }
+      for (const repo of fillers) await repo.cleanup().catch(() => undefined);
+    }
   });
 
   test("an archive that fails after the sidebar was replaced still shows its error", async ({

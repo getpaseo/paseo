@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isPlatform } from "../test-utils/platform.js";
 import {
+  listenOnTerminalWorkerSocket,
   resolveTerminalWorkerSocketPath,
   TerminalWorkerSocketPathError,
 } from "./terminal-worker-socket-path.js";
@@ -25,7 +26,36 @@ function longHome(root: string): string {
   return home;
 }
 
-afterEach(() => {
+const openServers: Server[] = [];
+
+function listenFor(socketPath: string): Promise<Server> {
+  const server = createServer();
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      openServers.push(server);
+      resolve(server);
+    });
+  });
+}
+
+// Stands in for a filesystem that passes the directory checks but refuses AF_UNIX bind, as AFS
+// does with EPERM.
+function refuseBindUnder(directory: string, code: string) {
+  return (socketPath: string): Promise<Server> => {
+    if (socketPath.startsWith(directory + path.sep)) {
+      return Promise.reject(
+        Object.assign(new Error(`listen ${code}: ${socketPath}`), { code, syscall: "listen" }),
+      );
+    }
+    return listenFor(socketPath);
+  };
+}
+
+afterEach(async () => {
+  await Promise.all(
+    openServers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))),
+  );
   for (const dir of temporaryDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -139,6 +169,66 @@ describe.skipIf(isPlatform("win32"))("terminal worker socket path", () => {
       server.listen(socketPath, () => resolve());
     });
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe.skipIf(isPlatform("win32"))("terminal worker socket listen", () => {
+  it("falls back to the next directory when the home's filesystem refuses the bind", async () => {
+    const home = makeDir("tw-b-", "/tmp");
+    const tmpDir = makeDir("tw-t-", "/tmp");
+    const homeSocketDirectory = path.join(home, "terminal-worker", "sock");
+    const { socketPath, listener } = await listenOnTerminalWorkerSocket({
+      paseoHome: home,
+      recordId: "test",
+      workerPid: 11,
+      tmpDir,
+      listen: refuseBindUnder(homeSocketDirectory, "EPERM"),
+    });
+    expect(path.dirname(socketPath)).toBe(path.join(tmpDir, `paseo-${process.getuid!()}`));
+    expect(listener.address()).toBe(socketPath);
+  });
+
+  it("throws a listen error that does not mean the filesystem refuses sockets", async () => {
+    const home = makeDir("tw-u-", "/tmp");
+    const homeSocketDirectory = path.join(home, "terminal-worker", "sock");
+    await expect(
+      listenOnTerminalWorkerSocket({
+        paseoHome: home,
+        recordId: "test",
+        workerPid: 12,
+        tmpDir: makeDir("tw-t-", "/tmp"),
+        listen: refuseBindUnder(homeSocketDirectory, "EADDRINUSE"),
+      }),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+  });
+
+  it("names every candidate's bind error when no directory accepts a socket", async () => {
+    const home = makeDir("tw-n-", "/tmp");
+    const tmpDir = makeDir("tw-t-", "/tmp");
+    let caught: unknown;
+    try {
+      await listenOnTerminalWorkerSocket({
+        paseoHome: home,
+        recordId: "test",
+        workerPid: 13,
+        tmpDir,
+        listen: refuseBindUnder("", "EPERM"),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TerminalWorkerSocketPathError);
+    const rejected = (caught as TerminalWorkerSocketPathError).rejected;
+    expect(rejected.slice(0, 2)).toEqual([
+      expect.objectContaining({
+        path: expect.stringContaining(path.join(home, "terminal-worker", "sock")),
+        reason: "cannot bind a socket here (EPERM)",
+      }),
+      expect.objectContaining({
+        path: expect.stringContaining(path.join(tmpDir, `paseo-${process.getuid!()}`)),
+        reason: "cannot bind a socket here (EPERM)",
+      }),
+    ]);
   });
 });
 

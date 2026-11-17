@@ -8,6 +8,7 @@ private let hardwareShortcutEventName = "onHardwareKeyboardShortcut"
 private weak var activeModule: PaseoHardwareKeyboardModule?
 private var isHardwareSubmitEnabled = false
 private var overlayKeys: Set<String> = []
+private var claimedShortcuts: [ClaimedShortcut] = []
 
 /// UIKit spells non-character keys as sentinel input strings rather than as the
 /// character they would type. JS sends the DOM `code` and the mapping lives
@@ -18,6 +19,42 @@ private let namedKeyInputs: [String: String] = [
   "ArrowDown": UIKeyCommand.inputDownArrow,
   "Enter": "\r",
 ]
+
+/// A shortcut the window takes from the focused text control: Shift+Tab would
+/// otherwise insert a tab, and Option+Shift+[ would type a quote.
+private struct ClaimedShortcut {
+  let input: String
+  let modifierFlags: UIKeyModifierFlags
+}
+
+struct ClaimedShortcutRecord: Record {
+  @Field var code: String = ""
+  @Field var shift: Bool = false
+  @Field var alt: Bool = false
+}
+
+private let claimableKeyInputs: [String: String] = [
+  "Tab": "\t", "Space": " ", "Enter": "\r", "Escape": UIKeyCommand.inputEscape,
+  "ArrowUp": UIKeyCommand.inputUpArrow, "ArrowDown": UIKeyCommand.inputDownArrow,
+  "ArrowLeft": UIKeyCommand.inputLeftArrow, "ArrowRight": UIKeyCommand.inputRightArrow,
+  "Minus": "-", "Equal": "=", "BracketLeft": "[", "BracketRight": "]", "Backslash": "\\",
+  "Semicolon": ";", "Quote": "'", "Backquote": "`", "Comma": ",", "Period": ".", "Slash": "/",
+]
+
+/// UIKit matches a key command against the unmodified character, so
+/// Option+Shift+[ is registered as "[" with both modifier flags.
+private func claimedShortcut(_ record: ClaimedShortcutRecord) -> ClaimedShortcut? {
+  let code = record.code
+  let input: String?
+  if code.count == 4 && code.hasPrefix("Key") { input = code.suffix(1).lowercased() }
+  else if code.count == 6 && code.hasPrefix("Digit") { input = String(code.suffix(1)) }
+  else { input = claimableKeyInputs[code] }
+  guard let input else { return nil }
+  var modifierFlags: UIKeyModifierFlags = []
+  if record.shift { modifierFlags.insert(.shift) }
+  if record.alt { modifierFlags.insert(.alternate) }
+  return ClaimedShortcut(input: input, modifierFlags: modifierFlags)
+}
 
 /// Whether the first responder is mid-IME-composition.
 ///
@@ -62,6 +99,14 @@ public class PaseoHardwareKeyboardModule: Module {
       }
     }
 
+    Function("setClaimedShortcuts") { (shortcuts: [ClaimedShortcutRecord]) in
+      let claimed = shortcuts.compactMap(claimedShortcut)
+      DispatchQueue.main.async {
+        claimedShortcuts = claimed
+        UIMenuSystem.main.setNeedsRebuild()
+      }
+    }
+
     OnDestroy {
       self.keyboardObservers.forEach(NotificationCenter.default.removeObserver)
       self.keyboardObservers = []
@@ -69,6 +114,7 @@ public class PaseoHardwareKeyboardModule: Module {
         activeModule = nil
         isHardwareSubmitEnabled = false
         overlayKeys = []
+        claimedShortcuts = []
       }
     }
   }
@@ -139,7 +185,10 @@ public final class PaseoHardwareKeyboardWindow: UIWindow {
     {
       commands.append(makeSubmitCommand())
     }
-    if !isComposingText() { commands.append(contentsOf: overlayKeys.compactMap(makeShortcutCommand)) }
+    if !isComposingText() {
+      commands.append(contentsOf: overlayKeys.compactMap(makeShortcutCommand))
+      commands.append(contentsOf: claimedShortcuts.map(makeClaimedCommand))
+    }
     return commands
   }
 
@@ -168,6 +217,18 @@ public final class PaseoHardwareKeyboardWindow: UIWindow {
   private func makeShortcutCommand(_ key: String) -> UIKeyCommand? {
     guard let input = namedKeyInputs[key] else { return nil }
     let command = UIKeyCommand(input: input, modifierFlags: [], action: #selector(handleHardwareKeyboardShortcut(_:)))
+    if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
+    return command
+  }
+
+  /// The window's press stream still emits the shortcut; the command only keeps
+  /// the key away from the text control.
+  private func makeClaimedCommand(_ shortcut: ClaimedShortcut) -> UIKeyCommand {
+    let command = UIKeyCommand(
+      input: shortcut.input,
+      modifierFlags: shortcut.modifierFlags,
+      action: #selector(handleHardwareKeyboardShortcut(_:))
+    )
     if #available(iOS 15.0, *) { command.wantsPriorityOverSystemBehavior = true }
     return command
   }

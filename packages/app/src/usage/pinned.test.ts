@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UsagePreferences } from "./preferences";
+import { DEFAULT_USAGE_PREFERENCES, type UsagePreferences } from "./preferences";
 import {
   choosePinnedUsageLayout,
   resolvePinnedUsage,
@@ -49,7 +49,7 @@ function preferences(
   pinned: UsagePreferences["pins"],
   displayAs: UsagePreferences["displayAs"] = "used",
 ): UsagePreferences {
-  return { displayAs, pins: pinned, serverId: null };
+  return { ...DEFAULT_USAGE_PREFERENCES, displayAs, pins: pinned };
 }
 
 describe("choosePinnedUsageLayout", () => {
@@ -114,7 +114,7 @@ describe("resolvePinnedUsage", () => {
     ]);
   });
 
-  it("groups pinned windows by source in report order, not pin order", () => {
+  it("lists pinned windows in card order, not pin order", () => {
     const work = report({
       sourceId: "claude",
       sourceLabel: "Claude",
@@ -139,6 +139,7 @@ describe("resolvePinnedUsage", () => {
     expect(sources[0]).toEqual({
       key: "claude:default",
       icon: "<svg/>",
+      hasError: false,
       windows: [
         {
           key: "claude:default/five-hour",
@@ -158,6 +159,28 @@ describe("resolvePinnedUsage", () => {
         },
       ],
     });
+  });
+
+  it("follows the arranged card order, even when it separates a source's accounts", () => {
+    const work = report({
+      sourceId: "claude",
+      sourceLabel: "Claude",
+      account: "work",
+      windows: [{ id: "weekly", label: "Weekly", usedPct: 90 }],
+    });
+    const sources = resolvePinnedUsage([claude, codex, work], {
+      ...preferences([
+        { sourceId: "claude", windowId: "weekly" },
+        { sourceId: "codex", windowId: "weekly" },
+      ]),
+      cardOrder: ["claude:default", "codex:default", "claude:work"],
+    });
+
+    expect(sources.map((source) => source.key)).toEqual([
+      "claude:default",
+      "codex:default",
+      "claude:work",
+    ]);
   });
 
   it("names a window by its label when the source gives no short label", () => {
@@ -257,7 +280,7 @@ describe("resolvePinnedUsage", () => {
   });
 });
 
-it("keeps unavailable and error reports out of the sidebar summary even with retained data", () => {
+it("shows retained windows and marks errored sources in the sidebar summary", () => {
   if (claude.report.status !== "available" || codex.report.status !== "available")
     throw new Error("fixtures must be available");
   const expired: UsageReportEntry = {
@@ -273,7 +296,30 @@ it("keeps unavailable and error reports out of the sidebar summary even with ret
     lastSuccessful: { fetchedAt: codex.fetchedAt, report: codex.report },
     report: { status: "error", error: "Store deleted" },
   };
-  expect(resolvePinnedUsage([expired, failed], preferences(null))).toEqual([]);
+  const expected = [
+    { key: "claude:default", hasError: false, windows: ["31%"] },
+    { key: "codex:default", hasError: true, windows: ["12%"] },
+  ];
+  const summarize = (pins: UsagePreferences["pins"]) =>
+    resolvePinnedUsage([expired, failed], preferences(pins)).map((source) => ({
+      key: source.key,
+      hasError: source.hasError,
+      windows: source.windows.map((window) => window.percentText),
+    }));
+
+  expect(summarize(null)).toEqual(expected);
+  expect(
+    summarize([
+      { sourceId: "claude", windowId: "five-hour" },
+      { sourceId: "codex", windowId: "weekly" },
+    ]),
+  ).toEqual(expected);
+  expect(
+    resolvePinnedUsage(
+      [{ ...failed, lastSuccessful: undefined }],
+      preferences([{ sourceId: "codex", windowId: "weekly" }]),
+    ),
+  ).toEqual([]);
 });
 
 it("localizes pinned labels and meanings while preserving custom window names", async () => {

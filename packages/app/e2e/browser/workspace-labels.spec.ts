@@ -73,35 +73,36 @@ function labelRow(page: import("@playwright/test").Page, name: string) {
   return page.getByTestId(`workspace-label-picker-row-${name}`);
 }
 
-async function box(locator: import("@playwright/test").Locator) {
-  const measured = await locator.boundingBox();
-  if (!measured) throw new Error("expected a visible element to measure");
-  return measured;
-}
-
 async function size(locator: import("@playwright/test").Locator) {
-  await settled(locator);
-  const { width, height } = await box(locator);
+  const { width, height } = await settled(locator);
   return { width, height };
 }
 
 /**
- * Waits until an element stops moving.
+ * Waits until an element is on screen and stops moving, and returns where it settled.
  *
  * The flyout scales in and the sidebar behind it re-lays out as the filter changes, so a rail
  * measured mid-animation is not a rail — and a measurement built from two `boundingBox()` calls
- * would take its two halves from two different frames.
+ * would take its two halves from two different frames. A row that has not been laid out yet has
+ * no box at all; that is not settled either, so the poll keeps waiting instead of failing.
  */
 async function settled(locator: import("@playwright/test").Locator) {
-  let previous = "";
+  const last: { box: Awaited<ReturnType<typeof locator.boundingBox>>; key: string | null } = {
+    box: null,
+    key: null,
+  };
   await expect
     .poll(async () => {
-      const current = JSON.stringify(await box(locator));
-      const stable = current === previous;
-      previous = current;
+      const current = await locator.boundingBox();
+      const key = current ? JSON.stringify(current) : null;
+      const stable = key !== null && key === last.key;
+      last.box = current;
+      last.key = key;
       return stable;
     })
     .toBe(true);
+  if (!last.box) throw new Error("a settled element has a box");
+  return last.box;
 }
 
 async function expectAssigned(
