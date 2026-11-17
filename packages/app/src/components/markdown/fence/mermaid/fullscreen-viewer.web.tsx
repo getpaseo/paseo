@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ZoomableViewport } from "@/components/zoomable-viewport";
 import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
+import { WindowSafeArea } from "@/window-layout";
 import { MermaidIframeRuntime, type MermaidRenderedMessage } from "./iframe-runtime.web";
 import type { DiagramColorScheme } from "./render-model";
 import { useMermaidRenderModel } from "./use-render-model";
@@ -23,11 +24,25 @@ interface MermaidFullscreenViewerProps {
 const FALLBACK_SIZE = { width: 240, height: 240 };
 const VIEWER_FIT = { padding: SPACING[6] };
 
-export function MermaidFullscreenViewer({
-  source,
-  colorScheme,
-  onClose,
-}: MermaidFullscreenViewerProps) {
+export function MermaidFullscreenViewer(props: MermaidFullscreenViewerProps) {
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      visible
+      onRequestClose={props.onClose}
+    >
+      {/* The modal draws over the whole window: its insets are the window's, not the ones left
+          where the diagram was opened (wide layouts spend the top one above the content). */}
+      <WindowSafeArea>
+        <MermaidFullscreenContent {...props} />
+      </WindowSafeArea>
+    </Modal>
+  );
+}
+
+function MermaidFullscreenContent({ source, colorScheme, onClose }: MermaidFullscreenViewerProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const { state, request, rendered, renderFailed } = useMermaidRenderModel({
@@ -93,35 +108,33 @@ export function MermaidFullscreenViewer({
   );
 
   return (
-    <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
-      <WindowChromeRootRegion corners="both">
-        <View style={styles.root}>
-          <View style={styles.backdrop} />
-          <View style={contentLayerStyle}>
-            {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focus holder for the Escape shortcut */}
-            <div ref={contentLayerRef} style={focusLayerDomStyle} tabIndex={-1}>
-              <ZoomableViewport
-                accessibilityLabel={t("message.diagram.diagram")}
-                actions={actions}
-                contentSize={contentSize}
-                fit={VIEWER_FIT}
-                minScale={1}
-                onPressOutsideContent={onClose}
-                style={styles.viewport}
-                testID="mermaid-fullscreen-viewport"
-                wheelActivation="always"
-              >
-                <MermaidIframeRuntime
-                  request={request}
-                  onRendered={handleRendered}
-                  onRenderFailed={renderFailed}
-                />
-              </ZoomableViewport>
-            </div>
-          </View>
+    <WindowChromeRootRegion corners="both">
+      <View style={styles.root}>
+        <View style={styles.backdrop} />
+        <View style={contentLayerStyle}>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focus holder for the Escape shortcut */}
+          <div ref={contentLayerRef} style={focusLayerDomStyle} tabIndex={-1}>
+            <ZoomableViewport
+              accessibilityLabel={t("message.diagram.diagram")}
+              actions={actions}
+              contentSize={contentSize}
+              fit={VIEWER_FIT}
+              minScale={1}
+              onPressOutsideContent={onClose}
+              style={styles.viewport}
+              testID="mermaid-fullscreen-viewport"
+              wheelActivation="always"
+            >
+              <MermaidIframeRuntime
+                request={request}
+                onRendered={handleRendered}
+                onRenderFailed={renderFailed}
+              />
+            </ZoomableViewport>
+          </div>
         </View>
-      </WindowChromeRootRegion>
-    </Modal>
+      </View>
+    </WindowChromeRootRegion>
   );
 }
 
@@ -135,7 +148,11 @@ const focusLayerDomStyle: React.CSSProperties = {
 
 const styles = StyleSheet.create((theme) => ({
   root: { flex: 1, minHeight: 0, minWidth: 0 },
-  backdrop: { position: "absolute", inset: 0, backgroundColor: theme.colors.surface0 },
+  backdrop: {
+    position: "absolute",
+    inset: 0,
+    backgroundColor: theme.colors.surface0,
+  },
   contentLayer: { position: "absolute", inset: 0 },
   viewport: { flex: 1 },
 }));
