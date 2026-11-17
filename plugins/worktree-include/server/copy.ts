@@ -23,14 +23,19 @@ async function git(cwd: string, args: string[], input?: string): Promise<string>
   return stdout;
 }
 
-async function gitAllowExit1(cwd: string, args: string[], input: string): Promise<string> {
+// `git check-ignore --stdin` reads each path as a pathspec, so a name such as `:(x`
+// would be parsed as pathspec magic. A `./` prefix keeps every path literal.
+async function checkIgnore(cwd: string, args: string[], paths: string[]): Promise<string[]> {
+  const input = paths.map((path) => `./${path}\0`).join("");
+  let output: string;
   try {
-    return await git(cwd, args, input);
+    output = await git(cwd, [...args, "check-ignore", "--stdin", "-z"], input);
   } catch (error) {
     // `git check-ignore` exits 1 when nothing matched.
-    if ((error as { code?: number }).code === 1) return "";
+    if ((error as { code?: number }).code === 1) return [];
     throw error;
   }
+  return splitNul(output).map((path) => path.replace(/^\.\//, ""));
 }
 
 const splitNul = (s: string) => s.split("\0").filter(Boolean);
@@ -44,9 +49,7 @@ export async function copyWorktreeIncludes(worktree: string, source: string): Pr
   const matches = await findIncludedFiles(source);
   if (matches.length === 0) return { kind: "copied", copied: [], skipped: [] };
 
-  const ignored = splitNul(
-    await gitAllowExit1(source, ["check-ignore", "--stdin", "-z"], matches.join("\0") + "\0"),
-  );
+  const ignored = await checkIgnore(source, [], matches);
 
   const copied: string[] = [];
   const skipped: string[] = [];
@@ -117,20 +120,12 @@ async function findIncludedFiles(source: string): Promise<string[]> {
 async function matchIncludePatterns(source: string, entries: string[]): Promise<string[]> {
   const scratch = await mkdtemp(join(tmpdir(), "paseo-worktree-include-"));
   try {
-    await git(scratch, ["init", "-q"]);
-    return splitNul(
-      await gitAllowExit1(
-        scratch,
-        [
-          "-c",
-          `core.excludesFile=${join(source, INCLUDE_FILE)}`,
-          "check-ignore",
-          "--no-index",
-          "--stdin",
-          "-z",
-        ],
-        entries.join("\0") + "\0",
-      ),
+    // An empty template keeps the user's template `info/exclude` out of the matching.
+    await git(scratch, ["init", "-q", "--template="]);
+    return await checkIgnore(
+      scratch,
+      ["-c", `core.excludesFile=${join(source, INCLUDE_FILE)}`],
+      entries,
     );
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -146,13 +141,14 @@ function parsePatterns(contents: string): string[] {
 
 // A pattern with a slash before its end is anchored to the checkout root, so it can
 // name a path inside `directory` when its literal start and the directory overlap.
-// Returns the narrowest path to search: the folder the pattern names inside
-// `directory`, or `directory` itself.
+// Returns the narrowest path to search: the whole path when the pattern has no glob,
+// else the folder before its first glob, or `directory` itself when the path ends above it.
 function searchedPathInside(pattern: string, directory: string): string | null {
   const path = pattern.replace(/^\//, "");
   if (!path.replace(/\/$/, "").includes("/")) return null;
-  const literal = path.slice(0, path.search(/[*?[\\]|$/));
+  const globAt = path.search(/[*?[\\]/);
+  const literal = globAt === -1 ? path : path.slice(0, globAt);
   if (!literal.startsWith(directory) && !directory.startsWith(literal)) return null;
-  const literalFolder = literal.slice(0, literal.lastIndexOf("/") + 1);
-  return literalFolder.length > directory.length ? literalFolder : directory;
+  const searched = globAt === -1 ? literal : literal.slice(0, literal.lastIndexOf("/") + 1);
+  return searched.length > directory.length ? searched : directory;
 }

@@ -17,6 +17,23 @@ async function writeSource(files: Record<string, string>): Promise<void> {
   }
 }
 
+// Total directories Git visits while listing files, read from its trace2 events.
+async function directoriesVisited(run: () => Promise<unknown>): Promise<number> {
+  const trace = join(root, "trace.json");
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    await run();
+  } finally {
+    delete process.env.GIT_TRACE2_EVENT;
+  }
+  return (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; key?: string; value?: string })
+    .filter((event) => event.event === "data" && event.key === "directories-visited")
+    .reduce((total, event) => total + Number(event.value), 0);
+}
+
 async function copied(): Promise<string[]> {
   const result = await copyWorktreeIncludes(worktree, source);
   if (result.kind !== "copied") throw new Error(`expected a copy, got ${result.kind}`);
@@ -69,7 +86,11 @@ describe("copyWorktreeIncludes", () => {
     });
 
     const result = await copyWorktreeIncludes(worktree, source);
-    expect(result).toEqual({ kind: "copied", copied: ["new-package/.env"], skipped: [] });
+    expect(result).toEqual({
+      kind: "copied",
+      copied: ["new-package/.env"],
+      skipped: [],
+    });
   });
 
   it("copies a path a pattern names inside an ignored directory", async () => {
@@ -126,5 +147,62 @@ describe("copyWorktreeIncludes", () => {
     });
 
     expect(await copied()).toEqual([]);
+  });
+
+  it("searches only the path a glob-free pattern names directly inside an ignored directory", async () => {
+    const packages: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) packages[`node_modules/pkg${i}/lib/index.js`] = "code";
+    await writeSource({
+      ".gitignore": "node_modules/\n",
+      ".worktreeinclude": "node_modules/.cache\n",
+      "node_modules/.cache/state.json": "cache",
+      ...packages,
+    });
+
+    let result: Awaited<ReturnType<typeof copyWorktreeIncludes>> | undefined;
+    const visited = await directoriesVisited(async () => {
+      result = await copyWorktreeIncludes(worktree, source);
+    });
+
+    expect(result).toEqual({
+      kind: "copied",
+      copied: ["node_modules/.cache/state.json"],
+      skipped: [],
+    });
+    expect(visited).toBeLessThan(10);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "copies includes when an ignored file is named like a Git pathspec",
+    async () => {
+      await writeSource({
+        ".gitignore": "*.log\n.env\n",
+        ".worktreeinclude": ".env\n",
+        ".env": "SECRET=root",
+        ":(oops.log": "log",
+        ":!c.log": "log",
+      });
+
+      expect(await copied()).toEqual([".env"]);
+    },
+  );
+
+  it("ignores exclude patterns from the user's git template", async () => {
+    const template = join(root, "template");
+    await mkdir(join(template, "info"), { recursive: true });
+    await writeFile(join(template, "info", "exclude"), "*.log\n");
+    await writeSource({
+      ".gitignore": "*.log\n.env\n",
+      ".worktreeinclude": ".env\n",
+      ".env": "SECRET=root",
+      "debug.log": "log",
+    });
+
+    process.env.GIT_TEMPLATE_DIR = template;
+    try {
+      expect(await copied()).toEqual([".env"]);
+    } finally {
+      delete process.env.GIT_TEMPLATE_DIR;
+    }
   });
 });

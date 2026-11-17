@@ -36,7 +36,7 @@ config/*.local.json
 
 模式只会选择 Git 已忽略的文件。在此添加路径不会使 Git 忽略该文件，需要时还应配置 `.gitignore`。已跟踪的文件和未被 Git 忽略的未跟踪文件都不会被复制。
 
-对于被 Git 整体忽略的目录（例如 `node_modules/`），除非某个模式指明了该目录或其中的路径，否则 Paseo 不会在其中查找。像 `.env` 这样的纯文件名会匹配 `.env` 和 `apps/web/.env`，但不会匹配 `node_modules/pkg/.env`。要从被忽略的目录中复制文件，请在模式中写出该目录，例如 `node_modules/pkg/.env` 或 `.secrets/`。以 `**/` 开头的模式（例如 `**/.env`）会在所有被忽略的目录中查找，包括 `node_modules/`，因此目录较大时请直接写出目录。
+对于被 Git 整体忽略的目录（例如 `node_modules/`），除非某个模式指明了该目录或其中的路径，否则 Paseo 不会在其中查找。像 `.env` 这样的纯文件名会匹配 `.env` 和 `apps/web/.env`，但不会匹配 `node_modules/pkg/.env`。要从被忽略的目录中复制文件，请在模式中写出该目录，例如 `node_modules/pkg/.env` 或 `.secrets/`。第一级目录名中带有通配符的模式（例如 `**/.env` 或 `*/.env`）会在所有被忽略的目录中查找，包括 `node_modules/`，因此目录较大时请直接写出目录。
 
 ## 文件复制时机 {#when-files-are-copied}
 
