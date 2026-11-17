@@ -82,7 +82,7 @@ const tool = defineAgentTool({
 export default function contribute(server) {
   server.addHook("agent.open.before", async ({ request }) => {
     if (request.labels.x !== "y") return;
-    return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, reason: request.reason }) }, tools: [...request.tools, tool] };
+    return { ...request, env: { ...request.env, OPEN_INFO: JSON.stringify({ title: request.title, labels: request.labels, metadata: request.metadata, background: request.background, reason: request.reason }) }, tools: [...request.tools, tool] };
   });
   return () => {};
 }
@@ -170,6 +170,8 @@ test("session hooks attach tools only to matching agents over MCP, with validate
     expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toEqual({
       title: "Chosen title",
       labels: { x: "y" },
+      metadata: {},
+      background: false,
       reason: "create",
     });
     const mcpA = await h.mcp();
@@ -252,6 +254,8 @@ test("resume uses the stored title and labels, and close removes the attachment"
     expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toEqual({
       title: "Stored title",
       labels: { x: "y" },
+      metadata: {},
+      background: false,
       reason: "resume",
     });
     expect(h.launches.at(-1)!.context!.paseoTools!.getTool("plugin_echo")?.name).toBe(
@@ -635,7 +639,12 @@ test("a plugin can reload an agent through the SDK and rerun session hooks with 
       id: a.id,
     });
     expect(h.launches).toHaveLength(2);
-    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO).reason).toBe("refresh");
+    expect(JSON.parse(h.launches.at(-1)!.context!.env!.OPEN_INFO)).toMatchObject({
+      labels: { x: "y" },
+      metadata: {},
+      background: false,
+      reason: "refresh",
+    });
     expect(h.launches.at(-1)!.context!.paseoTools!.getTool("plugin_echo")?.name).toBe(
       "plugin_echo",
     );
@@ -663,6 +672,124 @@ test("starting and stopping a session-hook plugin each causes one idle reopen", 
     expect(h.launches).toHaveLength(3);
     expect(h.events.interrupts).toBe(0);
   } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("an unchanged session-open hook does not reopen an idle provider session", async () => {
+  const source = (value: string) => `
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    return { ...request, env: { ...request.env, STABLE: ${JSON.stringify(value)} } };
+  });
+  return () => {};
+}
+`;
+  const h = await setup(false, source("1"));
+  try {
+    const agent = await h.create();
+    expect(h.launches.at(-1)!.context!.env!.STABLE).toBe("1");
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, agent.id, "after the same hook");
+    expect(h.launches).toHaveLength(1);
+    await writeFile(path.join(h.directory, "tools-test", "index.server.ts"), source("2"));
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, agent.id, "after the hook changes");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context!.env!.STABLE).toBe("2");
+    expect(h.events.interrupts).toBe(0);
+  } finally {
+    await h.close();
+  }
+}, 60_000);
+
+test("tool schema changes in session-open hooks reopen an idle provider session", async () => {
+  const configFile = path.join(tmpdir(), `tool-config-${Date.now()}.json`);
+  await writeFile(configFile, JSON.stringify({ description: "v1" }));
+  const source = `
+import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => {
+    const config = JSON.parse(readFileSync(${JSON.stringify(configFile)}, "utf8"));
+    const tool = defineAgentTool({
+      name: "dynamic_tool",
+      description: config.description,
+      input: z.object({ query: z.string() }),
+      async execute() { return { text: "ok" }; },
+    });
+    return {
+      ...request,
+      tools: [...request.tools, tool],
+    };
+  });
+  return () => {};
+}
+`;
+  const h = await setup(false, source);
+  try {
+    await h.install(
+      "unrelated-plugin",
+      "export default function contribute(server) { server.addHook('agent.open.before', async ({ request }) => request); return () => {}; }",
+    );
+    const agent = await h.create();
+    expect(h.launches).toHaveLength(1);
+
+    await h.client.reloadPlugin("unrelated-plugin");
+    await sendAndFinish(h, agent.id, "after unrelated reload with same tool schema");
+    expect(h.launches).toHaveLength(1);
+
+    await writeFile(configFile, JSON.stringify({ description: "v2" }));
+    await h.client.reloadPlugin("unrelated-plugin");
+    await sendAndFinish(h, agent.id, "after tool description changed");
+    expect(h.launches).toHaveLength(2);
+    expect(
+      await (
+        await h.mcp(agent.id)
+      ).callTool({ name: "dynamic_tool", arguments: { query: "test" } }),
+    ).toMatchObject({
+      content: [{ type: "text", text: "ok" }],
+    });
+  } finally {
+    await rm(configFile, { force: true });
+    await h.close();
+  }
+}, 60_000);
+
+test("required session reloads execute session-open hooks only once", async () => {
+  const source = (callLogFile: string, value: string) => `
+import { appendFileSync } from "node:fs";
+export default function contribute(server) {
+  let calls = 0;
+  server.addHook("agent.open.before", async ({ request }) => {
+    appendFileSync(${JSON.stringify(callLogFile)}, "call\\n");
+    return {
+      ...request,
+      env: { ...request.env, VALUE: ${JSON.stringify(value)}, HOOK_CALL: String(++calls) },
+    };
+  });
+  return () => {};
+}
+`;
+  const logFile = path.join(tmpdir(), `session-open-calls-${Date.now()}.log`);
+  const h = await setup(false, source(logFile, "v1"));
+  try {
+    const agent = await h.create();
+    let calls = (await readFile(logFile, "utf8")).trim().split("\n").length;
+    expect(calls).toBe(1);
+    expect(h.launches.at(-1)!.context!.env!.HOOK_CALL).toBe("1");
+
+    await writeFile(path.join(h.directory, "tools-test", "index.server.ts"), source(logFile, "v2"));
+    await h.client.reloadPlugin("tools-test");
+    await sendAndFinish(h, agent.id, "prompt needing reload");
+    expect(h.launches).toHaveLength(2);
+    expect(h.launches.at(-1)!.context!.env!.HOOK_CALL).toBe("1");
+
+    calls = (await readFile(logFile, "utf8")).trim().split("\n").length;
+    expect(calls).toBe(2);
+  } finally {
+    await rm(logFile, { force: true });
     await h.close();
   }
 }, 60_000);
@@ -858,7 +985,7 @@ test("installing and disabling an MCP plugin reopens idle sessions before their 
   }
 }, 60_000);
 
-test("installing and disabling an MCP plugin never interrupts a running turn", async () => {
+test("installing and disabling an MCP plugin during a turn leaves the provider session running", async () => {
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
@@ -885,7 +1012,7 @@ test("installing and disabling an MCP plugin never interrupts a running turn", a
     release();
     await expect.poll(() => manager.hasInFlightRun(a.id)).toBe(false);
     await sendAndFinish(h, a.id, "idle");
-    expect(h.launches).toHaveLength(2);
+    expect(h.launches).toHaveLength(1);
     expect(h.launches.at(-1)!.config.mcpServers?.company).toBeUndefined();
   } finally {
     release();

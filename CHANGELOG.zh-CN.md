@@ -14,6 +14,7 @@
 - 修复将对话标记为已读失败后，错误提示一直不关闭的问题 ([#9837](https://github.com/getpaseo/paseo/pull/9837))
 - 修复 daemon 重启后，等待结果和完成通知把 Agent 自行开始的回复与上一条回复拼接在一起的问题 ([#9846](https://github.com/getpaseo/paseo/pull/9846))
 - 修复客户端仅为读取历史而打开的 Codex 对话一直加载在 daemon 中直到重启的问题 ([#9859](https://github.com/getpaseo/paseo/pull/9859)，贡献者：[@Spshulem](https://github.com/Spshulem))
+- 会话打开钩子重载后如果没有改变 env、工具或 MCP 服务器，就保持当前 provider 进程，不再为下一条消息关掉它 ([#8269](https://github.com/getpaseo/paseo/pull/8269))
 
 ## 0.16.0 - 2026-11-16
 
