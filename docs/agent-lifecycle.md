@@ -276,16 +276,24 @@ sent right behind its archive still cancels it.
 
 An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
 the agents that archive itself archived. Deleting the worktree directory is the point of no
-return: an undo after it recreates the worktree through workspace recovery. Recovery checks out
-the workspace's branch, which stays in the repository. A worktree on a detached HEAD has no
-branch to come back to, so before deleting its directory the archive records HEAD as
-`refs/paseo/archived/<workspaceId>`. The ref keeps git's cleanup from deleting commits only that
-HEAD held, and recovery creates a new `restored/…` branch at it. Recovery reads the ref before the
-record's `branch`, which can still name the branch HEAD left. Every unarchive deletes the ref
-(Undo, Restore, or reopening the directory), so it exists only while the workspace is archived. The client shows or
+return: an undo after it recreates the worktree through workspace recovery. The client shows or
 hides the row by the latest local intent, so a late remove or upsert from a superseded request
 does not flip it back. Tabs and layout are purged only once the undo window closes with the
 archive committed.
+
+Before deleting the directory, the archive saves HEAD as one ref,
+`refs/paseo/archived/<hash of the directory path>/<name>`, whose value is HEAD's commit and
+whose `<name>` is `git rev-parse --abbrev-ref HEAD` (`feature`, or `HEAD` when detached). The ref
+keeps git's cleanup from deleting commits only that HEAD held. Recovery checks out the saved name
+when it still resolves to the saved commit and the saved commit otherwise, so git decides
+whether the worktree comes back on its branch or detached; restore never creates, moves, or
+deletes a branch. Paseo does not sort HEAD into kinds: the only place it reads the name is that
+check in `archived-head.ts`. The ref belongs to the directory, not to a workspace, because
+several workspaces can open one worktree. Every unarchive deletes it (Undo, Restore, or
+reopening the directory). A failed delete only logs, and the next archive of an active workspace
+drops what it left. With no saved HEAD (archived before saved HEADs existed, or the directory was
+already gone), recovery checks out the record's `branch`, or a new `restored/…` branch from the
+base.
 
 History navigation opens the selected agent without changing either archive state. Workspace
 **Unarchive**, **Restore**, Undo, and reopening the directory recover the agents closed by that

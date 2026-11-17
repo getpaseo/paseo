@@ -29,6 +29,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
+import { saveArchivedHead } from "./archived-head.js";
 import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js";
 
 const NOW = "2026-07-11T10:12:30.752Z";
@@ -395,6 +396,50 @@ test("restores a branchless workspace from its recorded base so work can continu
     }).trim(),
   );
 });
+
+test.each([
+  ["still names the branch HEAD left", "feature"],
+  ["names no branch", null],
+])(
+  "restores the HEAD archive saved, and does not describe a branch, when the record %s",
+  async (_label, recordedBranch) => {
+    const fixture = await createBaseRecoveryFixture("main");
+    const worktree = fixture.workspace.cwd;
+    execFileSync("git", ["checkout", "--detach"], { cwd: worktree, stdio: "pipe" });
+    writeFileSync(join(worktree, "detached.txt"), "detached\n");
+    execFileSync("git", ["add", "detached.txt"], { cwd: worktree, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "detached"], {
+      cwd: worktree,
+      stdio: "pipe",
+    });
+    const detachedCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: worktree,
+      encoding: "utf8",
+    }).trim();
+    await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+      ...workspace,
+      branch: recordedBranch,
+    }));
+    await saveArchivedHead({
+      worktreePath: worktree,
+      repoRoot: fixture.repoDir,
+      hadActiveWorkspace: true,
+    });
+    await fixture.archiveAndRemove();
+
+    const described = await fixture.service.inspect(fixture.workspace.workspaceId);
+    await fixture.service.restore(fixture.workspace.workspaceId);
+
+    expect({
+      described: described.kind === "recoverable" ? described.branch : "unavailable",
+      branch: execFileSync("git", ["branch", "--show-current"], {
+        cwd: worktree,
+        encoding: "utf8",
+      }).trim(),
+      head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim(),
+    }).toEqual({ described: null, branch: "", head: detachedCommit });
+  },
+);
 
 test("restores a branchless workspace from the repository default when its base is missing", async () => {
   const fixture = await createBaseRecoveryFixture("refs/heads/deleted-base");

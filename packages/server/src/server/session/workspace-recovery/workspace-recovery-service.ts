@@ -17,7 +17,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
-import { readArchivedCommit } from "./archived-commit.js";
+import { readArchivedHead, type ArchivedHead } from "./archived-head.js";
 
 export type WorkspaceRecoveryAction = "unarchive" | "restore";
 
@@ -58,7 +58,15 @@ type RecoveryPlan =
       state: Extract<WorkspaceRecoveryState, { kind: "recoverable" }>;
       workspace: PersistedWorkspaceRecord;
       sourceRepoRoot: string;
+      previousWorktree: PreviousWorktree;
+      // Read once here so the state shown to the user and the checkout restore makes agree.
+      archivedHead: ArchivedHead | null;
     };
+
+interface PreviousWorktree {
+  path: string;
+  isRecorded: boolean;
+}
 
 type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavailable" }>;
 
@@ -125,7 +133,33 @@ export function createWorkspaceRecoveryService(deps: {
       };
     }
 
-    return createRecoveryPlan({ action: "restore", workspace, sourceRepoRoot });
+    const previousWorktree = await resolvePreviousWorktree(workspace);
+    const archivedHead = await readArchivedHead({
+      repoRoot: sourceRepoRoot,
+      worktreePath: previousWorktree.path,
+    });
+    return createRecoveryPlan({
+      action: "restore",
+      workspace,
+      sourceRepoRoot,
+      previousWorktree,
+      archivedHead,
+    });
+  }
+
+  async function resolvePreviousWorktree(
+    workspace: PersistedWorkspaceRecord,
+  ): Promise<PreviousWorktree> {
+    if (workspace.worktreeRoot) return { path: workspace.worktreeRoot, isRecorded: true };
+    // COMPAT(worktreeRestoreMissingWorktreeRoot): records created before v0.1.110
+    // lack durable backing placement; remove filesystem discovery after 2027-01-17.
+    const ownership = await isPaseoOwnedWorktreeCwd(workspace.cwd, {
+      paseoHome: deps.paseoHome,
+      worktreesRoot: deps.worktreesRoot,
+    });
+    return ownership.allowed
+      ? { path: ownership.worktreePath ?? workspace.cwd, isRecorded: true }
+      : { path: workspace.cwd, isRecorded: false };
   }
 
   async function inspect(workspaceId: string): Promise<WorkspaceRecoveryState> {
@@ -142,17 +176,17 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      await recreateArchivedWorktree(resolved);
     }
     await deps.unarchiveWorkspace(resolved.workspace);
     return { workspaceId, action: resolved.kind };
   }
 
   async function recreateArchivedWorktree(
-    workspace: PersistedWorkspaceRecord,
-    sourceRepoRoot: string,
+    plan: Extract<RecoveryPlan, { kind: "restore" }>,
   ): Promise<void> {
-    const source = await resolveRecoverySource(workspace, sourceRepoRoot);
+    const { workspace, sourceRepoRoot, previousWorktree } = plan;
+    const source = await resolveRecoverySource(plan);
 
     try {
       await runGitCommand(["worktree", "prune"], { cwd: sourceRepoRoot, timeout: 30_000 });
@@ -160,31 +194,16 @@ export function createWorkspaceRecoveryService(deps: {
       // A stale worktree registration is not guaranteed; creation reports any real conflict.
     }
 
-    let previousWorktreePath = workspace.worktreeRoot;
-    let hasRecordedWorktreePath = Boolean(previousWorktreePath);
-    if (!previousWorktreePath) {
-      // COMPAT(worktreeRestoreMissingWorktreeRoot): records created before v0.1.110
-      // lack durable backing placement; remove filesystem discovery after 2027-01-17.
-      const ownership = await isPaseoOwnedWorktreeCwd(workspace.cwd, {
-        paseoHome: deps.paseoHome,
-        worktreesRoot: deps.worktreesRoot,
-      });
-      previousWorktreePath = ownership.allowed
-        ? (ownership.worktreePath ?? workspace.cwd)
-        : workspace.cwd;
-      hasRecordedWorktreePath = ownership.allowed;
-    }
-
     let recreatedWorktreePath: string;
     try {
       const result = await createWorktree({
         cwd: sourceRepoRoot,
-        worktreeSlug: basename(previousWorktreePath),
+        worktreeSlug: basename(previousWorktree.path),
         source,
 
         paseoHome: deps.paseoHome,
         worktreesRoot: deps.worktreesRoot,
-        ...(hasRecordedWorktreePath ? { worktreePath: previousWorktreePath } : {}),
+        ...(previousWorktree.isRecorded ? { worktreePath: previousWorktree.path } : {}),
       });
       recreatedWorktreePath = result.worktreePath;
     } catch (error) {
@@ -193,7 +212,7 @@ export function createWorkspaceRecoveryService(deps: {
 
     try {
       const recreatedWorkspacePath = mapWorkspaceCwdToWorktree({
-        sourceWorktreePath: previousWorktreePath,
+        sourceWorktreePath: previousWorktree.path,
         workspaceCwd: workspace.cwd,
         targetWorktreePath: recreatedWorktreePath,
       });
@@ -226,36 +245,21 @@ export function createWorkspaceRecoveryService(deps: {
   return { inspect, restore };
 }
 
-// A commit archive kept wins over the recorded branch: the record's branch is the last one
-// observed, and HEAD may have left it before the archive.
 async function resolveRecoverySource(
-  workspace: PersistedWorkspaceRecord,
-  sourceRepoRoot: string,
+  plan: Extract<RecoveryPlan, { kind: "restore" }>,
 ): Promise<WorktreeSource> {
-  const archivedCommit = await readArchivedCommit({
-    repoRoot: sourceRepoRoot,
-    workspaceId: workspace.workspaceId,
-  });
-  if (archivedCommit) {
-    return {
-      kind: "restore-commit",
-      commit: archivedCommit,
-      branchName: restoredBranchName(),
-      baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
-    };
+  const { workspace, sourceRepoRoot, archivedHead } = plan;
+  if (archivedHead) {
+    return { kind: "restore-archived-head", ...archivedHead, baseRef: workspace.baseBranch };
   }
   if (workspace.branch) {
     return { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch };
   }
   return {
     kind: "restore-from-base",
-    branchName: restoredBranchName(),
+    branchName: `restored/${randomUUID().slice(0, 8)}`,
     baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
   };
-}
-
-function restoredBranchName(): string {
-  return `restored/${randomUUID().slice(0, 8)}`;
 }
 
 async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null): Promise<string> {
@@ -281,7 +285,7 @@ async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null
 function createRecoveryPlan(
   input:
     | { action: "unarchive"; workspace: PersistedWorkspaceRecord }
-    | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string },
+    | (Omit<Extract<RecoveryPlan, { kind: "restore" }>, "kind" | "state"> & { action: "restore" }),
 ): RecoveryPlan {
   const state = {
     kind: "recoverable" as const,
@@ -290,11 +294,13 @@ function createRecoveryPlan(
     branch: input.workspace.branch,
   };
   if (input.action === "restore") {
+    const { action, ...plan } = input;
     return {
-      kind: input.action,
-      state: { ...state, action: input.action },
-      workspace: input.workspace,
-      sourceRepoRoot: input.sourceRepoRoot,
+      ...plan,
+      kind: action,
+      // The record's branch is the last one observed, and HEAD may have left it before the
+      // archive. With a saved HEAD, git decides at restore what HEAD comes back as.
+      state: { ...state, action, branch: input.archivedHead ? null : state.branch },
     };
   }
   return {

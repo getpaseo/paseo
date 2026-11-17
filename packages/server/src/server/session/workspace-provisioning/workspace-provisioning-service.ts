@@ -23,7 +23,7 @@ import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import type { UntrustedWorkspaceSource } from "../../workspace-automation-gate.js";
 import { readPaseoWorktreeMetadata } from "../../../utils/worktree-metadata.js";
-import { releaseArchivedCommit } from "../workspace-recovery/archived-commit.js";
+import { releaseArchivedHead } from "../workspace-recovery/archived-head.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -436,18 +436,29 @@ export function createWorkspaceProvisioningService(deps: {
   }
 
   // Every unarchive passes through ensureWorkspaceRecordUnarchived, so releasing here means a
-  // kept commit exists only while its workspace is archived.
-  async function releaseKeptCommit(
+  // saved HEAD exists only while its worktree's workspaces are archived.
+  async function releaseSavedHead(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord,
   ): Promise<void> {
     if (!workspace.archivedAt || workspace.kind !== "worktree") return;
-    await releaseArchivedCommit({
-      // COMPAT(worktreeRestoreMissingMainRepoRoot): records created before v0.1.110 lack
-      // mainRepoRoot; remove the project-root fallback after 2027-01-17.
-      repoRoot: workspace.mainRepoRoot ?? project.rootPath,
-      workspaceId: workspace.workspaceId,
-    });
+    try {
+      await releaseArchivedHead({
+        // COMPAT(worktreeRestoreMissingMainRepoRoot): records created before v0.1.110 lack
+        // mainRepoRoot; remove the project-root fallback after 2027-01-17.
+        repoRoot: workspace.mainRepoRoot ?? project.rootPath,
+        // COMPAT(worktreeRestoreMissingWorktreeRoot): records created before v0.1.110 lack
+        // worktreeRoot; remove the cwd fallback after 2027-01-17.
+        worktreePath: workspace.worktreeRoot ?? workspace.cwd,
+      });
+    } catch (error) {
+      // A ref left behind keeps one commit alive, and the next archive drops it; failing the
+      // unarchive would strand the workspace.
+      logger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to release the HEAD archive saved; unarchiving anyway",
+      );
+    }
   }
 
   async function ensureWorkspaceRecordUnarchived(
@@ -477,7 +488,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       };
     }
-    await releaseKeptCommit(workspace, project);
+    await releaseSavedHead(workspace, project);
     if (project.archivedAt || workspace.archivedAt) {
       const projectCheckout =
         checkout && areEquivalentPaths(project.rootPath, workspace.cwd)

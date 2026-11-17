@@ -155,36 +155,149 @@ test.skipIf(process.platform === "win32")(
   60000,
 );
 
-test.skipIf(process.platform === "win32").each(["undo", "restore"] as const)(
-  "%s brings back a worktree archived on a detached HEAD with the commits no ref held",
-  async (route) => {
-    const repo = createRepoWithGatedTeardown();
-    repo.releaseTeardown();
-    const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
-      repo.repoDir,
-      `detached-${route}`,
+function commitWork(directory: string, file: string): string {
+  mkdirSync(path.dirname(path.join(directory, file)), { recursive: true });
+  writeFileSync(path.join(directory, file), "work\n");
+  git(directory, ["add", file]);
+  git(directory, ["-c", "commit.gpgsign=false", "commit", "-m", `work on ${file}`]);
+  return gitOutput(directory, ["rev-parse", "HEAD"]);
+}
+
+// What HEAD was at archive, and what the repository did with its branch while archived.
+const archivedHeadCases = [
+  { name: "detached", detach: true, afterArchive: "nothing", comesBackOn: "" },
+  { name: "on a branch", detach: false, afterArchive: "nothing", comesBackOn: "branch" },
+  { name: "on a branch that moved", detach: false, afterArchive: "move", comesBackOn: "" },
+  { name: "on a branch that was deleted", detach: false, afterArchive: "delete", comesBackOn: "" },
+] as const;
+
+for (const route of ["undo", "restore"] as const) {
+  test.skipIf(process.platform === "win32").each(archivedHeadCases)(
+    `${route} brings back a worktree archived $name at the commit it was on`,
+    async ({ detach, afterArchive, comesBackOn }) => {
+      const repo = createRepoWithGatedTeardown();
+      repo.releaseTeardown();
+      const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
+        repo.repoDir,
+        `archived-head-${route}`,
+      );
+      const branch = gitOutput(directory, ["branch", "--show-current"]);
+      if (detach) git(directory, ["checkout", "--detach"]);
+      const archivedCommit = commitWork(directory, "work.txt");
+
+      const archived = await ctx.client.archiveWorkspace(workspaceId);
+      expect(archived.error).toBeNull();
+      expect(existsSync(directory)).toBe(false);
+      if (afterArchive === "move") git(repo.repoDir, ["branch", "-f", branch, "main"]);
+      if (afterArchive === "delete") git(repo.repoDir, ["branch", "-D", branch]);
+      const branchTip =
+        afterArchive === "move" ? gitOutput(repo.repoDir, ["rev-parse", branch]) : null;
+      collectUnreachableCommits(repo.repoDir);
+
+      if (route === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
+      else await ctx.client.restoreWorkspace(workspaceId);
+
+      expect({
+        workspaceActive: await isWorkspaceActive(workspaceId),
+        head: gitOutput(directory, ["rev-parse", "HEAD"]),
+        branch: gitOutput(directory, ["branch", "--show-current"]),
+        branchTip: branchTip && gitOutput(repo.repoDir, ["rev-parse", branch]),
+        savedHeads: gitOutput(repo.repoDir, ["for-each-ref", "refs/paseo"]),
+      }).toEqual({
+        workspaceActive: true,
+        head: archivedCommit,
+        branch: comesBackOn === "branch" ? branch : "",
+        branchTip,
+        savedHeads: "",
+      });
+    },
+    60000,
+  );
+}
+
+function commitOnDetachedHead(directory: string, file: string): string {
+  git(directory, ["checkout", "--detach"]);
+  return commitWork(directory, file);
+}
+
+function collectUnreachableCommits(repoDir: string): void {
+  git(repoDir, ["reflog", "expire", "--expire-unreachable=now", "--all"]);
+  git(repoDir, ["gc", "--prune=now", "--quiet"]);
+}
+
+test.skipIf(process.platform === "win32")(
+  "archiving again to clean up a folder a failed teardown left keeps its detached commit",
+  async () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-archive-cleanup-"));
+    tempRoots.push(tempRoot);
+    const repoDir = path.join(tempRoot, "repo");
+    execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+    git(repoDir, ["config", "user.email", "test@getpaseo.local"]);
+    git(repoDir, ["config", "user.name", "Paseo Test"]);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({ worktree: { teardown: ["exit 1"] } }),
     );
-    git(directory, ["checkout", "--detach"]);
-    writeFileSync(path.join(directory, "detached.txt"), "detached work\n");
-    git(directory, ["add", "detached.txt"]);
-    git(directory, ["-c", "commit.gpgsign=false", "commit", "-m", "detached work"]);
-    const detachedCommit = gitOutput(directory, ["rev-parse", "HEAD"]);
+    git(repoDir, ["add", "paseo.json"]);
+    git(repoDir, ["-c", "commit.gpgsign=false", "commit", "-m", "failing teardown"]);
+    const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
+      repoDir,
+      "cleanup-archive",
+    );
+    const detachedCommit = commitOnDetachedHead(directory, "detached.txt");
 
-    const archived = await ctx.client.archiveWorkspace(workspaceId);
-    expect(archived.error).toBeNull();
+    await ctx.client.archiveWorkspace(workspaceId);
+    expect(existsSync(directory)).toBe(true);
+    await ctx.client.archiveWorkspace(workspaceId);
     expect(existsSync(directory)).toBe(false);
-    git(repo.repoDir, ["reflog", "expire", "--expire-unreachable=now", "--all"]);
-    git(repo.repoDir, ["gc", "--prune=now", "--quiet"]);
-
-    if (route === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
-    else await ctx.client.restoreWorkspace(workspaceId);
+    collectUnreachableCommits(repoDir);
+    await ctx.client.restoreWorkspace(workspaceId);
 
     expect({
       workspaceActive: await isWorkspaceActive(workspaceId),
       head: gitOutput(directory, ["rev-parse", "HEAD"]),
-      onBranch: gitOutput(directory, ["branch", "--show-current"]).length > 0,
-      keptRefs: gitOutput(repo.repoDir, ["for-each-ref", "refs/paseo"]),
-    }).toEqual({ workspaceActive: true, head: detachedCommit, onBranch: true, keptRefs: "" });
+      savedHeads: gitOutput(repoDir, ["for-each-ref", "refs/paseo"]),
+    }).toEqual({ workspaceActive: true, head: detachedCommit, savedHeads: "" });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32").each([
+  ["root", "subdirectory"],
+  ["subdirectory", "root"],
+] as const)(
+  "restoring the %s workspace first brings back the detached commit of a worktree two workspaces share",
+  async (first, second) => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const root = await createWorktreeWorkspaceWithAgent(repo.repoDir, `shared-${first}`);
+    const detachedCommit = commitOnDetachedHead(root.directory, "sub/detached.txt");
+    const opened = await ctx.client.createWorkspace({
+      source: { kind: "directory", path: path.join(root.directory, "sub") },
+    });
+    const subdirectoryId = opened.workspace?.id;
+    if (!subdirectoryId) throw new Error(opened.error ?? "Failed to open the subdirectory");
+    const workspaceIds = { root: root.workspaceId, subdirectory: subdirectoryId };
+
+    await ctx.client.archiveWorkspace(workspaceIds.root);
+    expect(existsSync(root.directory)).toBe(true);
+    await ctx.client.archiveWorkspace(workspaceIds.subdirectory);
+    expect(existsSync(root.directory)).toBe(false);
+    collectUnreachableCommits(repo.repoDir);
+    await ctx.client.restoreWorkspace(workspaceIds[first]);
+    await ctx.client.restoreWorkspace(workspaceIds[second]);
+
+    expect({
+      rootActive: await isWorkspaceActive(workspaceIds.root),
+      subdirectoryActive: await isWorkspaceActive(workspaceIds.subdirectory),
+      head: gitOutput(root.directory, ["rev-parse", "HEAD"]),
+      savedHeads: gitOutput(repo.repoDir, ["for-each-ref", "refs/paseo"]),
+    }).toEqual({
+      rootActive: true,
+      subdirectoryActive: true,
+      head: detachedCommit,
+      savedHeads: "",
+    });
   },
   60000,
 );

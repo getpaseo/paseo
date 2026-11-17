@@ -189,8 +189,8 @@ export type WorktreeSource =
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
-  // A new branch at a commit archive kept, compared against baseRef.
-  | { kind: "restore-commit"; commit: string; baseRef: string; branchName: string }
+  // Checks out what archive saved: a branch name puts HEAD back on the branch, a commit detaches.
+  | { kind: "restore-archived-head"; checkout: string; commit: string; baseRef: string | null }
   | {
       kind: "checkout-change-request";
       forge: string;
@@ -1465,6 +1465,24 @@ interface WorktreeSourcePlan {
   };
 }
 
+async function resolveRestoredBaseMetadata(
+  cwd: string,
+  input: { baseRef: string | null; fallback: string },
+): Promise<Pick<WorktreeSourcePlan, "metadataBaseRefName" | "metadataBaseRef">> {
+  let exactBase: string | undefined;
+  if (input.baseRef && isQualifiedRef(input.baseRef)) {
+    try {
+      exactBase = await resolveBaseBranchForWorktree(cwd, input.baseRef);
+    } catch {
+      // Restore the worktree even when its comparison ref no longer exists.
+    }
+  }
+  return {
+    metadataBaseRefName: normalizeRequiredBaseBranch(input.baseRef ?? input.fallback),
+    ...(exactBase ? { metadataBaseRef: exactBase } : {}),
+  };
+}
+
 async function resolveRestoredWorktreeSourcePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "restore" }>,
@@ -1474,18 +1492,12 @@ async function resolveRestoredWorktreeSourcePlan(
   if (await isBranchCheckedOut(cwd, source.branchName)) {
     throw new BranchAlreadyCheckedOutError(source.branchName);
   }
-  let exactBase: string | undefined;
-  if (source.baseRef && isQualifiedRef(source.baseRef)) {
-    try {
-      exactBase = await resolveBaseBranchForWorktree(cwd, source.baseRef);
-    } catch {
-      // Restore the saved branch even when its comparison ref no longer exists.
-    }
-  }
   return {
     branchName: source.branchName,
-    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef ?? source.branchName),
-    ...(exactBase ? { metadataBaseRef: exactBase } : {}),
+    ...(await resolveRestoredBaseMetadata(cwd, {
+      baseRef: source.baseRef,
+      fallback: source.branchName,
+    })),
     changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
       headRef: source.branchName,
       localBranchName: source.branchName,
@@ -1494,19 +1506,33 @@ async function resolveRestoredWorktreeSourcePlan(
   };
 }
 
-async function resolveRestoredNewBranchPlan(
+async function resolveRestoredWorktreeFromBasePlan(
   cwd: string,
-  source: Extract<WorktreeSource, { kind: "restore-from-base" | "restore-commit" }>,
+  source: Extract<WorktreeSource, { kind: "restore-from-base" }>,
 ): Promise<WorktreeSourcePlan> {
   await validateGitBranchName(cwd, source.branchName);
   const baseRef = await resolveBaseBranchForWorktree(cwd, source.baseRef);
   const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
-  const startPoint = source.kind === "restore-commit" ? source.commit : baseRef;
   return {
     branchName,
     metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
     metadataBaseRef: baseRef,
-    addArguments: ["-b", branchName, "--no-track", startPoint],
+    addArguments: ["-b", branchName, "--no-track", baseRef],
+  };
+}
+
+async function resolveRestoredArchivedHeadPlan(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "restore-archived-head" }>,
+): Promise<WorktreeSourcePlan> {
+  return {
+    // A detached checkout has no branch; the restored worktree's caller reads only its path.
+    branchName: source.checkout,
+    ...(await resolveRestoredBaseMetadata(cwd, {
+      baseRef: source.baseRef,
+      fallback: source.commit,
+    })),
+    addArguments: [source.checkout],
   };
 }
 
@@ -1548,8 +1574,9 @@ async function resolveWorktreeSourcePlan({
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "restore-from-base":
-    case "restore-commit":
-      return resolveRestoredNewBranchPlan(cwd, source);
+      return resolveRestoredWorktreeFromBasePlan(cwd, source);
+    case "restore-archived-head":
+      return resolveRestoredArchivedHeadPlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);

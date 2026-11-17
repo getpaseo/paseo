@@ -389,10 +389,7 @@ test.describe("Worktree restore", () => {
     await page.getByTestId(`agent-row-${getServerId()}-${agent.id}`).click();
     await expect(page.getByText("Workspace archived", { exact: true })).toBeVisible();
     await expect(
-      page.getByText(
-        "Restore Sample workspace to return to its agents. A new branch will start from the saved base or the repository default.",
-        { exact: true },
-      ),
+      page.getByText("Restore Sample workspace to return to its agents.", { exact: true }),
     ).toBeVisible();
     await captureBranchlessRestoreStep(page, "01-restore-workspace.png");
 
@@ -419,7 +416,7 @@ test.describe("Worktree restore", () => {
         cwd: backingWorktree.workspaceDirectory,
         encoding: "utf8",
       }).trim(),
-    ).toMatch(/^restored\//);
+    ).toBe("");
   });
 
   test("restore failure stays visible and permits a successful retry", async ({ page }) => {

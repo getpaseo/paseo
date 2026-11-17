@@ -483,8 +483,7 @@ export const en = {
         archivedTitle: "Workspace archived",
         restoreDescription:
           "Restore {{workspaceName}} to return to its agents. Its worktree will use branch {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restore {{workspaceName}} to return to its agents. A new branch will start from the saved base or the repository default.",
+        restoreWithoutBranchDescription: "Restore {{workspaceName}} to return to its agents.",
         unarchiveDescription: "{{workspaceName}} is archived. Unarchive it to open it again.",
         restoreAction: "Restore",
         unarchiveAction: "Unarchive",
