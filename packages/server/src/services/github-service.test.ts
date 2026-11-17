@@ -3290,6 +3290,44 @@ describe("ForgeService", () => {
     expect(details.truncated).toBe(true);
   });
 
+  it("chooses an open PR before reading an older terminal candidate's commits", async () => {
+    const terminal = JSON.parse(
+      currentPullRequestJson({
+        number: 1,
+        state: "MERGED",
+        mergedAt: "2026-01-01T00:00:00Z",
+        headRefName: "feature",
+        headRepositoryOwner: { login: "acme" },
+        commits: undefined,
+      }),
+    );
+    const open = JSON.parse(
+      currentPullRequestJson({
+        number: 2,
+        headRefName: "feature",
+        headRepositoryOwner: { login: "acme" },
+        commits: undefined,
+      }),
+    );
+    const runner = createScriptedRunner([
+      JSON.stringify(terminal),
+      JSON.stringify({ owner: { login: "acme" }, name: "repo", parent: null }),
+      JSON.stringify([open, terminal]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature",
+        headSha: "own",
+      }),
+    ).resolves.toMatchObject({ number: 2, state: "open" });
+    expect(runner.calls.some(({ args }) => args.join(" ").includes("commits(last:"))).toBe(false);
+  });
+
   it("retries current PR view without statusCheckRollup when token permissions are insufficient", async () => {
     const runner = createScriptedRunner([
       {
@@ -3555,6 +3593,7 @@ describe("ForgeService", () => {
     });
     const runner = createScriptedRunner([
       candidate,
+      JSON.stringify([JSON.parse(candidate)]),
       JSON.stringify({
         data: {
           repository: {
@@ -3567,7 +3606,6 @@ describe("ForgeService", () => {
           },
         },
       }),
-      JSON.stringify([JSON.parse(candidate)]),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3586,8 +3624,8 @@ describe("ForgeService", () => {
       1,
     );
     expect(runner.calls[0]?.args.at(-1)).not.toContain("commits");
-    expect(runner.calls[1]?.args[3]).toContain("commits(last:100");
-    expect(runner.calls[1]?.args[3]).not.toContain("authors");
+    expect(runner.calls[2]?.args[3]).toContain("commits(last:100");
+    expect(runner.calls[2]?.args[3]).not.toContain("authors");
   });
 
   it("rejects an unrelated terminal PR on a reused branch", async () => {

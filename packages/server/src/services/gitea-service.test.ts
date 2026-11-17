@@ -2051,7 +2051,7 @@ describe("createGiteaService", () => {
         return ok(JSON.stringify([]));
       }
       if (args[1]?.includes("/commits?"))
-        return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: headSha }] : []));
+        return ok(JSON.stringify(args[1].includes("page=1") ? [{ sha: headSha }] : []));
       if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
         return ok(JSON.stringify([closedPr]));
       }
@@ -2071,6 +2071,38 @@ describe("createGiteaService", () => {
     ]);
   });
 
+  it("follows commit pagination headers and stops without probing past the last page", async () => {
+    const closed = currentPullRequestApi({
+      number: 8,
+      state: "closed",
+      headRef: "feature",
+      headSha: "remote-head",
+    });
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[1]?.includes("/pulls?")) return ok(JSON.stringify([closed]));
+      if (args[1]?.includes("/commits?")) {
+        const page = new URL(args[1], "https://gitea.test").searchParams.get("page");
+        if (page === "1")
+          return {
+            stdout: JSON.stringify([{ sha: "other" }]),
+            stderr: 'HTTP/1.1 200 OK\nLink: <https://gitea.test/commits?page=2>; rel="next"\n',
+          };
+        if (page === "2") return ok(JSON.stringify([{ sha: "own" }]));
+        throw new Error("HTTP 500: page past end");
+      }
+      throw new Error("Unexpected call");
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature",
+        headSha: "own",
+      }),
+    ).resolves.toMatchObject({ number: 8 });
+    expect(calls.filter((args) => args[1]?.includes("/commits?"))).toHaveLength(2);
+  });
+
   it("uses tea repository context when origin identity is unavailable", async () => {
     const headSha = "8888888888888888888888888888888888888888";
     const closedPr = currentPullRequestApi({
@@ -2083,7 +2115,7 @@ describe("createGiteaService", () => {
       (args) => {
         if (args[0] === "pr" && args[1] === "list") return ok("[]");
         if (args[1]?.includes("/commits?"))
-          return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: headSha }] : []));
+          return ok(JSON.stringify(args[1].includes("page=1") ? [{ sha: headSha }] : []));
         if (args[0] === "api" && args[1].startsWith("repos/{owner}/{repo}/pulls?")) {
           return ok(JSON.stringify([closedPr]));
         }
@@ -2119,7 +2151,7 @@ describe("createGiteaService", () => {
     const { service } = makeService((args) => {
       if (args[0] === "pr" && args[1] === "list") return ok("[]");
       if (args[1]?.includes("/commits?"))
-        return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: workspaceCommit }] : []));
+        return ok(JSON.stringify(args[1].includes("page=1") ? [{ sha: workspaceCommit }] : []));
       if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
         return ok(JSON.stringify([stale]));
       }

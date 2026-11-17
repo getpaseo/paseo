@@ -1412,17 +1412,23 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   const now = options.now ?? Date.now;
   const currentPrHeadShaCache = new Map<string, { sha: string; expiresAt: number }>();
 
-  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
+  async function runResult(
+    args: string[],
+    runOptions: TeaCommandRunnerOptions,
+  ): Promise<TeaCommandResult> {
     const teaPath = await resolveTea();
     if (!teaPath) {
       throw new TeaCliMissingError();
     }
     try {
-      const result = await runner(args, runOptions);
-      return result.stdout.trim();
+      return await runner(args, runOptions);
     } catch (error) {
       throw teaCliRunner.normalizeError(error, { args: redactTeaArgs(args), cwd: runOptions.cwd });
     }
+  }
+
+  async function run(args: string[], runOptions: TeaCommandRunnerOptions): Promise<string> {
+    return (await runResult(args, runOptions)).stdout.trim();
   }
 
   function runJsonParse<T>(
@@ -1674,13 +1680,22 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         async () => {
           const result: string[] = [];
           for (let page = 1; ; page++) {
-            const commits = await runJsonArray(
-              ["api", `${repoPath}/pulls/${item.number}/commits?limit=50&page=${page}`],
+            const args = [
+              "api",
+              `${repoPath}/pulls/${item.number}/commits?limit=50&page=${page}&files=false&verification=false`,
+              "--include",
+            ];
+            const response = await runResult(args, { cwd: input.cwd });
+            const commits = runJsonParse(
+              args,
               { cwd: input.cwd },
-              z.object({ sha: z.string() }),
+              response.stdout,
+              z.array(z.object({ sha: z.string() })),
             );
             result.push(...commits.map((commit) => commit.sha));
-            if (commits.length === 0) return result;
+            // tea writes response headers to stderr. Following Link also respects
+            // server-side page caps and avoids probing beyond the final page.
+            if (!/<[^>]+>;\s*rel="next"/i.test(response.stderr)) return result;
           }
         },
       );

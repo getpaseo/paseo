@@ -3128,17 +3128,9 @@ async function resolveCurrentPullRequestView(options: {
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
   const viewCandidate = await tryCurrentPullRequestView(options);
-  const viewMatch = viewCandidate
-    ? pickPullRequestCandidate({
-        candidates: [viewCandidate],
-        headRef: options.headRef,
-        headSha: options.headSha,
-        headRepositoryOwner: options.headRepositoryOwner,
-      })
-    : null;
-  if (viewMatch?.status.state === "open") {
-    return viewMatch.status;
-  }
+  const viewCandidates = viewCandidate ? [viewCandidate] : [];
+  const open = pickPullRequestCandidate({ ...options, candidates: viewCandidates });
+  if (open?.status.state === "open") return open.status;
 
   let headRepositoryOwner = options.headRepositoryOwner;
 
@@ -3148,13 +3140,17 @@ async function resolveCurrentPullRequestView(options: {
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
     if (!forkOwner) {
-      return viewMatch?.status ?? null;
+      const match = await loadAndPickPullRequestCandidate({
+        ...options,
+        candidates: viewCandidates,
+      });
+      return match?.status ?? null;
     }
     if (parentOwner && parentName) {
       return resolveForkPullRequestView({
         ...options,
         forkOwner,
-        viewMatch,
+        viewCandidate,
         repo: `${parentOwner}/${parentName}`,
       });
     }
@@ -3167,8 +3163,10 @@ async function resolveCurrentPullRequestView(options: {
     headRepositoryOwner,
     run: options.run,
   });
-  const match = pickPullRequestCandidate({
-    candidates: viewMatch ? [...candidates, viewMatch] : candidates,
+  const match = await loadAndPickPullRequestCandidate({
+    cwd: options.cwd,
+    run: options.run,
+    candidates: [...candidates, ...viewCandidates],
     headRef: options.headRef,
     headSha: options.headSha,
     headRepositoryOwner,
@@ -3189,7 +3187,7 @@ async function resolveForkPullRequestView(options: {
   headRef: string;
   headSha?: string;
   forkOwner: string;
-  viewMatch: ResolvedPullRequestCandidate | null;
+  viewCandidate: ResolvedPullRequestCandidate | null;
   repo: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
@@ -3204,16 +3202,19 @@ async function resolveForkPullRequestView(options: {
       }),
     ),
   );
-  const match = pickPullRequestCandidate({
+  const match = await loadAndPickPullRequestCandidate({
+    cwd: options.cwd,
+    run: options.run,
     candidates: [
       ...candidates.filter(
         (candidate): candidate is ResolvedPullRequestCandidate =>
           candidate !== null && candidate.headRepositoryOwner === options.forkOwner,
       ),
-      ...(options.viewMatch ? [options.viewMatch] : []),
+      ...(options.viewCandidate ? [options.viewCandidate] : []),
     ],
     headRef: options.headRef,
     headSha: options.headSha,
+    headRepositoryOwner: options.forkOwner,
   });
   return match?.status ?? null;
 }
@@ -3309,6 +3310,28 @@ async function loadPullRequestGithubFacts(options: {
 
 const readGitHubCommitList = createPullRequestCommitReader();
 
+async function loadAndPickPullRequestCandidate(
+  options: Parameters<typeof pickPullRequestCandidate>[0] & {
+    cwd: string;
+    run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+  },
+): Promise<ResolvedPullRequestCandidate | null> {
+  const matching = matchingPullRequestCandidates(options);
+  const open = matching.find((candidate) => candidate.status.state === "open");
+  if (open) return open;
+  for (const candidate of matching) {
+    await completeCandidateCommits(candidate, options);
+    if (
+      pullRequestContainsCommit({
+        workspaceCommit: options.headSha,
+        pullRequestCommits: candidate.status.commitOids,
+      })
+    )
+      return candidate;
+  }
+  return null;
+}
+
 async function completeCandidateCommits(
   candidate: ResolvedPullRequestCandidate,
   options: {
@@ -3364,7 +3387,6 @@ async function tryCurrentPullRequestView(options: {
       args: [...args, "--json", CURRENT_PR_STATUS_FIELDS],
       cwd: options.cwd,
     });
-    if (candidate) await completeCandidateCommits(candidate, options);
     return candidate;
   } catch (error) {
     if (isNoPullRequestFoundError(error)) {
@@ -3391,7 +3413,6 @@ async function listCurrentPullRequestCandidates(options: {
       args: [...args, "--json", CURRENT_PR_STATUS_FIELDS],
       cwd: options.cwd,
     });
-    await Promise.all(candidates.map((candidate) => completeCandidateCommits(candidate, options)));
     return candidates;
   } catch (error) {
     if (isNoPullRequestFoundError(error)) {
@@ -3631,6 +3652,22 @@ function pickPullRequestCandidate(options: {
   headSha?: string;
   headRepositoryOwner?: string;
 }): ResolvedPullRequestCandidate | null {
+  const matching = matchingPullRequestCandidates(options);
+  const open = matching.find((candidate) => candidate.status.state === "open");
+  if (open) return open;
+  return (
+    matching.find((candidate) =>
+      pullRequestContainsCommit({
+        workspaceCommit: options.headSha,
+        pullRequestCommits: candidate.status.commitOids,
+      }),
+    ) ?? null
+  );
+}
+
+function matchingPullRequestCandidates(
+  options: Parameters<typeof pickPullRequestCandidate>[0],
+): ResolvedPullRequestCandidate[] {
   const matching = options.candidates.filter((candidate) => {
     if (!isCandidateForHeadRef(candidate, options.headRef)) {
       return false;
@@ -3643,16 +3680,7 @@ function pickPullRequestCandidate(options: {
   matching.sort((left, right) =>
     comparePullRequestCandidatePreference(left, right, options.headSha),
   );
-  const open = matching.find((candidate) => candidate.status.state === "open");
-  if (open) return open;
-  return (
-    matching.find((candidate) =>
-      pullRequestContainsCommit({
-        workspaceCommit: options.headSha,
-        pullRequestCommits: candidate.status.commitOids,
-      }),
-    ) ?? null
-  );
+  return matching;
 }
 
 function comparePullRequestCandidatePreference(
