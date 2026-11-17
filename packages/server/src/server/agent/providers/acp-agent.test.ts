@@ -51,7 +51,6 @@ import {
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
-import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
@@ -2024,7 +2023,7 @@ describe("ACPAgentSession options against an ACP agent", () => {
 });
 
 describe("deriveModelDefinitionsFromACP", () => {
-  test("attaches session thinking options only to the selected ACP model", () => {
+  test("attaches shared thinking options to ACP model state", () => {
     const result = deriveModelDefinitionsFromACP(
       "claude-acp",
       {
@@ -2088,38 +2087,117 @@ describe("deriveModelDefinitionsFromACP", () => {
         label: "Sonnet",
         description: "Balanced",
         isDefault: false,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
+        thinkingOptions: [
+          {
+            id: "low",
+            label: "Low",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
+          {
+            id: "medium",
+            label: "Medium",
+            description: undefined,
+            isDefault: true,
+            metadata: undefined,
+          },
+          {
+            id: "high",
+            label: "High",
+            description: undefined,
+            isDefault: false,
+            metadata: undefined,
+          },
+        ],
+        defaultThinkingOptionId: "medium",
       },
     ]);
   });
 
-  test.each(["model/a@large", "model/b"])(
-    "does not share config-only session options when the default is %s",
-    (currentModel) => {
-      const models = deriveModelDefinitionsFromACP("acp", null, [
-        selectConfigOption("model", ["model/a@large", "model/b"], currentModel),
-        selectConfigOption("thought_level", ["minimal", "extreme"], "extreme"),
-      ]);
+  test("gives a model that reports its own reasoning levels those levels and default", () => {
+    const models = deriveModelDefinitionsFromACP(
+      "acp",
+      {
+        currentModelId: "startup",
+        availableModels: [
+          { modelId: "startup", name: "Startup" },
+          {
+            modelId: "other",
+            name: "Other",
+            _meta: {
+              reasoningEffort: "xhigh",
+              reasoningEfforts: [
+                { id: "high", label: "High" },
+                { id: "xhigh", label: "Extra high" },
+              ],
+            },
+          },
+        ],
+      },
+      [selectConfigOption("thought_level", ["none", "low"], "low")],
+    );
 
-      expect(models.find(({ id }) => id === currentModel)).toMatchObject({
-        isDefault: true,
-        thinkingOptions: [{ id: "minimal" }, { id: "extreme" }],
-        defaultThinkingOptionId: "extreme",
-      });
-      expect(models.find(({ id }) => id !== currentModel)).toMatchObject({
-        isDefault: false,
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-      });
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "none" }, { id: "low" }],
+      defaultThinkingOptionId: "low",
+    });
+    expect(models[1]).toMatchObject({
+      thinkingOptions: [
+        { id: "high", label: "High", isDefault: false },
+        { id: "xhigh", label: "Extra high", isDefault: true },
+      ],
+      defaultThinkingOptionId: "xhigh",
+    });
+  });
+
+  test("uses the wire value and a model's marked default when no reasoningEffort is provided", () => {
+    const models = deriveModelDefinitionsFromACP("acp", {
+      currentModelId: "current",
+      availableModels: [
+        {
+          modelId: "current",
+          name: "Current",
+          _meta: {
+            reasoningEfforts: [
+              {
+                id: "display-id",
+                value: "wire/id@large",
+                label: "Custom",
+                default: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(models[0]).toMatchObject({
+      thinkingOptions: [{ id: "wire/id@large", label: "Custom", isDefault: true }],
+      defaultThinkingOptionId: "wire/id@large",
+    });
+  });
+
+  test.each([{ supportsReasoningEffort: false }, { reasoningEfforts: [] }])(
+    "shows no thinking options for a model that reports none: %j",
+    (metadata) => {
+      const models = deriveModelDefinitionsFromACP(
+        "acp",
+        {
+          currentModelId: "current",
+          availableModels: [{ modelId: "current", name: "Current", _meta: metadata }],
+        },
+        [selectConfigOption("thought_level", ["low", "high"], "high")],
+      );
+
+      expect(models[0].thinkingOptions).toBeUndefined();
+      expect(models[0].defaultThinkingOptionId).toBeUndefined();
     },
   );
 
   test.each([
     { supportsReasoningEffort: true },
-    { supportsReasoningEffort: true, reasoningEfforts: [] },
     { reasoningEfforts: [{ id: "high", label: "High", description: 42 }] },
-    { reasoningEfforts: [{ id: "high", label: "High" }], reasoningEffort: "max" },
     {
       reasoningEfforts: [
         { id: "high", label: "High" },
@@ -2127,7 +2205,7 @@ describe("deriveModelDefinitionsFromACP", () => {
       ],
     },
   ])(
-    "reports unconfirmed per-model reasoning metadata instead of reusing session options: %j",
+    "keeps session thinking options when a model's reasoning table is unusable: %j",
     (metadata) => {
       const models = deriveModelDefinitionsFromACP(
         "acp",
@@ -2142,113 +2220,9 @@ describe("deriveModelDefinitionsFromACP", () => {
       );
 
       expect(models[1]).toMatchObject({
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-        metadata: {
-          thinkingOptionsError: expect.stringContaining(
-            'Cannot confirm thinking options for ACP model "other"',
-          ),
-        },
+        thinkingOptions: [{ id: "off" }, { id: "on" }],
+        defaultThinkingOptionId: "on",
       });
-    },
-  );
-
-  test("keeps a model without thought_level empty and honors an explicit unsupported model", () => {
-    const models = deriveModelDefinitionsFromACP(
-      "acp",
-      {
-        currentModelId: "current",
-        availableModels: [
-          { modelId: "current", name: "Current" },
-          {
-            modelId: "unsupported",
-            name: "Unsupported",
-            _meta: { supportsReasoningEffort: false },
-          },
-        ],
-      },
-      [],
-    );
-
-    expect(
-      models.map(({ thinkingOptions, defaultThinkingOptionId, metadata }) => ({
-        thinkingOptions,
-        defaultThinkingOptionId,
-        metadata,
-      })),
-    ).toEqual([
-      { thinkingOptions: undefined, defaultThinkingOptionId: undefined, metadata: undefined },
-      {
-        thinkingOptions: undefined,
-        defaultThinkingOptionId: undefined,
-        metadata: { supportsReasoningEffort: false },
-      },
-    ]);
-  });
-
-  test("does not apply a thought_level selector when its model selector disagrees with model state", () => {
-    const models = deriveModelDefinitionsFromACP(
-      "acp",
-      {
-        currentModelId: "requested",
-        availableModels: [{ modelId: "requested", name: "Requested" }],
-      },
-      [
-        selectConfigOption("model", ["requested", "actual"], "actual"),
-        selectConfigOption("thought_level", ["high", "max"], "max"),
-      ],
-    );
-
-    expect(models[0]).toMatchObject({
-      thinkingOptions: undefined,
-      defaultThinkingOptionId: undefined,
-      metadata: { thinkingOptionsError: expect.stringContaining("Cannot confirm") },
-    });
-  });
-
-  test("uses the wire value and a model's marked default when no reasoningEffort is provided", () => {
-    const models = deriveModelDefinitionsFromACP("acp", {
-      currentModelId: "current",
-      availableModels: [
-        {
-          modelId: "current",
-          name: "Current",
-          _meta: {
-            reasoningEfforts: [
-              { id: "display-id", value: "wire/id@large", label: "Custom", default: true },
-            ],
-          },
-        },
-      ],
-    });
-
-    expect(models[0]).toMatchObject({
-      thinkingOptions: [{ id: "wire/id@large", label: "Custom", isDefault: true }],
-      defaultThinkingOptionId: "wire/id@large",
-    });
-  });
-
-  test.each([true, false, undefined])(
-    "never refills an explicitly empty per-model effort list from session options (supportsReasoningEffort=%s)",
-    (supportsReasoningEffort) => {
-      const models = deriveModelDefinitionsFromACP(
-        "acp",
-        {
-          currentModelId: "current",
-          availableModels: [
-            {
-              modelId: "current",
-              name: "Current",
-              _meta: { source: "native", supportsReasoningEffort, reasoningEfforts: [] },
-            },
-          ],
-        },
-        [selectConfigOption("thought_level", ["low", "high"], "high")],
-      );
-
-      expect(models[0].thinkingOptions).toBeUndefined();
-      expect(models[0].defaultThinkingOptionId).toBeUndefined();
-      expect(models[0].metadata?.source).toBe("native");
     },
   );
 });
@@ -2285,7 +2259,12 @@ describe("ACPAgentClient modelTransformer", () => {
       provider: "pi",
       logger: createTestLogger(),
       defaultCommand: ["test-acp"],
-      modelTransformer: transformPiModels,
+      modelTransformer: (models) =>
+        models.map((model) => ({
+          ...model,
+          label: model.label.split("/").at(-1) ?? model.label,
+          description: model.id,
+        })),
     });
 
     await expect(
@@ -2539,6 +2518,7 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
     base: ["low", "medium", "high"],
     large: ["low", "medium", "high", "xhigh"],
     plain: undefined,
+    solo: ["low", "high", "max"],
   };
 
   function modelConfigOptions(model: string, level: string | undefined): SessionConfigOption[] {
@@ -2560,6 +2540,7 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
   async function fetchProbedCatalog(input: {
     providerOptions?: Record<string, unknown>;
     rejectModel?: string;
+    extraModels?: NonNullable<NewSessionResponse["models"]>["availableModels"];
   }) {
     const requests: string[] = [];
     let currentModel = "base";
@@ -2575,6 +2556,7 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
           { modelId: "large-xhigh", name: "Large (XHigh)" },
           { modelId: "plain", name: "Plain" },
           { modelId: "unmatched", name: "Unmatched" },
+          ...(input.extraModels ?? []),
         ],
       },
       configOptions: modelConfigOptions("base", "medium"),
@@ -2645,7 +2627,6 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
       thinking: model.thinkingOptions?.map((option) => option.id),
       defaultThinkingOptionId: model.defaultThinkingOptionId,
       markedDefault: model.thinkingOptions?.find((option) => option.isDefault)?.id,
-      thinkingOptionsError: model.metadata?.thinkingOptionsError !== undefined,
     }));
     expect(agentConnection.signal.aborted).toBe(false);
     return { models, requests };
@@ -2662,42 +2643,38 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
         thinking: ["low", "medium", "high"],
         defaultThinkingOptionId: "medium",
         markedDefault: "medium",
-        thinkingOptionsError: false,
       },
       {
         id: "base-high",
         thinking: ["low", "medium", "high"],
         defaultThinkingOptionId: "high",
         markedDefault: "high",
-        thinkingOptionsError: false,
       },
       {
         id: "large-low",
         thinking: ["low", "medium", "high", "xhigh"],
         defaultThinkingOptionId: "low",
         markedDefault: "low",
-        thinkingOptionsError: false,
       },
       {
         id: "large-xhigh",
         thinking: ["low", "medium", "high", "xhigh"],
         defaultThinkingOptionId: "xhigh",
         markedDefault: "xhigh",
-        thinkingOptionsError: false,
       },
       {
         id: "plain",
         thinking: undefined,
         defaultThinkingOptionId: undefined,
         markedDefault: undefined,
-        thinkingOptionsError: false,
       },
+      // No model select value to switch to, so it keeps upstream's fallback: the session's
+      // thought_level options, which describe the startup model.
       {
         id: "unmatched",
-        thinking: undefined,
-        defaultThinkingOptionId: undefined,
-        markedDefault: undefined,
-        thinkingOptionsError: false,
+        thinking: ["low", "medium", "high"],
+        defaultThinkingOptionId: "medium",
+        markedDefault: "medium",
       },
     ]);
     // One switch per base model, never a prompt, and the probe session is closed.
@@ -2710,7 +2687,7 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
     ]);
   });
 
-  test("leaves the remaining models unknown once a model switch fails", async () => {
+  test("keeps the session fallback for models after a failed model switch", async () => {
     const { models, requests } = await fetchProbedCatalog({
       providerOptions: { probeModelThinking: true },
       rejectModel: "large",
@@ -2722,9 +2699,9 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
       markedDefault: "high",
     });
     expect(models.find(({ id }) => id === "large-xhigh")).toMatchObject({
-      thinking: undefined,
-      defaultThinkingOptionId: undefined,
-      markedDefault: undefined,
+      thinking: ["low", "medium", "high"],
+      defaultThinkingOptionId: "medium",
+      markedDefault: "medium",
     });
     expect(requests).toEqual([
       "session/new",
@@ -2737,8 +2714,41 @@ describe("ACPAgentClient catalog discovery with probeModelThinking", () => {
   test("does not switch models unless the provider opts in", async () => {
     const { models, requests } = await fetchProbedCatalog({});
 
-    expect(models.find(({ id }) => id === "large-xhigh")?.thinking).toBeUndefined();
+    // Without the probe, a model without its own metadata gets upstream's fallback.
+    expect(models.find(({ id }) => id === "large-xhigh")).toEqual({
+      id: "large-xhigh",
+      thinking: ["low", "medium", "high"],
+      defaultThinkingOptionId: "medium",
+      markedDefault: "medium",
+    });
     expect(requests).toEqual(["session/new", "close"]);
+  });
+
+  test("leaves a model's own metadata levels to upstream's handling", async () => {
+    const { models, requests } = await fetchProbedCatalog({
+      providerOptions: { probeModelThinking: true },
+      extraModels: [
+        {
+          modelId: "solo-high",
+          name: "Solo (High)",
+          _meta: {
+            reasoningEffort: "high",
+            reasoningEfforts: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(models.find(({ id }) => id === "solo-high")).toEqual({
+      id: "solo-high",
+      thinking: ["low", "high"],
+      defaultThinkingOptionId: "high",
+      markedDefault: "high",
+    });
+    expect(requests).not.toContain("set:model-option=solo");
   });
 });
 
@@ -3147,60 +3157,6 @@ describe("ACP providers advertise session listing", () => {
   test("Copilot ACP client reports supportsSessionListing", () => {
     const client = new CopilotACPAgentClient({ logger: createTestLogger() });
     expect(client.capabilities.supportsSessionListing).toBe(true);
-  });
-});
-
-describe("transformPiModels", () => {
-  test("keeps slash-free labels unchanged", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "gpt-4.1-mini",
-          label: "GPT 4.1 Mini",
-          description: "Fast",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "gpt-4.1-mini",
-        label: "GPT 4.1 Mini",
-        description: "Fast",
-      },
-    ]);
-  });
-
-  test("uses the last path segment as label and preserves existing descriptions", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-4.1-mini",
-          label: "openrouter/openai/gpt-4.1-mini",
-          description: undefined,
-        },
-        {
-          provider: "pi",
-          id: "anthropic/claude-sonnet-4",
-          label: "anthropic/claude-sonnet-4",
-          description: "Balanced",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-      },
-      {
-        provider: "pi",
-        id: "anthropic/claude-sonnet-4",
-        label: "claude-sonnet-4",
-        description: "Balanced",
-      },
-    ]);
   });
 });
 

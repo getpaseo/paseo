@@ -477,6 +477,56 @@ async function advanceThroughWorkingTreeRecoveryAttempts(
   }
 }
 
+// Stalls every subscription for `watchPath` the way a CPU-starved startup scan does, until the
+// service aborts it at the subscribe deadline. Other paths subscribe immediately.
+function createStallingWatchSetup(watchPath: string) {
+  const signals: AbortSignal[] = [];
+  let acceptNext = false;
+  let acceptedCallback: WatchCallback | null = null;
+  const subscribe = vi.fn(
+    async (directory: string, callback: WatchCallback, options?: { signal?: AbortSignal }) => {
+      if (directory !== watchPath) {
+        return createAsyncSubscription();
+      }
+      const signal = options?.signal ?? new AbortController().signal;
+      signals.push(signal);
+      if (acceptNext) {
+        acceptNext = false;
+        acceptedCallback = callback;
+        return createAsyncSubscription();
+      }
+      return new Promise<ReturnType<typeof createAsyncSubscription>>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  );
+  return {
+    subscribe,
+    signals,
+    acceptNextAttempt() {
+      acceptNext = true;
+    },
+    failAcceptedWatcher() {
+      acceptedCallback?.(new Error("accepted watcher stopped"), []);
+    },
+    async expectAttemptAbortedAtDeadline() {
+      const signal = signals.at(-1);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
+      expect(signal?.aborted).toBe(true);
+      expect(signal?.reason).toMatchObject({ name: "WorkspaceGitWatcherSubscriptionTimeoutError" });
+    },
+    async expectNextAttemptAfter(delayMs: number, service: WorkspaceGitServiceImpl) {
+      const attempts = signals.length;
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      await waitForRefreshesToSettle(service);
+      expect(signals).toHaveLength(attempts);
+      await vi.advanceTimersByTimeAsync(1);
+      await settle(() => expect(signals).toHaveLength(attempts + 1));
+    },
+  };
+}
+
 describe("WorkspaceGitServiceImpl", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -1573,6 +1623,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscribe).toHaveBeenCalledTimes(1);
     expect(subscribe).toHaveBeenCalledWith(REPO_CWD, expect.any(Function), {
       ignore: [join(REPO_CWD, ".git")],
+      signal: expect.any(AbortSignal),
     });
 
     subscription.unsubscribe();
@@ -1646,6 +1697,67 @@ describe("WorkspaceGitServiceImpl", () => {
       }
     },
     15_000,
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "aborts each timed-out %s watcher setup and backs retries off toward an hour",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd));
+      const service = createService({ subscribe: setup.subscribe, getCheckoutStatus });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(setup.signals).toHaveLength(1));
+        await setup.expectAttemptAbortedAtDeadline();
+        await waitForObservationToSettle(service, 1);
+        for (const delayMs of [
+          30_000, 60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000, 3_600_000,
+        ]) {
+          await setup.expectNextAttemptAfter(delayMs, service);
+          await setup.expectAttemptAbortedAtDeadline();
+        }
+        // Degraded polling keeps the checkout fresh while the watcher waits out an hour.
+        const readsBeforeCappedWait = getCheckoutStatus.mock.calls.length;
+        await setup.expectNextAttemptAfter(3_600_000, service);
+        expect(getCheckoutStatus.mock.calls.length).toBeGreaterThanOrEqual(
+          readsBeforeCappedWait + 59,
+        );
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    30_000,
+  );
+
+  test.each(["repository metadata", "working tree"])(
+    "an accepted %s watcher subscription resets the setup-timeout backoff",
+    async (kind) => {
+      const watchPath = kind === "repository metadata" ? join(REPO_CWD, ".git") : REPO_CWD;
+      const setup = createStallingWatchSetup(watchPath);
+      const service = createService({ subscribe: setup.subscribe });
+      const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+      try {
+        await settle(() => expect(setup.signals).toHaveLength(1));
+        await setup.expectAttemptAbortedAtDeadline();
+        for (const delayMs of [30_000, 60_000, 120_000, 240_000, 480_000]) {
+          await setup.expectNextAttemptAfter(delayMs, service);
+          await setup.expectAttemptAbortedAtDeadline();
+        }
+        setup.acceptNextAttempt();
+        await setup.expectNextAttemptAfter(960_000, service);
+        setup.failAcceptedWatcher();
+        // The ordinary recovery ladder's ceiling applies again, not the 32-minute timeout step.
+        await setup.expectNextAttemptAfter(300_000, service);
+        await setup.expectAttemptAbortedAtDeadline();
+        await setup.expectNextAttemptAfter(300_000, service);
+      } finally {
+        subscription.unsubscribe();
+        await service.dispose();
+      }
+    },
+    30_000,
   );
 
   test.each(["repository metadata", "working tree"])(
@@ -1873,6 +1985,7 @@ describe("WorkspaceGitServiceImpl", () => {
     expect(subscription.repoRoot).toBeNull();
     expect(subscribe).toHaveBeenCalledWith(plainCwd, expect.any(Function), {
       ignore: [join(plainCwd, ".git")],
+      signal: expect.any(AbortSignal),
     });
     expect(vi.getTimerCount()).toBe(1);
 

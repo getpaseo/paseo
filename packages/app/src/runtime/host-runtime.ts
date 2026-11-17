@@ -17,14 +17,16 @@ import {
 import {
   connectionFromListen,
   createRemoteSshHostConnection,
-  normalizeStoredHostProfile,
+  forgetUnreadableHost,
   pinRelayProtectedSecurityInProfiles,
+  readHostRegistry,
   upsertHostConnectionInProfiles,
   registryHasConnection,
   relayConnectionFromOffer,
-  StoredHostRegistrySchema,
+  writeHostRegistry,
   type HostConnection,
   type HostProfile,
+  type UnreadableHostEntries,
 } from "@/types/host-connection";
 import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
 import {
@@ -43,7 +45,7 @@ import { isWeb } from "@/constants/platform";
 import { connectToDaemon, getConnectionAuthFailureReason } from "@/utils/test-daemon-connection";
 import { getOrCreateClientId } from "@/utils/client-id";
 import { z } from "zod";
-import { readValidatedJson, readValidatedString } from "@/storage/validated-storage";
+import { readValidatedString } from "@/storage/validated-storage";
 import {
   selectBestConnection,
   type ConnectionCandidate,
@@ -869,6 +871,22 @@ export class HostRuntimeController {
     this.activeClient?.ensureConnected(options);
   }
 
+  async reconnectVia(originServerId: string): Promise<void> {
+    const routes = this.host.connections.filter(
+      (connection) =>
+        connection.type === "routed" &&
+        connection.originServerId === originServerId &&
+        !this.authRejectedConnectionIds.has(connection.id),
+    );
+    if (routes.length === 0 || !this.started || isHostRuntimeConnected(this.snapshot)) return;
+    if (routes.some((route) => route.id === this.snapshot.activeConnectionId))
+      this.ensureConnected();
+    await this.probeCycleInFlight;
+    if (!this.started || this.snapshot.connectionStatus === "online") return;
+    for (const route of routes) this.connectionLastProbedAt.delete(route.id);
+    await this.runProbeCycleNow();
+  }
+
   markAgentDirectorySyncLoading(): void {
     const status = this.snapshot.hasEverLoadedAgentDirectory ? "revalidating" : "initial_loading";
     this.updateSnapshot({
@@ -1676,6 +1694,7 @@ export class HostRuntimeStore {
   private hostListVersion = 0;
   private hostRegistryLoaded = false;
   private hosts: HostProfile[] = [];
+  private unreadableHosts: UnreadableHostEntries = { hosts: [], connectionsByServerId: new Map() };
   private hostAppearanceMutationTail: Promise<void> = Promise.resolve();
   private hostRegistryStatus: HostRegistryStatus = "loading";
   private deps: HostRuntimeControllerDeps;
@@ -1783,32 +1802,17 @@ export class HostRuntimeStore {
     let shouldPersistHosts = false;
     let profiles: HostProfile[] = [];
     try {
-      const stored = await readValidatedJson(
-        this.storage,
-        REGISTRY_STORAGE_KEY,
-        StoredHostRegistrySchema,
-      );
+      const stored = await this.readStoredRegistry();
       if (stored) {
-        const normalizedProfiles: HostProfile[] = [];
-        for (const entry of stored) {
-          const profile = normalizeStoredHostProfile(entry);
-          if (!profile) {
-            await this.storage.removeItem(REGISTRY_STORAGE_KEY);
-            normalizedProfiles.length = 0;
-            break;
-          }
-          // COMPAT(connectionPassword): added in v0.9.1, remove after 2027-03-24 with stored-password migration.
-          if (
-            entry.connections.some(
-              (connection) => connection.type === "directTcp" && connection.password,
-            )
-          ) {
-            shouldPersistHosts = true;
-          }
-          normalizedProfiles.push(profile);
+        // An entry this build can't read skips only that host or connection, and stays stored.
+        const registry = readHostRegistry(stored);
+        this.unreadableHosts = registry.unreadable;
+        // COMPAT(connectionPassword): added in v0.9.1, remove after 2027-03-24 with stored-password migration.
+        if (registry.movedConnectionPassword) {
+          shouldPersistHosts = true;
         }
-        profiles = normalizedProfiles.filter((entry) => !isPlaceholderServerId(entry.serverId));
-        if (profiles.length !== normalizedProfiles.length) {
+        profiles = registry.hosts.filter((entry) => !isPlaceholderServerId(entry.serverId));
+        if (profiles.length !== registry.hosts.length) {
           shouldPersistHosts = true;
         }
       }
@@ -2304,6 +2308,7 @@ export class HostRuntimeStore {
   async removeHost(serverId: string): Promise<void> {
     await this.revokePushNotifications({ client: this.getClient(serverId), serverId });
     const remaining = this.hosts.filter((daemon) => daemon.serverId !== serverId);
+    this.unreadableHosts = forgetUnreadableHost(this.unreadableHosts, serverId);
     this.setHostsAndSync(remaining);
     await this.persistHosts();
   }
@@ -2392,7 +2397,27 @@ export class HostRuntimeStore {
   }
 
   private async persistHosts(hosts = this.hosts): Promise<void> {
-    await this.storage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(hosts));
+    await this.storage.setItem(
+      REGISTRY_STORAGE_KEY,
+      JSON.stringify(writeHostRegistry(hosts, this.unreadableHosts)),
+    );
+  }
+
+  /**
+   * Reads the stored registry without removing it. A value that isn't a JSON array is copied to
+   * `<key>:unreadable` first, because the next save overwrites the key.
+   */
+  private async readStoredRegistry(): Promise<unknown[] | null> {
+    const raw = await this.storage.getItem(REGISTRY_STORAGE_KEY);
+    if (raw === null) return null;
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (Array.isArray(value)) return value;
+    } catch {
+      // Not JSON: copied aside below.
+    }
+    await this.storage.setItem(`${REGISTRY_STORAGE_KEY}:unreadable`, raw);
+    return null;
   }
 
   private emitHostList(): void {
@@ -2601,6 +2626,7 @@ export class HostRuntimeStore {
       snapshot.connectionStatus === "online" && previousStatus !== "online";
     if (didTransitionOnline) {
       useSessionStore.getState().bumpHistorySyncGeneration(serverId);
+      for (const child of this.controllers.values()) void child.reconnectVia(serverId);
       // Checkout git data is push-driven; pushes emitted while disconnected are gone for
       // good (the daemon dedupes by snapshot fingerprint). Mark the caches stale so active
       // queries refetch now and evicted ones on their next mount.

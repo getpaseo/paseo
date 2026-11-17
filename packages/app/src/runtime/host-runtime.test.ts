@@ -2149,6 +2149,68 @@ describe("HostRuntimeController", () => {
     });
   });
 
+  it("wakes an active routed client before an unrelated direct probe settles", async () => {
+    useHostRuntimeClock();
+    const route: HostConnection = {
+      id: "via:srv_parent",
+      type: "routed",
+      originServerId: "srv_parent",
+    };
+    const host = makeHost({ connections: [route] });
+    const client = makeConnectedProbeClient(5);
+    const directProbeStarted = createDeferred<void>();
+    const directProbe = createDeferred<void>();
+    let directProbeCalls = 0;
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        getClientId: async () => "blocked-direct-probe",
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type === "directTcp") {
+            directProbeCalls += 1;
+            directProbeStarted.resolve();
+            await directProbe.promise;
+            throw new Error("Direct connection unavailable");
+          }
+          return {
+            client: client as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+      },
+    });
+    await controller.start({ autoProbe: false });
+    client.setConnectionState({
+      status: "disconnected",
+      reason: "origin offline",
+      nextRetryAt: new Date(Date.now() + 12000).toISOString(),
+    });
+    const probing = controller.updateHost({
+      ...host,
+      connections: [
+        route,
+        { id: "direct:unreachable", type: "directTcp", endpoint: "unreachable:6767" },
+      ],
+    });
+    await directProbeStarted.promise;
+    const recovering = controller.reconnectVia("srv_parent");
+    try {
+      expect(client.ensureConnectedCalls).toBe(1);
+      expect(controller.getSnapshot().connectionStatus).toBe("online");
+      expect(directProbeCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(client.ensureConnectedCalls).toBe(1);
+      expect(directProbeCalls).toBe(1);
+    } finally {
+      directProbe.resolve();
+      await Promise.all([probing, recovering]);
+      await controller.stop();
+    }
+    expect(directProbeCalls).toBe(1);
+  });
+
   it("keeps active client generation stable during background probe cycles", async () => {
     useHostRuntimeClock();
     const host = makeHost({
@@ -2194,7 +2256,200 @@ describe("HostRuntimeController", () => {
   });
 });
 
+const REGISTRY_KEY = "@paseo:daemon-registry";
+const futureConnection = { id: "future:1", type: "futureKind", address: "future.example.com" };
+const directA: HostConnection = {
+  id: "direct:lan-a:6767",
+  type: "directTcp",
+  endpoint: "lan-a:6767",
+};
+const directB: HostConnection = {
+  id: "direct:lan-b:6767",
+  type: "directTcp",
+  endpoint: "lan-b:6767",
+};
+// What a build with a connection kind this one doesn't know leaves behind: an extra connection
+// on a host this build can reach, and a host reached only through it.
+const storedWithUnreadableEntries = [
+  {
+    ...makeHost({ serverId: "srv_a", password: "secret-a" }),
+    connections: [futureConnection, directA],
+  },
+  makeHost({ serverId: "srv_b", password: "secret-b", connections: [directB] }),
+  { serverId: "srv_future", label: "future host", connections: [futureConnection] },
+];
+
+async function bootWithRegistry(registry: string): Promise<{
+  store: HostRuntimeStore;
+  storage: HostRuntimeStorage;
+}> {
+  const storage = createMemoryHostRuntimeStorage({
+    [REGISTRY_KEY]: registry,
+    "@paseo:e2e": "1",
+  });
+  const store = new HostRuntimeStore({
+    storage,
+    deps: {
+      createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+      connectToDaemon: async ({ host }) => ({
+        client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+        serverId: host.serverId,
+        hostname: host.label ?? null,
+      }),
+      getClientId: async () => "cid_test_runtime",
+    },
+    revokePushNotifications: async () => undefined,
+  });
+  await store.boot();
+  return { store, storage };
+}
+
+async function readRegistry(storage: HostRuntimeStorage): Promise<unknown> {
+  const raw = await storage.getItem(REGISTRY_KEY);
+  return raw === null ? null : JSON.parse(raw);
+}
+
 describe("HostRuntimeStore", () => {
+  function gatewayRecoveryFixture() {
+    const parent = new FakeDaemonClient();
+    parent.connectedHosts = true;
+    parent.hostDirectory = Promise.resolve({
+      self: { serverId: "srv_parent", label: "parent" },
+      hosts: ["srv_child", "srv_healthy"].map((serverId) => ({
+        registrationId: `reg_${serverId}`,
+        serverId,
+        label: serverId,
+        source: { id: "user", key: serverId },
+        metadata: {},
+        enabled: true,
+        status: "online" as const,
+        targetDescription: "relay",
+        lastOnlineAt: null,
+        nextRetryAt: null,
+        error: null,
+      })),
+    });
+    const parentReady = createDeferred<void>();
+    const child = makeConnectedProbeClient(5);
+    const healthy = makeConnectedProbeClient(5);
+    const unrelated = makeConnectedProbeClient(5);
+    const attempts = new Map<string, number>();
+    const hosts = [
+      makeHost({
+        serverId: "srv_parent",
+        connections: [
+          {
+            id: "relay:parent",
+            type: "relay",
+            relayEndpoint: "relay.paseo.sh:443",
+            daemonPublicKeyB64: "pk_parent",
+          },
+        ],
+      }),
+      ...["srv_child", "srv_healthy"].map((serverId) =>
+        makeHost({
+          serverId,
+          connections: [
+            {
+              id: "via:srv_parent",
+              type: "routed" as const,
+              originServerId: "srv_parent",
+            },
+          ],
+        }),
+      ),
+      makeHost({
+        serverId: "srv_unrelated",
+        connections: [
+          {
+            id: "direct:unrelated:6767",
+            type: "directTcp",
+            endpoint: "unrelated:6767",
+          },
+        ],
+      }),
+    ];
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage({
+        "@paseo:e2e": "1",
+        "@paseo:daemon-registry": JSON.stringify(hosts),
+      }),
+      deps: {
+        getClientId: async () => "gateway-recovery",
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host, connection }) => {
+          attempts.set(host.serverId, (attempts.get(host.serverId) ?? 0) + 1);
+          let client: FakeDaemonClient;
+          if (host.serverId === "srv_parent") {
+            await parentReady.promise;
+            parent.setConnectionState({ status: "connected" });
+            client = parent;
+          } else if (connection.type === "routed") {
+            if (!parent.isConnected) throw new Error("Origin host srv_parent is unavailable");
+            client = host.serverId === "srv_child" ? child : healthy;
+          } else {
+            client = unrelated;
+          }
+          return {
+            client: client as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label,
+          };
+        },
+      },
+    });
+    return { store, parent, parentReady, child, healthy, unrelated, attempts };
+  }
+
+  it("retries saved child routes immediately when their relay gateway first connects", async () => {
+    useHostRuntimeClock();
+    const { store, parentReady, attempts } = gatewayRecoveryFixture();
+    try {
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(attempts.get("srv_child")).toBe(1);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).not.toBe("online");
+      parentReady.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot("srv_parent")?.connectionStatus).toBe("online");
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      expect(store.getSnapshot("srv_healthy")?.connectionStatus).toBe("online");
+      expect(attempts.get("srv_child")).toBe(2);
+      expect(attempts.get("srv_healthy")).toBe(2);
+      expect(attempts.get("srv_unrelated")).toBe(1);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
+  it("wakes disconnected routed clients on gateway recovery without disturbing healthy hosts", async () => {
+    useHostRuntimeClock();
+    const { store, parent, parentReady, child, healthy, unrelated } = gatewayRecoveryFixture();
+    try {
+      parentReady.resolve();
+      await store.boot();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      parent.setConnectionState({ status: "disconnected", reason: "relay lost" });
+      child.setConnectionState({
+        status: "disconnected",
+        reason: "origin offline",
+        nextRetryAt: new Date(Date.now() + 12000).toISOString(),
+      });
+      parent.setConnectionState({ status: "connected" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(child.ensureConnectedCalls).toBe(1);
+      expect(store.getSnapshot("srv_child")?.connectionStatus).toBe("online");
+      expect(healthy.ensureConnectedCalls).toBe(0);
+      expect(unrelated.ensureConnectedCalls).toBe(0);
+      parent.setConnectionState({ status: "connected" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(child.ensureConnectedCalls).toBe(1);
+    } finally {
+      store.syncHosts([]);
+    }
+  });
+
   it.each([false, true])(
     "keeps B and C distinct with routed and direct candidates (B direct first: %s)",
     async (directFirst) => {
@@ -2482,6 +2737,98 @@ describe("HostRuntimeStore", () => {
 
     store.syncHosts([]);
     session.clearSession(host.serverId);
+  });
+
+  it("keeps readable hosts when the registry holds entries this build can't read", async () => {
+    const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
+
+    expect(store.getHosts().map((host) => [host.serverId, host.password])).toEqual([
+      ["srv_a", "secret-a"],
+      ["srv_b", "secret-b"],
+    ]);
+    expect(store.getHosts()[0]?.connections.map((connection) => connection.id)).toEqual([
+      directA.id,
+    ]);
+    expect(await readRegistry(storage)).toEqual(storedWithUnreadableEntries);
+
+    store.syncHosts([]);
+  });
+
+  it("keeps the entries it can't read when it saves the registry", async () => {
+    const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
+
+    await store.renameHost("srv_b", "renamed");
+
+    expect(await readRegistry(storage)).toMatchObject([
+      {
+        serverId: "srv_a",
+        password: "secret-a",
+        connections: [{ id: directA.id }, futureConnection],
+      },
+      { serverId: "srv_b", password: "secret-b", label: "renamed" },
+      storedWithUnreadableEntries[2],
+    ]);
+
+    store.syncHosts([]);
+  });
+
+  it("moves a stored connection password to its host and keeps the connection it can't read", async () => {
+    const { store, storage } = await bootWithRegistry(
+      JSON.stringify([
+        {
+          serverId: "srv_legacy",
+          connections: [
+            { type: "directTcp", endpoint: "lan-a:6767", password: "old-secret" },
+            futureConnection,
+          ],
+        },
+      ]),
+    );
+
+    expect(store.getHosts().map((host) => [host.serverId, host.password])).toEqual([
+      ["srv_legacy", "old-secret"],
+    ]);
+    await vi.waitFor(async () =>
+      expect(await readRegistry(storage)).toMatchObject([
+        { serverId: "srv_legacy", password: "old-secret" },
+      ]),
+    );
+    expect(await readRegistry(storage)).toMatchObject([
+      { connections: [{ ...directA, useTls: false }, futureConnection] },
+    ]);
+    const [written] = (await readRegistry(storage)) as Array<{ connections: unknown[] }>;
+    expect(written?.connections[0]).not.toHaveProperty("password");
+
+    store.syncHosts([]);
+  });
+
+  it("forgets an entry it can't read once that host is paired again and removed", async () => {
+    const { store, storage } = await bootWithRegistry(
+      JSON.stringify([{ serverId: "srv_future", connections: [futureConnection] }]),
+    );
+    expect(store.getHosts()).toEqual([]);
+
+    await store.upsertDirectConnection({ serverId: "srv_future", endpoint: directA.endpoint });
+    await vi.waitFor(async () =>
+      expect(await readRegistry(storage)).toMatchObject([
+        { serverId: "srv_future", connections: [{ id: directA.id }] },
+      ]),
+    );
+
+    await store.removeHost("srv_future");
+    expect(await readRegistry(storage)).toEqual([]);
+
+    store.syncHosts([]);
+  });
+
+  it("copies a registry that isn't JSON aside instead of deleting it", async () => {
+    const { store, storage } = await bootWithRegistry("{not json");
+
+    expect(store.getHosts()).toEqual([]);
+    expect(await storage.getItem(`${REGISTRY_KEY}:unreadable`)).toBe("{not json");
+    expect(await storage.getItem(REGISTRY_KEY)).toBe("{not json");
+
+    store.syncHosts([]);
   });
 
   it("marks the host registry loaded after boot reads storage", async () => {
