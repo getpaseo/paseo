@@ -64,7 +64,12 @@ export async function archiveIfSafe(input: {
   const cwd = snapshot.cwd;
   const pullRequest = snapshot.forge.pullRequest;
 
-  if (!pullRequest?.isMerged || !snapshot.git.headSha || snapshot.forge.error) {
+  if (
+    !pullRequest?.isMerged ||
+    !pullRequest.headSha ||
+    !snapshot.git.headSha ||
+    snapshot.forge.error
+  ) {
     return;
   }
   if (snapshot.git.isDirty !== false) {
@@ -75,11 +80,10 @@ export async function archiveIfSafe(input: {
   }
 
   if (
-    !(await pullRequestContainsCommit({
-      cwd,
+    !pullRequestContainsCommit({
       workspaceCommit: snapshot.git.headSha,
-      pullRequestCommit: pullRequest.headSha,
-    }))
+      pullRequestCommits: pullRequest.commitOids,
+    })
   )
     return;
 

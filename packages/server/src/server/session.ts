@@ -6188,9 +6188,10 @@ export class Session {
   private buildWorkspaceGitHubRuntimePayload(
     snapshot: WorkspaceGitRuntimeSnapshot,
   ): NonNullable<WorkspaceDescriptorPayload["githubRuntime"]> {
+    const { commitOids: _commitOids, ...pullRequest } = snapshot.forge.pullRequest ?? {};
     return {
       featuresEnabled: snapshot.forge.featuresEnabled,
-      pullRequest: snapshot.forge.pullRequest,
+      pullRequest: snapshot.forge.pullRequest ? pullRequest : null,
       error: snapshot.forge.error,
     };
   }

@@ -1,3 +1,4 @@
+import { createPullRequestCommitReader } from "./pull-request-contains-commit.js";
 import { createPullRequestHistory } from "../test-utils/pull-request-history.js";
 import { onTestFinished } from "vitest";
 import { execFileSync } from "node:child_process";
@@ -25,7 +26,7 @@ const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner,commits";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
@@ -213,6 +214,7 @@ function currentPullRequestJson(overrides: Record<string, unknown> = {}): string
     baseRefName: "main",
     headRefName: "feature/fork",
     headRefOid: "1111111111111111111111111111111111111111",
+    commits: [{ oid: overrides.headRefOid ?? "1111111111111111111111111111111111111111" }],
     mergedAt: null,
     statusCheckRollup: [],
     reviewDecision: "REVIEW_REQUIRED",
@@ -267,6 +269,7 @@ function batchPollPrNodeJson(overrides: Record<string, unknown> = {}): Record<st
     viewerCanUpdateBranch: false,
     isMergeQueueEnabled: false,
     isInMergeQueue: false,
+    commits: { nodes: [{ commit: { oid: overrides.headRefOid ?? "oid-42" } }] },
     ...overrides,
   };
 }
@@ -1113,44 +1116,90 @@ describe("ForgeService", () => {
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
 
-  it("filters terminal PRs by containment in a batched poll without per-target API calls", async () => {
-    vi.useRealTimers();
-    const history = createPullRequestHistory();
-    onTestFinished(history.dispose);
-    const { cwd, workspaceCommit, pullRequestCommit } = history;
-    const runner = createScriptedRunner([
-      batchPollStatusJson({
-        t0: batchPollRepositoryJson([
-          batchPollPrNodeJson({ headRefName: "feature", headRefOid: pullRequestCommit }),
-        ]),
-      }),
-      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+  it("shares terminal commit reads and caches failures until retry", async () => {
+    let now = 0;
+    let calls = 0;
+    const read = createPullRequestCommitReader(() => now);
+    const load = async () => {
+      calls++;
+      throw new Error("offline");
+    };
+    await expect(read("request@head", load)).rejects.toThrow("offline");
+    await expect(read("request@head", load)).rejects.toThrow("offline");
+    expect(calls).toBe(1);
+    now = 300_001;
+    await expect(read("request@head", load)).rejects.toThrow("offline");
+    expect(calls).toBe(2);
+    await expect(read("request@new-head", async () => ["own-commit"])).resolves.toEqual([
+      "own-commit",
     ]);
-    const service = createGitHubService({
-      runner: runner.runner,
-      resolveGhPath: async () => "/usr/bin/gh",
-      resolveRepoHost: async () => null,
-      resolveRepoSlug: async () => "acme/widgets",
-    });
-    onTestFinished(() => service.dispose?.());
-    const statuses: Array<CurrentPullRequestStatus | null> = [];
-    const subscription = service.retainCurrentPullRequestStatusPoll?.({
-      cwd,
-      headRef: "feature",
-      headSha: workspaceCommit,
-      onStatus: (status) => statuses.push(status),
-    });
-    onTestFinished(() => subscription?.unsubscribe());
-    await vi.waitFor(() => expect(statuses).toHaveLength(1));
-    expect(statuses[0]).toMatchObject({ state: "merged", headSha: pullRequestCommit });
-    expect(runner.calls).toHaveLength(2);
-    expect(runner.calls.every((call) => call.args[0] === "api" && call.args[1] === "graphql")).toBe(
-      true,
-    );
-    expect(history.git(["rev-parse", "HEAD"])).toBe(workspaceCommit);
-    expect(history.git(["rev-parse", "@{upstream}"])).toBe(workspaceCommit);
-    expect(() => history.git(["rev-parse", "--verify", "FETCH_HEAD"])).toThrow();
   });
+
+  it.each([false, true])(
+    "filters terminal PRs in a batched poll (pagination: %s)",
+    async (paginate) => {
+      vi.useRealTimers();
+      const history = createPullRequestHistory();
+      onTestFinished(history.dispose);
+      const { cwd, workspaceCommit, pullRequestCommit } = history;
+      const runner = createScriptedRunner([
+        batchPollStatusJson({
+          t0: batchPollRepositoryJson([
+            batchPollPrNodeJson({
+              headRefName: "feature",
+              headRefOid: pullRequestCommit,
+              commits: {
+                nodes: [
+                  { commit: { oid: paginate ? "other" : workspaceCommit } },
+                  { commit: { oid: pullRequestCommit } },
+                ],
+                pageInfo: { hasNextPage: paginate, endCursor: "cursor-1" },
+              },
+            }),
+          ]),
+        }),
+        ...(paginate
+          ? [
+              batchPollStatusJson({
+                t0: {
+                  pullRequest: {
+                    commits: {
+                      nodes: [{ commit: { oid: workspaceCommit } }],
+                      pageInfo: { hasNextPage: false, endCursor: "cursor-2" },
+                    },
+                  },
+                },
+              }),
+            ]
+          : []),
+        batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveRepoSlug: async () => "acme/widgets",
+      });
+      onTestFinished(() => service.dispose?.());
+      const statuses: Array<CurrentPullRequestStatus | null> = [];
+      const subscription = service.retainCurrentPullRequestStatusPoll?.({
+        cwd,
+        headRef: "feature",
+        headSha: workspaceCommit,
+        onStatus: (status) => statuses.push(status),
+      });
+      onTestFinished(() => subscription?.unsubscribe());
+      await vi.waitFor(() => expect(statuses).toHaveLength(1));
+      expect(statuses[0]).toMatchObject({ state: "merged", headSha: pullRequestCommit });
+      expect(runner.calls).toHaveLength(paginate ? 3 : 2);
+      expect(
+        runner.calls.every((call) => call.args[0] === "api" && call.args[1] === "graphql"),
+      ).toBe(true);
+      expect(history.git(["rev-parse", "HEAD"])).toBe(workspaceCommit);
+      expect(history.git(["rev-parse", "@{upstream}"])).toBe(workspaceCommit);
+      expect(() => history.git(["rev-parse", "--verify", "FETCH_HEAD"])).toThrow();
+    },
+  );
 
   it("batches PR status polls across workspaces into one GraphQL request", async () => {
     let now = 0;
@@ -3352,6 +3401,7 @@ describe("ForgeService", () => {
       state: "MERGED",
       mergedAt: "2026-07-17T12:00:00Z",
       headRefOid: pullRequestCommit,
+      commits: [{ oid: workspaceCommit }, { oid: pullRequestCommit }],
     });
     const runner = createScriptedRunner([
       stale,
@@ -3399,6 +3449,35 @@ describe("ForgeService", () => {
           headRef: "feature/fork",
           headRepositoryOwner: "forkOwner",
           headSha: history.pullRequestCommit,
+        }),
+      ).resolves.toBeNull();
+    },
+  );
+
+  it.each(["CLOSED", "MERGED"])(
+    "hides a %s PR when the workspace only shares its inherited base",
+    async (state) => {
+      const history = createPullRequestHistory();
+      onTestFinished(history.dispose);
+      const candidate = JSON.parse(
+        currentPullRequestJson({
+          state,
+          headRefOid: history.pullRequestCommit,
+          commits: [{ oid: history.pullRequestCommit }],
+          headRepositoryOwner: { login: "forkOwner" },
+        }),
+      );
+      const runner = createScriptedRunner([JSON.stringify(candidate), JSON.stringify([candidate])]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+      });
+      await expect(
+        service.getCurrentPullRequestStatus({
+          cwd: history.cwd,
+          headRef: "feature/fork",
+          headRepositoryOwner: "forkOwner",
+          headSha: history.workspaceCommit,
         }),
       ).resolves.toBeNull();
     },

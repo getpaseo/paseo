@@ -377,6 +377,7 @@ describe("createGitLabService", () => {
     const { service, calls } = makeService((args) => {
       if (args[1] === "list") return ok(JSON.stringify([newestStale, exactOlder]));
       if (args[1] === "view" && args[2] === "270") return ok(JSON.stringify(exactOlder));
+      if (args[1]?.includes("/commits?")) return ok(JSON.stringify([{ id: checkoutSha }]));
       if (args[0] === "api") return ok("{}");
       throw new Error(`unexpected call: ${args.join(" ")}`);
     });
@@ -388,7 +389,7 @@ describe("createGitLabService", () => {
     });
 
     expect(status?.number).toBe(270);
-    expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
+    expect(calls[2]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
   it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
@@ -401,9 +402,11 @@ describe("createGitLabService", () => {
       source_branch: "dev",
       sha: pullRequestCommit,
     };
-    const { service, calls } = makeService((args) =>
-      ok(JSON.stringify(args[1] === "list" ? [stale] : stale)),
-    );
+    const { service, calls } = makeService((args) => {
+      if (args[1]?.includes("/commits?"))
+        return ok(JSON.stringify([{ id: workspaceCommit }, { id: pullRequestCommit }]));
+      return ok(JSON.stringify(args[1] === "list" ? [stale] : stale));
+    });
 
     await expect(
       service.getCurrentPullRequestStatus({

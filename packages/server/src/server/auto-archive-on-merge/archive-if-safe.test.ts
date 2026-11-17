@@ -31,6 +31,7 @@ function createPullRequest(
     baseRefName: "main",
     headRefName: "feature",
     headSha: "same-head",
+    commitOids: ["same-head"],
     isMerged: true,
     ...overrides,
   };

@@ -98,17 +98,22 @@ Register the adapter in `defaultForgeRegistry` with:
 - `probeHost` when self-hosted/Enterprise detection is supported
 
 Current change-request lookup prefers an open request for the branch and repository.
-Closed and merged requests belong to a checkout only when their head contains the
-checkout commit. Display and auto-archive share this ancestry rule. This retains a
-request after a server-side branch update while rejecting historical requests on
-reused branch names. Auto-archive still requires an observed open-to-merged
-transition and fresh workspace safety checks; being behind the remote alone does
-not block archive when the merged request contains the checkout commit.
+A closed or merged request belongs to a workspace only when its checkout commit
+is in the forge's PR/MR commit list. Commits inherited from the base do not count.
+Display and auto-archive share this rule, preserving squash-merged requests and
+requests updated remotely while rejecting a fresh workspace on their base commit.
+A rewritten or newly advanced checkout no longer matches the terminal request.
 
-Containment uses Git objects, fetching a missing PR head from origin without
-moving refs or writing FETCH_HEAD. This keeps ancestry reads outside the GitHub
-GraphQL budget. If history or remote access cannot establish containment, hide
-the terminal request and leave the workspace active.
+Commit membership stays in the server snapshot; clients receive the selected
+request without its commit list. Archive uses that same evidence after refreshing
+the workspace. It still requires an observed open-to-merged transition and the
+workspace safety checks; being behind alone does not block it.
+
+Containment spawns no Git commands and fetches no Git objects. GitHub reads commit
+IDs in the existing batched query, batches additional pages under the same rate
+budget, and remembers terminal pages by PR head. GitLab and Gitea cache commit-list
+reads, including failures, for five minutes. Missing membership evidence leaves
+the workspace active.
 
 Keep checkout HEAD in adapter cache and poll identities so checkout changes
 refresh the facts used by archive eligibility.

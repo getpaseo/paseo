@@ -201,6 +201,8 @@ export interface WorkspaceGitRuntimeSnapshot {
       baseRefName: string;
       headRefName: string;
       headSha?: string;
+      /** Server-only commit membership evidence; never projected onto the wire. */
+      commitOids?: string[];
       isMerged: boolean;
       isDraft?: boolean;
       mergeable?: PullRequestMergeable;

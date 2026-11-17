@@ -2050,6 +2050,8 @@ describe("createGiteaService", () => {
       if (args[0] === "pr" && args[1] === "list" && argValue(args, "--state") === "open") {
         return ok(JSON.stringify([]));
       }
+      if (args[1]?.includes("/commits?"))
+        return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: headSha }] : []));
       if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
         return ok(JSON.stringify([closedPr]));
       }
@@ -2080,6 +2082,8 @@ describe("createGiteaService", () => {
     const { service, calls } = makeService(
       (args) => {
         if (args[0] === "pr" && args[1] === "list") return ok("[]");
+        if (args[1]?.includes("/commits?"))
+          return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: headSha }] : []));
         if (args[0] === "api" && args[1].startsWith("repos/{owner}/{repo}/pulls?")) {
           return ok(JSON.stringify([closedPr]));
         }
@@ -2114,6 +2118,8 @@ describe("createGiteaService", () => {
     });
     const { service } = makeService((args) => {
       if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[1]?.includes("/commits?"))
+        return ok(JSON.stringify(args[1].endsWith("page=1") ? [{ sha: workspaceCommit }] : []));
       if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
         return ok(JSON.stringify([stale]));
       }

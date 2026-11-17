@@ -1,4 +1,7 @@
-import { pullRequestContainsCommit } from "./pull-request-contains-commit.js";
+import {
+  pullRequestContainsCommit,
+  createPullRequestCommitReader,
+} from "./pull-request-contains-commit.js";
 import { z } from "zod";
 import { CHECK_TRAIT_ACTION_REQUIRED, CHECK_TRAIT_WARNING } from "@getpaseo/protocol/check-traits";
 import { mapGiteaCommitState } from "@getpaseo/protocol/gitea-status";
@@ -164,6 +167,7 @@ const GiteaPrListItemSchema = z
     labels: z.string().optional(),
     ci: z.string().optional(),
     headSha: z.string().optional(),
+    commitOids: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -1400,6 +1404,7 @@ function throwFirstNonTeaAuthSearchRejection(results: PromiseSettledResult<unkno
 }
 
 export function createGiteaService(options: CreateGiteaServiceOptions = {}): ForgeService {
+  const readRequestCommits = createPullRequestCommitReader();
   const runner = options.runner ?? runTeaCommand;
   const resolveTea = createCachedCliPathResolver(options.resolveTeaPath ?? resolveTeaPath);
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
@@ -1595,7 +1600,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     if (!match) {
       return null;
     }
-    const status = toCurrentPullRequestStatus(match);
+    const status = { ...toCurrentPullRequestStatus(match), commitOids: match.commitOids };
     return loadCurrentPullRequestChecks(input.cwd, match, status);
   }
 
@@ -1664,14 +1669,28 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         Number(right.head.sha === input.headSha) - Number(left.head.sha === input.headSha),
     );
     for (const item of candidates) {
+      const commitOids = await readRequestCommits(
+        `${input.cwd}:${repoPath}/${item.number}@${item.head.sha}`,
+        async () => {
+          const result: string[] = [];
+          for (let page = 1; ; page++) {
+            const commits = await runJsonArray(
+              ["api", `${repoPath}/pulls/${item.number}/commits?limit=50&page=${page}`],
+              { cwd: input.cwd },
+              z.object({ sha: z.string() }),
+            );
+            result.push(...commits.map((commit) => commit.sha));
+            if (commits.length === 0) return result;
+          }
+        },
+      );
       if (
-        await pullRequestContainsCommit({
-          cwd: input.cwd,
+        pullRequestContainsCommit({
           workspaceCommit: input.headSha,
-          pullRequestCommit: item.head.sha,
+          pullRequestCommits: commitOids,
         })
       ) {
-        return currentPullRequestApiToListItem(item);
+        return { ...currentPullRequestApiToListItem(item), commitOids };
       }
     }
     return null;

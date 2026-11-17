@@ -51,6 +51,7 @@ describe("checkout status projection", () => {
     const payload = normalizeCheckoutPrStatusPayload(
       {
         number: 123,
+        commitOids: ["server-only-membership"],
         repoOwner: "internal-owner",
         repoName: "internal-repo",
         url: "https://github.com/getpaseo/paseo/pull/123",
@@ -76,6 +77,7 @@ describe("checkout status projection", () => {
       "github",
     );
 
+    expect(payload).not.toHaveProperty("commitOids");
     expect(payload).toHaveProperty("repoOwner", "internal-owner");
     expect(payload).toHaveProperty("repoName", "internal-repo");
     expect(payload).toHaveProperty("forge", "github");

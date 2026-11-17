@@ -1,4 +1,7 @@
-import { pullRequestContainsCommit } from "./pull-request-contains-commit.js";
+import {
+  pullRequestContainsCommit,
+  createPullRequestCommitReader,
+} from "./pull-request-contains-commit.js";
 import { z } from "zod";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
@@ -154,6 +157,7 @@ const GitLabMergeRequestSchema = z
     source_branch: z.string(),
     target_branch: z.string(),
     sha: z.string().optional(),
+    commitOids: z.array(z.string()).optional(),
     source_project_id: z.number().nullable().optional(),
     target_project_id: z.number().nullable().optional(),
     draft: z.boolean().optional(),
@@ -740,6 +744,7 @@ function toCurrentPullRequestStatus(
     baseRefName: mr.target_branch,
     headRefName: mr.source_branch,
     ...(mr.sha ? { headSha: mr.sha } : {}),
+    commitOids: mr.commitOids,
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
@@ -920,6 +925,7 @@ function gitLabNumberQuery(query: string | undefined): string | null {
 }
 
 export function createGitLabService(options: CreateGitLabServiceOptions = {}): ForgeService {
+  const readRequestCommits = createPullRequestCommitReader();
   const runner = options.runner ?? runGlabCommand;
   const resolveGlab = createCachedCliPathResolver(options.resolveGlabPath ?? resolveGlabPath);
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
@@ -997,14 +1003,25 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     if (open) return viewMergeRequest(cwd, String(open.iid));
     candidates.sort((left, right) => Number(right.sha === headSha) - Number(left.sha === headSha));
     for (const mr of candidates) {
-      if (
-        await pullRequestContainsCommit({
-          cwd,
-          workspaceCommit: headSha,
-          pullRequestCommit: mr.sha,
-        })
-      ) {
-        return viewMergeRequest(cwd, String(mr.iid));
+      const project = mr.target_project_id ?? extractProjectPath(mr.references?.full);
+      if (project === undefined) continue;
+      const commitOids = await readRequestCommits(`${mr.web_url}@${mr.sha}`, async () => {
+        const result: string[] = [];
+        for (let page = 1; ; page++) {
+          const commits = await runJson(
+            [
+              "api",
+              `projects/${encodeURIComponent(project)}/merge_requests/${mr.iid}/commits?per_page=100&page=${page}`,
+            ],
+            { cwd },
+            z.array(z.object({ id: z.string() })),
+          );
+          result.push(...commits.map((commit) => commit.id));
+          if (commits.length < 100) return result;
+        }
+      });
+      if (pullRequestContainsCommit({ workspaceCommit: headSha, pullRequestCommits: commitOids })) {
+        return { ...(await viewMergeRequest(cwd, String(mr.iid))), commitOids };
       }
     }
     return null;

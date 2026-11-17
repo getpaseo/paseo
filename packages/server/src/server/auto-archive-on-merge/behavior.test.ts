@@ -179,6 +179,7 @@ async function createUnobservedWorkspace(journeyOptions?: {
   });
   let observation: PullRequestObservation | null = null;
   let remoteHeadSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+  const workspaceHeadSha = remoteHeadSha;
   const reads: Array<string | undefined> = [];
   const archives: string[] = [];
   let archiveDecisions = 0;
@@ -194,6 +195,7 @@ async function createUnobservedWorkspace(journeyOptions?: {
           status: observation && {
             ...observation,
             headSha: remoteHeadSha,
+            commitOids: [workspaceHeadSha, remoteHeadSha],
             title: observation.headRefName,
             baseRefName: "main",
             isMerged: observation.state === "merged",
