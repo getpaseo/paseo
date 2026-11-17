@@ -10,7 +10,7 @@ import {
 } from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
+import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 let workspace: SeededWorkspace;
@@ -468,15 +468,51 @@ test("downloads a file over direct TCP with its original filename and bytes", as
 
   const downloaded = await downloadFileFromExplorer(page, fileName);
   const url = new URL(downloaded.url());
-  expect(url.protocol).toBe("http:");
-  expect(url.port).toBe(getE2EDaemonPort());
-  expect(url.pathname).toBe("/api/files/download");
-  expect(url.searchParams.get("token")).toBeTruthy();
+  expect(url.protocol).toBe("blob:");
   expect(downloaded.suggestedFilename()).toBe(fileName);
   const savedFile = testInfo.outputPath(fileName);
   await downloaded.saveAs(savedFile);
   expect(await downloaded.failure()).toBeNull();
   expect(await readFile(savedFile)).toEqual(source);
+});
+
+test("keeps the app open and shows the error when the host rejects a download", async ({
+  page,
+}, testInfo) => {
+  const fileName = "removed-during-download.bin";
+  const filePath = path.join(workspace.workspaceDirectory, fileName);
+  const source = Buffer.from([0, 1, 2, 255]);
+  await writeFile(filePath, source);
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+  const workspaceUrl = page.url();
+
+  // The file disappears after the token is issued, so the real daemon answers 404.
+  await page.route(
+    "**/api/files/download?*",
+    async (route) => {
+      await rm(filePath);
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByText(fileName, { exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+
+  await expect(
+    page.getByText("Failed to download file (HTTP 404).", { exact: true }),
+  ).toBeVisible();
+  expect(page.url()).toBe(workspaceUrl);
+
+  await writeFile(filePath, source);
+  const downloaded = await downloadFileFromExplorer(page, fileName);
+  const savedFile = testInfo.outputPath(fileName);
+  await downloaded.saveAs(savedFile);
+  expect(await readFile(savedFile)).toEqual(source);
+  expect(page.url()).toBe(workspaceUrl);
 });
 
 test("downloads an unsupported binary from its preview with original filename and bytes", async ({

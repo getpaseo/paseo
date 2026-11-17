@@ -90,6 +90,7 @@ interface StartInput {
   token?: ReturnType<typeof createTokenRequest>;
   reader?: ReturnType<typeof createFileReader>;
   saver?: ReturnType<typeof createFileSaver>;
+  fetchFile?: typeof fetch;
 }
 
 async function startDownload(input: StartInput): Promise<Download | undefined> {
@@ -108,6 +109,7 @@ async function startDownload(input: StartInput): Promise<Download | undefined> {
     requestFileDownloadToken: token.request,
     readFile: reader.read,
     saveFile: saver.save,
+    fetchFile: input.fetchFile ?? (async () => new Response(FILE_BYTES)),
   });
   const { activeDownloadId, downloads } = useDownloadStore.getState();
   return activeDownloadId ? downloads.get(activeDownloadId) : undefined;
@@ -201,6 +203,35 @@ describe("download store transport selection", () => {
     expect(download).toMatchObject({ status: "complete" });
     expect(reader.requested).toEqual([]);
     expect(saver.savedFiles).toEqual([]);
+  });
+
+  it("fails with the HTTP status when a proxy in front of the host rejects the download", async () => {
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async () =>
+        new Response("<h1>401 Authorization Required</h1>", {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Basic realm="Paseo"' },
+        }),
+    });
+
+    expect(download).toMatchObject({
+      status: "error",
+      message: i18n.t("downloads.httpFailed", { status: 401 }),
+    });
+  });
+
+  it("fails with a readable message when the download request cannot reach the host", async () => {
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+
+    expect(download).toMatchObject({ status: "error", message: i18n.t("downloads.failed") });
   });
 
   it("fails the download and saves nothing when the session read fails", async () => {
