@@ -21,6 +21,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} installs",
     installs_one: "{{installs}} install",
+    updatedAgo: "Updated {{duration}}",
     menu: "More plugin actions",
     actions: {
       install: "Install",
@@ -80,6 +81,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} تثبيت",
     installs_one: "{{installs}} تثبيت",
+    updatedAgo: "تم التحديث {{duration}}",
     menu: "إجراءات أخرى للإضافات",
     actions: {
       install: "تثبيت",
@@ -139,6 +141,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} instalaciones",
     installs_one: "{{installs}} instalación",
+    updatedAgo: "Actualizado {{duration}}",
     menu: "Más acciones de plugins",
     actions: {
       install: "Instalar",
@@ -202,6 +205,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} installations",
     installs_one: "{{installs}} installation",
+    updatedAgo: "Mis à jour {{duration}}",
     menu: "Autres actions sur les plugins",
     actions: {
       install: "Installer",
@@ -269,6 +273,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} 件のインストール",
     installs_one: "{{installs}} 件のインストール",
+    updatedAgo: "更新: {{duration}}",
     menu: "その他のプラグイン操作",
     actions: {
       install: "インストール",
@@ -333,6 +338,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}}회 설치",
     installs_one: "{{installs}}회 설치",
+    updatedAgo: "업데이트됨 {{duration}}",
     menu: "기타 플러그인 작업",
     actions: {
       install: "설치",
@@ -392,6 +398,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} instalações",
     installs_one: "{{installs}} instalação",
+    updatedAgo: "Atualizado {{duration}}",
     menu: "Mais ações de plugins",
     actions: {
       install: "Instalar",
@@ -459,6 +466,7 @@ export const pluginGallery = {
     },
     installs: "Установок: {{installs}}",
     installs_one: "Установок: {{installs}}",
+    updatedAgo: "Обновлено {{duration}}",
     menu: "Другие действия с плагинами",
     actions: {
       install: "Установить",
@@ -518,6 +526,7 @@ export const pluginGallery = {
     },
     installs: "{{installs}} 次安装",
     installs_one: "{{installs}} 次安装",
+    updatedAgo: "更新于{{duration}}",
     menu: "更多插件操作",
     actions: {
       install: "安装",

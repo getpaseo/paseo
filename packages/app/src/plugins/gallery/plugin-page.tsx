@@ -33,6 +33,7 @@ import { ListingInstallControl } from "./install-control";
 import { InstallPluginSheet, type InstallTarget } from "./install-sheet";
 import {
   categoryLabel,
+  formatListingUpdatedAge,
   installedByListing,
   installedListingId,
   listingAuthorAvatar,
@@ -223,7 +224,7 @@ function detailSource(plugin: PluginListItem | undefined, listing: PluginListing
 }
 
 function Details({ plugin, listing }: { plugin?: PluginListItem; listing?: PluginListing }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const version = plugin?.installation?.currentRevision ?? (listing && listingVersion(listing));
   const source = detailSource(plugin, listing);
   const repository = listing?.repository.url;
@@ -247,7 +248,10 @@ function Details({ plugin, listing }: { plugin?: PluginListItem; listing?: Plugi
         ) : null}
         {listing ? (
           <SettingsRow label={t("settings.plugins.gallery.details.updated")}>
-            <DetailValue>{listing.updatedAt.slice(0, 10)}</DetailValue>
+            <DetailValue>
+              {listing.updatedAt.slice(0, 10)} ·{" "}
+              {formatListingUpdatedAge(listing.updatedAt, i18n.language)}
+            </DetailValue>
           </SettingsRow>
         ) : null}
         {repository ? (
