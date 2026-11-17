@@ -55,7 +55,12 @@ import {
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
 import { parsePartialJsonObject } from "./partial-json.js";
-import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
+import {
+  readAppendedTranscript,
+  withClaudeReplayHistory,
+  type ClaudeReplayHistory,
+  type TranscriptCursor,
+} from "./transcript-history.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
@@ -129,6 +134,7 @@ import {
   type AgentSlashCommand,
   type SteerActiveTurnOptions,
   type SteerResult,
+  type AgentHistorySyncResult,
   type AgentStreamEvent,
   type AgentTimelineItem,
   type AgentUsage,
@@ -2386,6 +2392,12 @@ class ClaudeAgentSession implements AgentSession {
   private historyReady: Promise<void> | null = null;
   private historySessionId: string | null = null;
   private replayingHistory = false;
+  /** Where the loaded or last synced transcript read ended. */
+  private transcriptCursor: TranscriptCursor | null = null;
+  /** The transcript records this session holds: replayed, synced, or seen live. */
+  private readonly knownRecordUuids = new Set<string>();
+  /** The replay facts the loaded history was read with, reused for what is appended. */
+  private replayOwnership: ClaudeReplayOwnership | null = null;
   private turnState: TurnState = "idle";
   private readonly turnNamespace = randomUUID();
   private nextTurnOrdinal = 1;
@@ -3940,6 +3952,8 @@ class ClaudeAgentSession implements AgentSession {
 
     const messageId = randomUUID();
     this.rememberUserMessageId(messageId);
+    // Claude Code records the prompt under this id; a sync must not read it back as new.
+    this.knownRecordUuids.add(messageId);
 
     return {
       type: "user",
@@ -4296,6 +4310,10 @@ class ClaudeAgentSession implements AgentSession {
         if (message.type === "system" && message.subtype === "task_notification")
           this.backgroundStops.get(message.task_id)?.(message.status);
         logRawMessage(message);
+        // What this session writes to its transcript, so a sync does not read it back as new.
+        if ("uuid" in message && typeof message.uuid === "string" && message.uuid.length > 0) {
+          this.knownRecordUuids.add(message.uuid);
+        }
         consecutiveInterruptAbortRecoveries = 0;
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
         if (!this.ownsQuery(activeQuery)) return true;
@@ -5574,9 +5592,14 @@ class ClaudeAgentSession implements AgentSession {
         );
         return;
       }
+      this.transcriptCursor = null;
+      this.knownRecordUuids.clear();
+      this.replayOwnership = null;
       await withClaudeReplayHistory(historyPath, async (history) => {
         const replay = await this.ingestPersistedSidechains(history);
         await this.ingestPersistedHistory(history.parentEntries, replay);
+        this.transcriptCursor = history.parentCursor;
+        this.replayOwnership = replay;
       });
     } catch (error) {
       this.logger.warn(
@@ -5594,6 +5617,7 @@ class ClaudeAgentSession implements AgentSession {
   ): Promise<void> {
     const timeline: PersistedTimelineEntry[] = [];
     for await (const entry of entries) {
+      this.rememberRecord(entry);
       await this.ingestPersistedHistoryEntry(entry, timeline, replay);
     }
 
@@ -5714,6 +5738,52 @@ class ClaudeAgentSession implements AgentSession {
           timestamp: historyTimestamp ?? undefined,
         });
       }
+    }
+  }
+
+  async syncAppendedHistory(): Promise<AgentHistorySyncResult> {
+    await this.ensureHistoryReady();
+    const reload = (reason: string): AgentHistorySyncResult => ({ kind: "reload", reason });
+    if (this.activeForegroundTurnId || this.autonomousTurn || this.replayingHistory) {
+      return reload("a turn is running");
+    }
+    const cursor = this.transcriptCursor;
+    const replay = this.replayOwnership;
+    if (!cursor || !replay) return reload("no transcript was loaded");
+    const read = await readAppendedTranscript(cursor);
+    if (read.kind === "rewritten") return reload("the transcript was rewritten");
+    const appended = read.entries.filter(
+      (entry) => !(typeof entry.uuid === "string" && this.knownRecordUuids.has(entry.uuid)),
+    );
+    // Each record's parent is held already, or came before it in this read.
+    const held = new Set(this.knownRecordUuids);
+    for (const entry of appended) {
+      const why = appendedEntryNeedsFullReplay(entry, held);
+      if (why) return reload(why);
+      if (typeof entry.uuid === "string" && entry.uuid.length > 0) held.add(entry.uuid);
+    }
+    const timeline: PersistedTimelineEntry[] = [];
+    for (const entry of appended) {
+      this.rememberRecord(entry);
+      await this.ingestPersistedHistoryEntry(entry, timeline, replay);
+    }
+    this.transcriptCursor = read.cursor;
+    if (timeline.length === 0) return { kind: "unchanged" };
+    return {
+      kind: "appended",
+      events: timeline.map((entry) => ({
+        type: "timeline",
+        item: entry.item,
+        provider: "claude",
+        timestamp: entry.timestamp,
+      })),
+    };
+  }
+
+  /** Notes a parent transcript record this session now holds. */
+  private rememberRecord(entry: ClaudeHistoryEntry): void {
+    if (entry.isSidechain !== true && typeof entry.uuid === "string" && entry.uuid.length > 0) {
+      this.knownRecordUuids.add(entry.uuid);
     }
   }
 
@@ -6558,6 +6628,45 @@ function readClaudeReplayTaskDeclaration(
 
 function readLegacyClaudeSubagentId(content: unknown): string | undefined {
   return /agentId:\s*([\w-]+)/.exec(JSON.stringify(content))?.[1];
+}
+
+/**
+ * Why an appended record cannot be replayed on its own, or null. Subagents, task notifications
+ * and compaction are folded across the whole history; a record whose parent this session never
+ * held continues another branch (a rewind, a fork).
+ */
+function appendedEntryNeedsFullReplay(
+  entry: ClaudeHistoryEntry,
+  known: ReadonlySet<string>,
+): string | null {
+  if (entry.isSidechain === true || typeof entry.agentId === "string") return "a subagent record";
+  if (
+    entry.isCompactSummary === true ||
+    entry.subtype === "compact_boundary" ||
+    entry.type === "summary"
+  ) {
+    return "a compaction";
+  }
+  if (readTaskNotificationToolUseIdFromHistoryRecord(entry)) return "a task notification";
+  const content = entry.message?.content;
+  if (
+    Array.isArray(content) &&
+    content.some(
+      (block) =>
+        typeof block === "object" &&
+        block !== null &&
+        (block as { type?: unknown }).type === "tool_use" &&
+        ((block as { name?: unknown }).name === "Task" ||
+          (block as { name?: unknown }).name === "Agent"),
+    )
+  ) {
+    return "a subagent call";
+  }
+  const parent = entry.parentUuid;
+  if (typeof parent === "string" && parent.length > 0 && !known.has(parent)) {
+    return "a record on another branch";
+  }
+  return null;
 }
 
 interface ClaudeHistoryEntry {
