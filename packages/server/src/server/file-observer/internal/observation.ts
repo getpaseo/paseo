@@ -69,6 +69,9 @@ class Observation implements ManagedObservation, ObservationHost {
     if (!rootStats.isDirectory()) {
       throw new Error(`File observation requires a directory: ${this.root}`);
     }
+    // An aborted subscription can close the observation while the root is being read; the backend
+    // must not start after its close has already finished.
+    if (!this.isActive()) return;
     try {
       await this.backend.start();
     } catch (error) {

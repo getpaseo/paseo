@@ -96,7 +96,7 @@ export async function listTerminalIds(daemon: IsolatedHostDaemon): Promise<strin
 
 const execFileAsync = promisify(execFile);
 
-async function psField(pid: number, field: "stat" | "lstart"): Promise<string> {
+async function psField(pid: number, field: "stat" | "lstart" | "comm"): Promise<string> {
   const { stdout } = await execFileAsync("ps", ["-o", `${field}=`, "-p", String(pid)], {
     env: { ...process.env, LC_ALL: "C" },
   });
@@ -117,17 +117,22 @@ export interface UnclosableTerminalProgram {
 export async function plantUnclosableTerminalProgram(
   daemon: IsolatedHostDaemon,
 ): Promise<UnclosableTerminalProgram> {
-  const parent = spawn("/bin/sh", ["-c", "sleep 0 & echo $!; exec sleep 600"], {
-    stdio: ["ignore", "pipe", "ignore"],
+  // The shell reaps any child that has exited whenever it finishes a builtin, so the program
+  // reads fd 3 until we close it, which happens only once the shell has become `sleep`.
+  const parent = spawn("/bin/sh", ["-c", "cat <&3 >/dev/null & echo $!; exec sleep 600 3<&-"], {
+    stdio: ["ignore", "pipe", "ignore", "pipe"],
   });
   parent.unref();
   const release = () => {
+    parent.stdio[3]?.destroy();
     if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
   };
   try {
     const pid = await new Promise<number>((resolve) => {
       parent.stdout!.once("data", (chunk: Buffer) => resolve(Number(chunk.toString().trim())));
     });
+    await expect.poll(() => psField(parent.pid!, "comm")).toMatch(/(^|\/)sleep$/);
+    parent.stdio[3]!.destroy();
     await expect.poll(async () => (await psField(pid, "stat")).startsWith("Z")).toBe(true);
     const gone = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
     await new Promise((resolve) => gone.once("exit", resolve));

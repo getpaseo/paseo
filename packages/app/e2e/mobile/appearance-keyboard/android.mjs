@@ -111,11 +111,13 @@ try {
     "android",
     "--no-test-ime",
   );
-  ad("wait", "text", "Plugin source", "5000");
-  const plugins = JSON.parse(ad("snapshot", "-i", "--json"));
-  const source = plugins.data.nodes.find((node) => node.type === "android.widget.EditText");
-  assert(source, "The connected host must support installing plugins from source");
-  ad("press", `@${source.ref}`);
+  // The source field lives in the Install from source sheet, behind the page's menu.
+  ad("wait", 'label="More plugin actions"', "5000");
+  ad("press", 'label="More plugin actions"');
+  ad("wait", 'text="Install from source"', "5000");
+  ad("press", 'text="Install from source"');
+  ad("wait", 'id="plugin-source-input"', "5000");
+  ad("press", 'id="plugin-source-input"');
   ad("type", "qa-source");
   const pluginMeasurement = await waitForFocusedInput();
   // A FormTextInput draws its border and padding on the native input's parent.
