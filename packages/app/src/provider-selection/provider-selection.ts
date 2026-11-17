@@ -8,7 +8,7 @@ import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manife
 import type { DraftCommandTarget } from "@/agent-commands";
 import { i18n } from "@/i18n/i18next";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
-import { filterSelectableModels } from "./model-catalog";
+import { filterPickerModels, resolveDefaultModelId } from "./model-catalog";
 
 export interface ProviderSelectionModelRow {
   /**
@@ -93,7 +93,7 @@ function buildModelSelection(
   if (models === null) {
     return { kind: "loading" };
   }
-  const selectableModels = filterSelectableModels(models) ?? [];
+  const selectableModels = filterPickerModels(models) ?? [];
   if (selectableModels.length === 0) {
     return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
   }
@@ -269,11 +269,7 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   if (selectedModelId) {
     return selectedModelId;
   }
-  return (
-    selection.availableModels.find((model) => model.isDefault)?.id ??
-    selection.availableModels[0]?.id ??
-    ""
-  );
+  return resolveDefaultModelId(selection.availableModels);
 }
 
 // The mode picker shows the first offered mode when the selected one isn't
@@ -344,7 +340,7 @@ export function resolveSubmissionReadiness(input: {
   selection: {
     provider: AgentProvider | string | null;
     modelId: string;
-    availableModels: readonly unknown[];
+    availableModels: readonly AgentModelDefinition[];
     isModelLoading: boolean;
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
@@ -367,7 +363,7 @@ export function resolveSubmissionReadiness(input: {
     return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
-  if (!hasSelectedModel && input.selection.availableModels.length > 0) {
+  if (!hasSelectedModel && (filterPickerModels(input.selection.availableModels)?.length ?? 0) > 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
   if (!input.workspaceDirectory) {

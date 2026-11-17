@@ -186,6 +186,55 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
+  it("keeps an existing hidden model editable with its thinking options", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-b",
+        serverName: "Host B",
+        cwd: "/repo/b",
+        model: "model-b",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyProviderSnapshot("host-b", providerSnapshot(THINKING_MODELS));
+    expect(form.getState().canSubmit).toBe(true);
+
+    const hiddenModel = { ...HOST_B_MODELS[0]!, pickerHidden: true };
+    form.applyProviderSnapshot("host-b", providerSnapshot([hiddenModel, THINKING_MODELS[1]!]));
+    expect(form.getState()).toMatchObject({
+      selectedModel: "model-b",
+      selectedModelDisplay: { label: "Model B" },
+      selectedThinkingOptionId: "high",
+      availableThinkingOptions: hiddenModel.thinkingOptions,
+      disclosure: { showThinkingField: true },
+      canSubmit: true,
+    });
+    expect(form.getState().modelSelectorProviders[0]?.modelSelection).toMatchObject({
+      kind: "models",
+      rows: [{ modelId: "model-c" }],
+    });
+    form.setName("Renamed schedule");
+    expect(form.getState().canSubmit).toBe(true);
+    form.close();
+  });
+
+  it("does not default a new schedule to a hidden model", () => {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-b", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.setPrompt("Run on the visible model.");
+    form.setProject(buildProjectOptionId("host-b", "project-b"), { label: "Project B" });
+    form.applyProviderSnapshot(
+      "host-b",
+      providerSnapshot([{ ...HOST_B_MODELS[0]!, pickerHidden: true }, THINKING_MODELS[1]!]),
+    );
+    form.setModel("mock", "");
+    expect(form.getState()).toMatchObject({ selectedModel: "model-c", canSubmit: true });
+    form.close();
+  });
+
   it("opens edit from the schedule host snapshot and completes that host resolution", () => {
     const previous = open({
       mode: "edit",

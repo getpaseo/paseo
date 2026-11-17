@@ -9,7 +9,11 @@ import type {
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { withoutLostControls } from "@/agent-controls/lost-controls";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import {
+  filterListedModels,
+  filterPickerModels,
+  resolveDefaultModelId,
+} from "@/provider-selection/model-catalog";
 
 /**
  * The persisted profile minus the id; the list owns identity.
@@ -164,7 +168,7 @@ function resolveModels(
   entries: readonly ProviderSnapshotEntry[],
   provider: string,
 ): AgentModelDefinition[] {
-  return filterSelectableModels(findEntry(entries, provider)?.models ?? null) ?? [];
+  return filterListedModels(findEntry(entries, provider)?.models ?? null) ?? [];
 }
 
 function resolveModes(entries: readonly ProviderSnapshotEntry[], provider: string): AgentMode[] {
@@ -225,7 +229,8 @@ function buildProviderOptions(entries: readonly ProviderSnapshotEntry[]): AgentP
 }
 
 function buildModelOptions(models: readonly AgentModelDefinition[]): AgentProfileFormOption[] {
-  return models.map((model) =>
+  const choices = filterPickerModels(models) ?? [];
+  return choices.map((model) =>
     formOption({
       id: model.id,
       label: model.label,
@@ -259,20 +264,6 @@ function buildThinkingOptions(options: readonly AgentSelectOption[]): AgentProfi
   );
 }
 
-/**
- * Every selection resolves to a concrete id.
- *
- * Each list used to carry a synthetic "Provider default" row. It read as a value
- * you could choose but stored an absent one, so a profile that looked fully
- * specified would apply whatever the host preferred at the time — and two hosts
- * would materialize the same profile differently. The schedule form never
- * offered that row; this form now matches it and seeds the catalog's own default
- * instead, so what the form shows is what the profile stores.
- */
-function defaultModelId(models: readonly AgentModelDefinition[]): string {
-  return models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? "";
-}
-
 function defaultModeId(entry: ProviderSnapshotEntry | null, modes: readonly AgentMode[]): string {
   return entry?.defaultModeId ?? modes[0]?.id ?? "";
 }
@@ -295,7 +286,8 @@ function seedSelections(
     modes: readonly AgentMode[];
   },
 ): AgentProfileFormState {
-  const modelId = next.modelId || defaultModelId(input.models);
+  // Store a concrete visible default so the profile uses the same model on every host.
+  const modelId = next.modelId || resolveDefaultModelId(input.models);
   const modeId = next.modeId || defaultModeId(input.entry, input.modes);
   const thinkingOptionId =
     next.thinkingOptionId || defaultThinkingOptionId(resolveEffectiveModel(input.models, modelId));

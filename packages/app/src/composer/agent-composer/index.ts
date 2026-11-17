@@ -9,7 +9,7 @@ import {
   resolveProviderSnapshotEntry,
 } from "@/composer/agent-controls/utils";
 import type { ComposerFocusOptions, ComposerModel, ComposerState } from "@/composer/model";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterListedModels } from "@/provider-selection/model-catalog";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { toDraftInputIfReady, type DraftRecord } from "@/stores/draft-store/state";
@@ -179,7 +179,7 @@ export function createAgentComposer(
     // Until the catalog lands there are no models, which is what the picker resolves with too.
     const entries = catalog.status === "ready" ? catalog.entries : null;
     return resolveAgentModelSelection({
-      models: filterSelectableModels(
+      models: filterListedModels(
         resolveProviderSnapshotEntry(entries ?? undefined, agent.provider)?.models ?? null,
       ),
       runtimeModelId: agent.runtimeInfo?.model ?? null,

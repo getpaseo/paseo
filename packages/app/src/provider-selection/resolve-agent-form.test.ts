@@ -7,7 +7,6 @@ import {
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
-  resolveDefaultModel,
   INITIAL_USER_MODIFIED,
   PENDING_AGENT_FORM_RESOLUTION,
   type AgentFormReducerState,
@@ -15,6 +14,7 @@ import {
   type ProviderModelsByProvider,
   type UserModifiedFields,
 } from "./resolve-agent-form";
+import { resolveDefaultModel } from "./model-catalog";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
@@ -109,6 +109,20 @@ function makeProviderModelsByProvider(
 }
 
 describe("resolveDefaultModel", () => {
+  it("uses visible choices for defaults while retaining hidden model metadata", () => {
+    const hidden = { ...CODEX_MODELS[0]!, pickerHidden: true, isDefault: true };
+    const visible = { ...CODEX_MODELS[0]!, id: "visible", isDefault: false };
+    expect(resolveDefaultModel([hidden, visible])).toBe(visible);
+    expect(resolveDefaultModel([hidden])).toBeNull();
+    expect(
+      resolveThinkingOptionId({
+        availableModels: [hidden, visible],
+        modelId: hidden.id,
+        requestedThinkingOptionId: "low",
+      }),
+    ).toBe("low");
+  });
+
   it("returns null for empty or null input", () => {
     expect(resolveDefaultModel(null)).toBeNull();
     expect(resolveDefaultModel([])).toBeNull();

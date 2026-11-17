@@ -1,4 +1,5 @@
 import { resolveSubmissionReadiness } from "@/provider-selection/provider-selection";
+import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 
 export interface WorkspaceDraftAutoSubmitConfig {
@@ -21,7 +22,7 @@ export function validateDraftSubmission(input: {
     selectedProvider: string | null;
     isModelLoading: boolean;
     effectiveModelId: string | null;
-    availableModels: unknown[];
+    availableModels: AgentModelDefinition[];
   };
   autoSubmitConfig: WorkspaceDraftAutoSubmitConfig | null;
   workspaceDirectory: string | null;

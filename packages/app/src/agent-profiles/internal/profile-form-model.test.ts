@@ -86,6 +86,17 @@ function toggledOnOpus(): AgentProfileFormModel {
 }
 
 describe("openAgentProfileForm", () => {
+  it("keeps thinking controls for a hidden selected model without offering it as a new choice", () => {
+    const model = openWithCatalog({ mode: "create" });
+    selectClaude(model);
+    expect(optionValues(model.getState().thinkingOptions)).toEqual(["think", "think-hard"]);
+    const hidden = { ...CLAUDE.models![0]!, pickerHidden: true };
+    model.applyProviderCatalog([{ ...CLAUDE, models: [hidden, CLAUDE.models![1]!] }]);
+    expect(model.getState().modelId).toBe(hidden.id);
+    expect(optionValues(model.getState().thinkingOptions)).toEqual(["think", "think-hard"]);
+    expect(optionValues(model.getState().modelOptions)).toEqual(["claude-haiku-4-5"]);
+  });
+
   it("starts a create form empty and cannot submit", () => {
     const model = openWithCatalog({ mode: "create" });
     const state = model.getState();

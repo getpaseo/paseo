@@ -730,7 +730,7 @@ Example: relabel a discovered model without replacing the full list:
 
 When an `additionalModels` entry has the same `id` as a discovered model, it updates that model in place.
 
-`hiddenModelIds` lists model ids to leave out of the conversation picker. Every other model stays selected. The provider model sheet writes this list from the checkbox on each discovered model. An id still launches when a session already uses it.
+`hiddenModelIds` lists model ids to leave out of the conversation picker. Every other model stays selected. The provider model sheet writes this list from the checkbox on each discovered model. Keep hidden definitions for saved selections, thinking controls, and schedule validation. Validate saved configurations against the catalog, not picker rows.
 
 ---
 

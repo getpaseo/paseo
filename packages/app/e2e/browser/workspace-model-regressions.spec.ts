@@ -251,6 +251,35 @@ test.describe("Workspace model regressions", () => {
     }
   });
 
+  test("new agent with a remembered provider skips its hidden default model", async ({ page }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "workspace-hidden-default-" });
+    const previous = (await client.getDaemonConfig()).config.providers.mock?.hiddenModelIds ?? [];
+    try {
+      await client.patchDaemonConfig({
+        providers: { mock: { hiddenModelIds: ["five-minute-stream"] } },
+      });
+      await page.addInitScript(() => {
+        localStorage.setItem(
+          "@paseo:create-agent-preferences",
+          JSON.stringify({
+            provider: "mock",
+            providerPreferences: { mock: { mode: "load-test" } },
+          }),
+        );
+      });
+      await gotoWorkspace(page, seeded.workspaceId);
+      await clickNewChat(page);
+      await expectComposerEditable(page);
+      await submitMessage(page, `Create with a visible default ${Date.now()}`);
+      await expect
+        .poll(() => fetchCreatedAgentForWorkspace(seeded, seeded.workspaceId), { timeout: 10_000 })
+        .toMatchObject({ provider: "mock", model: "thirty-minute-stream" });
+    } finally {
+      await client.patchDaemonConfig({ providers: { mock: { hiddenModelIds: previous } } });
+      await seeded.cleanup();
+    }
+  });
+
   test("local same-directory workspace with an initial prompt shows a generated title", async ({
     page,
   }) => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { i18n } from "@/i18n/i18next";
+import { filterListedModels, filterPickerModels, findModelByReference } from "./model-catalog";
 import {
   buildProviderQualifiedDescription,
   buildProviderSelectorProviders,
@@ -15,6 +16,28 @@ import {
 } from "./provider-selection";
 
 describe("combined model selector data", () => {
+  it("keeps hidden model metadata while excluding it from picker choices", () => {
+    const hidden: AgentModelDefinition = {
+      provider: "codex",
+      id: "hidden",
+      aliases: ["saved-alias"],
+      label: "Hidden",
+      pickerHidden: true,
+      thinkingOptions: [{ id: "high", label: "High" }],
+    };
+    const shown: AgentModelDefinition = { provider: "codex", id: "shown", label: "Shown" };
+    const compatibility: AgentModelDefinition = {
+      provider: "codex",
+      id: "legacy",
+      label: "Legacy",
+      isSelectable: false,
+    };
+    const models = [hidden, shown, compatibility];
+    expect(filterListedModels(models)).toEqual([hidden, shown]);
+    expect(filterPickerModels(models)).toEqual([shown]);
+    expect(findModelByReference(filterListedModels(models), "saved-alias")).toBe(hidden);
+  });
+
   it("shows a disconnected error for unfinished catalogs while keeping known models", () => {
     const providers = buildSelectableProviderSelectorProviders(
       [
@@ -414,6 +437,25 @@ describe("combined model selector data", () => {
           provider: "codewhale",
           modelId: "",
           availableModels: [],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        isConnected: true,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("allows the provider default when all discovered models are hidden", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "codex",
+          modelId: "",
+          availableModels: [{ ...codexModel, pickerHidden: true }],
           isModelLoading: false,
         },
         autoSubmitConfig: null,

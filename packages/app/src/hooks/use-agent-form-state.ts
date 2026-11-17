@@ -11,7 +11,7 @@ import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterListedModels, resolveDefaultModelId } from "@/provider-selection/model-catalog";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
 import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
@@ -24,7 +24,6 @@ import {
   resolveAgentForm,
   resolveEffectiveModel,
   normalizeSelectedModelId,
-  resolveDefaultModelId,
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
@@ -109,7 +108,7 @@ function buildAllProviderModels(
 ): Map<string, AgentModelDefinition[]> {
   const map = new Map<string, AgentModelDefinition[]>();
   for (const entry of snapshotEntries ?? []) {
-    map.set(entry.provider, filterSelectableModels(entry.models ?? []) ?? []);
+    map.set(entry.provider, filterListedModels(entry.models ?? []) ?? []);
   }
   return map;
 }
@@ -121,7 +120,7 @@ function buildProviderModelsByProvider(
   for (const entry of snapshotEntries ?? []) {
     map.set(
       entry.provider,
-      entry.status === "ready" ? filterSelectableModels(entry.models ?? null) : null,
+      entry.status === "ready" ? filterListedModels(entry.models ?? null) : null,
     );
   }
   return map;
@@ -245,9 +244,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         : null,
     [formState.provider, snapshotEntries],
   );
-  const snapshotSelectedProviderModels = filterSelectableModels(
-    snapshotSelectedEntry?.models ?? null,
-  );
+  const snapshotSelectedProviderModels = filterListedModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
   const snapshotSelectedProviderModes = resolveSelectedProviderModes({
     selectedEntry: snapshotSelectedEntry,
