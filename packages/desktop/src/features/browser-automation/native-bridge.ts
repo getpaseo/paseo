@@ -28,12 +28,16 @@ export interface NativeBrowserBridgeDependencies {
 }
 
 interface Capture {
-  tail: Promise<unknown>;
+  commandQueue: CdpSessionQueue;
   viewportQueue: CdpSessionQueue;
   events: NativeBrowserEvent[];
   bytes: number;
   dropped: number;
-  rawFrame: { data: string; sessionId: number; metadata: { timestamp?: number } } | null;
+  rawFrame: {
+    data: string;
+    sessionId: number;
+    metadata: { timestamp?: number };
+  } | null;
   acknowledgements: Set<number>;
   frame: NativeBrowserFrame | null;
   streaming: boolean;
@@ -45,6 +49,13 @@ interface Capture {
   host: NativeBrowserContents | null;
   stopTimer: ReturnType<typeof setTimeout> | null;
 }
+const MAX_FRAME_WIDTH = 1280;
+const MAX_FRAME_HEIGHT = 960;
+const MAX_FRAME_DATA_LENGTH = 1_099_900;
+const MAX_DECODE_DATA_LENGTH = 8_000_000;
+const FRAME_QUALITY = 65;
+const FRAME_TTL_MS = 1500;
+const CAPTURE_IDLE_MS = 2500;
 const MAX_EVENTS = 256;
 const MAX_EVENT_BYTES = 2 * 1024 * 1024;
 const contextMethods = new Set([
@@ -58,8 +69,7 @@ const cookies: Record<string, string> = {
   "Storage.setCookies": "Network.setCookies",
   "Storage.clearCookies": "Network.clearBrowserCookies",
 };
-// A pending Runtime command can wait for a dialog reply or debugger resume.
-// Queueing its unblocker behind it would leave the guest permanently paused.
+// Paused JavaScript must not block commands that inspect or resume it.
 const unblockers = new Set([
   "Page.handleJavaScriptDialog",
   "Debugger.evaluateOnCallFrame",
@@ -106,11 +116,32 @@ function releaseHost(capture: Capture, guest: NativeBrowserContents) {
   }
 }
 
+function resetCapture(contents: NativeBrowserContents, capture: Capture): void {
+  if (capture.stopTimer) clearTimeout(capture.stopTimer);
+  capture.stopTimer = null;
+  capture.streaming = false;
+  capture.frame = null;
+  capture.rawFrame = null;
+  capture.acknowledgements.clear();
+  if (capture.previousThrottling !== null && !contents.isDestroyed()) {
+    contents.setBackgroundThrottling(capture.previousThrottling);
+  }
+  capture.previousThrottling = null;
+  releaseHost(capture, contents);
+}
+
+function freshFrame(capture: Capture, notBefore = 0): NativeBrowserFrame | null {
+  const frame = capture.frame;
+  return frame && frame.capturedAt + FRAME_TTL_MS > Date.now() && frame.capturedAt > notBefore
+    ? frame
+    : null;
+}
+
 function observe(contents: NativeBrowserContents): Capture {
   const existing = captures.get(contents);
   if (existing) return existing;
   const capture: Capture = {
-    tail: Promise.resolve(),
+    commandQueue: new CdpSessionQueue(),
     viewportQueue: new CdpSessionQueue(),
     events: [],
     bytes: 0,
@@ -135,9 +166,11 @@ function observe(contents: NativeBrowserContents): Capture {
         sessionId: number;
         metadata: { timestamp?: number };
       };
-      if (!capture.streaming || packet.data.length > 8_000_000) {
+      if (!capture.streaming || packet.data.length > MAX_DECODE_DATA_LENGTH) {
         void contents.debugger
-          .sendCommand("Page.screencastFrameAck", { sessionId: packet.sessionId })
+          .sendCommand("Page.screencastFrameAck", {
+            sessionId: packet.sessionId,
+          })
           .catch(() => {});
         return;
       }
@@ -178,21 +211,11 @@ function observe(contents: NativeBrowserContents): Capture {
   });
   contents.debugger.on("detach", () => {
     capture.generation++;
-    capture.rawFrame = null;
-    capture.acknowledgements.clear();
-    if (capture.stopTimer) clearTimeout(capture.stopTimer);
-    capture.stopTimer = null;
-    capture.streaming = false;
-    capture.frame = null;
-    if (capture.previousThrottling !== null && !contents.isDestroyed())
-      contents.setBackgroundThrottling(capture.previousThrottling);
-    capture.previousThrottling = null;
-    releaseHost(capture, contents);
+    resetCapture(contents, capture);
   });
   contents.once("destroyed", () => {
     capture.generation++;
-    if (capture.stopTimer) clearTimeout(capture.stopTimer);
-    releaseHost(capture, contents);
+    resetCapture(contents, capture);
     capture.events = [];
     capture.bytes = 0;
   });
@@ -228,11 +251,10 @@ function consumeNativeFrame(
     if (
       dimensions.width > 0 &&
       dimensions.height > 0 &&
-      dimensions.width <= 1280 &&
-      dimensions.height <= 960
+      dimensions.width <= MAX_FRAME_WIDTH &&
+      dimensions.height <= MAX_FRAME_HEIGHT
     ) {
-      // Electron guest canvases may be transparent. JPEG needs an explicit
-      // browser-white canvas; dropping alpha directly makes text disappear.
+      // Composite transparent guest pixels onto white before encoding JPEG.
       const pixels = image.toBitmap();
       for (let index = 0; index < pixels.length; index += 4) {
         const alpha = pixels[index + 3]!;
@@ -243,8 +265,11 @@ function consumeNativeFrame(
         pixels[index + 2] = Math.min(255, pixels[index + 2]! + white);
         pixels[index + 3] = 255;
       }
-      const data = images.createFromBitmap(pixels, dimensions).toJPEG(65).toString("base64");
-      if (data.length <= 1_099_900)
+      const data = images
+        .createFromBitmap(pixels, dimensions)
+        .toJPEG(FRAME_QUALITY)
+        .toString("base64");
+      if (data.length <= MAX_FRAME_DATA_LENGTH)
         capture.frame = {
           data: "data:image/jpeg;base64," + data,
           ...dimensions,
@@ -270,10 +295,10 @@ async function captureStillFrame(
   } = metrics.cssVisualViewport;
   if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0)
     throw new Error("Native guest viewport is unavailable");
-  const scale = Math.min(1, 1280 / width, 960 / height);
+  const scale = Math.min(1, MAX_FRAME_WIDTH / width, MAX_FRAME_HEIGHT / height);
   const result = await contents.debugger.sendCommand("Page.captureScreenshot", {
     format: "jpeg",
-    quality: 65,
+    quality: FRAME_QUALITY,
     fromSurface: true,
     captureBeyondViewport: false,
     clip: { x, y, width, height, scale },
@@ -282,23 +307,28 @@ async function captureStillFrame(
   if (
     typeof result.data !== "string" ||
     !/^[A-Za-z0-9+/=]+$/.test(result.data) ||
-    result.data.length > 8_000_000
+    result.data.length > MAX_DECODE_DATA_LENGTH
   )
     throw new Error("Native screenshot is invalid or exceeds the decode size limit");
   let image = captureImages.createFromBuffer(Buffer.from(result.data, "base64"));
   const dimensions = image.getSize();
   if (dimensions.width <= 0 || dimensions.height <= 0)
     throw new Error("Native screenshot has no pixels");
-  const imageScale = Math.min(1, 1280 / dimensions.width, 960 / dimensions.height);
+  const imageScale = Math.min(
+    1,
+    MAX_FRAME_WIDTH / dimensions.width,
+    MAX_FRAME_HEIGHT / dimensions.height,
+  );
   let data = result.data;
   if (imageScale < 1) {
     image = image.resize({
       width: Math.max(1, Math.floor(dimensions.width * imageScale)),
       height: Math.max(1, Math.floor(dimensions.height * imageScale)),
     });
-    data = image.toJPEG(65).toString("base64");
+    data = image.toJPEG(FRAME_QUALITY).toString("base64");
   }
-  if (data.length > 1_099_900) throw new Error("Native screenshot exceeds the image size limit");
+  if (data.length > MAX_FRAME_DATA_LENGTH)
+    throw new Error("Native screenshot exceeds the image size limit");
   capture.frame = {
     data: `data:image/jpeg;base64,${data}`,
     ...image.getSize(),
@@ -338,17 +368,13 @@ export function registerNativeBrowserBridgeIpc(
         });
         await contents.debugger.sendCommand("Page.startScreencast", {
           format: "png",
-          quality: 65,
-          maxWidth: 1280,
-          maxHeight: 960,
+          quality: FRAME_QUALITY,
+          maxWidth: MAX_FRAME_WIDTH,
+          maxHeight: MAX_FRAME_HEIGHT,
           everyNthFrame: 1,
         });
       } catch (error) {
-        capture.streaming = false;
-        if (capture.previousThrottling !== null && !contents.isDestroyed())
-          contents.setBackgroundThrottling(capture.previousThrottling);
-        capture.previousThrottling = null;
-        releaseHost(capture, contents);
+        resetCapture(contents, capture);
         throw error;
       }
     }
@@ -357,22 +383,10 @@ export function registerNativeBrowserBridgeIpc(
     capture.stopTimer = setTimeout(() => {
       if (!contents.isDestroyed())
         void contents.debugger.sendCommand("Page.stopScreencast").catch(() => {});
-      capture.streaming = false;
-      if (capture.previousThrottling !== null && !contents.isDestroyed())
-        contents.setBackgroundThrottling(capture.previousThrottling);
-      capture.previousThrottling = null;
-      releaseHost(capture, contents);
-      capture.frame = null;
-      capture.rawFrame = null;
-      capture.acknowledgements.clear();
-      capture.stopTimer = null;
-    }, 2500);
-    const frame = capture.frame;
-    const fresh =
-      frame && frame.capturedAt + 1500 > Date.now() && frame.capturedAt > (input.notBefore ?? 0);
-    if (!fresh && Date.now() > capture.notBefore) {
-      // Screencast frames arrive only on paint. Refresh quiet pages with a bounded
-      // screenshot rather than relabeling an old paint with a new timestamp.
+      resetCapture(contents, capture);
+    }, CAPTURE_IDLE_MS);
+    if (!freshFrame(capture, input.notBefore) && Date.now() > capture.notBefore) {
+      // Quiet pages need a still capture because screencast frames arrive only on paint.
       if (!capture.stillTask && Date.now() - capture.lastStillAttemptAt >= 1000) {
         capture.lastStillAttemptAt = Date.now();
         capture.stillTask = capture.viewportQueue
@@ -383,11 +397,7 @@ export function registerNativeBrowserBridgeIpc(
       }
       if (capture.stillTask) await capture.stillTask;
     }
-    return capture.frame &&
-      capture.frame.capturedAt + 1500 > Date.now() &&
-      capture.frame.capturedAt > (input.notBefore ?? 0)
-      ? capture.frame
-      : null;
+    return freshFrame(capture, input.notBefore);
   });
   ipc.handle("paseo:browser:native-command", async (event, raw: unknown) => {
     const input = NativeBrowserCommandRequestSchema.parse(raw);
@@ -435,14 +445,12 @@ export function registerNativeBrowserBridgeIpc(
       return contents.debugger.sendCommand(method, params);
     };
     if (unblockers.has(method)) return execute();
-    const pending = capture.tail.then(() => {
+    return capture.commandQueue.run(() => {
       if (method.startsWith("Emulation.") || method === "Page.captureScreenshot") {
         return capture.viewportQueue.run(execute);
       }
       return execute();
     });
-    capture.tail = pending.catch(() => undefined);
-    return pending;
   });
   ipc.handle("paseo:browser:native-events", (event, raw: unknown) => {
     const input = NativeBrowserEventsRequestSchema.parse(raw);
