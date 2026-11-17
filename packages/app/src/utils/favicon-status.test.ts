@@ -86,6 +86,15 @@ describe("deriveFaviconStatus", () => {
       ),
     ).toBe("attention");
   });
+
+  it("counts agents in background workspaces while Show background puts them in the sidebar", () => {
+    const state = stateWithWorkspaces(
+      [{ id: "ws-hidden", background: true }],
+      agent({ id: "a", workspaceId: "ws-hidden", requiresAttention: true }),
+    );
+    expect(deriveFaviconStatus(state, { showBackground: true })).toBe("attention");
+    expect(createFaviconStatusSelector({ showBackground: true })(state)).toBe("attention");
+  });
 });
 
 describe("createFaviconStatusSelector", () => {
