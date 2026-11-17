@@ -906,6 +906,17 @@ describe("transient stream interruptions", () => {
       .map((entry) => entry.input.message.content);
     expect(inputs).toHaveLength(3);
   });
+
+  it("completes the turn without retrying or failing when agy reports a stale trajectory error after a completed agent_response", async () => {
+    const h = await harness();
+    await h.open();
+    const turnEnd = await h.completed(await h.prompt("RECOVERED_TURN_WITH_STALE_ERROR"));
+    expect(turnEnd).toMatchObject({ type: "session.turn", state: "completed" });
+    const inputs = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content);
+    expect(inputs).toEqual(["SYSTEM PREFIX\n\nRECOVERED_TURN_WITH_STALE_ERROR"]);
+  });
 });
 
 it.runIf(process.platform === "win32")(

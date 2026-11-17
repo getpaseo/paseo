@@ -104,14 +104,36 @@ const MAX_TRANSIENT_RETRIES = 2;
 const TRANSIENT_RETRY_DELAY_MS = 1_500;
 const TRANSIENT_CONTINUATION_PROMPT =
   "Error: The stream was interrupted. Please continue the task you were working on.";
+const SAFETY_CONTINUATION_PROMPT =
+  "Your previous response was blocked by content safety filters. Please provide a response that complies with content policies without repeating the blocked command or text.";
 
-function isTransientStreamError(error: string): boolean {
-  return (
+function recoverableTurnPrompt(error: string): string | null {
+  if (
     error.includes("The stream was interrupted") ||
     error.includes("stream idle timeout") ||
+    error.includes("context deadline exceeded") ||
     error.includes("UNAVAILABLE (code 503)") ||
     error.includes("Service Unavailable")
-  );
+  ) {
+    return TRANSIENT_CONTINUATION_PROMPT;
+  }
+  if (error.includes("blocked by content safety filters") || error.includes("Retries remaining:")) {
+    return SAFETY_CONTINUATION_PROMPT;
+  }
+  return null;
+}
+
+function hasCompletedResponse(turn: Turn, error: string): boolean {
+  if (error === "interrupted") return false;
+  if (
+    turn.lastStepIndex === undefined ||
+    turn.lastStepType !== "agent_response" ||
+    turn.lastStepState !== "DONE"
+  ) {
+    return false;
+  }
+  const finalText = turn.text.get(turn.lastStepIndex) ?? "";
+  return finalText.trim().length > 0;
 }
 
 const persistenceSchema = z
@@ -124,6 +146,9 @@ interface Turn {
   id: string;
   retries: number;
   retryTimer?: ReturnType<typeof setTimeout>;
+  lastStepIndex?: number;
+  lastStepType?: string;
+  lastStepState?: "ACTIVE" | "DONE" | "ERROR";
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
@@ -222,7 +247,8 @@ function replayHistoryFromTranscript(options: ReplayHistoryOptions): void {
     const stepKey = obj.step_index ?? index;
     if (obj.type === "USER_INPUT" && typeof obj.content === "string") {
       const text = extractUserText(obj.content);
-      if (!text || text === TRANSIENT_CONTINUATION_PROMPT) continue;
+      if (!text || text === TRANSIENT_CONTINUATION_PROMPT || text === SAFETY_CONTINUATION_PROMPT)
+        continue;
       emit({
         type: "timeline.item",
         sessionId,
@@ -578,8 +604,9 @@ export class Session {
         },
       });
     }
-    if (result.status === "ERROR") {
-      if (isTransientStreamError(result.error) && turn.retries < MAX_TRANSIENT_RETRIES) {
+    if (result.status === "ERROR" && !hasCompletedResponse(turn, result.error)) {
+      const retryPrompt = recoverableTurnPrompt(result.error);
+      if (retryPrompt && turn.retries < MAX_TRANSIENT_RETRIES) {
         turn.retries += 1;
         const delayMs = this.options.launch.env?.AGY_TEST_LOG ? 10 : TRANSIENT_RETRY_DELAY_MS;
         clearTimeout(turn.retryTimer);
@@ -591,7 +618,7 @@ export class Session {
             this.state.driver !== driver
           )
             return;
-          void driver.prompt(TRANSIENT_CONTINUATION_PROMPT).catch((error) => {
+          void driver.prompt(retryPrompt).catch((error) => {
             if (
               this.state.type === "running" &&
               this.state.turn === turn &&
@@ -630,6 +657,11 @@ export class Session {
 
   private acceptStep(step: Step, turn: Turn): void {
     const id = `${turn.id}:${step.step_index}`;
+    if (turn.lastStepIndex === undefined || step.step_index >= turn.lastStepIndex) {
+      turn.lastStepIndex = step.step_index;
+      turn.lastStepType = step.step_type;
+      turn.lastStepState = step.state;
+    }
     if (step.step_type === "agent_response") {
       const previous = turn.text.get(step.step_index) || "";
       const text = previous + step.text_delta;
