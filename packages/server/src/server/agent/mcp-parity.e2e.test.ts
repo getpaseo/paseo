@@ -782,6 +782,51 @@ describe("Suite A: Core Fixes", () => {
     }
   });
 
+  test("mark_agent_read clears a finished subagent for subscribed clients", async () => {
+    let childId: string | null = null;
+    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemonHandle.port}/ws` });
+    try {
+      await client.connect();
+      childId = await createChildAgent();
+      const unreadChildId = childId;
+      await waitFor({
+        timeoutMs: AGENT_WAIT_TIMEOUT_MS,
+        label: "child finished attention",
+        check: async () => {
+          const agent = (await client.fetchAgent(unreadChildId))?.agent;
+          return agent?.requiresAttention && agent.attentionReason === "finished" ? agent : null;
+        },
+      });
+      const observed: boolean[] = [];
+      const unsubscribe = client.subscribeRawMessages((message) => {
+        if (message.type !== "agent_update" || message.payload.kind !== "upsert") return;
+        if (message.payload.agent.id === unreadChildId) {
+          observed.push(message.payload.agent.requiresAttention === true);
+        }
+      });
+      await client.fetchAgents({ subscribe: {} });
+
+      const result = await callToolStructured(agentScopedClient, "mark_agent_read", {
+        agentId: unreadChildId,
+      });
+
+      expect(result).toEqual({ success: true, cleared: true });
+      expect((await client.fetchAgent(unreadChildId))?.agent.requiresAttention).toBe(false);
+      await waitFor({
+        timeoutMs: 5000,
+        label: "read update pushed to subscribed client",
+        check: () => (observed.includes(false) ? true : null),
+      });
+      unsubscribe();
+      expect(
+        await callToolStructured(agentScopedClient, "mark_agent_read", { agentId: unreadChildId }),
+      ).toEqual({ success: true, cleared: false });
+    } finally {
+      await client.close();
+      await archiveAgentIfPresent(childId);
+    }
+  });
+
   test("update_agent updates name and labels", async () => {
     let agentId: string | null = null;
     try {

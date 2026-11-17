@@ -92,6 +92,8 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`archive_agent`** — `{ agentId }`. Interrupts if running, removes from active list.
 
+**`mark_agent_read`** — `{ agentId }`. Clears the agent's unread or failed state, like Mark as read in the app. Call it when you have handled a subagent's result but will prompt it again; archive the agent instead when you are done with it. Either way the user isn't left with an unread chat that has nothing for them. A pending permission request stays unread. Returns `cleared: false` when there was nothing to clear.
+
 ## Agent profiles and provider discovery
 
 **`list_profiles`** — named launch bundles configured by the human. Before choosing how to launch a delegated agent, call this tool and read every profile's `notes`. Pick a named profile the user requested, or the profile whose notes best match the work.

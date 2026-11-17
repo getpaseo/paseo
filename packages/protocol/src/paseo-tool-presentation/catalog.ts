@@ -200,6 +200,12 @@ export const PASEO_TOOL_CATALOG = {
     context: targetAgent(),
     detail: { inputOrder: ["agentId"] },
   },
+  mark_agent_read: {
+    label: "Mark agent read",
+    completedLabel: "Marked agent read",
+    context: targetAgent(),
+    detail: { inputOrder: ["agentId"] },
+  },
   kill_agent: {
     label: "Kill agent",
     completedLabel: "Killed agent",
