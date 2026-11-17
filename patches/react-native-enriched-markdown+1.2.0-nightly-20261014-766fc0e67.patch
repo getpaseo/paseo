@@ -219,6 +219,32 @@ index 0a57557..25eb0dc 100644
      onLinkLongPress: ((String) -> Unit)?,
      factory: RendererFactory,
    ) {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockStyleContext.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockStyleContext.kt
+index 0286a85..c908586 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockStyleContext.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockStyleContext.kt
+@@ -41,6 +41,10 @@ class BlockStyleContext {
+   var listDepth = 0
+   var listType: ListType? = null
+   var listItemNumber = 0
++  var listMarkerExtra = 0f
++  var ancestorMarkerOffset = 0f
++  var listItemMarkerExtra = 0f
++  var listItemMarkerWidth: Float? = null
+   var taskItemCount = 0
+   var accumulatedIndent = 0
+ 
+@@ -151,6 +155,10 @@ class BlockStyleContext {
+     listDepth = 0
+     listType = null
+     listItemNumber = 0
++    listMarkerExtra = 0f
++    ancestorMarkerOffset = 0f
++    listItemMarkerExtra = 0f
++    listItemMarkerWidth = null
+     taskItemCount = 0
+     accumulatedIndent = 0
+     listItemStarts.clear()
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt
 index f5804a5..6292452 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/BlockquoteRenderer.kt
@@ -336,8 +362,81 @@ index 0cfad74..df88c5d 100644
      onLinkLongPress: ((String) -> Unit)?,
      factory: RendererFactory,
    ) {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListContextManager.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListContextManager.kt
+index cb3d2aa..548dbda 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListContextManager.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListContextManager.kt
+@@ -12,6 +12,8 @@ import com.swmansion.enriched.markdown.styles.ListStyle
+  *   allowing each level to maintain its own counter while preserving parent's position.
+  * - **Parent context restoration**: Restores parent list's style when exiting nested lists
+  *   so subsequent parent items render correctly.
++ * - **Marker column**: An ordered list widens its `99.` column to fit its widest marker, and a
++ *   nested list inherits the widening of the item it sits in.
+  */
+ class ListContextManager(
+   private val context: BlockStyleContext,
+@@ -24,6 +26,8 @@ class ListContextManager(
+     val previousDepth: Int,
+     val parentListType: BlockStyleContext.ListType?,
+     val wasNestedInOrderedList: Boolean,
++    val previousMarkerExtra: Float,
++    val previousMarkerOffset: Float,
+   )
+ 
+   /**
+@@ -32,11 +36,13 @@ class ListContextManager(
+    * - Incrementing list depth
+    * - Setting the appropriate list style
+    * - Resetting item number for the new list
++   * - Widening the marker column by [markerExtraWidth] and shifting a nested list by its parent item's widening
+    */
+   fun enterList(
+     listType: BlockStyleContext.ListType,
+     style: ListStyle,
+     startNumber: Int = 1,
++    markerExtraWidth: Float = 0f,
+   ): ListEntryState {
+     val previousDepth = context.listDepth
+     val isNested = previousDepth > 0
+@@ -61,10 +67,19 @@ class ListContextManager(
+     }
+     context.resetListItemNumber(startNumber)
+ 
++    val previousMarkerExtra = context.listMarkerExtra
++    val previousMarkerOffset = context.ancestorMarkerOffset
++    if (isNested) {
++      context.ancestorMarkerOffset += context.listItemMarkerExtra
++    }
++    context.listMarkerExtra = markerExtraWidth
++
+     return ListEntryState(
+       previousDepth = previousDepth,
+       parentListType = parentListType,
+       wasNestedInOrderedList = isNested && parentIsOrdered,
++      previousMarkerExtra = previousMarkerExtra,
++      previousMarkerOffset = previousMarkerOffset,
+     )
+   }
+ 
+@@ -74,6 +89,7 @@ class ListContextManager(
+    * - Decrementing list depth back to previousDepth
+    * - Restoring parent list item numbers from stack (if applicable)
+    * - Restoring parent list metadata (if nested) so subsequent parent items render correctly
++   * - Restoring the parent list's marker column and offset
+    */
+   fun exitList(entryState: ListEntryState) {
+     context.listDepth = entryState.previousDepth
+@@ -86,5 +102,8 @@ class ListContextManager(
+     if (entryState.previousDepth > 0) {
+       context.listType = entryState.parentListType
+     }
++
++    context.listMarkerExtra = entryState.previousMarkerExtra
++    context.ancestorMarkerOffset = entryState.previousMarkerOffset
+   }
+ }
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
-index b849f78..24c06f3 100644
+index b849f78..38d5ff2 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListItemRenderer.kt
 @@ -19,7 +19,7 @@ class ListItemRenderer(
@@ -349,11 +448,76 @@ index b849f78..24c06f3 100644
      onLinkLongPress: ((String) -> Unit)?,
      factory: RendererFactory,
    ) {
+@@ -50,15 +50,35 @@ class ListItemRenderer(
+           taskIndex = taskIndex,
+           isChecked = isChecked,
+           drawsMarker = drawsMarker,
++          ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
++          markerExtraWidth = styleContext.listMarkerExtra,
++          parentMarkerWidth = styleContext.listItemMarkerWidth,
+         )
+       } else {
+         when (listType) {
+           BlockStyleContext.ListType.UNORDERED -> {
+-            UnorderedListSpan(listStyle, depth, factory.context, factory.styleCache, drawsMarker)
++            UnorderedListSpan(
++              listStyle,
++              depth,
++              factory.context,
++              factory.styleCache,
++              drawsMarker,
++              ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
++              parentMarkerWidth = styleContext.listItemMarkerWidth,
++            )
+           }
+ 
+           BlockStyleContext.ListType.ORDERED -> {
+-            OrderedListSpan(listStyle, depth, factory.context, factory.styleCache, drawsMarker).apply {
++            OrderedListSpan(
++              listStyle,
++              depth,
++              factory.context,
++              factory.styleCache,
++              drawsMarker,
++              markerExtraWidth = styleContext.listMarkerExtra,
++              ancestorMarkerOffset = styleContext.ancestorMarkerOffset,
++              parentMarkerWidth = styleContext.listItemMarkerWidth,
++            ).apply {
+               setItemNumber(styleContext.listItemNumber)
+             }
+           }
+@@ -67,12 +87,18 @@ class ListItemRenderer(
+ 
+     val markerSpan = makeSpan(drawsMarker = true)
+ 
++    val previousMarkerExtra = styleContext.listItemMarkerExtra
++    styleContext.listItemMarkerExtra = markerSpan.markerExtraWidth
++    val previousMarkerWidth = styleContext.listItemMarkerWidth
++    styleContext.listItemMarkerWidth = markerSpan.baselineMarkerWidth
+     val prevIndent = styleContext.accumulatedIndent
+     styleContext.accumulatedIndent = prevIndent + markerSpan.getLeadingMargin(false)
+     try {
+       factory.renderChildren(node, builder, onLinkPress, onLinkLongPress)
+     } finally {
+       styleContext.accumulatedIndent = prevIndent
++      styleContext.listItemMarkerExtra = previousMarkerExtra
++      styleContext.listItemMarkerWidth = previousMarkerWidth
+     }
+ 
+     if (builder.length == start || builder.substring(start).isBlank()) return
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
-index 2bac5b1..ff2d2c2 100644
+index 2bac5b1..4f87447 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/ListRenderer.kt
-@@ -16,7 +16,7 @@ class ListRenderer(
+@@ -4,6 +4,7 @@ import android.text.SpannableStringBuilder
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+ import com.swmansion.enriched.markdown.spans.ListItemSpacingSpan
+ import com.swmansion.enriched.markdown.spans.MarginBottomSpan
++import com.swmansion.enriched.markdown.spans.OrderedListSpan
+ import com.swmansion.enriched.markdown.styles.ListStyle
+ import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
+ import com.swmansion.enriched.markdown.utils.text.span.applyLineHeightSkippingImages
+@@ -16,7 +17,7 @@ class ListRenderer(
    override fun render(
      node: MarkdownASTNode,
      builder: SpannableStringBuilder,
@@ -362,6 +526,41 @@ index 2bac5b1..ff2d2c2 100644
      onLinkLongPress: ((String) -> Unit)?,
      factory: RendererFactory,
    ) {
+@@ -31,8 +32,9 @@ class ListRenderer(
+         1
+       }
+ 
++    val markerExtraWidth = if (isOrdered) markerExtraWidth(node, listStyle, startNumber, factory) else 0f
+     val contextManager = ListContextManager(factory.blockStyleContext)
+-    val entryState = contextManager.enterList(listType, listStyle, startNumber)
++    val entryState = contextManager.enterList(listType, listStyle, startNumber, markerExtraWidth)
+ 
+     // For top-level lists, insert marginTop spacer before rendering content
+     if (entryState.previousDepth == 0) {
+@@ -58,6 +60,23 @@ class ListRenderer(
+     }
+   }
+ 
++  /** Lists under 100 keep the `99.` column, so only numbers from 100 on widen it. Task items draw a checkbox. */
++  private fun markerExtraWidth(
++    node: MarkdownASTNode,
++    listStyle: ListStyle,
++    startNumber: Int,
++    factory: RendererFactory,
++  ): Float {
++    val wideNumbers = mutableListOf<Int>()
++    var number = startNumber
++    for (item in node.children) {
++      if (item.type != MarkdownASTNode.NodeType.ListItem) continue
++      if (number >= 100 && item.attributes["isTask"] != "true") wideNumbers += number
++      number++
++    }
++    return OrderedListSpan.measureExtraWidth(listStyle, factory.context, wideNumbers)
++  }
++
+   private fun applyListSpacing(
+     builder: SpannableStringBuilder,
+     start: Int,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
 index 354b31a..77b1e14 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
@@ -592,6 +791,241 @@ index e190548..b2e6cf2 100644
        isHorizontalScrollBarEnabled = true
        overScrollMode = View.OVER_SCROLL_NEVER
        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
+index 2ab0043..b17875b 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/BaseListSpan.kt
+@@ -23,6 +23,8 @@ abstract class BaseListSpan(
+   protected val marginLeft: Float,
+   protected val gapWidth: Float,
+   internal val drawsMarker: Boolean = true,
++  internal val ancestorMarkerOffset: Float = 0f,
++  internal val parentMarkerWidth: Float? = null,
+ ) : MetricAffectingSpan(),
+   LeadingMarginSpan {
+   private var cachedText: CharSequence? = null
+@@ -38,17 +40,28 @@ abstract class BaseListSpan(
+ 
+   protected abstract fun getMarkerWidth(): Float
+ 
++  /** How far an ordered list widened this item's column past the one short lists reserve. */
++  internal open val markerExtraWidth: Float = 0f
++
++  /** This item's marker column without [markerExtraWidth]; a nested item measures its indent against it. */
++  internal open val baselineMarkerWidth: Float get() = getMarkerWidth()
++
+   override fun updateMeasureState(textPaint: TextPaint) = applyTextStyle(textPaint)
+ 
+   override fun updateDrawState(textPaint: TextPaint) = applyTextStyle(textPaint)
+ 
+-  override fun getLeadingMargin(first: Boolean): Int =
+-    if (depth == 0) {
+-      val effectiveGap = gapWidth.coerceAtLeast(DEFAULT_MIN_GAP)
+-      (getMarkerWidth() + effectiveGap).toInt()
+-    } else {
+-      marginLeft.toInt()
+-    }
++  override fun getLeadingMargin(first: Boolean): Int {
++    val effectiveGap = gapWidth.coerceAtLeast(DEFAULT_MIN_GAP)
++    if (depth == 0) return (getMarkerWidth() + effectiveGap).toInt()
++
++    // Subtract truncated absolute indents, each measured from its own item's column, so neither mixed
++    // columns nor fractional margins accumulate rounding. The widenings are whole pixels and add unchanged.
++    val markerWidth = baselineMarkerWidth
++    val parentWidth = parentMarkerWidth ?: markerWidth
++    val indent = (depth * marginLeft + markerWidth + effectiveGap).toInt()
++    val parentIndent = ((depth - 1) * marginLeft + parentWidth + effectiveGap).toInt()
++    return indent - parentIndent + markerExtraWidth.toInt()
++  }
+ 
+   override fun drawLeadingMargin(
+     canvas: Canvas,
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/OrderedListSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/OrderedListSpan.kt
+index 566f528..02b47cc 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/OrderedListSpan.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/OrderedListSpan.kt
+@@ -12,6 +12,7 @@ import com.facebook.react.views.text.ReactTypefaceUtils.parseFontWeight
+ import com.swmansion.enriched.markdown.renderer.BlockStyle
+ import com.swmansion.enriched.markdown.renderer.SpanStyleCache
+ import com.swmansion.enriched.markdown.styles.ListStyle
++import kotlin.math.ceil
+ 
+ class OrderedListSpan(
+   private val listStyle: ListStyle,
+@@ -19,6 +20,9 @@ class OrderedListSpan(
+   context: Context,
+   styleCache: SpanStyleCache,
+   drawsMarker: Boolean = true,
++  override val markerExtraWidth: Float = 0f,
++  ancestorMarkerOffset: Float = 0f,
++  parentMarkerWidth: Float? = null,
+ ) : BaseListSpan(
+     depth = depth,
+     context = context,
+@@ -33,30 +37,57 @@ class OrderedListSpan(
+     marginLeft = listStyle.marginLeft,
+     gapWidth = listStyle.gapWidth,
+     drawsMarker = drawsMarker,
++    ancestorMarkerOffset = ancestorMarkerOffset,
++    parentMarkerWidth = parentMarkerWidth,
+   ) {
+   companion object {
+     private val sharedMarkerPaint = TextPaint().apply { isAntiAlias = true }
+-  }
+ 
+-  private val markerTypeface: Typeface =
+-    run {
+-      val fontFamily = listStyle.fontFamily.takeIf { it.isNotEmpty() }
+-      val fontWeight = parseFontWeight(listStyle.markerFontWeight)
+-      applyStyles(null, ReactConstants.UNSET, fontWeight, fontFamily, context.assets)
++    /**
++     * How far the `99.` column every ordered list reserves must grow to fit each of [numbers].
++     * Whole pixels, so the Int leading margins and the float marker positions agree at every depth.
++     */
++    fun measureExtraWidth(
++      listStyle: ListStyle,
++      context: Context,
++      numbers: Iterable<Int>,
++    ): Float {
++      val paint = markerPaint(listStyle, markerTypeface(listStyle, context))
++      val default = paint.measureText("99.")
++      val widest = numbers.fold(default) { width, number -> maxOf(width, paint.measureText("$number.")) }
++      return ceil(listStyle.effectiveMarkerWidth(widest) - listStyle.effectiveMarkerWidth(default))
+     }
+ 
+-  private fun configureMarkerPaint(): TextPaint =
+-    sharedMarkerPaint.apply {
+-      textSize = listStyle.fontSize
+-      color = listStyle.markerColor
+-      typeface = markerTypeface
+-    }
++    private fun markerTypeface(
++      listStyle: ListStyle,
++      context: Context,
++    ): Typeface =
++      applyStyles(
++        null,
++        ReactConstants.UNSET,
++        parseFontWeight(listStyle.markerFontWeight),
++        listStyle.fontFamily.takeIf { it.isNotEmpty() },
++        context.assets,
++      )
+ 
+-  override fun getMarkerWidth(): Float {
+-    val paint = configureMarkerPaint()
+-    return listStyle.effectiveMarkerWidth(paint.measureText("99."))
++    private fun markerPaint(
++      listStyle: ListStyle,
++      typeface: Typeface,
++    ): TextPaint =
++      sharedMarkerPaint.apply {
++        textSize = listStyle.fontSize
++        color = listStyle.markerColor
++        this.typeface = typeface
++      }
+   }
+ 
++  private val markerTypeface = markerTypeface(listStyle, context)
++  private val defaultMarkerWidth = listStyle.effectiveMarkerWidth(markerPaint(listStyle, markerTypeface).measureText("99."))
++
++  override fun getMarkerWidth(): Float = defaultMarkerWidth + markerExtraWidth
++
++  override val baselineMarkerWidth: Float get() = defaultMarkerWidth
++
+   var itemNumber: Int = 1
+     private set
+ 
+@@ -71,11 +102,11 @@ class OrderedListSpan(
+     layout: Layout?,
+     start: Int,
+   ) {
+-    val markerPaint = configureMarkerPaint()
++    val markerPaint = markerPaint(listStyle, markerTypeface)
+     val text = if (dir < 0) ".$itemNumber" else "$itemNumber."
+     val textWidth = markerPaint.measureText(text)
+ 
+-    val markerRightEdge = x + (depth * marginLeft + getMarkerWidth()) * dir
++    val markerRightEdge = x + (depth * marginLeft + ancestorMarkerOffset + getMarkerWidth()) * dir
+     val markerX = if (dir > 0) markerRightEdge - textWidth else markerRightEdge
+ 
+     canvas.drawText(text, markerX, baseline.toFloat(), markerPaint)
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/TaskListSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/TaskListSpan.kt
+index 3b5a5c6..24ca5d9 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/TaskListSpan.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/TaskListSpan.kt
+@@ -20,6 +20,9 @@ class TaskListSpan(
+   val taskIndex: Int,
+   val isChecked: Boolean,
+   drawsMarker: Boolean = true,
++  ancestorMarkerOffset: Float = 0f,
++  override val markerExtraWidth: Float = 0f,
++  parentMarkerWidth: Float? = null,
+ ) : BaseListSpan(
+     depth = depth,
+     context = context,
+@@ -34,9 +37,12 @@ class TaskListSpan(
+     marginLeft = listStyle.marginLeft,
+     gapWidth = listStyle.gapWidth,
+     drawsMarker = drawsMarker,
++    ancestorMarkerOffset = ancestorMarkerOffset,
++    parentMarkerWidth = parentMarkerWidth,
+   ) {
+   private val checkboxSize = taskStyle.checkboxSize
+-  private val markerColumnWidth = listStyle.effectiveMarkerWidth(checkboxSize)
++  private val checkboxColumnWidth = listStyle.effectiveMarkerWidth(checkboxSize)
++  private val markerColumnWidth = checkboxColumnWidth + markerExtraWidth
+   private val cornerRadius = taskStyle.checkboxBorderRadius
+   private val rect = RectF()
+   private val checkPath = Path()
+@@ -60,6 +66,8 @@ class TaskListSpan(
+ 
+   override fun getMarkerWidth(): Float = markerColumnWidth
+ 
++  override val baselineMarkerWidth: Float get() = checkboxColumnWidth
++
+   override fun drawMarker(
+     canvas: Canvas,
+     paint: Paint,
+@@ -76,7 +84,7 @@ class TaskListSpan(
+     // Right-align the checkbox inside the reserved marker column so it hugs
+     // the gap before the text. At the default (markerColumnWidth ==
+     // checkboxSize) this is identical to the previous flush-left layout.
+-    val centerX = x + (depth * marginLeft + markerColumnWidth - checkboxSize / HALF_DIVISOR) * dir
++    val centerX = x + (depth * marginLeft + ancestorMarkerOffset + markerColumnWidth - checkboxSize / HALF_DIVISOR) * dir
+     val half = checkboxSize / HALF_DIVISOR
+     rect.set(centerX - half, centerY - half, centerX + half, centerY + half)
+ 
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/UnorderedListSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/UnorderedListSpan.kt
+index cc3e704..a7597f8 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/UnorderedListSpan.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/UnorderedListSpan.kt
+@@ -14,6 +14,8 @@ class UnorderedListSpan(
+   context: Context,
+   styleCache: SpanStyleCache,
+   drawsMarker: Boolean = true,
++  ancestorMarkerOffset: Float = 0f,
++  parentMarkerWidth: Float? = null,
+ ) : BaseListSpan(
+     depth = depth,
+     context = context,
+@@ -28,6 +30,8 @@ class UnorderedListSpan(
+     marginLeft = listStyle.marginLeft,
+     gapWidth = listStyle.gapWidth,
+     drawsMarker = drawsMarker,
++    ancestorMarkerOffset = ancestorMarkerOffset,
++    parentMarkerWidth = parentMarkerWidth,
+   ) {
+   companion object {
+     private val sharedBulletPaint =
+@@ -65,7 +69,7 @@ class UnorderedListSpan(
+     // it hugs the gap before the text — matches iOS behavior and stays
+     // visually flush-left when the column width equals the bullet radius
+     // (the default).
+-    val bulletX = x + (depth * marginLeft + markerColumnWidth) * dir
++    val bulletX = x + (depth * marginLeft + ancestorMarkerOffset + markerColumnWidth) * dir
+     val bulletY = baseline + (markerFontMetrics.ascent + markerFontMetrics.descent) / 2f
+ 
+     when (depth) {
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
 index b4d3cdc..4652b10 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/common/MarkdownViewManagerUtils.kt
@@ -610,6 +1044,50 @@ index b4d3cdc..4652b10 100644
  }
  
  fun emitLinkLongPress(
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/interaction/TaskListTapUtils.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/interaction/TaskListTapUtils.kt
+index 1bb4b53..e70b241 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/interaction/TaskListTapUtils.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/interaction/TaskListTapUtils.kt
+@@ -131,16 +131,31 @@ object TaskListTapUtils {
+         taskIndex = targetIndex,
+         isChecked = newChecked,
+         drawsMarker = old.drawsMarker,
++        ancestorMarkerOffset = old.ancestorMarkerOffset,
++        markerExtraWidth = old.markerExtraWidth,
++        parentMarkerWidth = old.parentMarkerWidth,
+       )
+ 
+-    // Replace every segment of the item — spans are split around code blocks
+-    for (old in targetSpans) {
+-      val start = spannable.getSpanStart(old)
+-      val end = spannable.getSpanEnd(old)
+-      // Keep the original flags so the list item priority survives the toggle
+-      val flags = spannable.getSpanFlags(old)
+-      spannable.removeSpan(old)
+-      spannable.setSpan(toggledCopy(old), start, end, flags)
++    // Layout draws leading margins in insertion order, and a re-added span moves to the end of it.
++    // Re-add the task's spans and everything attached after them (its ancestors) in their original
++    // order; the task's own nested items were attached first and stay where they are.
++    data class ListSpanState(
++      val span: BaseListSpan,
++      val start: Int,
++      val end: Int,
++      val flags: Int,
++    )
++
++    val coveringSpans = spannable.getSpans(spanStart, spanEnd, BaseListSpan::class.java)
++    val firstTarget = coveringSpans.indexOfFirst { it is TaskListSpan && it.taskIndex == targetIndex }
++    val listSpans =
++      coveringSpans.drop(firstTarget).map {
++        ListSpanState(it, spannable.getSpanStart(it), spannable.getSpanEnd(it), spannable.getSpanFlags(it))
++      }
++    listSpans.forEach { spannable.removeSpan(it.span) }
++    for ((old, start, end, flags) in listSpans) {
++      val replacement = if (old is TaskListSpan && old.taskIndex == targetIndex) toggledCopy(old) else old
++      spannable.setSpan(replacement, start, end, flags)
+     }
+ 
+     // The marker may be drawn by an anchor span wrapping an unattached copy
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt
 index fde4b04..b524ea7 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/LinkEvents.kt
@@ -628,6 +1106,898 @@ index fde4b04..b524ea7 100644
  }
  
  fun View.emitImagePressEvent(
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/ListRenderingTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/ListRenderingTest.kt
+new file mode 100644
+index 0000000..9cc404f
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/ListRenderingTest.kt
+@@ -0,0 +1,460 @@
++package com.swmansion.enriched.markdown
++
++import android.graphics.Typeface
++import android.text.SpannableString
++import android.text.StaticLayout
++import android.text.TextPaint
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.spans.BaseListSpan
++import com.swmansion.enriched.markdown.spans.ListMarkerAnchorSpan
++import com.swmansion.enriched.markdown.spans.OrderedListSpan
++import com.swmansion.enriched.markdown.styles.StyleConfig
++import com.swmansion.enriched.markdown.test.MarkdownRenderTestSupport.render
++import com.swmansion.enriched.markdown.test.MarkdownRenderTestSupport.styleConfig
++import com.swmansion.enriched.markdown.test.MarkerCanvas
++import com.swmansion.enriched.markdown.test.MarkerGeometry
++import com.swmansion.enriched.markdown.test.TestAstFactory.listItem
++import com.swmansion.enriched.markdown.test.TestAstFactory.orderedList
++import com.swmansion.enriched.markdown.test.TestAstFactory.paragraph
++import com.swmansion.enriched.markdown.test.TestAstFactory.taskListItem
++import com.swmansion.enriched.markdown.test.TestAstFactory.text
++import com.swmansion.enriched.markdown.test.TestAstFactory.unorderedList
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++import kotlin.math.ceil
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [30])
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++class ListRenderingTest {
++  @Test
++  fun shortListsKeepTheirIndentAndLongListsShareTheirWidestGutter() {
++    val style = listStyle()
++    val paint =
++      TextPaint().apply {
++        textSize = style.listStyle.fontSize
++        typeface = Typeface.create("monospace", Typeface.NORMAL)
++      }
++    val baseline = paint.measureText("99.")
++    val gap = style.listStyle.gapWidth
++    val short = orderedSpans(style, numbered(1, 99))
++    short.forEach { assertEquals((baseline + gap).toInt(), it.getLeadingMargin(false)) }
++    for ((start, count) in listOf(1 to 250, 98 to 4, 998 to 4, 12345 to 4, 0 to 101)) {
++      val spans = orderedSpans(style, numbered(start, count))
++      val widest = maxOf(baseline, spans.maxOf { paint.measureText("${it.itemNumber}.") })
++      spans.forEach { assertEquals((baseline + ceil(widest - baseline) + gap).toInt(), it.getLeadingMargin(false)) }
++      assertTrue(spans.first().getLeadingMargin(false) > short.first().getLeadingMargin(false))
++    }
++  }
++
++  @Test
++  fun nestedAndFollowingListsRestoreTheirOwnGutters() {
++    val style = listStyle()
++    val spans = orderedSpans(style, withChild(numbered(98, 4), 0, numbered(9998, 4)), numbered(1, 1))
++    val parent = spans.filter { it.depth == 0 && it.itemNumber != 1 }
++    assertEquals(4, parent.size)
++    parent.forEach { assertEquals(parent.first().getLeadingMargin(false), it.getLeadingMargin(false)) }
++    spans.filter { it.depth == 1 }.forEach { assertTrue(it.getLeadingMargin(false) > style.listStyle.marginLeft) }
++    val following = spans.single { it.depth == 0 && it.itemNumber == 1 }
++    assertTrue(following.getLeadingMargin(false) < parent.first().getLeadingMargin(false))
++  }
++
++  @Test
++  fun markerMinimumWidthRemainsAFloor() {
++    val style = listStyle(minWidth = 200.0)
++    orderedSpans(style, numbered(998, 4)).forEach {
++      assertEquals((style.listStyle.markerMinWidth + style.listStyle.gapWidth).toInt(), it.getLeadingMargin(false))
++    }
++  }
++
++  @Test
++  fun drawnMarkersStayInsideTheGutterAndAttachedToTheirParagraphs() {
++    val style = listStyle()
++    for (start in listOf(1, 98, 9998)) {
++      val threeLevels = withChild(numbered(1, 1), 0, numbered(1, 1))
++      assertDrawnMarkerPositions(style, withChild(numbered(start, 4), 2, threeLevels))
++    }
++  }
++
++  @Test
++  fun nestedBulletColumnsKeepTheirGapUnderWideParents() {
++    val style = listStyle()
++
++    fun tree(start: Int) = withChild(numbered(start, 4), 2, unorderedList(item(), item()))
++    for (start in listOf(98, 9998)) {
++      assertNestedMarkerGapsUnchanged(style, tree(1), tree(start))
++    }
++  }
++
++  @Test
++  fun tasksMoveWithTheirWideNumberedSiblings() {
++    val style = listStyle()
++
++    fun tree(start: Int): MarkdownASTNode {
++      val items = numbered(start, 3).children.toMutableList()
++      items[1] = taskListItem(checked = false, paragraph(text("item")), numbered(1, 1))
++      items[2] = listItem(paragraph(text("item")), numbered(1, 1))
++      return orderedList(*items.toTypedArray(), start = start)
++    }
++    assertEveryRowShiftsTogether(style, tree(1), tree(12345))
++  }
++
++  @Test
++  fun nestedTasksKeepTheirGapUnderWideNumericParents() {
++    val style = listStyle()
++
++    fun tree(start: Int) = withChild(numbered(start, 4), 2, orderedList(taskListItem(checked = false, paragraph(text("item")))))
++    for (start in listOf(98, 9998)) {
++      assertNestedMarkerGapsUnchanged(style, tree(1), tree(start))
++    }
++  }
++
++  @Test
++  fun sameTypeBulletAndTaskNestsKeepTheirMarkerGap() {
++    val style = listStyle()
++    val bullet = unorderedList(item())
++    val task = orderedList(taskListItem(checked = false, paragraph(text("item"))))
++    for (parent in listOf(bullet, task)) {
++      assertDrawnMarkerPositions(style, withChild(parent, 0, parent))
++    }
++  }
++
++  @Test
++  fun mixedNestsStartTheirTextFromTheirOwnMarkerColumn() {
++    val style = mixedStyle()
++    // Each child's text sits one marginLeft plus its own column and gap in: 24 + (3, 22 or 14) + 6.
++    val indents = mapOf(Kind.BULLET to 33f, Kind.ORDERED to 52f, Kind.TASK to 44f)
++    for (parent in Kind.entries) {
++      for (child in Kind.entries.filter { it != parent }) {
++        for (checked in checkedStates(parent, child)) {
++          val markers = drawMarkers(style, list(parent, list(child, checked = checked), checked))
++          assertEquals(listOf(0, 1), markers.map { it.depth })
++          assertEquals("$child under $parent", indents.getValue(child), markers.last().paragraphLeft, 0f)
++          assertMixedGaps(markers, "$child under $parent, checked=$checked")
++        }
++      }
++    }
++  }
++
++  @Test
++  fun topLevelAndSameTypeNestsKeepTheirGeometry() {
++    val style = mixedStyle()
++    for (kind in Kind.entries) {
++      val column = columnOf(style, kind)
++      val markers = drawMarkers(style, list(kind, list(kind, list(kind))))
++      assertEquals(listOf(0, 1, 2), markers.map { it.depth })
++      markers.forEach {
++        assertEquals("text for $kind at depth ${it.depth}", (column + MIXED_GAP).toInt() + it.depth * 24f, it.paragraphLeft, 0f)
++        assertEquals(column + it.depth * 24f, it.marker.right, 0.01f)
++      }
++    }
++  }
++
++  @Test
++  fun mixedColumnsUseAbsoluteIndentsWithoutFractionalDrift() {
++    val alternating = listOf(Kind.BULLET, Kind.ORDERED, Kind.BULLET, Kind.TASK)
++    val sameTypeRun = List(5) { Kind.BULLET } + Kind.TASK
++    for (margin in listOf(24.0, 24.5, 4.0)) {
++      val style = mixedStyle(bulletSize = 6.5, marginLeft = margin)
++      for (kinds in listOf(alternating, sameTypeRun)) {
++        val columns = kinds.map { columnOf(style, it) }
++        val tree = kinds.dropLast(1).foldRight(list(kinds.last())) { kind, child -> list(kind, child) }
++        val markers = drawMarkers(style, tree)
++        assertEquals(kinds.indices.toList(), markers.map { it.depth })
++        markers.forEach {
++          val expected = (it.depth * margin + columns[it.depth] + MIXED_GAP).toInt().toFloat()
++          assertEquals("absolute indent at depth ${it.depth} of $kinds, margin $margin", expected, it.paragraphLeft, 0f)
++          assertEquals(it.paragraphLeft - MIXED_GAP, it.marker.right, 0.99f)
++        }
++      }
++    }
++  }
++
++  @Test
++  fun mixedAncestorsAndFollowingSiblingsRestoreTheirOwnColumns() {
++    val style = mixedStyle()
++    for (parent in Kind.entries) {
++      val tree = list(parent).copy(children = Kind.entries.map { child -> item(parent, list(child, list(parent))) })
++      assertMixedGaps(drawMarkers(style, tree, list(Kind.BULLET), list(Kind.ORDERED), list(Kind.TASK)), "under $parent")
++    }
++  }
++
++  @Test
++  fun mixedNestsAroundWideNumberedListsKeepTheirMarkerGap() {
++    val style = mixedStyle()
++    val wide = numbered(12345, 2)
++    val wideWithTask = orderedList(item(), item(Kind.TASK, list(Kind.BULLET)), start = 998)
++    val shapes =
++      listOf(
++        withChild(wide, 0, list(Kind.BULLET)),
++        withChild(wide, 1, list(Kind.TASK, list(Kind.BULLET))),
++        list(Kind.BULLET, wide),
++        list(Kind.TASK, wide),
++        withChild(numbered(998, 4), 3, withChild(wide, 0, list(Kind.BULLET))),
++        list(Kind.BULLET, withChild(wide, 1, list(Kind.TASK))),
++        withChild(wideWithTask, 0, list(Kind.BULLET)),
++      )
++    for ((index, shape) in shapes.withIndex()) {
++      assertMixedGaps(drawMarkers(style, shape), "shape $index")
++    }
++  }
++
++  @Test
++  fun wrappedLinesKeepTheChildsOwnColumn() {
++    val style = mixedStyle()
++    val wrapped = orderedList(listItem(paragraph(text("wrapped child text ".repeat(12)))))
++    val text = SpannableString(render(style, list(Kind.BULLET, wrapped)))
++    val layout = StaticLayout.Builder.obtain(text, 0, text.length, TextPaint(), 180).build()
++    val span = text.getSpans(0, text.length, OrderedListSpan::class.java).single()
++    val firstLine = layout.getLineForOffset(text.getSpanStart(span))
++    val lastLine = layout.getLineForOffset(text.getSpanEnd(span) - 1)
++    assertTrue(lastLine > firstLine)
++    val column = columnOf(style, Kind.ORDERED)
++    for (line in firstLine..lastLine) {
++      assertEquals((24f + column + MIXED_GAP).toInt(), layout.getParagraphLeft(line))
++    }
++    val markers = MarkerCanvas.drawMarkers(layout)
++    assertEquals(2, markers.size)
++    assertEquals(24f + column, markers.last().right, 0.01f)
++  }
++
++  @Test
++  fun rtlMixedNestsKeepTheirMarkerGapAtEveryDepth() {
++    fun rtl(node: MarkdownASTNode): MarkdownASTNode {
++      if (node.type == MarkdownASTNode.NodeType.Text) return node.copy(content = "\u05e4\u05e8\u05d9\u05d8")
++      return node.copy(children = node.children.map { rtl(it) })
++    }
++
++    val style = mixedStyle()
++    for (parent in Kind.entries) {
++      for (child in Kind.entries.filter { it != parent }) {
++        for (checked in checkedStates(parent, child)) {
++          val tree = list(parent, list(child, list(parent, checked = checked), checked), checked)
++          val text = SpannableString(render(style, rtl(tree)))
++          val markers = MarkerCanvas.markerGeometry(text, MarkerCanvas.layout(text, style.listStyle.fontSize, rtl = true))
++          assertEquals(listOf(0, 1, 2), markers.map { it.depth })
++          markers.forEach {
++            assertEquals("RTL paragraph at depth ${it.depth}", -1, it.direction)
++            // Bullets are centered on the column edge, so their recorded right is that edge in both directions.
++            val kind = if (it.depth == 1) child else parent
++            val edge = if (kind == Kind.BULLET) it.marker.right else it.marker.left
++            assertEquals("$child under $parent, checked=$checked, depth ${it.depth}", it.paragraphRight + MIXED_GAP, edge, 0.01f)
++          }
++        }
++      }
++    }
++  }
++
++  @Test
++  fun equalMinimumColumnsKeepTheirGeometryForMixedNests() {
++    val style = mixedStyle(markerMinWidth = 40.0)
++    for (parent in Kind.entries) {
++      for (child in Kind.entries.filter { it != parent }) {
++        val markers = drawMarkers(style, list(parent, list(child, list(parent))))
++        assertEquals(listOf(0, 1, 2), markers.map { it.depth })
++        markers.forEach {
++          assertEquals("text for $child under $parent at depth ${it.depth}", 46f + it.depth * 24f, it.paragraphLeft, 0f)
++          assertEquals(40f + it.depth * 24f, it.marker.right, 0.01f)
++        }
++      }
++    }
++  }
++
++  @Test
++  fun markersAnchoredOnANestedListKeepTheirAncestorsOffset() {
++    val style = listStyle()
++    // The middle item opens with its sublist, so its marker is drawn by an anchor span.
++    val middle = orderedList(listItem(numbered(1, 1)), start = 1)
++    val text = SpannableString(render(style, withChild(numbered(12345, 1), 0, middle)))
++    assertEquals(1, text.getSpans(0, text.length, ListMarkerAnchorSpan::class.java).size)
++    val markers = MarkerCanvas.drawMarkers(MarkerCanvas.layout(text, style.listStyle.fontSize))
++    assertEquals(3, markers.size)
++    val (root, anchored, leaf) = markers.sortedBy { it.right }
++    assertEquals(root.right + style.listStyle.marginLeft, anchored.right, 0.01f)
++    assertEquals(anchored.right + style.listStyle.marginLeft, leaf.right, 0.01f)
++    assertTrue(markers.all { it.left >= 0f })
++  }
++
++  @Test
++  fun inheritedMarkerOffsetsFollowTheRtlDirection() {
++    val style = listStyle()
++    val text = SpannableString(render(style, withChild(numbered(12345, 1), 0, numbered(1, 1))))
++    val layout = MarkerCanvas.layout(text, style.listStyle.fontSize, rtl = true)
++    val markers = MarkerCanvas.drawMarkers(layout)
++    assertEquals(2, markers.size)
++    markers.forEach { marker ->
++      val line = layout.getLineForVertical(marker.baseline.toInt())
++      assertEquals(-1, layout.getParagraphDirection(line))
++      assertEquals(layout.getParagraphRight(line) + style.listStyle.gapWidth, marker.left, 0.01f)
++      assertTrue(marker.right <= layout.width)
++    }
++  }
++
++  private fun assertMixedGaps(
++    markers: List<MarkerGeometry>,
++    shape: String,
++  ) {
++    assertTrue(markers.isNotEmpty())
++    markers.forEach {
++      assertEquals("marker gap at depth ${it.depth}, $shape", it.paragraphLeft - MIXED_GAP, it.marker.right, 0.01f)
++    }
++  }
++
++  private fun assertDrawnMarkerPositions(
++    style: StyleConfig,
++    vararg lists: MarkdownASTNode,
++  ) {
++    drawMarkers(style, *lists).forEach { geometry ->
++      assertEquals(
++        "marker right at depth ${geometry.depth}",
++        geometry.paragraphLeft - style.listStyle.gapWidth,
++        geometry.marker.right,
++        0.01f,
++      )
++    }
++  }
++
++  /** The rows [wide] shares with [short], tasks and their children included, all sit [wide]'s widening further right. */
++  private fun assertEveryRowShiftsTogether(
++    style: StyleConfig,
++    short: MarkdownASTNode,
++    wide: MarkdownASTNode,
++  ) {
++    val shortRows = drawMarkers(style, short)
++    val wideRows = drawMarkers(style, wide).take(shortRows.size)
++    assertEquals(shortRows.size, wideRows.size)
++    val shift = wideRows.first().paragraphLeft - shortRows.first().paragraphLeft
++    assertTrue(shift > 0f)
++    wideRows.zip(shortRows).forEach { (actual, control) ->
++      assertEquals(control.depth, actual.depth)
++      assertEquals("text shift at depth ${actual.depth}", shift, actual.paragraphLeft - control.paragraphLeft, 0.01f)
++      assertEquals(
++        "marker gap at depth ${actual.depth}",
++        control.paragraphLeft - control.marker.right,
++        actual.paragraphLeft - actual.marker.right,
++        0.01f,
++      )
++    }
++  }
++
++  private fun assertNestedMarkerGapsUnchanged(
++    style: StyleConfig,
++    short: MarkdownASTNode,
++    wide: MarkdownASTNode,
++  ) {
++    val shortMarkers = drawMarkers(style, short).filter { it.depth > 0 }
++    val wideMarkers = drawMarkers(style, wide).filter { it.depth > 0 }
++    assertTrue(shortMarkers.isNotEmpty())
++    assertEquals(shortMarkers.size, wideMarkers.size)
++    shortMarkers.zip(wideMarkers).forEach { (control, actual) ->
++      assertEquals(control.depth, actual.depth)
++      assertEquals(
++        "nested marker gap at depth ${actual.depth}",
++        control.paragraphLeft - control.marker.right,
++        actual.paragraphLeft - actual.marker.right,
++        0.01f,
++      )
++    }
++  }
++
++  private fun drawMarkers(
++    style: StyleConfig,
++    vararg lists: MarkdownASTNode,
++  ): List<MarkerGeometry> {
++    // SpannableString reports spans in insertion order, as the text view does.
++    val text = SpannableString(render(style, *lists))
++    val geometry = MarkerCanvas.markerGeometry(text, MarkerCanvas.layout(text, style.listStyle.fontSize))
++    assertEquals(text.getSpans(0, text.length, BaseListSpan::class.java).count { it.drawsMarker }, geometry.size)
++    geometry.forEach { assertTrue("marker left ${it.marker.left} at depth ${it.depth}", it.marker.left >= 0f) }
++    return geometry
++  }
++
++  private fun orderedSpans(
++    style: StyleConfig,
++    vararg lists: MarkdownASTNode,
++  ): List<OrderedListSpan> {
++    val text = render(style, *lists)
++    return text
++      .getSpans(0, text.length, OrderedListSpan::class.java)
++      .sortedWith(compareBy({ text.getSpanStart(it) }, { it.depth }))
++  }
++
++  private fun item(): MarkdownASTNode = listItem(paragraph(text("item")))
++
++  private fun numbered(
++    start: Int,
++    count: Int,
++  ): MarkdownASTNode = orderedList(*Array(count) { item() }, start = start)
++
++  private fun withChild(
++    list: MarkdownASTNode,
++    index: Int,
++    child: MarkdownASTNode,
++  ): MarkdownASTNode {
++    val items = list.children.toMutableList()
++    items[index] = items[index].copy(children = items[index].children + child)
++    return list.copy(children = items)
++  }
++
++  private fun listStyle(minWidth: Double = 0.0): StyleConfig =
++    styleConfig(list = mapOf("fontFamily" to "monospace", "markerMinWidth" to minWidth))
++
++  private enum class Kind { ORDERED, BULLET, TASK }
++
++  private fun list(
++    kind: Kind,
++    child: MarkdownASTNode? = null,
++    checked: Boolean = false,
++  ): MarkdownASTNode {
++    val item = item(kind, child, checked)
++    return if (kind == Kind.ORDERED) orderedList(item) else unorderedList(item)
++  }
++
++  private fun item(
++    kind: Kind,
++    child: MarkdownASTNode? = null,
++    checked: Boolean = false,
++  ): MarkdownASTNode {
++    val children = listOfNotNull(paragraph(text("item")), child).toTypedArray()
++    return if (kind == Kind.TASK) taskListItem(checked, *children) else listItem(*children)
++  }
++
++  private fun checkedStates(
++    parent: Kind,
++    child: Kind,
++  ) = if (parent == Kind.TASK || child == Kind.TASK) listOf(false, true) else listOf(false)
++
++  /** The marker column [kind] reserves before any widening, read from a rendered top-level item. */
++  private fun columnOf(
++    style: StyleConfig,
++    kind: Kind,
++  ): Float {
++    val text = render(style, list(kind))
++    return text.getSpans(0, text.length, BaseListSpan::class.java).single().baselineMarkerWidth
++  }
++
++  private fun mixedStyle(
++    markerMinWidth: Double = 0.0,
++    bulletSize: Double = 6.0,
++    marginLeft: Double = 24.0,
++  ): StyleConfig =
++    styleConfig(
++      list =
++        mapOf(
++          "bulletSize" to bulletSize,
++          "markerMinWidth" to markerMinWidth,
++          "gapWidth" to MIXED_GAP.toDouble(),
++          "marginLeft" to marginLeft,
++        ),
++      taskList = mapOf("checkboxSize" to 14.0),
++    )
++
++  private companion object {
++    const val MIXED_GAP = 6f
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/TaskListInteractionTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/TaskListInteractionTest.kt
+new file mode 100644
+index 0000000..4ade5ad
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/TaskListInteractionTest.kt
+@@ -0,0 +1,119 @@
++package com.swmansion.enriched.markdown
++
++import android.text.Spanned
++import android.view.View
++import android.view.ViewGroup
++import android.widget.TextView
++import com.swmansion.enriched.markdown.accessibility.AccessibleMarkdownTextView
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.spans.BaseListSpan
++import com.swmansion.enriched.markdown.spans.ListMarkerAnchorSpan
++import com.swmansion.enriched.markdown.spans.TaskListSpan
++import com.swmansion.enriched.markdown.test.DrawnMarker
++import com.swmansion.enriched.markdown.test.MarkdownRenderTestSupport.render
++import com.swmansion.enriched.markdown.test.MarkdownRenderTestSupport.styleConfig
++import com.swmansion.enriched.markdown.test.MarkerCanvas
++import com.swmansion.enriched.markdown.test.TestAstFactory.listItem
++import com.swmansion.enriched.markdown.test.TestAstFactory.orderedList
++import com.swmansion.enriched.markdown.test.TestAstFactory.paragraph
++import com.swmansion.enriched.markdown.test.TestAstFactory.taskListItem
++import com.swmansion.enriched.markdown.test.TestAstFactory.text
++import com.swmansion.enriched.markdown.test.TestAstFactory.unorderedList
++import com.swmansion.enriched.markdown.utils.text.interaction.TaskListTapUtils
++import com.swmansion.enriched.markdown.utils.text.view.setupAsMarkdownTextView
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++import org.robolectric.annotation.GraphicsMode
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [30])
++@GraphicsMode(GraphicsMode.Mode.NATIVE)
++class TaskListInteractionTest {
++  private val context = RuntimeEnvironment.getApplication()
++
++  @Test
++  fun togglingATaskUnderAWideParentKeepsEveryMarginAndMarkerPosition() {
++    assertTaskToggleKeepsGeometry(wideParentTree(opensWithSublist = false), anchors = 0, markers = 4)
++  }
++
++  @Test
++  fun togglingAnAnchoredTaskUnderAWideParentKeepsEveryMarginAndMarkerPosition() {
++    assertTaskToggleKeepsGeometry(wideParentTree(opensWithSublist = true), anchors = 1, markers = 4)
++  }
++
++  @Test
++  fun togglingATaskInAMixedNestKeepsEveryMarginAndMarkerPosition() {
++    // The task's indent depends on its parent's marker column, so the toggled copy has to keep it.
++    val tasks = unorderedList(taskListItem(checked = false, paragraph(text("item")), numbered(1)))
++    val parent = listItem(paragraph(text("item")), tasks)
++    for (tree in listOf(unorderedList(parent), orderedList(parent))) {
++      assertTaskToggleKeepsGeometry(tree, anchors = 0, markers = 3)
++    }
++  }
++
++  private fun wideParentTree(opensWithSublist: Boolean): MarkdownASTNode {
++    val taskChildren = if (opensWithSublist) arrayOf(numbered(1)) else arrayOf(paragraph(text("item")), numbered(1))
++    val task = taskListItem(checked = false, *taskChildren)
++    return orderedList(listItem(paragraph(text("item")), unorderedList(task)), item(), start = 100)
++  }
++
++  // Layout draws leading margins in span insertion order, so a toggle that re-adds only the
++  // task's span would move its checkbox by its ancestors' margins.
++  private fun assertTaskToggleKeepsGeometry(
++    tree: MarkdownASTNode,
++    anchors: Int,
++    markers: Int,
++  ) {
++    val style = styleConfig(list = mapOf("fontFamily" to "monospace"))
++    val textView =
++      object : AccessibleMarkdownTextView(context) {}.apply {
++        layoutParams = ViewGroup.LayoutParams(MarkerCanvas.LAYOUT_WIDTH, ViewGroup.LayoutParams.WRAP_CONTENT)
++        setupAsMarkdownTextView()
++      }
++    textView.setText(render(style, tree), TextView.BufferType.SPANNABLE)
++    val initialText = textView.text as Spanned
++    val taskIndex = initialText.getSpans(0, initialText.length, TaskListSpan::class.java).single().taskIndex
++    assertEquals(anchors, initialText.getSpans(0, initialText.length, ListMarkerAnchorSpan::class.java).size)
++    val initialMargins = listMargins(initialText)
++    val initialMarkers = drawTextViewMarkers(textView)
++    assertEquals(markers, initialMarkers.size)
++
++    for (checked in listOf(true, false)) {
++      assertTrue(TaskListTapUtils.updateTaskListItemCheckedState(textView, taskIndex, checked, style))
++      val text = textView.text as Spanned
++      val tasks = text.getSpans(0, text.length, TaskListSpan::class.java)
++      assertTrue(tasks.isNotEmpty())
++      tasks.forEach { assertEquals(checked, it.isChecked) }
++      text.getSpans(0, text.length, ListMarkerAnchorSpan::class.java).forEach {
++        assertEquals(checked, (it.marker as TaskListSpan).isChecked)
++      }
++      assertEquals("list margins after checked=$checked", initialMargins, listMargins(text))
++      assertEquals("drawn markers after checked=$checked", initialMarkers, drawTextViewMarkers(textView))
++    }
++  }
++
++  private fun listMargins(text: Spanned): List<List<Int>> =
++    text
++      .getSpans(0, text.length, BaseListSpan::class.java)
++      .sortedWith(compareBy({ text.getSpanStart(it) }, { it.depth }, { text.getSpanEnd(it) }))
++      .map { listOf(text.getSpanStart(it), text.getSpanEnd(it), it.depth, it.getLeadingMargin(true), it.getLeadingMargin(false)) }
++
++  private fun drawTextViewMarkers(textView: TextView): List<DrawnMarker> {
++    textView.forceLayout()
++    textView.measure(
++      View.MeasureSpec.makeMeasureSpec(MarkerCanvas.LAYOUT_WIDTH, View.MeasureSpec.EXACTLY),
++      View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
++    )
++    textView.layout(0, 0, textView.measuredWidth, textView.measuredHeight)
++    return MarkerCanvas.drawMarkers(textView.layout)
++  }
++
++  private fun item(): MarkdownASTNode = listItem(paragraph(text("item")))
++
++  private fun numbered(count: Int): MarkdownASTNode = orderedList(*Array(count) { item() }, start = 1)
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/ListMarkerCanvas.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/ListMarkerCanvas.kt
+new file mode 100644
+index 0000000..7d925cc
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/ListMarkerCanvas.kt
+@@ -0,0 +1,121 @@
++package com.swmansion.enriched.markdown.test
++
++import android.graphics.Bitmap
++import android.graphics.Canvas
++import android.graphics.Paint
++import android.graphics.Rect
++import android.graphics.RectF
++import android.text.Layout
++import android.text.Spanned
++import android.text.StaticLayout
++import android.text.TextDirectionHeuristics
++import android.text.TextPaint
++import com.swmansion.enriched.markdown.spans.BaseListSpan
++
++/** A list marker as the layout drew it: a number, a bullet, or a checkbox. */
++data class DrawnMarker(
++  val left: Float,
++  val right: Float,
++  val baseline: Float,
++)
++
++/** A drawn marker with the text edges, direction and list depth of the paragraph it belongs to. */
++data class MarkerGeometry(
++  val marker: DrawnMarker,
++  val paragraphLeft: Float,
++  val depth: Int,
++  val paragraphRight: Float,
++  val direction: Int,
++)
++
++/** Records the list markers a layout draws instead of painting them. */
++class MarkerCanvas : Canvas(Bitmap.createBitmap(LAYOUT_WIDTH, 1, Bitmap.Config.ARGB_8888)) {
++  val markers = mutableListOf<DrawnMarker>()
++
++  // Layout draws only the lines inside the clip; report one tall enough for every list.
++  override fun getClipBounds(bounds: Rect): Boolean {
++    bounds.set(0, 0, LAYOUT_WIDTH, Int.MAX_VALUE / 2)
++    return true
++  }
++
++  override fun drawCircle(
++    cx: Float,
++    cy: Float,
++    radius: Float,
++    paint: Paint,
++  ) {
++    // Bullets are centered on the reserved column edge, matching the iOS drawer.
++    val outerRadius = radius + paint.strokeWidth / 2f
++    markers += DrawnMarker(cx - outerRadius, cx, cy)
++    super.drawCircle(cx, cy, radius, paint)
++  }
++
++  override fun drawRect(
++    left: Float,
++    top: Float,
++    right: Float,
++    bottom: Float,
++    paint: Paint,
++  ) {
++    // Bullets from depth 2 on are squares, centered like the round ones.
++    markers += DrawnMarker(left, (left + right) / 2f, (top + bottom) / 2f)
++    super.drawRect(left, top, right, bottom, paint)
++  }
++
++  override fun drawRoundRect(
++    rect: RectF,
++    rx: Float,
++    ry: Float,
++    paint: Paint,
++  ) {
++    val halfStroke = if (paint.style == Paint.Style.STROKE) paint.strokeWidth / 2f else 0f
++    markers += DrawnMarker(rect.left - halfStroke, rect.right + halfStroke, rect.centerY())
++    super.drawRoundRect(rect, rx, ry, paint)
++  }
++
++  override fun drawText(
++    text: String,
++    x: Float,
++    y: Float,
++    paint: Paint,
++  ) {
++    if (text.matches(Regex("(?:[0-9]+\\.|\\.[0-9]+)"))) markers += DrawnMarker(x, x + paint.measureText(text), y)
++    super.drawText(text, x, y, paint)
++  }
++
++  companion object {
++    const val LAYOUT_WIDTH = 2000
++
++    fun layout(
++      text: CharSequence,
++      textSize: Float,
++      rtl: Boolean = false,
++    ): StaticLayout =
++      StaticLayout.Builder
++        .obtain(text, 0, text.length, TextPaint().apply { this.textSize = textSize }, LAYOUT_WIDTH)
++        .apply { if (rtl) setTextDirection(TextDirectionHeuristics.RTL) }
++        .build()
++
++    /** The markers [layout] draws, top to bottom. */
++    fun drawMarkers(layout: Layout): List<DrawnMarker> =
++      MarkerCanvas().also(layout::draw).markers.sortedWith(compareBy({ it.baseline }, { it.left }))
++
++    /** Every marker [layout] draws, with the text edges, direction and depth of its paragraph. */
++    fun markerGeometry(
++      text: Spanned,
++      layout: Layout,
++    ): List<MarkerGeometry> =
++      drawMarkers(layout).map { marker ->
++        val line = layout.getLineForVertical(marker.baseline.toInt())
++        val start = layout.getLineStart(line)
++        val depth = text.getSpans(start, start + 1, BaseListSpan::class.java).maxOf { it.depth }
++        MarkerGeometry(
++          marker,
++          layout.getParagraphLeft(line).toFloat(),
++          depth,
++          layout.getParagraphRight(line).toFloat(),
++          layout.getParagraphDirection(line),
++        )
++      }
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/MarkdownRenderTestSupport.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/MarkdownRenderTestSupport.kt
+new file mode 100644
+index 0000000..645ce33
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/MarkdownRenderTestSupport.kt
+@@ -0,0 +1,126 @@
++package com.swmansion.enriched.markdown.test
++
++import android.content.Context
++import android.graphics.Color
++import android.text.Spannable
++import com.facebook.react.bridge.JavaOnlyArray
++import com.facebook.react.bridge.JavaOnlyMap
++import com.facebook.react.uimanager.DisplayMetricsHolder
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.renderer.Renderer
++import com.swmansion.enriched.markdown.styles.StyleConfig
++import org.robolectric.RuntimeEnvironment
++
++object MarkdownRenderTestSupport {
++  // Resolved per call, not cached: a @Config qualifier applies to the current test's context.
++  private val context: Context
++    get() = RuntimeEnvironment.getApplication()
++
++  fun render(
++    style: StyleConfig,
++    vararg blocks: MarkdownASTNode,
++  ): Spannable {
++    val renderer = Renderer()
++    renderer.configure(style, context)
++    return renderer.renderContent(blocks.toList())
++  }
++
++  /**
++   * The style map the JS side sends, with [list] and [taskList] entries replacing the defaults.
++   * Sizes are Double, colors Int, as in a ReadableMap.
++   */
++  fun styleConfig(
++    list: Map<String, Any> = emptyMap(),
++    taskList: Map<String, Any> = emptyMap(),
++  ): StyleConfig {
++    DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(context)
++    val style = JavaOnlyMap()
++    listOf("paragraph", "strong", "em", "strikethrough", "code", "superscript", "subscript", "highlight")
++      .forEach { style.putMap(it, textElement()) }
++    style.putMap("link", textElement().apply { putString("fontFamily", "serif") })
++    style.putArray(
++      "linkVariants",
++      JavaOnlyArray.of(
++        textElement().apply {
++          putString("pattern", "^ref:")
++          putString("fontFamily", "monospace")
++          putInt("color", Color.BLUE)
++        },
++      ),
++    )
++    style.putMap(
++      "spoiler",
++      textElement().apply {
++        putMap("particles", JavaOnlyMap.of("density", 0.5, "speed", 1.0))
++        putMap("solid", JavaOnlyMap.of("borderRadius", 0.0))
++      },
++    )
++    style.putMap("taskList", JavaOnlyMap().apply { putAll(defaultTaskList + taskList) })
++    style.putMap("list", textElement().apply { putAll(defaultList + list) })
++    return StyleConfig(style, context, false, 0f)
++  }
++
++  private val defaultList: Map<String, Any> =
++    mapOf(
++      "fontFamily" to "",
++      "bulletColor" to Color.BLACK,
++      "markerColor" to Color.BLACK,
++      "bulletSize" to 6.0,
++      "markerMinWidth" to 0.0,
++      "gapWidth" to 8.0,
++      "marginLeft" to 24.0,
++      "itemSpacing" to 0.0,
++    )
++
++  private val defaultTaskList: Map<String, Any> =
++    mapOf(
++      "checkedColor" to Color.BLACK,
++      "borderColor" to Color.BLACK,
++      "checkmarkColor" to Color.BLACK,
++      "checkedTextColor" to Color.BLACK,
++      "checkboxSize" to 16.0,
++      "checkboxBorderRadius" to 0.0,
++      "checkedStrikethrough" to false,
++    )
++
++  private fun textElement(): JavaOnlyMap =
++    JavaOnlyMap.of(
++      "fontFamily",
++      "",
++      "fontWeight",
++      "normal",
++      "fontSize",
++      16.0,
++      "lineHeight",
++      0.0,
++      "marginTop",
++      0.0,
++      "marginBottom",
++      0.0,
++      "color",
++      Color.BLACK,
++      "backgroundColor",
++      Color.TRANSPARENT,
++      "borderColor",
++      Color.TRANSPARENT,
++      "underline",
++      false,
++      "fontScale",
++      0.8,
++      "baselineOffsetScale",
++      0.5,
++    )
++
++  private fun JavaOnlyMap.putAll(values: Map<String, Any>) {
++    for ((key, value) in values) {
++      when (value) {
++        is String -> putString(key, value)
++        is Boolean -> putBoolean(key, value)
++        is Int -> putInt(key, value)
++        is Double -> putDouble(key, value)
++        is Float -> putDouble(key, value.toDouble())
++        else -> error("Unsupported style value for $key: $value")
++      }
++    }
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/TestAstFactory.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/TestAstFactory.kt
+new file mode 100644
+index 0000000..1808c34
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/test/TestAstFactory.kt
+@@ -0,0 +1,36 @@
++package com.swmansion.enriched.markdown.test
++
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode
++import com.swmansion.enriched.markdown.parser.MarkdownASTNode.NodeType
++
++object TestAstFactory {
++  fun paragraph(vararg children: MarkdownASTNode): MarkdownASTNode = MarkdownASTNode(NodeType.Paragraph, children = children.toList())
++
++  fun text(content: String): MarkdownASTNode = MarkdownASTNode(NodeType.Text, content = content)
++
++  /** An ordered list; [start] is the first number, as md4c reports it. */
++  fun orderedList(
++    vararg items: MarkdownASTNode,
++    start: Int? = null,
++  ): MarkdownASTNode =
++    MarkdownASTNode(
++      type = NodeType.OrderedList,
++      attributes = start?.let { mapOf("start" to it.toString()) }.orEmpty(),
++      children = items.toList(),
++    )
++
++  fun unorderedList(vararg items: MarkdownASTNode): MarkdownASTNode = MarkdownASTNode(NodeType.UnorderedList, children = items.toList())
++
++  fun listItem(vararg children: MarkdownASTNode): MarkdownASTNode = MarkdownASTNode(NodeType.ListItem, children = children.toList())
++
++  /** A GFM task-list item, what md4c produces for `- [ ]` / `- [x]`. */
++  fun taskListItem(
++    checked: Boolean,
++    vararg children: MarkdownASTNode,
++  ): MarkdownASTNode =
++    MarkdownASTNode(
++      type = NodeType.ListItem,
++      attributes = mapOf("isTask" to "true", "taskChecked" to checked.toString()),
++      children = children.toList(),
++    )
++}
 diff --git a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c b/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
 index 44d5134..5bc5529 100644
 --- a/node_modules/react-native-enriched-markdown/cpp/md4c/md4c.c
