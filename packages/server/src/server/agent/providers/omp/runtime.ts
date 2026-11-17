@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../../resources/launch.js";
 import type {
   OmpAgentMessage,
   OmpModel,
@@ -32,6 +33,7 @@ export interface OmpStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  resources?: AgentResourceLaunch;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;

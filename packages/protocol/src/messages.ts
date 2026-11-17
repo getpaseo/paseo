@@ -89,6 +89,11 @@ import {
   ScheduleUpdateResponseSchema,
 } from "./schedule/rpc-schemas.js";
 import {
+  AgentResourceCapabilitiesSchema,
+  AgentResourcePolicySchema,
+  AgentResourceStatusSchema,
+} from "./agent-resources.js";
+import {
   SpeechLocalModelsDeleteRequestSchema,
   SpeechLocalModelsDeleteResponseSchema,
   SpeechLocalModelsDownloadRequestSchema,
@@ -539,6 +544,7 @@ const AgentSessionConfigSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   systemPrompt: z.string().optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+  resources: AgentResourcePolicySchema.optional(),
 });
 
 const AgentPermissionUpdateSchema = z.record(z.string(), z.unknown());
@@ -928,6 +934,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   pendingPermissions: z.array(AgentPermissionRequestPayloadSchema),
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
+  /** Stored resource policy. What is in force comes from `agent.resources.get.request`. */
+  resources: AgentResourcePolicySchema.optional(),
   /** Opaque. Changes whenever the accounts this agent reports usage for can change. */
   usageScopeKey: z.string().optional(),
   lastUsage: AgentUsageSchema.optional(),
@@ -2215,6 +2223,53 @@ export const AgentConfigApplyRequestMessageSchema = z.object({
 export const AgentConfigApplyResponseMessageSchema = z.object({
   type: z.literal("agent.config.apply.response"),
   payload: AgentActionResponsePayloadSchema,
+});
+
+/**
+ * Reads resource controls. Without `agentId` the response carries only what this
+ * host can apply, which is what a draft or a schedule form needs.
+ */
+export const AgentResourcesGetRequestMessageSchema = z.object({
+  type: z.literal("agent.resources.get.request"),
+  agentId: z.string().optional(),
+  requestId: z.string(),
+});
+
+export const AgentResourcesGetResponseMessageSchema = z.object({
+  type: z.literal("agent.resources.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string().nullable(),
+    capabilities: AgentResourceCapabilitiesSchema.nullable(),
+    /** The agent's stored policy. */
+    resources: AgentResourcePolicySchema.nullable(),
+    /** What is in force for the agent. */
+    status: AgentResourceStatusSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+/**
+ * Replaces an agent's resource policy; `null` clears it. The policy is stored
+ * whether or not the agent is running, and a running agent is adjusted in place.
+ */
+export const AgentResourcesSetRequestMessageSchema = z.object({
+  type: z.literal("agent.resources.set.request"),
+  agentId: z.string(),
+  resources: AgentResourcePolicySchema.nullable(),
+  requestId: z.string(),
+});
+
+export const AgentResourcesSetResponseMessageSchema = z.object({
+  type: z.literal("agent.resources.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    accepted: z.boolean(),
+    error: z.string().nullable(),
+    resources: AgentResourcePolicySchema.nullable(),
+    status: AgentResourceStatusSchema.nullable(),
+  }),
 });
 
 export const AgentDetachRequestMessageSchema = z.object({
@@ -3633,6 +3688,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentThinkingRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
+  AgentResourcesGetRequestMessageSchema,
+  AgentResourcesSetRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
@@ -4045,6 +4102,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
+        // COMPAT(agentResources): added in v0.17.0, remove gate after 2027-05-16.
+        agentResources: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
@@ -7550,6 +7609,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentThinkingResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
+  AgentResourcesGetResponseMessageSchema,
+  AgentResourcesSetResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,

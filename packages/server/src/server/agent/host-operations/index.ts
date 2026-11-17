@@ -1,3 +1,8 @@
+import {
+  AgentResourcePolicySchema,
+  type AgentResourcePolicy,
+} from "@getpaseo/protocol/agent-resources";
+import { AGENT_RESOURCE_POLICY_DENIED } from "../resources/policy.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior, AgentSnapshotPayload } from "@getpaseo/protocol/messages";
@@ -189,6 +194,7 @@ const remoteCreate = z
         modeId: z.string().optional(),
         thinkingOptionId: z.string().optional(),
         features: z.record(z.string(), z.unknown()).optional(),
+        resources: AgentResourcePolicySchema.optional(),
       })
       .optional(),
   })
@@ -204,7 +210,13 @@ export function createHostResolver(input: {
   hosts: () => ToolHosts;
   callerAgentId?: string;
   /** The destination can't see the caller, so its background and mode defaults resolve before routing. */
-  caller: () => (BackgroundCaller & { provider: string; currentModeId: string | null }) | null;
+  caller: () =>
+    | (BackgroundCaller & {
+        provider: string;
+        currentModeId: string | null;
+        config?: { resources?: AgentResourcePolicy };
+      })
+    | null;
   lockedCwd?: string;
 }) {
   return {
@@ -227,6 +239,14 @@ export function createHostResolver(input: {
             const modeId =
               parsed.settings?.modeId ??
               (caller?.provider === provider ? (caller.currentModeId ?? undefined) : undefined);
+            // Same rules as a local create: an agent's child gets a copy of its policy
+            // and an agent cannot choose one. The SDK rejects a host without support.
+            if (input.callerAgentId && parsed.settings?.resources !== undefined) {
+              throw new Error(AGENT_RESOURCE_POLICY_DENIED);
+            }
+            const resources = input.callerAgentId
+              ? caller?.config?.resources
+              : parsed.settings?.resources;
             const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
             const labels = {
@@ -244,6 +264,7 @@ export function createHostResolver(input: {
                 modeId,
                 thinkingOptionId: parsed.settings?.thinkingOptionId,
                 featureValues: parsed.settings?.features,
+                ...(resources ? { resources } : {}),
               },
               workspaceId: parsed.workspaceId,
               // Older hosts reject any background with a workspaceId, so a visible create omits it.

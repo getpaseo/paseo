@@ -956,6 +956,8 @@ interface PendingChild {
 
 class PluginAgentClient implements AgentClient {
   readonly provider: string;
+  /** Plugin sessions run inside the shared plugin worker, outside any per-agent boundary. */
+  readonly sharesProcessAcrossAgents = true;
   private readonly runtime: ProviderRuntime;
   private readonly rootsBySession = new Map<string, PluginAgentSession>();
   private readonly pendingChildren: PendingChild[] = [];

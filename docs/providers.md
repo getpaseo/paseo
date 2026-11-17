@@ -201,6 +201,8 @@ If a helper process has a readiness phase, the provider's lifecycle model must o
 
 Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
 
+Pass `launchContext.resources` to every `spawnProcess` call that belongs to one agent, so the process starts inside that agent's resource boundary. A provider whose process serves several agents sets `sharesProcessAcrossAgents` on its client instead. See [agent-resources.md](agent-resources.md).
+
 ---
 
 ## Provider Snapshot Refresh Contract

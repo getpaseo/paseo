@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../resources/launch.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../provider-options.js";
@@ -7875,6 +7876,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     environment: Record<string, string>;
     goalsEnabled?: boolean;
     agentId?: string;
+    resources?: AgentResourceLaunch;
   }): Promise<() => ChildProcessWithoutNullStreams> {
     const processPort = this.deps.appServerProcess ?? defaultCodexAppServerProcess;
     const launchPrefix = await processPort.resolvePrefix({ runtimeSettings: this.runtimeSettings });
@@ -7899,6 +7901,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           detached: process.platform !== "win32",
           stdio: ["pipe", "pipe", "pipe"],
           baseEnv: options.environment,
+          resources: options.resources,
         },
       });
       assertChildWithPipes(child);
@@ -7942,6 +7945,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      resources: launchContext?.resources,
     });
     const session = new CodexAppServerAgentSession(
       sessionConfig,
@@ -7979,6 +7983,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       environment,
       goalsEnabled,
       agentId: launchContext?.agentId,
+      resources: launchContext?.resources,
     });
     const session = new CodexAppServerAgentSession(
       merged,

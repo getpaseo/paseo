@@ -30,6 +30,7 @@ export type ScheduleTarget =
         thinkingOptionId?: string;
         title?: string | null;
         providerOptions?: Record<string, unknown>;
+        resources?: AgentResourcePolicy;
       };
     };
 
@@ -139,6 +140,7 @@ export interface UpdateScheduleNewAgentConfig {
   model?: string | null;
   modeId?: string | null;
   cwd?: string;
+  resources?: AgentResourcePolicy | null;
 }
 
 export interface UpdateScheduleInput {
@@ -169,3 +171,4 @@ export interface ScheduleDaemonClient {
   scheduleUpdate(input: UpdateScheduleInput): Promise<ScheduleUpdatePayload>;
   close(): Promise<void>;
 }
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";

@@ -1,3 +1,4 @@
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
 import { isSameOrDescendantPath } from "../path-utils.js";
 import type {
   AgentListItemPayload,
@@ -120,6 +121,13 @@ function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
   return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
 }
 
+/** The stored resource policy; absent when none is set, so older clients see no change. */
+function resourcesField(
+  resources: AgentResourcePolicy | null | undefined,
+): Pick<AgentSnapshotPayload, "resources"> {
+  return resources ? { resources } : {};
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -140,6 +148,7 @@ export function toAgentPayload(
     thinkingOptionId,
     effectiveThinkingOptionId,
     ...(runtimeInfo ? { runtimeInfo } : {}),
+    ...resourcesField(agent.config.resources),
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
@@ -300,6 +309,7 @@ export function buildStoredAgentPayload(
       configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
     }),
     ...(runtimeInfo ? { runtimeInfo } : {}),
+    ...resourcesField(record.config?.resources),
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
@@ -450,6 +460,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   }
   if (config.mcpServers) {
     serializable.mcpServers = config.mcpServers;
+  }
+  if (config.resources) {
+    serializable.resources = config.resources;
   }
   return Object.keys(serializable).length ? serializable : null;
 }

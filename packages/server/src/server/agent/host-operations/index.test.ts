@@ -1,6 +1,7 @@
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, expect, test } from "vitest";
 
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
 import { createHostResolver, type HostOperations } from "./index.js";
 
 type Handler = ((event?: unknown) => void) | null;
@@ -15,7 +16,7 @@ class OlderHostSocket {
   onerror: Handler = null;
   private readonly createSent = Promise.withResolvers<Record<string, unknown>>();
 
-  constructor() {
+  constructor(private readonly extraFeatures: Record<string, boolean> = {}) {
     queueMicrotask(() => this.onopen?.());
   }
 
@@ -38,6 +39,7 @@ class OlderHostSocket {
             providersSnapshotCwd: true,
             ownedSubscriptions: true,
             backgroundWorkspaces: true,
+            ...this.extraFeatures,
           },
         },
       });
@@ -94,8 +96,8 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
-async function olderHost() {
-  const socket = new OlderHostSocket();
+async function olderHost(features: Record<string, boolean> = {}) {
+  const socket = new OlderHostSocket(features);
   const client = new DaemonClient({
     url: "ws://older.test",
     clientId: "older-host-test",
@@ -111,6 +113,7 @@ interface Caller {
   background: boolean;
   provider: string;
   currentModeId: string | null;
+  config?: { resources?: AgentResourcePolicy };
 }
 
 function resolverFor(client: DaemonClient, caller: Caller | null) {
@@ -188,4 +191,64 @@ test("a remote child of another provider leaves its mode to the host", async () 
 
 test("a remote create without a caller agent leaves its mode to the host", async () => {
   expect(await forwardedMode(null)).toBeUndefined();
+});
+
+const boundedCaller: Caller = {
+  ...visibleCodexCaller,
+  config: { resources: { cpuQuotaPercent: 50, memoryMaxMb: 1024 } },
+};
+
+async function forwardedResources(
+  caller: Caller | null,
+  args: Record<string, unknown> = createArgs,
+): Promise<unknown> {
+  const { client, socket } = await olderHost({ agentResources: true });
+  const creating = resolverFor(client, caller).use("srv_older", (host) =>
+    host.createAgent(args, {} as never),
+  );
+  creating.catch(() => {});
+  const request = (await socket.createRequest()) as { config: { resources?: unknown } };
+  return request.config.resources;
+}
+
+test("a remote child runs under its caller's resource policy, as a local one does", async () => {
+  expect(await forwardedResources(boundedCaller)).toEqual({
+    cpuQuotaPercent: 50,
+    memoryMaxMb: 1024,
+  });
+});
+
+test("a top-level remote create forwards the policy it was given", async () => {
+  expect(
+    await forwardedResources(null, { ...createArgs, settings: { resources: { nice: 10 } } }),
+  ).toEqual({ nice: 10 });
+});
+
+test("an agent cannot choose a remote child's resource policy", async () => {
+  const { client, socket } = await olderHost({ agentResources: true });
+
+  await expect(
+    resolverFor(client, boundedCaller).use("srv_older", (host) =>
+      host.createAgent(
+        { ...createArgs, settings: { resources: { memoryMaxMb: 65536 } } },
+        {} as never,
+      ),
+    ),
+  ).rejects.toThrow("Agents cannot set resource policies; agents you create inherit your own");
+  expect(socket.requests.map((request) => request.type)).not.toContain("create_agent_request");
+});
+
+test("a bounded caller's remote child is refused by a host that cannot enforce policies", async () => {
+  const { client, socket } = await olderHost();
+
+  await expect(
+    resolverFor(client, boundedCaller).use("srv_older", (host) =>
+      host.createAgent(createArgs, {} as never),
+    ),
+  ).rejects.toThrow("This host does not support agent resource controls.");
+  expect(socket.requests.map((request) => request.type)).not.toContain("create_agent_request");
+});
+
+test("an unbounded caller still creates remote children on a host without policies", async () => {
+  expect(await forwardedMode(visibleCodexCaller)).toBe("full-access");
 });

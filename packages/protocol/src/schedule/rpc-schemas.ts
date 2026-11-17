@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentResourcePolicySchema } from "../agent-resources.js";
 import {
   ScheduleCadenceSchema,
   ScheduleRunSchema,
@@ -85,6 +86,7 @@ const ScheduleUpdateNewAgentConfigSchema = z.object({
   archiveOnFinish: z.boolean().optional(),
   isolation: z.enum(["local", "worktree"]).optional(),
   cwd: z.string().trim().min(1).optional(),
+  resources: AgentResourcePolicySchema.nullable().optional(),
 });
 
 export const ScheduleUpdateRequestSchema = z.object({

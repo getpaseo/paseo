@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../../resources/launch.js";
 import type { PiTranscript } from "./transcript.js";
 import type {
   PiModel,
@@ -28,6 +29,7 @@ export interface PiStartSessionInput {
   cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  resources?: AgentResourceLaunch;
   protocolMode?: "rpc" | "rpc-ui";
   model?: string;
   thinkingOptionId?: string;

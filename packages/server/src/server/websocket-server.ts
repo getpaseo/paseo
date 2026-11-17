@@ -2165,6 +2165,8 @@ export class VoiceAssistantWebSocketServer {
         agentDetach: true,
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: true,
+        // COMPAT(agentResources): added after v0.16.0, remove gate after 2027-05-17; retain advertisement.
+        agentResources: this.agentManager.supportsResourcePolicies,
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: true,
         // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentResourcePolicySchema, type AgentResourcePolicy } from "../agent-resources.js";
 import { AgentProviderSchema } from "../provider-manifest.js";
 
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
@@ -38,6 +39,7 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       featureValues: z.record(z.string(), z.unknown()).optional(),
       systemPrompt: z.string().optional(),
       mcpServers: z.record(z.string(), z.unknown()).optional(),
+      resources: AgentResourcePolicySchema.optional(),
     }),
   }),
 ]);
@@ -97,6 +99,8 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  /** Replaces the stored policy; `null` clears it. */
+  resources?: AgentResourcePolicy | null;
 }
 
 export interface UpdateScheduleInput {

@@ -54,6 +54,8 @@ export type OpenCodeRuntimeClientOptions = NonNullable<
 // Selection belongs to the configured client, which provider reload replaces.
 export class OpenCodeRuntimeClient implements AgentClient {
   readonly provider = "opencode";
+  /** One OpenCode server can serve many agents, so it gets no per-agent resource boundary. */
+  readonly sharesProcessAcrossAgents = true;
   readonly capabilities;
   readonly resolveCreateConfig;
   readonly isCreateConfigUnattended;

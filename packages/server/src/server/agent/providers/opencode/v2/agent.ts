@@ -55,6 +55,8 @@ interface V2AgentOptions {
 
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode";
+  /** One OpenCode server can serve many agents, so it gets no per-agent resource boundary. */
+  readonly sharesProcessAcrossAgents = true;
   readonly capabilities: AgentCapabilityFlags;
   private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
   private readonly connections = new Map<string, V2Connection>();

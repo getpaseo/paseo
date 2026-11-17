@@ -1,3 +1,5 @@
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
+import type { AgentResourceLaunch } from "./resources/launch.js";
 import type {
   AgentOptionControl,
   AgentOptionSelectControl,
@@ -638,6 +640,8 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Resource limits for the agent's process tree. See docs/agent-resources.md. */
+  resources?: AgentResourcePolicy;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.
@@ -653,6 +657,12 @@ export interface AgentLaunchContext {
   mcpServerOwners?: Record<string, string>;
   agentId?: string;
   env?: Record<string, string>;
+  /**
+   * The agent's resource boundary. Pass it to `spawnProcess` for every process that
+   * belongs to this agent. A provider that serves several agents from one process
+   * must leave it unused and set `AgentClient.sharesProcessAcrossAgents`.
+   */
+  resources?: AgentResourceLaunch;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.
@@ -821,6 +831,11 @@ export interface AgentDraftControls {
 export interface AgentClient {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
+  /**
+   * True when one provider process serves several agents. A per-agent resource
+   * policy cannot be enforced on such a process, so one is refused.
+   */
+  readonly sharesProcessAcrossAgents?: boolean;
   /**
    * Create the agent with `config.providerOptions` (defaults already merged in). Emit nothing
    * about options while creating. If the agent ended up different from the options, say so in the

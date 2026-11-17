@@ -83,6 +83,7 @@ export class OmpCliRuntime implements OmpRuntime {
       args,
       cwd: launch.cwd,
       env: launch.env,
+      resources: input.resources,
     };
     const spawn = this.spawnProcess;
     const processOptions = {

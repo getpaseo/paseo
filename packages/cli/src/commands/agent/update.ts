@@ -1,3 +1,12 @@
+import type { AgentResourcePolicy, AgentResourceStatus } from "@getpaseo/protocol/agent-resources";
+import {
+  applyResourcePatch,
+  formatResourcePolicy,
+  formatResourceStatus,
+  parseResourcePatch,
+  type ResourceOptions,
+  type ResourcePolicyPatch,
+} from "../../utils/resource-options.js";
 import type { Command } from "commander";
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
@@ -15,6 +24,8 @@ export interface AgentUpdateResult {
   name: string | null;
   labels: string;
   thinkingOptionId: string | null;
+  /** The stored policy, with the state of each control when it was just changed. */
+  resources: string;
   noticeType: AgentProviderNotice["type"] | null;
   notice: string | null;
 }
@@ -27,11 +38,12 @@ export const updateSchema: OutputSchema<AgentUpdateResult> = {
     { header: "NAME", field: "name" },
     { header: "LABELS", field: "labels" },
     { header: "THINKING", field: "thinkingOptionId" },
+    { header: "RESOURCES", field: "resources" },
     { header: "NOTICE", field: "notice" },
   ],
 };
 
-export interface AgentUpdateOptions extends CommandOptions {
+export interface AgentUpdateOptions extends CommandOptions, ResourceOptions {
   name?: string;
   label?: string[];
   thinking?: string;
@@ -46,7 +58,7 @@ export interface AgentMetadataChanges {
 }
 
 interface AgentUpdateServerInfo {
-  features?: { agentThinkingUpdate?: boolean };
+  features?: { agentThinkingUpdate?: boolean; agentResources?: boolean };
 }
 
 export interface AgentUpdateClient {
@@ -56,18 +68,31 @@ export interface AgentUpdateClient {
     agentId: string,
     thinkingOptionId: string,
   ): Promise<AgentProviderNotice | null>;
+  getAgentResources(options: {
+    agentId: string;
+  }): Promise<{ resources: AgentResourcePolicy | null }>;
+  setAgentResources(
+    agentId: string,
+    resources: AgentResourcePolicy | null,
+  ): Promise<{ resources: AgentResourcePolicy | null; status: AgentResourceStatus | null }>;
 }
 
 export type AgentChanges =
   | { type: "metadata"; updates: AgentMetadataChanges }
-  | { type: "thinking"; thinkingOptionId: string };
+  | { type: "thinking"; thinkingOptionId: string }
+  | { type: "resources"; patch: ResourcePolicyPatch };
 
 export interface AppliedAgentChanges {
   notice: AgentProviderNotice | null;
+  /** Set when resources changed: the new policy and what is now in force. */
+  resources?: { policy: AgentResourcePolicy | null; status: AgentResourceStatus | null };
 }
 
 export function toAgentUpdateResult(
-  agent: Pick<AgentSnapshotPayload, "id" | "title" | "labels" | "effectiveThinkingOptionId">,
+  agent: Pick<
+    AgentSnapshotPayload,
+    "id" | "title" | "labels" | "effectiveThinkingOptionId" | "resources"
+  >,
   appliedChanges: AppliedAgentChanges,
 ): AgentUpdateResult {
   return {
@@ -75,6 +100,9 @@ export function toAgentUpdateResult(
     name: agent.title,
     labels: formatLabels(agent.labels),
     thinkingOptionId: agent.effectiveThinkingOptionId ?? null,
+    resources: appliedChanges.resources
+      ? formatResourceStatus(appliedChanges.resources.policy, appliedChanges.resources.status)
+      : formatResourcePolicy(agent.resources),
     noticeType: appliedChanges.notice?.type ?? null,
     notice: appliedChanges.notice?.message ?? null,
   };
@@ -85,6 +113,21 @@ export async function applyAgentChanges(
   agentId: string,
   changes: AgentChanges,
 ): Promise<AppliedAgentChanges> {
+  if (changes.type === "resources") {
+    // COMPAT(agentResources): added in v0.17.0, remove gate after 2027-05-16.
+    if (client.getLastServerInfoMessage()?.features?.agentResources !== true) {
+      throw {
+        code: "DAEMON_UPDATE_REQUIRED",
+        message: "This host does not support agent resource controls.",
+      } satisfies CommandError;
+    }
+    const { resources: current } = await client.getAgentResources({ agentId });
+    const applied = await client.setAgentResources(
+      agentId,
+      applyResourcePatch(current, changes.patch),
+    );
+    return { notice: null, resources: { policy: applied.resources, status: applied.status } };
+  }
   if (changes.type === "thinking") {
     // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
     if (client.getLastServerInfoMessage()?.features?.agentThinkingUpdate !== true) {
@@ -160,6 +203,7 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
   }
 
   const labels = parseLabelOptions(options.label);
+  const resourcePatch = parseResourcePatch(options);
   const thinkingOptionId = options.thinking?.trim();
   if (options.thinking !== undefined && !thinkingOptionId) {
     throw {
@@ -171,6 +215,16 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
   }
 
   const hasMetadataUpdates = Boolean(name) || Object.keys(labels).length > 0;
+  if (resourcePatch && (hasMetadataUpdates || thinkingOptionId)) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "Resource flags cannot be combined with --name, --label or --thinking",
+      details: "Run separate agent update commands for resources and other settings.",
+    } satisfies CommandError;
+  }
+  if (resourcePatch) {
+    return { type: "resources", patch: resourcePatch };
+  }
   if (hasMetadataUpdates && thinkingOptionId) {
     throw {
       code: "INVALID_OPTIONS",
@@ -182,7 +236,8 @@ function parseAgentChanges(options: AgentUpdateOptions): AgentChanges {
     throw {
       code: "NO_CHANGES_PROVIDED",
       message: "Nothing to update",
-      details: "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>",
+      details:
+        "Provide at least one of: --name <name>, --label <key=value>, --thinking <id>, or a resource flag such as --nice <n>",
     } satisfies CommandError;
   }
 

@@ -1,3 +1,4 @@
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
 import {
   DiffStreamRouter,
   DiffSubscriptionError,
@@ -910,6 +911,14 @@ type ProjectListRequest = Extract<SessionInboundMessage, { type: "project.list.r
 export type ProjectListOptions = Omit<ProjectListRequest, "type" | "requestId"> & {
   requestId?: string;
 };
+export type AgentResourcesGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.resources.get.response" }
+>["payload"];
+export type AgentResourcesSetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.resources.set.response" }
+>["payload"];
 export interface CreateScheduleOptions {
   prompt: string;
   name?: string | null;
@@ -941,6 +950,8 @@ export interface CreateScheduleOptions {
           providerOptions?: AgentSessionConfig["providerOptions"];
           systemPrompt?: string;
           mcpServers?: AgentSessionConfig["mcpServers"];
+          /** Applied to each run's agent. Needs a host with `agentResources`. */
+          resources?: AgentResourcePolicy;
         };
       };
   maxRuns?: number;
@@ -960,6 +971,8 @@ export interface UpdateScheduleNewAgentConfig {
   archiveOnFinish?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
+  /** Replaces the stored policy; `null` clears it. Needs a host with `agentResources`. */
+  resources?: AgentResourcePolicy | null;
 }
 export interface UpdateScheduleOptions {
   id: string;
@@ -3443,6 +3456,13 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  // COMPAT(agentResources): added in v0.17.0, remove gate after 2027-05-16.
+  private requireAgentResources(): void {
+    if (this.lastServerInfoMessage?.features?.agentResources !== true) {
+      throw new Error("This host does not support agent resource controls.");
+    }
+  }
+
   // Entity metadata is gated once at the transport boundary.
   private requireEntityMetadata(): void {
     if (this.lastServerInfoMessage?.features?.entityMetadata !== true) {
@@ -3480,6 +3500,9 @@ export class DaemonClient {
     }
     if (options.background !== undefined) this.requireBackgroundCreation(options);
     if (options.metadata !== undefined) this.requireEntityMetadata();
+    if (options.resources !== undefined || options.config?.resources !== undefined) {
+      this.requireAgentResources();
+    }
     const config = resolveAgentConfig(options);
     const result = await this.creations.createAgent({
       ...options,
@@ -4550,6 +4573,49 @@ export class DaemonClient {
       throw new Error(payload.error ?? "applyAgentConfig rejected");
     }
     return payload.notice ?? null;
+  }
+
+  /**
+   * What the host can apply, and for an agent its stored policy and what is in
+   * force. Omit `agentId` to read only the host's capabilities.
+   * Gated on `server_info.features.agentResources`.
+   */
+  async getAgentResources(
+    options: { agentId?: string; requestId?: string } = {},
+  ): Promise<AgentResourcesGetPayload> {
+    this.requireAgentResources();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.resources.get.response">({
+        requestId: options.requestId,
+        message: {
+          type: "agent.resources.get.request",
+          ...(options.agentId ? { agentId: options.agentId } : {}),
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload;
+  }
+
+  /**
+   * Replaces an agent's resource policy; `null` clears it. A running agent is
+   * adjusted in place where the host allows. Resolves with what is in force.
+   * Gated on `server_info.features.agentResources`.
+   */
+  async setAgentResources(
+    agentId: string,
+    resources: AgentResourcePolicy | null,
+  ): Promise<AgentResourcesSetPayload> {
+    this.requireAgentResources();
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.resources.set.response">({
+        message: { type: "agent.resources.set.request", agentId, resources },
+      });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "setAgentResources rejected");
+    }
+    return payload;
   }
 
   async restartServer(
@@ -7153,6 +7219,9 @@ export class DaemonClient {
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {
+    if (options.target.type === "new-agent" && options.target.config.resources !== undefined) {
+      this.requireAgentResources();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {
@@ -7246,6 +7315,9 @@ export class DaemonClient {
   }
 
   async scheduleUpdate(options: UpdateScheduleOptions): Promise<ScheduleUpdatePayload> {
+    if (options.newAgentConfig?.resources !== undefined) {
+      this.requireAgentResources();
+    }
     return this.sendCorrelatedSessionRequest({
       requestId: options.requestId,
       message: {

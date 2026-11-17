@@ -39,6 +39,8 @@ import {
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
 import { ForegroundPromptStart } from "../agent/agent-run-state.js";
+import { createFakeResourceHost } from "../agent/resources/fake-host.js";
+import { AgentResources } from "../agent/resources/index.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -317,6 +319,14 @@ function buildAgentRecord(params: {
     internal: false,
     archivedAt: params.archivedAt ?? null,
   };
+}
+
+function createTestResources(host?: Parameters<typeof createFakeResourceHost>[0]): AgentResources {
+  return new AgentResources({
+    logger: createTestLogger(),
+    namespace: "schedule-test",
+    host: createFakeResourceHost(host),
+  });
 }
 
 describe("ScheduleService", () => {
@@ -2040,6 +2050,7 @@ describe("ScheduleService", () => {
       clients,
       providerDefinitions: { claude: TEST_CLAUDE_PROVIDER_DEFINITION },
       registry: agentStorage,
+      resources: createTestResources(),
     });
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -2086,6 +2097,7 @@ describe("ScheduleService", () => {
               args: ["docs-server.js"],
             },
           },
+          resources: { nice: 15, cpuQuotaPercent: 100, memoryMaxMb: 2048 },
         },
       },
       maxRuns: 1,
@@ -2116,7 +2128,71 @@ describe("ScheduleService", () => {
           args: ["docs-server.js"],
         },
       },
+      resources: { nice: 15, cpuQuotaPercent: 100, memoryMaxMb: 2048 },
     });
+  });
+
+  test("stores, replaces and clears a new-agent schedule's resource policy", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({
+        logger: createTestLogger(),
+        resources: createTestResources({ controllers: "cpu memory pids" }),
+      }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const created = await service.create({
+      prompt: "nightly maintenance",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "codex", cwd: tempDir, resources: { nice: 19, memoryMaxMb: 1024 } },
+      },
+    });
+
+    const replaced = await service.update({
+      id: created.id,
+      newAgentConfig: { resources: { cpuQuotaPercent: 50 } },
+    });
+    const untouched = await service.update({ id: created.id, prompt: "renamed task" });
+    const cleared = await service.update({ id: created.id, newAgentConfig: { resources: null } });
+
+    expect(created.target).toMatchObject({
+      config: { resources: { nice: 19, memoryMaxMb: 1024 } },
+    });
+    expect(replaced.target).toMatchObject({ config: { resources: { cpuQuotaPercent: 50 } } });
+    expect(untouched.target).toMatchObject({ config: { resources: { cpuQuotaPercent: 50 } } });
+    expect(cleared.target).toEqual({
+      type: "new-agent",
+      config: { provider: "codex", cwd: tempDir },
+    });
+    await expect(
+      service.update({
+        id: created.id,
+        newAgentConfig: { resources: { memoryHighMb: 2048, memoryMaxMb: 1024 } },
+      }),
+    ).rejects.toThrow("Invalid resource policy: memoryHighMb must not exceed memoryMaxMb");
+    await expect(
+      service.create({
+        prompt: "bad",
+        cadence: { type: "every", everyMs: 60_000 },
+        target: {
+          type: "new-agent",
+          config: { provider: "codex", cwd: tempDir, resources: { allowedCpus: [1, 1] } },
+        },
+      }),
+    ).rejects.toThrow("Invalid resource policy: allowedCpus must not repeat a CPU");
+    // A schedule whose every run the host would refuse is refused when it is saved.
+    await expect(
+      service.update({ id: created.id, newAgentConfig: { resources: { allowedCpus: [0] } } }),
+    ).rejects.toThrow(
+      "Cannot enforce the resource policy. allowedCpus: The cpuset cgroup controller is not delegated to the systemd user manager",
+    );
+    expect((await service.inspect(created.id)).target).toEqual(cleared.target);
   });
 
   test("rejects numeric cron steps when creating or updating a schedule", async () => {

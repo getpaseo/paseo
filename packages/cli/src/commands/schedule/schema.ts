@@ -1,3 +1,4 @@
+import { formatResourcePolicy } from "../../utils/resource-options.js";
 import type { OutputSchema } from "../../output/index.js";
 import { formatCadence, formatTarget, type ScheduleRow } from "./shared.js";
 import type { ScheduleRecord, ScheduleRunRecord } from "./types.js";
@@ -77,6 +78,13 @@ export function createScheduleInspectRows(schedule: ScheduleRecord): ScheduleIns
           : `every:${schedule.cadence.everyMs}ms`,
     },
     { key: "Target", value: formatTarget(schedule.target) },
+    {
+      key: "Resources",
+      value:
+        schedule.target.type === "new-agent"
+          ? formatResourcePolicy(schedule.target.config.resources)
+          : "-",
+    },
     { key: "Status", value: schedule.status },
     { key: "CreatedAt", value: schedule.createdAt },
     { key: "UpdatedAt", value: schedule.updatedAt },

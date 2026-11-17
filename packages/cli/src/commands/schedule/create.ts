@@ -1,3 +1,4 @@
+import { parseResourcePolicy, type ResourceOptions } from "../../utils/resource-options.js";
 import type { Command } from "commander";
 import type { SingleResult } from "../../output/index.js";
 import { scheduleSchema } from "./schema.js";
@@ -10,7 +11,7 @@ import {
   type ScheduleRow,
 } from "./shared.js";
 
-export interface ScheduleCreateOptions extends ScheduleCommandOptions {
+export interface ScheduleCreateOptions extends ScheduleCommandOptions, ResourceOptions {
   every?: string;
   cron?: string;
   timezone?: string;
@@ -42,6 +43,7 @@ export async function runCreateCommand(
     provider: options.provider,
     mode: options.mode,
     thinking: options.thinking,
+    resources: parseResourcePolicy(options),
     cwd: options.cwd,
     daemonTarget: options.daemonTarget,
     maxRuns: options.maxRuns,

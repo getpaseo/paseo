@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../../resources/launch.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { query, type Options, type Query, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
@@ -19,6 +20,7 @@ export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
+  resources?: AgentResourceLaunch;
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
@@ -57,7 +59,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, resources, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -88,6 +90,7 @@ function applyRuntimeSettingsToClaudeOptions(
           ? { env: selfNodeCommand.env, envMode: "internal" as const }
           : providerEnvSpec),
         signal: spawnOptions.signal,
+        resources,
         stdio: ["pipe", "pipe", "pipe"],
         // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
         // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
