@@ -21,6 +21,7 @@ import type {
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import { keepArchivedCommit } from "./session/workspace-recovery/archived-commit.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
@@ -491,6 +492,17 @@ async function maybeRemoveDirectory(
   // Last chance to keep the directory. Teardown commands already ran, so a cancel here restores
   // a workspace whose teardown hooks fired; that beats deleting what the user asked to keep.
   request.checkpoint();
+  try {
+    await keepArchivedCommit({ worktreePath: backing.path, workspaceIds: archivedWorkspaceIds });
+  } catch (error) {
+    // Without the kept commit, removing the folder could delete commits that only its HEAD holds.
+    const reason = "could not keep the commit its HEAD is on";
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      `Worktree directory left in place during archive: ${reason}`,
+    );
+    return { removedDirectory: false, directoryLeftBehind: { path: backing.path, reason } };
+  }
   try {
     await deletePaseoWorktree({
       cwd: backing.mainRepoRoot,

@@ -189,6 +189,8 @@ export type WorktreeSource =
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
+  // A new branch at a commit archive kept, compared against baseRef.
+  | { kind: "restore-commit"; commit: string; baseRef: string; branchName: string }
   | {
       kind: "checkout-change-request";
       forge: string;
@@ -1492,18 +1494,19 @@ async function resolveRestoredWorktreeSourcePlan(
   };
 }
 
-async function resolveRestoredWorktreeFromBasePlan(
+async function resolveRestoredNewBranchPlan(
   cwd: string,
-  source: Extract<WorktreeSource, { kind: "restore-from-base" }>,
+  source: Extract<WorktreeSource, { kind: "restore-from-base" | "restore-commit" }>,
 ): Promise<WorktreeSourcePlan> {
   await validateGitBranchName(cwd, source.branchName);
   const baseRef = await resolveBaseBranchForWorktree(cwd, source.baseRef);
   const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+  const startPoint = source.kind === "restore-commit" ? source.commit : baseRef;
   return {
     branchName,
     metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
     metadataBaseRef: baseRef,
-    addArguments: ["-b", branchName, "--no-track", baseRef],
+    addArguments: ["-b", branchName, "--no-track", startPoint],
   };
 }
 
@@ -1545,7 +1548,8 @@ async function resolveWorktreeSourcePlan({
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "restore-from-base":
-      return resolveRestoredWorktreeFromBasePlan(cwd, source);
+    case "restore-commit":
+      return resolveRestoredNewBranchPlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);

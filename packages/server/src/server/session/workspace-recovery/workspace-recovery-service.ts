@@ -17,6 +17,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
+import { readArchivedCommit, releaseArchivedCommit } from "./archived-commit.js";
 
 export type WorkspaceRecoveryAction = "unarchive" | "restore";
 
@@ -142,6 +143,10 @@ export function createWorkspaceRecoveryService(deps: {
 
     if (resolved.kind === "restore") {
       await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      await releaseArchivedCommit({
+        repoRoot: resolved.sourceRepoRoot,
+        workspaceId: resolved.workspace.workspaceId,
+      });
     }
     await deps.unarchiveWorkspace(resolved.workspace);
     return { workspaceId, action: resolved.kind };
@@ -151,13 +156,7 @@ export function createWorkspaceRecoveryService(deps: {
     workspace: PersistedWorkspaceRecord,
     sourceRepoRoot: string,
   ): Promise<void> {
-    const source: WorktreeSource = workspace.branch
-      ? { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch }
-      : {
-          kind: "restore-from-base",
-          branchName: `restored/${randomUUID().slice(0, 8)}`,
-          baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
-        };
+    const source = await resolveRecoverySource(workspace, sourceRepoRoot);
 
     try {
       await runGitCommand(["worktree", "prune"], { cwd: sourceRepoRoot, timeout: 30_000 });
@@ -229,6 +228,38 @@ export function createWorkspaceRecoveryService(deps: {
   }
 
   return { inspect, restore };
+}
+
+// A commit archive kept wins over the recorded branch: the record's branch is the last one
+// observed, and HEAD may have left it before the archive.
+async function resolveRecoverySource(
+  workspace: PersistedWorkspaceRecord,
+  sourceRepoRoot: string,
+): Promise<WorktreeSource> {
+  const archivedCommit = await readArchivedCommit({
+    repoRoot: sourceRepoRoot,
+    workspaceId: workspace.workspaceId,
+  });
+  if (archivedCommit) {
+    return {
+      kind: "restore-commit",
+      commit: archivedCommit,
+      branchName: restoredBranchName(),
+      baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
+    };
+  }
+  if (workspace.branch) {
+    return { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch };
+  }
+  return {
+    kind: "restore-from-base",
+    branchName: restoredBranchName(),
+    baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
+  };
+}
+
+function restoredBranchName(): string {
+  return `restored/${randomUUID().slice(0, 8)}`;
 }
 
 async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null): Promise<string> {

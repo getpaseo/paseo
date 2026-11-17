@@ -35,6 +35,10 @@ function git(repoDir: string, args: string[]): void {
   execFileSync("git", args, { cwd: repoDir, stdio: "pipe" });
 }
 
+function gitOutput(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
 /** A repo whose worktree teardown parks until released. */
 function createRepoWithGatedTeardown(): GatedRepo {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-archive-undo-"));
@@ -147,6 +151,40 @@ test.skipIf(process.platform === "win32")(
       directoryExists: existsSync(directory),
       agentArchived: await isAgentArchived(agentId),
     }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32").each(["undo", "restore"] as const)(
+  "%s brings back a worktree archived on a detached HEAD with the commits no ref held",
+  async (route) => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      `detached-${route}`,
+    );
+    git(directory, ["checkout", "--detach"]);
+    writeFileSync(path.join(directory, "detached.txt"), "detached work\n");
+    git(directory, ["add", "detached.txt"]);
+    git(directory, ["-c", "commit.gpgsign=false", "commit", "-m", "detached work"]);
+    const detachedCommit = gitOutput(directory, ["rev-parse", "HEAD"]);
+
+    const archived = await ctx.client.archiveWorkspace(workspaceId);
+    expect(archived.error).toBeNull();
+    expect(existsSync(directory)).toBe(false);
+    git(repo.repoDir, ["reflog", "expire", "--expire-unreachable=now", "--all"]);
+    git(repo.repoDir, ["gc", "--prune=now", "--quiet"]);
+
+    if (route === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
+    else await ctx.client.restoreWorkspace(workspaceId);
+
+    expect({
+      workspaceActive: await isWorkspaceActive(workspaceId),
+      head: gitOutput(directory, ["rev-parse", "HEAD"]),
+      onBranch: gitOutput(directory, ["branch", "--show-current"]).length > 0,
+      keptRefs: gitOutput(repo.repoDir, ["for-each-ref", "refs/paseo"]),
+    }).toEqual({ workspaceActive: true, head: detachedCommit, onBranch: true, keptRefs: "" });
   },
   60000,
 );

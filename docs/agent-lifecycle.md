@@ -276,7 +276,13 @@ sent right behind its archive still cancels it.
 
 An aborted archive stops at its next checkpoint and reports `canceled`; the undo unarchives only
 the agents that archive itself archived. Deleting the worktree directory is the point of no
-return: an undo after it recreates the worktree through workspace recovery. The client shows or
+return: an undo after it recreates the worktree through workspace recovery. Recovery checks out
+the workspace's branch, which stays in the repository. A worktree on a detached HEAD has no
+branch to come back to, so before deleting its directory the archive records HEAD as
+`refs/paseo/archived/<workspaceId>`. The ref keeps git's cleanup from deleting commits only that
+HEAD held, and recovery creates a new `restored/…` branch at it, then deletes the ref. Recovery
+reads the ref before the record's `branch`, which can still name the branch HEAD left. The ref
+lives as long as the workspace stays archived. The client shows or
 hides the row by the latest local intent, so a late remove or upsert from a superseded request
 does not flip it back. Tabs and layout are purged only once the undo window closes with the
 archive committed.

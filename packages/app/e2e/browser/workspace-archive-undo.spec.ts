@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
@@ -236,6 +239,38 @@ test.describe("Workspace archive undo", () => {
     await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible({ timeout: 30_000 });
     await expectDirectoryPresence(worktree.workspaceDirectory, true);
     await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
+  });
+
+  test("Undo brings back a worktree archived on a detached HEAD with its commit", async ({
+    page,
+  }) => {
+    const worktree = await seedWorktree(page, "archive-undo-detached");
+    const git = (args: string[]) =>
+      execFileSync("git", args, { cwd: worktree.workspaceDirectory, encoding: "utf8" }).trim();
+    git(["checkout", "--detach"]);
+    writeFileSync(path.join(worktree.workspaceDirectory, "detached.txt"), "detached work\n");
+    git(["add", "detached.txt"]);
+    git([
+      "-c",
+      "user.name=Paseo Test",
+      "-c",
+      "user.email=test@getpaseo.local",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "detached work",
+    ]);
+    const detachedCommit = git(["rev-parse", "HEAD"]);
+
+    await archiveFromRowButton(page, worktree.workspaceId);
+    await undoButton(page).hover();
+    await expectDirectoryPresence(worktree.workspaceDirectory, false);
+    await undoButton(page).click();
+
+    await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible({ timeout: 30_000 });
+    await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
+    expect(git(["rev-parse", "HEAD"])).toBe(detachedCommit);
   });
 
   test("hovering Undo keeps the toast open past its deadline, and its close ends the undo", async ({
