@@ -184,6 +184,55 @@ describe("planWorkspaceOpenTargets", () => {
     ]);
   });
 
+  it("opens the branch and the active file on the web host the daemon resolved for an SSH alias", () => {
+    const aliasStatus = {
+      isGit: true,
+      remoteUrl: "git@github.com-work:acme/repo.git",
+      currentBranch: "feature/x",
+      forgeWeb: { host: "github.com" },
+    };
+    const open = (activeFile?: { path: string }) =>
+      planWorkspaceOpenTargets({
+        workspaceDirectory: "/repo",
+        activeFile,
+        desktopTargets: [],
+        canUseDesktopBridge: false,
+        isLocalExecution: false,
+        checkoutStatus: aliasStatus,
+        forge: "github",
+      }).map((target) => (target.source === "forge" ? target.url : null));
+
+    expect(open()).toEqual(["https://github.com/acme/repo/tree/feature/x"]);
+    expect(open({ path: "src/app.ts" })).toEqual([
+      "https://github.com/acme/repo/blob/feature/x/src/app.ts",
+    ]);
+  });
+
+  it("keeps the branch and file on the origin repository of a fork", () => {
+    const forkStatus = {
+      isGit: true,
+      remoteUrl: "git@github.com:fork-owner/repo.git",
+      currentBranch: "feature/only-on-fork",
+      forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+    };
+    const forgeUrls = (activeFile: { path: string } | undefined) =>
+      planWorkspaceOpenTargets({
+        workspaceDirectory: "/repo",
+        activeFile,
+        desktopTargets: [],
+        canUseDesktopBridge: false,
+        isLocalExecution: false,
+        checkoutStatus: forkStatus,
+        forge: "github",
+      }).flatMap((target) => (target.source === "forge" ? [target.url] : []));
+    const urls = [...forgeUrls(undefined), ...forgeUrls({ path: "src/app.ts" })];
+
+    expect(urls).toEqual([
+      "https://github.com/fork-owner/repo/tree/feature/only-on-fork",
+      "https://github.com/fork-owner/repo/blob/feature/only-on-fork/src/app.ts",
+    ]);
+  });
+
   it("infers the forge from the remote URL when the forge input is null", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",

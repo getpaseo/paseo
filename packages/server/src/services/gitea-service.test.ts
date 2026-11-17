@@ -429,6 +429,41 @@ function giteaMergeStatus(
   };
 }
 
+describe("createGiteaService getReferenceRepository", () => {
+  it("names the repository a fork was forked from, asking about the origin repository explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          full_name: "example-user/sample-repo",
+          fork: true,
+          parent: { full_name: "upstream-org/sample-repo" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-org/sample-repo",
+    );
+    expect(calls).toEqual([["api", "repos/example-user/sample-repo"]]);
+  });
+
+  it("rejects when tea api answers with an error body, since tea exits 0 on HTTP errors", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ message: "user does not exist [uid: 0, name: ]" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a repository that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ full_name: "example-user/sample-repo", fork: false, parent: null })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGiteaService", () => {
   it("maps a tea pr list item to the neutral current PR status by head branch", async () => {
     const { service, calls } = makeService((args) => {

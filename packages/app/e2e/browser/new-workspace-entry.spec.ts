@@ -160,6 +160,22 @@ test.describe("New workspace entry points", () => {
     }
   });
 
+  test("Ctrl+N opens the project picker with search focused", async ({ page }) => {
+    const seeded: SeededWorkspace = await seedWorkspace({ repoPrefix: "entry-shortcut-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+
+      await openGlobalNewWorkspaceComposer(page);
+      await page.goBack();
+      await openNewWorkspaceProjectPickerWithShortcut(page, "Control+N");
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
   test("keeps the in-progress form when the remembered workspace is archived elsewhere", async ({
     page,
   }) => {

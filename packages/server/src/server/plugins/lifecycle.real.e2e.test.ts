@@ -157,8 +157,7 @@ test.skipIf(process.platform !== "linux")(
         "This is a hook integration test. Reply exactly: out of credits. If the next user message is Try again., reply exactly RETRY_OK instead. Do not use tools.",
       );
       await waitForTurns(client, agent.id, 2);
-      const retryTurns = await endedTurns(client, agent.id);
-      expect(assistantText(retryTurns[1].data.timeline)).toBe("RETRY_OK");
+      expect(await latestReplyText(client, agent.id)).toBe("RETRY_OK");
       proof.followup = "RETRY_OK";
 
       await client.sendMessage(
@@ -207,8 +206,7 @@ test.skipIf(process.platform !== "linux")(
       const envPermission = await waitForPermission(client, agent.id, envCommand);
       await client.respondToPermission(agent.id, envPermission, { behavior: "allow" });
       await waitForTurns(client, agent.id, 5);
-      const envTurns = await endedTurns(client, agent.id);
-      expect(assistantText(envTurns[4].data.timeline)).toBe("created|opened");
+      expect(await latestReplyText(client, agent.id)).toBe("created|opened");
       proof.environmentOutput = "created|opened";
 
       await client.refreshAgent(agent.id);
@@ -331,6 +329,16 @@ test.skipIf(process.platform !== "linux")(
   },
   600_000,
 );
+
+// Turn hooks carry no history; read the reply the way plugins do.
+async function latestReplyText(client: DaemonClient, agentId: string): Promise<string> {
+  const page = await client.fetchAgentTimeline(agentId, {
+    direction: "tail",
+    limit: 1,
+    wholeTurns: true,
+  });
+  return assistantText(page.entries.map((entry) => entry.item));
+}
 
 function assistantText(timeline: readonly AgentTimelineItem[]): string {
   let text = "";

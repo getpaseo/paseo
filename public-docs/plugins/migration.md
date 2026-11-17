@@ -67,30 +67,31 @@ is a compile error.
 
 Use this table as the complete registration checklist.
 
-| Old registration and location                                                                 | New registration and location                                                                                               |
-| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                                                     |
-| `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                          |
-| `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items) |
-| New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                               |
-| New sidebar replacement view                                                                  | `client.addSidebarView({ id, title, Component })` in `index.client.tsx`; see [sidebar views](sidebar-views)                 |
-| New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                          |
-| `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                     |
-| Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                         |
-| `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                                   |
-| `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                                     |
-| `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                                         |
-| `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function                                  |
-| New composer item contribution                                                                | `client.addComposerItem(item)` in `index.client.tsx`; see [composer items](reference#composer-items)                        |
-| New New workspace item contribution                                                           | `client.addNewWorkspaceItem(item)` in `index.client.tsx`; see [New workspace items](reference#new-workspace-items)          |
-| New header contribution                                                                       | `client.addHeaderButton({ id, workspaceId, button })`                                                                       |
-| `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                                                  |
-| New settings screen contribution                                                              | `client.addSettingsScreen(screen)` in `index.client.tsx`; see [settings screens](reference#settings-screens)                |
-| `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                                                              |
-| `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                                                          |
-| `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                                                                |
-| `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                                      |
-| `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                                           |
+| Old registration and location                                                                 | New registration and location                                                                                                                                 |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                                                                                       |
+| `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addScreen({ id, title, Component })` in `index.client.tsx`                                                                                            |
+| `plugin.addSidebarItem({ id, title, icon, surface })` in the old root entry                   | `client.addSidebarHeaderItem({ id, title, Component })` in `index.client.tsx`; see [sidebar items](reference#sidebar-items)                                   |
+| New sidebar footer contribution                                                               | `client.addSidebarFooterItem({ id, title, Component })` in `index.client.tsx`                                                                                 |
+| New sidebar replacement view                                                                  | `client.addSidebarView({ id, title, Component })` in `index.client.tsx`; see [sidebar views](sidebar-views)                                                   |
+| New badge on sidebar workspace rows                                                           | `client.addWorkspaceRowBadgeItem({ id, title, icon, Component })` in `index.client.tsx`; see [workspace row badge items](reference#workspace-row-badge-items) |
+| New file panel contribution                                                                   | `client.addFilePanel(panel)` in `index.client.tsx`                                                                                                            |
+| `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                                                                                       |
+| Agent panel with `context: "agent"`                                                           | `client.addAgentPanel(panel)` in `index.client.tsx`; omit `context`                                                                                           |
+| `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                                                                                     |
+| `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                                                                                       |
+| `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function                                                                           |
+| `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function                                                                    |
+| New composer item contribution                                                                | `client.addComposerItem(item)` in `index.client.tsx`; see [composer items](reference#composer-items)                                                          |
+| New New workspace item contribution                                                           | `client.addNewWorkspaceItem(item)` in `index.client.tsx`; see [New workspace items](reference#new-workspace-items)                                            |
+| New header contribution                                                                       | `client.addHeaderButton({ id, workspaceId, button })`                                                                                                         |
+| `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                                                                                    |
+| New settings screen contribution                                                              | `client.addSettingsScreen(screen)` in `index.client.tsx`; see [settings screens](reference#settings-screens)                                                  |
+| `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                                                                                                |
+| `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                                                                                            |
+| `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                                                                                                  |
+| `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                                                                                        |
+| `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types                                                                             |
 
 Register the screen that replaces an `addSidebarItem` under that item's `id` to keep saved links
 working. A `/plugin/<plugin>/sidebar/<id>` link, and the older `/plugin/<plugin>/<id>`, opens the
@@ -206,6 +207,22 @@ setting `id` as an option key and each `value` as that option, and sends changes
 | `session.open` `config.settings`               | `config.providerOptions`                                                   |
 | `ProviderSetting` type                         | `ProviderOptionControl`                                                    |
 | `agent.create.before` `config.featureValues`   | `config.providerOptions`; a returned `featureValues` edit is still applied |
+
+### Turn history in v0.16
+
+`agent.turn.after` has sent an empty `timeline` since v0.13, and the SDK type no longer declares it.
+A plugin that reads `event.timeline` now fails typecheck. Read the turn from the agent instead:
+
+```ts
+const turn = await context.paseo.agents
+  .ref(event.agent.id)
+  .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+const items = turn.entries.filter((entry) => entry.turnId === event.turnId).map(({ item }) => item);
+```
+
+The filter drops entries from a turn that started after this one ended, such as a follow-up another plugin sent. The list is empty when such a turn has already started, or when `event.turnId` is `null`.
+
+Plugins built against an older SDK keep receiving `timeline: []` until removal after 2027-05-31.
 
 ## 5. Recognize half-migration errors
 

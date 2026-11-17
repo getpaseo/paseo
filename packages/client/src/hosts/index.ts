@@ -86,7 +86,8 @@ export function createHostChannelTransport(
     );
     cleanups.push(
       origin.subscribeConnectionStatus((connectionState) => {
-        if (connectionState.status !== "connected") close();
+        // The initial status arrives before the client installs transport handlers.
+        if (connectionState.status !== "connected") queueMicrotask(close);
       }),
     );
     let opening: Promise<string>;
