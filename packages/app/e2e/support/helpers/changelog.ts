@@ -24,11 +24,17 @@ export async function openWhatsNew(page: Page): Promise<Locator> {
   return sheet;
 }
 
+/** A minor version: `9.1` holds `9.1.0` and every patch of it. */
+export function minor(sheet: Locator, version: string): Locator {
+  return sheet.getByTestId(`changelog-release-group-${version}`);
+}
+
+/** One entry of a minor, such as `9.1.1`. */
 export function release(sheet: Locator, version: string): Locator {
   return sheet.getByTestId(`changelog-release-${version}`);
 }
 
-/** The one control a release with highlights has for its sections, in either state. */
+/** The one control a minor with highlights has for its entries, in either state. */
 export function allChangesToggle(entry: Locator): Locator {
   return entry.getByRole("button", { name: /^(Show|Hide) all changes$/ });
 }

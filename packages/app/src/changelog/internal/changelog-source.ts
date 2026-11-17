@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { parseChangelog, type ChangelogRelease } from "./parse-changelog";
+import { parseChangelog } from "./parse-changelog";
+import { groupReleases, type ChangelogReleaseGroup } from "./release-groups";
 
 const CHANGELOG_URL = "https://raw.githubusercontent.com/getpaseo/paseo/main/CHANGELOG.md";
 
 export type ChangelogState =
   | { status: "loading" }
-  | { status: "ready"; releases: ChangelogRelease[] }
+  | { status: "ready"; groups: ChangelogReleaseGroup[] }
   | { status: "error" };
 
 // Survives close/reopen so the second look paints without a spinner. The raw
-// text is kept alongside the releases so an unchanged revalidation can be
-// dropped: handing back an equal-but-new array would re-render every release.
-let cached: { markdown: string; releases: ChangelogRelease[] } | null = null;
+// text is kept alongside the groups so an unchanged revalidation can be
+// dropped: handing back an equal-but-new array would re-render every group.
+let cached: { markdown: string; groups: ChangelogReleaseGroup[] } | null = null;
 
 export interface Changelog {
   state: ChangelogState;
@@ -47,8 +48,9 @@ export function useChangelog(enabled: boolean): Changelog {
         if (cached?.markdown === markdown) return;
         const releases = parseChangelog(markdown);
         if (releases.length === 0) throw new Error("Changelog has no releases");
-        cached = { markdown, releases };
-        setState({ status: "ready", releases });
+        const groups = groupReleases(releases);
+        cached = { markdown, groups };
+        setState({ status: "ready", groups });
       } catch {
         if (controller.signal.aborted) return;
         if (cached) return;
@@ -68,5 +70,5 @@ export function useChangelog(enabled: boolean): Changelog {
 }
 
 function readCache(): ChangelogState {
-  return cached ? { status: "ready", releases: cached.releases } : { status: "loading" };
+  return cached ? { status: "ready", groups: cached.groups } : { status: "loading" };
 }

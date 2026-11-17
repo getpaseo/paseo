@@ -13,8 +13,29 @@ export interface ChangelogRelease {
   locale: Locale;
 }
 
+/**
+ * A minor version as the page shows it: the entry that opened it and every patch after it.
+ *
+ * `CHANGELOG.md` keeps one entry per version, because the release scripts read each version's
+ * heading and installed apps keep the parser they shipped with. Grouping is how the page shows
+ * those entries, so the highlights stay those of the minor: a patch sits behind Show all changes
+ * with the rest of the record and never replaces or pushes them down.
+ */
 export interface ChangelogReleaseGroup {
+  /** `0.16` for `0.16.1`; the group's anchor. */
   version: string;
+  /** The minor, or the beta's version while the minor has shipped only as a beta. */
+  label: string;
+  /** The date of the entry that opened the minor. */
+  date: string;
+  /** The highlights of the entry that opened the minor. */
+  highlights: string;
+  /** The language of the highlights. */
+  locale: Locale;
+  /**
+   * Newest first, as authored. The entry that opened the minor comes last and no longer carries
+   * the highlights, which the group shows above them.
+   */
   releases: ChangelogRelease[];
 }
 
@@ -115,20 +136,30 @@ export function localizeReleases(
   });
 }
 
-function groupChangelogReleases(releases: ChangelogRelease[]): ChangelogReleaseGroup[] {
-  const groups: ChangelogReleaseGroup[] = [];
+export function groupChangelogReleases(releases: ChangelogRelease[]): ChangelogReleaseGroup[] {
+  const runs: { version: string; releases: ChangelogRelease[] }[] = [];
 
   for (const release of releases) {
     const version = minorVersion(release.version);
-    const currentGroup = groups.at(-1);
-    if (currentGroup?.version === version) {
-      currentGroup.releases.push(release);
+    const run = runs.at(-1);
+    if (run?.version === version) {
+      run.releases.push(release);
     } else {
-      groups.push({ version, releases: [release] });
+      runs.push({ version, releases: [release] });
     }
   }
 
-  return groups;
+  return runs.map(({ version, releases: entries }) => {
+    const opening = entries[entries.length - 1];
+    return {
+      version,
+      label: opening.version.includes("-") ? opening.version : version,
+      date: opening.date,
+      highlights: opening.highlights,
+      locale: opening.locale,
+      releases: [...entries.slice(0, -1), { ...opening, highlights: "" }],
+    };
+  });
 }
 
 const englishReleases = parseChangelog(englishChangelog, DEFAULT_LOCALE);

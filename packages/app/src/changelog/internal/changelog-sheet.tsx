@@ -18,6 +18,7 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolveAppVersion } from "@/utils/app-version";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useChangelog, type ChangelogState } from "./changelog-source";
+import { revealGroups, type ChangelogReleaseGroup } from "./release-groups";
 import { useRevealedReleases } from "./use-revealed-releases";
 import {
   formatChangelogDate,
@@ -72,7 +73,7 @@ export function ChangelogSheet({ visible, onClose }: ChangelogSheetProps) {
       desktopHeight="85%"
       testID="changelog-sheet"
     >
-      <ChangelogBody state={state} shownReleases={count} onShowMore={showMore} onRetry={reload} />
+      <ChangelogBody state={state} shownItems={count} onShowMore={showMore} onRetry={reload} />
     </AdaptiveModalSheet>
   );
 }
@@ -81,12 +82,12 @@ const SNAP_POINTS = ["85%", "95%"];
 
 interface ChangelogBodyProps {
   state: ChangelogState;
-  shownReleases: number;
+  shownItems: number;
   onShowMore: () => void;
   onRetry: () => void;
 }
 
-function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogBodyProps) {
+function ChangelogBody({ state, shownItems, onShowMore, onRetry }: ChangelogBodyProps) {
   const { t } = useTranslation();
   const appVersion = useMemo(() => resolveAppVersion()?.replace(/^v/i, "") ?? null, []);
 
@@ -116,18 +117,14 @@ function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogB
     );
   }
 
-  const visibleReleases = state.releases.slice(0, shownReleases);
+  const revealed = revealGroups(state.groups, shownItems);
 
   return (
-    <View style={styles.releaseList}>
-      {visibleReleases.map((release) => (
-        <ReleaseView
-          key={`${release.version}:${release.date}`}
-          release={release}
-          isCurrent={release.version === appVersion}
-        />
+    <View style={styles.groupList}>
+      {revealed.groups.map((group) => (
+        <ReleaseGroupView key={group.version} group={group} installedVersion={appVersion} />
       ))}
-      {state.releases.length > visibleReleases.length ? (
+      {revealed.hasMore ? (
         <Button
           variant="ghost"
           onPress={onShowMore}
@@ -141,35 +138,40 @@ function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogB
   );
 }
 
-interface ReleaseViewProps {
-  release: ChangelogRelease;
-  isCurrent: boolean;
+interface ReleaseGroupViewProps {
+  group: ChangelogReleaseGroup;
+  installedVersion: string | null;
 }
 
 /**
- * A release that has highlights shows only them until the reader asks for the
- * sections, which are the full record. A release without highlights has nothing
- * to stand in for its sections, so it shows them as it always did.
+ * A minor version: its highlights, then every entry of it behind one control,
+ * newest first. A minor without highlights has nothing to stand in for its
+ * entries, so it shows them as it always did.
  */
-const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseViewProps) {
+const ReleaseGroupView = memo(function ReleaseGroupView({
+  group,
+  installedVersion,
+}: ReleaseGroupViewProps) {
   const { t } = useTranslation();
-  const date = formatChangelogDate(release.date);
+  const date = formatChangelogDate(group.date);
   const [showingAllChanges, setShowingAllChanges] = useState(false);
   const toggleAllChanges = useCallback(() => setShowingAllChanges((value) => !value), []);
   const allChangesState = useMemo(() => ({ expanded: showingAllChanges }), [showingAllChanges]);
-  const hasHighlights = release.highlights.length > 0;
-  const showsSections = !hasHighlights || showingAllChanges;
+  const hasHighlights = group.highlights.length > 0;
+  const hasEntryNotes = group.releases.some(hasNotes);
+  const showsEntries = !hasHighlights || showingAllChanges;
+  const isInstalled = group.releases.some((release) => release.version === installedVersion);
 
   return (
-    <View style={styles.release} testID={`changelog-release-${release.version}`}>
-      <View style={styles.releaseHeading}>
-        <Text style={styles.version}>{release.version}</Text>
-        {isCurrent ? <StatusBadge label={t("changelog.installed")} /> : null}
+    <View style={styles.group} testID={`changelog-release-group-${group.version}`}>
+      <View style={styles.groupHeading}>
+        <Text style={styles.groupLabel}>{group.label}</Text>
+        {isInstalled ? <StatusBadge label={t("changelog.installed")} /> : null}
         <View style={styles.headingSpacer} />
         {date ? <Text style={styles.date}>{date}</Text> : null}
       </View>
-      {hasHighlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
-      {hasHighlights && release.sections.length > 0 ? (
+      {hasHighlights ? <MarkdownRenderer text={group.highlights} compact /> : null}
+      {hasHighlights && hasEntryNotes ? (
         <Button
           variant="ghost"
           style={styles.allChangesToggle}
@@ -179,10 +181,45 @@ const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseVie
           {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
         </Button>
       ) : null}
-      {showsSections ? <ReleaseSections sections={release.sections} /> : null}
+      {showsEntries
+        ? group.releases.map((release) => (
+            <ReleaseView
+              key={`${release.version}:${release.date}`}
+              release={release}
+              isInstalled={release.version === installedVersion}
+            />
+          ))
+        : null}
     </View>
   );
 });
+
+function hasNotes(release: ChangelogRelease): boolean {
+  return release.highlights.length > 0 || release.sections.length > 0;
+}
+
+interface ReleaseViewProps {
+  release: ChangelogRelease;
+  isInstalled: boolean;
+}
+
+/** One entry of a minor: its version and date, then everything it was authored with. */
+function ReleaseView({ release, isInstalled }: ReleaseViewProps) {
+  const { t } = useTranslation();
+  const date = formatChangelogDate(release.date);
+  return (
+    <View style={styles.release} testID={`changelog-release-${release.version}`}>
+      <View style={styles.releaseHeading}>
+        <Text style={styles.version}>{release.version}</Text>
+        {isInstalled ? <StatusBadge label={t("changelog.installed")} /> : null}
+        <View style={styles.headingSpacer} />
+        {date ? <Text style={styles.date}>{date}</Text> : null}
+      </View>
+      {release.highlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
+      <ReleaseSections sections={release.sections} />
+    </View>
+  );
+}
 
 function ReleaseSections({ sections }: { sections: readonly ChangelogSection[] }) {
   return keyChangelogSections(sections).map(({ key, section }) => (
@@ -213,9 +250,25 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     gap: theme.spacing[3],
   },
-  releaseList: {
+  groupList: {
     gap: theme.spacing[8],
     paddingBottom: theme.spacing[4],
+  },
+  group: {
+    gap: theme.spacing[4],
+  },
+  groupHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  groupLabel: {
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
   },
   release: {
     gap: theme.spacing[4],
@@ -224,15 +277,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
   },
   headingSpacer: {
     flex: 1,
   },
   version: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },

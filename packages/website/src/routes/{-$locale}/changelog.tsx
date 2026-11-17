@@ -41,26 +41,14 @@ function HeadingAnchor({ version }: { version: string }) {
   );
 }
 
-/**
- * A release that has highlights shows only them; its sections, the full record, open on request.
- * A release without highlights shows its sections, since nothing stands in for them.
- */
 function ReleaseNotes({ release }: { release: ChangelogRelease }) {
-  const { t } = useTranslation();
-  if (!release.highlights) {
-    return <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>;
-  }
   return (
     <>
-      <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
+      {release.highlights ? (
+        <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
+      ) : null}
       {release.sections ? (
-        <details className="changelog-all-changes">
-          <summary className="changelog-all-changes-summary">
-            <span className="changelog-all-changes-show">{t("changelog.showAllChanges")}</span>
-            <span className="changelog-all-changes-hide">{t("changelog.hideAllChanges")}</span>
-          </summary>
-          <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
-        </details>
+        <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
       ) : null}
     </>
   );
@@ -94,22 +82,65 @@ function PatchRelease({ release }: { release: ChangelogRelease }) {
   );
 }
 
-function Release({ group }: { group: ChangelogReleaseGroup }) {
+function Patches({ group }: { group: ChangelogReleaseGroup }) {
   return (
-    <article className="changelog-release">
+    <div className="changelog-patches">
+      {group.releases.map((release) => (
+        <PatchRelease key={release.version} release={release} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A minor version: its highlights, then every entry of it behind one control, newest first.
+ * A minor without highlights shows its entries, since nothing stands in for them.
+ */
+function Release({ group }: { group: ChangelogReleaseGroup }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  return (
+    <article
+      className="changelog-release"
+      aria-labelledby={`${releaseAnchor(group.version)}-title`}
+    >
       <div id={releaseAnchor(group.version)} className="changelog-release-heading">
         <HeadingAnchor version={group.version} />
-        <h2 className="changelog-release-title">
-          Paseo <span>{group.version}</span>
+        <h2 id={`${releaseAnchor(group.version)}-title`} className="changelog-release-title">
+          Paseo <span>{group.label}</span>
         </h2>
+        <time dateTime={group.date} className="changelog-release-date">
+          {formatDate(group.date, locale, "long")}
+        </time>
       </div>
-      <div className="changelog-patches">
-        {group.releases.map((release) => (
-          <PatchRelease key={release.version} release={release} />
-        ))}
-      </div>
+      {group.highlights ? (
+        <>
+          <div className="changelog-release-notes" lang={group.locale}>
+            <UntranslatedNotice
+              contentLocale={group.locale}
+              message={t("changelog.untranslatedRelease")}
+            />
+            <ReactMarkdown components={patchMarkdownComponents}>{group.highlights}</ReactMarkdown>
+          </div>
+          {group.releases.some(hasNotes) ? (
+            <details className="changelog-all-changes">
+              <summary className="changelog-all-changes-summary">
+                <span className="changelog-all-changes-show">{t("changelog.showAllChanges")}</span>
+                <span className="changelog-all-changes-hide">{t("changelog.hideAllChanges")}</span>
+              </summary>
+              <Patches group={group} />
+            </details>
+          ) : null}
+        </>
+      ) : (
+        <Patches group={group} />
+      )}
     </article>
   );
+}
+
+function hasNotes(release: ChangelogRelease): boolean {
+  return release.highlights !== "" || release.sections !== "";
 }
 
 function Changelog() {

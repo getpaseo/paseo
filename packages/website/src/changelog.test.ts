@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { getChangelogReleaseGroups, localizeReleases, parseChangelog } from "~/changelog";
+import {
+  getChangelogReleaseGroups,
+  groupChangelogReleases,
+  localizeReleases,
+  parseChangelog,
+} from "~/changelog";
 
 const ENGLISH = parseChangelog(
   [
@@ -119,6 +124,65 @@ describe("localizeReleases", () => {
     expect(() => parseChangelog("## 1.0.0 - 2026-05-01\n## 1.0.0 - 2026-05-01\n", "zh-CN")).toThrow(
       "Duplicate changelog version: 1.0.0",
     );
+  });
+});
+
+describe("groupChangelogReleases", () => {
+  const [latest, older] = groupChangelogReleases(
+    parseChangelog(
+      [
+        "## 0.16.1 - 2026-11-17",
+        "",
+        "### Fixed",
+        "",
+        "- Fixed a patch thing",
+        "",
+        "## 0.16.0 - 2026-11-16",
+        "",
+        "- **Background tasks:** Paseo shows the tasks an agent runs.",
+        "",
+        "### Added",
+        "",
+        "- Added a minor thing",
+        "",
+        "## 0.15.0 - 2026-11-03",
+        "",
+        "### Fixed",
+        "",
+        "- Fixed an older thing",
+      ].join("\n"),
+      "en",
+    ),
+  );
+
+  it("keeps the minor's highlights and date when a patch ships", () => {
+    expect(latest).toMatchObject({
+      version: "0.16",
+      label: "0.16",
+      date: "2026-11-16",
+      highlights: "- **Background tasks:** Paseo shows the tasks an agent runs.",
+      locale: "en",
+    });
+  });
+
+  it("lists every entry of the minor newest first, without repeating the highlights", () => {
+    expect(latest.releases.map((release) => [release.version, release.highlights])).toEqual([
+      ["0.16.1", ""],
+      ["0.16.0", ""],
+    ]);
+    expect(latest.releases[1].sections).toBe("### Added\n\n- Added a minor thing");
+  });
+
+  it("has no highlights when the entry that opened the minor had none", () => {
+    expect(older).toMatchObject({ version: "0.15", highlights: "" });
+  });
+
+  it("labels a minor that has shipped only as a beta with the beta's version", () => {
+    const [beta] = groupChangelogReleases(
+      parseChangelog("## 0.17.0-beta.2 - 2026-11-20\n\n- **New:** Thing.\n", "en"),
+    );
+
+    expect(beta).toMatchObject({ version: "0.17", label: "0.17.0-beta.2" });
   });
 });
 

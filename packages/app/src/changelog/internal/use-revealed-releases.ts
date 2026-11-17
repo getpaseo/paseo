@@ -1,9 +1,11 @@
 import { startTransition, useCallback, useEffect, useState } from "react";
 
 /**
- * How much of the changelog is on screen.
+ * How much of the changelog is on screen, counted in the items `revealGroups`
+ * cuts the document into: a minor with highlights, or one entry of a minor
+ * without them.
  *
- * The latest release renders as soon as there is one, because that is what
+ * The latest minor renders as soon as there is one, because that is what
  * nearly every open is asking for. The rest of the first page follows
  * immediately, and every Show more after it, as transitions: React then slices
  * that work around the opening animation instead of committing hundreds of list
