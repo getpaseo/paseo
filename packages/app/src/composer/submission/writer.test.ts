@@ -125,3 +125,19 @@ test("a prior canonical attempt does not prove that a failed same-ID retry was a
     useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
   ).toEqual([canonical]);
 });
+
+test.each<Record<string, boolean>>([{}, { canonicalSubmittedPrompts: false }])(
+  "older hosts refuse same-ID retries without removing the accepted prompt (%j)",
+  (features) => {
+    initializeSession(CANONICAL_ONLY_SERVER_ID, features);
+    const writer = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+    const message = submittedMessage("legacy-accepted");
+    writer.begin("agent-1", message);
+    writer.accept("agent-1", message.clientMessageId!);
+    const retryWriter = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+    expect(() => retryWriter.begin("agent-1", message)).toThrow("Update the Paseo host");
+    expect(
+      useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
+    ).toEqual([message]);
+  },
+);
