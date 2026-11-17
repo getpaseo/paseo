@@ -118,3 +118,15 @@ describe("message submission transactions", () => {
     ]);
   });
 });
+
+it("does not let replaying a pre-retry row acknowledge the new attempt", () => {
+  const started = beginMessageSubmission([], {
+    clientMessageId: "same-id",
+    existingTimelineRow: true,
+  });
+  const replayed = observeMessageSubmissionCanonical(started, ["same-id"]);
+  expect(replayed[0]?.providerAcknowledged).toBe(false);
+  const rejected = rejectMessageSubmission(replayed, "same-id");
+  expect(rejected.outcome).toBe("rejected");
+  expect(rejected.submissions).toEqual([]);
+});
