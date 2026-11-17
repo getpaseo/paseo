@@ -123,7 +123,8 @@ test.each(["mode", "model", "commands"] as const)(
     try {
       await session.startTurn("Run the foreground command");
       await running.promise;
-      expect(await session.setThinkingOption?.("medium")).toMatchObject({
+      // Ultracode is launched with the query, so the change waits for a restart.
+      expect(await session.setThinkingOption?.("ultracode")).toMatchObject({
         message: "Thinking level applies next turn",
       });
       if (control === "mode") await session.setMode("acceptEdits");
@@ -149,7 +150,7 @@ test.each(["mode", "model", "commands"] as const)(
       await session.startTurn("Run another command with the new thinking level");
       queries[1].work.resolve();
       expect(await terminal.promise).toBe("turn_completed");
-      expect(efforts).toEqual(["low", "medium"]);
+      expect(efforts).toEqual(["low", "xhigh"]);
     } finally {
       await session.close();
     }
