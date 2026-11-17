@@ -18,6 +18,7 @@ import {
   requiresImportSessionsHostUpgrade,
   type SessionsQueryResult,
   sumFilteredAlreadyImportedCount,
+  sessionImportProviders,
 } from "@/components/import-session-sheet-view-model";
 
 function entry(
@@ -48,6 +49,52 @@ function settled(
     ...flags,
   };
 }
+
+describe("Claude account history", () => {
+  it("groups managed account filters while preserving other providers", () => {
+    expect(sessionImportProviders(["claude", "claude-second", "codex", "mengsk-claude"])).toEqual([
+      "claude",
+      "codex",
+      "mengsk-claude",
+    ]);
+  });
+
+  it("keeps the newest native history owner and distinct conversations with equal titles", () => {
+    const older = entry({ providerId: "claude", title: "Same title" });
+    const newer = entry({
+      providerId: "claude-second",
+      title: "Same title",
+      lastActivityAt: "2026-05-01T10:00:00Z",
+    });
+    const codex = entry({ providerId: "codex", title: "Same title" });
+    const another = entry({
+      providerHandleId: "thread-2",
+      title: "Same title",
+    });
+    expect(
+      aggregateSessionEntries([
+        settled({ entries: [older, codex, another] }),
+        settled({ entries: [newer] }),
+      ]),
+    ).toEqual([newer, another, codex]);
+  });
+
+  it("excludes an already open native Claude history through either account without hiding Codex", () => {
+    const claude = entry({ providerId: "claude-second" });
+    const codex = entry({ providerId: "codex" });
+    expect(
+      aggregateSessionEntries(
+        [settled({ entries: [claude, codex] })],
+        [
+          {
+            provider: "claude",
+            persistence: { sessionId: "internal", nativeHandle: "thread-1" },
+          },
+        ],
+      ),
+    ).toEqual([codex]);
+  });
+});
 
 describe("resolveProvidersToFetch", () => {
   it("returns null when the daemon does not support provider snapshots", () => {
@@ -132,13 +179,22 @@ describe("aggregateSessionEntries", () => {
     const result = aggregateSessionEntries([
       settled({
         entries: [
-          entry({ providerHandleId: "thread-1", lastActivityAt: "2026-04-30T10:00:00.000Z" }),
+          entry({
+            providerHandleId: "thread-1",
+            lastActivityAt: "2026-04-30T10:00:00.000Z",
+          }),
         ],
       }),
       settled({
         entries: [
-          entry({ providerHandleId: "thread-1", lastActivityAt: "2026-04-30T11:00:00.000Z" }),
-          entry({ providerHandleId: "thread-2", lastActivityAt: "2026-04-30T09:00:00.000Z" }),
+          entry({
+            providerHandleId: "thread-1",
+            lastActivityAt: "2026-04-30T11:00:00.000Z",
+          }),
+          entry({
+            providerHandleId: "thread-2",
+            lastActivityAt: "2026-04-30T09:00:00.000Z",
+          }),
         ],
       }),
     ]);
@@ -149,8 +205,14 @@ describe("aggregateSessionEntries", () => {
     const result = aggregateSessionEntries([
       settled({
         entries: [
-          entry({ providerHandleId: "old", lastActivityAt: "2026-04-29T10:00:00.000Z" }),
-          entry({ providerHandleId: "new", lastActivityAt: "2026-04-30T10:00:00.000Z" }),
+          entry({
+            providerHandleId: "old",
+            lastActivityAt: "2026-04-29T10:00:00.000Z",
+          }),
+          entry({
+            providerHandleId: "new",
+            lastActivityAt: "2026-04-30T10:00:00.000Z",
+          }),
         ],
       }),
     ]);
@@ -250,7 +312,9 @@ describe("resolveDirectoryLabel", () => {
   ];
 
   it("names the project root after the project alone", () => {
-    expect(resolveDirectoryLabel("/home/me/paseo", projects)).toEqual({ name: "paseo" });
+    expect(resolveDirectoryLabel("/home/me/paseo", projects)).toEqual({
+      name: "paseo",
+    });
   });
 
   it("qualifies a worktree under the project with its path below the root", () => {
@@ -289,7 +353,9 @@ describe("resolveDirectoryLabel", () => {
   });
 
   it("falls back to the path when no project owns the directory", () => {
-    expect(resolveDirectoryLabel("/tmp/scratch", projects)).toEqual({ name: "/tmp/scratch" });
+    expect(resolveDirectoryLabel("/tmp/scratch", projects)).toEqual({
+      name: "/tmp/scratch",
+    });
   });
 });
 
@@ -366,7 +432,10 @@ describe("getPromptPreview", () => {
   it("prefers the trimmed last prompt preview", () => {
     expect(
       getPromptPreview(
-        entry({ lastPromptPreview: "  later  ", firstPromptPreview: "  earlier  " }),
+        entry({
+          lastPromptPreview: "  later  ",
+          firstPromptPreview: "  earlier  ",
+        }),
       ),
     ).toBe("later");
   });
@@ -399,17 +468,26 @@ describe("computeEmptyState", () => {
   };
 
   it("hides the empty state while sessions are still loading", () => {
-    const result = computeEmptyState({ ...baseInputs, isLoadingSessions: true });
+    const result = computeEmptyState({
+      ...baseInputs,
+      isLoadingSessions: true,
+    });
     expect(result.showEmptyState).toBe(false);
   });
 
   it("hides the empty state when every query errored", () => {
-    const result = computeEmptyState({ ...baseInputs, allQueriesErrored: true });
+    const result = computeEmptyState({
+      ...baseInputs,
+      allQueriesErrored: true,
+    });
     expect(result.showEmptyState).toBe(false);
   });
 
   it("hides the empty state until every provider query has settled", () => {
-    const result = computeEmptyState({ ...baseInputs, allQueriesSettled: false });
+    const result = computeEmptyState({
+      ...baseInputs,
+      allQueriesSettled: false,
+    });
     expect(result.showEmptyState).toBe(false);
   });
 

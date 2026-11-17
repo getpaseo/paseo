@@ -1,6 +1,6 @@
 import React, { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -25,6 +25,7 @@ import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostProjects } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHosts } from "@/runtime/host-runtime";
+import { useSessionStore } from "@/stores/session-store";
 import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
@@ -45,6 +46,8 @@ import {
   resolveProvidersToFetch,
   requiresImportSessionsHostUpgrade,
   sumFilteredAlreadyImportedCount,
+  sessionImportProvider,
+  sessionImportProviders,
 } from "@/components/import-session-sheet-view-model";
 
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
@@ -79,6 +82,7 @@ type RecentSessionsResponse = Awaited<
 type SessionsQueryKey = ReadonlyArray<string | number | null>;
 
 function buildSessionsQueryKey(input: {
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
@@ -86,6 +90,7 @@ function buildSessionsQueryKey(input: {
 }): SessionsQueryKey {
   return [
     "recent-provider-sessions",
+    input.serverId,
     input.cwd,
     input.query,
     input.limit,
@@ -100,11 +105,15 @@ interface SessionsQueryConfig {
   // Query's default retry would keep the header spinner turning and pile up
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
-  placeholderData: typeof keepPreviousData;
+  placeholderData: (
+    previous: RecentSessionsResponse | undefined,
+    previousQuery: { queryKey: readonly unknown[] } | undefined,
+  ) => RecentSessionsResponse | undefined;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
 function buildSessionsQueriesConfig(args: {
+  serverId: string | null;
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
@@ -113,14 +122,26 @@ function buildSessionsQueriesConfig(args: {
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, visible, client, cwd, query, limit, hostDisconnectedMessage } = args;
+  const {
+    serverId,
+    providersToFetch,
+    visible,
+    client,
+    cwd,
+    query,
+    limit,
+    hostDisconnectedMessage,
+  } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
-    queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
+    queryKey: buildSessionsQueryKey({ serverId, cwd, query, limit, provider }),
     enabled,
     retry: false as const,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, previousQuery) => {
+      const key = previousQuery?.queryKey;
+      return key?.[1] === serverId && key[2] === cwd && key[5] === provider ? previous : undefined;
+    },
     queryFn: async () => {
       if (!client) {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -517,11 +538,15 @@ export function ImportSessionSheet({
     [snapshotEntries],
   );
 
-  const sessionsQueryRoot = useMemo(() => ["recent-provider-sessions", scopeCwd], [scopeCwd]);
+  const sessionsQueryRoot = useMemo(
+    () => ["recent-provider-sessions", serverId, scopeCwd],
+    [serverId, scopeCwd],
+  );
 
   const queriesConfig = useMemo(
     () =>
       buildSessionsQueriesConfig({
+        serverId,
         providersToFetch,
         visible,
         client,
@@ -530,18 +555,25 @@ export function ImportSessionSheet({
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [serverId, providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
 
-  const aggregatedEntries = useMemo(() => aggregateSessionEntries(queries), [queries]);
+  const hostAgents = useSessionStore((state) => state.sessions[serverId ?? ""]?.agents);
+  const aggregatedEntries = useMemo(
+    () => aggregateSessionEntries(queries, hostAgents ? [...hostAgents.values()] : []),
+    [queries, hostAgents],
+  );
   const totalAlreadyImportedCount = useMemo(
     () => sumFilteredAlreadyImportedCount(queries),
     [queries],
   );
 
-  const filterProviders = useMemo(() => [...(providersToFetch ?? [])].sort(), [providersToFetch]);
+  const filterProviders = useMemo(
+    () => sessionImportProviders(providersToFetch ?? []),
+    [providersToFetch],
+  );
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterAnchorRef = useRef<View>(null);
 
@@ -556,7 +588,9 @@ export function ImportSessionSheet({
 
   const visibleEntries = useMemo(() => {
     if (selectedProvider === ALL_FILTER_VALUE) return aggregatedEntries;
-    return aggregatedEntries.filter((entry) => entry.providerId === selectedProvider);
+    return aggregatedEntries.filter(
+      (entry) => sessionImportProvider(entry.providerId) === selectedProvider,
+    );
   }, [aggregatedEntries, selectedProvider]);
 
   const projectServerIds = useMemo(() => (serverId ? [serverId] : []), [serverId]);
@@ -585,7 +619,7 @@ export function ImportSessionSheet({
       { id: ALL_FILTER_VALUE, label: t("importSession.filters.all") },
       ...filterProviders.map((provider) => ({
         id: provider,
-        label: providerLabelById.get(provider) ?? provider,
+        label: provider === "claude" ? "Claude" : (providerLabelById.get(provider) ?? provider),
       })),
     ],
     [filterProviders, providerLabelById, t],
@@ -712,10 +746,16 @@ export function ImportSessionSheet({
   const handleRetryProvider = useCallback(
     (provider: string) => {
       void queryClient.refetchQueries({
-        queryKey: buildSessionsQueryKey({ cwd: scopeCwd, query, limit: pageLimit, provider }),
+        queryKey: buildSessionsQueryKey({
+          serverId,
+          cwd: scopeCwd,
+          query,
+          limit: pageLimit,
+          provider,
+        }),
       });
     },
-    [pageLimit, query, queryClient, scopeCwd],
+    [serverId, pageLimit, query, queryClient, scopeCwd],
   );
 
   const handleShowAll = useCallback(() => setIsShowingAllDirectories(true), []);
