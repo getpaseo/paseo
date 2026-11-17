@@ -103,6 +103,7 @@ function createHarness(overrides?: {
     agentStorage: {} as AutoArchiveArchiveOptions["agentStorage"],
     terminalManager: {} as AutoArchiveArchiveOptions["terminalManager"],
     findWorkspaceIdForCwd: vi.fn(async () => "ws-auto-archive"),
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: vi.fn(async () => []),
     getAutoArchivedChangeRequestUrl: vi.fn(
       async () => overrides?.autoArchivedChangeRequestUrl ?? null,
@@ -312,6 +313,7 @@ function createRealOutcomeHarness(input: {
       const match = active.find((workspace) => workspace.cwd === cwd);
       return match?.workspaceId ?? null;
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !input.archivedWorkspaceIds.has(workspace.workspaceId)),
     getAutoArchivedChangeRequestUrl: async (workspaceId: string) =>

@@ -27,7 +27,6 @@ import {
 import { validateBeforeRequest, validateBeforeResult } from "./plugins/lifecycle/index.js";
 import { UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
-import { saveArchivedHead } from "./session/workspace-recovery/archived-head.js";
 import { isPlatform } from "../test-utils/platform.js";
 
 function createGitHubServiceStub(): ForgeService {
@@ -434,29 +433,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       );
       expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath + "-1");
       expect(existsSync(first.worktree.worktreePath)).toBe(true);
-    });
-
-    test("does not place a new worktree where an archived worktree's HEAD is still saved", async () => {
-      const { tempDir, repoDir, paseoHome } = createGitRepo();
-      cleanupPaths.push(tempDir);
-      const archived = await createCoreWorktree(
-        { cwd: repoDir, paseoHome, branchName: "first", worktreeSlug: "same" },
-        createCoreDeps(),
-      );
-      const archivedPath = archived.worktree.worktreePath;
-      await saveArchivedHead({
-        worktreePath: archivedPath,
-        repoRoot: repoDir,
-        hadActiveWorkspace: true,
-      });
-      execFileSync("git", ["worktree", "remove", "--force", archivedPath], { cwd: repoDir });
-
-      const created = await createCoreWorktree(
-        { cwd: repoDir, paseoHome, branchName: "second", worktreeSlug: "same" },
-        createCoreDeps(),
-      );
-
-      expect(created.worktree.worktreePath).toBe(archivedPath + "-1");
     });
 
     test("creates branch-off worktrees from origin main without tracking origin main", async () => {

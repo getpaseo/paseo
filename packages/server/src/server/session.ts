@@ -1260,6 +1260,7 @@ export class Session {
       archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
       findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
       listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+      listAllWorkspaces: () => this.workspaceRegistry.listAll(),
       archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
       emit: (message) => this.emit(message),
       emitAgentRemove: (agentId) => this.agentUpdates.removeAgent(agentId),
@@ -5716,6 +5717,7 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+        listAllWorkspaces: () => this.workspaceRegistry.listAll(),
         archiveWorkspaceRecord: (workspaceId, archivedAt) =>
           this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
@@ -8065,6 +8067,7 @@ export class Session {
               findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
               getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
+              listAllWorkspaces: () => this.workspaceRegistry.listAll(),
               archiveWorkspaceRecord: (workspaceId, archivedAt) =>
                 this.archiveWorkspaceRecord(workspaceId, archivedAt),
               emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>

@@ -6,6 +6,7 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
+  type WorkspaceWorktreeRef,
   killTerminalsForWorkspace,
 } from "../workspace-archive-service.js";
 import type {
@@ -28,6 +29,7 @@ export interface AutoArchiveArchiveOptions {
   terminalManager: TerminalManager;
   findWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
+  listAllWorkspaces: () => Promise<WorkspaceWorktreeRef[]>;
   getAutoArchivedChangeRequestUrl: (workspaceId: string) => Promise<string | null>;
   archiveWorkspaceRecord: (
     workspaceId: string,
@@ -105,6 +107,7 @@ export async function archiveIfSafe(input: {
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
         listActiveWorkspaces: options.listActiveWorkspaces,
+        listAllWorkspaces: options.listAllWorkspaces,
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           options.archiveWorkspaceRecord(
             workspaceIdToArchive,

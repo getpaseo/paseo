@@ -262,6 +262,50 @@ test.skipIf(process.platform === "win32")(
   60000,
 );
 
+test.skipIf(process.platform === "win32")(
+  "restoring a worktree archived on a branch opens the new worktree that checked the branch out",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const created = await ctx.client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repo.repoDir,
+        action: "branch-off",
+        branchName: "reused-branch",
+        baseBranch: "main",
+      },
+    });
+    const archivedId = created.workspace?.id;
+    const archivedDirectory = created.workspace?.workspaceDirectory;
+    if (!archivedId || !archivedDirectory) throw new Error(created.error ?? "Failed to create");
+    const commit = commitWork(archivedDirectory, "work.txt");
+    await ctx.client.archiveWorkspace(archivedId);
+    const reopened = await ctx.client.createWorkspace({
+      source: { kind: "worktree", cwd: repo.repoDir, action: "checkout", refName: "reused-branch" },
+    });
+
+    await ctx.client.restoreWorkspace(archivedId);
+
+    expect({
+      reopenedDirectory: reopened.workspace?.workspaceDirectory,
+      archivedActive: await isWorkspaceActive(archivedId),
+      reopenedActive: await isWorkspaceActive(reopened.workspace?.id ?? ""),
+      head: gitOutput(archivedDirectory, ["rev-parse", "HEAD"]),
+      branch: gitOutput(archivedDirectory, ["branch", "--show-current"]),
+      savedHeads: gitOutput(repo.repoDir, ["for-each-ref", "refs/paseo"]),
+    }).toEqual({
+      reopenedDirectory: archivedDirectory,
+      archivedActive: true,
+      reopenedActive: true,
+      head: commit,
+      branch: "reused-branch",
+      savedHeads: "",
+    });
+  },
+  60000,
+);
+
 test.skipIf(process.platform === "win32").each([
   ["root", "subdirectory"],
   ["subdirectory", "root"],

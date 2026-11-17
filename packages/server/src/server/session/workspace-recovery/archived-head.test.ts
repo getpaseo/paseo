@@ -1,16 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import {
-  isHeldByArchivedWorktree,
-  readArchivedHead,
-  releaseArchivedHead,
-  saveArchivedHead,
-} from "./archived-head.js";
+import { readArchivedHead, releaseArchivedHead, saveArchivedHead } from "./archived-head.js";
 
 const tempDirectories: string[] = [];
 
@@ -46,14 +41,14 @@ function removeWorktree(repoRoot: string, worktreePath: string): void {
 test("restore checks out the saved branch while it still points at the saved commit, and the commit otherwise", async () => {
   const { repoRoot, worktreePath } = createRepositoryWithWorktree();
   const commit = git(worktreePath, ["rev-parse", "HEAD"]);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
   removeWorktree(repoRoot, worktreePath);
 
-  const onBranch = await readArchivedHead({ repoRoot, worktreePath });
+  const onBranch = await readArchivedHead({ repoRoot, workspaceId: "wks_a" });
   git(repoRoot, ["branch", "-f", "feature", "main"]);
-  const branchMoved = await readArchivedHead({ repoRoot, worktreePath });
+  const branchMoved = await readArchivedHead({ repoRoot, workspaceId: "wks_a" });
   git(repoRoot, ["branch", "-D", "feature"]);
-  const branchDeleted = await readArchivedHead({ repoRoot, worktreePath });
+  const branchDeleted = await readArchivedHead({ repoRoot, workspaceId: "wks_a" });
 
   expect({ onBranch, branchMoved, branchDeleted }).toEqual({
     onBranch: { checkout: "feature", commit },
@@ -62,42 +57,33 @@ test("restore checks out the saved branch while it still points at the saved com
   });
 });
 
-test("a removed folder reached through a symlinked parent finds the HEAD saved under its real path", async () => {
+test("each workspace on the folder keeps its own saved HEAD until it is released", async () => {
   const { repoRoot, worktreePath } = createRepositoryWithWorktree();
-  const linkedParent = `${dirname(worktreePath)}-link`;
-  symlinkSync(dirname(worktreePath), linkedParent);
-  tempDirectories.push(linkedParent);
-  const linkedWorktreePath = join(linkedParent, basename(worktreePath));
   const commit = git(worktreePath, ["rev-parse", "HEAD"]);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
+  // Before v0.1.95 a workspace ID was its path, which git rejects in a ref name.
+  const pathShapedId = "/home/u/.paseo/worktrees/repo/feature";
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_root", pathShapedId] });
   removeWorktree(repoRoot, worktreePath);
+
+  await releaseArchivedHead({ repoRoot, workspaceId: "wks_root" });
 
   expect({
-    held: await isHeldByArchivedWorktree({ repoRoot, worktreePath: linkedWorktreePath }),
-    head: await readArchivedHead({ repoRoot, worktreePath: linkedWorktreePath }),
-  }).toEqual({ held: true, head: { checkout: "feature", commit } });
+    released: await readArchivedHead({ repoRoot, workspaceId: "wks_root" }),
+    kept: await readArchivedHead({ repoRoot, workspaceId: pathShapedId }),
+    never: await readArchivedHead({ repoRoot, workspaceId: "wks_other" }),
+  }).toEqual({ released: null, kept: { checkout: "feature", commit }, never: null });
+  await releaseArchivedHead({ repoRoot, workspaceId: pathShapedId });
+  expect(git(repoRoot, ["for-each-ref", "refs/paseo"])).toBe("");
 });
 
-test("a HEAD left behind by a failed release is not read as current after the folder disappears", async () => {
-  const { repoRoot, worktreePath } = createRepositoryWithWorktree();
-  // An earlier archive saved HEAD, and the unarchive that followed could not delete it.
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
-  git(worktreePath, ["commit", "--allow-empty", "-m", "work after unarchive"]);
-  // The folder disappears outside Paseo, then the active workspace is archived.
-  removeWorktree(repoRoot, worktreePath);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
-
-  expect(await readArchivedHead({ repoRoot, worktreePath })).toBeNull();
-});
-
-test("archiving workspaces that were already archived keeps the HEAD saved when the folder went", async () => {
+test("archiving again once the folder is gone keeps the HEAD saved before", async () => {
   const { repoRoot, worktreePath } = createRepositoryWithWorktree();
   const commit = git(worktreePath, ["rev-parse", "HEAD"]);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
   removeWorktree(repoRoot, worktreePath);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: false });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
 
-  expect(await readArchivedHead({ repoRoot, worktreePath })).toEqual({
+  expect(await readArchivedHead({ repoRoot, workspaceId: "wks_a" })).toEqual({
     checkout: "feature",
     commit,
   });
@@ -105,23 +91,20 @@ test("archiving workspaces that were already archived keeps the HEAD saved when 
 
 test("saving again replaces the HEAD saved before, whatever git named it", async () => {
   const { repoRoot, worktreePath } = createRepositoryWithWorktree();
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
   // The next name sits below the saved one, which git cannot hold beside it.
   git(worktreePath, ["checkout", "-b", "other"]);
   git(worktreePath, ["branch", "-D", "feature"]);
   git(worktreePath, ["checkout", "-b", "feature/next"]);
   git(worktreePath, ["checkout", "--detach"]);
   const detached = git(worktreePath, ["rev-parse", "HEAD"]);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: false });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
   git(worktreePath, ["checkout", "feature/next"]);
-  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: false });
+  await saveArchivedHead({ worktreePath, workspaceIds: ["wks_a"] });
   removeWorktree(repoRoot, worktreePath);
 
   expect({
     saved: git(repoRoot, ["for-each-ref", "--format=%(objectname)", "refs/paseo"]),
-    restored: await readArchivedHead({ repoRoot, worktreePath }),
+    restored: await readArchivedHead({ repoRoot, workspaceId: "wks_a" }),
   }).toEqual({ saved: detached, restored: { checkout: "feature/next", commit: detached } });
-
-  await releaseArchivedHead({ repoRoot, worktreePath });
-  expect(git(repoRoot, ["for-each-ref", "refs/paseo"])).toBe("");
 });

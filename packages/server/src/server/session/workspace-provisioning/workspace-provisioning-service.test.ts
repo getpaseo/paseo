@@ -628,7 +628,7 @@ test.each([
     });
     await workspaceRegistry.upsert(workspace);
     // The archive saved HEAD, then failed to remove the folder.
-    await saveArchivedHead({ worktreePath: worktree, repoRoot: repo, hadActiveWorkspace: true });
+    await saveArchivedHead({ worktreePath: worktree, workspaceIds: [workspace.workspaceId] });
     expect(git(repo, ["for-each-ref", "--format=%(objectname)", "refs/paseo"])).toBe(
       git(worktree, ["rev-parse", "HEAD"]),
     );
@@ -640,7 +640,7 @@ test.each([
   },
 );
 
-test("ensureWorkspaceRecordUnarchived unarchives when git cannot delete the saved HEAD", async () => {
+test("ensureWorkspaceRecordUnarchived keeps the workspace archived when git cannot delete the saved HEAD", async () => {
   const repo = path.join(tmpDir, "repo");
   const worktree = path.join(tmpDir, "worktree");
   const git = (cwd: string, args: string[]) =>
@@ -675,7 +675,7 @@ test("ensureWorkspaceRecordUnarchived unarchives when git cannot delete the save
   });
   await workspaceRegistry.upsert(workspace);
   // The archive saved HEAD, then failed to remove the folder.
-  await saveArchivedHead({ worktreePath: worktree, repoRoot: repo, hadActiveWorkspace: true });
+  await saveArchivedHead({ worktreePath: worktree, workspaceIds: [workspace.workspaceId] });
   expect(git(repo, ["for-each-ref", "--format=%(objectname)", "refs/paseo"])).toBe(
     git(worktree, ["rev-parse", "HEAD"]),
   );
@@ -683,10 +683,9 @@ test("ensureWorkspaceRecordUnarchived unarchives when git cannot delete the save
   // Another git command holds the refs lock.
   writeFileSync(path.join(repo, ".git", "packed-refs.lock"), "");
 
-  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(workspace);
+  await expect(provisioning.ensureWorkspaceRecordUnarchived(workspace)).rejects.toThrow();
 
-  expect(unarchived.archivedAt).toBeNull();
-  expect((await workspaceRegistry.get(workspace.workspaceId))?.archivedAt).toBeNull();
+  expect((await workspaceRegistry.get(workspace.workspaceId))?.archivedAt).toBe(ARCHIVED_AT);
 });
 
 test("ensureWorkspaceRecordUnarchived preserves the consumed auto-archive change request", async () => {

@@ -422,8 +422,7 @@ test.each([
     }));
     await saveArchivedHead({
       worktreePath: worktree,
-      repoRoot: fixture.repoDir,
-      hadActiveWorkspace: true,
+      workspaceIds: [fixture.workspace.workspaceId],
     });
     await fixture.archiveAndRemove();
 
@@ -445,8 +444,7 @@ test("restores the HEAD archive saved against the repository default when the re
   const fixture = await createBaseRecoveryFixture(null);
   await saveArchivedHead({
     worktreePath: fixture.workspace.cwd,
-    repoRoot: fixture.repoDir,
-    hadActiveWorkspace: true,
+    workspaceIds: [fixture.workspace.workspaceId],
   });
   await fixture.archiveAndRemove();
 

@@ -1,24 +1,23 @@
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs";
 import { stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { join } from "node:path";
 
 import { runGitCommand } from "../../../utils/run-git-command.js";
 
 // Removing a worktree folder at archive deletes its HEAD, and with it the only hold on commits
-// that no branch reaches. Before the folder goes, archive saves HEAD as one ref:
+// that no branch reaches. Before the folder goes, archive saves HEAD once for each workspace on
+// the folder:
 //
-//   refs/paseo/archived/<sha256 of the folder's real path>/<git's name for HEAD>  ->  HEAD's commit
+//   refs/paseo/archived/<sha256 of the workspace ID>/<git's name for HEAD>  ->  HEAD's commit
 //
 // The name is `git rev-parse --abbrev-ref HEAD`, stored as git prints it and never parsed here.
 // The ref keeps the commit alive, and recovery hands the name back to git when it still means
 // that commit, so git decides whether the worktree comes back on a branch or detached.
 //
-// The ref belongs to the folder rather than to a workspace: several workspaces can open one
-// worktree, and whichever is recovered first brings the folder back. Refs outside refs/heads,
-// refs/tags and refs/remotes are shared by every worktree of a repository and hidden from
-// branch lists, pushes and fetches.
+// The ref belongs to the workspace record: unarchiving the record deletes it, and nothing else
+// does. The ID is hashed because pre-v0.1.95 IDs are paths, which git rejects in a ref name.
+// Refs outside refs/heads, refs/tags and refs/remotes are shared by every worktree of a
+// repository and hidden from branch lists, pushes and fetches.
 
 async function exists(path: string): Promise<boolean> {
   return stat(path).then(
@@ -27,27 +26,9 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
-// fs.realpath rather than the native resolver, which can return a Windows 8.3 alias.
-const resolveRealPath = promisify(realpath);
-
-// The folder's path with symlinks resolved, even after the folder is gone: archive, recovery and
-// worktree placement can each spell one folder differently, and all must reach the same key.
-async function canonicalFolderPath(path: string): Promise<string> {
-  const absolute = resolve(path);
-  const parent = dirname(absolute);
-  if (parent === absolute) return absolute;
-  try {
-    return await resolveRealPath(absolute);
-  } catch {
-    return join(await canonicalFolderPath(parent), basename(absolute));
-  }
-}
-
-async function savedHeadPrefix(worktreePath: string): Promise<string> {
-  const folder = createHash("sha256")
-    .update(await canonicalFolderPath(worktreePath))
-    .digest("hex");
-  return `refs/paseo/archived/${folder}/`;
+function savedHeadPrefix(workspaceId: string): string {
+  const workspace = createHash("sha256").update(workspaceId).digest("hex");
+  return `refs/paseo/archived/${workspace}/`;
 }
 
 async function listSavedHeads(cwd: string, prefix: string): Promise<string[]> {
@@ -85,25 +66,21 @@ async function readHeadName(worktreePath: string): Promise<string | null> {
 }
 
 /**
- * Saves the worktree's HEAD before archive removes its folder. When the archive took the last active workspace off the worktree,
- * every earlier archive was already undone, so what an earlier archive saved is a leftover and
- * goes; otherwise it is still the worktree's saved HEAD and stays.
+ * Saves the worktree's HEAD for each workspace on it, before archive removes its folder. A folder
+ * without a HEAD has nothing to save, and what an earlier archive saved for these workspaces stays.
  */
 export async function saveArchivedHead(input: {
   worktreePath: string;
-  repoRoot: string | null;
-  hadActiveWorkspace: boolean;
+  workspaceIds: readonly string[];
 }): Promise<void> {
-  const prefix = await savedHeadPrefix(input.worktreePath);
   const name = await readHeadName(input.worktreePath);
-  if (name) {
-    const cwd = input.worktreePath;
+  if (!name) return;
+  const cwd = input.worktreePath;
+  for (const workspaceId of input.workspaceIds) {
+    const prefix = savedHeadPrefix(workspaceId);
+    // Delete before create: an earlier `feature` would block a new `feature/next`.
     await discardSavedHeads(cwd, prefix);
     await runGitCommand(["update-ref", `${prefix}${name}`, "HEAD"], { cwd });
-    return;
-  }
-  if (input.hadActiveWorkspace && input.repoRoot && (await isRepository(input.repoRoot))) {
-    await discardSavedHeads(input.repoRoot, prefix);
   }
 }
 
@@ -115,10 +92,10 @@ export interface ArchivedHead {
 
 export async function readArchivedHead(input: {
   repoRoot: string;
-  worktreePath: string;
+  workspaceId: string;
 }): Promise<ArchivedHead | null> {
   if (!(await isRepository(input.repoRoot))) return null;
-  const prefix = await savedHeadPrefix(input.worktreePath);
+  const prefix = savedHeadPrefix(input.workspaceId);
   const [saved] = await listSavedHeads(input.repoRoot, prefix);
   if (!saved) return null;
   const separator = saved.indexOf(" ");
@@ -131,21 +108,15 @@ export async function readArchivedHead(input: {
   return { checkout: named.stdout.trim() === commit ? name : commit, commit };
 }
 
-/** Deletes the saved HEAD once a workspace on the worktree is unarchived. */
+/**
+ * Deletes the workspace's saved HEAD when it is unarchived. Throws when git cannot, so the
+ * workspace stays archived with its ref rather than active with a ref a later restore would read.
+ */
 export async function releaseArchivedHead(input: {
   repoRoot: string;
-  worktreePath: string;
+  workspaceId: string;
 }): Promise<void> {
   // Without a repository there is no ref to delete.
   if (!(await isRepository(input.repoRoot))) return;
-  await discardSavedHeads(input.repoRoot, await savedHeadPrefix(input.worktreePath));
-}
-
-/** Whether an archived worktree still holds this path, so a new worktree must not take it. */
-export async function isHeldByArchivedWorktree(input: {
-  repoRoot: string;
-  worktreePath: string;
-}): Promise<boolean> {
-  const saved = await listSavedHeads(input.repoRoot, await savedHeadPrefix(input.worktreePath));
-  return saved.length > 0;
+  await discardSavedHeads(input.repoRoot, savedHeadPrefix(input.workspaceId));
 }

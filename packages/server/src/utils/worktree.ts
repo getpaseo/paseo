@@ -47,7 +47,6 @@ import {
   isPathInsideRoot,
 } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
-import { isHeldByArchivedWorktree } from "../server/session/workspace-recovery/archived-head.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -1357,12 +1356,7 @@ export async function resolveDefaultWorktreePath(
   );
   let candidate = original;
   let suffix = 1;
-  while (
-    (await pathExists(candidate)) ||
-    (await isHeldByArchivedWorktree({ repoRoot: options.cwd, worktreePath: candidate }))
-  ) {
-    candidate = `${original}-${suffix++}`;
-  }
+  while (await pathExists(candidate)) candidate = `${original}-${suffix++}`;
   return candidate;
 }
 

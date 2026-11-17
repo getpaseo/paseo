@@ -436,29 +436,18 @@ export function createWorkspaceProvisioningService(deps: {
   }
 
   // Every unarchive passes through ensureWorkspaceRecordUnarchived, so releasing here means a
-  // saved HEAD exists only while its worktree's workspaces are archived.
+  // saved HEAD exists only while its workspace is archived.
   async function releaseSavedHead(
     workspace: PersistedWorkspaceRecord,
     project: PersistedProjectRecord,
   ): Promise<void> {
-    if (!workspace.archivedAt || workspace.kind !== "worktree") return;
-    try {
-      await releaseArchivedHead({
-        // COMPAT(worktreeRestoreMissingMainRepoRoot): records created before v0.1.110 lack
-        // mainRepoRoot; remove the project-root fallback after 2027-01-17.
-        repoRoot: workspace.mainRepoRoot ?? project.rootPath,
-        // COMPAT(worktreeRestoreMissingWorktreeRoot): records created before v0.1.110 lack
-        // worktreeRoot; remove the cwd fallback after 2027-01-17.
-        worktreePath: workspace.worktreeRoot ?? workspace.cwd,
-      });
-    } catch (error) {
-      // A ref left behind keeps one commit alive, and the next archive drops it; failing the
-      // unarchive would strand the workspace.
-      logger.warn(
-        { err: error, workspaceId: workspace.workspaceId },
-        "Failed to release the HEAD archive saved; unarchiving anyway",
-      );
-    }
+    if (!workspace.archivedAt) return;
+    await releaseArchivedHead({
+      // COMPAT(worktreeRestoreMissingMainRepoRoot): records created before v0.1.110 lack
+      // mainRepoRoot; remove the project-root fallback after 2027-01-17.
+      repoRoot: workspace.mainRepoRoot ?? project.rootPath,
+      workspaceId: workspace.workspaceId,
+    });
   }
 
   async function ensureWorkspaceRecordUnarchived(

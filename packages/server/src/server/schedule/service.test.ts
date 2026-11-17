@@ -159,6 +159,7 @@ function createScheduleService(options: TestScheduleServiceOptions): ScheduleSer
           findWorkspaceIdForCwd: async (cwd) =>
             Array.from(workspaces.values()).find((workspace) => workspace.cwd === cwd)
               ?.workspaceId ?? null,
+          listAllWorkspaces: async () => [],
           listActiveWorkspaces,
           archiveWorkspaceRecord: async (id) => {
             const workspace = workspaces.get(id);
@@ -260,6 +261,7 @@ async function createRegistryBackedScheduleWorkspaceDeps(rootDir: string): Promi
               agentStorage,
               findWorkspaceIdForCwd: async (cwd) =>
                 resolveWorkspaceIdForPath(cwd, await workspaceRegistry.listAll()),
+              listAllWorkspaces: async () => [],
               listActiveWorkspaces: async () =>
                 (await workspaceRegistry.listAll())
                   .filter((workspace) => !workspace.archivedAt)

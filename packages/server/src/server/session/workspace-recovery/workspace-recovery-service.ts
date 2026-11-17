@@ -136,7 +136,7 @@ export function createWorkspaceRecoveryService(deps: {
     const previousWorktree = await resolvePreviousWorktree(workspace);
     const archivedHead = await readArchivedHead({
       repoRoot: sourceRepoRoot,
-      worktreePath: previousWorktree.path,
+      workspaceId: workspace.workspaceId,
     });
     return createRecoveryPlan({
       action: "restore",

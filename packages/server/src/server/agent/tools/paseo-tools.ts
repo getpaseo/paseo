@@ -137,6 +137,7 @@ export interface PaseoToolHostDependencies {
   >;
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
+  listAllWorkspaces?: ArchiveDependencies["listAllWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
@@ -3337,6 +3338,9 @@ function archiveWorktreeDependencies(
   if (!options.listActiveWorkspaces) {
     throw new Error("Active workspace lister is required to archive worktrees");
   }
+  if (!options.listAllWorkspaces) {
+    throw new Error("Workspace lister is required to archive worktrees");
+  }
   if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
     throw new Error("Workspace update emitter is required to archive worktrees");
   }
@@ -3355,6 +3359,7 @@ function archiveWorktreeDependencies(
     agentStorage: context.agentStorage,
     findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
     listActiveWorkspaces: options.listActiveWorkspaces,
+    listAllWorkspaces: options.listAllWorkspaces,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,

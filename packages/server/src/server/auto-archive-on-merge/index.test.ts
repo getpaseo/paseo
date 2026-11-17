@@ -61,6 +61,7 @@ test("fans one fresh observation out to every workspace attached to its exact cw
       },
       getSnapshot,
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () => [
       { workspaceId: "workspace-a", cwd: "/repo/worktree" },
       { workspaceId: "workspace-b", cwd: "/repo/worktree/child/.." },
@@ -114,6 +115,7 @@ test("serializes the complete fan-out for duplicate merge events on one cwd", as
       },
       getSnapshot: async () => snapshot,
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () => [
       { workspaceId: "workspace-a", cwd: "/repo/worktree" },
       { workspaceId: "workspace-b", cwd: "/repo/worktree/child/.." },
@@ -171,6 +173,7 @@ test("does not fan out a stale merged event when the fresh observation has no PR
       },
       getSnapshot,
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: vi.fn(async () => [
       { workspaceId: "workspace-a", cwd: "/repo/worktree" },
     ]),
@@ -202,6 +205,7 @@ test("logs and skips when the fresh observation cannot be read", async () => {
         throw new Error("snapshot failed");
       },
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: vi.fn(),
   } as unknown as AutoArchiveOnMergeOptions;
 
@@ -233,6 +237,7 @@ test("does not read an observation when auto-archive is disabled", async () => {
       },
       getSnapshot,
     },
+    listAllWorkspaces: async () => [],
     listActiveWorkspaces: vi.fn(),
   } as unknown as AutoArchiveOnMergeOptions;
 
