@@ -9797,7 +9797,7 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     void firstRun.catch(() => undefined);
     await appServer.waitForRequest("thread/loaded/list");
     const senderRejection = expect(senderStart.started).rejects.toThrow(
-      "its prompt was not delivered",
+      "Turn was canceled before starting",
     );
     const cancel = manager.cancelAgentRun(agent.id);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -15906,3 +15906,57 @@ test("out-of-band agent delivery journals the original identity while a turn is 
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+for (const outcome of ["not_submitted", "unknown"] as const) {
+  test(`sender receipt preserves ${outcome} across provider startup failure`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "startup-receipt-outcome-"));
+    const failure = Object.assign(new Error("Native startup response failed"), {
+      deliveryOutcome: outcome,
+    });
+    let starts = 0;
+    class AdmissionClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        const session = new TestAgentSession(config);
+        const start = session.startTurn.bind(session);
+        session.startTurn = async () => {
+          starts += 1;
+          if (starts === 1) throw failure;
+          return start();
+        };
+        return session;
+      }
+    }
+    const manager = new AgentManager({
+      clients: { codex: new AdmissionClient() },
+      registry: new AgentStorage(join(workdir, "agents"), logger),
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    onTestFinished(async () => {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    });
+    const receipts = new MessageReceipts(join(workdir, "receipts"));
+    const input = {
+      agentId: agent.id,
+      messageId: "startup",
+      request: { text: "Original" },
+      send: async (beforeDispatch: () => Promise<void>) => {
+        await beforeDispatch();
+        const result = await startAgentRun(manager, agent.id, "Original", logger, {
+          runOptions: { clientMessageId: "startup" },
+        });
+        if (result.disposition === "turn_started") await result.started;
+      },
+    };
+    await expect(receipts.send(input)).rejects.toMatchObject({ deliveryOutcome: outcome });
+    expect(await receipts.getStatus(input)).toMatchObject({
+      status: outcome === "unknown" ? "unknown" : "rejected",
+    });
+    if (outcome === "not_submitted") await receipts.send(input);
+    else await expect(receipts.send(input)).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    expect(starts).toBe(outcome === "not_submitted" ? 2 : 1);
+  });
+}

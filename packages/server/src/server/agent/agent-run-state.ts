@@ -13,7 +13,7 @@ export interface ForegroundTurnWaiter {
 type ForegroundRunStart =
   | { status: "pending" }
   | { status: "started"; turnId: string }
-  | { status: "failed"; error: string; stale?: true };
+  | { status: "failed"; error: string; cause?: Error; stale?: true };
 
 export interface PendingForegroundRun {
   token: string;
@@ -388,7 +388,8 @@ export class ForegroundPromptStart {
     // A stale-session failure is retried with a new run; wait for it unless dispatch ended.
     if (run?.start.status === "failed" && run.start.stale && !ended) return;
     this.done = true;
-    this.rejectStarted(new Error(this.describeUnstarted(run)));
+    const cause = run?.start.status === "failed" ? run.start.cause : undefined;
+    this.rejectStarted(cause ?? new Error(this.describeUnstarted(run)));
   }
 
   private describeUnstarted(run: PendingForegroundRun | null): string {

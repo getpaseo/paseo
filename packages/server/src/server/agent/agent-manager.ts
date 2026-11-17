@@ -1,3 +1,4 @@
+import { deliveryFailureOutcome } from "../message-receipts/outcome.js";
 import { messageFingerprint } from "../message-receipts/fingerprint.js";
 import {
   MessageAcceptanceStore,
@@ -3176,6 +3177,11 @@ export class AgentManager {
     } catch (error) {
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
+          this.runs.settleForegroundStart(pendingRun, {
+            status: "failed",
+            error: error.message,
+            cause: error,
+          });
           if (options?.clientMessageId) {
             this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
               messageId: options.clientMessageId,
@@ -3207,13 +3213,23 @@ export class AgentManager {
       }
       agent.pendingReplacement = false;
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-      this.runs.settleForegroundStart(pendingRun, { status: "failed", error: errorMsg });
+      this.runs.settleForegroundStart(pendingRun, {
+        status: "failed",
+        error: errorMsg,
+        ...(error instanceof Error ? { cause: error } : {}),
+      });
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
         if (options?.clientMessageId) {
-          this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
-            messageId: options.clientMessageId,
-          });
+          this.recordSubmittedPrompt(
+            agent,
+            prompt,
+            options.clientMessageId,
+            deliveryFailureOutcome(error) === "unknown" ? "unknown" : "rejected",
+            {
+              messageId: options.clientMessageId,
+            },
+          );
         }
         await this.handleStreamEvent(agent, {
           type: "turn_failed",
@@ -5710,7 +5726,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
     clientMessageId: string,
-    outcome: "accepted" | "rejected",
+    outcome: "accepted" | "rejected" | "unknown",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
     const items = projectAgentMessages({
@@ -5721,7 +5737,7 @@ export class AgentManager {
     });
     for (const item of items) {
       // Human attempts stay in history on rejection; delivery notifications require acceptance.
-      if (outcome === "rejected" && item.type !== "user_message") continue;
+      if (outcome !== "accepted" && item.type !== "user_message") continue;
       this.recordSubmittedPromptItem(agent, item, options);
     }
   }
