@@ -502,6 +502,8 @@ through that runner. Keep persistent dev servers in [workspace scripts](../publi
 where their lifecycle and stop control remain visible. A heavy job receives its
 own scope and budget under the aggregate slice, even when launched by an agent.
 It is bounded by its deadline rather than the parent agent's scope.
+Cancelling a job or losing its wrapper also cancels its queued submission; it cannot
+start later when a slot opens. An admitted job releases its scope on cancellation.
 
 Install the launcher and its `is-main-module.mjs` dependency at a stable path
 outside a disposable worktree. Schedule `reap` in a user systemd timer once a

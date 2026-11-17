@@ -168,6 +168,23 @@ function launchCommand(command, args, env = process.env) {
   });
 }
 
+function watchParentProcess(parent, interrupt) {
+  const timer = setInterval(() => {
+    if (process.ppid !== parent) interrupt();
+  }, 1000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+function interruptSignals(interrupt) {
+  process.on("SIGTERM", interrupt);
+  process.on("SIGINT", interrupt);
+  return () => {
+    process.off("SIGTERM", interrupt);
+    process.off("SIGINT", interrupt);
+  };
+}
+
 export function processStartTicks(stat) {
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
 }
@@ -223,21 +240,8 @@ async function run(args) {
         }
       }
     },
-    watchParent: (interrupt) => {
-      const timer = setInterval(() => {
-        if (process.ppid !== parent) interrupt();
-      }, 1000);
-      timer.unref();
-      return () => clearInterval(timer);
-    },
-    signals: (interrupt) => {
-      process.on("SIGTERM", interrupt);
-      process.on("SIGINT", interrupt);
-      return () => {
-        process.off("SIGTERM", interrupt);
-        process.off("SIGINT", interrupt);
-      };
-    },
+    watchParent: (interrupt) => watchParentProcess(parent, interrupt),
+    signals: interruptSignals,
   });
 }
 
@@ -245,17 +249,52 @@ async function run(args) {
 // locks release on crashes; there are no stale lock files to guess about or reap.
 export const JOB_SHELL = `
 set -eu
+owner=$2
+owner_start=$3
+workload=
+
+owner_alive() {
+  local stat tail
+  local -a fields
+  IFS= read -r stat 2>/dev/null < "/proc/$owner/stat" || return 1
+  tail=\${stat##*) }
+  read -r -a fields <<< "$tail"
+  [[ \${fields[19]:-} == "$owner_start" && \${fields[0]:-} != Z && \${fields[0]:-} != X ]]
+}
+
+cancel() {
+  trap '' TERM INT
+  if [[ -n "$workload" ]]; then
+    kill -TERM "$workload" 2>/dev/null || true
+    wait "$workload" 2>/dev/null || true
+  fi
+  exit 143
+}
+trap cancel TERM INT
+
 exec 8>"$1/slot-1"
 exec 9>"$1/slot-2"
-shift
+shift 3
 deadline=$((SECONDS + 600))
 while true; do
+  owner_alive || cancel
   if flock --nonblock 8; then break; fi
   if flock --nonblock 9; then break; fi
   if (( SECONDS >= deadline )); then echo "Heavy-job queue timed out after 600 seconds" >&2; exit 124; fi
   sleep 1
 done
-"$@"
+# SIGKILL cannot be forwarded by Node. Check its birth identity again after
+# admission, then keep watching it while run supervises the eventual scope.
+owner_alive || cancel
+"$@" <&0 &
+workload=$!
+while kill -0 "$workload" 2>/dev/null; do
+  owner_alive || cancel
+  sleep 1
+done
+status=0
+wait "$workload" || status=$?
+exit "$status"
 `;
 
 async function job(args) {
@@ -273,7 +312,36 @@ async function job(args) {
     "--",
     ...parsed.command,
   ];
-  return launchCommand("bash", ["-c", JOB_SHELL, "paseo-heavy-job", slots, ...command]);
+  return launchQueuedCommand({ slots, command });
+}
+
+export async function launchQueuedCommand({ slots, command }) {
+  const parent = process.ppid;
+  const ticks = processStartTicks(await readFile("/proc/self/stat", "utf8"));
+  // A private process group lets cancellation reach the polling sleep and the
+  // run supervisor without signalling the caller's session or other jobs.
+  const child = spawn(
+    "bash",
+    ["-c", JOB_SHELL, "paseo-heavy-job", slots, String(process.pid), ticks, ...command],
+    { stdio: "inherit", detached: true },
+  );
+  const workload = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve(code ?? (signal === "SIGINT" ? 130 : 143)));
+  });
+  return superviseScope({
+    launch: () => workload,
+    stop: async () => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    },
+    watchParent: (interrupt) => watchParentProcess(parent, interrupt),
+    signals: interruptSignals,
+  });
 }
 
 export async function main(args) {

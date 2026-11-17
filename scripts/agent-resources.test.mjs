@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readlink, rm } from "node:fs/promises";
+import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -137,22 +138,16 @@ test(
     let queued;
     try {
       for (const slot of [1, 2]) {
-        const holder = spawn(
-          "bash",
-          [
-            "-c",
-            'exec 8>"$1"; flock 8; echo ready; read -r finish',
-            "holder",
-            path.join(dir, `slot-${slot}`),
-          ],
-          { stdio: ["pipe", "pipe", "inherit"] },
-        );
-        holders.push(holder);
-        await new Promise((resolve) => holder.stdout.once("data", resolve));
+        holders.push(await holdSlot(path.join(dir, `slot-${slot}`)));
       }
-      queued = spawn("bash", ["-c", JOB_SHELL, "job", dir, "printf", "admitted"], {
-        stdio: ["ignore", "pipe", "inherit"],
-      });
+      const ticks = processStartTicks(await readFile("/proc/self/stat", "utf8"));
+      queued = spawn(
+        "bash",
+        ["-c", JOB_SHELL, "job", dir, String(process.pid), ticks, "printf", "admitted"],
+        {
+          stdio: ["ignore", "pipe", "inherit"],
+        },
+      );
       let output = "";
       queued.stdout.on("data", (data) => {
         output += data;
@@ -217,3 +212,180 @@ test("workloads refuse an aggregate slice with missing or unlimited budgets", ()
     );
   }
 });
+
+async function waitFor(check, message) {
+  const deadline = Date.now() + 5_000;
+  while (!(await check())) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function processIsRunning(pid) {
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] !== "Z";
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function exists(file) {
+  try {
+    await access(file);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function holdSlot(file) {
+  const child = spawn(
+    "bash",
+    ["-c", 'exec 8>"$1"; flock 8; echo ready; read -r finish', "holder", file],
+    { stdio: ["pipe", "pipe", "inherit"] },
+  );
+  await once(child.stdout, "data");
+  return child;
+}
+
+function queuedWrapper(slots, command, stdio = "ignore") {
+  const launcher = `
+    import { launchQueuedCommand } from ${JSON.stringify(new URL("./agent-resources.mjs", import.meta.url).href)};
+    process.exitCode = await launchQueuedCommand({ slots: process.argv[1], command: process.argv.slice(2) });
+  `;
+  return spawn(process.execPath, ["--input-type=module", "-e", launcher, slots, ...command], {
+    stdio,
+    detached: true,
+  });
+}
+
+async function queuedShell(wrapper, slots) {
+  let pid;
+  await waitFor(async () => {
+    const children = await readFile(`/proc/${wrapper.pid}/task/${wrapper.pid}/children`, "utf8");
+    pid = Number(children.trim().split(/\s+/)[0]);
+    if (!pid) return false;
+    try {
+      const files = await Promise.all([
+        readlink(`/proc/${pid}/fd/8`),
+        readlink(`/proc/${pid}/fd/9`),
+      ]);
+      return files[0] === path.join(slots, "slot-1") && files[1] === path.join(slots, "slot-2");
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    }
+  }, "queue shell did not open both slot files");
+  return pid;
+}
+
+for (const signal of ["SIGTERM", "SIGKILL"]) {
+  test(
+    `cancelling a queued wrapper with ${signal} never admits its command`,
+    { skip: process.platform !== "linux", timeout: 10_000 },
+    async (t) => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-job-cancel-"));
+      const holders = [];
+      let wrapper;
+      t.after(async () => {
+        if (wrapper) {
+          try {
+            process.kill(-wrapper.pid, "SIGKILL");
+          } catch (error) {
+            if (error.code !== "ESRCH") throw error;
+          }
+        }
+        for (const holder of holders) holder.stdin.end("finish\n");
+        await rm(dir, { recursive: true, force: true });
+      });
+      for (const slot of [1, 2]) holders.push(await holdSlot(path.join(dir, `slot-${slot}`)));
+      const marker = path.join(dir, "admitted");
+      wrapper = queuedWrapper(dir, [
+        process.execPath,
+        "-e",
+        'require("node:fs").writeFileSync(process.argv[1], "admitted")',
+        marker,
+      ]);
+      const shell = await queuedShell(wrapper, dir);
+      const exited = once(wrapper, "exit");
+      wrapper.kill(signal);
+      await exited;
+      for (const holder of holders) holder.stdin.end("finish\n");
+      await waitFor(async () => !(await processIsRunning(shell)), "cancelled queue shell survived");
+      assert.equal(await exists(marker), false, "the cancelled command was admitted");
+    },
+  );
+
+  test(
+    `cancelling an admitted wrapper with ${signal} also cancels its command`,
+    { skip: process.platform !== "linux", timeout: 10_000 },
+    async (t) => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-job-active-cancel-"));
+      const ready = path.join(dir, "ready");
+      const wrapper = queuedWrapper(dir, [
+        process.execPath,
+        "-e",
+        'require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)',
+        ready,
+      ]);
+      t.after(async () => {
+        try {
+          process.kill(-wrapper.pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+        await rm(dir, { recursive: true, force: true });
+      });
+      await waitFor(() => exists(ready), "queued command was not admitted");
+      const commandPid = Number(await readFile(ready, "utf8"));
+      const shell = await queuedShell(wrapper, dir);
+      const exited = once(wrapper, "exit");
+      wrapper.kill(signal);
+      await exited;
+      await waitFor(
+        async () => !(await processIsRunning(shell)),
+        "queue shell survived cancellation",
+      );
+      await waitFor(
+        async () => !(await processIsRunning(commandPid)),
+        "admitted command survived cancellation",
+      );
+    },
+  );
+}
+
+test(
+  "queued commands retain stdin and their exit status",
+  { skip: process.platform !== "linux", timeout: 10_000 },
+  async (t) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "paseo-job-stdio-"));
+    const wrapper = queuedWrapper(
+      dir,
+      [
+        process.execPath,
+        "-e",
+        'process.stdin.pipe(process.stdout); process.stdin.on("end", () => { process.exitCode = 17; })',
+      ],
+      ["pipe", "pipe", "inherit"],
+    );
+    t.after(async () => {
+      try {
+        process.kill(-wrapper.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+      await rm(dir, { recursive: true, force: true });
+    });
+    let output = "";
+    wrapper.stdout.on("data", (data) => {
+      output += data;
+    });
+    const closed = once(wrapper, "close");
+    wrapper.stdin.end("literal input\n");
+    assert.deepEqual(await closed, [17, null]);
+    assert.equal(output, "literal input\n");
+  },
+);
