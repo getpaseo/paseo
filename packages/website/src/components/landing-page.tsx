@@ -714,8 +714,8 @@ function AutomationDetail({ kind }: { kind: AutomationKind }) {
 }
 
 const MCP_AGENT_CALLS: ToolCall[] = [
-  { kind: "paseo", label: "Create agent", detail: "Fix #412: retry flaky relay handshake" },
-  { kind: "paseo", label: "Create agent", detail: "Fix #417: group schedules by project" },
+  { kind: "paseo", label: "Create agent", detail: "Fix #412: relay handshake race" },
+  { kind: "paseo", label: "Create agent", detail: "Fix #417: menu bar icon on macOS" },
 ];
 
 function McpAutomationTranscript() {

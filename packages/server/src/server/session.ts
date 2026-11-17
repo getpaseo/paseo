@@ -1,3 +1,4 @@
+import { deliveryFailureOutcome } from "./message-receipts/outcome.js";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -144,7 +145,10 @@ import {
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
-import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
+import {
+  assertPluginTimelineDataSize,
+  assertPluginTimelineKind,
+} from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
@@ -219,6 +223,7 @@ import type { PushNotifications } from "./push/index.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
+  unarchiveWorkspaceAgents,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
@@ -318,6 +323,7 @@ type ProviderSubagentManagerEvent = Extract<
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
+const FULL_AGENT_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
@@ -497,7 +503,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  messageReceipts: Pick<MessageReceipts, "send">;
+  messageReceipts: Pick<MessageReceipts, "send" | "getStatus">;
   agentMessages: AgentMessageDelivery;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
@@ -536,6 +542,10 @@ export interface SessionOptions {
     statusSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
+    listRegistry(): Promise<import("@getpaseo/protocol/plugin-registry").PluginRegistryIndex>;
+    getRegistryPlugin(
+      id: string,
+    ): Promise<import("@getpaseo/protocol/plugin-registry").PublishedPluginDetail>;
     previewUpdates(input: {
       pluginId?: string;
       target?: import("@getpaseo/protocol/messages").PluginUpdateSelection;
@@ -868,7 +878,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly messageReceipts: Pick<MessageReceipts, "send">;
+  private readonly messageReceipts: Pick<MessageReceipts, "send" | "getStatus">;
   private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
@@ -1003,6 +1013,13 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: (request) =>
+        unarchiveWorkspaceAgents({
+          ...request,
+          agentStorage: this.agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
+          sessionLogger: this.sessionLogger,
+        }),
       withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
@@ -2657,6 +2674,8 @@ export class Session {
 
   private dispatchMetadataMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.message.get_delivery_status.request":
+        return this.handleGetMessageDeliveryStatus(msg);
       case "agent.metadata.update.request":
         return this.handleAgentMetadataUpdateRequest(msg);
       case "workspace.metadata.update.request":
@@ -2892,6 +2911,30 @@ export class Session {
     });
   }
 
+  private dispatchPluginRegistryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.registry.list.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.listRegistry().then((index) => {
+        this.emit({
+          type: "plugin.registry.list.response",
+          payload: { requestId: msg.requestId, index },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.registry.get.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.getRegistryPlugin(msg.id).then((plugin) => {
+        this.emit({
+          type: "plugin.registry.get.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    return undefined;
+  }
+
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "plugin.source.install.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
@@ -2972,7 +3015,7 @@ export class Session {
         return undefined;
       });
     }
-    return undefined;
+    return this.dispatchPluginRegistryMessage(msg);
   }
 
   private subscribeToPluginChanges(
@@ -3142,6 +3185,10 @@ export class Session {
 
   private dispatchAgentLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "send_agent_message_request":
+        return this.handleSendAgentMessageRequest(msg);
+      case "wait_for_finish_request":
+        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "fetch_agents_request":
         return this.handleFetchAgents(msg);
       case "fetch_agent_history_request":
@@ -3162,10 +3209,6 @@ export class Session {
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "project.icon.set.request":
         return this.handleProjectIconSetRequest(msg);
-      case "send_agent_message_request":
-        return this.handleSendAgentMessageRequest(msg);
-      case "wait_for_finish_request":
-        return this.handleWaitForFinish(msg.agentId, msg.requestId, msg.timeoutMs);
       case "create_agent_request":
         return this.handleCreateAgentRequest(msg);
       case "resume_agent_request":
@@ -4074,6 +4117,7 @@ export class Session {
       const removedWorkspaceIds: string[] = [];
       try {
         for (const workspaceId of activeWorkspaceIds) {
+          const archivedAt = new Date().toISOString();
           await archiveWorkspaceContents(
             {
               agentManager: this.agentManager,
@@ -4083,8 +4127,9 @@ export class Session {
               sessionLogger: this.sessionLogger,
             },
             workspaceId,
+            archivedAt,
           );
-          await this.archiveWorkspaceRecord(workspaceId);
+          await this.archiveWorkspaceRecord(workspaceId, archivedAt);
           removedWorkspaceIds.push(workspaceId);
         }
 
@@ -5383,15 +5428,11 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
-      );
+      for (const id of agentIds) {
+        if (!this.agentManager.getAgent(id) && !(await this.agentStorage.get(id))) {
+          throw new Error(`Agent not found: ${id}`);
+        }
+      }
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
@@ -5678,7 +5719,8 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+          this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -5754,6 +5796,12 @@ export class Session {
 
     if (knownIds.has(trimmed)) {
       return { ok: true, agentId: trimmed };
+    }
+
+    // A complete agent ID names one agent. When none has it, no prefix or
+    // title answers for it, so a command never acts on a different agent.
+    if (FULL_AGENT_ID_PATTERN.test(trimmed)) {
+      return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
     }
 
     const prefixMatches = Array.from(knownIds).filter((id) => id.startsWith(trimmed));
@@ -6173,6 +6221,7 @@ export class Session {
       // resolves to "github") so the sidebar/hover-card brand mark matches the
       // status projection without a second resolve.
       forge: snapshot.forge.forge,
+      forgeWeb: snapshot.forgeWeb,
     };
   }
 
@@ -8019,7 +8068,8 @@ export class Session {
               findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
               getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+                this.archiveWorkspaceRecord(workspaceId, archivedAt),
               emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
                 this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
               markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -8130,19 +8180,8 @@ export class Session {
     }
     if (workspace.archivedAt) {
       await this.workspaceRecovery.restore(workspaceId);
-    }
-    const results = await Promise.allSettled(
-      input.agentIds.map((agentId) =>
-        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
-      ),
-    );
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected") {
-        this.sessionLogger.warn(
-          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
-          "Failed to unarchive agent while undoing workspace archive",
-        );
-      }
+    } else if (input.archivedAt) {
+      await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace, input.archivedAt);
     }
     await this.publishRecoveredWorkspace(workspaceId);
   }
@@ -8499,6 +8538,7 @@ export class Session {
   ): Promise<void> {
     const pluginId = parsePluginClientId(this.clientId);
     if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
+    assertPluginTimelineKind(msg.item.kind);
     assertPluginTimelineDataSize(msg.item.data);
     const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
       ...msg.item,
@@ -8881,6 +8921,56 @@ export class Session {
     }
   }
 
+  private messageReceiptInput(input: {
+    message: Omit<Extract<SessionInboundMessage, { type: "send_agent_message_request" }>, "type">;
+    agentId: string;
+  }) {
+    const { message: msg, agentId } = input;
+    const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+    const identity = { agentId, clientMessageId: msg.messageId ?? "", prompt };
+    return {
+      agentId,
+      messageId: identity.clientMessageId,
+      request: {
+        prompt,
+        sourceAgentId: msg.sourceAgentId,
+        sourceAgentServerId: msg.sourceAgentServerId,
+        sessionMode: msg.sessionMode,
+        activeTurnBehavior: msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
+      },
+      isAccepted: () => this.agentManager.hasAcceptedSubmittedMessage(identity),
+      onCompleted: () => this.agentManager.forgetAcceptedSubmittedMessage(identity),
+    };
+  }
+
+  private async handleGetMessageDeliveryStatus(
+    msg: Extract<SessionInboundMessage, { type: "agent.message.get_delivery_status.request" }>,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    const base = { requestId: msg.requestId, agentId: msg.agentId, messageId: msg.messageId };
+    if (!resolved.ok) {
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, status: null, error: resolved.error },
+      });
+      return;
+    }
+    try {
+      const status = await this.messageReceipts.getStatus(
+        this.messageReceiptInput({ message: msg, agentId: resolved.agentId }),
+      );
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, agentId: resolved.agentId, ...status, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.message.get_delivery_status.response",
+        payload: { ...base, status: null, error: errorToFriendlyMessage(error) },
+      });
+    }
+  }
+
   private async handleSendAgentMessageRequest(
     msg: Extract<SessionInboundMessage, { type: "send_agent_message_request" }>,
   ): Promise<void> {
@@ -8893,11 +8983,13 @@ export class Session {
           agentId: msg.agentId,
           accepted: false,
           error: resolved.error,
+          deliveryOutcome: "not_submitted",
         },
       });
       return;
     }
 
+    let dispatched = false;
     try {
       const agentId = resolved.agentId;
 
@@ -8916,8 +9008,9 @@ export class Session {
         queued = acceptAdmission;
       });
       let deliveryStatus: "queued" | undefined;
-      const send = async () => {
+      const send = async (beforeDispatch: () => Promise<void>) => {
         if (msg.sourceAgentId) {
+          await beforeDispatch();
           const receipt = this.agentMessages.enqueue({
             recipientId: agentId,
             messageId: msg.messageId,
@@ -8948,34 +9041,28 @@ export class Session {
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
+          beforeDispatch,
           logger: this.sessionLogger,
         });
         if (result.disposition === "turn_started") {
-          await waitForAgentRunStartWithTimeout(
-            this.agentManager,
-            agentId,
-            this.delivery.requestSignal,
-          );
+          await waitForAgentRunStartWithTimeout(this.agentManager, agentId, result.started);
         }
       };
-      const sent = msg.messageId
+      const messageId = msg.messageId;
+      const sent = messageId
         ? this.messageReceipts.send({
-            agentId,
-            messageId: msg.messageId,
-            request: {
-              prompt,
-              sourceAgentId: msg.sourceAgentId,
-              sourceAgentServerId: msg.sourceAgentServerId,
-              sessionMode: msg.sessionMode,
-              activeTurnBehavior:
-                msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
-            },
-            prepare: async () => {
+            ...this.messageReceiptInput({ message: msg, agentId }),
+            send: async (beforeDispatch) => {
               if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+              await send(async () => {
+                await beforeDispatch();
+                dispatched = true;
+              });
             },
-            send,
           })
-        : send();
+        : send(async () => {
+            dispatched = true;
+          });
       void sent.catch((error) => {
         if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
@@ -9003,6 +9090,7 @@ export class Session {
           agentId: resolved.agentId,
           accepted: false,
           error: errorToFriendlyMessage(error),
+          deliveryOutcome: deliveryFailureOutcome(error, dispatched ? "unknown" : "not_submitted"),
         },
       });
     }

@@ -86,7 +86,7 @@ const selected = useWorkspace(ref, selector, equals);
 
 没有选择器时，自定义相等比较函数接收快照；有选择器时接收选择结果。现有工作区面板仍可向 `useWorkspace` 和 `useAgent` 传入主机本地的字符串 ID。跨主机视图应使用引用。`useHosts()` 保留现有的 `serverId`、`label` 和连接 `status` 字段。
 
-工作区快照包含 `project`、`pinnedAt`、`labels`、`background`、`branch`、`lastPromptAt`、`parentAgent` 和 `createdAt`（旧主机上为 null）。使用 `indicator` 和本地化的 `indicatorLabel` 显示 Paseo 的状态。`status` 保持 daemon 原始状态。Agent 快照包含工作区和父 Agent 引用。项目快照提供 `displayName`、`rootPath`、`kind` 和 `iconRevision`。
+工作区快照包含 `project`、`pinnedAt`、`labels`、`background`、`branch`、`lastPromptAt`、`parentAgent` 和 `createdAt`（旧主机上为 null）。使用 `indicator` 和本地化的 `indicatorLabel` 显示 Paseo 的状态。`status` 保持 daemon 原始状态。Agent 快照包含工作区和父 Agent 引用、`background` 和 `backgroundWork.count`。项目快照提供 `displayName`、`rootPath`、`kind` 和 `iconRevision`。
 
 ## 列出终端 {#list-terminals}
 

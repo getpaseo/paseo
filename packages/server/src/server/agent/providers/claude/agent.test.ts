@@ -911,15 +911,16 @@ describe("ClaudeAgentSession features", () => {
       },
     }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
     const turn = session.startTurn("must not run after closure");
+    const rejected = expect(turn).rejects.toThrow("Claude session is closed");
     try {
       await started;
       await session.close();
       allowOptions();
-      await turn;
+      await rejected;
       expect(queryFactory).not.toHaveBeenCalled();
     } finally {
       allowOptions();
-      await turn;
+      await rejected;
       await session.close();
     }
   });
@@ -992,6 +993,43 @@ describe("ClaudeAgentSession features", () => {
         }),
       ]);
       expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("carries the SDK decision reason onto the permission request description", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      canUseTool(
+        "Bash",
+        { command: "printf test" },
+        {
+          toolUseID: "tool-hook-ask",
+          decisionReason:
+            "\u001b[33mHeredoc input to python3 -- cannot statically verify safety\u001b[0m",
+        },
+      ).catch(() => undefined);
+
+      expect(events.find((event) => event.type === "permission_requested")).toMatchObject({
+        type: "permission_requested",
+        request: {
+          name: "Bash",
+          description: "Heredoc input to python3 -- cannot statically verify safety",
+        },
+      });
     } finally {
       unsubscribe();
       await session.close();
@@ -4839,4 +4877,23 @@ describe("Claude import descriptor scheduling", () => {
     reads.get("later")!.resolve("later descriptor");
     await expect(later).resolves.toEqual(["later descriptor"]);
   });
+});
+
+test("Claude startTurn rejects when query startup fails before submitting the prompt", async () => {
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude/bin",
+    queryFactory: () => {
+      throw new Error("query startup failed");
+    },
+  });
+  const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await expect(session.startTurn("never submitted")).rejects.toThrow("query startup failed");
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
+  } finally {
+    await session.close();
+  }
 });

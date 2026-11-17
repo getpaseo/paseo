@@ -449,7 +449,7 @@ test("a timed-out subscription rejects and cannot replay on reconnect", async ()
     h.open();
     await connecting;
     const observation = h.client.observeAgents({ timeout: 10 });
-    await expect(observation.ready).rejects.toThrow(/timed out|timeout/i);
+    await expect(observation.ready).rejects.toMatchObject({ code: "DAEMON_REQUEST_TIMEOUT" });
     await observation.release();
     const reconnecting = h.client.connect();
     h.open();

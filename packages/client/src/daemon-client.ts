@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { messageTooLargeError } from "./daemon-client-transport-utils.js";
 import type { HostAdd, HostUpdate, HostDirectory } from "@getpaseo/protocol/hosts";
+import type { PluginListingDetail, PluginListingIndex } from "@getpaseo/protocol/plugin-registry";
 import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
@@ -482,7 +483,7 @@ export interface SendMessageOptions {
   sourceAgentServerId?: string;
   sessionMode?: string;
   messageId?: string;
-  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
+  /** Agent sources wait for turn end unless interrupt is explicit. Human sources default to interrupt. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
@@ -1022,6 +1023,7 @@ interface WaitHandle<T> {
 interface WaitOptions {
   skipQueue?: boolean;
   requestId?: string;
+  requestType?: SessionInboundMessage["type"];
 }
 
 interface CorrelatedResponseIdentity {
@@ -1076,6 +1078,19 @@ type PluginCatalogResponseEntry =
 export type PluginCatalogEntry = Omit<PluginCatalogResponseEntry, "clientBundle"> & {
   clientBundle: string;
 };
+
+export class AgentMessageSendError extends Error {
+  readonly deliveryOutcome: "not_submitted" | "rejected" | "unknown";
+  constructor(input: {
+    message: string;
+    deliveryOutcome: "not_submitted" | "rejected" | "unknown";
+    cause?: unknown;
+  }) {
+    super(input.message, { cause: input.cause });
+    this.deliveryOutcome = input.deliveryOutcome;
+    this.name = "AgentMessageSendError";
+  }
+}
 
 export class DaemonConnectionError extends Error {
   readonly serverId?: string;
@@ -2358,7 +2373,7 @@ export class DaemonClient {
         return { kind: "ok", value };
       },
       timeout,
-      { ...params.options, requestId: params.requestId },
+      { ...params.options, requestId: params.requestId, requestType: params.message.type },
     );
 
     // The response deadline still applies while the transport waits for drain.
@@ -4246,13 +4261,19 @@ export class DaemonClient {
       options.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
     ) {
-      throw new Error("Update the Paseo host to send messages with agent provenance.");
+      throw new AgentMessageSendError({
+        message: "Update the Paseo host to send messages with agent provenance.",
+        deliveryOutcome: "not_submitted",
+      });
     }
     if (
       options.sourceAgentServerId &&
       this.lastServerInfoMessage?.features?.agentMessageBatching !== true
     ) {
-      throw new Error("Update the Paseo host to send messages with a qualified agent address.");
+      throw new AgentMessageSendError({
+        message: "Update the Paseo host to send messages with a qualified agent address.",
+        deliveryOutcome: "not_submitted",
+      });
     }
     const requestId = this.createRequestId();
     const messageId = options.messageId ?? crypto.randomUUID();
@@ -4284,9 +4305,38 @@ export class DaemonClient {
       },
     });
     if (!payload.accepted) {
-      throw new Error(payload.error ?? "sendAgentMessage rejected");
+      throw new AgentMessageSendError({
+        message: payload.error ?? "sendAgentMessage rejected",
+        deliveryOutcome: payload.deliveryOutcome ?? "unknown",
+      });
     }
     return payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {};
+  }
+
+  async getAgentMessageDeliveryStatus(
+    input: SendMessageOptions & { agentId: string; text: string; messageId: string },
+  ) {
+    if (this.getLastServerInfoMessage()?.features?.messageDeliveryStatus !== true)
+      throw new Error("Update the Paseo host to check message delivery status.");
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      ...input,
+      type: "agent.message.get_delivery_status.request",
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.message.get_delivery_status.response" &&
+        msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error || payload.status === null)
+      throw new Error(payload.error ?? "Could not check message delivery");
+    return { status: payload.status, failure: payload.failure };
   }
 
   async sendMessage(
@@ -6575,6 +6625,38 @@ export class DaemonClient {
     return payload.plugins;
   }
 
+  private requirePluginRegistry(): void {
+    // COMPAT(pluginRegistry): added in v0.16.0; remove after 2027-05-15 once daemon floor proxies the registry.
+    if (this.getLastServerInfoMessage()?.features?.pluginRegistry !== true)
+      throw new Error("Update the host to browse plugins.");
+  }
+
+  /** The host's default plugin registry directory. */
+  async listPluginRegistry(): Promise<PluginListingIndex> {
+    this.requirePluginRegistry();
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.registry.list.request", requestId },
+      responseType: "plugin.registry.list.response",
+      timeout: 60_000,
+    });
+    return payload.index;
+  }
+
+  /** One registry listing with its overview. */
+  async getRegistryPlugin(id: string): Promise<PluginListingDetail> {
+    this.requirePluginRegistry();
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "plugin.registry.get.request", requestId, id },
+      responseType: "plugin.registry.get.response",
+      timeout: 60_000,
+    });
+    return payload.plugin;
+  }
+
   private requirePluginUpdates(): void {
     // COMPAT(pluginSourceUpdates): added in v0.8.0; remove after 2027-03-16 once daemon floor supports reviewed updates.
     if (this.getLastServerInfoMessage()?.features?.pluginSourceUpdates !== true)
@@ -8074,7 +8156,9 @@ export class DaemonClient {
   ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new DaemonConnectionError(
-      `Timeout waiting for message (${timeout}ms)`,
+      options?.requestType
+        ? `No response to ${options.requestType} after ${timeout}ms`
+        : `Timeout waiting for message (${timeout}ms)`,
       "DAEMON_REQUEST_TIMEOUT",
     );
 

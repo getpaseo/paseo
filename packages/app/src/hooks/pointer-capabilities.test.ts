@@ -23,10 +23,18 @@ class FakeMediaQueryList {
   }
 }
 
-function createFakeDisplay(initial: { finePointer: boolean; touchScreen: boolean }) {
+function createFakeDisplay(initial: {
+  finePointer: boolean;
+  touchScreen: boolean;
+  touchPrimaryPointer?: boolean;
+}) {
   const queries = {
     finePointer: new FakeMediaQueryList("(hover: hover) and (pointer: fine)", initial.finePointer),
     touchScreen: new FakeMediaQueryList("(any-pointer: coarse)", initial.touchScreen),
+    touchPrimaryPointer: new FakeMediaQueryList(
+      "(pointer: coarse)",
+      initial.touchPrimaryPointer ?? false,
+    ),
   };
   const matchMedia = (query: string) => {
     const match = Object.values(queries).find((list) => list.media === query);
@@ -73,5 +81,27 @@ describe("pointer capabilities", () => {
       finePointer: false,
       touchScreen: false,
     });
+  });
+});
+
+describe("hasTouchPrimaryPointer", () => {
+  it("is false on a touch-screen laptop driven by its trackpad", () => {
+    const display = createFakeDisplay({ finePointer: true, touchScreen: true });
+    expect(createPointerCapabilitiesSource(display.matchMedia).hasTouchPrimaryPointer()).toBe(
+      false,
+    );
+  });
+
+  it("is true when the primary pointer is coarse", () => {
+    const display = createFakeDisplay({
+      finePointer: false,
+      touchScreen: true,
+      touchPrimaryPointer: true,
+    });
+    expect(createPointerCapabilitiesSource(display.matchMedia).hasTouchPrimaryPointer()).toBe(true);
+  });
+
+  it("is false without media queries", () => {
+    expect(createPointerCapabilitiesSource(null).hasTouchPrimaryPointer()).toBe(false);
   });
 });

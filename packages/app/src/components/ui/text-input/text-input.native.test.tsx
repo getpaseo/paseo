@@ -66,13 +66,15 @@ function createHandleRecorder() {
   return { handleRef, received, assignHandle };
 }
 
+const attachNoContentDrag = () => () => {};
+
 describe("EditingTextInputNative", () => {
   it("uses the bottom-sheet input only inside a bottom sheet", () => {
     act(() => {
       root?.render(
         <>
           <EditingTextInput testID="outside" />
-          <BottomSheetScope>
+          <BottomSheetScope attachContentDrag={attachNoContentDrag}>
             <EditingTextInput testID="inside" />
           </BottomSheetScope>
         </>,

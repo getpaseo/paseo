@@ -172,6 +172,17 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     payload: { requestId: "message-duplicate", agentId, accepted: true, error: null },
   });
   expect(
+    await hub.requestOrdinary({
+      ...message,
+      type: "agent.message.get_delivery_status.request",
+      requestId: "read-delivery",
+    }),
+  ).toMatchObject({
+    type: "agent.message.get_delivery_status.response",
+    payload: { status: "accepted", error: null },
+  });
+
+  expect(
     hub
       .hubMessages()
       .some((event) => event.type === "agent_stream" && event.payload.agentId === agentId),
@@ -180,6 +191,50 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
   expect(
     await hub.requestOrdinary({ ...message, text: "changed", requestId: "message-conflict" }),
   ).toMatchObject({ payload: { accepted: false } });
+});
+
+test("Hub retries a message whose send failed before reaching the provider", async () => {
+  const hub = await launchRelationship();
+  const agentId = await hub.createUnrelatedLocalAgent();
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "mode-change-failed",
+    text: "retry me",
+    sessionMode: "full-access",
+  };
+  hub.failNextProviderModeChange();
+  expect(await hub.requestOrdinary({ ...message, requestId: "first-attempt" })).toMatchObject({
+    payload: {
+      accepted: false,
+      deliveryOutcome: "not_submitted",
+      error: expect.stringContaining("mode change failure"),
+    },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "retry me")).toHaveLength(0);
+
+  expect(await hub.requestOrdinary({ ...message, requestId: "retry" })).toMatchObject({
+    payload: { accepted: true, error: null },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "retry me")).toHaveLength(1);
+});
+
+test("Hub never resubmits a message whose send failed after reaching the provider", async () => {
+  const hub = await launchRelationship();
+  const agentId = await hub.createUnrelatedLocalAgent();
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "turn-start-failed",
+    text: "do not repeat me",
+  };
+  hub.failProviderPromptStart("do not repeat me");
+  await hub.requestOrdinary({ ...message, requestId: "first-attempt" });
+
+  expect(await hub.requestOrdinary({ ...message, requestId: "retry" })).toMatchObject({
+    payload: { accepted: false, error: "agent_request_outcome_unknown" },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "do not repeat me")).toHaveLength(0);
 });
 
 test("ordinary Hub requests survive daemon restart and restore an archived workspace", async () => {
