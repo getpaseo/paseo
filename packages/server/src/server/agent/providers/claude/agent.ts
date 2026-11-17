@@ -83,7 +83,7 @@ import {
   type ClaudeProviderOptions,
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { discoverClaudeModels } from "./model-discovery.js";
+import { discoverClaudeModels, killExitingClaudeModelDiscoveries } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
   findSteeredMessageParent,
@@ -1749,6 +1749,10 @@ export class ClaudeAgentClient implements AgentClient {
       models,
       ...modeCatalog,
     };
+  }
+
+  async shutdown(): Promise<void> {
+    await killExitingClaudeModelDiscoveries();
   }
 
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {

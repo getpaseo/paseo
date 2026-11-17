@@ -5049,22 +5049,24 @@ class OpenCodeAgentSession implements AgentSession {
           answers,
         });
       }
-
-      this.pendingPermissions.delete(requestId);
-      this.pendingPermissionDirectories.delete(requestId);
-      return;
+    } else {
+      const reply = resolveOpenCodePermissionReply(response);
+      await this.client.permission.reply({
+        requestID: requestId,
+        directory,
+        reply,
+        message: response.behavior === "deny" ? response.message : undefined,
+      });
     }
-
-    const reply = resolveOpenCodePermissionReply(response);
-    await this.client.permission.reply({
-      requestID: requestId,
-      directory,
-      reply,
-      message: response.behavior === "deny" ? response.message : undefined,
-    });
 
     this.pendingPermissions.delete(requestId);
     this.pendingPermissionDirectories.delete(requestId);
+    this.notifySubscribers({
+      type: "permission_resolved",
+      provider: "opencode",
+      requestId,
+      resolution: response,
+    });
   }
 
   describePersistence(): AgentPersistenceHandle | null {
