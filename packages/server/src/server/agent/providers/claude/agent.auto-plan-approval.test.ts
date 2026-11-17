@@ -173,6 +173,15 @@ test.each([
     "a tool the user answers on the card",
     { decisionReasonType: "other", requiresUserInteraction: true },
   ],
+  ["a compound command with an ask rule in one part", { decisionReasonType: "subcommandResults" }],
+  [
+    "a read the user blocked outside the working directories",
+    { decisionReasonType: "safetyCheck", decisionReasonCode: "outside_reads_blocked" },
+  ],
+  [
+    "an organization's ask limit",
+    { decisionReasonType: "workingDir", decisionReasonCode: "org_ask_ceiling" },
+  ],
   ["a Claude Code that does not say why it asks", {}],
 ])("bypass still asks the user about %s", async (_source, why) => {
   const { session, events, requestPermission } = await createBypassSession();
