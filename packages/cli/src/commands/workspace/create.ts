@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { resolveCallerAgentId } from "../../utils/caller-agent.js";
+import type { DaemonTarget } from "../../utils/daemon-target.js";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
 import { toWorkspaceRow, workspaceSchema, type WorkspaceRow } from "./shared.js";
 
@@ -124,19 +125,21 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
   }
 }
 
-// The daemon resolves a relative path against its own working directory, so
-// --path is made absolute here, where the caller's directory is known. An
-// absolute path can target a daemon on a different operating system, and the
-// daemon expands a leading ~ to its own home directory.
-function resolveCallerPath(input: string): string {
+// A relative --path names a directory relative to where the command runs, so
+// it is made absolute here for a local daemon, which would otherwise resolve
+// it against its own working directory. For an explicit endpoint the path is
+// sent as written, the same rule as resolveRepositoryDirectory. An absolute
+// path can target a daemon on a different operating system, and the daemon
+// expands a leading ~ to its own home directory.
+function resolveCallerPath(input: string, daemonTarget: DaemonTarget): string {
   const isHomeRelative = input === "~" || input.startsWith("~/");
-  return isHomeRelative || isPosixAbsolute(input) || isWindowsAbsolute(input)
-    ? input
-    : resolve(input);
+  if (isHomeRelative || isPosixAbsolute(input) || isWindowsAbsolute(input)) return input;
+  return daemonTarget.kind === "instance" ? resolve(input) : input;
 }
 
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
-  const callerPath = options.path === undefined ? undefined : resolveCallerPath(options.path);
+  const callerPath =
+    options.path === undefined ? undefined : resolveCallerPath(options.path, options.daemonTarget);
   if (options.isolation === "local") {
     return buildLocalWorkspaceSource(options, callerPath ?? process.cwd());
   }

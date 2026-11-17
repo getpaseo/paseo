@@ -10,14 +10,25 @@ describe("workspace create source", () => {
   });
 
   it("resolves a relative path against the directory the command runs in", () => {
-    expect(buildWorkspaceSource({ isolation: "local", path: "." })).toEqual({
+    const daemonTarget = { kind: "instance" as const, home: "/tmp/paseo-home" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "." })).toEqual({
       kind: "directory",
       path: process.cwd(),
     });
-    expect(buildWorkspaceSource({ isolation: "worktree", path: "../sibling" })).toEqual({
+    expect(
+      buildWorkspaceSource({ daemonTarget, isolation: "worktree", path: "../sibling" }),
+    ).toEqual({
       kind: "worktree",
       cwd: path.resolve(process.cwd(), "../sibling"),
       action: "branch-off",
+    });
+  });
+
+  it("sends a relative path to an explicit daemon endpoint as written", () => {
+    const daemonTarget = { kind: "endpoint" as const, host: "other-box:6767" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "repo" })).toEqual({
+      kind: "directory",
+      path: "repo",
     });
   });
 
@@ -29,11 +40,12 @@ describe("workspace create source", () => {
   });
 
   it("leaves a home-relative path for the daemon to expand", () => {
-    expect(buildWorkspaceSource({ isolation: "local", path: "~/repo" })).toEqual({
+    const daemonTarget = { kind: "instance" as const, home: "/tmp/paseo-home" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "~/repo" })).toEqual({
       kind: "directory",
       path: "~/repo",
     });
-    expect(buildWorkspaceSource({ isolation: "worktree", path: "~" })).toEqual({
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "worktree", path: "~" })).toEqual({
       kind: "worktree",
       cwd: "~",
       action: "branch-off",
