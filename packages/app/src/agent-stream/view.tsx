@@ -237,6 +237,7 @@ function renderListEmptyComponent(input: {
 }
 
 interface FocusedSubmittedMessage {
+  request: number;
   serverId: string;
   agentId: string;
   rowId: string;
@@ -377,6 +378,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const contentMaxWidth = useSettings(resolveContentMaxWidth);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
     const submissionFocusRequest = useRef(0);
+    const pendingSubmissionFocus = useRef<{
+      request: number;
+      resolve(found: boolean): void;
+    } | null>(null);
+    const settleSubmissionFocus = useStableEvent((found: boolean, request?: number) => {
+      const pending = pendingSubmissionFocus.current;
+      if (!pending || (request !== undefined && pending.request !== request)) return;
+      pendingSubmissionFocus.current = null;
+      pending.resolve(found);
+    });
     const [focusedSubmission, setFocusedSubmission] = useState<FocusedSubmittedMessage | null>(
       null,
     );
@@ -654,11 +665,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(
       () => () => {
         submissionFocusRequest.current += 1;
+        settleSubmissionFocus(true);
       },
-      [agentId, resolvedServerId],
+      [agentId, resolvedServerId, settleSubmissionFocus],
     );
 
     const focusSubmittedMessage = useStableEvent(async (clientMessageId: string) => {
+      settleSubmissionFocus(true);
       const request = ++submissionFocusRequest.current;
       let target = findSubmittedUserMessage(
         effectiveStreamItems,
@@ -680,13 +693,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }
       if (submissionFocusRequest.current !== request) return true;
       if (!target) return false;
-      setFocusedSubmission({
-        serverId: resolvedServerId,
-        agentId,
-        rowId: target.id,
-        hasScrolled: false,
+      const rowId = target.id;
+      return new Promise<boolean>((resolve) => {
+        pendingSubmissionFocus.current = { request, resolve };
+        setFocusedSubmission({
+          request,
+          serverId: resolvedServerId,
+          agentId,
+          rowId,
+          hasScrolled: false,
+        });
       });
-      return true;
     });
     useEffect(() => {
       if (
@@ -697,12 +714,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       )
         return;
       if (!mountedMessageIds.has(focusedSubmission.rowId)) {
-        revealLoadedHistory(focusedSubmission.rowId);
+        const hostId = presentation.turns.hostIdByFoldedMessageId.get(focusedSubmission.rowId);
+        if (hostId) {
+          setExpandedTurnHostIds((previous) => new Set(previous).add(hostId));
+          return;
+        }
+        if (!revealLoadedHistory(focusedSubmission.rowId)) {
+          settleSubmissionFocus(false, focusedSubmission.request);
+          setFocusedSubmission(null);
+        }
         return;
       }
       const frame = requestAnimationFrame(() => {
         viewportRef.current?.scrollToMessage?.(focusedSubmission.rowId);
         completeSubmissionScroll(focusedSubmission);
+        settleSubmissionFocus(true, focusedSubmission.request);
       });
       return () => cancelAnimationFrame(frame);
     }, [
@@ -711,6 +737,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       mountedMessageIds,
       revealLoadedHistory,
       completeSubmissionScroll,
+      settleSubmissionFocus,
+      presentation.turns.hostIdByFoldedMessageId,
       resolvedServerId,
     ]);
 
@@ -720,6 +748,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         focusSubmittedMessage,
         scrollToBottom(reason = "jump-to-bottom") {
           submissionFocusRequest.current += 1;
+          settleSubmissionFocus(true);
           setFocusedSubmission(null);
           viewportRef.current?.scrollToBottom(reason);
         },
@@ -727,7 +756,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           viewportRef.current?.prepareForViewportChange();
         },
       }),
-      [focusSubmittedMessage],
+      [focusSubmittedMessage, settleSubmissionFocus],
     );
 
     const scrollToBottom = useCallback(() => {

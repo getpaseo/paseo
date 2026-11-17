@@ -1,3 +1,4 @@
+import { withDirectoryPlugin } from "../support/helpers/plugin-timeline";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test as baseTest } from "../support/fixtures";
 import {
@@ -1225,6 +1226,31 @@ test.describe("Agent message submission", () => {
     await retryRestoredSubmission(page, prompt);
     await expect(highlighted).toHaveCount(0);
   });
+  test("Find message reports a hidden target instead of claiming a successful reveal", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "This failed message is hidden by a plugin.";
+    await withDirectoryPlugin({
+      pluginId: "hide-submitted-message",
+      source: `export default function contribute(client) {
+        client.addTimelineTransformer({ id: "hide", query: { itemType: "user_message" }, transform: () => ({ items: [] }) });
+        return () => {};
+      }`,
+      run: async () => {
+        await submitMessageThatWillBeRejected(page, prompt);
+        await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+        await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+        await page.getByRole("button", { name: "Find message", exact: true }).click();
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Delivery is still unconfirmed" }),
+        ).toBeVisible();
+        await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
+        await expectComposerDraft(page, prompt);
+      },
+    });
+  });
+
   test("finds a cached failed message offline without losing the draft", async ({
     page,
     rejectionScenario,
@@ -1529,5 +1555,21 @@ test.describe("Agent message submission", () => {
 
   test("uses untracked optimistic rows for an old host", async ({ page }, testInfo) => {
     await expectOldHostSubmissionBehavior(page, testInfo);
+  });
+});
+
+test.describe("compact message recovery", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("compact Find message reveals the failed prompt and retains the draft", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "Recover this prompt in the compact layout.";
+    await submitMessageThatWillBeRejected(page, prompt);
+    await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(prompt);
+    await expect(page.getByTestId("user-message-highlight")).toBeInViewport();
+    await expectComposerDraft(page, prompt);
   });
 });
