@@ -2399,6 +2399,8 @@ class ClaudeAgentSession implements AgentSession {
   private queryRestartNeeded = false;
   /** True from the moment a query's launch options are copied until the query exists. */
   private queryStarting = false;
+  /** The launch in flight, shared by every caller that asks for a query meanwhile. */
+  private queryStart: Promise<Query> | null = null;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -3587,12 +3589,38 @@ class ClaudeAgentSession implements AgentSession {
 
   private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
     await this.ensureHistoryReady();
-    // Controls use the running turn's query. Pending launch settings take effect
-    // after that turn finishes, when its active query handle has been cleared.
-    if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
-      return this.query;
-    }
+    for (;;) {
+      // Controls use the running turn's query. Pending launch settings take effect
+      // after that turn finishes, when its active query handle has been cleared.
+      if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
+        return this.query;
+      }
 
+      // One launch at a time. Two control-plane reads can arrive together — a chat reopening
+      // lists its commands while the client asks for the provider's capabilities — and each used
+      // to launch its own process. The session kept only the child of the last launch, so closing
+      // it left the other `claude`, and every MCP server under it, running.
+      //
+      // Then look again. A caller can set a restart while this launch is copying its options —
+      // the launch reads the settings once, at the top of buildOptions — and a caller waiting on
+      // that launch would otherwise run its turn on what the restart superseded. The loop retires
+      // the stale query and launches once more, and the callers that were waiting share that one.
+      await (this.queryStart ?? this.startQueryLaunch(launchMode));
+    }
+  }
+
+  /** Publish a launch before awaiting it, so every caller meanwhile shares the same process. */
+  private startQueryLaunch(launchMode: PermissionMode): Promise<Query> {
+    const start = this.launchQuery(launchMode);
+    this.queryStart = start;
+    const settled = () => {
+      if (this.queryStart === start) this.queryStart = null;
+    };
+    start.then(settled, settled);
+    return start;
+  }
+
+  private async launchQuery(launchMode: PermissionMode): Promise<Query> {
     if (this.queryRestartNeeded && this.query) {
       await this.retireQuery();
     }
@@ -3602,45 +3630,51 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
-    // buildOptions copies the launch options before it waits, so from here they are fixed.
+    // buildOptions copies the launch options before it waits, so from here they are fixed. That
+    // snapshot is what a restart asks for, so the mark is spent here: a setter that ran before
+    // this point — a thinking or model change with no query yet — is already in these options,
+    // and only one requested after it makes ensureQuery retire and launch again.
+    this.queryRestartNeeded = false;
     this.queryStarting = true;
-    let options: ClaudeOptions;
+    let query: Query;
     try {
-      options = await this.buildOptions(launchMode);
+      const options = await this.buildOptions(launchMode);
       // Closure can finish while launch options are being prepared.
       if (this.closed) throw new Error("Claude session is closed");
-    } catch (error) {
-      this.queryStarting = false;
-      throw error;
-    }
-    this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
-    this.input = input;
-    this.runtimeSafety.reset();
-    this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
-    // A fresh Claude process has no turn of its own in flight.
-    this.mainTurnInFlight = false;
-    this.query = claudeQuery(
-      { prompt: input.iterable, options },
-      {
-        runtimeSettings: this.runtimeSettings,
-        launchEnv: this.launchEnv,
-        queryFactory: this.queryFactory,
-        onChildProcess: (child) => {
-          this.childProcess = child;
-          child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+      this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
+      this.input = input;
+      this.runtimeSafety.reset();
+      this.dispatchEvents([{ type: "background_work", provider: "claude", items: null }]);
+      // A fresh Claude process has no turn of its own in flight.
+      this.mainTurnInFlight = false;
+      query = claudeQuery(
+        { prompt: input.iterable, options },
+        {
+          runtimeSettings: this.runtimeSettings,
+          launchEnv: this.launchEnv,
+          queryFactory: this.queryFactory,
+          onChildProcess: (child) => {
+            this.childProcess = child;
+            child.once("exit", (code, signal) => this.handleRuntimeExit(child, code, signal));
+          },
         },
-      },
-    );
-    this.queryStarting = false;
+      );
+      this.query = query;
+    } finally {
+      // Every path out of the launch, including a queryFactory that throws and options the SDK
+      // rejects. Left set, it makes applyOptions refuse every non-fast option change for the rest
+      // of the session as "live only".
+      this.queryStarting = false;
+    }
     const fastMode = this.resolveFastModeSetting();
     if (fastMode !== null) {
-      await this.query.applyFlagSettings({ fastMode });
+      await query.applyFlagSettings({ fastMode });
     }
     // Do not kick off background control-plane queries here. Methods like
     // supportedCommands()/setPermissionMode() may execute immediately after
     // ensureQuery() (for listCommands()/setMode()), and sharing the same query
     // control plane can cause those calls to wait behind supportedModels().
-    return this.query;
+    return query;
   }
 
   private async awaitWithTimeout(
