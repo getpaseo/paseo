@@ -5531,6 +5531,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async retireInterruptedClient(client: CodexAppServerClient): Promise<void> {
+    // Before native submission, the manager owns the canceled startup outcome.
+    const canceledBeforeSubmission = this.pendingForegroundStart?.submitted === false;
     this.logger.warn(
       this.traceContext(),
       "Retiring the Codex app-server before allowing another foreground turn",
@@ -5552,7 +5554,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.terminalProcessIdsByTurnId.clear();
     this.settleStreamRetry({ status: "canceled" });
-    this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    if (!canceledBeforeSubmission)
+      this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.currentTurnId = null;

@@ -9757,9 +9757,15 @@ test("canceling a pending Codex start settles as canceled without accepting its 
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-cold-cancel-"));
   const threadLoaded = deferred<{ data: string[] }>();
   const appServer = createFakeCodexAppServer({ "thread/loaded/list": () => threadLoaded.promise });
+  const replacement = createFakeCodexAppServer();
+  const runtimes = [appServer, replacement];
   class ColdStartClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+      return new CodexAppServerAgentSession(config, null, logger, async () => {
+        const runtime = runtimes.shift();
+        if (!runtime) throw new Error("Unexpected extra runtime");
+        return runtime.child;
+      });
     }
   }
   const manager = new AgentManager({
@@ -9811,11 +9817,13 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(false);
 
     const nextRun = manager.runAgent(agent.id, "Next prompt", { clientMessageId: "next-prompt" });
-    await appServer.waitForRequest("turn/start");
-    appServer.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
-    appServer.completeTurn();
+    void nextRun.catch(() => undefined);
+    await replacement.waitForRequest("turn/start");
+    replacement.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
+    replacement.completeTurn();
     await expect(nextRun).resolves.toMatchObject({ canceled: false });
     appServer.assertNoErrors();
+    replacement.assertNoErrors();
   } finally {
     threadLoaded.resolve({ data: ["thread-1"] });
     manager.prepareForShutdown();

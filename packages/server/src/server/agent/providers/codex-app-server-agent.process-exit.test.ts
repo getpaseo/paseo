@@ -1180,3 +1180,29 @@ test("manager Stop can retry a failed startup retirement after its run is cleare
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("retiring a pre-submission startup leaves its cancellation event to the manager", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-unsubmitted-cancel-"));
+  const old = createFakeCodexAppServer({ "thread/loaded/list": () => new Promise(() => {}) });
+  const session = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: workdir },
+    null,
+    logger,
+    async () => old.child,
+  );
+  await session.getRuntimeInfo();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const starting = session.startTurn("never submitted");
+    const canceled = expect(starting).rejects.toThrow("canceled before starting");
+    await old.waitForRequest("thread/loaded/list");
+    await session.interrupt();
+    await canceled;
+    expect(old.requests().filter((request) => request.method === "turn/start")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
