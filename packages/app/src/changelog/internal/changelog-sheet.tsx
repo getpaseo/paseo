@@ -146,14 +146,13 @@ interface ReleaseGroupViewProps {
 /**
  * A minor version: its highlights, then every entry of it behind one control,
  * newest first. A minor without highlights has nothing to stand in for its
- * entries, so it shows them as it always did.
+ * entries, so it shows them as it always did. Each entry keeps its date.
  */
 const ReleaseGroupView = memo(function ReleaseGroupView({
   group,
   installedVersion,
 }: ReleaseGroupViewProps) {
   const { t } = useTranslation();
-  const date = formatChangelogDate(group.date);
   const [showingAllChanges, setShowingAllChanges] = useState(false);
   const toggleAllChanges = useCallback(() => setShowingAllChanges((value) => !value), []);
   const allChangesState = useMemo(() => ({ expanded: showingAllChanges }), [showingAllChanges]);
@@ -164,11 +163,9 @@ const ReleaseGroupView = memo(function ReleaseGroupView({
 
   return (
     <View style={styles.group} testID={`changelog-release-group-${group.version}`}>
-      <View style={styles.groupHeading}>
-        <Text style={styles.groupLabel}>{group.label}</Text>
+      <View style={styles.releaseHeading}>
+        <Text style={styles.version}>{group.label}</Text>
         {isInstalled ? <StatusBadge label={t("changelog.installed")} /> : null}
-        <View style={styles.headingSpacer} />
-        {date ? <Text style={styles.date}>{date}</Text> : null}
       </View>
       {hasHighlights ? <MarkdownRenderer text={group.highlights} compact /> : null}
       {hasHighlights && hasEntryNotes ? (
@@ -181,15 +178,17 @@ const ReleaseGroupView = memo(function ReleaseGroupView({
           {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
         </Button>
       ) : null}
-      {showsEntries
-        ? group.releases.map((release) => (
+      {showsEntries ? (
+        <View style={styles.releaseList}>
+          {group.releases.map((release) => (
             <ReleaseView
               key={`${release.version}:${release.date}`}
               release={release}
-              isInstalled={release.version === installedVersion}
+              isCurrent={release.version === installedVersion}
             />
-          ))
-        : null}
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -200,26 +199,46 @@ function hasNotes(release: ChangelogRelease): boolean {
 
 interface ReleaseViewProps {
   release: ChangelogRelease;
-  isInstalled: boolean;
+  isCurrent: boolean;
 }
 
-/** One entry of a minor: its version and date, then everything it was authored with. */
-function ReleaseView({ release, isInstalled }: ReleaseViewProps) {
+/**
+ * A release that has highlights shows only them until the reader asks for the
+ * sections, which are the full record. A release without highlights has nothing
+ * to stand in for its sections, so it shows them as it always did.
+ */
+const ReleaseView = memo(function ReleaseView({ release, isCurrent }: ReleaseViewProps) {
   const { t } = useTranslation();
   const date = formatChangelogDate(release.date);
+  const [showingAllChanges, setShowingAllChanges] = useState(false);
+  const toggleAllChanges = useCallback(() => setShowingAllChanges((value) => !value), []);
+  const allChangesState = useMemo(() => ({ expanded: showingAllChanges }), [showingAllChanges]);
+  const hasHighlights = release.highlights.length > 0;
+  const showsSections = !hasHighlights || showingAllChanges;
+
   return (
     <View style={styles.release} testID={`changelog-release-${release.version}`}>
       <View style={styles.releaseHeading}>
         <Text style={styles.version}>{release.version}</Text>
-        {isInstalled ? <StatusBadge label={t("changelog.installed")} /> : null}
+        {isCurrent ? <StatusBadge label={t("changelog.installed")} /> : null}
         <View style={styles.headingSpacer} />
         {date ? <Text style={styles.date}>{date}</Text> : null}
       </View>
-      {release.highlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
-      <ReleaseSections sections={release.sections} />
+      {hasHighlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
+      {hasHighlights && release.sections.length > 0 ? (
+        <Button
+          variant="ghost"
+          style={styles.allChangesToggle}
+          accessibilityState={allChangesState}
+          onPress={toggleAllChanges}
+        >
+          {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
+        </Button>
+      ) : null}
+      {showsSections ? <ReleaseSections sections={release.sections} /> : null}
     </View>
   );
-}
+});
 
 function ReleaseSections({ sections }: { sections: readonly ChangelogSection[] }) {
   return keyChangelogSections(sections).map(({ key, section }) => (
@@ -257,18 +276,8 @@ const styles = StyleSheet.create((theme) => ({
   group: {
     gap: theme.spacing[4],
   },
-  groupHeading: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingBottom: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  groupLabel: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
+  releaseList: {
+    gap: theme.spacing[8],
   },
   release: {
     gap: theme.spacing[4],
@@ -277,12 +286,15 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
+    paddingBottom: theme.spacing[2],
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
   },
   headingSpacer: {
     flex: 1,
   },
   version: {
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foreground,
   },

@@ -40,11 +40,10 @@ function versions(group: ChangelogReleaseGroup): string[] {
 describe("groupReleases", () => {
   const [latest, older] = groupReleases(parseChangelog(CHANGELOG));
 
-  it("keeps the minor's highlights and date when a patch ships", () => {
+  it("keeps the minor's highlights when a patch ships", () => {
     expect(latest).toMatchObject({
       version: "0.16",
       label: "0.16",
-      date: "2026-11-16",
       highlights: "- **Background tasks:** Paseo shows the tasks an agent runs.",
     });
   });

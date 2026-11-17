@@ -15,8 +15,6 @@ export interface ChangelogReleaseGroup {
   version: string;
   /** The minor, or the beta's version while the minor has shipped only as a beta. */
   label: string;
-  /** The date of the entry that opened the minor. */
-  date: string;
   /** The highlights of the entry that opened the minor. */
   highlights: string;
   /**
@@ -45,7 +43,6 @@ export function groupReleases(releases: readonly ChangelogRelease[]): ChangelogR
     return {
       version,
       label: isPrerelease(opening.version) ? opening.version : version,
-      date: opening.date,
       highlights: opening.highlights,
       releases: [...entries.slice(0, -1), { ...opening, highlights: "" }],
     };

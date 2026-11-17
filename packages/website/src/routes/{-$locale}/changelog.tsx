@@ -42,14 +42,26 @@ function HeadingAnchor({ version }: { version: string }) {
   );
 }
 
+/**
+ * A release that has highlights shows only them; its sections, the full record, open on request.
+ * A release without highlights shows its sections, since nothing stands in for them.
+ */
 function ReleaseNotes({ release }: { release: ChangelogRelease }) {
+  const { t } = useTranslation();
+  if (!release.highlights) {
+    return <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>;
+  }
   return (
     <>
-      {release.highlights ? (
-        <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
-      ) : null}
+      <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
       {release.sections ? (
-        <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
+        <details className="changelog-all-changes">
+          <summary className="changelog-all-changes-summary">
+            <span className="changelog-all-changes-show">{t("changelog.showAllChanges")}</span>
+            <span className="changelog-all-changes-hide">{t("changelog.hideAllChanges")}</span>
+          </summary>
+          <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
+        </details>
       ) : null}
     </>
   );
@@ -99,7 +111,6 @@ function Patches({ group }: { group: ChangelogReleaseGroup }) {
  */
 function Release({ group }: { group: ChangelogReleaseGroup }) {
   const { t } = useTranslation();
-  const locale = useLocale();
   return (
     <article
       className="changelog-release"
@@ -108,11 +119,8 @@ function Release({ group }: { group: ChangelogReleaseGroup }) {
       <div id={releaseAnchor(group.version)} className="changelog-release-heading">
         <HeadingAnchor version={group.version} />
         <h2 id={`${releaseAnchor(group.version)}-title`} className="changelog-release-title">
-          Paseo <span>{group.label}</span>
+          Paseo <span>{group.version}</span>
         </h2>
-        <time dateTime={group.date} className="changelog-release-date">
-          {formatDate(group.date, locale, "long")}
-        </time>
       </div>
       {group.highlights ? (
         <>

@@ -155,11 +155,9 @@ describe("groupChangelogReleases", () => {
     ),
   );
 
-  it("keeps the minor's highlights and date when a patch ships", () => {
+  it("keeps the minor's highlights when a patch ships", () => {
     expect(latest).toMatchObject({
       version: "0.16",
-      label: "0.16",
-      date: "2026-11-16",
       highlights: "- **Background tasks:** Paseo shows the tasks an agent runs.",
       locale: "en",
     });
@@ -175,14 +173,6 @@ describe("groupChangelogReleases", () => {
 
   it("has no highlights when the entry that opened the minor had none", () => {
     expect(older).toMatchObject({ version: "0.15", highlights: "" });
-  });
-
-  it("labels a minor that has shipped only as a beta with the beta's version", () => {
-    const [beta] = groupChangelogReleases(
-      parseChangelog("## 0.17.0-beta.2 - 2026-11-20\n\n- **New:** Thing.\n", "en"),
-    );
-
-    expect(beta).toMatchObject({ version: "0.17", label: "0.17.0-beta.2" });
   });
 });
 

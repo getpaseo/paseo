@@ -24,10 +24,6 @@ export interface ChangelogRelease {
 export interface ChangelogReleaseGroup {
   /** `0.16` for `0.16.1`; the group's anchor. */
   version: string;
-  /** The minor, or the beta's version while the minor has shipped only as a beta. */
-  label: string;
-  /** The date of the entry that opened the minor. */
-  date: string;
   /** The highlights of the entry that opened the minor. */
   highlights: string;
   /** The language of the highlights. */
@@ -153,8 +149,6 @@ export function groupChangelogReleases(releases: ChangelogRelease[]): ChangelogR
     const opening = entries[entries.length - 1];
     return {
       version,
-      label: opening.version.includes("-") ? opening.version : version,
-      date: opening.date,
       highlights: opening.highlights,
       locale: opening.locale,
       releases: [...entries.slice(0, -1), { ...opening, highlights: "" }],

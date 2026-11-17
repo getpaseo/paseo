@@ -315,11 +315,11 @@
 }
 
 .changelog-all-changes-hide,
-.changelog-all-changes[open] .changelog-all-changes-show {
+.changelog-all-changes[open] > summary .changelog-all-changes-show {
   display: none;
 }
 
-.changelog-all-changes[open] .changelog-all-changes-hide {
+.changelog-all-changes[open] > summary .changelog-all-changes-hide {
   display: inline;
 }
 

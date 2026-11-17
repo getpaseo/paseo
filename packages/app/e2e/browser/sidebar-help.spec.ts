@@ -127,7 +127,6 @@ test("renders the changelog in the app and links the website", async ({ page }) 
 
   await test.step("leads a minor with its highlights when a patch has shipped", async () => {
     await expect(latest.getByText("9.1", { exact: true })).toBeVisible();
-    await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
     await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
     await expect(latest.getByText("Fixed a patch crash")).toHaveCount(0);
     await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
@@ -136,7 +135,9 @@ test("renders the changelog in the app and links the website", async ({ page }) 
   await test.step("shows every entry on request, newest first, and tucks them away", async () => {
     await showAllChanges(latest);
     await expect(release(latest, "9.1.1").getByText("Fixed a patch crash")).toBeVisible();
+    await expect(release(latest, "9.1.1").getByText("March 5, 2026", { exact: true })).toBeVisible();
     const minorEntry = release(latest, "9.1.0");
+    await expect(minorEntry.getByText("March 4, 2026", { exact: true })).toBeVisible();
     await expect(minorEntry.getByText("Sparkles", { exact: true })).toBeVisible();
     await expect(minorEntry.getByText("Added a brand new thing")).toBeVisible();
     await expect(minorEntry.getByText("Read this before upgrading.")).toBeVisible();
