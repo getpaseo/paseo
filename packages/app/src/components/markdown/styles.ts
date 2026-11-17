@@ -19,7 +19,7 @@ export function createMarkdownStyles(
   const paragraph = {
     fontSize,
     fontFamily: theme.fontFamily.ui,
-    lineHeight: Math.round(fontSize * 1.4),
+    lineHeight: compact ? Math.round(fontSize * 1.4) : theme.lineHeight.content,
     color: muted ? theme.colors.foregroundMuted : theme.colors.foreground,
     ...block,
   };
@@ -83,6 +83,7 @@ export function createMarkdownStyles(
         ...paragraph,
         fontFamily: theme.fontFamily.mono === "ui-monospace" && !isWeb ? "" : theme.fontFamily.mono,
         fontSize: theme.fontSize.code,
+        lineHeight: theme.lineHeight.code,
         backgroundColor: theme.colors.surface2,
         borderColor: theme.colors.border,
         borderRadius: 8,

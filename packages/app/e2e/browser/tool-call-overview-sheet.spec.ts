@@ -244,7 +244,7 @@ async function openToolDetails(badge: Locator): Promise<void> {
 
 test("keeps open-file and expand as separate tool-call actions", async ({ page }) => {
   test.setTimeout(120_000);
-  await configureOverviewToolCalls(page, "collapseToolCalls");
+  await configureOverviewToolCalls(page, "collapseToolCalls", true);
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "tool-call-open-file-",
     title: "Tool-call open-file action",

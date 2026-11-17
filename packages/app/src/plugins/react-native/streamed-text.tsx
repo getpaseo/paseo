@@ -17,6 +17,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontFamily: theme.fontFamily.ui,
     fontSize: theme.fontSize.content,
-    lineHeight: Math.round(theme.fontSize.content * 1.4),
+    lineHeight: theme.lineHeight.content,
   },
 }));

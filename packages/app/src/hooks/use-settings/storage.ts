@@ -71,7 +71,7 @@ export function defaultContentFontSize(native: boolean): number {
 export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
 export const MIN_CONTENT_FONT_SIZE = 10;
 export const MAX_CONTENT_FONT_SIZE = 21;
-export const DEFAULT_CODE_FONT_SIZE = 12; // == FONT_SIZE.code
+export const DEFAULT_CODE_FONT_SIZE = FONT_SIZE.code;
 export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
@@ -89,11 +89,11 @@ export interface AppSettings {
   sendBehavior: SendBehavior;
   serviceUrlBehavior: ServiceUrlBehavior;
   terminalScrollbackLines: number;
-  uiFontFamily: string; // "" = platform default UI stack
-  monoFontFamily: string; // "" = platform default mono stack
+  uiFontFamily: string; // "" = built-in default UI stack
+  monoFontFamily: string; // "" = built-in default mono stack
   uiBaseFontSize: number; // clamped px, platform default 14 or 15
-  contentFontSize: number; // clamped px, platform default 15 or 16
-  codeFontSize: number; // clamped px, default 12
+  contentFontSize: number; // clamped px, default 16
+  codeFontSize: number; // clamped px, default 14
   /** Max width of chat and markdown content in px; null follows the current default. */
   contentMaxWidth: number | null;
   syntaxTheme: SyntaxThemeId; // default "one"
@@ -337,7 +337,11 @@ const StoredAppSettingsSchema = z
       pullRequestOpenLocation:
         stored.pullRequestOpenLocation ?? (legacyPullRequestsInSidePane ? "side" : "explorer"),
       uiBaseFontSize,
-      contentFontSize: stored.contentFontSize ?? uiBaseFontSize,
+      contentFontSize:
+        stored.contentFontSize ??
+        (stored.uiBaseFontSize === undefined && stored.uiFontSize === undefined
+          ? DEFAULT_CONTENT_FONT_SIZE
+          : uiBaseFontSize),
       sidebarChecksDisplay,
       sidebarRowItems: {
         ...stored.sidebarRowItems,
@@ -430,7 +434,7 @@ async function readAppSettings(
     return {
       settings: {
         ...DEFAULT_CLIENT_SETTINGS,
-        ...pickAppSettingsFromLegacy(legacyStored),
+        ...normalizeAppSettings(legacyStored),
       } satisfies AppSettings,
       needsWrite: true,
       stored: legacyStored,
@@ -478,16 +482,6 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     ...settings
   } = StoredAppSettingsSchema.parse(value);
   return settings;
-}
-
-function pickAppSettingsFromLegacy(legacy: StoredAppSettings): AppSettings {
-  const settings = normalizeAppSettings(legacy);
-  return {
-    ...settings,
-    // The legacy key rendered content on the interface ramp. Freeze that
-    // rendered value into the new independent preference during migration.
-    contentFontSize: legacy.uiBaseFontSize,
-  };
 }
 
 export function parseTerminalScrollbackLines(value: unknown): number | null {

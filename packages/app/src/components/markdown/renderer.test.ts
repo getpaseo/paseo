@@ -1118,6 +1118,13 @@ it("replaces the native placeholder only after the resolved URL decodes", () => 
   expect(prepared.render(new Map([["shot.png", url]]))).toBe(`![image](<${url}>)`);
 });
 
+it("uses Conductor's default prose and code-block line heights", () => {
+  const { markdownStyle } = createMarkdownStyles(lightTheme, { blockGap: 12 });
+
+  expect(markdownStyle.paragraph?.lineHeight).toBe(26);
+  expect(markdownStyle.codeBlock?.lineHeight).toBe(21);
+});
+
 it("makes the web Markdown container selectable in Safari as well as unprefixed browsers", () => {
   expect(createMarkdownStyles(lightTheme, { blockGap: 12 }).containerStyle).toEqual({
     userSelect: "text",

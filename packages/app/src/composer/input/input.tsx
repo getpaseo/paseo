@@ -2446,7 +2446,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     // line box is the same for every line. Web keeps the CSS value.
     ...(isWeb
       ? ({
-          lineHeight: theme.fontSize.content * 1.4,
+          lineHeight: theme.lineHeight.content,
           outlineStyle: "none",
           outlineWidth: 0,
           outlineColor: "transparent",

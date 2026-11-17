@@ -192,7 +192,7 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     color: theme.colors.foreground,
-    lineHeight: 18,
+    lineHeight: theme.lineHeight.code,
     ...(isWeb
       ? {
           whiteSpace: "pre",

@@ -585,8 +585,8 @@ export const SPACING = {
 } as const;
 
 export const FONT_SIZE = {
-  code: 12,
-  content: 15,
+  code: 14,
+  content: 16,
   sm: 12,
   base: 14,
   lg: 16,
@@ -596,8 +596,18 @@ export const FONT_SIZE = {
   "4xl": 26,
 } as const;
 
+export function resolveContentLineHeight(fontSize: number): number {
+  return Math.round(fontSize * 1.6);
+}
+
+export function resolveCodeLineHeight(fontSize: number): number {
+  return Math.round(fontSize * 1.5);
+}
+
 export const LINE_HEIGHT = {
-  diff: 22,
+  content: resolveContentLineHeight(FONT_SIZE.content),
+  code: resolveCodeLineHeight(FONT_SIZE.code),
+  diff: resolveCodeLineHeight(FONT_SIZE.code),
 } as const;
 
 export const ICON_SIZE = {
@@ -639,19 +649,18 @@ export const OPACITY = {
   100: 1,
 } as const;
 
-// Platform default font stacks — copied verbatim from constants/theme.ts `Fonts`
-// (sans -> ui, mono -> mono). These seed the dynamic `fontFamily` theme token and
-// are the fallback an empty user-supplied family resolves to at apply time.
+// Geist ships with the app and is loaded by AppearanceProvider. These stacks seed the dynamic
+// `fontFamily` theme token and are the fallback an empty user-supplied family resolves to.
 export const DEFAULT_UI_FONT_STACK: string = Platform.select({
-  ios: "system-ui",
-  default: "normal",
-  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  ios: "Geist",
+  default: "Geist",
+  web: "Geist, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 });
 
 export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
-  ios: "ui-monospace",
-  default: "monospace",
-  web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  ios: "Geist Mono",
+  default: "Geist Mono",
+  web: "'Geist Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 });
 
 // Chat and markdown content column; the appearance updater patches the user's width in.

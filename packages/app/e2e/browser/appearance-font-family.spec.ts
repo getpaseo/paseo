@@ -13,6 +13,33 @@ async function setFontFamily(page: Page, name: string, family: string) {
   await input.press("Tab");
 }
 
+test("renders bundled Geist defaults with Conductor typography metrics", async ({
+  page,
+}, testInfo) => {
+  await openAppearance(page);
+
+  const preview = page.getByRole("img", {
+    name: "Live preview of content typography, syntax theme, and code font",
+  });
+  const content = preview.getByText("Readable content and code preview", { exact: true });
+  await expect(content).toHaveCSS("font-size", "16px");
+  await expect(content).toHaveCSS("line-height", "26px");
+  await expect(content).toHaveCSS("font-family", /Geist/);
+
+  const code = preview.getByText("export", { exact: true }).first();
+  await expect(code).toHaveCSS("font-size", "14px");
+  await expect(code).toHaveCSS("line-height", "21px");
+  await expect(code).toHaveCSS("font-family", /Geist Mono/);
+  expect(
+    await page.evaluate(() => ({
+      ui: document.fonts.check("16px Geist"),
+      mono: document.fonts.check('14px "Geist Mono"'),
+    })),
+  ).toEqual({ ui: true, mono: true });
+
+  await preview.screenshot({ path: testInfo.outputPath("geist-defaults.png") });
+});
+
 test("keeps settings usable while editing code and interface font families", async ({
   page,
 }, testInfo) => {

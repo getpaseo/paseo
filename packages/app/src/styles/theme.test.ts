@@ -2,17 +2,31 @@ import { describe, expect, it } from "vitest";
 import {
   darkPureBlackTheme,
   darkTheme,
+  DEFAULT_MONO_FONT_STACK,
+  DEFAULT_UI_FONT_STACK,
   FONT_SIZE,
   getNextThemePreference,
   lightTheme,
+  LINE_HEIGHT,
+  resolveCodeLineHeight,
+  resolveContentLineHeight,
   THEME_OPTIONS,
 } from "./theme";
 
 describe("Typography scale", () => {
+  it("uses the bundled Geist families for interface and code text by default", () => {
+    expect(DEFAULT_UI_FONT_STACK).toMatch(/^Geist(?:,|$)/);
+    expect(DEFAULT_MONO_FONT_STACK).toMatch(/^["']?Geist Mono["']?(?:,|$)/);
+    expect(lightTheme.fontFamily).toEqual({
+      ui: DEFAULT_UI_FONT_STACK,
+      mono: DEFAULT_MONO_FONT_STACK,
+    });
+  });
+
   it("names 14px as the default interface tier", () => {
     expect(FONT_SIZE).toEqual({
-      code: 12,
-      content: 15,
+      code: 14,
+      content: 16,
       sm: 12,
       base: 14,
       lg: 16,
@@ -21,6 +35,12 @@ describe("Typography scale", () => {
       "3xl": 22,
       "4xl": 26,
     });
+  });
+
+  it("uses Conductor's prose and code line-height ratios", () => {
+    expect(resolveContentLineHeight(16)).toBe(26);
+    expect(resolveCodeLineHeight(14)).toBe(21);
+    expect(LINE_HEIGHT).toEqual({ content: 26, code: 21, diff: 21 });
   });
 });
 

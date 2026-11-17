@@ -1,6 +1,5 @@
 import { AppearanceText as Text } from "@/appearance/text";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -39,14 +38,6 @@ const TextInput = withUnistyles(EditingTextInput, (theme) => {
   void theme.fontSize;
   return {};
 });
-
-// Platform default stacks can be the bare native tokens ("normal"/"monospace");
-// those read as a bug, so show a human label in the placeholder instead.
-const BARE_DEFAULT_STACKS: ReadonlySet<string> = new Set(["normal", "monospace"]);
-
-function resolveDefaultStackPlaceholder(t: TFunction, stack: string): string {
-  return BARE_DEFAULT_STACKS.has(stack) ? t("settings.appearance.fonts.systemDefault") : stack;
-}
 
 // Local size string (digits only) -> preview override number. Empty/invalid
 // yields undefined so the preview falls back to the committed theme value.
@@ -313,8 +304,8 @@ export function AppearanceSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
   const showInterfaceFontFamilyRow = !isNative;
-  const uiFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_UI_FONT_STACK);
-  const monoFontPlaceholder = resolveDefaultStackPlaceholder(t, DEFAULT_MONO_FONT_STACK);
+  const uiFontPlaceholder = DEFAULT_UI_FONT_STACK;
+  const monoFontPlaceholder = DEFAULT_MONO_FONT_STACK;
 
   const [uiFontDraft, setUiFontDraft] = useState(settings.uiFontFamily);
   const [monoFontDraft, setMonoFontDraft] = useState(settings.monoFontFamily);

@@ -59,7 +59,7 @@ export function editorTheme(theme: EditorVisualTheme) {
         ".cm-scroller": {
           overflow: "auto",
           fontFamily: theme.monoFont,
-          lineHeight: "1.45",
+          lineHeight: "1.5",
         },
         ".cm-panels": { backgroundColor: theme.background, color: theme.foreground },
         ".cm-panels-top": { borderBottom: "none" },

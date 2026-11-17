@@ -1,8 +1,9 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { resolveCodeLineHeight } from "@/styles/theme";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
@@ -32,9 +33,19 @@ export function FileSourceView({
   location,
   navigationRevision,
   presentation,
+  theme,
 }: FileSourceViewProps) {
   const listRef = useRef<FlatList<HighlightToken[]>>(null);
   const [lines, setLines] = useState<HighlightToken[][] | null>(null);
+  const lineHeight = resolveCodeLineHeight(theme.codeFontSize);
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<HighlightToken[]> | null | undefined, index: number) => ({
+      length: lineHeight,
+      offset: index * lineHeight,
+      index,
+    }),
+    [lineHeight],
+  );
   // Navigating within the file does not rebuild its lines; a new build starts at the latest line.
   const openingLine = useRef(location.lineStart);
   useEffect(() => {
@@ -61,7 +72,7 @@ export function FileSourceView({
       keyExtractor={sourceLineKey}
       initialNumToRender={24}
       windowSize={9}
-      getItemLayout={sourceLineLayout}
+      getItemLayout={getItemLayout}
       renderItem={renderSourceLine}
     />
   );
@@ -109,16 +120,12 @@ function sourceLineKey(_tokens: HighlightToken[], index: number): string {
   return String(index);
 }
 
-function sourceLineLayout(_data: ArrayLike<HighlightToken[]> | null | undefined, index: number) {
-  return { length: 20, offset: index * 20, index };
-}
-
 const renderSourceLine: ListRenderItem<HighlightToken[]> = ({ item, index }) => (
   <SourceLineView tokens={item} number={index + 1} />
 );
 
 const styles = StyleSheet.create((theme) => ({
-  line: { flexDirection: "row", minHeight: theme.fontSize.code * 1.45 },
+  line: { flexDirection: "row", minHeight: theme.lineHeight.code },
   gutter: {
     width: 56,
     paddingRight: theme.spacing[3],
@@ -131,6 +138,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
-    lineHeight: theme.fontSize.code * 1.45,
+    lineHeight: theme.lineHeight.code,
   },
 }));

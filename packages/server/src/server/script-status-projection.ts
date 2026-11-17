@@ -6,7 +6,7 @@ import type {
   WorkspaceScriptPayload,
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
-import { readPaseoConfigOrLastKnown } from "../utils/paseo-config-file.js";
+import { readPaseoConfig, readPaseoConfigOrLastKnown } from "../utils/paseo-config-file.js";
 import { getScriptConfigs, isServiceScript } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";

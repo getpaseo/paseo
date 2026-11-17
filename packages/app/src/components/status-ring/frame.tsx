@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { StyleSheet as RNStyleSheet, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
-import { getStatusDotColor } from "@/utils/status-dot-color";
 import {
   STATUS_RING_FRAME_SIZE,
   STATUS_RING_HEAD_OPACITY,
@@ -19,7 +18,7 @@ export interface StatusRingProps {
   // tab dot, the project tile under a sidebar badge. Leave it out where the ring sits on flat
   // background and has nothing to knock out.
   backdrop?: SurfaceBackdrop | null;
-  // "status" paints the running colour. "foreground" paints the text colour, for a ring that
+  // "status" paints the accent colour. "foreground" paints the text colour, for a ring that
   // stands on its own beside a label instead of sitting on an agent icon.
   tone?: StatusRingTone;
 }
@@ -92,8 +91,6 @@ export const styles = StyleSheet.create((theme) => {
     borderRadius: theme.borderRadius.full,
     borderWidth: STATUS_RING_STROKE,
   } as const;
-  const runningColor = getStatusDotColor({ theme, bucket: "running" }) ?? undefined;
-
   return {
     frame: {
       width: STATUS_RING_FRAME_SIZE,
@@ -114,7 +111,7 @@ export const styles = StyleSheet.create((theme) => {
     track: {
       ...circle,
       position: "absolute",
-      borderColor: runningColor,
+      borderColor: theme.colors.accent,
       opacity: STATUS_RING_TRACK_OPACITY,
     },
 
@@ -123,7 +120,7 @@ export const styles = StyleSheet.create((theme) => {
     arc: {
       ...circle,
       borderColor: "transparent",
-      borderTopColor: runningColor,
+      borderTopColor: theme.colors.accent,
       opacity: STATUS_RING_HEAD_OPACITY,
     },
 
@@ -131,7 +128,7 @@ export const styles = StyleSheet.create((theme) => {
       width: STATUS_INDICATOR_FILLED_DOT_SIZE,
       height: STATUS_INDICATOR_FILLED_DOT_SIZE,
       borderRadius: theme.borderRadius.full,
-      backgroundColor: runningColor,
+      backgroundColor: theme.colors.accent,
     },
 
     trackForeground: { borderColor: theme.colors.foreground },

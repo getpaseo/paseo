@@ -7,6 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useFonts } from "expo-font";
 import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import {
@@ -29,6 +30,10 @@ const ContributedThemesContext = createContext<ContributedThemes | null>(null);
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, updateSettings, isLoading } = useAppSettings();
+  const [fontsLoaded, fontLoadError] = useFonts({
+    Geist: require("../../assets/fonts/Geist-VariableFont.ttf"),
+    "Geist Mono": require("../../assets/fonts/GeistMono-VariableFont.ttf"),
+  });
   const systemColorScheme = useColorScheme();
   const systemAccent = useSystemAccentColor();
   const [hasAppliedAppearance, setHasAppliedAppearance] = useState(false);
@@ -88,7 +93,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // The first settings load changes appearance keys. Mount screens only after applying it
   // so startup does not destroy and recreate an already-visible workspace.
-  if (!hasAppliedAppearance) return null;
+  if (!hasAppliedAppearance || (!fontsLoaded && !fontLoadError)) return null;
 
   return (
     <ContributedThemesContext.Provider value={value}>

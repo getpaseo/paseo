@@ -31,6 +31,7 @@ export PASEO_DAEMON_ENDPOINT="$DAEMON_ENDPOINT"
 
 export PASEO_CORS_ORIGINS="${PASEO_CORS_ORIGINS:-*}"
 
+npm --prefix "$ROOT_DIR" run build:server
 npm --prefix "$DESKTOP_DIR" run build:main
 
 echo "══════════════════════════════════════════════════════"

@@ -626,7 +626,7 @@ const styles = StyleSheet.create((theme) => {
     paseoProse: {
       color: theme.colors.foreground,
       fontSize: theme.fontSize.content,
-      lineHeight: Math.round(theme.fontSize.content * 1.5),
+      lineHeight: theme.lineHeight.content,
       overflowWrap: "anywhere",
     },
     paseoFields: {
@@ -715,7 +715,7 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: theme.fontFamily.mono,
       fontSize: theme.fontSize.code,
       color: theme.colors.foreground,
-      lineHeight: 18,
+      lineHeight: theme.lineHeight.code,
       ...(isWeb
         ? {
             whiteSpace: "pre",

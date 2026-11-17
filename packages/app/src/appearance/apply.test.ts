@@ -45,7 +45,7 @@ interface FakeTheme {
     "3xl": number;
     "4xl": number;
   };
-  lineHeight: { diff: number };
+  lineHeight: { content: number; code: number; diff: number };
   contentMaxWidth: number;
   colors: {
     foreground: string;
@@ -70,7 +70,7 @@ function makeFakeTheme(): FakeTheme {
       "3xl": 22,
       "4xl": 26,
     },
-    lineHeight: { diff: 22 },
+    lineHeight: { content: 21, code: 18, diff: 18 },
     contentMaxWidth: 820,
     colors: { foreground: "#fff", syntax: {} },
   };
@@ -199,10 +199,10 @@ describe("applyAppearance", () => {
     expect(runCapturedUpdater().fontSize.code).toBe(18);
   });
 
-  it("couples lineHeight.diff to the code font size", () => {
-    applyAppearance(makeInput({ codeFontSize: 18 }));
+  it("couples content and code line heights to their font sizes", () => {
+    applyAppearance(makeInput({ contentFontSize: 19, codeFontSize: 18 }));
 
-    expect(runCapturedUpdater().lineHeight.diff).toBe(Math.round(18 * 1.5)); // 27
+    expect(runCapturedUpdater().lineHeight).toEqual({ content: 30, code: 27, diff: 27 });
   });
 
   it("replaces the theme accent with the macOS system accent", () => {

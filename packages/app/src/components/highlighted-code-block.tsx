@@ -15,6 +15,7 @@ import type { HighlightToken } from "@getpaseo/highlight";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { resolveCodeLineHeight } from "@/styles/theme";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 import {
@@ -161,7 +162,7 @@ function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): Spli
   const textOnly: TextStyle = { ...WEB_SELECTABLE };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
   if (fontSize !== undefined) textOnly.fontSize = fontSize;
-  if (fontSize !== undefined) textOnly.lineHeight = Math.round(fontSize * 1.45);
+  if (fontSize !== undefined) textOnly.lineHeight = resolveCodeLineHeight(fontSize);
   if (color !== undefined) textOnly.color = color;
   return {
     containerStyle: [box as ViewStyle, CONTAINER_BASE],

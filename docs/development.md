@@ -19,6 +19,10 @@ Root checkout dev is intentionally split across terminals:
 - `npm run dev:app` runs Expo on `http://localhost:8081` and connects to the dev daemon.
 - `npm run dev:desktop` runs its own Electron-flavored Expo server on the first free port from `8082` through `8089`. It never claims port `8081`.
 
+Desktop dev builds the server stack before compiling Electron. The daemon needs
+generated runtime assets, including the terminal worker and OpenCode bridge bundles,
+that TypeScript compilation alone does not produce.
+
 Desktop dev launches its desktop-managed daemon with `PASEO_NODE_ENV=development`,
 so development-only providers such as Mock Load Test are available. Packaged
 desktop launches always force the daemon to production mode.

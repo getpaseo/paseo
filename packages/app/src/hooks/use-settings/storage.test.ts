@@ -529,7 +529,7 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "dark",
-      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
       chatDisplay: "full",
     });
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
@@ -668,7 +668,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
       chatDisplay: "full",
     });
   });
@@ -713,7 +713,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
       chatDisplay: "full",
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
@@ -735,7 +735,7 @@ describe("loadSettingsFromStorage", () => {
     expect(result).toEqual({
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
-      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
       chatDisplay: "full",
     });
   });
@@ -811,7 +811,7 @@ describe("saveAppSettings", () => {
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "light",
-      contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
       chatDisplay: "collapseToolCalls",
     });
   });
@@ -864,7 +864,7 @@ describe("appearance settings", () => {
     expect(result.uiFontFamily).toBe("");
     expect(result.monoFontFamily).toBe("");
     expect(result.uiBaseFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
-    expect(result.contentFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
+    expect(result.contentFontSize).toBe(DEFAULT_CONTENT_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
     expect(result.chatDisplay).toBe("full");
@@ -936,10 +936,11 @@ describe("appearance settings", () => {
     expect(defaultUiBaseFontSize(false)).toBe(14);
   });
 
-  it("uses a 16px content default on mobile and a 15px default on web", () => {
+  it("uses Conductor's 16px content and 14px code defaults", () => {
     expect(defaultContentFontSize(true)).toBe(16);
-    expect(defaultContentFontSize(false)).toBe(15);
+    expect(defaultContentFontSize(false)).toBe(16);
     expect(DEFAULT_CONTENT_FONT_SIZE).toBe(defaultContentFontSize(false));
+    expect(DEFAULT_CODE_FONT_SIZE).toBe(14);
   });
 
   it("derives and persists content size from an existing interface-size preference", async () => {
