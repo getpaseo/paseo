@@ -90,12 +90,14 @@ test.describe("New workspace: launching a terminal", () => {
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "captured: fix the flaky test");
     });
+    const firstWorkspaceUrl = page.url();
 
     await test.step("a profile without the sentinel is read-only and shows the resolved command", async () => {
       await openNewWorkspaceComposer(page, {
         projectKey: workspace.projectKey,
         projectDisplayName: workspace.projectDisplayName,
       });
+      await page.reload();
       await selectLaunchOption(page, BARE_PROFILE.id);
       await expect(terminalPromptInput(page)).toHaveCount(0);
       await expectTerminalPreviewCommand(page, "/bin/sh -c echo bare-launch-static-line; exec cat");
@@ -106,6 +108,7 @@ test.describe("New workspace: launching a terminal", () => {
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);
       await expectTerminalOutputContains(page, "bare-launch-static-line");
+      expect(page.url()).not.toBe(firstWorkspaceUrl);
     });
   });
 

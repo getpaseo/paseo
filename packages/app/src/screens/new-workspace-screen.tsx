@@ -1,7 +1,11 @@
 import { useAddHost } from "@/hosts/add-host";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import { draftCreations } from "@/composer/draft/creation-attempts";
-import { prepareDraftCreation, useDraftStore } from "@/stores/draft-store";
+import {
+  flushDraftPersistStorage,
+  prepareDraftCreation,
+  useDraftStore,
+} from "@/stores/draft-store";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -517,49 +521,51 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
+  const handOffWorkspace = (workspace: WorkspaceDescriptor) => {
+    if (navigated) return;
+    navigated = true;
+    if (!input.isStillOnCreateScreen()) return;
+    getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [{ ...workspace, status: "running" }]);
+    const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
+      forkDraftSetup: input.forkDraftSetup,
+      workspaceDirectory: workspace.workspaceDirectory,
+      provider,
+      composerState,
+    });
+    outcome = submitWorkspaceDraft({
+      clearConsumedDraft,
+      draftKey: input.draftKey,
+      draftContextScopeKey: input.draftContextScopeKey,
+      resolveClient: input.resolveClient,
+      isStillOnCreateScreen: input.isStillOnCreateScreen,
+      serverId,
+      clearDraft,
+      draftId: input.draftId,
+      initialSetup,
+      workspaceId: workspace.id,
+      workspaceDirectory: workspace.workspaceDirectory,
+      text,
+      attachments,
+      provider,
+      composerState,
+      supportsForgeSearch: input.supportsForgeSearch,
+      agentCreation,
+    });
+  };
   const execute = async (): Promise<AgentSnapshotPayload> => {
-    const { agent } = await ensureWorkspace({
+    const { workspace, agent } = await ensureWorkspace({
       cwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
       agent: initialAgent,
       onEvent: (snapshot) => {
-        if (!snapshot.workspace || navigated) return;
-        navigated = true;
-        if (!input.isStillOnCreateScreen()) return;
-        const workspace = normalizeWorkspaceDescriptor(snapshot.workspace);
-        getHostRuntimeStore().acceptWorkspaceSnapshots(serverId, [
-          { ...workspace, status: "running" },
-        ]);
-        const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-          forkDraftSetup: input.forkDraftSetup,
-          workspaceDirectory: workspace.workspaceDirectory,
-          provider,
-          composerState,
-        });
-        outcome = submitWorkspaceDraft({
-          clearConsumedDraft,
-          draftKey: input.draftKey,
-          draftContextScopeKey: input.draftContextScopeKey,
-          resolveClient: input.resolveClient,
-          isStillOnCreateScreen: input.isStillOnCreateScreen,
-          serverId,
-          clearDraft,
-          draftId: input.draftId,
-          initialSetup,
-          workspaceId: workspace.id,
-          workspaceDirectory: workspace.workspaceDirectory,
-          text,
-          attachments,
-          provider,
-          composerState,
-          supportsForgeSearch: input.supportsForgeSearch,
-          agentCreation,
-        });
+        if (snapshot.workspace) handOffWorkspace(normalizeWorkspaceDescriptor(snapshot.workspace));
       },
     });
     if (!agent) throw new Error("Workspace creation returned no agent");
+    // Legacy agent creation has no lifecycle events. Its result still proves readiness.
+    handOffWorkspace(workspace);
     return agent;
   };
   // A retry after a failed agent start belongs to the ready workspace's draft, not to this creation.
@@ -933,7 +939,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
-  const [creationIdentity] = useState(() => ({
+  const [creationIdentity, setCreationIdentity] = useState(() => ({
     worktreeSlug: createNameId(),
   }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1354,6 +1360,12 @@ export function NewWorkspaceScreen({
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";
+          const clearConsumedDraft = captureWorkspaceDraftCleanup({
+            draftId,
+            draftKey,
+            clearDraft: chatDraft.clear,
+            draftContextScopeKey,
+          });
           await runCreateEmptyWorkspace({
             payload,
             ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
@@ -1367,6 +1379,10 @@ export function NewWorkspaceScreen({
               navigateToWorkspace({ serverId: targetServerId, workspaceId });
             },
           });
+          clearConsumedDraft();
+          await flushDraftPersistStorage();
+          setCreationResult({ workspace: null });
+          setCreationIdentity({ worktreeSlug: createNameId() });
           // Nothing navigated, so this screen may still be mounted under another route. Release
           // the pending lock it would otherwise keep forever.
           if (outcome === "background") {
@@ -1439,6 +1455,12 @@ export function NewWorkspaceScreen({
       await updateFormPreferences({ launchTarget });
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
+      const clearConsumedDraft = captureWorkspaceDraftCleanup({
+        draftId,
+        draftKey,
+        clearDraft: chatDraft.clear,
+        draftContextScopeKey,
+      });
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
         prompt: terminalPromptText,
@@ -1484,6 +1506,10 @@ export function NewWorkspaceScreen({
           navigateToWorkspace({ serverId: targetServerId, workspaceId, target });
         },
       });
+      clearConsumedDraft();
+      await flushDraftPersistStorage();
+      setCreationResult({ workspace: null });
+      setCreationIdentity({ worktreeSlug: createNameId() });
       if (outcome === "background") {
         setPendingAction(null);
       }
@@ -1494,6 +1520,10 @@ export function NewWorkspaceScreen({
       toast.error(message);
     }
   }, [
+    chatDraft.clear,
+    draftContextScopeKey,
+    draftId,
+    draftKey,
     ensureWorkspace,
     isStillOnCreateScreen,
     launchTarget,

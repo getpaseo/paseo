@@ -1,4 +1,4 @@
-import type { createCreationScenario } from "../support/helpers/creation";
+import { useCreationProtocol, type createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
 import {
@@ -6,48 +6,80 @@ import {
   selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
 
-test("an edited background failure reuses its ready workspace and restored metadata after reload", async ({
+const backgroundRecoveryScenarios: Array<{
+  name: string;
+  legacy: boolean;
+  metadata: Record<string, string>;
+}> = [
+  { name: "modern metadata", legacy: false, metadata: { "composer-metadata.tag": "restored" } },
+  { name: "legacy", legacy: true, metadata: {} },
+];
+for (const scenario of backgroundRecoveryScenarios) {
+  test(`an edited background failure reuses its ready workspace after reload (${scenario.name})`, async ({
+    creation,
+    startup,
+    composerMetadata,
+    page,
+  }) => {
+    const delay = await delayBrowserWorkspaceCreatedResponse(page);
+    try {
+      await creation.openWorkspaceForm("local");
+      await composerMetadata.set(scenario.metadata);
+      await creation.submitPrompt("Original background task", "Create");
+      await delay.waitForCreateRequest();
+      await creation.leaveWorkspaceForm();
+      await startup.fail();
+      delay.release();
+      await expect(
+        page
+          .getByText(/Creation startup failed for test/)
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
+      await creation.expectOneCreatedWorkspace();
+      const protocol = await useCreationProtocol(page, scenario.legacy);
+      await creation.returnToWorkspaceForm();
+      await page.reload();
+      await selectWorkspaceIsolation(page, "worktree");
+      await creation.submitPrompt("Edited background task", "Create");
+      await expect(
+        page
+          .getByText(/Workspace placement has changed/)
+          .filter({ visible: true })
+          .first(),
+      ).toBeVisible();
+      await creation.expectAgentCount(0);
+      await creation.expectCreatedWorkspaceCount(1);
+      await selectWorkspaceIsolation(page, "local");
+      await creation.submitPrompt("Edited background task", "Create");
+      await creation.expectPromptVisible("Edited background task");
+      await creation.expectOneCreatedWorkspace();
+      await creation.expectAgentCount(1);
+      await creation.expectAgentMetadata(scenario.metadata);
+      protocol.expectAgentRequest();
+    } finally {
+      delay.release();
+    }
+  });
+}
+
+test("successful empty workspace creation retires its draft identity across reloads", async ({
   creation,
-  startup,
-  composerMetadata,
   page,
 }) => {
-  const delay = await delayBrowserWorkspaceCreatedResponse(page);
-  try {
-    await creation.openWorkspaceForm("local");
-    await composerMetadata.set({ "composer-metadata.tag": "restored" });
-    await creation.submitPrompt("Original background task", "Create");
-    await delay.waitForCreateRequest();
-    await creation.leaveWorkspaceForm();
-    await startup.fail();
-    delay.release();
-    await expect(
-      page
-        .getByText(/Creation startup failed for test/)
-        .filter({ visible: true })
-        .first(),
-    ).toBeVisible();
-    await creation.expectOneCreatedWorkspace();
-    await creation.returnToWorkspaceForm();
-    await selectWorkspaceIsolation(page, "worktree");
-    await creation.submitPrompt("Edited background task", "Create");
-    await expect(
-      page
-        .getByText(/Workspace placement has changed/)
-        .filter({ visible: true })
-        .first(),
-    ).toBeVisible();
-    await creation.expectAgentCount(0);
-    await creation.expectOneCreatedWorkspace();
-    await selectWorkspaceIsolation(page, "local");
-    await creation.submitPrompt("Edited background task", "Create");
-    await creation.expectPromptVisible("Edited background task");
-    await creation.expectOneCreatedWorkspace();
-    await creation.expectAgentCount(1);
-    await creation.expectAgentMetadata({ "composer-metadata.tag": "restored" });
-  } finally {
-    delay.release();
-  }
+  await creation.openWorkspaceForm("local");
+  await creation.submitRepeatedly("Create");
+  await expect(page).toHaveURL(/\/workspace\//);
+  const firstWorkspaceUrl = page.url();
+  await creation.returnToWorkspaceForm();
+  await page.reload();
+  await creation.submitRepeatedly("Create");
+  await expect(page).toHaveURL(/\/workspace\//);
+  expect(page.url()).not.toBe(firstWorkspaceUrl);
+  await creation.returnToWorkspaceForm();
+  await page.reload();
+  await creation.submitPrompt("Chat after two empty workspaces", "Create");
+  await creation.expectPromptVisible("Chat after two empty workspaces");
 });
 
 for (const isolation of ["local", "worktree"] as const) {
