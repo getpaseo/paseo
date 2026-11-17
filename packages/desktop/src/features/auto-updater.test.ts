@@ -4,9 +4,10 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock } = vi.hoisted(() => {
+const { autoUpdaterMock, appRecovery } = vi.hoisted(() => {
   const handlers = new Map<string, (value: unknown) => void>();
   return {
+    appRecovery: { relaunches: 0, exitCodes: [] as number[] },
     autoUpdaterMock: {
       handlers,
       logger: {
@@ -29,6 +30,12 @@ vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(),
     isPackaged: true,
+    relaunch: () => {
+      appRecovery.relaunches += 1;
+    },
+    exit: (code: number) => {
+      appRecovery.exitCodes.push(code);
+    },
   },
 }));
 
@@ -39,6 +46,7 @@ vi.mock("electron-updater", () => ({
 import {
   bucketFromStagingUserId,
   checkForAppUpdate,
+  downloadAndInstallUpdate,
   createAppUpdateLifecycleLogger,
   resolveStagingUserId,
   rolloutManifestSchema,
@@ -139,6 +147,36 @@ describe("checkForAppUpdate", () => {
       isSilent: false,
       isForceRunAfter: true,
     });
+  });
+});
+
+describe("native update handoff failure", () => {
+  it("relaunches Desktop after a late manual-install error without unlocking stale updater callbacks", async () => {
+    const update = { version: "9.0.0", releaseDate: "2020-01-01T00:00:00.000Z" };
+    autoUpdaterMock.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true,
+      updateInfo: update,
+    });
+    await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    autoUpdaterMock.handlers.get("update-downloaded")?.(update);
+    const installed = await downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+    expect(installed.installed).toBe(true);
+    expect(appRecovery.relaunches).toBe(0);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      autoUpdaterMock.handlers.get("error")?.(new Error("Native installer failed after handoff"));
+      expect(appRecovery.relaunches).toBe(1);
+      expect(appRecovery.exitCodes).toEqual([0]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
 

@@ -93,6 +93,7 @@ import { getDesktopSettingsStore } from "./settings/desktop-settings-electron.js
 import { clampWindowStateToWorkAreas, createWindowStateStore } from "./settings/window-state.js";
 import {
   isDesktopManagedDaemonRunningSync,
+  installDesktopAppUpdateOnQuit,
   stopDesktopDaemonViaCli,
 } from "./daemon/daemon-manager.js";
 import {
@@ -103,7 +104,6 @@ import {
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
-import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
   parseAgentDeepLink,
@@ -1042,7 +1042,7 @@ const quitLifecycle = createQuitLifecycle({
     }),
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
-    return installAppUpdateOnQuit({
+    return installDesktopAppUpdateOnQuit({
       currentVersion: app.getVersion(),
       releaseChannel: settings.releaseChannel,
       signal,

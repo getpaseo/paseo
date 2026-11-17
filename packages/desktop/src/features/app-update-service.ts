@@ -67,11 +67,14 @@ export interface AppUpdateService {
     },
     onBeforeQuit?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult>;
-  installUpdateOnQuit(input: {
-    currentVersion: string;
-    releaseChannel: AppReleaseChannel;
-    signal: AbortSignal;
-  }): Promise<boolean>;
+  installUpdateOnQuit(
+    input: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      signal: AbortSignal;
+    },
+    onBeforeQuit?: () => Promise<void>,
+  ): Promise<boolean>;
 }
 
 export interface AppUpdateServiceDeps {
@@ -109,19 +112,23 @@ async function performQuitAndInstall(
   {
     targetVersion,
     onBeforeQuit,
+    signal,
     restart,
   }: {
     targetVersion: string;
     onBeforeQuit?: () => Promise<void>;
+    signal?: AbortSignal;
     restart: boolean;
   },
-): Promise<void> {
+): Promise<boolean> {
   if (onBeforeQuit) await onBeforeQuit();
+  if (signal?.aborted) return false;
   runtime.quitAndInstall({
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
   });
+  return true;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -418,11 +425,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
+        signal,
         restart,
       });
+      if (!installed) return buildDeferredInstallResult(currentVersion);
       return {
         installed: true,
         version: readyVersion,
@@ -442,11 +451,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
+        signal,
         restart,
       });
+      if (!installed) return buildDeferredInstallResult(currentVersion);
 
       return {
         installed: true,
@@ -464,15 +475,18 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
   }
 
-  async function installUpdateOnQuit({
-    currentVersion,
-    releaseChannel,
-    signal,
-  }: {
-    currentVersion: string;
-    releaseChannel: AppReleaseChannel;
-    signal: AbortSignal;
-  }): Promise<boolean> {
+  async function installUpdateOnQuit(
+    {
+      currentVersion,
+      releaseChannel,
+      signal,
+    }: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      signal: AbortSignal;
+    },
+    onBeforeQuit?: () => Promise<void>,
+  ): Promise<boolean> {
     if (!deps.isPackaged() || !downloadedUpdateVersion) {
       return false;
     }
@@ -486,7 +500,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       return false;
     }
 
-    const result = await installCachedUpdate(currentVersion, { signal, restart: false });
+    const result = await installCachedUpdate(currentVersion, {
+      signal,
+      onBeforeQuit,
+      restart: false,
+    });
     return result.installed;
   }
 

@@ -142,6 +142,7 @@ export function shouldInstallAppUpdateOnQuit(input: {
 
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
+  private pendingInstall: AppUpdateInstallRequest | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
@@ -187,8 +188,13 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       input.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
-      if (isUpdateChannelNotPublished(error)) return;
+      if (isUpdateChannelNotPublished(error) && !this.pendingInstall) return;
       input.onError(error);
+      if (this.pendingInstall) {
+        // Native install callbacks survive an error; exit before a fresh daemon can start.
+        if (this.pendingInstall.isForceRunAfter) app.relaunch();
+        app.exit(0);
+      }
     });
   }
 
@@ -218,7 +224,13 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
       isSilent,
       isForceRunAfter,
     });
-    autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    this.pendingInstall = { targetVersion, isSilent, isForceRunAfter };
+    try {
+      autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+    } catch (error) {
+      this.pendingInstall = null;
+      throw error;
+    }
   }
 }
 
@@ -285,15 +297,18 @@ export async function downloadAndInstallUpdate(
   );
 }
 
-export async function installAppUpdateOnQuit({
-  currentVersion,
-  releaseChannel,
-  signal,
-}: {
-  currentVersion: string;
-  releaseChannel: AppReleaseChannel;
-  signal: AbortSignal;
-}): Promise<boolean> {
+export async function installAppUpdateOnQuit(
+  {
+    currentVersion,
+    releaseChannel,
+    signal,
+  }: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+    signal: AbortSignal;
+  },
+  onBeforeQuit?: () => Promise<void>,
+): Promise<boolean> {
   if (
     !shouldInstallAppUpdateOnQuit({
       platform: process.platform,
@@ -303,5 +318,8 @@ export async function installAppUpdateOnQuit({
     return false;
   }
 
-  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
+  return appUpdateService.installUpdateOnQuit(
+    { currentVersion, releaseChannel, signal },
+    onBeforeQuit,
+  );
 }

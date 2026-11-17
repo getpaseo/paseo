@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_DESKTOP_SETTINGS } from "../settings/desktop-settings";
 import { ExternalCliCommandError } from "./cli/external";
 import {
+  assertDaemonRuntimeOutsideAppBundle,
   createDaemonCommandHandlers,
   keepsTerminalsOnStop,
   stopCapturedDaemon,
+  stopDesktopDaemon,
   type DesktopDaemonStopReason,
 } from "./daemon-manager";
 
@@ -182,6 +184,26 @@ describe("daemon-manager commands", () => {
     writeFileSync(lockPath, JSON.stringify({ ...lock, desktopManaged: false }));
     expect(await handler({ listen: "localhost:6799" })).toBeNull();
   });
+
+  it("refuses an update when a prior desktop daemon has no launch receipt", async () => {
+    mkdirSync(mocks.paseoHome);
+    writeFileSync(
+      path.join(mocks.paseoHome, "paseo.pid"),
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: "2026-11-17T00:00:00.000Z",
+        hostname: hostname(),
+        uid: process.getuid?.() ?? 0,
+        listen: "127.0.0.1:6799",
+        desktopManaged: true,
+      }),
+    );
+
+    await expect(stopDesktopDaemon("app_update")).rejects.toThrow(
+      `Stop the daemon at ${mocks.paseoHome} (PID ${process.pid}) explicitly, then retry the update.`,
+    );
+    expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalled();
+  });
 });
 
 describe("desktop stops and terminals", () => {
@@ -285,5 +307,74 @@ describe("desktop stops and terminals", () => {
       stopCapturedDaemon({ ...harness.input, reason: "app_update", keepTerminals: true }),
     ).rejects.toThrow("unreachable");
     expect(harness.stops).toEqual([{ keepTerminals: true }]);
+  });
+});
+
+describe("attached daemon update safety", () => {
+  const instance = {
+    pid: 4242,
+    startedAt: "2026-11-17T00:00:00.000Z",
+    hostname: "host",
+    uid: 501,
+    listen: "127.0.0.1:6799",
+    desktopManaged: false,
+  };
+  const installRoot = path.resolve("applications", "Paseo");
+  const input = {
+    home: "/home/paseo",
+    instance,
+    resourcesPath: path.join(installRoot, "resources"),
+  };
+
+  it("blocks an unattested CLI daemon using bundled program files even without desktopManaged", async () => {
+    await expect(
+      assertDaemonRuntimeOutsideAppBundle({
+        ...input,
+        runCliJson: async () => ({
+          ...instance,
+          daemonNode: path.join(installRoot, "Frameworks", "Paseo Helper"),
+        }),
+      }),
+    ).rejects.toThrow("uses the app's program files");
+  });
+
+  it("allows a matching attached daemon using a separate Node installation", async () => {
+    await expect(
+      assertDaemonRuntimeOutsideAppBundle({
+        ...input,
+        runCliJson: async () => ({ ...instance, daemonNode: path.resolve("node", "bin", "node") }),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not confuse a sibling installation prefix with the updated bundle", async () => {
+    await expect(
+      assertDaemonRuntimeOutsideAppBundle({
+        ...input,
+        runCliJson: async () => ({ ...instance, daemonNode: `${installRoot}-other/node` }),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    { ...instance, daemonNode: "relative/node" },
+    { ...instance, daemonNode: undefined },
+    { ...instance, pid: 123, daemonNode: path.resolve("node") },
+    { ...instance, startedAt: "different", daemonNode: path.resolve("node") },
+  ])("refuses an unverifiable runtime %j", async (status) => {
+    await expect(
+      assertDaemonRuntimeOutsideAppBundle({ ...input, runCliJson: async () => status }),
+    ).rejects.toThrow("cannot verify");
+  });
+
+  it("does not install when the daemon status request fails", async () => {
+    await expect(
+      assertDaemonRuntimeOutsideAppBundle({
+        ...input,
+        runCliJson: async () => {
+          throw new Error("Daemon status unavailable");
+        },
+      }),
+    ).rejects.toThrow("Daemon status unavailable");
   });
 });

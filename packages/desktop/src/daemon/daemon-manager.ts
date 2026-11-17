@@ -23,6 +23,7 @@ import {
 import {
   checkForAppUpdate,
   downloadAndInstallUpdate,
+  installAppUpdateOnQuit,
   type AppUpdateCheckIntent,
   type AppReleaseChannel,
 } from "../features/auto-updater.js";
@@ -58,9 +59,15 @@ import {
   readLegacySkillSelection,
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
+import { hasDesktopDaemonLaunchReceipt, recordDesktopDaemonLaunch } from "./launch-receipt.js";
+import { createDesktopDaemonUpdateLifecycle } from "./update-lifecycle.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
+const daemonUpdateLifecycle = createDesktopDaemonUpdateLifecycle({
+  start: launchDaemon,
+  stopForUpdate: () => stopDesktopDaemon("app_update"),
+});
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
 const DESKTOP_DAEMON_STOP_REASON_VALUES = [
@@ -136,11 +143,20 @@ function logFilePath(): string {
   return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
 }
 
+function isCurrentDesktopLaunch(home: string, instance: DaemonInstance | null): boolean {
+  return Boolean(
+    instance &&
+    ownedLaunch &&
+    ownedLaunch.home === home &&
+    isSameDaemonInstance(instance, ownedLaunch.instance),
+  );
+}
+
 export function isDesktopManagedDaemonRunningSync(): boolean {
   if (!ownedLaunch) return false;
   try {
     const lock = JSON.parse(readFileSync(path.join(ownedLaunch.home, "paseo.pid"), "utf8"));
-    return isSameDaemonInstance(lock, ownedLaunch.instance) && isProcessRunning(lock.pid);
+    return isCurrentDesktopLaunch(ownedLaunch.home, lock) && isProcessRunning(lock.pid);
   } catch {
     return false;
   }
@@ -269,7 +285,15 @@ function normalizeVersion(version: string | null): string | null {
 }
 
 function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
-  if (!current.ownedByDesktop) return false;
+  const recordedLaunch =
+    current.pid !== null &&
+    current.startedAt !== null &&
+    hasDesktopDaemonLaunchReceipt({
+      filePath: path.join(app.getPath("userData"), "desktop-daemon.json"),
+      home: current.home,
+      instance: { pid: current.pid, startedAt: current.startedAt },
+    });
+  if (!current.ownedByDesktop && !recordedLaunch) return false;
   const appVersion = normalizeVersion(resolveDesktopAppVersion());
   const daemonVersion = normalizeVersion(current.version);
   return Boolean(appVersion && daemonVersion && appVersion !== daemonVersion);
@@ -281,7 +305,11 @@ function assertBuiltInDaemonManagementEnabled(settings: DesktopSettings): void {
   }
 }
 
-async function startDaemon(): Promise<DesktopDaemonStatus> {
+function startDaemon(): Promise<DesktopDaemonStatus> {
+  return daemonUpdateLifecycle.start();
+}
+
+async function launchDaemon(): Promise<DesktopDaemonStatus> {
   assertBuiltInDaemonManagementEnabled(await getDesktopSettingsStore().get());
 
   const current = await resolveDesktopDaemonStatus();
@@ -322,6 +350,11 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
       desktopManaged: true,
       onAcquired: (instance) => {
         ownedLaunch = { home, instance };
+        recordDesktopDaemonLaunch({
+          filePath: path.join(app.getPath("userData"), "desktop-daemon.json"),
+          home,
+          instance,
+        });
       },
     });
   } catch (error) {
@@ -336,23 +369,50 @@ export async function stopDesktopDaemon(
 ): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
   const instance = await readDaemonInstance(home);
-  const owned = Boolean(
-    instance &&
-    ownedLaunch &&
-    ownedLaunch.home === home &&
-    isSameDaemonInstance(instance, ownedLaunch.instance),
+  if (!instance) {
+    if (confirmedInstance) {
+      throw new Error(
+        "Daemon changed since confirmation; inspect its current home and PID before stopping it.",
+      );
+    }
+    return resolveDesktopDaemonStatus();
+  }
+  const owned = isCurrentDesktopLaunch(home, instance);
+  const replacingAppDaemon = reason === "app_update" || reason === "version_mismatch";
+  const recordedLaunch = Boolean(
+    replacingAppDaemon &&
+    hasDesktopDaemonLaunchReceipt({
+      filePath: path.join(app.getPath("userData"), "desktop-daemon.json"),
+      home,
+      instance,
+    }),
   );
   const explicit =
     reason === "manual_ipc" &&
     confirmedInstance &&
-    instance &&
     instance.pid === confirmedInstance.pid &&
     instance.startedAt === confirmedInstance.startedAt;
   if (confirmedInstance && !explicit)
     throw new Error(
       "Daemon changed since confirmation; inspect its current home and PID before stopping it.",
     );
-  if (!instance || (!owned && !explicit)) return resolveDesktopDaemonStatus();
+  const replaceable = owned || recordedLaunch;
+  if (reason === "app_update" && instance.desktopManaged && !replaceable) {
+    throw new DaemonInstanceError(
+      "DAEMON_UPDATE_STOP_CONFIRMATION_REQUIRED",
+      `Paseo cannot update while an unowned desktop daemon is running. Stop the daemon at ${home} (PID ${instance.pid}) explicitly, then retry the update.`,
+    );
+  }
+  if (reason === "app_update" && !replaceable) {
+    await assertDaemonRuntimeOutsideAppBundle({
+      home,
+      instance,
+      resourcesPath: process.resourcesPath,
+    });
+  }
+  if (!replaceable && !explicit) {
+    return resolveDesktopDaemonStatus();
+  }
   const keepTerminals = keepsTerminalsOnStop(reason, process.platform);
   logDesktopDaemonLifecycle("stopping captured supervisor", {
     reason,
@@ -363,6 +423,51 @@ export async function stopDesktopDaemon(
   await stopCapturedDaemon({ home, instance, reason, keepTerminals });
   if (owned) ownedLaunch = null;
   return resolveDesktopDaemonStatus();
+}
+
+export async function assertDaemonRuntimeOutsideAppBundle({
+  home,
+  instance,
+  resourcesPath,
+  runCliJson = runExternalCliJsonCommand,
+}: {
+  home: string;
+  instance: DaemonInstance;
+  resourcesPath: string;
+  runCliJson?: typeof runExternalCliJsonCommand;
+}): Promise<void> {
+  const status = await runCliJson(["daemon", "status", "--home", home, "--json"]);
+  if (typeof status !== "object" || status === null) {
+    throw new DaemonInstanceError(
+      "DAEMON_UPDATE_RUNTIME_UNKNOWN",
+      "Paseo cannot verify the running daemon's program path. Stop it explicitly before updating.",
+    );
+  }
+  const sameInstance =
+    "pid" in status &&
+    status.pid === instance.pid &&
+    "startedAt" in status &&
+    status.startedAt === instance.startedAt;
+  const daemonNode = "daemonNode" in status ? status.daemonNode : null;
+  const runtimeKnown =
+    sameInstance && typeof daemonNode === "string" && path.isAbsolute(daemonNode);
+  if (!runtimeKnown || !path.isAbsolute(resourcesPath)) {
+    throw new DaemonInstanceError(
+      "DAEMON_UPDATE_RUNTIME_UNKNOWN",
+      "Paseo cannot verify the running daemon's program path. Stop it explicitly before updating.",
+    );
+  }
+  const relativeRuntime = path.relative(path.resolve(resourcesPath, ".."), daemonNode);
+  const outsideBundle =
+    relativeRuntime === ".." ||
+    relativeRuntime.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeRuntime);
+  if (!outsideBundle) {
+    throw new DaemonInstanceError(
+      "DAEMON_UPDATE_STOP_CONFIRMATION_REQUIRED",
+      `Paseo cannot update while an unowned daemon uses the app's program files. Stop the daemon at ${home} (PID ${instance.pid}) explicitly, then retry the update.`,
+    );
+  }
 }
 
 export interface StopCapturedDaemonInput {
@@ -465,6 +570,12 @@ async function resolveRequestedReleaseChannel(
   return parseReleaseChannel(args) ?? (await getDesktopSettingsStore().get()).releaseChannel;
 }
 
+export function installDesktopAppUpdateOnQuit(
+  input: Parameters<typeof installAppUpdateOnQuit>[0],
+): Promise<boolean> {
+  return daemonUpdateLifecycle.install((prepare) => installAppUpdateOnQuit(input, prepare));
+}
+
 // ---------------------------------------------------------------------------
 // IPC registration
 // ---------------------------------------------------------------------------
@@ -530,11 +641,9 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     install_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
-      return downloadAndInstallUpdate(
-        { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
-        async () => {
-          await stopDesktopDaemon("app_update");
-        },
+      const releaseChannel = await resolveRequestedReleaseChannel(args);
+      return daemonUpdateLifecycle.install((prepare) =>
+        downloadAndInstallUpdate({ currentVersion, releaseChannel }, prepare),
       );
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
