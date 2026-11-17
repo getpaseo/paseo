@@ -772,7 +772,9 @@ Use `addComposerSection` for content that needs to stay above an agent's normal 
 than opening from a toolbar item or track pill. The [public contract](../public-docs/plugins/reference.md#composer-sections)
 owns props, lifecycle, and visibility rules.
 
-The agent panel mounts sections beneath `AgentTracks`, inside the composer's docked content.
+The agent panel mounts sections below the transcript and its floating `AgentTracks`, inside the
+composer's docked content. Keep tracks anchored to the transcript so they cannot cover section
+controls. Read-only sheets keep their tracks but do not mount composer sections.
 They receive the installation environment through `usePluginItemHost`; do not add separate
 SDK clients or cache contexts. Keep generation and section state in the plugin. The host
 supplies placement, identity, and per-section render boundaries only.
