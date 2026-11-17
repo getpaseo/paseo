@@ -50,6 +50,33 @@ describe("highlightCode", () => {
     expect(stringToken?.style).toBe("string");
   });
 
+  it("highlights Ruby code", () => {
+    const code = [
+      "# Greets people",
+      "class Greeter < Base",
+      "  def greet(name)",
+      '    "Hello, #{name}" if name',
+      "  end",
+      "end",
+    ].join("\n");
+    const result = highlightCode(code, "app/models/greeter.rb");
+
+    expect(result).toHaveLength(6);
+    expect(result[0][0]).toEqual({ text: "# Greets people", style: "comment" });
+
+    const classToken = result[1].find((t) => t.text === "class");
+    expect(classToken?.style).toBe("keyword");
+
+    const defToken = result[2].find((t) => t.text === "def");
+    expect(defToken?.style).toBe("keyword");
+
+    const stringToken = result[3].find((t) => t.text.includes("Hello"));
+    expect(stringToken?.style).toBe("string");
+
+    const ifToken = result[3].find((t) => t.text === "if");
+    expect(ifToken?.style).toBe("keyword");
+  });
+
   it("highlights Dart code", () => {
     const code = 'class Greeter {\n  final String message = "hello";\n}';
     const result = highlightCode(code, "test.dart");
