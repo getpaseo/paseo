@@ -83,7 +83,11 @@ export function observeMessageSubmissionCanonical(
   const observed = new Set(clientMessageIds);
   let changed = false;
   const next = submissions.flatMap((submission): MessageSubmissionRecord[] => {
-    if (submission.providerAcknowledged || !observed.has(submission.clientMessageId)) {
+    if (
+      submission.providerAcknowledged ||
+      submission.existingTimelineRow ||
+      !observed.has(submission.clientMessageId)
+    ) {
       return [submission];
     }
     changed = true;
