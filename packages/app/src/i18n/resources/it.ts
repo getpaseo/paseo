@@ -2084,6 +2084,7 @@ export const it: TranslationResources = {
     hostUnavailable: "Host di download non disponibile.",
     cancelled: "Download annullato.",
     failed: "Download del file non riuscito.",
+    httpFailed: "Download del file non riuscito (HTTP {{status}}).",
     shareFile: "Condividi file",
     shareFileNamed: "Condividi {{fileName}}",
   },
