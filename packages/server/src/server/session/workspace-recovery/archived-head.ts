@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { runGitCommand } from "../../../utils/run-git-command.js";
 
 // Removing a worktree folder at archive deletes its HEAD, and with it the only hold on commits
 // that no branch reaches. Before the folder goes, archive saves HEAD as one ref:
 //
-//   refs/paseo/archived/<sha256 of the folder path>/<git's name for HEAD>  ->  HEAD's commit
+//   refs/paseo/archived/<sha256 of the folder's real path>/<git's name for HEAD>  ->  HEAD's commit
 //
 // The name is `git rev-parse --abbrev-ref HEAD`, stored as git prints it and never parsed here.
 // The ref keeps the commit alive, and recovery hands the name back to git when it still means
@@ -25,8 +27,26 @@ async function exists(path: string): Promise<boolean> {
   );
 }
 
-function savedHeadPrefix(worktreePath: string): string {
-  const folder = createHash("sha256").update(resolve(worktreePath)).digest("hex");
+// fs.realpath rather than the native resolver, which can return a Windows 8.3 alias.
+const resolveRealPath = promisify(realpath);
+
+// The folder's path with symlinks resolved, even after the folder is gone: archive, recovery and
+// worktree placement can each spell one folder differently, and all must reach the same key.
+async function canonicalFolderPath(path: string): Promise<string> {
+  const absolute = resolve(path);
+  const parent = dirname(absolute);
+  if (parent === absolute) return absolute;
+  try {
+    return await resolveRealPath(absolute);
+  } catch {
+    return join(await canonicalFolderPath(parent), basename(absolute));
+  }
+}
+
+async function savedHeadPrefix(worktreePath: string): Promise<string> {
+  const folder = createHash("sha256")
+    .update(await canonicalFolderPath(worktreePath))
+    .digest("hex");
   return `refs/paseo/archived/${folder}/`;
 }
 
@@ -74,7 +94,7 @@ export async function saveArchivedHead(input: {
   repoRoot: string | null;
   hadActiveWorkspace: boolean;
 }): Promise<void> {
-  const prefix = savedHeadPrefix(input.worktreePath);
+  const prefix = await savedHeadPrefix(input.worktreePath);
   const name = await readHeadName(input.worktreePath);
   if (name) {
     const cwd = input.worktreePath;
@@ -98,7 +118,7 @@ export async function readArchivedHead(input: {
   worktreePath: string;
 }): Promise<ArchivedHead | null> {
   if (!(await isRepository(input.repoRoot))) return null;
-  const prefix = savedHeadPrefix(input.worktreePath);
+  const prefix = await savedHeadPrefix(input.worktreePath);
   const [saved] = await listSavedHeads(input.repoRoot, prefix);
   if (!saved) return null;
   const separator = saved.indexOf(" ");
@@ -118,7 +138,7 @@ export async function releaseArchivedHead(input: {
 }): Promise<void> {
   // Without a repository there is no ref to delete.
   if (!(await isRepository(input.repoRoot))) return;
-  await discardSavedHeads(input.repoRoot, savedHeadPrefix(input.worktreePath));
+  await discardSavedHeads(input.repoRoot, await savedHeadPrefix(input.worktreePath));
 }
 
 /** Whether an archived worktree still holds this path, so a new worktree must not take it. */
@@ -126,6 +146,6 @@ export async function isHeldByArchivedWorktree(input: {
   repoRoot: string;
   worktreePath: string;
 }): Promise<boolean> {
-  const saved = await listSavedHeads(input.repoRoot, savedHeadPrefix(input.worktreePath));
+  const saved = await listSavedHeads(input.repoRoot, await savedHeadPrefix(input.worktreePath));
   return saved.length > 0;
 }

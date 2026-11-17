@@ -282,7 +282,7 @@ does not flip it back. Tabs and layout are purged only once the undo window clos
 archive committed.
 
 Before deleting the directory, the archive saves HEAD as one ref,
-`refs/paseo/archived/<hash of the directory path>/<name>`, whose value is HEAD's commit and
+`refs/paseo/archived/<hash of the directory's real path>/<name>`, whose value is HEAD's commit and
 whose `<name>` is `git rev-parse --abbrev-ref HEAD` (`feature`, or `HEAD` when detached). The ref
 keeps git's cleanup from deleting commits only that HEAD held. Recovery checks out the saved name
 when it still resolves to the saved commit and the saved commit otherwise, so git decides

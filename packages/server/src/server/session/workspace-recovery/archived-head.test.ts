@@ -1,11 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { afterEach, expect, test } from "vitest";
 
-import { readArchivedHead, releaseArchivedHead, saveArchivedHead } from "./archived-head.js";
+import {
+  isHeldByArchivedWorktree,
+  readArchivedHead,
+  releaseArchivedHead,
+  saveArchivedHead,
+} from "./archived-head.js";
 
 const tempDirectories: string[] = [];
 
@@ -55,6 +60,22 @@ test("restore checks out the saved branch while it still points at the saved com
     branchMoved: { checkout: commit, commit },
     branchDeleted: { checkout: commit, commit },
   });
+});
+
+test("a removed folder reached through a symlinked parent finds the HEAD saved under its real path", async () => {
+  const { repoRoot, worktreePath } = createRepositoryWithWorktree();
+  const linkedParent = `${dirname(worktreePath)}-link`;
+  symlinkSync(dirname(worktreePath), linkedParent);
+  tempDirectories.push(linkedParent);
+  const linkedWorktreePath = join(linkedParent, basename(worktreePath));
+  const commit = git(worktreePath, ["rev-parse", "HEAD"]);
+  await saveArchivedHead({ worktreePath, repoRoot, hadActiveWorkspace: true });
+  removeWorktree(repoRoot, worktreePath);
+
+  expect({
+    held: await isHeldByArchivedWorktree({ repoRoot, worktreePath: linkedWorktreePath }),
+    head: await readArchivedHead({ repoRoot, worktreePath: linkedWorktreePath }),
+  }).toEqual({ held: true, head: { checkout: "feature", commit } });
 });
 
 test("a HEAD left behind by a failed release is not read as current after the folder disappears", async () => {
