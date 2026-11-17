@@ -3154,6 +3154,11 @@ export class AgentManager {
     } catch (error) {
       if (error instanceof AgentTurnStartCanceledError) {
         if (!pendingRun.settled) {
+          if (options?.clientMessageId) {
+            this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
+              messageId: options.clientMessageId,
+            });
+          }
           await this.handleStreamEvent(agent, {
             type: "turn_canceled",
             provider: agent.provider,

@@ -9684,8 +9684,16 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     await senderRejection;
     expect(manager.getAgent(agent.id)).toMatchObject({ lifecycle: "idle", lastError: undefined });
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
-    expect(events.map((event) => event.type)).toEqual(["turn_canceled"]);
-    expect(manager.getTimeline(agent.id)).toEqual([]);
+    expect(events.map((event) => event.type)).toEqual(["timeline", "turn_canceled"]);
+    // The canceled attempt stays in history like a rejected one, without being delivered.
+    expect(manager.getTimeline(agent.id)).toEqual([
+      {
+        type: "user_message",
+        text: "Canceled prompt",
+        clientMessageId: "canceled-prompt",
+        messageId: "canceled-prompt",
+      },
+    ]);
     expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(false);
 
     const nextRun = manager.runAgent(agent.id, "Next prompt", { clientMessageId: "next-prompt" });
