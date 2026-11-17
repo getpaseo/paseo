@@ -1,3 +1,4 @@
+import type { ForgeWeb } from "@getpaseo/protocol/messages";
 import type { ForgeReferenceSigil } from "@/git/client-forge-module";
 import { forgeFromRemoteUrl } from "@/git/forge";
 import { getClientForgeLogicModule } from "@/git/forges";
@@ -26,12 +27,15 @@ const REFERENCE = new RegExp(String.raw`^(?:(${REPO}))?([#!])(${NUMBER})$`);
 export function createForgeShorthand(input: {
   forge: string | null | undefined;
   remoteUrl: string | null | undefined;
+  forgeWeb?: ForgeWeb | null;
 }): ForgeShorthand | null {
   const remoteUrl = input.remoteUrl;
   const forge = input.forge || forgeFromRemoteUrl(remoteUrl);
   if (!forge || !remoteUrl) return null;
   const sigils = forgeSigils(forge).filter(
-    (sigil) => buildForgeReferenceUrl(forge, { remoteUrl, sigil, number: 1 }) !== null,
+    (sigil) =>
+      buildForgeReferenceUrl(forge, { remoteUrl, forgeWeb: input.forgeWeb, sigil, number: 1 }) !==
+      null,
   );
   if (sigils.length === 0) return null;
   return {
@@ -41,6 +45,7 @@ export function createForgeShorthand(input: {
       if (!match) return null;
       return buildForgeReferenceUrl(forge, {
         remoteUrl,
+        forgeWeb: input.forgeWeb,
         repo: match[1] ?? null,
         sigil: match[2] as ForgeReferenceSigil,
         number: Number(match[3]),

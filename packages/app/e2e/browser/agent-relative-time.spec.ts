@@ -5,7 +5,7 @@ import { seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { openAgentRoute } from "../support/helpers/mock-agent";
 import { resetSeededPageState, openSessions } from "../support/helpers/archive-tab";
 
-test("agent list age advances and command center says just now for a fresh agent", async ({
+test("agent list age advances and command center says just now for a fresh workspace", async ({
   page,
 }) => {
   const session = await seedMockAgentWorkspace({
@@ -23,10 +23,10 @@ test("agent list age advances and command center says just now for a fresh agent
 
     const commandCenter = await openCommandCenter(page);
     await commandCenter.getByTestId("command-center-input").fill("Relative time agent");
-    const agentResult = commandCenter.getByTestId(
-      `command-center-agent-${getServerId()}:${session.agentId}`,
+    const workspaceResult = commandCenter.getByTestId(
+      `command-center-workspace-${getServerId()}:${session.workspaceId}`,
     );
-    await expect(agentResult.getByTestId("command-center-result-timestamp")).toContainText(
+    await expect(workspaceResult.getByTestId("command-center-result-timestamp")).toContainText(
       "just now",
     );
     await page.keyboard.press("Escape");

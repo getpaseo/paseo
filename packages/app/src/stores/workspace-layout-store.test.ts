@@ -906,6 +906,91 @@ describe("workspace-layout-store actions", () => {
     ).toEqual(override);
   });
 
+  it("keeps reused file tabs unique and focuses the matching split pane", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const firstTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+      intent: "reveal",
+    })!;
+    store.replaceTab(workspaceKey, firstTabId, { kind: "file", path: "src/b.ts" });
+    const rightPaneId = store.splitPaneEmpty(workspaceKey, {
+      targetPaneId: "main",
+      position: "right",
+    });
+    if (!rightPaneId) throw new Error("Expected a right split pane");
+    const rightTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+      intent: "reveal",
+      placement: { mode: "pane", paneId: rightPaneId },
+    })!;
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/b.ts" },
+      intent: "reveal",
+    });
+    store.focusTab(workspaceKey, rightTabId);
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const fileTabs = collectAllTabs(layout.root).filter((tab) => tab.target.kind === "file");
+    expect({
+      fileTabCount: fileTabs.length,
+      uniqueFileTabCount: new Set(fileTabs.map((tab) => tab.tabId)).size,
+      fileTargets: fileTabs.map((tab) => tab.target),
+      focusedPaneId: layout.focusedPaneId,
+    }).toEqual({
+      fileTabCount: 2,
+      uniqueFileTabCount: 2,
+      fileTargets: [
+        { kind: "file", path: "src/b.ts" },
+        { kind: "file", path: "src/a.ts" },
+      ],
+      focusedPaneId: rightPaneId,
+    });
+  });
+
+  it("allocates distinct ids across retained tabs, sheets, and background opens", () => {
+    const workspaceKey = createWorkspaceKey();
+    const layoutStore = createWorkspaceLayoutStore(workspaceLayoutIds);
+    const store = layoutStore.getState();
+    const fileTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+      intent: "reveal",
+    })!;
+    store.replaceTab(workspaceKey, fileTabId, { kind: "file", path: "src/b.ts" });
+    layoutStore.setState({ layoutMode: "compact" });
+    const sheetTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+      intent: "reveal",
+    })!;
+    const selectedSheet = selectSheetTab(layoutStore.getState(), {
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+    });
+    expect(selectedSheet?.tab.tabId).toBe(sheetTabId);
+    const backgroundTabId = store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/a.ts" },
+      intent: "background",
+    })!;
+
+    expect(new Set([fileTabId, sheetTabId, backgroundTabId]).size).toBe(3);
+    expect(layoutStore.getState().sheetsByWorkspace[workspaceKey]).toHaveLength(1);
+    expect(
+      collectAllTabs(layoutStore.getState().layoutByWorkspace[workspaceKey].root)
+        .filter((tab) => tab.target.kind === "file")
+        .map((tab) => tab.target),
+    ).toEqual([
+      { kind: "file", path: "src/b.ts" },
+      { kind: "file", path: "src/a.ts" },
+    ]);
+  });
+
   it("keeps the tab instance when a panel receives a same-kind replacement", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();
@@ -3200,6 +3285,75 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  it("repairs persisted duplicate ids without losing tabs, pane focus, or unambiguous parents", () => {
+    const file = (tabId: string, path: string) => ({
+      tabId,
+      target: { kind: "file", path },
+      createdAt: 1,
+      state: { treeVisible: true, treeWidth: 280 },
+    });
+    const leftTabs = [file("file_a.ts", "b.ts"), file("file_a.ts", "c.ts")];
+    const rightTabs = [
+      file("file_a.ts", "a.ts"),
+      file("file_b.ts", "b.ts"),
+      file("file_b.ts:2", "b.ts"),
+      file("child", "child.ts"),
+      file("parent", "parent.ts"),
+    ];
+    const layout = normalizeLayout({
+      root: {
+        kind: "group",
+        group: {
+          id: "root",
+          direction: "horizontal",
+          sizes: [0.4, 0.6],
+          children: [
+            {
+              kind: "pane",
+              pane: {
+                id: "main",
+                tabs: leftTabs,
+                tabIds: leftTabs.map((tab) => tab.tabId),
+                focusedTabId: "file_a.ts",
+              },
+            },
+            {
+              kind: "pane",
+              pane: {
+                id: "right",
+                tabs: rightTabs,
+                tabIds: rightTabs.map((tab) => tab.tabId),
+                focusedTabId: "file_a.ts",
+                hidden: true,
+              },
+            },
+          ],
+        },
+      },
+      focusedPaneId: "main",
+      parentTabIdByTabId: {
+        "file_a.ts": "parent",
+        "file_b.ts": "file_a.ts",
+        child: "parent",
+      },
+    });
+    const tabs = collectAllTabs(layout.root);
+
+    expect(tabs).toHaveLength(7);
+    expect(new Set(tabs.map((tab) => tab.tabId)).size).toBe(7);
+    expect(tabs[0]).toEqual({ ...leftTabs[0], tabId: "file_b.ts:3" });
+    expect(tabs[1]).toEqual({ ...leftTabs[1], tabId: "file_c.ts" });
+    expect(tabs.slice(2)).toEqual(rightTabs);
+    expect(findPaneById(layout.root, "main")?.tabIds).toEqual(["file_b.ts:3", "file_c.ts"]);
+    expect(findPaneById(layout.root, "main")?.focusedTabId).toBe("file_b.ts:3");
+    expect(findPaneById(layout.root, "right")).toMatchObject({
+      hidden: true,
+      focusedTabId: "file_a.ts",
+    });
+    expect(layout.parentTabIdByTabId).toEqual({ child: "parent" });
+    expect(normalizeLayout(layout)).toEqual(layout);
+  });
+
   it("hydrates duplicate Changes and Pull request instances without collapsing their ids or state", () => {
     const tabs = [
       {
@@ -5108,6 +5262,50 @@ describe("compact workspace sheet", () => {
     });
 
     expect(sheetTargets(store)).toEqual([fileTarget, nextTarget]);
+  });
+
+  it("reserves a retargeted sheet's id when reconciling a new root agent tab", () => {
+    seedAgents([
+      { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child-a", parentAgentId: "root", workspaceId: "sheet-ws" },
+      { id: "child-b", parentAgentId: "root", workspaceId: "sheet-ws" },
+    ]);
+    const store = createCompactStore();
+    store.getState().openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child-a" },
+      intent: "reveal",
+    });
+    const sheetId = requireTopSheet(store).tab.tabId;
+    store.getState().replaceTab(workspaceKey, sheetId, { kind: "agent", agentId: "child-b" });
+    seedAgents([
+      { id: "root", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child-a", parentAgentId: null, workspaceId: "sheet-ws" },
+      { id: "child-b", parentAgentId: "root", workspaceId: "sheet-ws" },
+    ]);
+
+    store.getState().reconcileTabs(workspaceKey, {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: ["root", "child-a", "child-b"],
+      autoOpenAgentIds: ["child-a"],
+      knownTerminalIds: ["term-1"],
+      standaloneTerminalIds: ["term-1"],
+    });
+    const tab = collectAllTabs(store.getState().layoutByWorkspace[workspaceKey].root).find(
+      (candidate) => candidate.target.kind === "agent" && candidate.target.agentId === "child-a",
+    );
+    if (!tab) throw new Error("Expected the root agent's tab");
+    expect(tab.tabId).not.toBe(sheetId);
+
+    store.getState().closeTab(workspaceKey, tab.tabId);
+    expect(requireTopSheet(store).tab).toMatchObject({
+      tabId: sheetId,
+      target: { kind: "agent", agentId: "child-b" },
+    });
+    expect(
+      collectAllTabs(store.getState().layoutByWorkspace[workspaceKey].root),
+    ).not.toContainEqual(tab);
   });
 
   it("closes the sheet when its agent stops being a subagent, leaving one tab for it", () => {
