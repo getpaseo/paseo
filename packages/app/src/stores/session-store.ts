@@ -1240,7 +1240,7 @@ export const useSessionStore = create<SessionStore>()(
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const result = rejectMessageSubmission(currentSubmissions, clientMessageId);
           outcome = result.outcome;
-          if (outcome === "unknown") return prev;
+          if (outcome === "unknown" && result.submissions === currentSubmissions) return prev;
           const stream =
             outcome === "rejected"
               ? removeSubmittedUserMessage({

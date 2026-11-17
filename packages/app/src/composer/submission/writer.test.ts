@@ -89,3 +89,24 @@ test("a failed same-ID retry preserves an accepted send awaiting its canonical e
   ).toEqual([message]);
   expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual([message.clientMessageId]);
 });
+
+for (const finalOutcome of ["accept", "reject"] as const) {
+  test(`one failed overlapping attempt preserves the pending attempt until ${finalOutcome}`, () => {
+    initializeSession(CANONICAL_ONLY_SERVER_ID, { canonicalSubmittedPrompts: true });
+    const writer = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+    const message = submittedMessage("overlap");
+    writer.begin("agent-1", message);
+    writer.begin("agent-1", message);
+    expect(writer.reject("agent-1", "overlap")).toBe("unknown");
+    expect(
+      useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
+    ).toEqual([message]);
+    if (finalOutcome === "accept") {
+      writer.accept("agent-1", "overlap");
+      expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual(["overlap"]);
+    } else {
+      expect(writer.reject("agent-1", "overlap")).toBe("rejected");
+      expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual([]);
+    }
+  });
+}

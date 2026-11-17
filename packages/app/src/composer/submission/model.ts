@@ -5,6 +5,7 @@ export interface PendingMessageSubmission {
 export type MessageSubmissionRecord = PendingMessageSubmission & {
   providerAcknowledged: boolean;
   rpcSettled: boolean;
+  pendingAttempts?: number;
 };
 
 const EMPTY_MESSAGE_SUBMISSIONS: readonly MessageSubmissionRecord[] = [];
@@ -45,7 +46,11 @@ export function beginMessageSubmission(
   input: PendingMessageSubmission,
 ): MessageSubmissionRecord[] {
   if (submissions.some((submission) => submission.clientMessageId === input.clientMessageId)) {
-    return submissions as MessageSubmissionRecord[];
+    return submissions.map((record) =>
+      record.clientMessageId === input.clientMessageId
+        ? { ...record, pendingAttempts: (record.pendingAttempts ?? 1) + 1 }
+        : record,
+    );
   }
   return [...submissions, { ...input, providerAcknowledged: false, rpcSettled: false }];
 }
@@ -92,6 +97,20 @@ export function rejectMessageSubmission(
   const submission = submissions.find((item) => item.clientMessageId === clientMessageId);
   if (!submission) {
     return { outcome: "unknown", submissions: submissions as MessageSubmissionRecord[] };
+  }
+  if (
+    !submission.rpcSettled &&
+    !submission.providerAcknowledged &&
+    (submission.pendingAttempts ?? 1) > 1
+  ) {
+    return {
+      outcome: "unknown",
+      submissions: submissions.map((record) =>
+        record === submission
+          ? { ...record, pendingAttempts: (record.pendingAttempts ?? 1) - 1 }
+          : record,
+      ),
+    };
   }
   if (submission.rpcSettled && !submission.providerAcknowledged) {
     // A failed retry cannot revoke an earlier accepted RPC. Keep waiting for its echo.
