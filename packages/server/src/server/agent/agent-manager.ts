@@ -93,8 +93,7 @@ import {
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import {
   AgentRunState,
-  type ForegroundRunStartOptions,
-  type ForegroundRunRetry,
+  type ForegroundPromptStart,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
@@ -3142,7 +3141,6 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
-    retry?: ForegroundRunRetry;
   }): Promise<string | null> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
@@ -3173,8 +3171,11 @@ export class AgentManager {
         throw error;
       }
       if (isStaleProviderSessionError(error)) {
-        pendingRun.retry = params.retry;
-        this.runs.settleForegroundStart(pendingRun, { status: "failed", error: error.message });
+        this.runs.settleForegroundStart(pendingRun, {
+          status: "failed",
+          error: error.message,
+          stale: true,
+        });
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -3230,17 +3231,17 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): AsyncGenerator<AgentStreamEvent> {
     await this.ensureInteractiveSession(agentId);
-    yield* this.streamAgent(agentId, prompt, options, startOptions);
+    yield* this.streamAgent(agentId, prompt, options, promptStart);
   }
 
   private async *streamAfterRuntimeCollection(
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): AsyncGenerator<AgentStreamEvent> {
     await this.waitForAgentClose(agentId);
     await ensureAgentLoaded(agentId, {
@@ -3248,20 +3249,20 @@ export class AgentManager {
       agentStorage: this.requireRegistry(),
       logger: this.logger,
     });
-    yield* this.streamAgent(agentId, prompt, options, startOptions);
+    yield* this.streamAgent(agentId, prompt, options, promptStart);
   }
 
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): AsyncGenerator<AgentStreamEvent> {
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
-      return this.streamAfterRuntimeCollection(agentId, prompt, options, startOptions);
+      return this.streamAfterRuntimeCollection(agentId, prompt, options, promptStart);
     const existingAgent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(existingAgent.session))
-      return this.streamAfterHistoryLoad(agentId, prompt, options, startOptions);
+      return this.streamAfterHistoryLoad(agentId, prompt, options, promptStart);
     this.logger.trace(
       {
         agentId,
@@ -3296,7 +3297,7 @@ export class AgentManager {
     agent.lastError = undefined;
 
     const pendingRun = this.runs.createPendingRun(agentId);
-    startOptions?.retryOf?.resolve(pendingRun);
+    promptStart?.bind(pendingRun);
 
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string | null;
@@ -3307,7 +3308,6 @@ export class AgentManager {
         pendingRun,
         prompt,
         options,
-        retry: startOptions?.retry,
       });
       if (turnId === null) {
         const canceledEvent: AgentStreamEvent = {
@@ -3472,10 +3472,10 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.requireSessionAgent(agentId);
-    return this.replaceRunInForegroundLane(agentId, prompt, options, startOptions);
+    return this.replaceRunInForegroundLane(agentId, prompt, options, promptStart);
   }
 
   async steerAgentRun(
@@ -3516,7 +3516,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options?: AgentSteerOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): Promise<ActiveTurnSteerDispatchResult> {
     // A turn that is still starting has no id to steer yet. Replacing it would drop its
     // prompt, so wait until it is accepted (or fails) and steer the turn it became.
@@ -3564,7 +3564,7 @@ export class AgentManager {
         expectedTurnId,
         prompt,
         stripSteerOptions(options),
-        startOptions,
+        promptStart,
       ),
     };
   }
@@ -3630,10 +3630,10 @@ export class AgentManager {
     expectedTurnId: string,
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
-    return this.replaceRunInForegroundLane(agent.id, prompt, options, startOptions, (live) =>
+    return this.replaceRunInForegroundLane(agent.id, prompt, options, promptStart, (live) =>
       this.assertSteerAdmissionOwnsTurn(live, expectedTurnId),
     );
   }
@@ -3646,13 +3646,13 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
     assertAdmission?: (agent: ActiveManagedAgent) => void,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     // Replacements queue in arrival order; each one holds the foreground lane only while
     // it cancels and reserves, so Stop is never stuck behind a replacement that is waiting.
     return this.runQueuedMutation(this.replacementMutationTails, agentId, () =>
-      this.replaceRunWhenAdmitted(agentId, prompt, options, startOptions, assertAdmission),
+      this.replaceRunWhenAdmitted(agentId, prompt, options, promptStart, assertAdmission),
     );
   }
 
@@ -3660,7 +3660,7 @@ export class AgentManager {
     agentId: string,
     prompt: AgentPromptInput,
     options: AgentRunOptions | undefined,
-    startOptions?: ForegroundRunStartOptions,
+    promptStart?: ForegroundPromptStart,
     assertAdmission?: (agent: ActiveManagedAgent) => void,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     let stalledStart: PendingForegroundRun | null = null;
@@ -3679,7 +3679,7 @@ export class AgentManager {
         if (!this.hasInFlightRun(agent.id)) {
           return {
             status: "reserved" as const,
-            iterator: this.streamAgent(agent.id, prompt, options, startOptions),
+            iterator: this.streamAgent(agent.id, prompt, options, promptStart),
           };
         }
         agent.pendingReplacement = true;
@@ -3693,7 +3693,7 @@ export class AgentManager {
           }
           return {
             status: "reserved" as const,
-            iterator: this.streamAgent(agent.id, prompt, options, startOptions),
+            iterator: this.streamAgent(agent.id, prompt, options, promptStart),
           };
         } catch (error) {
           agent.pendingReplacement = false;
@@ -3737,8 +3737,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found`);
     }
 
-    // shortcut: binds to the run tracked when the wait begins, so a sender already replaced by then follows the replacement; pass the run token from dispatch if that window matters.
-    let pendingRun = this.runs.getPendingRun(agentId);
+    const pendingRun = this.runs.getPendingRun(agentId);
     if (
       (snapshot.lifecycle === "running" || pendingRun?.start.status === "started") &&
       !snapshot.pendingReplacement
@@ -3762,8 +3761,6 @@ export class AgentManager {
 
       let unsubscribe: (() => void) | null = null;
       let abortHandler: (() => void) | null = null;
-      let finished = false;
-      let followingRetry = false;
 
       const cleanup = () => {
         if (unsubscribe) {
@@ -3785,13 +3782,11 @@ export class AgentManager {
       };
 
       const finishOk = () => {
-        finished = true;
         cleanup();
         resolvePromise();
       };
 
       const finishErr = (error: unknown) => {
-        finished = true;
         cleanup();
         reject(error);
       };
@@ -3802,50 +3797,10 @@ export class AgentManager {
         options.signal.addEventListener("abort", abortHandler, { once: true });
       }
 
-      const checkRetry = () => {
-        if (finished || followingRetry) return true;
-        if (pendingRun?.settled && pendingRun.start.status !== "started" && pendingRun.retry) {
-          const failedRun = pendingRun;
-          followingRetry = true;
-          void pendingRun.retry.promise.then((retryRun) => {
-            followingRetry = false;
-            if (finished) return true;
-            if (!retryRun) {
-              finishErr(
-                new Error(
-                  failedRun.start.status === "failed"
-                    ? failedRun.start.error
-                    : `Agent ${agentId} run finished before starting`,
-                ),
-              );
-              return true;
-            }
-            pendingRun = retryRun;
-            void retryRun.settledPromise.then(checkCurrentState);
-            return checkCurrentState();
-          });
-          return true;
-        }
-        return false;
-      };
-
       const checkCurrentState = () => {
-        if (checkRetry()) return true;
         const current = this.getAgent(agentId);
         if (!current) {
           finishErr(new Error(`Agent ${agentId} not found`));
-          return true;
-        }
-
-        // A replacement's start must not acknowledge the sender's own run that ended unstarted.
-        if (pendingRun?.settled && pendingRun.start.status !== "started") {
-          finishErr(
-            new Error(
-              pendingRun.start.status === "failed"
-                ? pendingRun.start.error
-                : `Agent ${agentId} run was canceled before its turn started; its prompt was not delivered`,
-            ),
-          );
           return true;
         }
 
@@ -3886,8 +3841,6 @@ export class AgentManager {
         { agentId, replayState: false },
       );
 
-      // Clearing a run emits no agent state.
-      void pendingRun?.settledPromise.then(checkCurrentState);
       checkCurrentState();
     });
   }

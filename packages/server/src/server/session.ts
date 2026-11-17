@@ -8993,6 +8993,7 @@ export class Session {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,
             agentId,
+            result.started,
             this.delivery.requestSignal,
           );
         }

@@ -21,7 +21,7 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { AgentTurnStartCanceledError } from "./agent-sdk-types.js";
-import { createForegroundRunRetry } from "./agent-run-state.js";
+import { ForegroundPromptStart } from "./agent-run-state.js";
 import { CodexAppServerAgentSession } from "./providers/codex-app-server-agent.js";
 import { createFakeCodexAppServer } from "./providers/codex/test-utils/fake-app-server.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
@@ -1214,7 +1214,7 @@ test("starts its own turn when the previous turn fails to start under a steer se
     );
 
     startHeld.resolve();
-    await expect(second).resolves.toEqual({ disposition: "turn_started" });
+    await expect(second).resolves.toMatchObject({ disposition: "turn_started" });
     await vi.waitFor(() => expect(session.startPrompts).toEqual(["FIRST", "SECOND"]));
     expect(session.interruptCount).toBe(0);
   } finally {
@@ -9668,12 +9668,18 @@ test("canceling a pending Codex start settles as canceled without accepting its 
       workspaceId: undefined,
     });
     // Drain the stream: a fresh Codex agent has no session handle for runAgent before its first turn.
+    const senderStart = new ForegroundPromptStart(agent.id);
     const firstRun = drainAsyncGenerator(
-      manager.streamAgent(agent.id, "Canceled prompt", { clientMessageId: "canceled-prompt" }),
+      manager.streamAgent(
+        agent.id,
+        "Canceled prompt",
+        { clientMessageId: "canceled-prompt" },
+        senderStart,
+      ),
     );
     void firstRun.catch(() => undefined);
     await appServer.waitForRequest("thread/loaded/list");
-    const senderRejection = expect(manager.waitForAgentRunStart(agent.id)).rejects.toThrow(
+    const senderRejection = expect(senderStart.started).rejects.toThrow(
       "its prompt was not delivered",
     );
     const cancel = manager.cancelAgentRun(agent.id);
@@ -9813,17 +9819,20 @@ test("a stalled Codex start canceled by its replacement rejects its sender's sta
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    const firstRun = drainAsyncGenerator(manager.streamAgent(agent.id, "First prompt"));
+    const firstStart = new ForegroundPromptStart(agent.id);
+    const secondStart = new ForegroundPromptStart(agent.id);
+    const firstRun = drainAsyncGenerator(
+      manager.streamAgent(agent.id, "First prompt", undefined, firstStart),
+    );
     await appServer.waitForRequest("thread/loaded/list");
-    const firstWait = manager.waitForAgentRunStart(agent.id);
-    void firstWait.catch(() => undefined);
-    const replacement = manager.replaceAgentRun(agent.id, "Second prompt");
+    const firstWait = firstStart.started;
+    const replacement = manager.replaceAgentRun(agent.id, "Second prompt", undefined, secondStart);
     await firstInterruptRequested.promise;
     firstLoaded.resolve({ data: ["thread-1"] });
     const replacementStream = await replacement;
     await expect(firstRun).resolves.toBeUndefined();
 
-    const secondWait = manager.waitForAgentRunStart(agent.id);
+    const secondWait = secondStart.started;
     const replacementDrained = drainAsyncGenerator(replacementStream);
     await appServer.waitForRequest("turn/start");
     appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
@@ -9875,11 +9884,11 @@ test("a sender's start wait follows its prompt across a stale-session retry", as
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await startAgentRun(manager, agent.id, "Retry this prompt", logger, {
-      runOptions: { clientMessageId: "stale-start-wait" },
-    });
-    const senderWait = manager.waitForAgentRunStart(agent.id);
-    void senderWait.catch(() => undefined);
+    const senderWait = dispatchStarted(
+      await startAgentRun(manager, agent.id, "Retry this prompt", logger, {
+        runOptions: { clientMessageId: "stale-start-wait" },
+      }),
+    );
     releaseStart.resolve();
     await client.waitForRetryStart();
     await manager.waitForAgentEvent(agent.id);
@@ -9891,6 +9900,47 @@ test("a sender's start wait follows its prompt across a stale-session retry", as
     await expect(senderWait).resolves.toBeUndefined();
   } finally {
     releaseStart.resolve();
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a sender's start wait follows its prompt when the session is stale before the wait begins", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-stale-start-"));
+  class StaleStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new StaleProviderSessionError("stale-bridge");
+    }
+  }
+  class StaleStartClient extends ResumeTrackingTestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new StaleStartSession(config);
+    }
+  }
+  const client = new StaleStartClient();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const dispatch = await startAgentRun(manager, agent.id, "Retry this prompt", logger, {
+      runOptions: { clientMessageId: "immediate-stale-start" },
+    });
+    // The stale start has failed and been cleared before the sender begins waiting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    await expect(dispatchStarted(dispatch)).resolves.toBeUndefined();
+    await client.waitForRetryStart();
+    expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({
+        text: "Retry this prompt",
+        clientMessageId: "immediate-stale-start",
+      }),
+    ]);
+  } finally {
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();
@@ -9929,8 +9979,9 @@ test.each(["reload", "retry", "stale retry"])(
       const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
         workspaceId: undefined,
       });
-      await startAgentRun(manager, agent.id, "Retry this prompt", logger);
-      const senderWait = manager.waitForAgentRunStart(agent.id);
+      const senderWait = dispatchStarted(
+        await startAgentRun(manager, agent.id, "Retry this prompt", logger),
+      );
       const rejection = expect(senderWait).rejects.toThrow(
         failure === "retry" ? "retry failed" : "is stale after its plugin reloaded",
       );
@@ -9980,8 +10031,9 @@ test("a sender's start wait rejects when Stop cancels its pending stale-session 
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    await startAgentRun(manager, agent.id, "Retry this prompt", logger);
-    const senderWait = manager.waitForAgentRunStart(agent.id);
+    const senderWait = dispatchStarted(
+      await startAgentRun(manager, agent.id, "Retry this prompt", logger),
+    );
     const rejection = expect(senderWait).rejects.toThrow("its prompt was not delivered");
     releaseStart.resolve();
     await retryEntered.promise;
@@ -10003,7 +10055,6 @@ test("a sender's start wait never adopts an unlinked run after a stale start", a
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unlinked-start-"));
   const releaseStart = deferred<void>();
   const staleError = new StaleProviderSessionError("stale-bridge");
-  const retry = createForegroundRunRetry();
   class StaleStartSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       await releaseStart.promise;
@@ -10020,21 +10071,24 @@ test("a sender's start wait never adopts an unlinked run after a stale start", a
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
+    const senderStart = new ForegroundPromptStart(agent.id);
     const firstRun = drainAsyncGenerator(
-      manager.streamAgent(agent.id, "First prompt", undefined, { retry }),
+      manager.streamAgent(agent.id, "First prompt", undefined, senderStart),
     );
     const firstFailure = expect(firstRun).rejects.toBe(staleError);
-    const senderWait = manager.waitForAgentRunStart(agent.id);
-    const rejection = expect(senderWait).rejects.toThrow(staleError.message);
+    const rejection = expect(senderStart.started).rejects.toThrow(staleError.message);
     releaseStart.resolve();
     await firstFailure;
     try {
       await manager.reloadAgentSession(agent.id);
-      const otherRun = drainAsyncGenerator(manager.streamAgent(agent.id, "Another sender"));
-      await expect(manager.waitForAgentRunStart(agent.id)).resolves.toBeUndefined();
+      const otherStart = new ForegroundPromptStart(agent.id);
+      const otherRun = drainAsyncGenerator(
+        manager.streamAgent(agent.id, "Another sender", undefined, otherStart),
+      );
+      await expect(otherStart.started).resolves.toBeUndefined();
       await otherRun;
     } finally {
-      retry.resolve(null);
+      senderStart.end();
     }
     await rejection;
     expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual(
@@ -15369,3 +15423,11 @@ test("plugin instructions are recomputed for each launch without changing saved 
   expect(client.resumeOverrides.at(-1)?.daemonAppendSystemPrompt).toBe("Daemon");
   expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBe("Saved");
 });
+
+function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): Promise<void> {
+  if (dispatch.disposition !== "turn_started") {
+    throw new Error(`Expected a started turn, got ${dispatch.disposition}`);
+  }
+  void dispatch.started.catch(() => undefined);
+  return dispatch.started;
+}

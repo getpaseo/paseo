@@ -10,6 +10,7 @@ import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
+import { ForegroundPromptStart } from "../agent-run-state.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
@@ -93,7 +94,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
     "agent-1",
     "hello from create",
     { clientMessageId: "msg-create-1" },
-    { retry: expect.anything() },
+    expect.any(ForegroundPromptStart),
   );
 });
 
