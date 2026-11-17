@@ -89,9 +89,12 @@ test("session create forwards clientMessageId to the initial prompt run options"
     firstAgentContext: { attachments: [] },
   });
 
-  expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
-    clientMessageId: "msg-create-1",
-  });
+  expect(streamAgent).toHaveBeenCalledWith(
+    "agent-1",
+    "hello from create",
+    { clientMessageId: "msg-create-1" },
+    { retry: expect.anything() },
+  );
 });
 
 test("session create validates the requested mode against the provider's modes", async () => {
