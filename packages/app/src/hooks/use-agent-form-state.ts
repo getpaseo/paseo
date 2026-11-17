@@ -41,6 +41,7 @@ import {
   type DraftSelectionSourceFlags,
 } from "@/composer/draft/selection-source";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import type { MaterializedAgentProfile } from "@/agent-profiles";
 
 export type {
@@ -173,11 +174,51 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
   const { serverId, initialValues, workingDir, isVisible = true, isCreateFlow = true } = options;
 
   const { preferences, isLoading: isPreferencesLoading, updatePreferences } = useFormPreferences();
+  const { config: daemonConfig } = useDaemonConfig(serverId);
   const preferenceOverlayRef = useRef(new OptimisticFormPreferences(preferences));
 
   useEffect(() => {
     preferenceOverlayRef.current.reconcile(preferences);
   }, [preferences]);
+
+  /**
+   * The provider settings sheet mirrors a default-model pin into the daemon
+   * config (additionalModels isDefault) so headless clients honor it too. The
+   * app-side `pinnedModel` preference can be missing (pinned from another
+   * device, or written before this field existed): overlay the daemon-side
+   * pin onto the preferences seen by the form resolution so the composer
+   * seeds and submits the pinned model instead of drifting to last-used.
+   */
+  const preferencesWithDaemonPin = useMemo<FormPreferences>(() => {
+    const daemonProviders = daemonConfig?.providers as
+      | Record<string, { additionalModels?: Array<{ id: string; isDefault?: boolean }> }>
+      | undefined;
+    if (!daemonProviders) {
+      return preferences;
+    }
+    let next: FormPreferences | null = null;
+    for (const [provider, providerConfig] of Object.entries(daemonProviders)) {
+      const daemonPin = providerConfig?.additionalModels?.find(
+        (model) => model.isDefault === true,
+      )?.id;
+      if (!daemonPin) {
+        continue;
+      }
+      const current: FormPreferences = next ?? preferences;
+      const existing = current.providerPreferences?.[provider];
+      if (existing?.pinnedModel) {
+        continue;
+      }
+      next = {
+        ...current,
+        providerPreferences: {
+          ...current.providerPreferences,
+          [provider]: { ...existing, pinnedModel: daemonPin },
+        },
+      };
+    }
+    return next ?? preferences;
+  }, [preferences, daemonConfig]);
 
   const updateCurrentPreferences = useCallback(
     async (
@@ -297,7 +338,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       isPreferencesLoading,
       hasSnapshot: snapshotEntries !== undefined,
       initialValues,
-      preferences,
+      preferences: preferencesWithDaemonPin,
       providerModelsByProvider: snapshotProviderModelsByProvider,
       allowedProviderMap: snapshotResolvableProviderDefinitionMap,
     });
@@ -308,7 +349,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     isPreferencesLoading,
     snapshotEntries,
     initialValues,
-    preferences,
+    preferencesWithDaemonPin,
     snapshotProviderModelsByProvider,
     snapshotResolvableProviderDefinitionMap,
     dispatch,
@@ -496,7 +537,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
 
   const selectionSource = useMemo<DraftSelectionSourceFlags>(() => {
     const providerPrefs = formState.provider
-      ? preferences?.providerPreferences?.[formState.provider]
+      ? preferencesWithDaemonPin?.providerPreferences?.[formState.provider]
       : undefined;
     const savedThinkingOptionId = providerPrefs?.thinkingByModel?.[formState.model]?.trim();
     return resolveDraftSelectionSource({
@@ -507,8 +548,19 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
         modeId: providerPrefs?.mode ?? null,
         thinkingOptionId: savedThinkingOptionId ?? null,
       },
+      // The pinned default as visible to the composer (app-side preference or
+      // the daemon-configured default): when the remembered last-used model
+      // disagrees with it, the model selection is demoted to implicit so the
+      // server resolves the pinned default.
+      providerDefaultModel: providerPrefs?.pinnedModel ?? null,
     });
-  }, [formState.provider, formState.model, preferences, userModified, initialValues]);
+  }, [
+    formState.provider,
+    formState.model,
+    preferencesWithDaemonPin,
+    userModified,
+    initialValues,
+  ]);
 
   return useMemo(
     () => ({

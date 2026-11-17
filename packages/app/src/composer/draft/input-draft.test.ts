@@ -204,4 +204,43 @@ describe("resolveDraftSelectionSource", () => {
       }),
     ).toEqual({ model: "explicit", modeId: "implicit", thinkingOptionId: "implicit" });
   });
+
+  it("treats a saved last-used model as explicit without a provider default pin", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: false, modeId: false, thinkingOptionId: false },
+        savedSelection: { model: "gpt-5.4" },
+      }),
+    ).toEqual({ model: "explicit", modeId: "implicit", thinkingOptionId: "implicit" });
+  });
+
+  it("demotes a saved last-used model that disagrees with the provider default pin", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: false, modeId: false, thinkingOptionId: false },
+        savedSelection: { model: "gpt-5.4" },
+        providerDefaultModel: "gpt-5.3-codex",
+      }),
+    ).toEqual({ model: "implicit", modeId: "implicit", thinkingOptionId: "implicit" });
+  });
+
+  it("treats a saved model matching the provider default pin as explicit", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: false, modeId: false, thinkingOptionId: false },
+        savedSelection: { model: "gpt-5.3-codex" },
+        providerDefaultModel: "gpt-5.3-codex",
+      }),
+    ).toEqual({ model: "explicit", modeId: "implicit", thinkingOptionId: "implicit" });
+  });
+
+  it("keeps a user-modified model explicit even when it disagrees with the pin", () => {
+    expect(
+      resolveDraftSelectionSource({
+        userModified: { model: true, modeId: false, thinkingOptionId: false },
+        savedSelection: { model: "gpt-5.4" },
+        providerDefaultModel: "gpt-5.3-codex",
+      }),
+    ).toEqual({ model: "explicit", modeId: "implicit", thinkingOptionId: "implicit" });
+  });
 });
