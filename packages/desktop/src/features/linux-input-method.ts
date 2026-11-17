@@ -9,10 +9,7 @@ export function configureLinuxInputMethod({
   env = process.env,
   platform = process.platform,
 }: LinuxInputMethodOptions = {}): boolean {
-  if (platform !== "linux" || env.IBUS_USE_PORTAL !== undefined) {
-    return false;
-  }
-  if (!env.DBUS_SESSION_BUS_ADDRESS) {
+  if (platform !== "linux" || env.IBUS_USE_PORTAL !== undefined || !env.DBUS_SESSION_BUS_ADDRESS) {
     return false;
   }
 
@@ -35,8 +32,7 @@ export function configureLinuxInputMethod({
     return false;
   }
 
-  // libibus watches the portal's D-Bus owner and reconnects when it returns.
-  // This also avoids cached private socket paths removed by cache cleanup.
+  // The portal reconnects without relying on cached private socket paths.
   env.IBUS_USE_PORTAL = "1";
   return true;
 }

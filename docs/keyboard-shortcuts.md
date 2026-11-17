@@ -106,18 +106,12 @@ unhandled, so the pipeline skips `preventDefault` and the platform's own undo ru
 
 ## Linux input service recovery
 
-Before GTK initializes, Desktop selects the IBus portal when it already owns its
-session D-Bus name. libibus then follows service ownership changes and recreates
-input contexts when the portal returns. New windows can connect through the portal
-even if cache cleanup removed IBus's private Unix socket. Desktop does not restart
-IBus, reload windows, or restart the Paseo daemon.
+Before GTK initializes, Desktop selects the running IBus portal so libibus can
+reconnect after service restarts or private socket deletion. An explicit
+`IBUS_USE_PORTAL` setting takes precedence. Without a portal, session bus, or
+`gdbus`, Desktop keeps the existing input method; the probe times out after one
+second.
 
-An explicit `IBUS_USE_PORTAL` setting is preserved. Systems without a running
-portal, session bus, or `gdbus` retain their existing input method. A portal probe
-has a one-second deadline. This setting only affects libibus clients; other input
-method implementations are unchanged.
-
-`test:e2e:window-startup` verifies native X11 keyboard events before socket loss,
-in a new Desktop process after socket deletion, and after IBus returns, using a private
-D-Bus session and temporary configuration. Its Linux dependencies are `ibus`,
-`dbus-x11`, `python3`, `libxtst6`, and Xvfb.
+`test:e2e:input-method` tests native X11 input after socket deletion and IBus
+restart in a private D-Bus session. It requires `ibus`, `dbus-x11`, `python3`,
+`libxtst6`, and Xvfb.

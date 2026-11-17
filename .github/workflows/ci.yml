@@ -350,9 +350,13 @@ jobs:
         env:
           PASEO_DESKTOP_LIFECYCLE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-lifecycle
 
-      - name: Run desktop startup and input recovery E2E (Linux)
+      - name: Run desktop startup E2E (Linux)
         if: ${{ runner.os == 'Linux' }}
         run: xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop
+
+      - name: Verify Linux input method recovery
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a npm run test:e2e:input-method --workspace=@getpaseo/desktop
 
       - name: Upload desktop lifecycle screenshots
         uses: actions/upload-artifact@v4
