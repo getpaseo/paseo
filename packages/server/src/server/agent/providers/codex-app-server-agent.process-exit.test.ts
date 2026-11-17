@@ -903,3 +903,78 @@ test("interrupt retirement completes pending compaction before cancellation", as
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("interrupt retirement cancels native question rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-retire-native-question-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const statuses: string[] = [];
+  session.subscribe((event) => {
+    if (
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "question"
+    )
+      statuses.push(event.item.status);
+    if (event.type === "turn_canceled") statuses.push("turn_canceled");
+  });
+  try {
+    await session.startTurn("ask me");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+    appServer.requestUserInput({
+      threadId: "thread-1",
+      turnId: "turn",
+      itemId: "question",
+      questions: [
+        { id: "choice", header: "Choice", question: "Which?", options: [{ label: "One" }] },
+      ],
+    });
+    await expect.poll(() => statuses).toEqual(["running"]);
+    await session.interrupt();
+    expect(statuses).toEqual(["running", "canceled", "turn_canceled"]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("interrupt retirement completes child compaction markers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-retire-child-compaction-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const statuses = () =>
+    events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.item.type === "compaction"
+        ? [event.event.item.status]
+        : [],
+    );
+  try {
+    await session.startTurn("start child");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+    appServer.startsSubAgent({
+      callId: "spawn",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
+    appServer.startsCompaction({ threadId: "child", itemId: "child-compaction" });
+    await expect.poll(statuses).toEqual(["loading"]);
+    await session.interrupt();
+    expect(statuses()).toEqual(["loading", "completed"]);
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

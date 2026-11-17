@@ -1,15 +1,10 @@
+import { useSettingsContentPresented } from "@/navigation/settings-presentation";
+import { AppearanceText as Text } from "@/appearance/text";
 import { useHardwareKeyboardPresent } from "@/keyboard";
 import { useAddHost } from "@/hosts/add-host";
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Alert, Pressable, ScrollView, View, type PressableStateCallbackType } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router/react-navigation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -113,9 +108,12 @@ import {
   HostWorkspacesPage,
   HostTerminalsPage,
 } from "@/screens/settings/host-page";
-import { PluginSettingsContent } from "@/plugins/settings";
-import { usePluginDisplayName } from "@/plugins/plugin-list";
-import { HostPluginsPage } from "@/screens/settings/plugins-page";
+import {
+  PluginGalleryMenu,
+  PluginGalleryPage,
+  PluginPage,
+  type PluginPageSubject,
+} from "@/plugins/gallery";
 import { MetadataGenerationPage } from "@/screens/settings/metadata-generation-page";
 import { HostVoicePage } from "@/screens/settings/voice/voice-page";
 import ProjectsScreen from "@/screens/projects-screen";
@@ -285,7 +283,7 @@ function renderHostSettingsContent(
     case "terminals":
       return <HostTerminalsPage serverId={view.serverId} />;
     case "plugins":
-      return <HostPluginsPage serverId={view.serverId} />;
+      return <PluginGalleryPage serverId={view.serverId} />;
     case "host":
       return <HostSettingsPage serverId={view.serverId} onHostRemoved={onHostRemoved} />;
   }
@@ -992,7 +990,7 @@ function SettingsSidebar({
   let selectedHostSection: HostSectionSlug | null = null;
   if (view.kind === "host") selectedHostSection = view.section;
   if (view.kind === "project") selectedHostSection = "projects";
-  if (view.kind === "plugin") selectedHostSection = "plugins";
+  if (view.kind === "plugin" || view.kind === "pluginListing") selectedHostSection = "plugins";
 
   const sidebarBody = (
     <>
@@ -1124,6 +1122,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   const appVersion = resolveAppVersion();
   const appVersionText = formatVersionWithPrefix(appVersion);
   const isCompactLayout = useIsCompactFormFactor();
+  const onContentLayout = useSettingsContentPresented();
   const insets = useSafeAreaInsets();
   const insetBottomStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
   const hosts = useHosts();
@@ -1134,7 +1133,12 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // The host the four sections scope to: the host on the active view, otherwise
   // the picker choice, otherwise the connected local daemon, otherwise the first host.
   const activeHostServerId = useMemo(() => {
-    if (view.kind === "host" || view.kind === "project" || view.kind === "plugin")
+    if (
+      view.kind === "host" ||
+      view.kind === "project" ||
+      view.kind === "plugin" ||
+      view.kind === "pluginListing"
+    )
       return view.serverId;
     return resolveActiveHostServerId({
       selectedServerId: selectedSettingsHostServerId,
@@ -1267,10 +1271,20 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     returnFromSettings({ kind: "root" });
   }, []);
 
-  // The header names the plugin; its tabs name the open settings screen.
-  const pluginDisplayName = usePluginDisplayName(view.kind === "plugin" ? view : null);
+  // A plugin's page draws its own header; the compact back header names the plugin.
+  const pluginPage = useMemo((): { serverId: string; subject: PluginPageSubject } | null => {
+    if (view.kind === "plugin")
+      return {
+        serverId: view.serverId,
+        subject: { kind: "installed", pluginId: view.pluginId, screenId: view.screenId },
+      };
+    if (view.kind === "pluginListing")
+      return { serverId: view.serverId, subject: { kind: "listing", listingId: view.listingId } };
+    return null;
+  }, [view]);
   const detailTitle = ((): string | undefined => {
-    if (view.kind === "plugin") return pluginDisplayName;
+    // The plugin page heads itself with the plugin's name and icon.
+    if (pluginPage) return undefined;
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
       return item ? t(item.labelKey) : undefined;
@@ -1285,15 +1299,23 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
     return undefined;
   })();
 
+  const pluginGalleryServerId =
+    view.kind === "host" && view.section === "plugins" ? view.serverId : null;
+  const detailActions = useMemo(
+    () =>
+      pluginGalleryServerId ? <PluginGalleryMenu serverId={pluginGalleryServerId} /> : undefined,
+    [pluginGalleryServerId],
+  );
+  // The gallery and a plugin's page share one width, so opening a plugin keeps the page edges put.
+  const detailWidth = pluginGalleryServerId || pluginPage ? "wide" : "default";
+
   const content: ReactNode = (() => {
-    if (view.kind === "plugin")
+    if (pluginPage)
       return (
-        <PluginSettingsContent
-          serverId={view.serverId}
-          pluginId={view.pluginId}
-          screenId={view.screenId}
-          onBackToPlugins={handleBackFromDetail}
-          showBackToPlugins={!isCompactLayout}
+        <PluginPage
+          serverId={pluginPage.serverId}
+          subject={pluginPage.subject}
+          onBack={handleBackFromDetail}
         />
       );
     if (view.kind === "host") {
@@ -1347,7 +1369,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   if (settingsLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.loadingContainer} onLayout={onContentLayout}>
         <Text style={styles.loadingText}>{t("settings.loading")}</Text>
       </View>
     );
@@ -1356,7 +1378,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // Mobile root: full-screen sidebar-as-list.
   if (isCompactLayout && view.kind === "root") {
     return (
-      <View style={styles.container}>
+      <View style={styles.container} onLayout={onContentLayout}>
         <BackHeader title={t("settings.title")} onBack={handleBackToWorkspace} />
         <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
           <SettingsSidebar
@@ -1376,8 +1398,13 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
 
   if (isCompactLayout) {
     return (
-      <View style={styles.container}>
-        <PageLayout title={detailTitle} onBack={handleBackFromDetail}>
+      <View style={styles.container} onLayout={onContentLayout}>
+        <PageLayout
+          title={detailTitle}
+          onBack={handleBackFromDetail}
+          actions={detailActions}
+          width={detailWidth}
+        >
           {content}
         </PageLayout>
       </View>
@@ -1388,7 +1415,7 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
   // region + traffic-light padding; detail pane renders whatever header the
   // selected section provides.
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={onContentLayout}>
       <View style={desktopStyles.row}>
         <WindowChromeRegion corners="top-left">
           <SettingsSidebar
@@ -1406,6 +1433,8 @@ export default function SettingsScreen({ view }: SettingsScreenProps) {
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
             <PageLayout
               title={detailTitle}
+              actions={detailActions}
+              width={detailWidth}
               titleTestID="settings-detail-header-title"
               testID="settings-detail-scroll-body"
             >

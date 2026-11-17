@@ -5,9 +5,11 @@ import {
   normalizeStoredHostProfile,
   orderHostsLocalFirst,
   pinRelayProtectedSecurityInProfiles,
+  readHostRegistry,
   relayConnectionFromOffer,
   resolveActiveHostServerId,
   upsertHostConnectionInProfiles,
+  writeHostRegistry,
   type HostConnection,
   type HostProfile,
 } from "./host-connection";
@@ -85,6 +87,25 @@ describe("normalizeStoredHostProfile", () => {
     });
     expect(profile?.password).toBe("old-secret");
     expect(profile?.connections[0]).not.toHaveProperty("password");
+  });
+
+  it("drops a connection kind this build doesn't know and keeps the host", () => {
+    const profile = normalizeStoredHostProfile({
+      serverId: "srv_mixed",
+      password: "secret",
+      connections: [
+        { id: "future:1", type: "futureKind", address: "future.example.com" },
+        { id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767", futureField: true },
+        { id: "direct:remote:6767", type: "directTcp", endpoint: "remote:6767" },
+      ],
+      preferredConnectionId: "direct:remote:6767",
+    });
+
+    expect(profile?.password).toBe("secret");
+    expect(profile?.connections).toEqual([
+      { id: "direct:remote:6767", type: "directTcp", endpoint: "remote:6767", useTls: false },
+    ]);
+    expect(profile?.preferredConnectionId).toBe("direct:remote:6767");
   });
 
   it("preserves legacy relay ids when TLS is absent", () => {
@@ -174,6 +195,59 @@ describe("normalizeStoredHostProfile", () => {
       sshPort: 2222,
       daemonPort: 7777,
     });
+  });
+});
+
+describe("readHostRegistry and writeHostRegistry", () => {
+  const direct: HostConnection = {
+    id: "direct:lan:6767",
+    type: "directTcp",
+    endpoint: "lan:6767",
+    useTls: false,
+  };
+  const future = { id: "future:1", type: "futureKind", address: "future.example.com" };
+
+  it("writes back every entry it could not read", () => {
+    const unreadableHost = { serverId: "srv_future", connections: [future] };
+    const hostWithFutureField = { serverId: "srv_field", connections: [direct], futureField: 1 };
+    const stored = [
+      { ...makeHost("srv_a"), connections: [direct, future] },
+      unreadableHost,
+      hostWithFutureField,
+      "not a host",
+    ];
+
+    const { hosts, unreadable } = readHostRegistry(stored);
+    expect(hosts.map((host) => host.serverId)).toEqual(["srv_a"]);
+    expect(hosts[0]?.connections).toEqual([direct]);
+
+    expect(writeHostRegistry(hosts, unreadable)).toEqual([
+      { ...hosts[0], connections: [direct, future] },
+      unreadableHost,
+      hostWithFutureField,
+      "not a host",
+    ]);
+  });
+
+  it("writes a host saved again by this build in place of the entry it could not read", () => {
+    const { hosts, unreadable } = readHostRegistry([{ serverId: "srv_a", connections: [future] }]);
+    expect(hosts).toEqual([]);
+
+    const saved = { ...makeHost("srv_a"), connections: [direct] };
+    expect(writeHostRegistry([saved], unreadable)).toEqual([saved]);
+  });
+
+  it("moves a stored direct TCP password to its host next to a connection it can't read", () => {
+    const registry = readHostRegistry([
+      {
+        serverId: "srv_legacy",
+        connections: [future, { type: "directTcp", endpoint: "lan:6767", password: "old-secret" }],
+      },
+    ]);
+
+    expect(registry.movedConnectionPassword).toBe(true);
+    expect(registry.hosts[0]?.password).toBe("old-secret");
+    expect(registry.hosts[0]?.connections).toEqual([direct]);
   });
 });
 
