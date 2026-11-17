@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { stat } from "node:fs/promises";
 
 import type { Logger } from "pino";
 
@@ -19,7 +20,7 @@ import type {
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 
 export type ActiveWorkspaceRef = Pick<
@@ -707,7 +708,32 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   const archivedAt = input.archivedAt ?? new Date().toISOString();
-  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
+  let checkout: WorkspaceArchiveContext["checkout"];
+  if (existingWorkspace.kind === "worktree") {
+    const cwd = existingWorkspace.worktreeRoot ?? existingWorkspace.cwd;
+    try {
+      const [head, branch] = await Promise.all([
+        runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], { cwd }),
+        runGitCommand(["symbolic-ref", "--quiet", "--short", "HEAD"], {
+          cwd,
+          acceptExitCodes: [0, 1],
+        }),
+      ]);
+      const branchName = branch.stdout.trim() || null;
+      checkout = { branch: branchName, commit: branchName ? undefined : head.stdout.trim() };
+    } catch (error) {
+      const missing = await stat(cwd).then(
+        () => false,
+        (failure: NodeJS.ErrnoException) => failure.code === "ENOENT",
+      );
+      if (!missing) throw error;
+      // An unavailable checkout retains its previously recorded placement.
+    }
+  }
+  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, {
+    ...input.context,
+    ...(checkout ? { checkout } : {}),
+  });
 
   return existingWorkspace;
 }

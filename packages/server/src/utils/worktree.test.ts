@@ -278,7 +278,7 @@ describe("paseo worktree manager", () => {
     });
   });
 
-  it("deletes a worktree whose .git admin dir has already been removed", async () => {
+  it("keeps a worktree when its commit cannot be protected", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-delete-branch",
       cwd: repoDir,
@@ -293,13 +293,32 @@ describe("paseo worktree manager", () => {
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    await deletePaseoWorktree({
+    await expect(
+      deletePaseoWorktree({
+        cwd: repoDir,
+        worktreePath: created.worktreePath,
+        paseoHome,
+      }),
+    ).rejects.toThrow();
+
+    expect(existsSync(created.worktreePath)).toBe(true);
+  });
+
+  it("keeps a worktree when writing its retention ref fails", async () => {
+    const created = await createLegacyWorktreeForTest({
+      branchName: "ref-write-failure",
       cwd: repoDir,
-      worktreePath: created.worktreePath,
+      baseBranch: "main",
+      worktreeSlug: "ref-write-failure",
       paseoHome,
     });
+    mkdirSync(join(repoDir, ".git", "refs", "paseo"), { recursive: true });
+    writeFileSync(join(repoDir, ".git", "refs", "paseo", "kept-commits"), "blocked\n");
 
-    expect(existsSync(created.worktreePath)).toBe(false);
+    await expect(
+      deletePaseoWorktree({ cwd: repoDir, worktreePath: created.worktreePath, paseoHome }),
+    ).rejects.toThrow();
+    expect(existsSync(created.worktreePath)).toBe(true);
   });
 
   it("deletes a worktree when Git reports its source through native and long path spellings", async () => {

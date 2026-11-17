@@ -188,6 +188,7 @@ export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; branchName: string }
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
+  | { kind: "restore-detached"; commit: string; baseRef: string | null }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
   | {
       kind: "checkout-change-request";
@@ -1208,6 +1209,13 @@ export async function deletePaseoWorktree({
         teardownCwd,
       });
     }
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], {
+      cwd: resolvedWorktree,
+    });
+    const commit = stdout.trim();
+    await runGitCommand(["update-ref", `refs/paseo/kept-commits/${commit}`, commit], {
+      cwd: resolvedWorktree,
+    });
   }
 
   if (cwd) {
@@ -1361,14 +1369,24 @@ export async function resolveDefaultWorktreePath(
 /**
  * Create a git worktree with proper naming conventions
  */
-export const createWorktree = async ({
+export function createWorktree(
+  options: CreateWorktreeOptions & {
+    source: Exclude<WorktreeSource, { kind: "restore-detached" }>;
+  },
+): Promise<CreatedWorktree>;
+export function createWorktree(
+  options: CreateWorktreeOptions,
+): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }>;
+export async function createWorktree({
   cwd,
   source,
   worktreeSlug,
   paseoHome,
   worktreesRoot,
   worktreePath: explicitWorktreePath,
-}: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+}: CreateWorktreeOptions): Promise<
+  Omit<CreatedWorktree, "branchName"> & { branchName: string | null }
+> {
   const branchesBefore =
     source.kind === "checkout-branch" ||
     source.kind === "checkout-change-request" ||
@@ -1394,14 +1412,14 @@ export const createWorktree = async ({
     });
     worktreePath = await normalizePathForOwnership(worktreePath);
 
-    if (sourcePlan.pushRemote) {
+    if (sourcePlan.pushRemote && sourcePlan.branchName) {
       await configureWorktreePushRemote({
         cwd,
         branchName: sourcePlan.branchName,
         remote: sourcePlan.pushRemote,
       });
     }
-    if (sourcePlan.trackingRemote) {
+    if (sourcePlan.trackingRemote && sourcePlan.branchName) {
       await configureWorktreeTrackingRemote({
         cwd,
         branchName: sourcePlan.branchName,
@@ -1434,7 +1452,7 @@ export const createWorktree = async ({
     }
     throw error;
   }
-};
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
@@ -1443,7 +1461,7 @@ interface ResolveWorktreeSourcePlanOptions {
 }
 
 interface WorktreeSourcePlan {
-  branchName: string;
+  branchName: string | null;
   // Display name and exact ref are two different facts. The name cannot round-trip to a
   // commit — "main" resolves local-first even when the worktree was cut from a fork's
   // upstream — so comparisons and actions read the ref and the UI reads the name.
@@ -1544,6 +1562,12 @@ async function resolveWorktreeSourcePlan({
       return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
+    case "restore-detached":
+      return {
+        branchName: null,
+        metadataBaseRefName: source.baseRef ?? source.commit,
+        addArguments: ["--detach", source.commit],
+      };
     case "restore-from-base":
       return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {

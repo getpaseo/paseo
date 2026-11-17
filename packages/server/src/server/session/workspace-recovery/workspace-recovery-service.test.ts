@@ -335,11 +335,15 @@ async function createBaseRecoveryFixture(baseBranch: string | null) {
       await registry.update(record.workspaceId, (value) => ({ ...value, archivedAt: null }));
     },
   });
-  async function archiveAndRemove() {
-    await archivePersistedWorkspaceRecord({
-      workspaceId: workspace.workspaceId,
-      workspaceRegistry: registry,
-    });
+  async function archiveAndRemove(legacy = false) {
+    if (legacy) {
+      await registry.archive(workspace.workspaceId, new Date().toISOString());
+    } else {
+      await archivePersistedWorkspaceRecord({
+        workspaceId: workspace.workspaceId,
+        workspaceRegistry: registry,
+      });
+    }
     await deletePaseoWorktree({ cwd: repoDir, worktreePath: workspace.cwd, paseoHome });
     expect(existsSync(workspace.cwd)).toBe(false);
   }
@@ -368,7 +372,7 @@ test("restores a branchless workspace from its recorded base so work can continu
     ...workspace,
     branch: null,
   }));
-  await fixture.archiveAndRemove();
+  await fixture.archiveAndRemove(true);
 
   await expect(fixture.service.inspect(fixture.workspace.workspaceId)).resolves.toMatchObject({
     kind: "recoverable",
@@ -402,7 +406,7 @@ test("restores a branchless workspace from the repository default when its base 
     ...workspace,
     branch: null,
   }));
-  await fixture.archiveAndRemove();
+  await fixture.archiveAndRemove(true);
 
   await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
     workspaceId: fixture.workspace.workspaceId,
@@ -416,6 +420,40 @@ test("restores a branchless workspace from the repository default when its base 
   ).toBe(
     execFileSync("git", ["rev-parse", "main"], { cwd: fixture.repoDir, encoding: "utf8" }).trim(),
   );
+});
+
+test("restores the archived detached checkout at its recorded commit", async () => {
+  const fixture = await createBaseRecoveryFixture("main");
+  execFileSync("git", ["switch", "--detach"], { cwd: fixture.workspace.cwd });
+  writeFileSync(join(fixture.workspace.cwd, "detached.txt"), "detached\n");
+  execFileSync("git", ["add", "detached.txt"], { cwd: fixture.workspace.cwd });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "detached"], {
+    cwd: fixture.workspace.cwd,
+  });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: null,
+    commit,
+  });
+  execFileSync("git", ["reflog", "expire", "--expire=now", "--all"], { cwd: fixture.repoDir });
+  execFileSync("git", ["gc", "--prune=now"], { cwd: fixture.repoDir });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(commit);
+  expect(
+    execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("HEAD");
 });
 
 test("restores the branch HEAD with a base name when the exact base is missing", async () => {

@@ -151,13 +151,22 @@ export function createWorkspaceRecoveryService(deps: {
     workspace: PersistedWorkspaceRecord,
     sourceRepoRoot: string,
   ): Promise<void> {
-    const source: WorktreeSource = workspace.branch
-      ? { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch }
-      : {
-          kind: "restore-from-base",
-          branchName: `restored/${randomUUID().slice(0, 8)}`,
-          baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
-        };
+    let source: WorktreeSource;
+    if (workspace.branch) {
+      source = { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch };
+    } else if (workspace.commit) {
+      source = {
+        kind: "restore-detached",
+        commit: workspace.commit,
+        baseRef: workspace.baseBranch,
+      };
+    } else {
+      source = {
+        kind: "restore-from-base",
+        branchName: `restored/${randomUUID().slice(0, 8)}`,
+        baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
+      };
+    }
 
     try {
       await runGitCommand(["worktree", "prune"], { cwd: sourceRepoRoot, timeout: 30_000 });
