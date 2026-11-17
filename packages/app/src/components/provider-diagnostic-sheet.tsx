@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   AdaptiveModalSheet,
   AdaptiveTextInput,
+  SheetHeaderIconButton,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -275,27 +276,9 @@ function DiagnosticSubSheet({
     }
   }, [visible, fetchDiagnostic]);
 
-  const refreshButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      sheetStyles.iconButton,
-      (Boolean(hovered) || pressed) && sheetStyles.iconButtonHovered,
-      loading ? sheetStyles.disabled : null,
-    ],
-    [loading],
-  );
-
   const handleRefreshPress = useCallback(() => {
     void fetchDiagnostic();
   }, [fetchDiagnostic]);
-
-  const copyButtonStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      sheetStyles.iconButton,
-      (Boolean(hovered) || pressed) && Boolean(diagnostic) && sheetStyles.iconButtonHovered,
-      diagnostic ? null : sheetStyles.disabled,
-    ],
-    [diagnostic],
-  );
 
   const handleCopyPress = useCallback(() => {
     if (!diagnostic) return;
@@ -308,49 +291,27 @@ function DiagnosticSubSheet({
     () => ({
       title: t("settings.providers.diagnostic.title"),
       actions: (
-        <View style={sheetStyles.headerActions}>
-          <Pressable
+        <>
+          <SheetHeaderIconButton
+            icon={Copy}
+            label={t("settings.providers.diagnostic.copyAccessibility")}
             onPress={handleCopyPress}
             disabled={!diagnostic}
-            hitSlop={8}
-            style={copyButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={t("settings.providers.diagnostic.copyAccessibility")}
-          >
-            <Copy size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Pressable
-            onPress={handleRefreshPress}
-            disabled={loading}
-            hitSlop={8}
-            style={refreshButtonStyle}
-            accessibilityRole="button"
-            accessibilityLabel={
+          />
+          <SheetHeaderIconButton
+            icon={RotateCw}
+            label={
               loading
                 ? t("settings.providers.diagnostic.refreshingAccessibility")
                 : t("settings.providers.diagnostic.refreshAccessibility")
             }
-          >
-            {loading ? (
-              <LoadingSpinner size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            ) : (
-              <RotateCw size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            )}
-          </Pressable>
-        </View>
+            onPress={handleRefreshPress}
+            busy={loading}
+          />
+        </>
       ),
     }),
-    [
-      copyButtonStyle,
-      diagnostic,
-      handleCopyPress,
-      handleRefreshPress,
-      loading,
-      refreshButtonStyle,
-      t,
-      theme.colors.foregroundMuted,
-      theme.iconSize.sm,
-    ],
+    [diagnostic, handleCopyPress, handleRefreshPress, loading, t],
   );
 
   let body: React.ReactNode;
@@ -761,11 +722,6 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
   },
   disabled: {
     opacity: 0.5,

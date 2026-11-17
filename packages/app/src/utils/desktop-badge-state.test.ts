@@ -1,8 +1,38 @@
 import { describe, expect, it } from "vitest";
+import type { WorkspaceDescriptor } from "@/stores/session-store";
 import {
-  deriveMacDockBadgeCountFromWorkspaceStatuses,
+  createMacDockBadgeCountSelector,
   isWorkspaceActionableForDesktopBadge,
+  selectMacDockBadgeCount,
 } from "./desktop-badge-state";
+
+function workspace(id: string, status: WorkspaceDescriptor["status"]): WorkspaceDescriptor {
+  return {
+    createdAt: null,
+    lastUserMessageAt: null,
+    id,
+    projectId: "project-1",
+    projectDisplayName: "Project 1",
+    projectRootPath: "/repo",
+    workspaceDirectory: "/repo",
+    projectKind: "git",
+    workspaceKind: "local_checkout",
+    name: id,
+    status,
+    archivingAt: null,
+    statusEnteredAt: null,
+    diffStat: null,
+    scripts: [],
+  };
+}
+
+function stateWith(...workspaces: WorkspaceDescriptor[]) {
+  return {
+    sessions: {
+      srv_a: { workspaces: new Map(workspaces.map((entry) => [entry.id, entry])) },
+    },
+  };
+}
 
 describe("desktop-badge-state", () => {
   it("treats attention-requiring workspace statuses as actionable", () => {
@@ -17,18 +47,40 @@ describe("desktop-badge-state", () => {
   });
 
   it("returns undefined when no visible workspaces need attention", () => {
-    expect(deriveMacDockBadgeCountFromWorkspaceStatuses(["done", "running"])).toBeUndefined();
+    expect(
+      selectMacDockBadgeCount(stateWith(workspace("a", "done"), workspace("b", "running"))),
+    ).toBeUndefined();
   });
 
-  it("counts only actionable visible workspaces", () => {
-    expect(
-      deriveMacDockBadgeCountFromWorkspaceStatuses([
-        "done",
-        "attention",
-        "running",
-        "needs_input",
-        "failed",
-      ]),
-    ).toBe(3);
+  it("counts only actionable visible workspaces across every host", () => {
+    const state = {
+      sessions: {
+        srv_a: {
+          workspaces: new Map([
+            ["a", workspace("a", "done")],
+            ["b", workspace("b", "attention")],
+          ]),
+        },
+        srv_b: {
+          workspaces: new Map([
+            ["c", workspace("c", "running")],
+            ["d", workspace("d", "needs_input")],
+            ["e", workspace("e", "failed")],
+          ]),
+        },
+      },
+    };
+    expect(selectMacDockBadgeCount(state)).toBe(3);
+  });
+
+  it("recounts only when a workspace map is replaced", () => {
+    const select = createMacDockBadgeCountSelector();
+    const state = stateWith(workspace("a", "attention"));
+    expect(select(state)).toBe(1);
+
+    state.sessions.srv_a.workspaces.set("b", workspace("b", "failed"));
+    expect(select({ sessions: { ...state.sessions } })).toBe(1);
+
+    expect(select(stateWith(workspace("a", "attention"), workspace("b", "failed")))).toBe(2);
   });
 });

@@ -1,5 +1,6 @@
 import { Command } from "commander";
-import { connectToDaemon, resolveAgentId } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
+import { resolveAgentEntry, type AgentLookupClient } from "../../utils/agent-directory.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -34,10 +35,25 @@ export interface AgentReloadOptions extends CommandOptions {
 
 export type AgentReloadCommandResult = SingleResult<AgentReloadResult>;
 
+export interface AgentReloadClient extends AgentLookupClient {
+  refreshAgent(agentId: string): Promise<{ agentId: string; timelineSize?: number }>;
+  close(): Promise<void>;
+}
+
 export async function runReloadCommand(
   agentIdArg: string,
   options: AgentReloadOptions,
   _command: Command,
+): Promise<AgentReloadCommandResult> {
+  return reloadAgent(agentIdArg, options);
+}
+
+export async function reloadAgent(
+  agentIdArg: string,
+  options: AgentReloadOptions,
+  connect: (
+    options: Parameters<typeof connectToDaemon>[0],
+  ) => Promise<AgentReloadClient> = connectToDaemon,
 ): Promise<AgentReloadCommandResult> {
   if (!agentIdArg || agentIdArg.trim().length === 0) {
     const error: CommandError = {
@@ -48,13 +64,11 @@ export async function runReloadCommand(
     throw error;
   }
 
-  const client = await connectToDaemon({ target: options.daemonTarget });
+  const client = await connect({ target: options.daemonTarget });
 
   try {
-    const agentsPayload = await client.fetchAgents({ filter: { includeArchived: true } });
-    const agents = agentsPayload.entries.map((entry) => entry.agent);
-    const agentId = resolveAgentId(agentIdArg, agents);
-    if (!agentId) {
+    const agent = await resolveAgentEntry(client, agentIdArg);
+    if (!agent) {
       const error: CommandError = {
         code: "AGENT_NOT_FOUND",
         message: `Agent not found: ${agentIdArg}`,
@@ -63,7 +77,7 @@ export async function runReloadCommand(
       throw error;
     }
 
-    const result = await client.refreshAgent(agentId);
+    const result = await client.refreshAgent(agent.id);
 
     await client.close();
 

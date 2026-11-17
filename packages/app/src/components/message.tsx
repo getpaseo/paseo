@@ -1562,7 +1562,6 @@ interface ExpandableBadgeProps {
   style?: StyleProp<ViewStyle>;
   onToggle?: () => void;
   onOpenFile?: () => void;
-  onDetailHoverChange?: (hovered: boolean) => void;
   renderDetails?: () => ReactNode;
   isLoading?: boolean;
   isError?: boolean;
@@ -1887,7 +1886,6 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isExpanded,
   onToggle,
   onOpenFile,
-  onDetailHoverChange,
   renderDetails,
   isLoading = false,
   isError = false,
@@ -1913,11 +1911,6 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   }, []);
   const handlePressIn = useCallback(() => setIsPressed(true), []);
   const handlePressOut = useCallback(() => setIsPressed(false), []);
-  const handleDetailHoverIn = useCallback(() => onDetailHoverChange?.(true), [onDetailHoverChange]);
-  const handleDetailHoverOut = useCallback(
-    () => onDetailHoverChange?.(false),
-    [onDetailHoverChange],
-  );
   const handleOpenFilePress = useCallback(
     (event: GestureResponderEvent) => {
       event.stopPropagation?.();
@@ -2207,14 +2200,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
         ) : null}
       </View>
       {detailContent ? (
-        <Pressable
-          ref={detailWrapperRef}
-          style={detailWrapperStyle}
-          onHoverIn={handleDetailHoverIn}
-          onHoverOut={handleDetailHoverOut}
-        >
+        <View ref={detailWrapperRef} style={detailWrapperStyle}>
           {detailContent}
-        </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -2234,7 +2222,6 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;
-  if (previous.onDetailHoverChange !== next.onDetailHoverChange) return false;
   if (previous.renderDetails !== next.renderDetails) return false;
   return true;
 }
@@ -2252,7 +2239,6 @@ interface ToolCallProps {
   metadata?: Record<string, unknown>;
   isLastInSequence?: boolean;
   disableOuterSpacing?: boolean;
-  onInlineDetailsHoverChange?: (hovered: boolean) => void;
   onInlineDetailsExpandedChange?: (expanded: boolean) => void;
   onOpenFilePath?: (filePath: string) => void;
   defaultExpanded?: boolean;
@@ -2276,7 +2262,6 @@ export const ToolCall = memo(function ToolCall({
   metadata,
   isLastInSequence = false,
   disableOuterSpacing,
-  onInlineDetailsHoverChange,
   onInlineDetailsExpandedChange,
   onOpenFilePath,
   defaultExpanded,
@@ -2363,13 +2348,6 @@ export const ToolCall = memo(function ToolCall({
   ]);
 
   useEffect(() => {
-    if (!onInlineDetailsHoverChange || !shouldRenderInline || isExpanded) {
-      return;
-    }
-    onInlineDetailsHoverChange(false);
-  }, [isExpanded, shouldRenderInline, onInlineDetailsHoverChange]);
-
-  useEffect(() => {
     if (!onInlineDetailsExpandedChange) {
       return;
     }
@@ -2435,7 +2413,6 @@ export const ToolCall = memo(function ToolCall({
       isError={status === "failed"}
       isLastInSequence={isLastInSequence}
       disableOuterSpacing={disableOuterSpacing}
-      onDetailHoverChange={onInlineDetailsHoverChange}
     />
   );
 }, areToolCallPropsEqual);

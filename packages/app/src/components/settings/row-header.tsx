@@ -54,11 +54,7 @@ export function SettingsRowHeader({
 }: SettingsRowHeaderProps) {
   const layout = useSettingsRowLayout();
   const rowStyle = useCallback(
-    ({ hovered, pressed }: HoverState) => [
-      layout.row,
-      !disabled && hovered && styles.hovered,
-      !disabled && pressed && styles.pressed,
-    ],
+    ({ hovered }: HoverState) => [layout.row, !disabled && hovered && styles.hovered],
     [disabled, layout],
   );
   const chevronStyle = useMemo(
