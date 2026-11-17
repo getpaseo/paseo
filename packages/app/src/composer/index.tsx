@@ -1,3 +1,4 @@
+import { KeyboardController } from "react-native-keyboard-controller";
 import { Button } from "@/components/ui/button";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -1418,10 +1419,15 @@ function ComposerContentImpl({
     message: string;
     clientMessageId: string | null;
   } | null>(null);
+  const messageLocationVersion = useRef(0);
   const viewSubmittedMessage = useMutation({
     networkMode: "always",
     mutationFn: async () => {
       if (!sendError?.clientMessageId || !onViewSubmittedMessage) return;
+      const version = messageLocationVersion.current;
+      // The native dock translates the timeline while the keyboard is visible.
+      if (isNative) await KeyboardController.dismiss();
+      if (version !== messageLocationVersion.current) return;
       let found: boolean;
       try {
         found = await onViewSubmittedMessage(sendError.clientMessageId);
@@ -1434,6 +1440,7 @@ function ComposerContentImpl({
   const { reset: resetMessageLocation, mutate: locateSubmittedMessage } = viewSubmittedMessage;
   const setSendError = useCallback(
     (message: string | null, clientMessageId?: string) => {
+      messageLocationVersion.current += 1;
       resetMessageLocation();
       setSendErrorState(
         message === null ? null : { message, clientMessageId: clientMessageId ?? null },
