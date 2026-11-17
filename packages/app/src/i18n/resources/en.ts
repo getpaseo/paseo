@@ -1,3 +1,5 @@
+import { pluginGallery } from "./plugin-gallery";
+
 export const en = {
   pluginCombobox: {
     searching: "Searching…",
@@ -2421,6 +2423,7 @@ export const en = {
       host: "Overview",
     },
     plugins: {
+      gallery: pluginGallery.en,
       title: "Plugins",
       screens: {
         open: "Open",
@@ -2458,21 +2461,22 @@ export const en = {
         enabling: "Enabling…",
         disable: "Disable",
         disabling: "Disabling…",
-        remove: "Remove",
-        removing: "Removing…",
+        remove: "Uninstall",
+        removing: "Uninstalling…",
       },
       feedback: {
         installed: "Installed {{name}}",
         reload: "Reloaded {{name}}",
         enable: "Enabled {{name}}",
         disable: "Disabled {{name}}",
-        remove: "Removed {{name}}",
+        remove: "Uninstalled {{name}}",
         kept: "Kept {{name}}",
         globalEnabled: "Plugins enabled",
         globalDisabled: "Plugins disabled",
       },
-      removeConfirmTitle: "Remove {{name}}?",
-      removeConfirmMessage: "This removes the configuration. The source directory is not deleted.",
+      removeConfirmTitle: "Uninstall {{name}}?",
+      removeConfirmMessage: "Its download and settings on this host are deleted.",
+      removeConfirmLocalMessage: "Its settings are deleted. Its folder stays on disk.",
       states: {
         offlineTitle: "Plugin host is offline",
         offlineDescription: "Reconnect to this host to manage its plugins.",

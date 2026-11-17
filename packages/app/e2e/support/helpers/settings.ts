@@ -223,6 +223,14 @@ export async function addDirectHostFromSettings(
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
 }
 
+export async function expectAddHostFieldDrawnAsInput(page: Page, testId: string): Promise<void> {
+  const field = page.getByTestId(testId);
+  await expect(field).toBeVisible();
+  await expect(field).toHaveCSS("border-top-width", "1px");
+  await expect(field).not.toHaveCSS("padding-left", "0px");
+  await expect(field).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+}
+
 export async function toggleHostAdvanced(page: Page): Promise<void> {
   await page.getByTestId("direct-host-advanced-toggle").click();
 }

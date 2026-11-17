@@ -88,6 +88,8 @@ export interface PluginSessionOpenRequest {
   readonly background: boolean;
   readonly labels: Readonly<Record<string, string>>;
   readonly metadata: Readonly<Record<string, JsonValue>>;
+  /** Instructions appended for this open; not saved on the agent. */
+  appendSystemPrompt?: string[];
   tools: AgentToolDefinition[];
   env: Record<string, string>;
   mcpServers: NonNullable<AgentSessionConfig["mcpServers"]>;

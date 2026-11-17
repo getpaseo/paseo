@@ -11,6 +11,7 @@ import path from "node:path";
 import { LRUCache } from "lru-cache";
 import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
+import { bypassApprovesAsk } from "./bypass-approval.js";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -83,7 +84,7 @@ import {
   type ClaudeProviderOptions,
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { discoverClaudeModels } from "./model-discovery.js";
+import { discoverClaudeModels, killExitingClaudeModelDiscoveries } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
   findSteeredMessageParent,
@@ -1751,6 +1752,10 @@ export class ClaudeAgentClient implements AgentClient {
     };
   }
 
+  async shutdown(): Promise<void> {
+    await killExitingClaudeModelDiscoveries();
+  }
+
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
     return claudeModeCatalog(this.buildProviderEnv(launchEnv)).defaultModeId;
   }
@@ -3044,7 +3049,11 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
-    const { providerOptions: _providerOptions, ...persistedConfig } = this.config;
+    const {
+      providerOptions: _providerOptions,
+      pluginAppendSystemPrompt: _pluginAppendSystemPrompt,
+      ...persistedConfig
+    } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
@@ -3712,7 +3721,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildAppendedSystemPrompt(): string {
     return (
-      composeSystemPromptParts(this.config.systemPrompt, this.config.daemonAppendSystemPrompt) ?? ""
+      composeSystemPromptParts(
+        this.config.systemPrompt,
+        this.config.daemonAppendSystemPrompt,
+        ...(this.config.pluginAppendSystemPrompt ?? []),
+      ) ?? ""
     );
   }
 
@@ -5307,6 +5320,11 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options,
   ): Promise<PermissionResult> => {
+    // Decide before publishing anything: bypassed asks never enter the permission UI.
+    if (this.currentMode === "bypassPermissions" && bypassApprovesAsk(toolName, options)) {
+      return { behavior: "allow", updatedInput: input, toolUseID: options.toolUseID };
+    }
+
     const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
     const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);

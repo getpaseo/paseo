@@ -35,14 +35,19 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
   firstRowTrailing?: ReactNode;
 }
 
+/** The top-level items the user keeps visible, in display order. */
+export function useVisibleSidebarNavItems() {
+  const { items } = useSidebarNavItems("header");
+  return useMemo(() => items.filter((item) => item.visible), [items]);
+}
+
 /**
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden and there is no `firstRowTrailing`.
  */
 export function SidebarNavRows({ style, onBeforeNavigate, firstRowTrailing }: SidebarNavRowsProps) {
-  const { items } = useSidebarNavItems("header");
-  const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
+  const visibleItems = useVisibleSidebarNavItems();
   const groupRef = useRef<View | null>(null);
 
   if (visibleItems.length === 0 && !firstRowTrailing) return null;

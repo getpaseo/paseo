@@ -14,6 +14,8 @@ export interface FileChange {
 
 export interface FileObserverOptions {
   ignore?: string[];
+  // Aborting before `subscribe()` resolves stops the startup scan and rejects with the reason.
+  signal?: AbortSignal;
 }
 
 export type FileObserverCallback = (error: Error | null, events: FileChange[]) => void;
@@ -105,7 +107,19 @@ class FileObserverService implements FileObserver {
       createBackend: this.createBackend,
       onClosed: () => state.observations.delete(observation),
     });
-    await observation.start();
+    const { signal } = options;
+    signal?.throwIfAborted();
+    const abort = () => void observation.close();
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      await observation.start();
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+    if (signal?.aborted) {
+      await observation.close();
+      throw signal.reason;
+    }
     if (this.closePromise) {
       await observation.close();
       throw new Error("File observer is closed");
