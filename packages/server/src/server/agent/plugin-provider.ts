@@ -1949,7 +1949,11 @@ function mapSessionConfig(
   return {
     cwd: config.cwd,
     env: createProviderEnv({ baseEnv: {}, overlays: [launchContext?.env] }),
-    systemPrompt: combineSystemPrompts(config.systemPrompt, config.daemonAppendSystemPrompt),
+    systemPrompt: combineSystemPrompts(
+      config.systemPrompt,
+      config.daemonAppendSystemPrompt,
+      ...(config.pluginAppendSystemPrompt ?? []),
+    ),
     mcpServers: { ...config.mcpServers },
     toolPolicy: config.toolPolicy
       ? { preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })) }
@@ -1968,8 +1972,9 @@ function mapSessionConfig(
 function combineSystemPrompts(
   systemPrompt: string | undefined,
   daemonPrompt: string | undefined,
+  ...pluginPrompts: string[]
 ): string | undefined {
-  const parts = [systemPrompt, daemonPrompt].filter(
+  const parts = [systemPrompt, daemonPrompt, ...pluginPrompts].filter(
     (value): value is string => typeof value === "string" && value.trim().length > 0,
   );
   return parts.length > 0 ? parts.join("\n\n") : undefined;

@@ -51,7 +51,6 @@ import {
 } from "./copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
-import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
 import type {
   AgentCapabilityFlags,
@@ -2260,7 +2259,12 @@ describe("ACPAgentClient modelTransformer", () => {
       provider: "pi",
       logger: createTestLogger(),
       defaultCommand: ["test-acp"],
-      modelTransformer: transformPiModels,
+      modelTransformer: (models) =>
+        models.map((model) => ({
+          ...model,
+          label: model.label.split("/").at(-1) ?? model.label,
+          description: model.id,
+        })),
     });
 
     await expect(
@@ -2911,60 +2915,6 @@ describe("ACP providers advertise session listing", () => {
   test("Copilot ACP client reports supportsSessionListing", () => {
     const client = new CopilotACPAgentClient({ logger: createTestLogger() });
     expect(client.capabilities.supportsSessionListing).toBe(true);
-  });
-});
-
-describe("transformPiModels", () => {
-  test("keeps slash-free labels unchanged", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "gpt-4.1-mini",
-          label: "GPT 4.1 Mini",
-          description: "Fast",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "gpt-4.1-mini",
-        label: "GPT 4.1 Mini",
-        description: "Fast",
-      },
-    ]);
-  });
-
-  test("uses the last path segment as label and preserves existing descriptions", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-4.1-mini",
-          label: "openrouter/openai/gpt-4.1-mini",
-          description: undefined,
-        },
-        {
-          provider: "pi",
-          id: "anthropic/claude-sonnet-4",
-          label: "anthropic/claude-sonnet-4",
-          description: "Balanced",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-4.1-mini",
-        label: "gpt-4.1-mini",
-        description: "openrouter/openai/gpt-4.1-mini",
-      },
-      {
-        provider: "pi",
-        id: "anthropic/claude-sonnet-4",
-        label: "claude-sonnet-4",
-        description: "Balanced",
-      },
-    ]);
   });
 });
 

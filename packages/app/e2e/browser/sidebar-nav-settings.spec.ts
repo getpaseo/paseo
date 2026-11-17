@@ -110,6 +110,7 @@ test.describe("Sidebar items in Appearance settings", () => {
 
     await test.step("the sidebar starts in the default order", async () => {
       await expectSidebarOrder(page, ["new-workspace", "history", "search", "schedules", "goals"]);
+      await expect(page.locator('[data-testid="sidebar-nav-separator"]:visible')).toHaveCount(1);
     });
 
     await test.step("the Sidebar section lists every item in the same order", async () => {
@@ -199,6 +200,9 @@ test.describe("Sidebar items in Appearance settings", () => {
     await expectSidebarItemHidden(page, "search");
     await expectSidebarItemHidden(page, "schedules");
     await expectSidebarItemHidden(page, "goals");
+    // Nothing is left above the Workspaces section: no drag strip, no empty divider.
+    await expect(page.locator('[data-testid="sidebar-nav-drag-strip"]:visible')).toHaveCount(0);
+    await expect(page.locator('[data-testid="sidebar-nav-separator"]:visible')).toHaveCount(0);
   });
 });
 
