@@ -6,16 +6,18 @@ export function pullRequestContainsCommit(input: {
   return !!input.workspaceCommit && !!input.pullRequestCommits?.includes(input.workspaceCommit);
 }
 
-/** Cache immutable terminal-request commit lists, including failed reads, across polls. */
-export function createPullRequestCommitReader(now: () => number = Date.now) {
-  const cache = new Map<string, { expiresAt: number; commits: Promise<string[]> }>();
+/** Terminal commit lists are immutable for a request head. Failed reads remain retryable. */
+export function createPullRequestCommitReader() {
+  const cache = new Map<string, Promise<string[]>>();
   return (key: string, load: () => Promise<string[]>): Promise<string[]> => {
     const existing = cache.get(key);
-    if (existing && existing.expiresAt > now()) return existing.commits;
-    const entry = { expiresAt: now() + 300_000, commits: load() };
-    cache.delete(key);
-    cache.set(key, entry);
+    if (existing) return existing;
+    const commits = load().catch(() => {
+      cache.delete(key);
+      return [];
+    });
+    cache.set(key, commits);
     if (cache.size > 1024) cache.delete(cache.keys().next().value!);
-    return entry.commits;
+    return commits;
   };
 }

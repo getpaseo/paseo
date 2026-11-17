@@ -531,7 +531,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner,commits";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_STATUS_FACTS_QUERY = `
@@ -650,7 +650,9 @@ const BatchPollPrNodeSchema = z.object({
   commits: z
     .object({
       nodes: z.array(z.object({ commit: z.object({ oid: z.string() }) })),
-      pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }).optional(),
+      pageInfo: z
+        .object({ hasPreviousPage: z.boolean(), startCursor: z.string().nullable() })
+        .optional(),
     })
     .optional(),
   updatedAt: z.string().optional(),
@@ -758,7 +760,6 @@ fragment PaseoPollPullRequest on PullRequest {
   baseRefName
   headRefName
   headRefOid
-  commits(first: 100) { nodes { commit { oid } } pageInfo { hasNextPage endCursor } }
   updatedAt
   mergedAt
   mergeable
@@ -1674,17 +1675,13 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return;
     }
 
-    try {
-      if (!(await loadBatchCommitPages(addressedEntries, response.aliases))) return;
-    } catch (error) {
-      reportGitHubBatchError(addressedEntries, error);
-      return;
-    }
+    const failedCommitEntries = await loadBatchCommitPages(addressedEntries, response.aliases);
     const distribution = distributeGitHubPollBatch({
       entries: addressedEntries,
       aliases: response.aliases,
       args,
       startedAt,
+      failedCommitEntries,
     });
     if (distribution.pendingChecks.length > 0) {
       await loadBatchPullRequestChecks(distribution.pendingChecks, startedAt);
@@ -1699,6 +1696,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     entries: GitHubBatchPollEntry[];
     firstEntry: GitHubBatchPollEntry;
     args: string[];
+    onError?: (entries: GitHubBatchPollEntry[], error: unknown) => void;
   }): Promise<GitHubBatchQueryResponse | null> {
     try {
       const stdout = await run(input.args, { cwd: input.firstEntry.target.cwd });
@@ -1707,7 +1705,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       const isPaused = await pauseGitHubPollsAfterRateLimit(input.firstEntry, error);
       const partial = extractGraphqlBatchAliasesFromError(error);
       if (isPaused || !partial) {
-        reportGitHubBatchError(input.entries, error);
+        (input.onError ?? reportGitHubBatchError)(input.entries, error);
         return null;
       }
       const stdout = error instanceof GitHubCommandError ? (error.stdout ?? "") : "";
@@ -1732,12 +1730,18 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       aliases[batchAlias(index)] = parsed.data;
       if (parsed.data.isFork && parsed.data.parent) continue;
       if (selectBatchPollNode(entry, parsed.data)?.state === "OPEN") continue;
-      for (const node of parsed.data.pullRequests.nodes) {
+      for (const node of batchPollNodesForWorkspace(entry, parsed.data)) {
         const key = `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`;
         const cachedCommits = terminalCommitPages.get(key);
         if (node.state !== "OPEN" && cachedCommits)
           node.commits = { ...cachedCommits, nodes: [...cachedCommits.nodes] };
-        if (node.state !== "OPEN" && entry.target.headSha && node.commits?.pageInfo?.hasNextPage)
+        if (node.state !== "OPEN" && !node.commits)
+          node.commits = { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: null } };
+        if (
+          node.state !== "OPEN" &&
+          entry.target.headSha &&
+          node.commits?.pageInfo?.hasPreviousPage
+        )
           pending.push({ entry, node });
       }
     }
@@ -1747,18 +1751,21 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   async function loadBatchCommitPages(
     entries: GitHubBatchPollEntry[],
     aliases: Record<string, unknown>,
-  ): Promise<boolean> {
+  ): Promise<Set<GitHubBatchPollEntry>> {
     const pending = collectBatchCommitPages(entries, aliases);
+    const failedNodes = new Set<BatchPollPrNode>();
+    const errors = new Map<GitHubBatchPollEntry, unknown>();
     while (pending.length) {
       const needing = pending.filter(
         ({ entry, node }) =>
-          node.commits?.pageInfo?.hasNextPage &&
+          !failedNodes.has(node) &&
+          node.commits?.pageInfo?.hasPreviousPage &&
           !node.commits.nodes.some(({ commit }) => commit.oid === entry.target.headSha),
       );
       if (!needing.length) break;
       const fields = needing.map(
         ({ entry, node }, index) =>
-          `${batchAlias(index)}: repository(owner: ${graphqlString(entry.owner)}, name: ${graphqlString(entry.name)}) { pullRequest(number: ${node.number}) { commits(first:100, after:${graphqlString(node.commits!.pageInfo!.endCursor!)}) { nodes { commit { oid } } pageInfo { hasNextPage endCursor } } } }`,
+          `${batchAlias(index)}: repository(owner: ${graphqlString(entry.owner)}, name: ${graphqlString(entry.name)}) { pullRequest(number: ${node.number}) { commits(last:100${node.commits!.pageInfo!.startCursor ? `, before:${graphqlString(node.commits!.pageInfo!.startCursor!)}` : ""}) { nodes { commit { oid } } pageInfo { hasPreviousPage startCursor } } } }`,
       );
       const args = [
         "api",
@@ -1766,26 +1773,40 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         "-f",
         `query=query PaseoBatchCommitPages { rateLimit { limit remaining resetAt } ${fields.join("\n")} }`,
       ];
+      const needingEntries = [...new Set(needing.map(({ entry }) => entry))];
       const response = await loadGitHubPollBatchResponse({
-        entries,
-        firstEntry: entries[0]!,
+        entries: needingEntries,
+        firstEntry: needingEntries[0]!,
         args,
+        onError: (affected, error) => {
+          for (const entry of affected) errors.set(entry, error);
+        },
       });
-      if (!response) return false;
+      if (!response) {
+        if ((pollPausedUntilByHost.get(needingEntries[0]!.host) ?? 0) > deps.now())
+          return new Set(entries);
+        for (const { node } of needing) failedNodes.add(node);
+        break;
+      }
       const rateLimit = parseGraphqlBatchRateLimit(response.stdout);
       if (rateLimit && pauseGitHubPollsAtReserve(entries[0]!.host, rateLimit)) {
         reportGitHubBatchError(entries, new GitHubGraphqlPollPausedError(rateLimit));
-        return false;
+        return new Set(entries);
       }
-      for (const [index, { node }] of needing.entries()) {
-        const page = z
+      for (const [index, { entry, node }] of needing.entries()) {
+        const parsed = z
           .object({
             pullRequest: z.object({ commits: BatchPollPrNodeSchema.shape.commits.unwrap() }),
           })
-          .parse(response.aliases[batchAlias(index)]).pullRequest.commits;
+          .safeParse(response.aliases[batchAlias(index)]);
+        if (!parsed.success) {
+          failedNodes.add(node);
+          errors.set(entry, parsed.error);
+          continue;
+        }
+        const page = parsed.data.pullRequest.commits;
         node.commits!.nodes.push(...page.nodes);
         node.commits!.pageInfo = page.pageInfo;
-        const entry = needing[index]!.entry;
         const key = `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`;
         terminalCommitPages.delete(key);
         terminalCommitPages.set(key, node.commits!);
@@ -1793,7 +1814,24 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           terminalCommitPages.delete(terminalCommitPages.keys().next().value!);
       }
     }
-    return true;
+    return reportUnresolvedCommitReads(errors, entries, aliases);
+  }
+
+  function reportUnresolvedCommitReads(
+    errors: Map<GitHubBatchPollEntry, unknown>,
+    entries: GitHubBatchPollEntry[],
+    aliases: Record<string, unknown>,
+  ): Set<GitHubBatchPollEntry> {
+    const failed = new Set<GitHubBatchPollEntry>();
+    for (const [entry, error] of errors) {
+      const repository = BatchPollRepositorySchema.parse(
+        aliases[batchAlias(entries.indexOf(entry))],
+      );
+      if (selectBatchPollNode(entry, repository)) continue;
+      failed.add(entry);
+      updatePollTargetAfterError(entry.target, error);
+    }
+    return failed;
   }
 
   function distributeGitHubPollBatch(input: {
@@ -1801,6 +1839,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     aliases: Record<string, unknown>;
     args: string[];
     startedAt: number;
+    failedCommitEntries: ReadonlySet<GitHubBatchPollEntry>;
   }): GitHubBatchDistribution {
     const distribution: GitHubBatchDistribution = {
       pendingChecks: [],
@@ -1808,6 +1847,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       redirected: [],
     };
     for (const [index, entry] of input.entries.entries()) {
+      if (input.failedCommitEntries.has(entry)) continue;
       const aliasValue = input.aliases[batchAlias(index)];
       const repository = aliasValue ? BatchPollRepositorySchema.safeParse(aliasValue) : null;
       if (!repository?.success) {
@@ -1896,29 +1936,35 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     return `${entry.host}\n${entry.originOwner}/${entry.originName}`;
   }
 
+  function batchPollNodesForWorkspace(
+    entry: GitHubBatchPollEntry,
+    repository: BatchPollRepository,
+  ): BatchPollPrNode[] {
+    // Branch names also match other forks; reject those before loading commit lists.
+    const owner = entry.target.headRepositoryOwner ?? entry.headRepositoryOwner;
+    const selfOwner = (repository.owner?.login ?? entry.owner).toLowerCase();
+    return repository.pullRequests.nodes.filter(
+      (node) =>
+        node.headRefName === entry.target.headRef &&
+        (owner
+          ? node.headRepositoryOwner?.login === owner
+          : node.headRepositoryOwner?.login?.toLowerCase() === selfOwner),
+    );
+  }
+
   function selectBatchPollNode(
     entry: GitHubBatchPollEntry,
     repository: BatchPollRepository,
   ): BatchPollPrNode | null {
-    // Prefer the canonical owner from the response: the origin slug can carry
-    // stale casing or a pre-transfer owner that repository() redirects from.
-    const selfOwner = (repository.owner?.login ?? entry.owner).toLowerCase();
     const headRepositoryOwner = entry.target.headRepositoryOwner ?? entry.headRepositoryOwner;
     const nodeByCandidate = new Map<ResolvedPullRequestCandidate, BatchPollPrNode>();
     const candidates: ResolvedPullRequestCandidate[] = [];
-    for (const node of repository.pullRequests.nodes) {
+    for (const node of batchPollNodesForWorkspace(entry, repository)) {
       const candidate = toCurrentPullRequestCandidate(
         toBatchCurrentPullRequestItem(node, undefined),
         entry.target.headRef,
       );
       if (!candidate) {
-        continue;
-      }
-      // pullRequests(headRefName:) also matches forks whose branch shares the
-      // name. Without a fork-owner hint the workspace branch lives in this
-      // repository, so only self-owned heads are real candidates (mirrors
-      // `gh pr view` resolving the current branch's own PR).
-      if (!headRepositoryOwner && candidate.headRepositoryOwner?.toLowerCase() !== selfOwner) {
         continue;
       }
       nodeByCandidate.set(candidate, node);
@@ -3122,6 +3168,7 @@ async function resolveCurrentPullRequestView(options: {
   const candidates = await listCurrentPullRequestCandidates({
     cwd: options.cwd,
     headRef: options.headRef,
+    headRepositoryOwner,
     run: options.run,
   });
   const match = pickPullRequestCandidate({
@@ -3270,16 +3317,21 @@ async function completeCandidateCommits(
   candidate: ResolvedPullRequestCandidate,
   options: {
     cwd: string;
+    headRef: string;
+    headRepositoryOwner?: string;
     run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
   },
 ): Promise<void> {
   const status = candidate.status;
-  if (status.state === "open" || (status.commitOids?.length ?? 0) < 100) return;
+  if (!isCandidateForHeadRef(candidate, options.headRef)) return;
+  if (options.headRepositoryOwner && candidate.headRepositoryOwner !== options.headRepositoryOwner)
+    return;
+  if (status.state === "open" || status.commitOids !== undefined) return;
   status.commitOids = await readGitHubCommitList(`${status.url}@${status.headSha}`, async () => {
     const commits: string[] = [];
     let cursor: string | null = null;
     for (;;) {
-      const query = `query { repository(owner:${graphqlString(status.repoOwner!)},name:${graphqlString(status.repoName!)}) { pullRequest(number:${status.number}) { commits(first:100${cursor ? `,after:${graphqlString(cursor)}` : ""}) { nodes { commit { oid } } pageInfo { hasNextPage endCursor } } } } }`;
+      const query = `query { repository(owner:${graphqlString(status.repoOwner!)},name:${graphqlString(status.repoName!)}) { pullRequest(number:${status.number}) { commits(last:100${cursor ? `,before:${graphqlString(cursor)}` : ""}) { nodes { commit { oid } } pageInfo { hasPreviousPage startCursor } } } } }`;
       const stdout = await options.run(["api", "graphql", "-f", `query=${query}`], {
         cwd: options.cwd,
       });
@@ -3293,8 +3345,8 @@ async function completeCandidateCommits(
         })
         .parse(JSON.parse(stdout)).data.repository.pullRequest.commits;
       commits.push(...page.nodes.map(({ commit }) => commit.oid));
-      if (!page.pageInfo?.hasNextPage) return commits;
-      cursor = page.pageInfo.endCursor;
+      if (!page.pageInfo?.hasPreviousPage) return commits;
+      cursor = page.pageInfo.startCursor;
     }
   });
 }
@@ -3329,6 +3381,7 @@ async function tryCurrentPullRequestView(options: {
 async function listCurrentPullRequestCandidates(options: {
   cwd: string;
   headRef: string;
+  headRepositoryOwner?: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<ResolvedPullRequestCandidate[]> {
   const args = ["pr", "list", "--state", "all", "--head", options.headRef, "--limit", "10"];

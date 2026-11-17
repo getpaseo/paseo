@@ -26,7 +26,7 @@ const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner,commits";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
@@ -1116,24 +1116,72 @@ describe("ForgeService", () => {
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
 
-  it("shares terminal commit reads and caches failures until retry", async () => {
-    let now = 0;
-    let calls = 0;
-    const read = createPullRequestCommitReader(() => now);
-    const load = async () => {
-      calls++;
-      throw new Error("offline");
-    };
-    await expect(read("request@head", load)).rejects.toThrow("offline");
-    await expect(read("request@head", load)).rejects.toThrow("offline");
-    expect(calls).toBe(1);
-    now = 300_001;
-    await expect(read("request@head", load)).rejects.toThrow("offline");
-    expect(calls).toBe(2);
-    await expect(read("request@new-head", async () => ["own-commit"])).resolves.toEqual([
-      "own-commit",
-    ]);
+  it("does not retain failed commit reads or block another candidate", async () => {
+    const read = createPullRequestCommitReader();
+    await expect(
+      read("bad@head", async () => {
+        throw new Error("offline");
+      }),
+    ).resolves.toEqual([]);
+    await expect(read("good@head", async () => ["own-commit"])).resolves.toEqual(["own-commit"]);
+    await expect(read("bad@head", async () => ["recovered"])).resolves.toEqual(["recovered"]);
+    await expect(
+      read("good@head", async () => {
+        throw new Error("must use cache");
+      }),
+    ).resolves.toEqual(["own-commit"]);
   });
+
+  it.each(["transport", "alias"])(
+    "isolates a failed commit-page read (%s) from a complete open workspace",
+    async (failure) => {
+      const runner = createScriptedRunner([
+        batchPollStatusJson({
+          t0: batchPollRepositoryJson([
+            batchPollPrNodeJson({
+              headRefName: "a",
+              commits: { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: "next" } },
+            }),
+          ]),
+          t1: batchPollRepositoryJson([
+            batchPollPrNodeJson({ headRefName: "b", state: "OPEN", mergedAt: null }),
+          ]),
+        }),
+        failure === "transport"
+          ? { error: new Error("HTTP 502") }
+          : batchPollStatusJson({ t0: null }),
+        batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveRepoSlug: async () => "acme/widgets",
+      });
+      const errorsA: unknown[] = [],
+        errorsB: unknown[] = [];
+      const statusesB: Array<CurrentPullRequestStatus | null> = [];
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/a",
+        headRef: "a",
+        headSha: "own-a",
+        onError: (error) => errorsA.push(error),
+      });
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/b",
+        headRef: "b",
+        headSha: "own-b",
+        onError: (error) => errorsB.push(error),
+        onStatus: (status) => statusesB.push(status),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+      service.dispose?.();
+      expect(errorsA).toHaveLength(1);
+      expect(errorsB).toEqual([]);
+      expect(statusesB).toEqual([expect.objectContaining({ state: "open" })]);
+    },
+  );
 
   it.each([false, true])(
     "filters terminal PRs in a batched poll (pagination: %s)",
@@ -1148,15 +1196,19 @@ describe("ForgeService", () => {
             batchPollPrNodeJson({
               headRefName: "feature",
               headRefOid: pullRequestCommit,
-              commits: {
-                nodes: [
-                  { commit: { oid: paginate ? "other" : workspaceCommit } },
-                  { commit: { oid: pullRequestCommit } },
-                ],
-                pageInfo: { hasNextPage: paginate, endCursor: "cursor-1" },
-              },
+              commits: undefined,
             }),
           ]),
+        }),
+        batchPollStatusJson({
+          t0: {
+            pullRequest: {
+              commits: {
+                nodes: [{ commit: { oid: paginate ? "other" : workspaceCommit } }],
+                pageInfo: { hasPreviousPage: paginate, startCursor: "cursor-1" },
+              },
+            },
+          },
         }),
         ...(paginate
           ? [
@@ -1165,7 +1217,7 @@ describe("ForgeService", () => {
                   pullRequest: {
                     commits: {
                       nodes: [{ commit: { oid: workspaceCommit } }],
-                      pageInfo: { hasNextPage: false, endCursor: "cursor-2" },
+                      pageInfo: { hasPreviousPage: false, startCursor: "cursor-2" },
                     },
                   },
                 },
@@ -1191,7 +1243,9 @@ describe("ForgeService", () => {
       onTestFinished(() => subscription?.unsubscribe());
       await vi.waitFor(() => expect(statuses).toHaveLength(1));
       expect(statuses[0]).toMatchObject({ state: "merged", headSha: pullRequestCommit });
-      expect(runner.calls).toHaveLength(paginate ? 3 : 2);
+      expect(runner.calls).toHaveLength(paginate ? 4 : 3);
+      expect(runner.calls[0]?.args[3]).not.toContain("commits(");
+      expect(runner.calls[1]?.args[3]).toContain("commits(last:100");
       expect(
         runner.calls.every((call) => call.args[0] === "api" && call.args[1] === "graphql"),
       ).toBe(true);
@@ -3482,6 +3536,51 @@ describe("ForgeService", () => {
       ).resolves.toBeNull();
     },
   );
+
+  it("reads only commit IDs for a cold terminal lookup and reuses the list", async () => {
+    const candidate = currentPullRequestJson({
+      number: 987,
+      state: "MERGED",
+      headRefOid: "cold-own-head",
+      commits: undefined,
+      headRepositoryOwner: { login: "forkOwner" },
+    });
+    const runner = createScriptedRunner([
+      candidate,
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              commits: {
+                nodes: [{ commit: { oid: "cold-own-head" } }],
+                pageInfo: { hasPreviousPage: false, startCursor: null },
+              },
+            },
+          },
+        },
+      }),
+      JSON.stringify([JSON.parse(candidate)]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({
+        cwd: "/repo",
+        headRef: "feature/fork",
+        headRepositoryOwner: "forkOwner",
+        headSha: "cold-own-head",
+      }),
+    ).resolves.toMatchObject({ number: 987 });
+    expect(runner.calls).toHaveLength(4);
+    expect(runner.calls.filter((call) => call.args[3]?.includes("commits(last:100"))).toHaveLength(
+      1,
+    );
+    expect(runner.calls[0]?.args.at(-1)).not.toContain("commits");
+    expect(runner.calls[1]?.args[3]).toContain("commits(last:100");
+    expect(runner.calls[1]?.args[3]).not.toContain("authors");
+  });
 
   it("rejects an unrelated terminal PR on a reused branch", async () => {
     const owner = { login: "forkOwner" };

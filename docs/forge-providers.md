@@ -109,11 +109,13 @@ request without its commit list. Archive uses that same evidence after refreshin
 the workspace. It still requires an observed open-to-merged transition and the
 workspace safety checks; being behind alone does not block it.
 
-Containment spawns no Git commands and fetches no Git objects. GitHub reads commit
-IDs in the existing batched query, batches additional pages under the same rate
-budget, and remembers terminal pages by PR head. GitLab and Gitea cache commit-list
-reads, including failures, for five minutes. Missing membership evidence leaves
-the workspace active.
+Containment spawns no Git commands and fetches no Git objects. GitHub loads only terminal
+commit IDs in a separate batch under the same rate budget, newest page first,
+and remembers pages by PR head. Open requests need no membership read. GitLab,
+Gitea, and legacy GitHub cache successful terminal commit lists by request head;
+failed reads stay retryable and exclude only the unresolved candidate. A failed
+GitHub commit batch does not block workspaces whose status is already complete.
+Missing membership evidence leaves the workspace active.
 
 Keep checkout HEAD in adapter cache and poll identities so checkout changes
 refresh the facts used by archive eligibility.
