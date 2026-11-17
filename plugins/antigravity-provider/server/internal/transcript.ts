@@ -493,7 +493,10 @@ interface ReadOnlyDatabaseSync {
 }
 
 interface BuiltinSqliteModule {
-  DatabaseSync: new (filePath: string, options?: { readOnly?: boolean }) => ReadOnlyDatabaseSync;
+  DatabaseSync: new (
+    filePath: string,
+    options?: { readOnly?: boolean; timeout?: number },
+  ) => ReadOnlyDatabaseSync;
 }
 
 function getBuiltinSqlite(): BuiltinSqliteModule | null {
@@ -518,7 +521,7 @@ export function isConversationStepWaitingForApproval(
   if (!sqlite) return false;
   let db: ReadOnlyDatabaseSync | undefined;
   try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    db = new sqlite.DatabaseSync(dbPath, { readOnly: true, timeout: 2000 });
     const row = db
       .prepare("SELECT status FROM steps WHERE idx > ? AND status = ? LIMIT 1")
       .get(afterStepIndex, CORTEX_STEP_STATUS_WAITING);

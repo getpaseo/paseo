@@ -71,6 +71,7 @@ import {
   parseToolPermissionQuestions,
   persistenceSchema,
   selectPermissionOption,
+  summarizeQuestionPermissionOutcome,
   type AcpElicitationParams,
   type AcpPermissionOption,
   type AcpRequestPermissionParams,
@@ -125,6 +126,7 @@ type PendingPermission =
       rpcId: string | number;
       kind: "question";
       transport: "elicitation";
+      toolCallId?: string;
       questions: ParsedElicitationQuestion[];
     }
   | {
@@ -132,6 +134,7 @@ type PendingPermission =
       rpcId: string | number;
       kind: "question";
       transport: "permission";
+      toolCallId?: string;
       questions: ParsedElicitationQuestion[];
       rawInput?: Readonly<Record<string, JsonValue>>;
       options: AcpPermissionOption[];
@@ -566,9 +569,11 @@ export class Session {
         response,
       );
       this.driver?.respond(pending.rpcId, result);
+      this.recordQuestionToolCallOutcome(pending.toolCallId, pending.questions, response);
     } else {
       const result = buildElicitationResponse(pending.questions, response);
       this.driver?.respond(pending.rpcId, result);
+      this.recordQuestionToolCallOutcome(pending.toolCallId, pending.questions, response);
     }
 
     if (response.behavior === "deny" && response.interrupt && this.conversationId) {
@@ -2104,6 +2109,7 @@ export class Session {
       rpcId,
       kind: "question",
       transport: "permission",
+      ...(isRootSession ? { toolCallId: mergedTool.toolCallId } : {}),
       questions,
       ...(input ? { rawInput: input } : {}),
       options,
@@ -2133,6 +2139,7 @@ export class Session {
       rpcId,
       kind: "question",
       transport: "elicitation",
+      ...(isRootSession && params.toolCallId ? { toolCallId: params.toolCallId } : {}),
       questions,
     });
     if (this.autonomousTurn) {
@@ -2140,6 +2147,26 @@ export class Session {
     }
 
     this.emitQuestionPermission(permissionId, questions, params.message);
+  }
+
+  private recordQuestionToolCallOutcome(
+    toolCallId: string | undefined,
+    questions: ParsedElicitationQuestion[],
+    response: ProviderPermissionResponse,
+  ): void {
+    if (!toolCallId) return;
+    const existing = this.turnTools.get(toolCallId);
+    if (!existing) return;
+    const updated: AcpToolCallPayload = {
+      ...existing,
+      rawOutput: { output: summarizeQuestionPermissionOutcome(questions, response) },
+    };
+    this.turnTools.set(toolCallId, updated);
+    this.options.emit({
+      type: "timeline.item",
+      sessionId: this.id,
+      item: mapAcpToolCall(updated),
+    });
   }
 
   private emitQuestionPermission(
@@ -2160,7 +2187,12 @@ export class Session {
             id: question.id,
             header: question.header,
             question: question.question,
-            options: question.options,
+            options: question.options.map(
+              (option): Record<string, JsonValue> =>
+                option.description
+                  ? { label: option.label, description: option.description }
+                  : { label: option.label },
+            ),
             multiSelect: question.multiSelect,
             allowOther: question.allowOther,
             allowEmpty: question.allowEmpty,

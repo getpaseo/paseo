@@ -260,10 +260,20 @@ async function harness(env: Record<string, string> = {}) {
   };
 }
 
+function isProcessDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 it("retires an idle old-account process before its refresh can overwrite a switched login, then loads the same conversation", async () => {
   const h = await harness({ AGY_TEST_REFRESH_DELAY_MS: "4000" });
   await h.open();
   const saved = h.persistence();
+  const [initial] = await h.acpLaunches();
   await writeFile(
     h.credentialPath,
     JSON.stringify({
@@ -272,12 +282,10 @@ it("retires an idle old-account process before its refresh can overwrite a switc
       token: { refresh_token: "second-fixture" },
     }),
   );
-  await expect
-    .poll(async () => (await h.records()).some((r) => r.signal === "SIGTERM"), {
-      timeout: 2000,
-      interval: 10,
-    })
-    .toBe(true);
+  await expect.poll(() => isProcessDead(initial.pid), { timeout: 2000, interval: 10 }).toBe(true);
+  if (process.platform !== "win32") {
+    expect((await h.records()).some((r) => r.signal === "SIGTERM")).toBe(true);
+  }
   const next = await h.prompt("HELLO");
   expect(await h.completed(next)).toMatchObject({ state: "completed" });
   expect((await h.acpLaunches()).map((r) => r.credentialEmail)).toEqual([
@@ -290,8 +298,7 @@ it("retires an idle old-account process before its refresh can overwrite a switc
       .map((r) => r.rpc.params.sessionId),
   ).toEqual([saved.data.conversationId]);
   expect((await h.records()).some((r) => r.credentialRefresh)).toBe(false);
-  const [old] = await h.acpLaunches();
-  expect(() => process.kill(old.pid, 0)).toThrow();
+  expect(() => process.kill(initial.pid, 0)).toThrow();
   expect(JSON.parse(await readFile(h.credentialPath, "utf8")).id_token_email).toBe(
     "second@example.com",
   );
@@ -301,6 +308,7 @@ it("stops all idle sessions sharing a login and restores each with the new accou
   const h = await harness();
   await h.open();
   await h.open(undefined, "s2");
+  const initialLaunches = await h.acpLaunches();
   await writeFile(
     h.credentialPath,
     JSON.stringify({
@@ -309,10 +317,13 @@ it("stops all idle sessions sharing a login and restores each with the new accou
     }),
   );
   await expect
-    .poll(async () => (await h.records()).filter((r) => r.signal === "SIGTERM").length, {
+    .poll(() => initialLaunches.every((launch) => isProcessDead(launch.pid)), {
       timeout: 2000,
     })
-    .toBe(2);
+    .toBe(true);
+  if (process.platform !== "win32") {
+    expect((await h.records()).filter((r) => r.signal === "SIGTERM")).toHaveLength(2);
+  }
   expect(await h.completed(await h.prompt("HELLO"))).toMatchObject({ state: "completed" });
   expect(await h.completed(await h.message([{ type: "text", text: "HELLO" }], "s2"))).toMatchObject(
     { state: "completed" },
@@ -346,8 +357,9 @@ it("ends an active old-account turn with an actionable error and accepts the nex
 it("retires on logout without relaunching a login flow, then resumes after sign-in", async () => {
   const h = await harness();
   await h.open();
+  const [initial] = await h.acpLaunches();
   await rm(h.credentialPath);
-  await expect.poll(async () => (await h.records()).some((r) => r.signal === "SIGTERM")).toBe(true);
+  await expect.poll(() => isProcessDead(initial.pid), { timeout: 2000 }).toBe(true);
   const rejected = await h.failedPrompt(await h.prompt("HELLO"));
   expect(rejected).toMatchObject({ result: { type: "failed", error: { code: "AUTH_REQUIRED" } } });
   expect(await h.acpLaunches()).toHaveLength(1);
@@ -659,6 +671,117 @@ it("maps elicitation/create (ask_question) to a native question permission and r
       item: expect.objectContaining({
         type: "assistant_message",
         text: 'QUESTION_RESULT:{"action":"accept","content":{"q0":"Other","q0_other":"Svelte"}}\n',
+      }),
+    }),
+  );
+});
+
+it("maps multi-question agy oneOf/anyOf elicitations to const IDs, _other write-ins, and plain_text tool output", async () => {
+  const h = await harness();
+  await h.open();
+
+  const askTurn = await h.prompt("ASK_MULTI_ONEOF_QUESTION");
+  const questionEvent = await h.wait(
+    (event) => event.type === "session.permission" && event.request.kind === "question",
+  );
+  if (questionEvent.type !== "session.permission") throw new Error("Expected question permission");
+  expect(questionEvent.request).toMatchObject({
+    name: "ask_question",
+    kind: "question",
+    title: "The agent has 4 questions.",
+    input: {
+      questions: [
+        {
+          id: "q1",
+          header: "Question 1",
+          question: "Who approves PROD?",
+          options: [{ label: "Owner or SRE" }, { label: "Owner only" }],
+          multiSelect: false,
+          allowOther: true,
+          allowEmpty: false,
+        },
+        {
+          id: "q2",
+          header: "Question 2",
+          question: "Initial rollout scope?",
+          options: [{ label: "Core repos" }, { label: "All repos" }],
+          multiSelect: false,
+          allowOther: true,
+          allowEmpty: false,
+        },
+        {
+          id: "q3",
+          header: "Question 3",
+          question: "Any custom rollout note?",
+          options: [],
+          multiSelect: false,
+          allowOther: true,
+          allowEmpty: false,
+        },
+        {
+          id: "q4",
+          header: "Question 4",
+          question: "Target regions?",
+          options: [{ label: "US, EU, and APAC" }, { label: "LATAM" }],
+          multiSelect: true,
+          allowOther: true,
+          allowEmpty: false,
+        },
+      ],
+    },
+  });
+
+  await h.connection.send({
+    type: "session.permission",
+    sessionId: "s",
+    permissionId: questionEvent.request.id,
+    response: {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          "Question 1": "Owner only",
+          "Question 2": "Start with shop-agent-platform only",
+          "Question 3": "Lock head_sha before merge",
+          "Question 4": "US, EU, and APAC, ME-Central",
+        },
+      },
+    },
+  });
+
+  expect(await h.completed(askTurn)).toMatchObject({ state: "completed" });
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({
+        type: "assistant_message",
+        text: [
+          "A1: Owner only",
+          "A2: Start with shop-agent-platform only",
+          "A3: Lock head_sha before merge",
+          "A4: US, EU, and APAC, ME-Central",
+          'WIRE:{"action":"accept","content":{"q1":"2","q2_other":"Start with shop-agent-platform only","q3_other":"Lock head_sha before merge","q4_other":"ME-Central","q4":["1"]}}',
+          "",
+        ].join("\n"),
+      }),
+    }),
+  );
+  expect(h.events).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({
+        type: "tool_call",
+        name: "ask_question",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          label: "Questions",
+          text: [
+            "Q1: Who approves PROD?\nA1: Owner only",
+            "Q2: Initial rollout scope?\nA2: Start with shop-agent-platform only",
+            "Q3: Any custom rollout note?\nA3: Lock head_sha before merge",
+            "Q4: Target regions?\nA4: US, EU, and APAC, ME-Central",
+          ].join("\n\n"),
+        },
       }),
     }),
   );

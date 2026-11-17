@@ -162,6 +162,7 @@ export function mapAcpToolDetail(
   const rawOutput = asRecord(tool.rawOutput);
 
   return (
+    tryQuestionDetail(name, rawInput, output) ??
     trySubAgentDetail(name, rawInput, rawOutput, output) ??
     tryShellDetail(tool, name, rawInput, rawOutput, output) ??
     tryFileDetail(tool, name, rawInput, output) ??
@@ -171,6 +172,31 @@ export function mapAcpToolDetail(
       output: (tool.rawOutput as JsonValue | undefined) ?? output ?? null,
     }
   );
+}
+
+function tryQuestionDetail(
+  name: string,
+  rawInput: Record<string, unknown>,
+  output: string | undefined,
+): ProviderToolCallDetail | undefined {
+  if (!/^ask[_-]?(?:user[_-]?)?question$/i.test(name) && !Array.isArray(rawInput.questions)) {
+    return undefined;
+  }
+  const rawQuestions = Array.isArray(rawInput.questions) ? rawInput.questions : [];
+  const prompts = rawQuestions
+    .map((entry, idx) => {
+      const record = asRecord(entry);
+      const q = stringField(record, "question") ?? stringField(record, "title");
+      if (!q) return undefined;
+      return rawQuestions.length > 1 ? `Q${idx + 1}: ${q}` : `Q: ${q}`;
+    })
+    .filter((line): line is string => Boolean(line));
+  const text = output?.trim() || prompts.join("\n");
+  return {
+    type: "plain_text",
+    label: rawQuestions.length === 1 ? "Question" : "Questions",
+    ...(text ? { text } : {}),
+  };
 }
 
 function trySubAgentDetail(

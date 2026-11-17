@@ -74,21 +74,38 @@ export const acpRequestPermissionParamsSchema = z.object({
 
 export type AcpRequestPermissionParams = z.infer<typeof acpRequestPermissionParamsSchema>;
 
+export const acpElicitationChoiceSchema = z.object({
+  const: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+});
+
+export type AcpElicitationChoice = z.infer<typeof acpElicitationChoiceSchema>;
+
 export const acpElicitationPropertySchema = z.object({
   type: z.string().optional(),
   title: z.string().optional(),
   description: z.string().optional(),
   enum: z.array(z.string()).optional(),
+  enumNames: z.array(z.string()).optional(),
+  oneOf: z.array(acpElicitationChoiceSchema).optional(),
+  anyOf: z.array(acpElicitationChoiceSchema).optional(),
   items: z
     .object({
       type: z.string().optional(),
       enum: z.array(z.string()).optional(),
+      enumNames: z.array(z.string()).optional(),
+      oneOf: z.array(acpElicitationChoiceSchema).optional(),
+      anyOf: z.array(acpElicitationChoiceSchema).optional(),
     })
     .optional(),
 });
 
+export type AcpElicitationProperty = z.infer<typeof acpElicitationPropertySchema>;
+
 export const acpElicitationParamsSchema = z.object({
   sessionId: z.string().optional(),
+  toolCallId: z.string().optional(),
   mode: z.string().optional(),
   message: z.string().optional(),
   url: z.string().optional(),
@@ -246,11 +263,17 @@ export const persistenceSchema = z
     message: "Expected conversationId or sessionId in Antigravity persistence state",
   });
 
+export interface ParsedElicitationOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
 export interface ParsedElicitationQuestion {
   id: string;
   header: string;
   question: string;
-  options: Array<{ label: string; description?: string }>;
+  options: ParsedElicitationOption[];
   rawEnum: string[];
   multiSelect: boolean;
   allowOther: boolean;
@@ -282,19 +305,24 @@ function parseRawQuestionEntries(rawQuestions: unknown[]): ParsedElicitationQues
   const records = rawQuestions
     .map((entry) => asPlainRecord(entry))
     .filter((entry): entry is Record<string, unknown> => entry !== null);
-  return records.map((entry, index) => parseSingleQuestionRecord(entry, index, records.length));
+  const usedHeaders = new Set<string>();
+  return records.map((entry, index) =>
+    parseSingleQuestionRecord(entry, index, records.length, usedHeaders),
+  );
 }
 
 function parseSingleQuestionRecord(
   entry: Record<string, unknown>,
   index: number,
   total: number,
+  usedHeaders: Set<string>,
 ): ParsedElicitationQuestion {
   const id = nonEmptyString(entry.id) ?? `q${index}`;
-  const header =
+  const baseHeader =
     nonEmptyString(entry.header) ??
     nonEmptyString(entry.title) ??
     (total === 1 ? "Question" : `Question ${index + 1}`);
+  const header = allocateUniqueHeader(baseHeader, usedHeaders, index);
   const question =
     nonEmptyString(entry.question) ??
     nonEmptyString(entry.description) ??
@@ -317,28 +345,29 @@ function parseSingleQuestionRecord(
 }
 
 function parseRawQuestionOptions(rawOptions: unknown): {
-  options: Array<{ label: string; description?: string }>;
+  options: ParsedElicitationOption[];
   rawEnum: string[];
 } {
   if (!Array.isArray(rawOptions)) {
     return { options: [], rawEnum: [] };
   }
-  const options: Array<{ label: string; description?: string }> = [];
+  const options: ParsedElicitationOption[] = [];
   const rawEnum: string[] = [];
   for (const item of rawOptions) {
     if (typeof item === "string" && item.trim()) {
       const label = item.trim();
       rawEnum.push(label);
-      if (label !== "Other") options.push({ label });
+      if (label !== "Other") options.push({ label, value: label });
       continue;
     }
     const obj = asPlainRecord(item);
     const label = obj ? nonEmptyString(obj.label) : undefined;
     if (!label) continue;
-    rawEnum.push(label);
-    if (label === "Other") continue;
+    const value = (obj ? nonEmptyString(obj.value) : undefined) ?? label;
+    rawEnum.push(value);
+    if (label === "Other" || value === "Other") continue;
     const description = obj ? nonEmptyString(obj.description) : undefined;
-    options.push(description ? { label, description } : { label });
+    options.push(description ? { label, value, description } : { label, value });
   }
   return { options, rawEnum };
 }
@@ -356,13 +385,15 @@ function buildFallbackToolQuestion(
   const hasChooserOptions =
     allowOptions.length > 1 ||
     allowOptions.some((option) => !GENERIC_APPROVAL_OPTION_RE.test(option.name.trim()));
-  const options = hasChooserOptions ? allowOptions.map((option) => ({ label: option.name })) : [];
+  const options: ParsedElicitationOption[] = hasChooserOptions
+    ? allowOptions.map((option) => ({ label: option.name, value: option.name }))
+    : [];
   return {
     id: "q0",
     header: "Question",
     question: contentQuestion ?? titleText ?? "The agent has a question.",
     options,
-    rawEnum: options.map((option) => option.label),
+    rawEnum: options.map((option) => option.value),
     multiSelect: false,
     allowOther: options.length === 0,
     allowEmpty: false,
@@ -415,14 +446,12 @@ export function buildToolPermissionQuestionResponse(
       : { outcome: { outcome: "cancelled" } };
   }
 
-  const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
-  const supplied = parsed.success ? (parsed.data?.answers ?? {}) : {};
+  const supplied = extractSuppliedAnswers(response.updatedInput);
   const answersByQuestion: Record<string, string | string[]> = {};
 
   for (const question of questions) {
-    const rawValue =
-      supplied[question.header] ?? supplied[question.id] ?? supplied[question.question] ?? "";
-    const values = normalizeAnswerValues(rawValue, question.multiSelect);
+    const rawValue = lookupQuestionRawAnswer(supplied, question);
+    const values = normalizeAnswerValues(rawValue, question.multiSelect, question.options);
     answersByQuestion[question.question] = question.multiSelect ? values : (values[0] ?? "");
   }
 
@@ -477,10 +506,71 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function allocateUniqueHeader(base: string, used: Set<string>, index: number): string {
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  const disambiguated = `${base} (${index + 1})`;
+  used.add(disambiguated);
+  return disambiguated;
+}
+
+function parseElicitationPropertyOptions(
+  prop: AcpElicitationProperty,
+  multiSelect: boolean,
+): { options: ParsedElicitationOption[]; rawEnum: string[] } {
+  const choices = multiSelect
+    ? (prop.items?.anyOf ?? prop.items?.oneOf)
+    : (prop.oneOf ?? prop.anyOf);
+  if (choices && choices.length > 0) {
+    return parseElicitationChoiceOptions(choices);
+  }
+  const enumValues = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
+  const enumNames = multiSelect ? prop.items?.enumNames : prop.enumNames;
+  return parseElicitationStringEnumOptions(enumValues, enumNames);
+}
+
+function parseElicitationChoiceOptions(choices: AcpElicitationChoice[]): {
+  options: ParsedElicitationOption[];
+  rawEnum: string[];
+} {
+  const options: ParsedElicitationOption[] = [];
+  const rawEnum: string[] = [];
+  for (const choice of choices) {
+    const value = choice.const.trim();
+    if (!value) continue;
+    const label = choice.title?.trim() || value;
+    rawEnum.push(value);
+    if (value === "Other" || label === "Other") continue;
+    const description = choice.description?.trim();
+    options.push(description ? { label, value, description } : { label, value });
+  }
+  return { options, rawEnum };
+}
+
+function parseElicitationStringEnumOptions(
+  enumValues: string[],
+  enumNames: string[] | undefined,
+): { options: ParsedElicitationOption[]; rawEnum: string[] } {
+  const options: ParsedElicitationOption[] = [];
+  const rawEnum: string[] = [];
+  for (let i = 0; i < enumValues.length; i++) {
+    const value = enumValues[i]!.trim();
+    if (!value) continue;
+    const label = enumNames?.[i]?.trim() || value;
+    rawEnum.push(value);
+    if (value === "Other" || label === "Other") continue;
+    options.push({ label, value });
+  }
+  return { options, rawEnum };
+}
+
 export function parseElicitationQuestions(
   params: AcpElicitationParams,
 ): ParsedElicitationQuestion[] {
   const properties = params.requestedSchema?.properties ?? {};
+  const hasExplicitRequired = Array.isArray(params.requestedSchema?.required);
   const required = new Set(params.requestedSchema?.required ?? []);
   const entries = Object.entries(properties).filter(([key]) => !key.endsWith("_other"));
 
@@ -499,16 +589,20 @@ export function parseElicitationQuestions(
     ];
   }
 
+  const usedHeaders = new Set<string>();
   return entries.map(([key, prop], index) => {
     const multiSelect = prop.type === "array";
-    const rawEnum = multiSelect ? (prop.items?.enum ?? []) : (prop.enum ?? []);
-    const options = rawEnum.filter((item) => item !== "Other").map((label) => ({ label }));
+    const { options, rawEnum } = parseElicitationPropertyOptions(prop, multiSelect);
     const otherFieldKey = `${key}_other` in properties ? `${key}_other` : undefined;
     const allowOther = Boolean(otherFieldKey) || rawEnum.includes("Other") || options.length === 0;
-    const header =
-      prop.title?.trim() || (entries.length === 1 ? "Question" : `Question ${index + 1}`);
+    const explicitDescription = prop.description?.trim();
+    const explicitTitle = prop.title?.trim();
+    const baseHeader =
+      (explicitDescription ? explicitTitle : undefined) ||
+      (entries.length === 1 ? "Question" : `Question ${index + 1}`);
+    const header = allocateUniqueHeader(baseHeader, usedHeaders, index);
     const question =
-      prop.description?.trim() || prop.title?.trim() || params.message || `Question ${index + 1}`;
+      explicitDescription || explicitTitle || params.message || `Question ${index + 1}`;
     return {
       id: key,
       header,
@@ -517,7 +611,7 @@ export function parseElicitationQuestions(
       rawEnum,
       multiSelect,
       allowOther,
-      allowEmpty: !required.has(key),
+      allowEmpty: hasExplicitRequired && !otherFieldKey ? !required.has(key) : false,
       otherFieldKey,
     };
   });
@@ -529,6 +623,18 @@ const suppliedAnswersSchema = z
   })
   .optional();
 
+function extractSuppliedAnswers(updatedInput: unknown): Record<string, string | string[]> {
+  const parsed = suppliedAnswersSchema.safeParse(updatedInput);
+  return parsed.success ? (parsed.data?.answers ?? {}) : {};
+}
+
+function lookupQuestionRawAnswer(
+  answers: Record<string, string | string[]>,
+  question: ParsedElicitationQuestion,
+): string | string[] {
+  return answers[question.header] ?? answers[question.id] ?? answers[question.question] ?? "";
+}
+
 export function buildElicitationResponse(
   questions: ParsedElicitationQuestion[],
   response: ProviderPermissionResponse,
@@ -536,51 +642,125 @@ export function buildElicitationResponse(
   if (response.behavior === "deny") {
     return { action: "cancel" };
   }
-  const parsed = suppliedAnswersSchema.safeParse(response.updatedInput);
-  const answers = parsed.success ? (parsed.data?.answers ?? {}) : {};
+  const answers = extractSuppliedAnswers(response.updatedInput);
   const content: Record<string, unknown> = {};
 
   for (const question of questions) {
-    const rawValue =
-      answers[question.header] ?? answers[question.id] ?? answers[question.question] ?? "";
-    const values = normalizeAnswerValues(rawValue, question.multiSelect);
-    const knownLabels = new Set(question.options.map((option) => option.label));
+    const rawValue = lookupQuestionRawAnswer(answers, question);
+    const values = normalizeAnswerValues(rawValue, question.multiSelect, question.options);
 
     if (question.multiSelect) {
-      applyMultiSelectAnswer(content, question, values, knownLabels);
+      applyMultiSelectAnswer(content, question, values);
     } else {
-      applySingleSelectAnswer(content, question, values[0] ?? "", knownLabels);
+      applySingleSelectAnswer(content, question, values[0] ?? "");
     }
   }
 
   return { action: "accept", content };
 }
 
-function normalizeAnswerValues(rawValue: string | string[], multiSelect: boolean): string[] {
+export function summarizeQuestionPermissionOutcome(
+  questions: ParsedElicitationQuestion[],
+  response: ProviderPermissionResponse,
+): string {
+  if (response.behavior === "deny") {
+    return "Dismissed";
+  }
+  const answers = extractSuppliedAnswers(response.updatedInput);
+  return questions
+    .map((question, index) => {
+      const rawValue = lookupQuestionRawAnswer(answers, question);
+      const values = normalizeAnswerValues(rawValue, question.multiSelect, question.options);
+      const displayValues = values.map((val) => {
+        const matched = findMatchingElicitationOption(question.options, val);
+        return matched ? matched.label : val;
+      });
+      const rendered = displayValues.length > 0 ? displayValues.join(", ") : "Skipped";
+      const prefix = questions.length > 1 ? `Q${index + 1}: ` : "Q: ";
+      const ansPrefix = questions.length > 1 ? `A${index + 1}: ` : "A: ";
+      return `${prefix}${question.question}\n${ansPrefix}${rendered}`;
+    })
+    .join("\n\n");
+}
+
+function findMatchingElicitationOption(
+  options: readonly ParsedElicitationOption[],
+  candidate: string,
+): ParsedElicitationOption | undefined {
+  return options.find((option) => option.label === candidate || option.value === candidate);
+}
+
+function normalizeAnswerValues(
+  rawValue: string | string[],
+  multiSelect: boolean,
+  options: readonly ParsedElicitationOption[],
+): string[] {
   if (Array.isArray(rawValue)) {
     return rawValue.map((item) => item.trim()).filter(Boolean);
   }
   if (multiSelect) {
-    return rawValue
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
+    return splitMultiSelectString(rawValue, options);
   }
   const trimmed = rawValue.trim();
   return trimmed ? [trimmed] : [];
+}
+
+function splitMultiSelectString(
+  rawValue: string,
+  options: readonly ParsedElicitationOption[],
+): string[] {
+  const candidates = [...options]
+    .flatMap((opt) => (opt.label === opt.value ? [opt.label] : [opt.label, opt.value]))
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+
+  const tokens: string[] = [];
+  let remaining = rawValue.trim();
+  while (remaining.length > 0) {
+    const matched = matchLeadingMultiSelectToken(remaining, candidates);
+    if (matched) {
+      tokens.push(matched.token);
+      remaining = matched.rest;
+      continue;
+    }
+    const commaIdx = remaining.indexOf(",");
+    if (commaIdx < 0) {
+      tokens.push(remaining);
+      break;
+    }
+    const head = remaining.slice(0, commaIdx).trim();
+    if (head) tokens.push(head);
+    remaining = remaining.slice(commaIdx + 1).trim();
+  }
+  return tokens;
+}
+
+function matchLeadingMultiSelectToken(
+  remaining: string,
+  candidates: readonly string[],
+): { token: string; rest: string } | null {
+  for (const candidate of candidates) {
+    if (remaining === candidate) {
+      return { token: candidate, rest: "" };
+    }
+    if (remaining.startsWith(`${candidate},`)) {
+      return { token: candidate, rest: remaining.slice(candidate.length + 1).trim() };
+    }
+  }
+  return null;
 }
 
 function applyMultiSelectAnswer(
   content: Record<string, unknown>,
   question: ParsedElicitationQuestion,
   values: string[],
-  knownLabels: Set<string>,
 ): void {
   const selected: string[] = [];
   const custom: string[] = [];
   for (const value of values) {
-    if (knownLabels.has(value)) {
-      selected.push(value);
+    const matched = findMatchingElicitationOption(question.options, value);
+    if (matched) {
+      selected.push(matched.value);
     } else {
       custom.push(value);
     }
@@ -589,7 +769,7 @@ function applyMultiSelectAnswer(
     if (question.rawEnum.includes("Other")) selected.push("Other");
     if (question.otherFieldKey) {
       content[question.otherFieldKey] = custom.join(", ");
-    } else {
+    } else if (!question.rawEnum.includes("Other")) {
       selected.push(...custom);
     }
   }
@@ -600,18 +780,22 @@ function applySingleSelectAnswer(
   content: Record<string, unknown>,
   question: ParsedElicitationQuestion,
   single: string,
-  knownLabels: Set<string>,
 ): void {
   if (!single) {
-    content[question.id] = "";
+    if (question.options.length === 0 && !question.otherFieldKey) {
+      content[question.id] = "";
+    }
     return;
   }
-  if (knownLabels.has(single) || question.options.length === 0) {
-    content[question.id] = single;
+  const matched = findMatchingElicitationOption(question.options, single);
+  if (matched) {
+    content[question.id] = matched.value;
     return;
   }
   if (question.otherFieldKey) {
-    content[question.id] = question.rawEnum.includes("Other") ? "Other" : single;
+    if (question.rawEnum.includes("Other")) {
+      content[question.id] = "Other";
+    }
     content[question.otherFieldKey] = single;
     return;
   }
