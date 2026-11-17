@@ -12,9 +12,9 @@ export function createPullRequestCommitReader() {
   return (key: string, load: () => Promise<string[]>): Promise<string[]> => {
     const existing = cache.get(key);
     if (existing) return existing;
-    const commits = load().catch(() => {
+    const commits = load().catch((error: unknown) => {
       cache.delete(key);
-      return [];
+      throw error;
     });
     cache.set(key, commits);
     if (cache.size > 1024) cache.delete(cache.keys().next().value!);

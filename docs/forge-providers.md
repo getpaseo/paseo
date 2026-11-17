@@ -113,7 +113,7 @@ Containment spawns no Git commands and fetches no Git objects. GitHub loads only
 commit IDs in a separate batch under the same rate budget, newest page first,
 and remembers pages by PR head. Open requests need no membership read. GitLab,
 Gitea, and legacy GitHub cache successful terminal commit lists by request head;
-failed reads stay retryable and exclude only the unresolved candidate. A failed
+failed reads stay retryable and reject the lookup, preserving its previous snapshot. A failed
 GitHub commit batch does not block workspaces whose status is already complete.
 Missing membership evidence leaves the workspace active.
 

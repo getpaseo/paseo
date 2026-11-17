@@ -392,7 +392,7 @@ describe("createGitLabService", () => {
     expect(calls[2]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
-  it("keeps a matching MR when a newer unrelated commit-list read fails", async () => {
+  it("rejects an unknown newer MR instead of choosing an older match and retries", async () => {
     const older = { ...OPEN_MR, iid: 270, state: "merged", sha: "older-head" };
     const newer = { ...older, iid: 271, state: "closed", sha: "newer-head" };
     let failedReads = 0;
@@ -400,22 +400,25 @@ describe("createGitLabService", () => {
       if (args[1] === "list") return ok(JSON.stringify([newer, older]));
       if (args[1]?.includes("/271/commits?")) {
         failedReads++;
-        throw new Error("HTTP 502");
+        if (failedReads < 3) throw new Error("HTTP 502");
+        return ok(JSON.stringify([{ id: "workspace-commit" }]));
       }
       if (args[1]?.includes("/270/commits?"))
         return ok(JSON.stringify([{ id: "workspace-commit" }]));
-      if (args[1] === "view") return ok(JSON.stringify(older));
+      if (args[1] === "view") return ok(JSON.stringify(newer));
       return ok("{}");
     });
     const input = { cwd: "/repo", headRef: OPEN_MR.source_branch, headSha: "workspace-commit" };
-    await expect(service.getCurrentPullRequestStatus(input)).resolves.toMatchObject({
-      number: 270,
-      state: "merged",
-    });
+    await expect(service.getCurrentPullRequestStatus(input)).rejects.toThrow(
+      "GitLab CLI command failed",
+    );
     await expect(
       service.getCurrentPullRequestStatus({ ...input, force: true, reason: "retry" }),
-    ).resolves.toMatchObject({ number: 270, state: "merged" });
+    ).rejects.toThrow("GitLab CLI command failed");
     expect(failedReads).toBe(2);
+    await expect(
+      service.getCurrentPullRequestStatus({ ...input, force: true, reason: "recovered" }),
+    ).resolves.toMatchObject({ number: 271 });
   });
 
   it("keeps a merged MR when its remote head advances beyond the checkout", async () => {

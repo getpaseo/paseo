@@ -1116,13 +1116,13 @@ describe("ForgeService", () => {
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
 
-  it("does not retain failed commit reads or block another candidate", async () => {
+  it("rejects failed commit reads and retries without retaining the failure", async () => {
     const read = createPullRequestCommitReader();
     await expect(
       read("bad@head", async () => {
         throw new Error("offline");
       }),
-    ).resolves.toEqual([]);
+    ).rejects.toThrow("offline");
     await expect(read("good@head", async () => ["own-commit"])).resolves.toEqual(["own-commit"]);
     await expect(read("bad@head", async () => ["recovered"])).resolves.toEqual(["recovered"]);
     await expect(
@@ -1133,7 +1133,7 @@ describe("ForgeService", () => {
   });
 
   it.each(["transport", "alias"])(
-    "isolates a failed commit-page read (%s) from a complete open workspace",
+    "preserves a failed workspace even with an older match and isolates a complete open workspace (%s)",
     async (failure) => {
       const runner = createScriptedRunner([
         batchPollStatusJson({
@@ -1141,6 +1141,11 @@ describe("ForgeService", () => {
             batchPollPrNodeJson({
               headRefName: "a",
               commits: { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: "next" } },
+            }),
+            batchPollPrNodeJson({
+              number: 50,
+              headRefName: "a",
+              commits: { nodes: [{ commit: { oid: "own-a" } }] },
             }),
           ]),
           t1: batchPollRepositoryJson([
@@ -1160,12 +1165,14 @@ describe("ForgeService", () => {
       });
       const errorsA: unknown[] = [],
         errorsB: unknown[] = [];
+      const statusesA: Array<CurrentPullRequestStatus | null> = [];
       const statusesB: Array<CurrentPullRequestStatus | null> = [];
       service.retainCurrentPullRequestStatusPoll?.({
         cwd: "/a",
         headRef: "a",
         headSha: "own-a",
         onError: (error) => errorsA.push(error),
+        onStatus: (status) => statusesA.push(status),
       });
       service.retainCurrentPullRequestStatusPoll?.({
         cwd: "/b",
@@ -1178,6 +1185,7 @@ describe("ForgeService", () => {
       await flushMicrotasks();
       service.dispose?.();
       expect(errorsA).toHaveLength(1);
+      expect(statusesA).toEqual([]);
       expect(errorsB).toEqual([]);
       expect(statusesB).toEqual([expect.objectContaining({ state: "open" })]);
     },

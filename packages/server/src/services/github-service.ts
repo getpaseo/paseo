@@ -1814,20 +1814,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           terminalCommitPages.delete(terminalCommitPages.keys().next().value!);
       }
     }
-    return reportUnresolvedCommitReads(errors, entries, aliases);
+    return reportUnresolvedCommitReads(errors);
   }
 
   function reportUnresolvedCommitReads(
     errors: Map<GitHubBatchPollEntry, unknown>,
-    entries: GitHubBatchPollEntry[],
-    aliases: Record<string, unknown>,
   ): Set<GitHubBatchPollEntry> {
     const failed = new Set<GitHubBatchPollEntry>();
     for (const [entry, error] of errors) {
-      const repository = BatchPollRepositorySchema.parse(
-        aliases[batchAlias(entries.indexOf(entry))],
-      );
-      if (selectBatchPollNode(entry, repository)) continue;
+      // An unread candidate could outrank a known match. Preserve the prior
+      // snapshot until membership can be established for this workspace.
       failed.add(entry);
       updatePollTargetAfterError(entry.target, error);
     }
