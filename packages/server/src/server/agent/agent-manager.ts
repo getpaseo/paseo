@@ -2350,7 +2350,7 @@ export class AgentManager {
 
   private async persistArchivedRecord(
     record: StoredAgentRecord,
-    options: { archivedAt: string; updatedAt?: string },
+    options: { archivedAt: string; updatedAt: string },
   ): Promise<ArchivedStoredAgentRecord> {
     const archivedRecord = buildArchivedAgentRecord(record, options);
     await this.requireRegistry().upsert(archivedRecord);
@@ -2870,7 +2870,11 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
-    const nextRecord = await this.persistArchivedRecord(record, { archivedAt });
+    // Archiving is the agent's latest change, as markRecordArchived records it for a loaded agent.
+    const nextRecord = await this.persistArchivedRecord(record, {
+      archivedAt,
+      updatedAt: archivedAt,
+    });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
