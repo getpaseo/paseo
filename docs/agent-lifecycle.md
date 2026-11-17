@@ -122,11 +122,13 @@ own interrupt RPC and any bounded cleanup before acknowledging cancellation. Pos
 settlement still waits two seconds. Waiting for a starting run before replacement uses the same
 outer budget; it cannot hold later interruption requests indefinitely.
 
-Codex retires its app-server when `turn/interrupt` times out. It confirms process exit before
-settling cancellation; the next prompt resumes the saved thread in a fresh process. A failed
-termination retains foreground ownership, and Stop retries termination. Retirement dismisses
-pending native and asynchronous questions before publishing cancellation so reopening cannot
-restore a question from the canceled runtime. Other provider errors retain their refusal behavior.
+Codex retires its app-server when an interrupt or startup acknowledgement is lost, and when Stop
+cancels an in-flight startup. It confirms process exit before allowing another prompt; a failed
+termination retains ownership so Stop can retry. Stopping the runtime proves it cannot continue,
+but does not prove a prompt was never delivered: a turn may have executed before its reply was
+lost. Startup acknowledgement loss therefore stays explicitly unknown and is never replayed
+automatically. Retirement settles tool rows and questions before publishing cancellation so
+reopening cannot restore activity from the retired runtime.
 
 ## Relationships
 

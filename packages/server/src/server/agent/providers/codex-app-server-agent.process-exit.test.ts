@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "../agent-manager.js";
@@ -760,9 +760,9 @@ test("failed Codex process retirement retains ownership and Stop can retry it", 
     stalled.startsTurn({ threadId: String(start.threadId), turnId: "unresponsive-turn" });
     await expect(session.interrupt()).rejects.toThrow("did not report exit after SIGKILL");
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-    await expect(session.startTurn("must not run concurrently")).rejects.toThrow(
-      "A foreground turn is already active",
-    );
+    await expect(session.startTurn("must not run concurrently")).rejects.toMatchObject({
+      deliveryOutcome: "not_submitted",
+    });
     stalled.child.exitCode = 0;
     stalled.child.emit("exit", 0, null);
     await session.interrupt();
@@ -1021,3 +1021,74 @@ for (const timeline of ["root", "child"] as const) {
     }
   });
 }
+
+for (const stop of [false, true]) {
+  test(`a lost Codex start acknowledgement ${stop ? "can be stopped" : "retires its runtime"} without claiming non-delivery`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-start-unknown-"));
+    const old = createFakeCodexAppServer({ "turn/start": () => new Promise(() => {}) });
+    const replacement = createFakeCodexAppServer();
+    const session = await new ProcessExitCodexClient([old, replacement]).createSession({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "auto",
+    });
+    let exited = false;
+    old.child.once("exit", () => {
+      exited = true;
+    });
+    try {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const starting = session.startTurn("possibly accepted");
+      const rejected = expect(starting).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+      await old.waitForRequest("turn/start");
+      old.startsTurn({ threadId: "thread-1", turnId: "native-start" });
+      if (stop) {
+        const stopping = session.interrupt();
+        await vi.advanceTimersByTimeAsync(5_100);
+        await stopping;
+      } else await vi.advanceTimersByTimeAsync(90_100);
+      await rejected;
+      expect(exited).toBe(true);
+      vi.useRealTimers();
+      await expect(session.startTurn("new prompt")).resolves.toEqual({
+        turnId: expect.any(String),
+      });
+      expect(old.requests().filter((request) => request.method === "turn/start")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a lost steer acknowledgement has a bounded wait so Stop can proceed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-steer-unknown-"));
+  const appServer = createFakeCodexAppServer({
+    "turn/steer": () => new Promise(() => {}),
+    "turn/interrupt": () => ({}),
+  });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+    modeId: "auto",
+  });
+  try {
+    const start = await session.startTurn("keep working");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-turn" });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const steering = session.steerActiveTurn!("follow-up", { expectedTurnId: start.turnId });
+    const rejected = expect(steering).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    await appServer.waitForRequest("turn/steer");
+    await vi.advanceTimersByTimeAsync(5_100);
+    await rejected;
+    const stopping = session.interrupt();
+    await appServer.waitForRequest("turn/interrupt");
+    appServer.completeTurn({ threadId: "thread-1" });
+    await stopping;
+  } finally {
+    vi.useRealTimers();
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
