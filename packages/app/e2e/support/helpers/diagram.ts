@@ -204,3 +204,67 @@ export async function toggleDiagramSourceAndVerifyControls(page: Page): Promise<
   await viewport.getByRole("button", { name: "Reset view" }).click();
   await expect(viewport.getByRole("button", { name: "Reset view" })).toBeDisabled();
 }
+
+async function clearClipboard(page: Page): Promise<void> {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+}
+
+async function readClipboard(page: Page): Promise<string> {
+  return page.evaluate(() => navigator.clipboard.readText());
+}
+
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function boxesOverlap(a: Box, b: Box): boolean {
+  const apartHorizontally = a.x + a.width <= b.x || b.x + b.width <= a.x;
+  const apartVertically = a.y + a.height <= b.y || b.y + b.height <= a.y;
+  return !apartHorizontally && !apartVertically;
+}
+
+/** The drawn diagram's toolbar copies its Mermaid source, the way a code block's Copy does. */
+export async function expectToolbarCopiesDiagramSource(page: Page, source: string): Promise<void> {
+  await clearClipboard(page);
+  const viewport = page.getByTestId("mermaid-viewport").last();
+  await page.mouse.move(0, 0);
+  await viewport.hover();
+  await viewport.getByRole("button", { name: "Copy code", exact: true }).click();
+  await expect.poll(() => readClipboard(page)).toBe(source);
+}
+
+/**
+ * In the source view, View diagram and the code block's own Copy sit side by side, so each takes
+ * its own clicks: Copy copies the source and keeps the source view, View diagram goes back.
+ */
+export async function expectSourceViewCopiesDiagramSource(
+  page: Page,
+  source: string,
+): Promise<void> {
+  await clearClipboard(page);
+  const viewport = page.getByTestId("mermaid-viewport").last();
+  await page.mouse.move(0, 0);
+  await viewport.hover();
+  await viewport.getByRole("button", { name: "View source", exact: true }).click();
+  const codeBlock = page.locator('[data-paseo-markdown-language="mermaid"]').last();
+  await codeBlock.hover();
+  const viewDiagram = page.getByRole("button", { name: "View diagram", exact: true }).last();
+  const copy = codeBlock.getByRole("button", { name: "Copy code", exact: true });
+  const viewDiagramBox = await viewDiagram.boundingBox();
+  const copyBox = await copy.boundingBox();
+  expect(viewDiagramBox, "View diagram has measurable layout").not.toBeNull();
+  expect(copyBox, "Copy has measurable layout").not.toBeNull();
+  expect(
+    boxesOverlap(viewDiagramBox!, copyBox!),
+    "View diagram and Copy do not cover each other",
+  ).toBe(false);
+  await copy.click();
+  await expect.poll(() => readClipboard(page)).toBe(source);
+  await expect(viewDiagram, "copying keeps the source view open").toBeVisible();
+  await viewDiagram.click();
+  await expect(viewDiagram).toHaveCount(0);
+}
