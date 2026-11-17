@@ -15,7 +15,7 @@ import { ensureValidJson } from "../../json-utils.js";
 import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
-import type { AgentManager } from "../agent-manager.js";
+import type { AgentManager, ManagedAgent } from "../agent-manager.js";
 import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
@@ -2099,6 +2099,13 @@ function createToolCatalog(
     },
   );
 
+  // Match the WebSocket snapshot: idle agents can still own background work.
+  async function projectLiveAgent(agent: ManagedAgent) {
+    const snapshot = await serializeSnapshotWithMetadata(agentStorage, agent, childLogger);
+    const backgroundWork = agentManager.getAgentBackgroundWorkSummary(agent.id);
+    return backgroundWork ? { ...snapshot, backgroundWork } : snapshot;
+  }
+
   registerTool(
     "get_agent_status",
     {
@@ -2116,11 +2123,7 @@ function createToolCatalog(
     async ({ agentId }) => {
       const snapshot = agentManager.getAgent(agentId);
       if (snapshot) {
-        const structuredSnapshot = await serializeSnapshotWithMetadata(
-          agentStorage,
-          snapshot,
-          childLogger,
-        );
+        const structuredSnapshot = await projectLiveAgent(snapshot);
         return {
           content: [],
           structuredContent: ensureValidJson({
@@ -2188,8 +2191,7 @@ function createToolCatalog(
         manager: agentManager,
         storage: agentStorage,
         workspaces: options.workspaceRegistry,
-        projectLive: (snapshot) =>
-          serializeSnapshotWithMetadata(agentStorage, snapshot, childLogger),
+        projectLive: projectLiveAgent,
         projectStored: (record) =>
           buildStoredAgentPayload(
             record,
