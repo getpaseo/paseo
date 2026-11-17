@@ -13,10 +13,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
-import {
-  __resetWorktreeTeardownTimeoutForTests,
-  __setWorktreeTeardownTimeoutForTests,
-} from "../utils/worktree.js";
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
 
@@ -150,7 +146,10 @@ test.skipIf(process.platform === "win32")(
     writeFileSync(
       path.join(repoDir, "paseo.json"),
       JSON.stringify({
-        worktree: { teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait` },
+        worktree: {
+          teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+          teardownTimeoutMs: 2000,
+        },
       }),
     );
     git(repoDir, ["add", "paseo.json"]);
@@ -159,8 +158,6 @@ test.skipIf(process.platform === "win32")(
       repoDir,
       "undo-during-hanging-teardown",
     );
-    __setWorktreeTeardownTimeoutForTests(2000);
-
     try {
       const archive = ctx.client.archiveWorkspace(workspaceId);
       await expect.poll(() => existsSync(pidFile), { timeout: 15000 }).toBe(true);
@@ -172,7 +169,6 @@ test.skipIf(process.platform === "win32")(
         agentArchived: await isAgentArchived(agentId),
       }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
     } finally {
-      __resetWorktreeTeardownTimeoutForTests();
       if (existsSync(pidFile)) {
         const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
         try {

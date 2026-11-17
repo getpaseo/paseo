@@ -107,7 +107,7 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 
 Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) to write files before setup, terminals, and the first agent.
 
-`setup` runs once after the worktree is created. Use setup to install dependencies and run project initialization. Use [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) to copy ignored files such as `.env`. `teardown` runs during archive, before the directory is removed. Its commands share a 45 second limit. If a command fails, or is still running at the limit and is stopped, the workspace is archived and the worktree stays on disk.
+`setup` runs once after the worktree is created. Use setup to install dependencies and run project initialization. Use [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) to copy ignored files such as `.env`. `teardown` runs during archive, before the directory is removed.
 
 ```json
 {
@@ -121,6 +121,19 @@ Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafte
 Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
+
+Teardown commands share a one minute limit. Set `teardownTimeoutMs` to change it, in milliseconds:
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+A command still running at the limit is stopped, along with its child processes. When a teardown command fails or is stopped, the workspace is still archived and the worktree stays on disk. `teardownTimeoutMs` takes a whole number from 1 to 2147483647; any other value uses the default.
 
 ## Scripts and services
 

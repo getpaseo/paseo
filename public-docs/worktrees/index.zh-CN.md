@@ -105,7 +105,7 @@ paseo workspace create \
 
 插件可以通过 [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafter) 在 setup、终端和第一个 Agent 运行之前写入文件。
 
-`setup` 在 worktree 创建后运行一次。使用 setup 安装依赖并初始化项目。使用 [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) 复制 `.env` 等被忽略的文件。`teardown` 在归档期间、目录被删除之前运行。它的所有命令共用 45 秒的时限。如果某个命令失败，或到时限仍在运行而被停止，工作区仍会归档，worktree 则保留在磁盘上。
+`setup` 在 worktree 创建后运行一次。使用 setup 安装依赖并初始化项目。使用 [`.worktreeinclude`](#copy-local-files-with-worktreeinclude) 复制 `.env` 等被忽略的文件。`teardown` 在归档期间、目录被删除之前运行。
 
 ```json
 {
@@ -119,6 +119,19 @@ paseo workspace create \
 两个字段都接受多行 shell 脚本或命令数组；无论哪种形式，命令都按顺序运行。
 
 命令以 worktree 作为 `cwd` 运行。使用 `$PASEO_SOURCE_CHECKOUT_PATH` 访问原始检出中的文件（未跟踪的配置、本地缓存等）。
+
+teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修改它，单位为毫秒：
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+到时限仍在运行的命令会连同它的子进程一起被停止。如果某个 teardown 命令失败或被停止，工作区仍会归档，worktree 则保留在磁盘上。`teardownTimeoutMs` 接受 1 到 2147483647 之间的整数；其他值使用默认时限。
 
 ## 脚本与服务 {#scripts-and-services}
 

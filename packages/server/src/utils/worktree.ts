@@ -146,19 +146,11 @@ export class WorktreeSetupError extends Error {
 
 export type WorktreeTeardownCommandResult = WorktreeSetupCommandResult;
 
-// Archive waits for teardown before it answers, and the app gives up on an archive request after
-// 60 seconds (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). Keep this deadline under that.
-const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 45_000;
-let worktreeTeardownTimeoutMs = DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS;
-
-// Daemon tests archive in process and can't wait out the real deadline.
-export function __setWorktreeTeardownTimeoutForTests(timeoutMs: number): void {
-  worktreeTeardownTimeoutMs = timeoutMs;
-}
-
-export function __resetWorktreeTeardownTimeoutForTests(): void {
-  worktreeTeardownTimeoutMs = DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS;
-}
+// paseo.json can change this with worktree.teardownTimeoutMs. Archive waits for teardown before it
+// answers, and the app stops waiting for an archive answer after 60 seconds
+// (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). A teardown that runs to this limit, or to a longer
+// one, answers after the app has reported the archive as failed.
+const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 60_000;
 
 export class WorktreeTeardownError extends Error {
   readonly results: WorktreeTeardownCommandResult[];
@@ -292,6 +284,13 @@ export async function getWorktreeSetupCommands(repoRoot: string): Promise<string
 
 export async function getWorktreeTeardownCommands(repoRoot: string): Promise<string[]> {
   return (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardown ?? [];
+}
+
+export async function getWorktreeTeardownTimeoutMs(repoRoot: string): Promise<number> {
+  return (
+    (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardownTimeoutMs ??
+    DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS
+  );
 }
 
 export async function getWorktreeTerminalSpecs(
@@ -784,7 +783,7 @@ export async function runWorktreeTeardownCommands(options: {
   // One deadline covers every command. A command still running then is stopped with its process
   // tree and counts as failed, which keeps the worktree. Output streams instead of filling a
   // buffer, so a command that prints a lot still succeeds.
-  const timeoutMs = worktreeTeardownTimeoutMs;
+  const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
   for (const [index, cmd] of teardownCommands.entries()) {

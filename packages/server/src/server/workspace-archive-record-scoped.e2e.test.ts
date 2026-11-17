@@ -7,11 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
-import {
-  __resetWorktreeTeardownTimeoutForTests,
-  __setWorktreeTeardownTimeoutForTests,
-  createWorktree,
-} from "../utils/worktree.js";
+import { createWorktree } from "../utils/worktree.js";
 import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 import {
   createDaemonTestContext,
@@ -575,10 +571,10 @@ test.skipIf(process.platform === "win32")(
 
 async function createWorktreeWithTeardown(
   slug: string,
-  teardown: string,
+  worktreeConfig: { teardown: string; teardownTimeoutMs?: number },
 ): Promise<{ workspaceId: string; worktreePath: string }> {
   const repoDir = createGitRepo();
-  writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify({ worktree: { teardown } }));
+  writeFileSync(path.join(repoDir, "paseo.json"), JSON.stringify({ worktree: worktreeConfig }));
   execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
   execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add teardown"], {
     cwd: repoDir,
@@ -607,11 +603,10 @@ test.skipIf(process.platform === "win32")(
   "a paseo.json teardown that never exits is stopped and the archive answers",
   async () => {
     const pidFile = path.join(makeTempDir("hanging-teardown-"), "sleep.pid");
-    const { workspaceId, worktreePath } = await createWorktreeWithTeardown(
-      "hanging-teardown",
-      `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
-    );
-    __setWorktreeTeardownTimeoutForTests(2000);
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("hanging-teardown", {
+      teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+      teardownTimeoutMs: 2000,
+    });
 
     try {
       const archive = await ctx.client.archiveWorkspace(workspaceId);
@@ -624,7 +619,6 @@ test.skipIf(process.platform === "win32")(
       const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
       await expect.poll(() => isProcessRunning(sleepPid), { timeout: 5000 }).toBe(false);
     } finally {
-      __resetWorktreeTeardownTimeoutForTests();
       if (existsSync(pidFile)) {
         const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
         if (isProcessRunning(sleepPid)) process.kill(sleepPid, "SIGKILL");
@@ -637,10 +631,9 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "a paseo.json teardown that prints more than 1 MiB still removes the worktree",
   async () => {
-    const { workspaceId, worktreePath } = await createWorktreeWithTeardown(
-      "chatty-teardown",
-      `node -e "process.stdout.write('x'.repeat(2 * 1024 * 1024))"`,
-    );
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("chatty-teardown", {
+      teardown: `node -e "process.stdout.write('x'.repeat(2 * 1024 * 1024))"`,
+    });
 
     const archive = await ctx.client.archiveWorkspace(workspaceId);
 
