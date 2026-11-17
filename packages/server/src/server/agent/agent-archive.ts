@@ -15,12 +15,20 @@ export function buildArchivedAgentRecord(
   return {
     ...record,
     archivedAt,
-    updatedAt: options?.updatedAt ?? record.updatedAt,
+    updatedAt: latestTimestamp(record.updatedAt, options?.updatedAt),
     lastStatus: normalizeArchivedStatus(record.lastStatus),
     requiresAttention: false,
     attentionReason: null,
     attentionTimestamp: null,
   };
+}
+
+// Archiving is the agent's latest change. An earlier archive time (an original archive put back
+// after a failed unarchive) keeps the newer updatedAt, since clients drop an agent update that is
+// older than the one they hold.
+function latestTimestamp(current: string, archiveTime: string | undefined): string {
+  if (archiveTime === undefined || Date.parse(archiveTime) <= Date.parse(current)) return current;
+  return archiveTime;
 }
 
 function normalizeArchivedStatus(

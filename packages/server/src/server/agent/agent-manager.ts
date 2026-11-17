@@ -663,10 +663,6 @@ interface SteerEventBarrier {
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
-function laterTimestamp(a: string, b: string): string {
-  return Date.parse(b) > Date.parse(a) ? b : a;
-}
-
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
 }
@@ -2875,11 +2871,9 @@ export class AgentManager {
     }
 
     // Archiving is the agent's latest change, as markRecordArchived records it for a loaded agent.
-    // Restoring an earlier archive (after a failed unarchive) keeps the newer updatedAt, since
-    // clients drop an agent update that is older than the one they hold.
     const nextRecord = await this.persistArchivedRecord(record, {
       archivedAt,
-      updatedAt: laterTimestamp(record.updatedAt, archivedAt),
+      updatedAt: archivedAt,
     });
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");

@@ -6562,6 +6562,46 @@ test("archiveSnapshot restoring an earlier archive time keeps updatedAt at the u
   expect(events.at(-1)?.updatedAt.toISOString()).toBe(unarchivedAt);
 });
 
+test("archiveSnapshot restoring an earlier archive time on a loaded agent keeps updatedAt at the unarchive", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-snapshot-restore-loaded-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Restore loaded archive updatedAt" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const { archivedAt: originalArchivedAt } = await manager.archiveAgent(created.id);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await manager.unarchiveSnapshot(created.id);
+  const unarchivedAt = Date.parse((await storage.get(created.id))!.updatedAt);
+  // The send resumed the agent before a later loading step failed, so it is still loaded.
+  await ensureAgentLoaded(created.id, { agentManager: manager, agentStorage: storage, logger });
+  expect(manager.getAgent(created.id)).not.toBeNull();
+
+  const events: ManagedAgent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === created.id) {
+        events.push(event.agent);
+      }
+    },
+    { agentId: created.id, replayState: false },
+  );
+
+  await manager.archiveSnapshot(created.id, originalArchivedAt);
+
+  const stored = await storage.get(created.id);
+  expect(stored?.archivedAt).toBe(originalArchivedAt);
+  expect(Date.parse(stored!.updatedAt)).toBeGreaterThanOrEqual(unarchivedAt);
+  expect(events.at(-1)?.updatedAt.getTime()).toBeGreaterThanOrEqual(unarchivedAt);
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
@@ -14674,14 +14714,16 @@ test("workspace archive preserves a loaded history agent stamp and stamps cascad
       labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
       workspaceId: undefined,
     });
-    const stamp = "2026-11-09T00:00:00.000Z";
+    // Archive stamps are taken when the archive happens, so they follow the agents' activity.
+    const stamp = new Date(Date.now() + 60_000).toISOString();
+    const laterStamp = new Date(Date.now() + 120_000).toISOString();
     await manager.archiveAgent(parent.id, stamp);
     expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
     expect((await storage.get(child.id))?.archivedAt).toBe(stamp);
     await ensureAgentLoaded(parent.id, { agentManager: manager, agentStorage: storage, logger });
-    await manager.archiveAgent(parent.id, "2026-11-09T01:00:00.000Z");
+    await manager.archiveAgent(parent.id, laterStamp);
     expect((await storage.get(parent.id))?.archivedAt).toBe(stamp);
-    expect((await storage.get(parent.id))?.updatedAt).toBe("2026-11-09T01:00:00.000Z");
+    expect((await storage.get(parent.id))?.updatedAt).toBe(laterStamp);
   } finally {
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
