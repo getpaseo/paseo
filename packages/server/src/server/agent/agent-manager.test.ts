@@ -6521,6 +6521,47 @@ test("archiveSnapshot moves a stored-only agent's updatedAt to its archive time,
   expect((await storage.get(created.id))?.updatedAt).toBe(archivedAt);
 });
 
+test("archiveSnapshot restoring an earlier archive time keeps updatedAt at the unarchive", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-snapshot-restore-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  const created = await manager.createAgent(
+    { provider: "codex", cwd: workdir, title: "Restore archive updatedAt" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  await manager.closeAgent(created.id);
+  const originalArchivedAt = (await manager.archiveSnapshot(created.id, new Date().toISOString()))
+    .archivedAt!;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await manager.unarchiveSnapshot(created.id);
+  const unarchivedAt = (await storage.get(created.id))!.updatedAt;
+
+  const events: ManagedAgent[] = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === created.id) {
+        events.push(event.agent);
+      }
+    },
+    { agentId: created.id, replayState: false },
+  );
+
+  // A send that could not load the agent puts its original archive back.
+  await manager.archiveSnapshot(created.id, originalArchivedAt);
+
+  // Clients keep the newer of two updates, so an older updatedAt would leave them showing it active.
+  const stored = await storage.get(created.id);
+  expect(stored?.archivedAt).toBe(originalArchivedAt);
+  expect(stored?.updatedAt).toBe(unarchivedAt);
+  expect(events.at(-1)?.updatedAt.toISOString()).toBe(unarchivedAt);
+});
+
 test("markAgentUnread restores error attention on a read errored agent", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-mark-unread-error-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
