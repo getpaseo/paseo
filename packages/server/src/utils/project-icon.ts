@@ -273,10 +273,11 @@ function matchesPattern(filename: string, pattern: string): boolean {
   return filename === pattern;
 }
 
-async function isExistingFile(fullPath: string): Promise<boolean> {
+async function isIconFile(fullPath: string): Promise<boolean> {
   try {
     const stats = await stat(fullPath);
-    return stats.isFile();
+    // Oversized assets must not hide smaller icons later in the search.
+    return stats.isFile() && stats.size <= MAX_ICON_SIZE;
   } catch {
     return false;
   }
@@ -309,7 +310,7 @@ async function findIconInDir(dir: string, patterns: string[]): Promise<string | 
     }
   }
 
-  const existsResults = await Promise.all(candidatePaths.map((p) => isExistingFile(p)));
+  const existsResults = await Promise.all(candidatePaths.map((p) => isIconFile(p)));
   const foundIndex = existsResults.findIndex((exists) => exists);
   return foundIndex === -1 ? null : (candidatePaths[foundIndex] ?? null);
 }
