@@ -170,6 +170,11 @@ export interface ModelTriggerLabelState {
   modelShown: boolean;
   modelText: string;
   modelTruncated: boolean;
+  /**
+   * The model label shows what its box fits right now: the full text when it fits, otherwise a
+   * truncation that fits. False while the control has yet to catch up with a reflow.
+   */
+  modelFitsBox: boolean;
 }
 
 declare global {
@@ -194,12 +199,18 @@ function readModelTriggerLabelStateInPage(): ModelTriggerLabelState {
   };
   const modelShown = model !== undefined && shown(model);
   const modelText = model?.textContent ?? "";
+  const overflows = (node: Element) => node.scrollWidth > node.clientWidth;
+  const modelOverflows = model !== undefined && overflows(model);
+  // The label's box is sized by an invisible copy of the full text, its first child, so the box
+  // follows a reflow at once while the shown text waits for the control's next layout event.
+  const fullTextSizer = model?.parentElement?.parentElement?.firstElementChild;
+  const fullTextFits = fullTextSizer ? !overflows(fullTextSizer) : true;
   return {
     modelShown,
     modelText,
     thinkingShown: modelShown && thinking !== undefined,
-    modelTruncated:
-      model !== undefined && (modelText.endsWith("…") || model.scrollWidth > model.clientWidth),
+    modelTruncated: modelText.endsWith("…") || modelOverflows,
+    modelFitsBox: !modelOverflows && modelText.endsWith("…") !== fullTextFits,
   };
 }
 
@@ -217,13 +228,26 @@ export async function recordModelTriggerFramesFromLoad(page: Page): Promise<void
   })()`);
 }
 
-/** The model control's labels once two reads 100ms apart agree. */
+/**
+ * The model control's labels once it has caught up with its width: two reads 100ms apart agree
+ * and the model label shows what its box fits. A resize reflows the page at once, but the control
+ * chooses its labels again only when its layout events arrive, and on a slow runner that takes
+ * longer than 100ms. Until then the label can be clipped by the browser beside the thinking
+ * label, or truncated in a box that has since widened.
+ */
 export async function readSettledModelTriggerLabels(page: Page): Promise<ModelTriggerLabelState> {
+  const deadline = Date.now() + 10_000;
   let previous = await page.evaluate(readModelTriggerLabelStateInPage);
   for (;;) {
     await page.waitForTimeout(100);
     const next = await page.evaluate(readModelTriggerLabelStateInPage);
-    if (JSON.stringify(next) === JSON.stringify(previous)) return next;
+    const agrees = JSON.stringify(next) === JSON.stringify(previous);
+    if (agrees && next.modelFitsBox) return next;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the model control never settled on a label that fits its box: ${JSON.stringify(next)}`,
+      );
+    }
     previous = next;
   }
 }

@@ -2051,7 +2051,7 @@ function createToolCatalog(
         };
       }
 
-      const { disposition } = await sendPromptToAgent({
+      const dispatch = await sendPromptToAgent({
         agentManager,
         agentStorage,
         agentId,
@@ -2070,11 +2070,14 @@ function createToolCatalog(
       });
 
       // Return once the provider has accepted the turn, so the status reports it running.
-      if (disposition === "turn_started") {
-        await waitForAgentRunStartWithTimeout(agentManager, agentId).catch((error) => {
-          rejectNotification();
-          throw error;
-        });
+      const { disposition } = dispatch;
+      if (dispatch.disposition === "turn_started") {
+        await waitForAgentRunStartWithTimeout(agentManager, agentId, dispatch.started).catch(
+          (error) => {
+            rejectNotification();
+            throw error;
+          },
+        );
       }
       const currentSnapshot = agentManager.getAgent(agentId);
 
