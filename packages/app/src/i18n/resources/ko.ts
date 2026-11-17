@@ -1274,6 +1274,9 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    workspaces: {
+      title: "워크스페이스",
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",

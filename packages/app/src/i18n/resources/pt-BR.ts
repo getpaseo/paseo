@@ -1293,6 +1293,9 @@ export const ptBR: TranslationResources = {
     pinned: {
       title: "Fixados",
     },
+    workspaces: {
+      title: "Espaços de trabalho",
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",

@@ -1281,6 +1281,9 @@ export const ja: TranslationResources = {
     pinned: {
       title: "固定済み",
     },
+    workspaces: {
+      title: "ワークスペース",
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",
