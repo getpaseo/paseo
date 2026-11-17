@@ -1879,14 +1879,22 @@ describe("ForgeService", () => {
   });
 
   it.each(["reserve", "error"])(
-    "publishes resolved statuses when commit paging pauses the host (%s)",
+    "preserves known checks when commit paging pauses the host (%s)",
     async (failure) => {
+      let now = 0;
+      const open = batchPollRepositoryJson([
+        batchPollPrNodeJson({ state: "OPEN", mergedAt: null, headRefName: "open" }),
+      ]);
       const runner = createScriptedRunner([
+        batchPollStatusJson({ t0: open }),
         batchPollStatusJson({
-          t0: batchPollRepositoryJson([batchPollPrNodeJson({ commits: undefined })]),
-          t1: batchPollRepositoryJson([
-            batchPollPrNodeJson({ state: "OPEN", mergedAt: null, headRefName: "open" }),
+          t0: batchPollChecksAliasJson([
+            { __typename: "StatusContext", context: "ci", state: "FAILURE" },
           ]),
+        }),
+        batchPollStatusJson({
+          t0: open,
+          t1: batchPollRepositoryJson([batchPollPrNodeJson()]),
         }),
         ...(failure === "reserve"
           ? [
@@ -1894,7 +1902,7 @@ describe("ForgeService", () => {
                 aliases: {},
                 limit: 5000,
                 remaining: 0,
-                resetAt: new Date(300000).toISOString(),
+                resetAt: new Date(3600000).toISOString(),
               }),
             ]
           : [
@@ -1904,23 +1912,20 @@ describe("ForgeService", () => {
                   stderr: "GraphQL: API rate limit already exceeded for user ID 123",
                 }),
               },
-              JSON.stringify({ resources: { graphql: { remaining: 0, reset: 300 } } }),
+              JSON.stringify({ resources: { graphql: { remaining: 0, reset: 3600 } } }),
             ]),
       ]);
       const service = createGitHubService({
         runner: runner.runner,
+        ttlMs: 3600000,
         resolveGhPath: async () => "/usr/bin/gh",
         resolveRepoHost: async () => null,
         resolveRepoSlug: async () => "acme/widgets",
-        now: () => 0,
+        now: () => now,
       });
       const statuses: Array<CurrentPullRequestStatus | null> = [];
-      const errors: unknown[] = [];
-      service.retainCurrentPullRequestStatusPoll?.({
-        cwd: "/terminal",
-        headRef: "feat-a",
-        headSha: "oid-42",
-      });
+      const errors: unknown[] = [],
+        terminalErrors: unknown[] = [];
       service.retainCurrentPullRequestStatusPoll?.({
         cwd: "/open",
         headRef: "open",
@@ -1929,10 +1934,24 @@ describe("ForgeService", () => {
       });
       await vi.advanceTimersByTimeAsync(0);
       await flushMicrotasks();
+      expect(statuses).toEqual([expect.objectContaining({ checksStatus: "failure" })]);
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/terminal",
+        headRef: "feat-a",
+        headSha: "oid-42",
+        onError: (error) => terminalErrors.push(error),
+      });
+      now = EXPECTED_GITHUB_SLOW_POLL_MS;
+      await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+      await flushMicrotasks();
+      expect(statuses).toEqual([expect.objectContaining({ checksStatus: "failure" })]);
+      expect(errors).toHaveLength(1);
+      expect(terminalErrors).toHaveLength(1);
+      await expect(
+        service.getCurrentPullRequestStatus({ cwd: "/open", headRef: "open" }),
+      ).resolves.toMatchObject({ checksStatus: "failure" });
+      expect(runner.calls).toHaveLength(failure === "reserve" ? 4 : 5);
       service.dispose?.();
-      expect(statuses).toEqual([expect.objectContaining({ state: "open" })]);
-      expect(errors).toEqual([]);
-      expect(runner.calls).toHaveLength(failure === "reserve" ? 2 : 3);
     },
   );
 

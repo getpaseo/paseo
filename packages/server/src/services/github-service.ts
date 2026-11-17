@@ -1699,8 +1699,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       failedCommitEntries,
     });
     if ((pollPausedUntilByHost.get(firstEntry.host) ?? 0) > deps.now()) {
+      const error = new Error(
+        "GitHub GraphQL polling is paused; pull request checks could not be refreshed",
+      );
       for (const item of distribution.pendingChecks) {
-        finalizeBatchPollTarget({ ...item, rollup: null, startedAt });
+        updatePollTargetAfterError(item.entry.target, error);
       }
       return;
     }
