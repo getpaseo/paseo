@@ -18,6 +18,7 @@ interface RecoverableWindow {
       event: "render-process-gone",
       listener: (event: unknown, details: RendererExit) => void,
     ): unknown;
+    getURL(): string;
     reload(): void;
   };
 }
@@ -31,6 +32,9 @@ export function reloadWhenRendererExits(
 
   win.webContents.on("render-process-gone", (_event, details) => {
     if (details.reason === "clean-exit" || win.isDestroyed()) return;
+    // Before the first page commits, Chromium finishes the navigation in a new
+    // renderer by itself. Reloading then would abort the window's initial load.
+    if (win.webContents.getURL() === "") return;
 
     const time = now();
     reloadTimes = reloadTimes.filter((reloadTime) => time - reloadTime < RELOAD_WINDOW_MS);

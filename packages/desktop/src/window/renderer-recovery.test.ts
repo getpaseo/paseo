@@ -4,6 +4,10 @@ import { reloadWhenRendererExits } from "./renderer-recovery.js";
 
 class Contents extends EventEmitter {
   reloads = 0;
+  url = "paseo://app/";
+  getURL() {
+    return this.url;
+  }
   reload() {
     this.reloads += 1;
   }
@@ -50,6 +54,13 @@ describe("reloadWhenRendererExits", () => {
   it("leaves a renderer that exited cleanly alone", () => {
     const { win } = recoverableWindow();
     win.webContents.exit("clean-exit");
+    expect(win.webContents.reloads).toBe(0);
+  });
+
+  it("leaves a renderer that exits before the first page commits to Chromium", () => {
+    const { win } = recoverableWindow();
+    win.webContents.url = "";
+    win.webContents.exit("killed");
     expect(win.webContents.reloads).toBe(0);
   });
 
