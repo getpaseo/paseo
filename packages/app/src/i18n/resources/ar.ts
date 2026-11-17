@@ -2017,6 +2017,7 @@ export const ar: TranslationResources = {
     hostUnavailable: "مضيف التنزيل غير متاح.",
     cancelled: "تم إلغاء التنزيل.",
     failed: "فشل تنزيل الملف.",
+    httpFailed: "فشل تنزيل الملف (HTTP {{status}}).",
     shareFile: "مشاركة الملف",
     shareFileNamed: "مشاركة{{fileName}}",
   },
