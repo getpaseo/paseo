@@ -1562,7 +1562,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       const restored = await createWorktreePrimitive({
         cwd: repoDir,
         worktreeSlug: "restorable",
-        source: { kind: "restore", ref: "feature/restorable", baseRef: "main" },
+        source: { kind: "restore", branchName: "feature/restorable", baseRef: "main" },
         paseoHome,
         worktreePath: created.worktreePath,
       });

@@ -8,7 +8,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
-  readWorktreeHead,
+  readWorktreeHeadReference,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
@@ -20,7 +20,7 @@ import type {
   WorkspaceRegistry,
 } from "./workspace-registry.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { runGitCommand, runWithGitCommandPriority } from "../utils/run-git-command.js";
+import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 
 export type ActiveWorkspaceRef = Pick<
@@ -708,25 +708,14 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   const archivedAt = input.archivedAt ?? new Date().toISOString();
-  let checkout: WorkspaceArchiveContext["checkout"];
+  let head: string | null = null;
   if (existingWorkspace.kind === "worktree") {
     const cwd = existingWorkspace.worktreeRoot ?? existingWorkspace.cwd;
-    try {
-      const [commit, branch] = await Promise.all([
-        readWorktreeHead(cwd),
-        runGitCommand(["symbolic-ref", "--quiet", "--short", "HEAD"], {
-          cwd,
-          acceptExitCodes: [0, 1],
-        }),
-      ]);
-      if (commit) checkout = { branch: branch.stdout.trim() || null, commit };
-    } catch {
-      // An unavailable checkout retains its previously recorded placement.
-    }
+    head = await readWorktreeHeadReference(cwd);
   }
   await input.workspaceRegistry.archive(input.workspaceId, archivedAt, {
     ...input.context,
-    ...(checkout ? { checkout } : {}),
+    ...(head ? { head } : {}),
   });
 
   return existingWorkspace;

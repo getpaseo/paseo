@@ -152,12 +152,18 @@ export function createWorkspaceRecoveryService(deps: {
     sourceRepoRoot: string,
   ): Promise<void> {
     let source: WorktreeSource;
-    const ref = workspace.branch ?? workspace.commit;
-    if (ref) {
+    const checkout = parseWorkspaceHead(workspace);
+    if (checkout.kind === "branch") {
       source = {
         kind: "restore",
-        ref,
+        branchName: checkout.branch,
         baseRef: workspace.baseBranch,
+      };
+    } else if (checkout.kind === "commit") {
+      source = {
+        kind: "restore-commit",
+        commit: checkout.commit,
+        baseRef: await resolveRecoveryBase(sourceRepoRoot, workspace.baseBranch),
       };
     } else {
       source = {
@@ -259,16 +265,29 @@ async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null
   return defaultBranch;
 }
 
+function parseWorkspaceHead(
+  workspace: PersistedWorkspaceRecord,
+): { kind: "branch"; branch: string } | { kind: "commit"; commit: string } | { kind: "missing" } {
+  if (workspace.head) {
+    const prefix = "refs/heads/";
+    return workspace.head.startsWith(prefix)
+      ? { kind: "branch", branch: workspace.head.slice(prefix.length) }
+      : { kind: "commit", commit: workspace.head };
+  }
+  return workspace.branch ? { kind: "branch", branch: workspace.branch } : { kind: "missing" };
+}
+
 function createRecoveryPlan(
   input:
     | { action: "unarchive"; workspace: PersistedWorkspaceRecord }
     | { action: "restore"; workspace: PersistedWorkspaceRecord; sourceRepoRoot: string },
 ): RecoveryPlan {
+  const checkout = parseWorkspaceHead(input.workspace);
   const state = {
     kind: "recoverable" as const,
     workspaceId: input.workspace.workspaceId,
     workspaceName: resolveWorkspaceDisplayName(input.workspace),
-    branch: input.workspace.branch,
+    branch: checkout.kind === "branch" ? checkout.branch : null,
   };
   if (input.action === "restore") {
     return {

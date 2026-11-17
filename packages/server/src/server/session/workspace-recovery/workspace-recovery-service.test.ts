@@ -361,16 +361,12 @@ test("preserves ordinary checkout behavior when no separate base was recorded", 
   ).toMatchObject({ currentBranch: "feature", baseRef: "feature" });
 });
 
-test("records the branch and commit of an archived checkout", async () => {
+test("records the full HEAD ref of an archived checkout", async () => {
   const fixture = await createBaseRecoveryFixture(null);
-  const commit = execFileSync("git", ["rev-parse", "feature"], {
-    cwd: fixture.repoDir,
-    encoding: "utf8",
-  }).trim();
   await fixture.archiveAndRemove();
   expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
     branch: "feature",
-    commit,
+    head: "refs/heads/feature",
   });
 });
 
@@ -386,6 +382,55 @@ test("archives a workspace whose worktree Git administration is missing", async 
     workspaceRegistry: fixture.registry,
   });
   expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).toBeTruthy();
+});
+
+test("restores a branch that shares its name with a tag", async () => {
+  const fixture = await createBaseRecoveryFixture("main");
+  execFileSync("git", ["tag", "feature"], { cwd: fixture.repoDir });
+  await fixture.archiveAndRemove();
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.head).toBe(
+    "refs/heads/feature",
+  );
+  expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+  });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(
+    execFileSync("git", ["symbolic-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("refs/heads/feature");
+});
+
+test("restores detached HEAD even when the stored branch is stale", async () => {
+  const fixture = await createBaseRecoveryFixture("main");
+  execFileSync("git", ["switch", "--detach"], { cwd: fixture.workspace.cwd });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+    head: commit,
+  });
+  expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+    branch: null,
+  });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(
+    execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("HEAD");
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(commit);
 });
 
 test("restores a branchless workspace from its recorded base so work can continue", async () => {
@@ -463,8 +508,8 @@ test("restores the archived detached checkout at its recorded commit", async () 
   }).trim();
   await fixture.archiveAndRemove();
   expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
-    branch: null,
-    commit,
+    branch: "feature",
+    head: commit,
   });
   execFileSync("git", ["reflog", "expire", "--expire=now", "--all"], { cwd: fixture.repoDir });
   execFileSync("git", ["gc", "--prune=now"], { cwd: fixture.repoDir });

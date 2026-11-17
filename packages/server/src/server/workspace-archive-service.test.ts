@@ -210,7 +210,7 @@ describe("archiveByScope", () => {
         paseoHome,
         worktreeSlug: "external",
         worktreePath: recordedPath,
-        source: { kind: "restore", ref: "external", baseRef: "main" },
+        source: { kind: "restore", branchName: "external", baseRef: "main" },
       });
       expect(existsSync(await getPaseoWorktreeMetadataPath(restored.worktreePath))).toBe(true);
       const workspaceId = "external-workspace";
