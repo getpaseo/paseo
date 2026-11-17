@@ -6,6 +6,8 @@ export interface WorkspaceAgentActivity {
   agentId: string;
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
+  /** Earliest time any root agent of the workspace will wake on its own. */
+  nextWakeAt: string | null;
 }
 
 function workspaceAgentStatus(agent: Agent): Agent["status"] {
@@ -19,6 +21,7 @@ export function buildWorkspaceAgentActivityIndex(
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
   const latestActivityAtByWorkspaceId = new Map<string, Date>();
+  const nextWakeAtByWorkspaceId = new Map<string, string>();
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
@@ -30,6 +33,8 @@ export function buildWorkspaceAgentActivityIndex(
     ) {
       continue;
     }
+
+    keepEarliestWake(nextWakeAtByWorkspaceId, agent.workspaceId, agent.backgroundWork?.nextWakeAt);
 
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
     const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
@@ -49,15 +54,14 @@ export function buildWorkspaceAgentActivityIndex(
       agentId: agent.id,
       status,
       enteredAt,
+      nextWakeAt: null,
     });
   }
 
   for (const [workspaceId, activity] of activityByWorkspaceId) {
+    activity.nextWakeAt = nextWakeAtByWorkspaceId.get(workspaceId) ?? null;
     const previousActivity = previous?.get(workspaceId);
-    if (
-      previousActivity?.agentId === activity.agentId &&
-      previousActivity.status === activity.status
-    ) {
+    if (previousActivity && isSameActivity(previousActivity, activity)) {
       activityByWorkspaceId.set(workspaceId, previousActivity);
     }
   }
@@ -66,6 +70,26 @@ export function buildWorkspaceAgentActivityIndex(
     return previous instanceof Map ? previous : new Map(previous);
   }
   return activityByWorkspaceId;
+}
+
+function keepEarliestWake(
+  wakes: Map<string, string>,
+  workspaceId: string,
+  nextWakeAt: string | undefined,
+): void {
+  if (!nextWakeAt) return;
+  const earliest = wakes.get(workspaceId);
+  if (!earliest || Date.parse(nextWakeAt) < Date.parse(earliest)) {
+    wakes.set(workspaceId, nextWakeAt);
+  }
+}
+
+function isSameActivity(previous: WorkspaceAgentActivity, next: WorkspaceAgentActivity): boolean {
+  return (
+    previous.agentId === next.agentId &&
+    previous.status === next.status &&
+    previous.nextWakeAt === next.nextWakeAt
+  );
 }
 
 function areWorkspaceAgentActivityIndexesIdentical(

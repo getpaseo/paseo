@@ -482,6 +482,12 @@ export type AgentStreamEvent =
       type: "background_work";
       provider: AgentProvider;
       items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
+    }
+  | {
+      /** Earliest time the provider will wake the idle agent on its own; null when none. */
+      type: "scheduled_wakeup";
+      provider: AgentProvider;
+      nextWakeAt: string | null;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

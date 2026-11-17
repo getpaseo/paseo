@@ -7,6 +7,8 @@ import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 interface EffectiveWorkspaceStatus {
   status: WorkspaceDescriptor["status"];
   enteredAt: Date | null;
+  /** Set only while the workspace is idle and one of its agents will wake on its own. */
+  nextWakeAt: string | null;
 }
 
 export function deriveEffectiveWorkspaceStatus(input: {
@@ -15,6 +17,20 @@ export function deriveEffectiveWorkspaceStatus(input: {
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
 }): EffectiveWorkspaceStatus {
+  const { status, enteredAt } = deriveWorkspaceStatusBucket(input);
+  const nextWakeAt =
+    status === "done" || status === "attention"
+      ? (input.workspaceAgentActivity?.get(input.workspace.id)?.nextWakeAt ?? null)
+      : null;
+  return { status, enteredAt, nextWakeAt };
+}
+
+function deriveWorkspaceStatusBucket(input: {
+  serverId: string;
+  workspace: WorkspaceDescriptor;
+  pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
+  workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+}): Pick<EffectiveWorkspaceStatus, "status" | "enteredAt"> {
   if (input.workspace.status !== "done") {
     return { status: input.workspace.status, enteredAt: input.workspace.statusEnteredAt };
   }

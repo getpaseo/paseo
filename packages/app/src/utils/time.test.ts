@@ -4,9 +4,11 @@ import {
   describeTimeAgo,
   formatCompactTimeAgo,
   formatCompactTimeAgoAsProse,
+  formatCompactTimeUntil,
   formatDuration,
   formatMessageTimestamp,
   formatTimeAgo,
+  nextCompactTimeUntilChange,
 } from "./time";
 
 describe("formatTimeAgo", () => {
@@ -23,6 +25,54 @@ describe("formatTimeAgo", () => {
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
   });
+});
+
+describe("formatCompactTimeUntil", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  it.each([
+    ["2026-07-16T11:58:00.000Z", "<1m"],
+    ["2026-07-16T12:00:30.000Z", "<1m"],
+    ["2026-07-16T12:01:00.000Z", "<1m"],
+    ["2026-07-16T12:01:00.001Z", "2m"],
+    ["2026-07-16T12:10:01.000Z", "11m"],
+    ["2026-07-16T12:59:30.000Z", "1h"],
+    ["2026-07-16T13:00:00.000Z", "1h"],
+    ["2026-07-16T15:30:00.000Z", "3h"],
+    ["2026-07-17T11:59:30.000Z", "1d"],
+    ["2026-07-19T13:00:00.000Z", "3d"],
+  ])("counts down to %s as %s", (date, expected) => {
+    expect(formatCompactTimeUntil(new Date(date), now)).toBe(expected);
+  });
+});
+
+describe("nextCompactTimeUntilChange", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  it.each([
+    // Due at 12:02:00.300: "3m" now, "2m" from 12:00:00.300, "<1m" from 12:01:00.300.
+    ["2026-07-16T12:02:00.300Z", "2026-07-16T12:00:00.300Z"],
+    ["2026-07-16T12:01:30.000Z", "2026-07-16T12:00:30.000Z"],
+    ["2026-07-16T12:10:01.000Z", "2026-07-16T12:00:01.000Z"],
+    // "1h" holds until 59 minutes are left.
+    ["2026-07-16T13:30:00.000Z", "2026-07-16T12:31:00.000Z"],
+    // "3h" holds until 2h59m are left, "1d" until 23h59m.
+    ["2026-07-16T15:30:00.000Z", "2026-07-16T12:31:00.000Z"],
+    ["2026-07-17T18:00:00.000Z", "2026-07-16T18:01:00.000Z"],
+  ])("moves on from a wake at %s at %s", (date, expected) => {
+    const next = nextCompactTimeUntilChange(new Date(date), now);
+    expect(next?.toISOString()).toBe(expected);
+    expect(formatCompactTimeUntil(new Date(date), next!)).not.toBe(
+      formatCompactTimeUntil(new Date(date), new Date(next!.getTime() - 1)),
+    );
+  });
+
+  it.each(["2026-07-16T12:01:00.000Z", "2026-07-16T12:00:00.000Z", "2026-07-16T11:00:00.000Z"])(
+    "stops once a wake at %s reads <1m",
+    (date) => {
+      expect(nextCompactTimeUntilChange(new Date(date), now)).toBeNull();
+    },
+  );
 });
 
 describe("describeTimeAgo", () => {

@@ -1364,6 +1364,8 @@ export const ptBR: TranslationResources = {
         serviceRunning: "Serviço {{name}} em execução",
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",
+        wakesIn: "em {{time}}",
+        wakeScheduled: "Será retomado sozinho",
       },
       checks: {
         passed: "Aprovados: {{count}}",

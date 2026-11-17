@@ -48,6 +48,28 @@ describe("AgentBackgroundWorkStore", () => {
     expect(store.summary("agent-a")).toBeUndefined();
   });
 
+  test("keeps a pending wake apart from the counted items", () => {
+    const store = new AgentBackgroundWorkStore();
+    expect(store.setNextWakeAt("agent-a", T1)).toBe(true);
+    expect(store.setNextWakeAt("agent-a", T1)).toBe(false);
+    expect(store.summary("agent-a")).toEqual({ count: 0, nextWakeAt: T1 });
+    expect(store.list("agent-a")).toEqual([]);
+
+    store.apply("agent-a", [{ id: "bash-1", kind: "shell", description: "sleep 20" }], T0);
+    expect(store.summary("agent-a")).toEqual({ count: 1, nextWakeAt: T1 });
+
+    expect(store.setNextWakeAt("agent-a", null)).toBe(true);
+    expect(store.summary("agent-a")).toEqual({ count: 1 });
+  });
+
+  test("clears a pending wake with the agent's work", () => {
+    const store = new AgentBackgroundWorkStore();
+    store.setNextWakeAt("agent-a", T1);
+    expect(store.clear("agent-a")).toEqual([]);
+    expect(store.summary("agent-a")).toBeUndefined();
+    expect(store.clear("agent-a")).toBeNull();
+  });
+
   test("keeps the first occurrence of a duplicated id", () => {
     const store = new AgentBackgroundWorkStore();
 

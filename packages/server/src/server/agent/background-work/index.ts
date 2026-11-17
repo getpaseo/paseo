@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentBackgroundWorkSummary } from "@getpaseo/protocol/messages";
 
 export interface AgentBackgroundWorkInput {
   id: string;
@@ -21,6 +22,7 @@ export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
  */
 export class AgentBackgroundWorkStore {
   private readonly items = new Map<string, AgentBackgroundWorkItem[]>();
+  private readonly nextWakeAt = new Map<string, string>();
 
   apply(
     agentId: string,
@@ -55,13 +57,24 @@ export class AgentBackgroundWorkStore {
     return [...(this.items.get(agentId) ?? [])];
   }
 
-  summary(agentId: string): { count: number } | undefined {
+  /** A pending wake is kept apart from the items: the agent stays idle until it fires. */
+  setNextWakeAt(agentId: string, nextWakeAt: string | null): boolean {
+    if ((this.nextWakeAt.get(agentId) ?? null) === nextWakeAt) return false;
+    if (nextWakeAt === null) this.nextWakeAt.delete(agentId);
+    else this.nextWakeAt.set(agentId, nextWakeAt);
+    return true;
+  }
+
+  summary(agentId: string): AgentBackgroundWorkSummary | undefined {
     const items = this.items.get(agentId);
-    return items ? { count: items.length } : undefined;
+    const nextWakeAt = this.nextWakeAt.get(agentId);
+    if (!items && !nextWakeAt) return undefined;
+    return { count: items?.length ?? 0, ...(nextWakeAt ? { nextWakeAt } : {}) };
   }
 
   clear(agentId: string): AgentBackgroundWorkItem[] | null {
-    if (!this.items.delete(agentId)) return null;
+    const hadWake = this.nextWakeAt.delete(agentId);
+    if (!this.items.delete(agentId) && !hadWake) return null;
     return [];
   }
 }

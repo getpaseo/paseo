@@ -1338,6 +1338,8 @@ export const ar: TranslationResources = {
         serviceRunning: "الخدمة {{name}} قيد التشغيل",
         serviceUnhealthy: "الخدمة {{name}} غير سليمة",
         creating: "جارٍ الإنشاء...",
+        wakesIn: "خلال {{time}}",
+        wakeScheduled: "سيستأنف تلقائيًا",
       },
       checks: {
         passed: "ناجحة: {{count}}",

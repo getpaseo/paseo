@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
+import { computeNextRunAt, listCronRuns, validateScheduleCadence } from "./cron.js";
 
 describe("schedule cron cadence", () => {
   test("computes the next every cadence from the provided timestamp", () => {
@@ -77,6 +77,21 @@ describe("schedule cron cadence", () => {
 
     expect(first.toISOString()).toBe("2026-11-01T05:30:00.000Z");
     expect(second.toISOString()).toBe("2026-11-01T06:30:00.000Z");
+  });
+
+  test("lists the runs inside a window, both ends included", () => {
+    const cadence = { type: "cron" as const, expression: "*/5 * * * *" };
+    const runs = (from: string, to: string) =>
+      listCronRuns(cadence, new Date(from), new Date(to)).map((run) => run.toISOString());
+
+    expect(runs("2026-01-01T00:05:00.000Z", "2026-01-01T00:15:00.000Z")).toEqual([
+      "2026-01-01T00:05:00.000Z",
+      "2026-01-01T00:10:00.000Z",
+      "2026-01-01T00:15:00.000Z",
+    ]);
+    expect(runs("2026-01-01T00:05:30.000Z", "2026-01-01T00:14:59.000Z")).toEqual([
+      "2026-01-01T00:10:00.000Z",
+    ]);
   });
 
   test("rejects invalid cron expressions", () => {

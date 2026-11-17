@@ -903,6 +903,18 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+/** Live background work of an agent, as counted by the daemon. */
+export const AgentBackgroundWorkSummarySchema = z.object({
+  count: z.number().int().nonnegative(),
+  /**
+   * Earliest time the provider will wake the agent on its own (a scheduled wakeup or cron).
+   * Not counted as running work: the agent is idle until then.
+   */
+  nextWakeAt: z.string().optional(),
+});
+
+export type AgentBackgroundWorkSummary = z.infer<typeof AgentBackgroundWorkSummarySchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -920,7 +932,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   updatedAt: z.string(),
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
-  backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  backgroundWork: AgentBackgroundWorkSummarySchema.optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
@@ -958,7 +970,7 @@ export const AgentListItemPayloadSchema = z.object({
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
   status: AgentStatusSchema,
-  backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  backgroundWork: AgentBackgroundWorkSummarySchema.optional(),
   cwd: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),

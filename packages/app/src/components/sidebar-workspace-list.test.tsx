@@ -644,7 +644,7 @@ describe("sidebar group visibility", () => {
         serverId: SERVER_ID,
         workspace: descriptor,
         workspaceAgentActivity: new Map([
-          [descriptor.id, { agentId: "agent", status, enteredAt: null }],
+          [descriptor.id, { agentId: "agent", status, enteredAt: null, nextWakeAt: null }],
         ]),
       });
       expect(last.statusBucket).toBe(status);
