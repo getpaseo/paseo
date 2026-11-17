@@ -1,3 +1,5 @@
+import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
+import { classifyAssistantFileLink } from "@/assistant-file-links";
 import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
 import { gfmTable } from "micromark-extension-gfm-table";
@@ -22,29 +24,91 @@ const SEPARATED_PATH = String.raw`${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
 const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
 // Bare prose paths need a known extension, a line suffix, or at least two separators.
 const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
-const INLINE_CODE_PATH = String.raw`${PATH_PREFIX}?${HAS_PATH_LETTER}${SEPARATED_PATH}`;
 
-function createFilePattern(path: string): RegExp {
+function createTextPattern(path: string, forgeReferencePattern?: string): RegExp {
+  // Forge references come before paths so `group/project#12` is not read as a path.
+  const forgeReference = forgeReferencePattern ? `|${forgeReferencePattern}` : "";
   // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
   return new RegExp(
-    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    String.raw`(?:${BARE_URL}${forgeReference}|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
     "g",
   );
 }
 
-const FILE_PATTERN = createFilePattern(PROSE_PATH);
-const INLINE_CODE_FILE_PATTERN = createFilePattern(INLINE_CODE_PATH);
+// Matches bare URLs that MD4C does not autolink, like single-label or bracketed hosts.
+// Quotes and unbalanced closing parentheses end the URL. Trailing sentence punctuation stays outside.
+// CJK, fullwidth and typographic punctuation (、。，（）【】「」“”…) also ends it; CJK letters do not.
+const URL_BOUNDARY =
+  "\\u2018\\u2019\\u201C\\u201D\\u2026\\u3000-\\u3003\\u3008-\\u3011\\u3014-\\u301F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65";
+const URL_CHARACTER = String.raw`[^\s<>()"'\x60${URL_BOUNDARY}]`;
+const URL_GROUP = String.raw`\(${URL_CHARACTER}*\)`;
+const BARE_URL = String.raw`https?://(?:${URL_CHARACTER}|${URL_GROUP})*(?:[^\s<>()"'\x60.,;:!?${URL_BOUNDARY}]|${URL_GROUP})`;
 
-function linkMetadata() {
+const TEXT_PATTERN = createTextPattern(PROSE_PATH);
+// One entry per distinct workspace forge remote; reuse keeps the engine's regex identity stable.
+const textPatternsByForgeReference = new Map<string, RegExp>();
+function textPattern(forgeReferencePattern?: string): RegExp {
+  if (!forgeReferencePattern) return TEXT_PATTERN;
+  let pattern = textPatternsByForgeReference.get(forgeReferencePattern);
+  if (!pattern) {
+    pattern = createTextPattern(PROSE_PATH, forgeReferencePattern);
+    textPatternsByForgeReference.set(forgeReferencePattern, pattern);
+  }
+  return pattern;
+}
+
+// External Markdown links only what its author wrote as an https URL.
+const EXTERNAL_LINKS = {
+  text: new RegExp(BARE_URL.replace("https?", "https"), "g"),
+  inlineCode: /^https:\/\/[^\s<>]+$/,
+};
+
+function linkMetadata(inlineCodePaths: ReadonlySet<string>, forgeReferencePattern?: string) {
+  // The engine accepts regexes on both platforms. Classify complete code spans
+  // first, then pass literal matches rather than maintaining a second path grammar.
+  const alternatives = [...inlineCodePaths].map((path) =>
+    path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
   return {
     linkRecognition: {
-      text: FILE_PATTERN,
+      text: textPattern(forgeReferencePattern),
       inlineCode: new RegExp(
-        String.raw`^(?:${INLINE_CODE_FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
+        String.raw`^(?:https?://[^\s<>]+${alternatives.length ? `|${alternatives.join("|")}` : ""})$`,
       ),
     },
     linkSource: markdownLinkSource,
   };
+}
+
+function collectInlineCodePaths(
+  source: string,
+  workspaceRoot?: string,
+  commandNames?: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const paths = new Set<string>();
+  const previousEnds = new Map<number, number>();
+  // Collect candidates between consecutive runs of equal length. The engine owns
+  // Markdown context (escapes, fences, authored links); extra candidates are harmless
+  // because recognition only applies to complete Code nodes. This avoids an AST
+  // parse on every streaming reveal, including updates inside long code fences.
+  for (const match of source.matchAll(/`+/g)) {
+    const length = match[0].length;
+    const previousEnd = previousEnds.get(length);
+    previousEnds.set(length, match.index + length);
+    if (previousEnd === undefined) continue;
+    let value = source.slice(previousEnd, match.index).replace(/\r\n?|\n/g, " ");
+    // CommonMark code spans replace line endings and strip one surrounding space.
+    if (value.startsWith(" ") && value.endsWith(" ") && /[^ ]/.test(value)) {
+      value = value.slice(1, -1);
+    }
+    const classification = classifyAssistantFileLink(value, { workspaceRoot });
+    if (
+      (classification && classification.kind !== "external") ||
+      (value.startsWith("/") && commandNames?.has(value.slice(1)))
+    )
+      paths.add(value);
+  }
+  return paths;
 }
 
 export function markdownLinkSource(
@@ -80,7 +144,18 @@ function workspaceHoverTitle(link: Link, markup: string, workspaceRoot?: string)
 export function prepareMarkdownSource(
   source: string,
   workspaceRoot?: string,
-  options: { supportsSvg?: boolean } = {},
+  options: {
+    supportsSvg?: boolean;
+    commandNames?: ReadonlySet<string>;
+    /** Regex source for forge references such as `#12`; see `@/git/forge-shorthand`. */
+    forgeReferencePattern?: string;
+    /**
+     * Author-controlled Markdown from outside this host, such as a plugin README. It follows the
+     * registry's overview contract: only absolute https links and images, and nothing is
+     * recognized as a file, forge reference or command.
+     */
+    external?: boolean;
+  } = {},
 ) {
   source = normalizeMarkdownHtml(source);
   const images: MarkdownImage[] = [];
@@ -90,14 +165,26 @@ export function prepareMarkdownSource(
       extensions: [gfmTable()],
       mdastExtensions: [gfmTableFromMarkdown()],
     }));
+  const external = options.external === true;
+  const metadata = external
+    ? { linkRecognition: EXTERNAL_LINKS, linkSource: markdownLinkSource }
+    : linkMetadata(
+        collectInlineCodePaths(source, workspaceRoot, options.commandNames),
+        options.forgeReferencePattern,
+      );
   const edits: { start: number; end: number; text: string }[] = [];
   if (
     !source.includes("![") &&
     !source.includes("||") &&
     !source.includes("&") &&
-    !(workspaceRoot && source.includes("]("))
+    // Match content, header, and delimiter lines; quote-only lines count as blank.
+    !/^[\t >]*[^\t >\r\n][^\r\n]*(?:\r\n|\r|\n)[^\r\n]+(?:\r\n|\r|\n)(?=[\t >:|-]*\|)[\t >|]*:?-[-\t :|]*$/m.test(
+      source,
+    ) &&
+    !(workspaceRoot && source.includes("](")) &&
+    !(external && /\]|<[a-z]+:/i.test(source))
   ) {
-    return { images, ...linkMetadata(), render: () => source };
+    return { images, ...metadata, render: () => source };
   }
 
   const definitions = new Map<string, { url: string; title?: string | null }>();
@@ -114,9 +201,10 @@ export function prepareMarkdownSource(
   ) {
     const target = node.type === "image" ? node : definitions.get(node.identifier);
     if (
-      target &&
-      options.supportsSvg === false &&
-      /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(target.url)
+      (external && !pluginOverviewUrl(target?.url)) ||
+      (target &&
+        options.supportsSvg === false &&
+        /(?:\.svg(?:[?#]|$)|^data:image\/svg\+xml)/i.test(target.url))
     ) {
       edits.push({ start, end, text: escapeMarkdownText(node.alt ?? "") });
       return;
@@ -169,11 +257,41 @@ export function prepareMarkdownSource(
       if (lineEnd < end) split(lineEnd);
     }
   }
-  function visit(node: Nodes) {
-    const start = node.position?.start.offset;
-    const end = node.position?.end.offset;
-    if (start !== undefined && end !== undefined) {
+  // An external link to anything but an https URL keeps its label and loses the brackets and
+  // destination around it, so edits inside the label still apply.
+  function dropUnsafeDestination(node: Nodes, start: number, end: number) {
+    if (node.type !== "link" && node.type !== "linkReference") return;
+    const target = node.type === "link" ? node : definitions.get(node.identifier);
+    if (pluginOverviewUrl(target?.url)) return;
+    const labelStart = node.children[0]?.position?.start.offset;
+    const labelEnd = node.children.at(-1)?.position?.end.offset;
+    if (labelStart === undefined || labelEnd === undefined) {
+      edits.push({ start, end, text: "" });
+      return;
+    }
+    edits.push({ start, end: labelStart, text: "" });
+    edits.push({ start: labelEnd, end, text: "" });
+  }
+  function visit(node: Nodes, previous?: Nodes) {
+    const position = node.position;
+    if (position?.start.offset !== undefined && position.end.offset !== undefined) {
+      const start = position.start.offset;
+      const end = position.end.offset;
       if (node.type === "paragraph") splitStandaloneImages(node, start, end);
+      if (
+        node.type === "table" &&
+        previous?.type === "paragraph" &&
+        previous.position?.end.line === position.start.line - 1
+      ) {
+        // MD4C only recognizes a table header on the first line of a paragraph.
+        const lineStart =
+          Math.max(source.lastIndexOf("\n", start - 1), source.lastIndexOf("\r", start - 1)) + 1;
+        const newline = source.slice(lineStart - 2, lineStart).replace(/[^\r\n]/g, "");
+        const blank = source.slice(lineStart, start).replace(/[^>]/g, " ").trimEnd();
+        const boundary = lineStart - newline.length;
+        edits.push({ start: boundary, end: lineStart, text: `${newline}${blank}${newline}` });
+      }
+      if (external) dropUnsafeDestination(node, start, end);
       if (node.type === "link") {
         const title = workspaceHoverTitle(node, source.slice(start, end), workspaceRoot);
         if (title !== null)
@@ -201,12 +319,13 @@ export function prepareMarkdownSource(
         if (text !== source.slice(start, end)) edits.push({ start, end, text });
       }
     }
-    if ("children" in node) node.children.forEach(visit);
+    if ("children" in node)
+      node.children.forEach((child, index) => visit(child, node.children[index - 1]));
   }
   visit(getTree());
   return {
     images,
-    ...linkMetadata(),
+    ...metadata,
     render(
       urls: ReadonlyMap<string, string> = new Map(),
       unavailableImages: ReadonlySet<string> = new Set(),

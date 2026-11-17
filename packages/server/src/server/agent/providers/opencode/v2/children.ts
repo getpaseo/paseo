@@ -7,6 +7,7 @@ import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import type { ProviderSubagentInputEvent } from "../../../provider-subagents/store.js";
 
 import { messages } from "./history.js";
+import { buildOpenCodeSubagentSubtitle } from "../subagent-presentation.js";
 
 import type { V2Api } from "./api.js";
 interface ChildrenOptions {
@@ -65,11 +66,23 @@ export class SessionChildren {
     if (active[info.id]) status = "running";
     else if (info.outcome === "failed") status = "failed";
     else if (info.outcome === "interrupted") status = "canceled";
+    const subtitle = buildOpenCodeSubagentSubtitle({
+      agentName: info.agent,
+      modelId: info.model?.id,
+      variant: info.model?.variant,
+      totalTokens:
+        info.tokens.input +
+        info.tokens.output +
+        info.tokens.reasoning +
+        info.tokens.cache.read +
+        info.tokens.cache.write,
+    });
     const presentation: ProviderSubagentInputEvent = {
       type: "upsert",
       id: info.id,
       parentSubagentId: info.parentID === this.options.id ? null : info.parentID,
       title: info.title ?? null,
+      ...(subtitle ? { subtitle } : {}),
       status,
       cwd: info.location.directory,
       timestamp: new Date(info.time.updated).toISOString(),
@@ -79,13 +92,13 @@ export class SessionChildren {
       this.childStates.set(info.id, signature);
       this.options.emit({ type: "provider_subagent", provider: "opencode", event: presentation });
     }
-    for (const event of timeline.messages(await messages(this.options.client(), info.id))) {
+    await timeline.messages(await messages(this.options.client(), info.id), (event) => {
       if (event.type === "timeline")
         this.options.emit({
           type: "provider_subagent",
           provider: "opencode",
           event: { type: "timeline", id: info.id, item: event.item, timestamp: event.timestamp },
         });
-    }
+    });
   }
 }

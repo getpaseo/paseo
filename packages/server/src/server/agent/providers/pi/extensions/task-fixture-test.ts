@@ -89,7 +89,7 @@ export async function verifyTaskFixture(path: URL, expectedStatuses: string[]): 
     for (const event of fixture.events) pi.latestSession().emit(event);
     pi.latestSession().finishTurn();
     expect(todos(live)).toEqual(mapped);
-    const replay = new PiHistoryMapper("pi").mapMessages(fixture.messages);
+    const replay = await new PiHistoryMapper("pi").mapMessages(fixture.messages);
     expect(todos(replay)).toEqual(mapped);
     expect(
       replay.filter(

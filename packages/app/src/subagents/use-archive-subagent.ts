@@ -1,3 +1,4 @@
+import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { useCallback } from "react";
 import { useToast } from "@/contexts/toast-context";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
@@ -13,17 +14,12 @@ export type {
   ResolveArchiveSubagentDialogInput,
 } from "./archive-subagent";
 
-export interface UseArchiveSubagentInput {
-  serverId: string;
-}
-
-export function useArchiveSubagent(input: UseArchiveSubagentInput): (subagentId: string) => void {
+export function useArchiveSubagent(): (address: AgentAddress) => void {
   const { archiveAgent } = useArchiveAgent();
-  const { serverId } = input;
   const toast = useToast();
 
   return useCallback(
-    (subagentId: string) => {
+    ({ serverId, agentId: subagentId }: AgentAddress) => {
       void requestArchiveSubagent(
         { serverId, subagentId },
         {
@@ -37,6 +33,6 @@ export function useArchiveSubagent(input: UseArchiveSubagentInput): (subagentId:
         },
       );
     },
-    [archiveAgent, serverId, toast],
+    [archiveAgent, toast],
   );
 }

@@ -5,6 +5,7 @@ import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import {
   addProjectFlow,
+  chooseAddHostFromProjectFlow,
   addProjectFlowBack,
   addProjectFlowHost,
   addProjectFlowInput,
@@ -14,11 +15,14 @@ import {
   expectNewWorkspaceForAddedProject,
   expectAddProjectResultVisible,
   navigateAddProjectResults,
+  navigateAndDismissAddProject,
+  watchAddProjectRenderWarnings,
   openAddProjectFlow,
   openAddProjectHostSelection,
 } from "../support/helpers/add-project-flow";
 import { gotoAppShell } from "../support/helpers/app";
 import {
+  disconnectAllHostsAndReload,
   addConnectedHostAndReload,
   addConnectedHostsAndReload,
   addOfflineHostAndReload,
@@ -68,6 +72,19 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
 
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("Add host replaces the project dialog when no hosts are connected", async ({ page }) => {
+    await gotoAppShell(page);
+    await disconnectAllHostsAndReload(page);
+    await openAddProjectHostSelection(page);
+    const originalUrl = page.url();
+    await chooseAddHostFromProjectFlow(page);
+    await expect(addProjectFlow(page)).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Direct connection", exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(originalUrl);
+  });
 
   test("method selection shows the daemon's available project sources without search", async ({
     page,
@@ -131,6 +148,7 @@ test.describe("Add Project command-center flow", () => {
     test("Escape and Back restore searchable page input before closing at the root", async ({
       page,
     }) => {
+      const renderWarnings = watchAddProjectRenderWarnings(page);
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
         serverId: secondaryHost.serverId,
@@ -168,8 +186,9 @@ test.describe("Add Project command-center flow", () => {
 
       await page.keyboard.press("Escape");
       await expectAddProjectPage(page, "host");
-      await page.keyboard.press("Escape");
+      await navigateAndDismissAddProject(page);
       await expect(addProjectFlow(page)).not.toBeVisible();
+      expect(renderWarnings).toEqual([]);
     });
 
     test("New directory creates a Project on the selected remote host", async ({ page }) => {
@@ -418,5 +437,42 @@ test.describe("Add Project command-center flow", () => {
       await removeCreatedProject(directoryPath, projectId).catch(() => undefined);
       await rm(parentDirectory, { recursive: true, force: true });
     }
+  });
+});
+
+test.describe("Compact Add project context", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("canceling Add project preserves the sidebar", async ({ page }) => {
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await openAddProjectFlow(page);
+    await page.keyboard.press("Escape");
+    await expect(addProjectFlow(page)).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Close menu", exact: true })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(page.getByTestId("sidebar-search")).toBeVisible();
+  });
+  test("successful Add project reveals the new workspace page", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await gotoAppShell(page);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+    await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
+    await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName);
+    await page.keyboard.press("Enter");
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+    await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
   });
 });

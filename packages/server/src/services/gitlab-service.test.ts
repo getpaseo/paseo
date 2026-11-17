@@ -260,6 +260,38 @@ const DISCUSSIONS = [
   },
 ];
 
+describe("createGitLabService getReferenceRepository", () => {
+  it("names the project a fork was forked from, asking about the origin project explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          path_with_namespace: "example-group/example-project",
+          forked_from_project: { path_with_namespace: "upstream-group/sub/example-project" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-group/sub/example-project",
+    );
+    expect(calls).toEqual([["api", "projects/example-group%2Fexample-project"]]);
+  });
+
+  it("rejects when glab api answers with an error body", async () => {
+    const { service } = makeService(() => ok(JSON.stringify({ message: "404 Project Not Found" })));
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a project that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ path_with_namespace: "example-group/example-project" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGitLabService", () => {
   it("maps a glab merge request view to the neutral current PR status", async () => {
     const { service, calls } = makeService((args) =>
@@ -357,14 +389,16 @@ describe("createGitLabService", () => {
     expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
-  it("does not attach the latest historical merge request after a reused branch advances", async () => {
+  it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
     const stale = {
       ...OPEN_MR,
       state: "merged",
       source_branch: "dev",
       sha: "1111111111111111111111111111111111111111",
     };
-    const { service, calls } = makeService(() => ok(JSON.stringify([stale])));
+    const { service, calls } = makeService((args) =>
+      ok(JSON.stringify(args[1] === "list" ? [stale] : stale)),
+    );
 
     await expect(
       service.getCurrentPullRequestStatus({
@@ -372,8 +406,8 @@ describe("createGitLabService", () => {
         headRef: "dev",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toBeNull();
-    expect(calls).toEqual([currentMrListArgs("dev")]);
+    ).resolves.toMatchObject({ state: "merged" });
+    expect(calls[0]).toEqual(currentMrListArgs("dev"));
   });
 
   it("looks up a numeric current branch through the source-branch list filter", async () => {

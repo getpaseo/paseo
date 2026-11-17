@@ -1,4 +1,5 @@
 import * as React from "react";
+import { type Locale, localizePath } from "~/i18n";
 import type { DesktopPlatform, MobilePlatform } from "~/platform";
 
 export function releaseBase(version: string) {
@@ -44,11 +45,12 @@ export function parseReleaseAssetUrl(value: unknown): string | null {
 }
 
 /** Download buttons link here; the thanks page starts the download itself. */
-export function thanksPageHref(fileUrl: string): string {
-  return `/download/thanks?${new URLSearchParams({ file: fileUrl })}`;
+export function thanksPageHref(fileUrl: string, locale: Locale): string {
+  return localizePath(`/download/thanks?${new URLSearchParams({ file: fileUrl })}`, locale);
 }
 
 export const appStoreUrl = "https://apps.apple.com/app/paseo-pocket-engineer/id6758887924";
+export const testFlightBetaUrl = "https://testflight.apple.com/join/Y5HpSQjJ";
 export const playStoreUrl = "https://play.google.com/store/apps/details?id=sh.paseo";
 export const webAppUrl = "https://app.paseo.sh";
 
@@ -61,15 +63,20 @@ export interface PrimaryDownload {
 export function getDesktopDownload(
   release: ReleaseAssetInfo,
   platform: DesktopPlatform,
+  locale: Locale,
 ): PrimaryDownload {
   const urls = downloadUrls(release);
   switch (platform) {
     case "windows":
-      return { label: "Windows", href: thanksPageHref(urls.windowsExeX64), icon: WindowsIcon };
+      return {
+        label: "Windows",
+        href: thanksPageHref(urls.windowsExeX64, locale),
+        icon: WindowsIcon,
+      };
     case "linux":
-      return { label: "Linux", href: thanksPageHref(urls.linuxAppImage), icon: LinuxIcon };
+      return { label: "Linux", href: thanksPageHref(urls.linuxAppImage, locale), icon: LinuxIcon };
     case "mac":
-      return { label: "Mac", href: thanksPageHref(urls.macAppleSilicon), icon: AppleIcon };
+      return { label: "Mac", href: thanksPageHref(urls.macAppleSilicon, locale), icon: AppleIcon };
   }
 }
 

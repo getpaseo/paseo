@@ -32,6 +32,7 @@ test.describe("Sidebar project filter", () => {
       await page.getByTestId("sidebar-display-preferences-menu").click();
       await expect(page.getByRole("menuitem")).toHaveText([
         /^Grouping/,
+        /^Sort/,
         /^Title/,
         "Show",
         "Project",

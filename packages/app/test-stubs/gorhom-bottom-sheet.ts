@@ -22,6 +22,10 @@ export function useBottomSheetModal(): never {
 export function useBottomSheet(): never {
   throw new Error("useBottomSheet is unavailable in tests");
 }
+// A drag area only hands its gesture to a sheet; with no sheet drawn there is nothing to drag.
+export function useBottomSheetGestureHandlers(): never {
+  throw new Error("useBottomSheetGestureHandlers is unavailable in tests");
+}
 export const BottomSheetModalInternalProvider = PassThrough;
 export const INITIAL_CONTAINER_LAYOUT = {
   height: 0,

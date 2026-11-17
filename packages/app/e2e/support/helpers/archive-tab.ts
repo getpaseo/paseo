@@ -219,6 +219,11 @@ export async function expectWorkspaceArchiveOutcome(
   await expectWorkspaceTabVisible(page, input.survivingAgentId);
 }
 
+export async function closeActiveAgentWithShortcut(page: Page, agentId: string): Promise<void> {
+  await page.keyboard.press("Alt+Shift+w");
+  await expectWorkspaceTabHidden(page, agentId);
+}
+
 export async function closeWorkspaceAgentTab(page: Page, agentId: string): Promise<void> {
   const closeButton = page.getByTestId(`workspace-agent-close-${agentId}`).filter({
     visible: true,
@@ -235,6 +240,10 @@ export async function expectArchivedAgentFocused(page: Page, agentId: string): P
   ).toBeVisible({
     timeout: 30_000,
   });
+}
+
+export async function unarchiveAgentFromConversation(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Unarchive", exact: true }).click();
 }
 
 export async function reloadWorkspace(page: Page, workspaceId: string): Promise<void> {

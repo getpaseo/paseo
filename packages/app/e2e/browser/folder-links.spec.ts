@@ -81,6 +81,8 @@ for (const folder of [
   "docs/guides",
   "docs/guides/",
   "docs/指南",
+  "examples/next.js/",
+  "examples/next.js",
 ]) {
   test(`chat folder link opens folder contents: ${folder}`, async ({ page }) => {
     const session = await seedMockAgentWorkspace({
@@ -92,6 +94,9 @@ for (const folder of [
     try {
       await mkdir(path.join(session.cwd, folder), { recursive: true });
       await writeFile(path.join(session.cwd, folder, "guide.md"), "# Folder link destination\n");
+      const competingFile = path.join(session.cwd, "repo-a", folder.replace(/\/$/, ""));
+      await mkdir(path.dirname(competingFile), { recursive: true });
+      await writeFile(competingFile, "This is a file, not the requested folder.\n");
       await session.client.waitForFinish(session.agentId, 30_000);
       await page.addInitScript(() => {
         localStorage.setItem(

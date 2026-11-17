@@ -24,6 +24,7 @@ const SECTION_LABELS = {
   appearance: "Appearance",
   sidebar: "Sidebar",
   editor: "Editor",
+  files: "Files",
   terminal: "Terminal",
   browser: "Browser",
   shortcuts: "Shortcuts",
@@ -41,6 +42,7 @@ type HostSection =
   | "pair-device"
   | "agents"
   | "metadata"
+  | "voice"
   | "workspaces"
   | "providers"
   | "usage"
@@ -54,6 +56,119 @@ export async function openSettingsSection(page: Page, section: SettingsSection):
 
   await sidebar.getByRole("button", { name: SECTION_LABELS[section], exact: true }).click();
   await expectAppRoute(page, buildSettingsSectionRoute(section));
+}
+
+export async function revealSettingsSidebarSection(
+  page: Page,
+  section: SettingsSection,
+): Promise<number> {
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: SECTION_LABELS[section], exact: true })
+    .scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollSettled(
+  page: Page,
+  offset: number,
+): Promise<void> {
+  // RN Web emits its final scroll callback 100 ms after scrolling stops.
+  await page.waitForTimeout(200);
+  await expectSettingsSidebarScrollOffset(page, offset);
+}
+
+export async function selectSettingsHostSectionsRapidly(page: Page): Promise<void> {
+  for (let selection = 0; selection < 5; selection += 1) {
+    await page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("button", { name: "Providers", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("button", { name: "Terminals", exact: true })
+      .click();
+    await expectSettingsHeader(page, "Terminals");
+  }
+}
+
+export async function scrollSettingsSidebarUp(page: Page, pixels: number): Promise<void> {
+  await page.getByTestId("settings-sidebar-scroll-body").hover();
+  await page.mouse.wheel(0, -pixels);
+}
+
+export async function changeSettingsInterfaceFontSize(page: Page, size: number): Promise<void> {
+  const input = page.getByRole("textbox", { name: "Interface font size" });
+  await input.fill(String(size));
+  await input.press("Tab");
+  await expect(input).toHaveValue(String(size));
+  await expect(
+    page.getByRole("navigation", { name: "Settings" }).getByText("Appearance", { exact: true }),
+  ).toHaveCSS("font-size", `${size}px`);
+}
+
+export async function changeSettingsInterfaceFontSizeKeepingSidebarPosition(
+  page: Page,
+  size: number,
+): Promise<number> {
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  const anchor = navigation.getByRole("button", { name: "About", exact: true });
+  const before = await anchor.evaluate((node) => ({
+    top: node.getBoundingClientRect().top,
+    height: node.getBoundingClientRect().height,
+  }));
+  await changeSettingsInterfaceFontSize(page, size);
+  // Larger fonts reflow rows. Preserve the visible destination, rather than its old pixel offset.
+  await expect
+    .poll(() =>
+      anchor.evaluate((node, top) => Math.abs(node.getBoundingClientRect().top - top), before.top),
+    )
+    .toBeLessThan(before.height);
+  const offset = await page
+    .getByTestId("settings-sidebar-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function scrollSettingsSidebarToEnd(page: Page): Promise<number> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await scrollBody.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect
+    .poll(() =>
+      scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight - node.scrollTop),
+    )
+    .toBe(0);
+  const offset = await scrollBody.evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  return offset;
+}
+
+export async function expectSettingsSidebarScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
+}
+
+export async function scrollSettingsDetailDown(page: Page): Promise<number> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect
+    .poll(() => scrollBody.evaluate((node) => node.scrollHeight - node.clientHeight))
+    .toBeGreaterThan(0);
+  await scrollBody.hover();
+  await page.mouse.wheel(0, 1000);
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  const offset = await scrollBody.evaluate((node) => node.scrollTop);
+  return offset;
+}
+
+export async function expectSettingsDetailScrollOffset(page: Page, offset: number): Promise<void> {
+  const scrollBody = page.getByTestId("settings-detail-scroll-body");
+  await expect.poll(() => scrollBody.evaluate((node) => node.scrollTop)).toBe(offset);
 }
 
 export async function openSettingsHost(page: Page, serverId: string): Promise<void> {
@@ -106,6 +221,14 @@ export async function addDirectHostFromSettings(
   }
   await page.getByTestId("direct-host-submit").click();
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
+}
+
+export async function expectAddHostFieldDrawnAsInput(page: Page, testId: string): Promise<void> {
+  const field = page.getByTestId(testId);
+  await expect(field).toBeVisible();
+  await expect(field).toHaveCSS("border-top-width", "1px");
+  await expect(field).not.toHaveCSS("padding-left", "0px");
+  await expect(field).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 }
 
 export async function toggleHostAdvanced(page: Page): Promise<void> {
@@ -263,7 +386,22 @@ export async function expectDirectHostFormValues(
 }
 
 export async function expectDirectHostSslEnabled(page: Page): Promise<void> {
+  await expect(page.getByRole("checkbox", { name: "Use SSL", exact: true })).toBeChecked();
   await expect(page.getByTestId("direct-ssl-toggle-checked")).toBeVisible();
+}
+
+export async function fillDirectHostAddress(page: Page, host: string, port: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Host", exact: true }).fill(host);
+  await page.getByRole("textbox", { name: "Port", exact: true }).fill(port);
+}
+
+export async function toggleDirectHostSsl(page: Page): Promise<void> {
+  await page.getByRole("checkbox", { name: "Use SSL", exact: true }).click();
+}
+
+export async function expectDirectHostSslDisabled(page: Page): Promise<void> {
+  await expect(page.getByRole("checkbox", { name: "Use SSL", exact: true })).not.toBeChecked();
+  await expect(page.getByTestId("direct-ssl-toggle-checked")).toHaveCount(0);
 }
 
 export async function expectDirectHostUriValue(page: Page, uri: string): Promise<void> {
@@ -323,6 +461,25 @@ export async function expectHostInjectMcpCard(page: Page): Promise<void> {
   const card = page.getByTestId("host-page-inject-mcp-card");
   await expect(card).toBeVisible();
   await expect(card.getByRole("switch", { name: "Inject Paseo tools" })).toBeVisible();
+}
+
+function idleAgentReleaseSwitch(page: Page) {
+  return page
+    .getByTestId("host-page-idle-runtime-cleanup-card")
+    .getByRole("switch", { name: "Release idle agents" });
+}
+
+export async function expectIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toBeEnabled();
+  await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+}
+
+export async function setIdleAgentRelease(page: Page, enabled: boolean): Promise<void> {
+  const toggle = idleAgentReleaseSwitch(page);
+  await expect(toggle).toHaveAttribute("aria-checked", String(!enabled));
+  await toggle.click();
+  await expectIdleAgentRelease(page, enabled);
 }
 
 export async function openHostSection(
@@ -452,4 +609,231 @@ export async function removeHostFromHostPage(page: Page, serverId: string): Prom
 export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
   await expect(page.getByTestId("host-page-identity")).toContainText("Online");
   await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
+}
+
+function restartRecoverySwitch(page: Page) {
+  return page.getByRole("switch", { name: "Resume agents after restart", exact: true });
+}
+
+function restartRecoveryEditButton(page: Page) {
+  return page.getByRole("button", { name: "Edit prompt", exact: true });
+}
+
+export async function setRestartRecoveryEnabled(page: Page, enabled: boolean) {
+  const toggle = restartRecoverySwitch(page);
+  await toggle.click();
+  await expectRestartRecoveryEnabled(page, enabled);
+}
+
+// The prompt is only editable while restart recovery is on.
+export async function expectRestartRecoveryEnabled(page: Page, enabled: boolean) {
+  await expect(restartRecoverySwitch(page)).toBeChecked({ checked: enabled });
+  await expect(restartRecoveryEditButton(page)).toBeEnabled({ enabled });
+}
+
+export async function editRestartRecoveryPrompt(page: Page, prompt: string) {
+  await restartRecoveryEditButton(page).click();
+  const sheet = page.getByTestId("host-page-restart-recovery-sheet");
+  await sheet.getByRole("textbox", { name: "Resume prompt", exact: true }).fill(prompt);
+  await sheet.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}
+
+export async function expectRestartRecoveryPrompt(page: Page, prompt: string) {
+  await restartRecoveryEditButton(page).click();
+  const sheet = page.getByTestId("host-page-restart-recovery-sheet");
+  await expect(sheet.getByRole("textbox", { name: "Resume prompt", exact: true })).toHaveValue(
+    prompt,
+  );
+  await sheet.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+}
+
+export async function revealSettingsSyntaxTheme(page: Page) {
+  await page.getByLabel(/Highlight theme:/).scrollIntoViewIfNeeded();
+  const offset = await page
+    .getByTestId("settings-detail-scroll-body")
+    .evaluate((node) => node.scrollTop);
+  expect(offset).toBeGreaterThan(0);
+  const keywordColor = await page
+    .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+    .getByText("export", { exact: true })
+    .first()
+    .evaluate((node) => getComputedStyle(node).color);
+  return { offset, keywordColor };
+}
+
+export async function changeSettingsSyntaxTheme(page: Page, theme: string): Promise<void> {
+  await page.getByLabel(/Highlight theme:/).click();
+  await page.getByRole("menuitem", { name: theme, exact: true }).click();
+  await expect(page.getByLabel(`Highlight theme: ${theme}`, { exact: true })).toBeVisible();
+}
+
+export async function expectSettingsSyntaxColorChanged(
+  page: Page,
+  previousColor: string,
+): Promise<void> {
+  await expect(
+    page
+      .getByRole("img", { name: "Live preview of content typography, syntax theme, and code font" })
+      .getByText("export", { exact: true })
+      .first(),
+  ).not.toHaveCSS("color", previousColor);
+}
+
+export async function changeSettingsTypography(page: Page): Promise<void> {
+  const input = page.getByRole("textbox", { name: "Interface font size", exact: true });
+  await input.fill("18");
+  await input.press("Enter");
+  await expect(input).toHaveValue("18");
+  await expect(input).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Code size", { exact: true })).toHaveCSS("font-size", "18px");
+  const navigation = page.getByRole("navigation", { name: "Settings" });
+  await expect(navigation.getByText("Appearance", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(navigation.getByText("Providers", { exact: true })).toHaveCSS("font-size", "18px");
+  await expect(page.getByText("Dracula", { exact: true })).toHaveCSS("font-size", "18px");
+  const familyInput = page.getByRole("textbox", { name: "Code font family", exact: true });
+  await familyInput.fill("Courier New, Courier, monospace");
+  await familyInput.press("Enter");
+  const codeInput = page.getByRole("textbox", { name: "Code font size", exact: true });
+  await codeInput.fill("16");
+  await codeInput.press("Enter");
+  await expect(codeInput).toHaveValue("16");
+  const preview = page.getByRole("img", {
+    name: "Live preview of content typography, syntax theme, and code font",
+  });
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS("font-size", "16px");
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "line-height",
+    "24px",
+  );
+  await expect(preview.getByText("export", { exact: true }).first()).toHaveCSS(
+    "font-family",
+    /Courier/,
+  );
+  const contentInput = page.getByRole("textbox", { name: "Content font size", exact: true });
+  await contentInput.fill("20");
+  await contentInput.press("Enter");
+  await expect(preview.getByText("Readable content and code preview", { exact: true })).toHaveCSS(
+    "font-size",
+    "20px",
+  );
+}
+
+export async function normalizeSettingsFontSizes(page: Page): Promise<void> {
+  for (const [name, minimum, maximum] of [
+    ["Interface font size", "10", "21"],
+    ["Content font size", "10", "21"],
+    ["Code font size", "9", "22"],
+  ] as const) {
+    const input = page.getByRole("textbox", { name, exact: true });
+    await input.fill("999");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    // Clamp again when the saved value is already at the maximum.
+    await input.fill("999");
+    await input.press("Tab");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("");
+    await input.press("Enter");
+    await expect(input).toHaveValue(maximum);
+    await input.fill("1");
+    await input.press("Enter");
+    await expect(input).toHaveValue(minimum);
+    await input.fill("1");
+    await input.press("Tab");
+    await expect(input).toHaveValue(minimum);
+  }
+}
+
+/** Sample actual paints, including the first workspace frame after Settings. */
+export async function captureCompactSidebarReturn(page: Page, returnAction: () => Promise<void>) {
+  await page.evaluate(() => {
+    const capture = {
+      frames: [] as {
+        time: number;
+        pathname: string;
+        sidebarVisible: boolean;
+        settingsVisible: boolean;
+        closeX: number | null;
+      }[],
+      stopped: false,
+    };
+    Object.assign(window, { __sidebarFrameCapture: capture });
+    const start = performance.now();
+    function sample() {
+      if (capture.stopped) return;
+      const close = document.querySelector('[data-testid="sidebar-close"]');
+      capture.frames.push({
+        time: performance.now() - start,
+        pathname: location.pathname,
+        settingsVisible:
+          document
+            .querySelector('[data-testid="settings-sidebar"]')
+            ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false,
+        sidebarVisible:
+          (close?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) ?? false) &&
+          close!.getBoundingClientRect().x >= 0 &&
+          close!.getBoundingClientRect().right <= innerWidth,
+        closeX: close?.getBoundingClientRect().x ?? null,
+      });
+      requestAnimationFrame(sample);
+    }
+    requestAnimationFrame(sample);
+  });
+  await returnAction();
+  return page.evaluate(async () => {
+    const capture = (
+      window as typeof window & {
+        __sidebarFrameCapture: {
+          frames: {
+            time: number;
+            pathname: string;
+            sidebarVisible: boolean;
+            settingsVisible: boolean;
+            closeX: number | null;
+          }[];
+          stopped: boolean;
+        };
+      }
+    ).__sidebarFrameCapture;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+    capture.stopped = true;
+    return capture.frames;
+  });
+}
+
+export async function captureCompactSidebarContext(page: Page) {
+  const sidebar = await page.getByTestId("sidebar-project-workspace-list-scroll").elementHandle();
+  if (!sidebar) throw new Error("Open sidebar has no workspace list");
+  await expect
+    .poll(() => sidebar.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
+  const offset = await sidebar.evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop;
+  });
+  expect(offset).toBeGreaterThan(0);
+  return async () => {
+    expect(await sidebar.evaluate((el) => el.isConnected)).toBe(true);
+    expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(offset);
+    await sidebar.dispose();
+  };
+}
+
+export async function expectCompactSidebarOpen(page: Page) {
+  await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeInViewport();
+}
+
+export async function closeCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Close sidebar", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open menu", exact: true }).first(),
+  ).toBeInViewport();
+}
+
+export async function openSettingsFromCompactSidebar(page: Page) {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectAppRoute(page, buildSettingsRoute());
+  await expectCompactSettingsList(page);
 }

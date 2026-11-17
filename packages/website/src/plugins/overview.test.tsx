@@ -1,8 +1,14 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import registry from "../../e2e/registry.fixture.json";
 import { PluginTile } from "./plugin-tile";
 import { PluginCard } from "./plugin-card";
 import { authorAvatarUrl, getAuthor, type Plugin } from "./registry";
-import React, { createElement } from "react";
+import React, { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseFragment, type DefaultTreeAdapterMap } from "parse5";
 import { describe, expect, it } from "vitest";
@@ -20,7 +26,14 @@ function elements(html: string): Element[] {
   return result;
 }
 function render(markdown: string) {
-  return renderToStaticMarkup(<PluginOverview>{markdown}</PluginOverview>);
+  return renderToStaticMarkup(<PluginOverview lang="en">{markdown}</PluginOverview>);
+}
+/** Renders an element on an English page, as the site's route components do. */
+async function renderPage(element: ReactElement): Promise<string> {
+  const routeTree = createRootRoute({ component: () => element });
+  const router = createRouter({ routeTree, history: createMemoryHistory() });
+  await router.load();
+  return renderToStaticMarkup(<RouterProvider router={router} />);
 }
 function attribute(element: Element, name: string) {
   return element.attrs.find((attr) => attr.name === name)?.value;
@@ -120,27 +133,27 @@ describe("registry images", () => {
     "vbscript:msgbox(1)",
     "./icon.png",
     "//example.com/x",
-  ])("does not load %s in cards or icons", (url) => {
+  ])("does not load %s in cards or icons", async (url) => {
     const plugin = { ...registry.plugins[0], icon: url, media: [url] } as Plugin;
     for (const component of [
       createElement(PluginTile, { plugin, size: "sm" }),
       createElement(PluginCard, { plugin }),
     ]) {
       expect(
-        imageSources(renderToStaticMarkup(component)).filter((src) => src !== avatarUrl(plugin)),
+        imageSources(await renderPage(component)).filter((src) => src !== avatarUrl(plugin)),
       ).toEqual([]);
     }
   });
 });
 
-it("uses the first HTTPS screenshot when an earlier screenshot is rejected", () => {
+it("uses the first HTTPS screenshot when an earlier screenshot is rejected", async () => {
   const source = "https://example.com/screenshot.png";
   const plugin = {
     ...registry.plugins[0],
     icon: undefined,
     media: ["data:image/png;base64,AAAA", source],
   } as Plugin;
-  expect(imageSources(renderToStaticMarkup(createElement(PluginCard, { plugin })))).toEqual([
+  expect(imageSources(await renderPage(createElement(PluginCard, { plugin })))).toEqual([
     source,
     avatarUrl(plugin),
   ]);

@@ -1,3 +1,4 @@
+import { revealWorkspaceTab } from "./navigation";
 import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
 import {
   collectAllTabs,
@@ -5,6 +6,7 @@ import {
   DEFAULT_PANE_ID,
   findPaneById,
   findPaneContainingTab,
+  selectSheetTab,
   useWorkspaceLayoutStore,
   type WorkspaceTabPlacement,
 } from "@/stores/workspace-layout-store";
@@ -117,13 +119,16 @@ export function openWorkspaceTargetAtLocation(
     const parentPane = findPaneContainingTab(layout.root, input.parentTabId);
     placement = parentPane ? { mode: "prefer", paneId: parentPane.id } : undefined;
   }
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement,
-    parentTabId: input.parentTabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement,
+      parentTabId: input.parentTabId ?? undefined,
+    }),
+  );
 }
 
 /** Opens a tree selection while reusing an unmodified preview in its destination pane. */
@@ -140,7 +145,7 @@ export function openPreferredWorkspacePreview(
   // The sheet is already a single replaceable slot, so it needs no preview tab.
   if (
     existing ||
-    store.opensInSheet({ workspaceKey: input.workspaceKey, target: input.target, intent: "reveal" })
+    selectSheetTab(store, { workspaceKey: input.workspaceKey, target: input.target }) !== null
   ) {
     return openPreferredWorkspaceTarget(input);
   }
@@ -170,15 +175,21 @@ export function openPreferredWorkspacePreview(
       nextTarget: input.target,
     })
   ) {
-    return store.replaceTab(input.workspaceKey, activeTab.tabId, input.target);
+    return revealWorkspaceTab(
+      input.workspaceKey,
+      store.replaceTab(input.workspaceKey, activeTab.tabId, input.target),
+    );
   }
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement: { mode: "pane", paneId: destinationPaneId },
-    parentTabId: input.parentTabId ?? activeTab?.tabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement: { mode: "pane", paneId: destinationPaneId },
+      parentTabId: input.parentTabId ?? activeTab?.tabId ?? undefined,
+    }),
+  );
 }
 
 /**
@@ -192,11 +203,14 @@ export function openWorkspaceTargetBeside(input: OpenWorkspaceTargetInput): stri
   }
   const store = useWorkspaceLayoutStore.getState();
   const paneId = store.ensureSidePane(input.workspaceKey);
-  return store.openTab({
-    workspaceKey: input.workspaceKey,
-    target: input.target,
-    intent: "reveal",
-    placement: paneId ? { mode: "pane", paneId } : undefined,
-    parentTabId: input.parentTabId ?? undefined,
-  });
+  return revealWorkspaceTab(
+    input.workspaceKey,
+    store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: input.target,
+      intent: "reveal",
+      placement: paneId ? { mode: "pane", paneId } : undefined,
+      parentTabId: input.parentTabId ?? undefined,
+    }),
+  );
 }

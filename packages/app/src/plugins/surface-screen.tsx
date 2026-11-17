@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
+import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
 import { useCallback, useMemo, type ComponentType } from "react";
@@ -12,14 +12,19 @@ import { ScreenHeader } from "@/components/headers/screen-header";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HostFilter } from "@/components/hosts/host-filter";
 import type { HostPickerHost } from "@/components/hosts/host-picker";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
+import {
+  useHostRuntimeClient,
+  useHostRuntimeConnectionStatus,
+  useHosts,
+} from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { usePluginHostNavigation } from "./host-navigation";
-import { resolvePluginIcon } from "./icons";
+import { PluginIconView } from "./icons";
 import { toPluginTheme } from "./theme";
-import { useInstalledPlugin, usePluginInstallations } from "./registry";
+import { useInstalledPlugin, usePluginCatalogStatus, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute, pluginScreenParamsFromRoute } from "./routes";
 import {
   legacySidebarItemHostKey,
@@ -32,7 +37,9 @@ import {
   getPluginSurfaceContributionServerIds,
   resolvePluginScreenTitle,
   resolvePluginSurfaceContribution,
+  resolvePluginSurfacePlaceholder,
   type PluginSurfaceContributionIdentity,
+  type PluginSurfacePlaceholderStatus,
 } from "./surface-contribution";
 import { resolvePluginPlatform } from "./platform";
 
@@ -42,19 +49,35 @@ const pluginThemeMapping = (theme: Theme) => ({
   theme: toPluginTheme(theme),
 });
 const ThemedX = withUnistyles(X);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const SURFACE_ERRORS = {
+  offline: "Plugin host is offline.",
+  error: "Could not load plugins. Reconnect to try again.",
+  unavailable: "This plugin surface is unavailable.",
+} as const;
+
+function PluginSurfacePlaceholder({ status }: { status: PluginSurfacePlaceholderStatus }) {
+  if (status === "loading") {
+    return (
+      <View
+        testID="plugin-surface-loading"
+        accessibilityRole="progressbar"
+        accessibilityLabel="Loading plugin"
+        style={styles.loading}
+      >
+        <ThemedLoadingSpinner size="large" uniProps={mutedColorMapping} />
+      </View>
+    );
+  }
+  return <Text style={styles.errorText}>{SURFACE_ERRORS[status]}</Text>;
+}
 
 function routeParam(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-function PluginHeaderIcon({
-  Icon,
-  color = "",
-}: {
-  Icon: ReturnType<typeof resolvePluginIcon>;
-  color?: string;
-}) {
-  return <Icon size={16} color={color} />;
+function PluginHeaderIcon({ icon, color = "" }: { icon: PluginIcon; color?: string }) {
+  return <PluginIconView icon={icon} size={16} color={color} />;
 }
 
 const ThemedPluginHeaderIcon = withUnistyles(PluginHeaderIcon);
@@ -143,6 +166,9 @@ export function PluginSurfaceScreen() {
   const installations = usePluginInstallations(pluginId);
   const hosts = useHosts();
   const client = useHostRuntimeClient(serverId);
+  const connectionStatus = useHostRuntimeConnectionStatus(serverId);
+  const catalogStatus = usePluginCatalogStatus(serverId);
+  const placeholderStatus = resolvePluginSurfacePlaceholder({ connectionStatus, catalogStatus });
   const compact = useIsCompactFormFactor();
   const { sidebarItem, surface } = useMemo(
     () => resolvePluginSurfaceContribution(plugin, identity),
@@ -155,14 +181,15 @@ export function PluginSurfaceScreen() {
     const serverIds = getPluginSurfaceContributionServerIds(installations, pluginId, identity);
     return hosts.filter((candidate) => serverIds.includes(candidate.serverId));
   }, [hosts, identity, installations, pluginId]);
-  const title = useMemo(
-    () =>
-      surface
-        ? resolvePluginScreenTitle(surface, sidebarItem, params)
-        : (sidebarItem?.title ?? (pluginId || "Plugin")),
-    [params, pluginId, sidebarItem, surface],
-  );
-  const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
+  const title = useMemo(() => {
+    if (surface && plugin)
+      return resolvePluginScreenTitle(surface, sidebarItem, params, (text) =>
+        plugin.i18n.resolve(text, plugin.locale),
+      );
+    if (sidebarItem && plugin) return plugin.i18n.resolve(sidebarItem.title, plugin.locale);
+    return pluginId || "Plugin";
+  }, [params, plugin, pluginId, sidebarItem, surface]);
+  const icon = sidebarItem?.icon ?? null;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
@@ -172,15 +199,15 @@ export function PluginSurfaceScreen() {
   const headerLeft = useMemo(
     () => (
       <>
-        {Icon ? (
+        {icon ? (
           <HeaderIconBadge>
-            <ThemedPluginHeaderIcon Icon={Icon} uniProps={mutedColorMapping} />
+            <ThemedPluginHeaderIcon icon={icon} uniProps={mutedColorMapping} />
           </HeaderIconBadge>
         ) : null}
         <ScreenTitle testID="plugin-surface-title">{title}</ScreenTitle>
       </>
     ),
-    [Icon, title],
+    [icon, title],
   );
   const hostFilter = useMemo(
     () =>
@@ -244,9 +271,7 @@ export function PluginSurfaceScreen() {
             />
           </SurfaceErrorBoundary>
         ) : (
-          <Text style={styles.errorText}>
-            {plugin && surface ? "Plugin host is offline." : "This plugin surface is unavailable."}
-          </Text>
+          <PluginSurfacePlaceholder status={placeholderStatus} />
         )}
       </View>
     </View>
@@ -260,6 +285,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   body: {
     flex: 1,
+  },
+  loading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   errorText: {
     color: theme.colors.statusDanger,

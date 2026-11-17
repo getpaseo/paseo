@@ -50,6 +50,29 @@ interface GitActionRuntimeState {
   handler: () => void;
 }
 
+export function isCurrentBranchBase(
+  currentBranch: string | null | undefined,
+  baseRef: string | null | undefined,
+): boolean {
+  if (!currentBranch || !baseRef) return false;
+  if (baseRef.startsWith("refs/heads/")) return baseRef === `refs/heads/${currentBranch}`;
+  if (baseRef.startsWith("refs/")) return false;
+  // Older hosts send a display name, which cannot distinguish a local ref from its remote.
+  return currentBranch === baseRef.replace(/^origin\//, "");
+}
+
+export function canMergeIntoLocalBase(
+  currentBranch: string | null | undefined,
+  baseRef: string | null | undefined,
+): boolean {
+  if (!currentBranch || !baseRef) return false;
+  if (baseRef.startsWith("refs/remotes/") && !baseRef.startsWith("refs/remotes/origin/")) {
+    return false;
+  }
+  const localTarget = baseRef.replace(/^(?:refs\/heads\/|refs\/remotes\/origin\/|origin\/)/, "");
+  return currentBranch !== localTarget;
+}
+
 export interface BuildGitActionsInput {
   isGit: boolean;
   githubFeaturesEnabled: boolean;
@@ -68,6 +91,7 @@ export interface BuildGitActionsInput {
   hasRemote: boolean;
   isPaseoOwnedWorktree: boolean;
   isOnBaseBranch: boolean;
+  canMergeLocally: boolean;
   hasUncommittedChanges: boolean;
   baseRefAvailable: boolean;
   baseRefLabel: string;
@@ -312,6 +336,18 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
   };
 }
 
+/**
+ * The actions a flattened list shows after the primary. `secondary` keeps the actions the policy
+ * can promote to `primary`, and the translator rebuilds those objects, so a flattening consumer
+ * has to drop the promoted one by id or it renders it twice.
+ */
+export function actionsWithoutPrimary(gitActions: GitActions): GitAction[] {
+  const primaryActionId = gitActions.primary?.id;
+  return [...gitActions.secondary, ...gitActions.menu].filter(
+    (action) => action.id !== primaryActionId,
+  );
+}
+
 function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (input.shouldPromoteArchive) {
     return "archive-workspace";
@@ -337,7 +373,7 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (input.shipDefault === "pr" && canUsePullRequestActionAsShipDefault(input)) {
     return "pr";
   }
-  if (!input.isOnBaseBranch && input.aheadCount > 0) {
+  if (!input.isOnBaseBranch && input.canMergeLocally && input.aheadCount > 0) {
     return "merge-branch";
   }
   if (!input.isOnBaseBranch && canMergeFromBase(input)) {
@@ -368,7 +404,7 @@ function getPullRequestActionIds(filter: {
 function getFeatureActionIds(input: BuildGitActionsInput): GitActionId[] {
   return [
     "merge-from-base",
-    "merge-branch",
+    ...(input.canMergeLocally ? (["merge-branch"] as const) : []),
     ...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }),
   ];
 }

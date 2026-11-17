@@ -1,11 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  findSteeredMessageParent,
   revertClaudeConversation,
   revertClaudeConversationAndFiles,
   revertClaudeFiles,
@@ -217,4 +226,96 @@ describe("Claude rewind against the Claude SDK", () => {
       "first reply",
     ]);
   });
+
+  test("forks just before a message steered into a running turn", async () => {
+    tempRoot = mkdtempSync(path.join(tmpdir(), "claude-rewind-steer-"));
+    delete process.env.CLAUDE_CONFIG_DIR;
+    const projectDir = path.join(tempRoot, "projects", "-repo");
+    mkdirSync(projectDir, { recursive: true });
+    const sessionId = randomUUID();
+    const firstUser = randomUUID();
+    const toolUse = randomUUID();
+    const toolResult = randomUUID();
+    const steeredMessage = randomUUID();
+    const queuedCommand = randomUUID();
+    const transcriptPath = path.join(projectDir, `${sessionId}.jsonl`);
+    writeTranscript(transcriptPath, sessionId, [
+      { type: "user", uuid: firstUser, parentUuid: null, text: "first" },
+      { type: "assistant", uuid: toolUse, parentUuid: firstUser, text: "running a tool" },
+      { type: "user", uuid: toolResult, parentUuid: toolUse, text: "tool output" },
+      // What Claude Code writes when it reads a steered message between two tool calls.
+      JSON.stringify({
+        type: "attachment",
+        uuid: queuedCommand,
+        parentUuid: toolResult,
+        sessionId,
+        attachment: {
+          type: "queued_command",
+          prompt: [{ type: "text", text: "steered" }],
+          source_uuid: steeredMessage,
+        },
+      }),
+      { type: "assistant", uuid: randomUUID(), parentUuid: queuedCommand, text: "reply to steer" },
+    ]);
+
+    const parent = await findSteeredMessageParent(transcriptPath, steeredMessage);
+    expect(parent).toBe(toolResult);
+    expect(await findSteeredMessageParent(transcriptPath, randomUUID())).toBeNull();
+
+    let currentSessionId = sessionId;
+    await revertClaudeConversation({
+      sdk: realClaudeRewindSdk,
+      sessionId,
+      transcriptPath,
+      messageId: parent!,
+      setSessionId: (nextSessionId) => {
+        currentSessionId = nextSessionId;
+      },
+    });
+    expect(readMessageTexts(path.join(projectDir, `${currentSessionId}.jsonl`))).toEqual([
+      "first",
+      "running a tool",
+      "tool output",
+    ]);
+  });
 });
+
+test.runIf(process.platform === "linux")(
+  "releases the transcript descriptor after an early steer match",
+  async () => {
+    const artifacts = path.resolve(".artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const root = mkdtempSync(path.join(artifacts, "claude-rewind-descriptor-"));
+    const transcriptPath = path.join(root, "session.jsonl");
+    const matchingEntry = {
+      type: "attachment",
+      parentUuid: "before-steer",
+      attachment: { type: "queued_command", source_uuid: "steered-message" },
+    };
+    const unreadEntry = JSON.stringify({ type: "assistant", message: "x".repeat(1024) });
+    writeFileSync(
+      transcriptPath,
+      JSON.stringify(matchingEntry) + "\n" + (unreadEntry + "\n").repeat(1200),
+    );
+    const openDescriptors = () =>
+      readdirSync("/proc/self/fd").filter((descriptor) => {
+        try {
+          return readlinkSync(path.join("/proc/self/fd", descriptor)) === transcriptPath;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+          throw error;
+        }
+      }).length;
+    try {
+      expect(openDescriptors()).toBe(0);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await expect(findSteeredMessageParent(transcriptPath, "steered-message")).resolves.toBe(
+          "before-steer",
+        );
+      }
+      await expect.poll(openDescriptors, { timeout: 1000 }).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

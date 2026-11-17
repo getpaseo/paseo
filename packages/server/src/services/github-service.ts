@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   isGitHubHost,
+  parseGitHubRemoteIdentity,
   parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
@@ -346,6 +347,7 @@ const CurrentPullRequestStatusSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().optional(),
+  updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
   reviewDecision: z.unknown().optional(),
@@ -524,7 +526,7 @@ query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) 
 }`;
 
 const CURRENT_PR_STATUS_BASE_FIELDS =
-  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
+  "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,updatedAt,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
 
 const PULL_REQUEST_STATUS_FACTS_QUERY = `
@@ -640,6 +642,7 @@ const BatchPollPrNodeSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().catch(""),
+  updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
   reviewDecision: z.unknown().optional(),
@@ -744,6 +747,7 @@ fragment PaseoPollPullRequest on PullRequest {
   baseRefName
   headRefName
   headRefOid
+  updatedAt
   mergedAt
   mergeable
   reviewDecision
@@ -956,6 +960,11 @@ interface GitHubServiceDependencies {
    * per invocation.
    */
   resolveRepoSlug: (cwd: string) => Promise<string | null>;
+  /**
+   * owner/name of the origin remote on any host: an SSH alias or Enterprise
+   * host included, which `resolveRepoSlug` leaves to `gh`.
+   */
+  resolveOriginRepository: (cwd: string) => Promise<string | null>;
 }
 
 export interface GitHubCommandRunnerOptions {
@@ -1047,6 +1056,7 @@ interface CreateGitHubServiceOptions {
   now?: () => number;
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
   resolveRepoSlug?: (cwd: string) => Promise<string | null>;
+  resolveOriginRepository?: (cwd: string) => Promise<string | null>;
 }
 
 type PullRequestCheckRunNode = z.infer<typeof PullRequestCheckRunNodeSchema>;
@@ -1118,6 +1128,7 @@ interface ResolvedPullRequestCandidate {
   status: CurrentPullRequestStatus;
   headSha?: string;
   headRepositoryOwner?: string;
+  updatedAt?: string;
 }
 
 export function createGitHubService(options: CreateGitHubServiceOptions = {}): GitHubService {
@@ -1128,6 +1139,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     now: options.now ?? Date.now,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
     resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
+    resolveOriginRepository: options.resolveOriginRepository ?? resolveOriginRepositoryPath,
   };
   // A resolved enterprise host is cached permanently; a null resolution (no
   // host, or the auth probe said no) expires so `gh auth login --hostname`
@@ -2539,6 +2551,26 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return { success: true };
     },
 
+    getReferenceRepository(input) {
+      return cached({
+        cwd: input.cwd,
+        method: "getReferenceRepository",
+        args: {},
+        readOptions: input,
+        load: async () => {
+          const repo = await deps.resolveOriginRepository(input.cwd);
+          if (!repo) {
+            return null;
+          }
+          // A failed lookup must reject: "no parent" is cached as a final answer.
+          const view = await readGitHubRepoView({ cwd: input.cwd, repo, run });
+          const parentOwner = view.parent?.owner?.login;
+          const parentName = view.parent?.name;
+          return parentOwner && parentName ? `${parentOwner}/${parentName}` : null;
+        },
+      });
+    },
+
     isAuthenticated(input) {
       return cached({
         cwd: input.cwd,
@@ -2968,7 +3000,7 @@ async function resolveCurrentPullRequestView(options: {
         headRepositoryOwner: options.headRepositoryOwner,
       })
     : null;
-  if (viewMatch) {
+  if (viewMatch?.status.state === "open") {
     return viewMatch.status;
   }
 
@@ -2980,12 +3012,13 @@ async function resolveCurrentPullRequestView(options: {
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
     if (!forkOwner) {
-      return null;
+      return viewMatch?.status ?? null;
     }
     if (parentOwner && parentName) {
       return resolveForkPullRequestView({
         ...options,
         forkOwner,
+        viewMatch,
         repo: `${parentOwner}/${parentName}`,
       });
     }
@@ -2998,7 +3031,7 @@ async function resolveCurrentPullRequestView(options: {
     run: options.run,
   });
   const match = pickPullRequestCandidate({
-    candidates,
+    candidates: viewMatch ? [...candidates, viewMatch] : candidates,
     headRef: options.headRef,
     headSha: options.headSha,
     headRepositoryOwner,
@@ -3019,6 +3052,7 @@ async function resolveForkPullRequestView(options: {
   headRef: string;
   headSha?: string;
   forkOwner: string;
+  viewMatch: ResolvedPullRequestCandidate | null;
   repo: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
@@ -3034,12 +3068,15 @@ async function resolveForkPullRequestView(options: {
     ),
   );
   const match = pickPullRequestCandidate({
-    candidates: candidates.filter(
-      (candidate): candidate is ResolvedPullRequestCandidate => candidate !== null,
-    ),
+    candidates: [
+      ...candidates.filter(
+        (candidate): candidate is ResolvedPullRequestCandidate =>
+          candidate !== null && candidate.headRepositoryOwner === options.forkOwner,
+      ),
+      ...(options.viewMatch ? [options.viewMatch] : []),
+    ],
     headRef: options.headRef,
     headSha: options.headSha,
-    headRepositoryOwner: options.forkOwner,
   });
   return match?.status ?? null;
 }
@@ -3215,20 +3252,53 @@ async function resolveGitHubSlugFromOrigin(cwd: string): Promise<string | null> 
   return parseGitHubRemoteUrl(stdout.trim())?.repo ?? null;
 }
 
-async function getGitHubRepoView(options: {
-  cwd: string;
-  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
-}): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
-  const args = ["repo", "view", "--json", "owner,name,parent"];
+async function resolveOriginRepositoryPath(cwd: string): Promise<string | null> {
+  let stdout: string;
   try {
-    const stdout = await options.run(args, {
-      cwd: options.cwd,
-    });
-    return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
-      args,
-      cwd: options.cwd,
-      emptyFallback: "{}",
-    });
+    ({ stdout } = await runGitCommand(["config", "--get", "remote.origin.url"], {
+      cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+    }));
+  } catch {
+    return null;
+  }
+  const location = parseGitRemoteLocation(stdout.trim());
+  return location ? (parseGitHubRemoteIdentity(location.path)?.repo ?? null) : null;
+}
+
+interface GitHubRepoViewOptions {
+  cwd: string;
+  /** owner/name to ask about; `gh` picks the default repository for the directory when absent. */
+  repo?: string;
+  run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
+}
+
+async function readGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema>> {
+  const args = [
+    "repo",
+    "view",
+    ...(options.repo ? [options.repo] : []),
+    "--json",
+    "owner,name,parent",
+  ];
+  const stdout = await options.run(args, {
+    cwd: options.cwd,
+  });
+  return parseGitHubJsonOutput(stdout, GitHubRepoViewSchema, {
+    args,
+    cwd: options.cwd,
+    emptyFallback: "{}",
+  });
+}
+
+async function getGitHubRepoView(
+  options: GitHubRepoViewOptions,
+): Promise<z.infer<typeof GitHubRepoViewSchema> | null> {
+  try {
+    return await readGitHubRepoView(options);
   } catch (error) {
     // A missing CLI or an auth failure must surface as its typed class so the
     // caller reports the real problem; only a genuine "not a resolvable repo"
@@ -3337,6 +3407,7 @@ function toBatchCurrentPullRequestItem(
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     ...(node.headRefOid ? { headRefOid: node.headRefOid } : {}),
+    updatedAt: node.updatedAt,
     mergedAt: node.mergedAt ?? null,
     ...(statusCheckRollup ? { statusCheckRollup } : {}),
     reviewDecision: node.reviewDecision,
@@ -3357,6 +3428,7 @@ function toCurrentPullRequestCandidate(
   const headSha = item.headRefOid;
   return {
     status,
+    updatedAt: item.updatedAt,
     ...(headSha ? { headSha } : {}),
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
   };
@@ -3378,12 +3450,6 @@ function pickPullRequestCandidate(options: {
 }): ResolvedPullRequestCandidate | null {
   const matching = options.candidates.filter((candidate) => {
     if (!isCandidateForHeadRef(candidate, options.headRef)) {
-      return false;
-    }
-    if (
-      candidate.status.state !== "open" &&
-      (!options.headSha || candidate.headSha !== options.headSha)
-    ) {
       return false;
     }
     if (!options.headRepositoryOwner) {
@@ -3411,17 +3477,17 @@ function comparePullRequestCandidatePreference(
   if (leftExact !== rightExact) {
     return leftExact ? -1 : 1;
   }
-  return 0;
+  return (
+    (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
+    (right.status.number ?? 0) - (left.status.number ?? 0)
+  );
 }
 
 function getPullRequestStateRank(status: CurrentPullRequestStatus): number {
-  if (status.state === "open" || status.isDraft) {
+  if (status.state === "open") {
     return 0;
   }
-  if (status.state === "merged") {
-    return 1;
-  }
-  return 2;
+  return 1;
 }
 
 type GitHubCloneProtocol = "https" | "ssh";
@@ -3969,6 +4035,7 @@ function toCurrentPullRequestStatus(
     state,
     baseRefName: item.baseRefName,
     headRefName: item.headRefName || fallbackHeadRefName,
+    ...(item.headRefOid ? { headSha: item.headRefOid } : {}),
     isMerged: mergedAt !== null,
     isDraft: item.isDraft ?? false,
     mergeable: item.mergeable,

@@ -1,11 +1,15 @@
-import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import {
   compareMatchScores,
+  type MatchClass,
   type MatchScore,
   scoreTextFields,
+  textFieldsMatchClass,
 } from "@getpaseo/protocol/search/text-match";
 import type { CommandCenterContribution } from "./contributions";
+import type { CommandCenterListMetrics } from "./list-metrics";
 
+/** Sections pinned above every contribution section. */
+export const LEADING_SECTION_BAND = -1;
 /** Sections that reorder by how well they match the query. */
 export const CONTRIBUTION_SECTION_BAND = 0;
 /** Sections pinned below every contribution section regardless of match quality. */
@@ -43,23 +47,42 @@ export function compareCommandCenterScores(
   return left.fieldRank - right.fieldRank || compareMatchScores(left.match, right.match);
 }
 
+export interface CommandCenterWorkspaceProject {
+  viewKey: string;
+  name: string;
+  iconDataUri: string | null;
+}
+
+/** An agent a workspace can be found by. Agents are never results of their own. */
+export interface CommandCenterWorkspaceAgent {
+  id: string;
+  title: string;
+  provider: string;
+}
+
 export interface CommandCenterWorkspaceResult {
   kind: "workspace";
   id: string;
   title: string;
   subtitle: string;
+  serverId: string;
+  workspaceId: string;
+  project: CommandCenterWorkspaceProject;
   /** PR/MR number backing this workspace, so a number query can match it exactly. */
   changeRequestNumber: number | null;
+  /** Last activity, or when it was archived for an archived workspace. */
+  activityAt: Date | null;
+  /** The workspace's agents, most recent first. Part of what the workspace matches on. */
+  agents: readonly CommandCenterWorkspaceAgent[];
+  /** The agent the query matched better than the workspace's own text. Drawn as a third line. */
+  matchedAgent: CommandCenterWorkspaceAgent | null;
+  archived: boolean;
+  /** Started by automation rather than the user. Found by a query, never listed as recent. */
+  background: boolean;
+  /** Opens the workspace and lets its default tab selection apply. */
   run(): void;
-}
-
-export interface CommandCenterAgentResult {
-  kind: "agent";
-  id: string;
-  agent: AggregatedAgent;
-  title: string;
-  subtitle: string;
-  run(): void;
+  /** Opens the workspace on this agent's tab. */
+  openAgent(agentId: string): void;
 }
 
 export interface CommandCenterFileResult {
@@ -82,13 +105,12 @@ export interface CommandCenterContributionResult {
 
 export type CommandCenterResult =
   | CommandCenterWorkspaceResult
-  | CommandCenterAgentResult
   | CommandCenterFileResult
   | CommandCenterContributionResult;
 
 export interface CommandCenterResultSection {
   id: string;
-  /** CONTRIBUTION_SECTION_BAND or PINNED_SECTION_BAND. Compared before anything else. */
+  /** LEADING, CONTRIBUTION or PINNED_SECTION_BAND. Compared before anything else. */
   band: number;
   rank: number;
   title?: string;
@@ -150,6 +172,14 @@ export function scoreSearchFields(
   return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
 }
 
+/** How closely the query matched the fields; see `MatchClass`. Null when it does not match. */
+export function searchFieldsMatchClass(
+  query: string,
+  fields: CommandCenterSearchFields,
+): MatchClass | null {
+  return textFieldsMatchClass(query, [...fields.visible, ...fields.hidden]);
+}
+
 /** Join non-empty subtitle parts with " · ", dropping null/undefined/empty. */
 export function joinSubtitleParts(parts: readonly (string | null | undefined)[]): string {
   return parts.filter((part): part is string => Boolean(part)).join(" · ");
@@ -169,13 +199,18 @@ function contributionSearchFields(
   return { visible, hidden: contribution.keywords };
 }
 
-function resultHeight(result: CommandCenterResult): number {
-  if (result.kind === "workspace" || result.kind === "agent") return 56;
-  if (result.kind === "file") return 36;
-  if (result.contribution.presentation.kind === "action") {
-    return result.contribution.presentation.subtitle ? 56 : 36;
-  }
-  return 36;
+/** How many lines of text the row draws, which decides its height. */
+function resultLineCount(result: CommandCenterResult): 1 | 2 | 3 {
+  if (result.kind === "workspace") return result.matchedAgent ? 3 : 2;
+  if (result.kind === "file") return 1;
+  const presentation = result.contribution.presentation;
+  return presentation.kind === "action" && presentation.subtitle ? 2 : 1;
+}
+
+function resultHeight(result: CommandCenterResult, metrics: CommandCenterListMetrics): number {
+  const lines = resultLineCount(result);
+  if (lines === 3) return metrics.threeLineRow;
+  return lines === 2 ? metrics.twoLineRow : metrics.singleLineRow;
 }
 
 /**
@@ -200,48 +235,41 @@ function resultScore(result: CommandCenterResult): CommandCenterScore | undefine
   return result.kind === "contribution" ? result.score : undefined;
 }
 
-/** Rows shown when nothing has been typed, per pinned category. */
-const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
-
-/**
- * Filter and rank already-built rows. Rows in, rows out — building them needs translations,
- * navigation callbacks and the project tree, none of which matching cares about, so that stays
- * with the caller and this stays testable without mounting React.
- *
- * `tiebreak` is the caller's own ordering (alphabetical for workspaces, status and recency for
- * agents). It decides equal-scoring rows, so an agent awaiting input still outranks an idle one
- * that matched exactly as well.
- */
-export function filterAndRankBuiltInResults<Row>(
-  rows: readonly Row[],
-  query: string,
-  fieldsOf: (row: Row) => CommandCenterSearchFields,
-  tiebreak: (left: Row, right: Row) => number,
-): Row[] {
-  if (!query.trim()) return rows.slice(0, DEFAULT_CATEGORY_RESULT_LIMIT);
-
-  const scored: { row: Row; score: CommandCenterScore }[] = [];
-  for (const row of rows) {
-    const score = scoreSearchFields(query, fieldsOf(row));
-    if (score) scored.push({ row, score });
-  }
-  scored.sort(
-    (left, right) =>
-      compareCommandCenterScores(left.score, right.score) || tiebreak(left.row, right.row),
-  );
-  return scored.map((entry) => entry.row);
+/** A built-in row that orders by how recently it saw activity. */
+export interface CommandCenterRecentRow {
+  activityAt: Date | null;
 }
 
+/** Most recent first. A row with no timestamp sorts after every row that has one. */
+export function compareByRecency(left: CommandCenterRecentRow, right: CommandCenterRecentRow) {
+  return (right.activityAt?.getTime() ?? 0) - (left.activityAt?.getTime() ?? 0);
+}
+
+/**
+ * Rank built-in rows by the kind of match they made: which fields matched, then the matcher's
+ * tier. Offset and spread are deliberately left out. They only say where in the title the word
+ * happened to sit, so "usage" in "Deliver sidebar usage" and in "expose usage data" would be
+ * ordered by sentence position. Leaving them out makes those rows equal, and recency decides.
+ */
+export function compareBuiltInScores(left: CommandCenterScore, right: CommandCenterScore): number {
+  return left.fieldRank - right.fieldRank || left.match.tier - right.match.tier;
+}
+
+/**
+ * Group contributions into their sections, ranked by the query. `includeQueryOnly` lists the
+ * contributions that otherwise wait for a query, for a list whose whole job is browsing them.
+ */
 export function buildContributionSections(
   contributions: readonly CommandCenterContribution[],
   query: string,
+  options: { includeQueryOnly?: boolean } = {},
 ): CommandCenterResultSection[] {
   const groups = new Map<string, MutableCommandCenterResultSection>();
   const registryIndexById = new Map<string, number>();
   const hasQuery = Boolean(query.trim());
 
   for (const [index, contribution] of contributions.entries()) {
-    if (contribution.visibility === "query" && !hasQuery) continue;
+    if (contribution.visibility === "query" && !hasQuery && !options.includeQueryOnly) continue;
     let score: CommandCenterScore | undefined;
     if (hasQuery) {
       // The score is the filter: null means no token found a home, so the row is out.
@@ -293,6 +321,7 @@ export function buildContributionSections(
 
 export function projectCommandCenterRows(
   sections: readonly CommandCenterResultSection[],
+  metrics: CommandCenterListMetrics,
 ): CommandCenterListProjection {
   const populated = sections
     .filter((section) => section.results.length > 0)
@@ -305,10 +334,8 @@ export function projectCommandCenterRows(
 
   for (const [sectionIndex, section] of populated.entries()) {
     const divider = sectionIndex > 0;
-    let sectionHeight = 0;
-    if (section.title && divider) sectionHeight = 49;
-    if (section.title && !divider) sectionHeight = 32;
-    if (!section.title && divider) sectionHeight = 17;
+    const sectionHeight =
+      (divider ? metrics.sectionDivider : 0) + (section.title ? metrics.sectionTitle : 0);
     if (sectionHeight > 0) {
       offsets.push(offset);
       rows.push({
@@ -321,7 +348,7 @@ export function projectCommandCenterRows(
       offset += sectionHeight;
     }
     for (const result of section.results) {
-      const height = resultHeight(result);
+      const height = resultHeight(result, metrics);
       offsets.push(offset);
       rowIndexByResultId.set(result.id, rows.length);
       rows.push({ kind: "result", key: result.id, result, height });

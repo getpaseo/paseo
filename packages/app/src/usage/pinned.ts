@@ -1,6 +1,13 @@
-import { formatPct } from "./format";
-import { displayPercent } from "./model";
-import { effectiveUsagePins, type UsagePreferences } from "./preferences";
+import type { TFunction } from "i18next";
+import { i18n } from "@/i18n/i18next";
+import {
+  formatPct,
+  formatDisplayPct,
+  formatProviderUsageLabel,
+  formatUsageAccountName,
+} from "./format";
+import { displayPercent, resolveUsageSnapshot } from "./model";
+import { effectiveUsagePins, usageReportsOn, type UsagePreferences } from "./preferences";
 import { windowTone } from "./tone";
 import type { UsageReportEntry, UsageTone } from "./types";
 
@@ -21,6 +28,8 @@ export interface PinnedUsageWindow {
 export interface PinnedUsageSource {
   key: string;
   icon: string | null;
+  /** The displayed values are retained from before a failed refresh. */
+  hasError: boolean;
   windows: PinnedUsageWindow[];
 }
 
@@ -51,29 +60,23 @@ export function choosePinnedUsageLayout(input: {
 }
 
 function describe(entry: UsageReportEntry, windowLabel: string): string {
-  const account = entry.account.label ? ` (${entry.account.label})` : "";
-  return `${entry.sourceLabel}${account} ${windowLabel}`;
-}
-
-/** Reports with every account of a source together, sources in the order they first appear. */
-function groupBySource(reports: readonly UsageReportEntry[]): UsageReportEntry[] {
-  const sourceIds = [...new Set(reports.map((entry) => entry.sourceId))];
-  return sourceIds.flatMap((sourceId) => reports.filter((entry) => entry.sourceId === sourceId));
+  return `${formatUsageAccountName(entry)} ${windowLabel}`;
 }
 
 /**
- * The sidebar Usage item's summary: one group per account, grouped by source, each with its
- * windows in its report's order. Accounts with nothing to show are left out.
+ * The sidebar Usage item's summary: one group per account in card order, each with its windows in
+ * its report's order. Accounts turned off or with nothing to show are left out.
  */
 export function resolvePinnedUsage(
   reports: readonly UsageReportEntry[],
   preferences: UsagePreferences,
+  t: TFunction = i18n.t,
 ): PinnedUsageSource[] {
   const pins = effectiveUsagePins(preferences, reports);
-  const meaning = preferences.displayAs === "remaining" ? "left" : "used";
-  return groupBySource(reports).flatMap((entry) => {
-    if (entry.report.status !== "available") return [];
-    const windows = entry.report.windows
+  return usageReportsOn(reports, preferences).flatMap((entry) => {
+    const snapshot = resolveUsageSnapshot(entry);
+    if (!snapshot) return [];
+    const windows = snapshot.report.windows
       .filter(
         (window) =>
           displayPercent(window, preferences.displayAs) !== null &&
@@ -84,14 +87,21 @@ export function resolvePinnedUsage(
         const percentText = formatPct(percent);
         return {
           key: `${entry.id}/${window.id}`,
-          label: `${describe(entry, window.label)} ${percentText} ${meaning}`,
-          shortLabel: window.shortLabel ?? window.label,
+          label: `${describe(entry, formatProviderUsageLabel(window.id, window.label, t))} ${formatDisplayPct(percent, preferences.displayAs, undefined, t)}`,
+          shortLabel: window.shortLabel ?? formatProviderUsageLabel(window.id, window.label, t),
           percent,
           percentText,
           tone: windowTone(window),
         };
       });
     if (windows.length === 0) return [];
-    return [{ key: entry.id, icon: entry.icon ?? null, windows }];
+    return [
+      {
+        key: entry.id,
+        icon: entry.icon ?? null,
+        hasError: entry.report.status === "error",
+        windows,
+      },
+    ];
   });
 }

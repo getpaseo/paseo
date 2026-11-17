@@ -7,7 +7,7 @@ import {
 } from "./keyboard-shortcuts";
 import { filterShortcutHelpSections, shortcutSearchText } from "./shortcut-help-search";
 
-const MAC_DESKTOP = { isMac: true, isDesktop: true };
+const MAC_DESKTOP = { isMac: true, usesDesktopBindings: true };
 const NEW_WORKSPACE_BINDING = "workspace-new-cmd-n-mac";
 
 /**

@@ -1,3 +1,4 @@
+import type { WorkspaceCompactHeaderActions } from "./adaptive-workspace-chrome";
 import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
@@ -31,6 +32,7 @@ import {
   useWorkspaceScriptsMenuPages,
   type UseWorkspaceScriptsMenuPagesInput,
 } from "@/screens/workspace/scripts";
+import { usePluginWorkspaceMenu } from "@/plugins";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
@@ -205,12 +207,15 @@ function HeaderMenuProfileItem({
 }
 
 export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspaceActions {
+  pane?: WorkspaceCompactHeaderActions["pane"];
+  onExitFocusMode?: () => void;
   normalizedServerId: string;
+  normalizedWorkspaceId: string;
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-  onCreateBrowser: () => void;
+  onCreateTerminalWithProfile: (profile: TerminalProfile, paneId?: string) => void;
+  onCreateBrowser: (input?: { paneId?: string }) => void;
 }
 
 /**
@@ -218,17 +223,30 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
  * the rarer launches stay here alongside the workspace actions.
  *
  * The header has no room for a scripts button either, so scripts are a page of this menu, and the
- * ⋯ carries a dot while a running service is unhealthy.
+ * ⋯ carries a dot while a running service is unhealthy. Plugin header buttons are rows here for the
+ * same reason.
  */
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
+  normalizedWorkspaceId,
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
   onCreateTerminalWithProfile,
   onCreateBrowser,
+  pane,
+  onExitFocusMode,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
+  const paneId = pane?.id;
+  const handleCreateBrowser = useCallback(
+    () => onCreateBrowser({ paneId }),
+    [onCreateBrowser, paneId],
+  );
+  const handleCreateTerminalWithProfile = useCallback(
+    (profile: TerminalProfile) => onCreateTerminalWithProfile(profile, paneId),
+    [onCreateTerminalWithProfile, paneId],
+  );
   const { t } = useTranslation();
   const router = useRouter();
   const triggerStyle = useIconButtonChromeStyle({ size: "large" });
@@ -242,6 +260,11 @@ export function WorkspaceHeaderMenuMobile({
     router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
   }, [normalizedServerId, router]);
   const scriptsMenu = useWorkspaceScriptsMenuPages(scripts);
+  const pluginMenu = usePluginWorkspaceMenu(normalizedServerId, normalizedWorkspaceId);
+  const pages = useMemo(
+    () => [...scriptsMenu.pages, ...pluginMenu.pages],
+    [scriptsMenu.pages, pluginMenu.pages],
+  );
 
   return (
     <DropdownMenu compactMode="sheet">
@@ -266,15 +289,41 @@ export function WorkspaceHeaderMenuMobile({
         align="start"
         width={220}
         testID="workspace-header-menu"
-        pages={scriptsMenu.pages}
+        pages={pages}
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
+        {onExitFocusMode ? (
+          <DropdownMenuItem onSelect={onExitFocusMode}>
+            {t("workspace.tabs.actions.exitFocusMode")}
+          </DropdownMenuItem>
+        ) : null}
+        {pane?.splitRight ? (
+          <DropdownMenuItem onSelect={pane.splitRight}>
+            {t("workspace.tabs.actions.splitRight")}
+          </DropdownMenuItem>
+        ) : null}
+        {pane?.splitDown ? (
+          <DropdownMenuItem onSelect={pane.splitDown}>
+            {t("workspace.tabs.actions.splitDown")}
+          </DropdownMenuItem>
+        ) : null}
+        {pane?.toggleMaximized ? (
+          <DropdownMenuItem onSelect={pane.toggleMaximized}>
+            {t(
+              pane.maximized
+                ? "workspace.tabs.actions.restorePane"
+                : "workspace.tabs.actions.maximizePane",
+            )}
+          </DropdownMenuItem>
+        ) : null}
         {scriptsMenu.trigger}
+        {pluginMenu.rows}
+        {pluginMenu.rows.length > 0 ? <DropdownMenuSeparator /> : null}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"
             leading={MENU_NEW_BROWSER_ICON}
-            onSelect={onCreateBrowser}
+            onSelect={handleCreateBrowser}
           >
             {t("workspace.header.actions.newBrowser")}
           </DropdownMenuItem>
@@ -287,7 +336,7 @@ export function WorkspaceHeaderMenuMobile({
             key={profile.id}
             profile={profile}
             disabled={createTerminalDisabled}
-            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
+            onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
           />
         ))}
         <DropdownMenuSeparator />

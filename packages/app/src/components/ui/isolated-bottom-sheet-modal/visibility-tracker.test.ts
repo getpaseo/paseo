@@ -88,6 +88,18 @@ describe("bottom sheet visibility tracker", () => {
     expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
   });
 
+  it("dismisses again when a sheet hidden while opening finishes opening anyway", () => {
+    const { sheet, tracker } = setup();
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+
+    // The owner hides the sheet before its open animation reports in; the sheet still lands open.
+    tracker.syncDesired({ visible: false });
+    tracker.handleSheetIndexChange(0);
+
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }, { type: "dismiss" }]);
+  });
+
   it("waits to present until the sheet controller becomes available", () => {
     const { sheet, tracker } = setup();
     tracker.syncDesired({ visible: true });
@@ -202,6 +214,31 @@ describe("bottom sheet visibility tracker", () => {
 
     expect(context.backPress.press()).toBe(true);
     expect(context.sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  });
+
+  it("lets the sheet step back through its own pages before Back dismisses it", () => {
+    const sheet = new FakeBottomSheet();
+    const backPress = new FakeBackPress();
+    let openPages = 1;
+    const tracker = createBottomSheetVisibilityTracker({
+      onClose: () => {},
+      onBack: () => {
+        if (openPages === 0) return false;
+        openPages -= 1;
+        return true;
+      },
+      backPress,
+    });
+    tracker.attachController(sheet);
+    tracker.syncDesired({ visible: true });
+    tracker.handleSheetIndexChange(0);
+
+    expect(backPress.press()).toBe(true);
+    expect(openPages).toBe(0);
+    expect(sheet.events).toEqual([{ type: "present" }]);
+
+    expect(backPress.press()).toBe(true);
+    expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
   });
 
   it("leaves Back to the navigator before the sheet is on screen and after it closes", () => {

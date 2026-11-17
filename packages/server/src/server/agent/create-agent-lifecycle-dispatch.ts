@@ -1,3 +1,4 @@
+import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
 
@@ -7,11 +8,13 @@ import { archiveByScope, type ActiveWorkspaceRef } from "../workspace-archive-se
 import type {
   CreatePaseoWorktreeWorkflowFn,
   CreatePaseoWorktreeWorkflowResult,
-  CreatePaseoWorktreeSetupContinuationInput,
-  NormalizedGitOptions,
 } from "../worktree-session.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
-import type { FirstAgentContext, SessionOutboundMessage } from "../messages.js";
+import type {
+  FirstAgentContext,
+  CreateAgentWorktreeTarget,
+  SessionOutboundMessage,
+} from "../messages.js";
 import type { AgentManager, AgentSubscriber, SubscribeOptions } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 
@@ -57,33 +60,39 @@ export class CreateAgentLifecycleDispatch {
 
   async createWorktreeForRequest(input: {
     cwd: string;
-    target: NormalizedGitOptions | null;
+    target: CreateAgentWorktreeTarget | undefined;
     firstAgentContext: FirstAgentContext;
-    setupContinuation?: CreatePaseoWorktreeSetupContinuationInput;
     background?: boolean;
     callerWorkspaceId?: string;
   }): Promise<CreatePaseoWorktreeWorkflowResult | null> {
     const target = input.target;
-    if (!target?.createWorktree) return null;
+    if (!target) return null;
+    const placement: CreatePaseoWorktreeInput = { cwd: input.cwd };
+    switch (target.mode) {
+      case "branch-off":
+        placement.action = "branch-off";
+        placement.worktreeSlug = target.newBranch;
+        placement.refName = target.base;
+        break;
+      case "checkout-branch":
+        placement.action = "checkout";
+        placement.refName = target.branch;
+        break;
+      case "checkout-pr":
+        placement.githubPrNumber = target.prNumber;
+        break;
+    }
+    const base = target.mode === "branch-off" ? target.base : undefined;
     return this.dependencies.createPaseoWorktreeWorkflow(
       {
-        cwd: input.cwd,
+        ...placement,
         background: input.background,
         callerWorkspaceId: input.callerWorkspaceId,
         firstAgentContext: input.firstAgentContext,
-        worktreeSlug: target.worktreeSlug,
-        refName: target.refName,
-        action: target.action,
-        checkoutSource: target.checkoutSource,
-        githubPrNumber: target.githubPrNumber,
-        runSetup: false,
         paseoHome: this.dependencies.paseoHome,
         worktreesRoot: this.dependencies.worktreesRoot,
       },
-      {
-        ...(target.baseBranch ? { resolveDefaultBranch: async () => target.baseBranch! } : {}),
-        setupContinuation: input.setupContinuation,
-      },
+      base ? { resolveDefaultBranch: async () => base } : undefined,
     );
   }
 

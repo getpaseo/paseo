@@ -136,7 +136,7 @@ async function expectForkFailureWithoutOverlappingStatus(page: Page) {
 async function observeToastReplacement(page: Page) {
   const observation = await page
     .getByRole("alert")
-    .filter({ hasText: "Reconnecting to host" })
+    .filter({ hasText: "Reconnecting" })
     .evaluateHandle((toast) => {
       const frames: Array<{ connected: boolean; opacity: number; transform: string }> = [];
       let frame = 0;
@@ -357,6 +357,8 @@ test.describe("Viewed agent timelines", () => {
   });
 
   test("two visible split chats both stay current", async ({ page }) => {
+    // Keep both split panes wide enough for the tab-rail interactions below.
+    await page.setViewportSize({ width: 1600, height: 900 });
     const scenario = await seedViewedTimelineScenario();
     try {
       await enableMoveTabShortcut(page);

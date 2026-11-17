@@ -1,3 +1,5 @@
+import { supportsDesktopPaneSplits } from "@/constants/layout";
+import { revealWorkspaceTab } from "./navigation";
 import {
   collectAllPanes,
   collectAllTabs,
@@ -8,11 +10,9 @@ import {
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import type { OpenInSidePanePreferences, PullRequestOpenLocation } from "@/hooks/use-settings";
-import type { ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import {
   isExplorerSidebarOpen,
   openExplorerSidebarView,
-  usesCompactExplorerSidebar,
   type ExplorerSidebarView,
 } from "@/workspace-tabs/explorer-sidebar";
 import {
@@ -23,7 +23,6 @@ import {
 interface WorkspaceViewInput {
   isCompact: boolean;
   workspaceKey: string | null;
-  checkout: ExplorerCheckoutContext | null;
   supportsPaneSplits?: boolean;
 }
 
@@ -35,13 +34,17 @@ interface OpenWorkspacePullRequestInput extends WorkspaceViewInput {
   destination: PullRequestOpenLocation;
 }
 
+function supportingViewsBelongInExplorer(input: WorkspaceViewInput): boolean {
+  return input.isCompact || !(input.supportsPaneSplits ?? supportsDesktopPaneSplits());
+}
+
 function openExplorerView(input: WorkspaceViewInput, view: ExplorerSidebarView): void {
   openExplorerSidebarView({ ...input, view });
 }
 
 /** Opens the workspace Changes view according to the current layout and diff preference. */
 export function openWorkspaceChanges(input: OpenWorkspaceChangesInput): string | null {
-  if (usesCompactExplorerSidebar(input)) {
+  if (supportingViewsBelongInExplorer(input)) {
     openExplorerView(input, "changes");
     return null;
   }
@@ -55,7 +58,7 @@ export function openWorkspaceChanges(input: OpenWorkspaceChangesInput): string |
 
 /** Reveals Changes from the composer, then opens its diff on a subsequent desktop action. */
 export function openComposerChanges(input: OpenWorkspaceChangesInput): string | null {
-  if (usesCompactExplorerSidebar(input) || isExplorerSidebarOpen(input)) {
+  if (supportingViewsBelongInExplorer(input) || isExplorerSidebarOpen(input)) {
     return openWorkspaceChanges(input);
   }
   openExplorerView(input, "changes");
@@ -64,15 +67,26 @@ export function openComposerChanges(input: OpenWorkspaceChangesInput): string | 
 
 /** Opens the workspace pull request at its semantic destination. */
 export function openWorkspacePullRequest(input: OpenWorkspacePullRequestInput): string | null {
-  if (usesCompactExplorerSidebar(input) || input.destination === "explorer") {
-    openExplorerView(input, "pr");
-    return null;
+  if (!input.workspaceKey) return null;
+  let tabId: string | null;
+  if (supportingViewsBelongInExplorer(input) || input.destination === "explorer") {
+    const store = useWorkspaceLayoutStore.getState();
+    const paneId = store.ensureExplorerSidebar(input.workspaceKey);
+    tabId = store.openTab({
+      workspaceKey: input.workspaceKey,
+      target: { kind: "pull_request" },
+      intent: "reveal",
+      placement: paneId ? { mode: "prefer", paneId } : undefined,
+    });
+  } else {
+    return openWorkspaceTargetAtLocation({
+      workspaceKey: input.workspaceKey,
+      target: { kind: "pull_request" },
+      location: input.destination,
+    });
   }
-  return openWorkspaceTargetAtLocation({
-    workspaceKey: input.workspaceKey,
-    target: { kind: "pull_request" },
-    location: input.destination,
-  });
+  revealWorkspaceTab(input.workspaceKey, tabId);
+  return tabId;
 }
 
 /** Adds a detected desktop PR once without revealing or selecting its destination. */

@@ -6,6 +6,30 @@ import {
 } from "./agent-state-bucket.js";
 
 describe("deriveAgentStateBucket", () => {
+  it("shows idle agents with background work as running while preserving attention precedence", () => {
+    const backgroundWork = { count: 1 };
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        backgroundWork,
+        requiresAttention: true,
+        attentionReason: "finished",
+      }),
+    ).toBe("running");
+    expect(
+      deriveAgentStateBucket({ status: "idle", backgroundWork, attentionReason: "permission" }),
+    ).toBe("needs_input");
+    expect(deriveAgentStateBucket({ status: "error", backgroundWork })).toBe("running");
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        backgroundWork,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+    ).toBe("failed");
+    expect(deriveAgentStateBucket({ status: "idle", backgroundWork: { count: 0 } })).toBe("done");
+  });
   it("prioritizes pending permissions as needs_input", () => {
     expect(
       deriveAgentStateBucket({
@@ -32,6 +56,28 @@ describe("deriveAgentStateBucket", () => {
     expect(
       deriveAgentStateBucket({
         status: "running",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+    ).toBe("failed");
+  });
+
+  it("treats an errored agent whose error was read as done", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+      }),
+    ).toBe("done");
+  });
+
+  it("treats an errored agent with unread error attention as failed", () => {
+    expect(
+      deriveAgentStateBucket({
+        status: "error",
         pendingPermissionCount: 0,
         requiresAttention: true,
         attentionReason: "error",
@@ -83,10 +129,21 @@ describe("getAgentStatusPriority", () => {
   it("prioritizes pending permissions before errors and running agents", () => {
     const permission = getAgentStatusPriority({ status: "running", pendingPermissionCount: 1 });
     expect(permission).toBeLessThan(
-      getAgentStatusPriority({ status: "error", pendingPermissionCount: 0 }),
+      getAgentStatusPriority({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
     );
     expect(permission).toBeLessThan(
       getAgentStatusPriority({ status: "running", pendingPermissionCount: 0 }),
+    );
+  });
+
+  it("ranks an errored agent with a read error alongside completed agents", () => {
+    expect(getAgentStatusPriority({ status: "error", requiresAttention: false })).toBe(
+      getAgentStatusPriority({ status: "idle" }),
     );
   });
 });

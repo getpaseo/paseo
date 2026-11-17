@@ -7,7 +7,8 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
-import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
+import { spawnProcess } from "../../../utils/spawn.js";
+import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 
 // Runs the real `codex` binary against a local Responses endpoint standing in
 // for a custom provider's OPENAI_BASE_URL, so no login is needed.
@@ -88,52 +89,106 @@ describe("Codex custom provider import list", () => {
     for (const cleanup of cleanups.splice(0).toReversed()) await cleanup();
   });
 
-  test("lists a custom provider's session under that provider and imports it there", async () => {
-    const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-home-"));
-    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-cwd-"));
-    cleanups.push(() => rmSync(codexHome, { recursive: true, force: true }));
-    cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
-    const { baseUrl, server, requestCount } = await startResponsesEndpoint();
-    cleanups.push(() => closeServer(server));
+  test.each([
+    { providerId: "my-codex", seedLegacy: false, seedBuiltin: false },
+    { providerId: "ollama", seedLegacy: false, seedBuiltin: false },
+    { providerId: "my-codex", seedLegacy: true, seedBuiltin: false },
+    { providerId: "ollama", seedLegacy: false, seedBuiltin: true },
+  ])(
+    "lists and imports sessions for $providerId (legacy: $seedLegacy, native: $seedBuiltin)",
+    async ({ providerId, seedLegacy, seedBuiltin }) => {
+      const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-home-"));
+      const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-custom-import-cwd-"));
+      cleanups.push(() => rmSync(codexHome, { recursive: true, force: true }));
+      cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
+      const { baseUrl, server, requestCount } = await startResponsesEndpoint();
+      cleanups.push(() => closeServer(server));
 
-    const logger = createTestLogger();
-    const customCodex = new CodexAppServerAgentClient(
-      logger,
-      { env: { CODEX_HOME: codexHome, OPENAI_BASE_URL: baseUrl, OPENAI_API_KEY: "test-key" } },
-      { customProvider: { id: "my-codex", label: "My Codex", extends: "codex" } },
-    );
-    const stockCodex = new CodexAppServerAgentClient(logger, { env: { CODEX_HOME: codexHome } });
+      const logger = createTestLogger();
+      if (seedLegacy || seedBuiltin) {
+        // Seed an old custom session or a native built-in session with real Codex.
+        const environment = {
+          ...process.env,
+          CODEX_HOME: codexHome,
+          CODEX_OSS_BASE_URL: baseUrl,
+          OPENAI_API_KEY: "test-key",
+        };
+        const legacy = new CodexAppServerAgentSession(
+          { provider: "codex", cwd, model: "mock-model" },
+          null,
+          logger,
+          async () =>
+            spawnProcess("codex", ["app-server"], { cwd, env: environment, stdio: "pipe" }),
+          {
+            environment,
+            customCodexConfig: {
+              model_provider: providerId,
+              model_providers: seedBuiltin
+                ? {}
+                : {
+                    [providerId]: {
+                      name: "My Codex",
+                      base_url: baseUrl,
+                      wire_api: "responses",
+                      env_key: "OPENAI_API_KEY",
+                      requires_openai_auth: false,
+                    },
+                  },
+            },
+          },
+        );
+        try {
+          await legacy.run("hello from the legacy provider");
+        } finally {
+          await legacy.close();
+        }
+      }
+      const customCodex = new CodexAppServerAgentClient(
+        logger,
+        { env: { CODEX_HOME: codexHome, OPENAI_BASE_URL: baseUrl, OPENAI_API_KEY: "test-key" } },
+        { customProvider: { id: providerId, label: "My Codex", extends: "codex" } },
+      );
+      const stockCodex = new CodexAppServerAgentClient(logger, { env: { CODEX_HOME: codexHome } });
 
-    const session = await customCodex.createSession({
-      provider: "codex",
-      cwd,
-      model: "mock-model",
-    });
-    try {
-      await session.run("hello from the custom provider");
-    } finally {
-      await session.close();
-    }
+      const session = await customCodex.createSession({
+        provider: "codex",
+        cwd,
+        model: "mock-model",
+      });
+      try {
+        await session.run("hello from the custom provider");
+      } finally {
+        await session.close();
+      }
 
-    const customSessions = await customCodex.listImportableSessions({ cwd });
-    const stockSessions = await stockCodex.listImportableSessions({ cwd });
+      const customSessions = await customCodex.listImportableSessions({ cwd });
+      const stockSessions = await stockCodex.listImportableSessions({ cwd });
 
-    expect(customSessions.map((entry) => entry.firstPromptPreview)).toEqual([
-      "hello from the custom provider",
-    ]);
-    expect(stockSessions).toEqual([]);
+      expect(customSessions.map((entry) => entry.firstPromptPreview).sort()).toEqual(
+        seedLegacy
+          ? ["hello from the custom provider", "hello from the legacy provider"]
+          : ["hello from the custom provider"],
+      );
+      expect(stockSessions).toEqual([]);
 
-    const config = { provider: "codex", cwd, model: "mock-model" };
-    const imported = await customCodex.importSession(
-      { providerHandleId: customSessions[0].providerHandleId, cwd },
-      { config, storedConfig: config },
-    );
-    const requestsBeforeImportedTurn = requestCount();
-    try {
-      await imported.session.run("hello again after import");
-    } finally {
-      await imported.session.close();
-    }
-    expect(requestCount()).toBeGreaterThan(requestsBeforeImportedTurn);
-  }, 120_000);
+      const config = { provider: "codex", cwd, model: "mock-model" };
+      const sessionToImport = seedLegacy
+        ? customSessions.find(
+            (entry) => entry.firstPromptPreview === "hello from the legacy provider",
+          )!
+        : customSessions[0];
+      const imported = await customCodex.importSession(
+        { providerHandleId: sessionToImport.providerHandleId, cwd },
+        { config, storedConfig: config },
+      );
+      const requestsBeforeImportedTurn = requestCount();
+      try {
+        await imported.session.run("hello again after import");
+      } finally {
+        await imported.session.close();
+      }
+      expect(requestCount()).toBeGreaterThan(requestsBeforeImportedTurn);
+    },
+    120_000,
+  );
 });

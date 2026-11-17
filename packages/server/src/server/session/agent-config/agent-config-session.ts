@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import type { AgentConfigApply } from "@getpaseo/protocol/messages";
 import type { AgentProviderNotice } from "../../agent/agent-sdk-types.js";
+import type { ProviderOptionsPatch } from "../../agent/option-controls.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 
 /**
@@ -22,13 +23,13 @@ export interface AgentConfigSessionHost {
  * The per-agent config mutations this subsystem drives. The shell adapts these
  * onto the AgentManager and loads a closed agent before mutation (mode still
  * routes through setAgentModeCommand); tests wire an in-memory fake. Mode and
- * thinking yield a provider notice; model and feature do not.
+ * thinking yield a provider notice; model and options do not.
  */
 export interface AgentConfigOperations {
   ensureLoaded(agentId: string): Promise<void>;
   setMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
   setModel(agentId: string, modelId: string | null): Promise<void>;
-  setFeature(agentId: string, featureId: string, value: unknown): Promise<void>;
+  setOptions(agentId: string, patch: ProviderOptionsPatch): Promise<void>;
   setThinking(
     agentId: string,
     thinkingOptionId: string | null,
@@ -112,8 +113,9 @@ export class AgentConfigSession {
       logLabel: "set_agent_feature_request",
       logFields: { agentId, featureId, value, requestId },
       failureText: "Failed to set agent feature",
+      // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A feature is a one-key options patch.
       run: async () => {
-        await this.operations.setFeature(agentId, featureId, value);
+        await this.operations.setOptions(agentId, { [featureId]: value });
         return undefined;
       },
       emitResponse: (payload) => this.host.emit({ type: "set_agent_feature_response", payload }),
@@ -152,7 +154,7 @@ export class AgentConfigSession {
 
   /**
    * Model first, because a thinking option only means anything against the model
-   * that offers it; features last so they settle on top of the rest. An omitted
+   * that offers it; options last so they settle on top of the rest. An omitted
    * field is left alone. The first notice produced is the one the client sees —
    * later steps still run, so a notice never truncates the bundle.
    *
@@ -189,8 +191,10 @@ export class AgentConfigSession {
       const thinkingNotice = await this.operations.setThinking(agentId, config.thinkingOptionId);
       notice ??= thinkingNotice;
     }
-    for (const [featureId, value] of Object.entries(config.featureValues ?? {})) {
-      await this.operations.setFeature(agentId, featureId, value);
+    // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. `featureValues` is an options patch.
+    const optionsPatch = { ...config.featureValues, ...config.options };
+    if (Object.keys(optionsPatch).length > 0) {
+      await this.operations.setOptions(agentId, optionsPatch);
     }
 
     return notice;
