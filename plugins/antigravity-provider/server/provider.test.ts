@@ -875,6 +875,39 @@ describe("image prompts", () => {
   });
 });
 
+describe("transient stream interruptions", () => {
+  it("retries transient stream interruption automatically within the same turn", async () => {
+    const h = await harness();
+    await h.open();
+    const turnEnd = await h.completed(await h.prompt("STREAM_INTERRUPT_ONCE"));
+    expect(turnEnd).toMatchObject({ type: "session.turn", state: "completed" });
+    const inputs = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content);
+    expect(inputs).toEqual([
+      "SYSTEM PREFIX\n\nSTREAM_INTERRUPT_ONCE",
+      "Error: The stream was interrupted. Please continue the task you were working on.",
+    ]);
+  });
+
+  it("fails the turn after exhausting transient stream interruption retries", async () => {
+    const h = await harness();
+    await h.open();
+    const turnEnd = await h.completed(await h.prompt("STREAM_INTERRUPT_ALWAYS"));
+    expect(turnEnd).toMatchObject({
+      type: "session.turn",
+      state: "failed",
+      error: {
+        message: "The stream was interrupted. Please continue the task you were working on.",
+      },
+    });
+    const inputs = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content);
+    expect(inputs).toHaveLength(3);
+  });
+});
+
 it.runIf(process.platform === "win32")(
   "launches an Antigravity command shim for probes and conversation startup",
   async () => {

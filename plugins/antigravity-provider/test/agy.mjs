@@ -48,7 +48,9 @@ function emit(frame) {
     converted.result.conversation_id = conversationId;
     if (process.env.AGY_TEST_DENIAL_COUNTS && converted.result.denied_actions?.length) {
       converted.result.denied_actions = Array.from(
-        { length: Number(process.env.AGY_TEST_DENIAL_COUNTS.split(",")[denialResults++]) },
+        {
+          length: Number(process.env.AGY_TEST_DENIAL_COUNTS.split(",")[denialResults++]),
+        },
         () => converted.result.denied_actions[0],
       );
     }
@@ -74,6 +76,37 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (
+    text.includes("STREAM_INTERRUPT_ALWAYS") ||
+    (turns.get("stream-interrupt-always") &&
+      text.includes("The stream was interrupted. Please continue"))
+  ) {
+    turns.set("stream-interrupt-always", (turns.get("stream-interrupt-always") || 0) + 1);
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "The stream was interrupted. Please continue the task you were working on.",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
+  if (text.includes("STREAM_INTERRUPT_ONCE")) {
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "The stream was interrupted. Please continue the task you were working on.",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

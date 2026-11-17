@@ -100,6 +100,20 @@ function discoverCommands(cwd: string | undefined, homeDir: string): ProviderCom
   return result;
 }
 
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_RETRY_DELAY_MS = 1_500;
+const TRANSIENT_CONTINUATION_PROMPT =
+  "Error: The stream was interrupted. Please continue the task you were working on.";
+
+function isTransientStreamError(error: string): boolean {
+  return (
+    error.includes("The stream was interrupted") ||
+    error.includes("stream idle timeout") ||
+    error.includes("UNAVAILABLE (code 503)") ||
+    error.includes("Service Unavailable")
+  );
+}
+
 const persistenceSchema = z
   .object({
     version: z.literal(1),
@@ -108,6 +122,8 @@ const persistenceSchema = z
   .strict();
 interface Turn {
   id: string;
+  retries: number;
+  retryTimer?: ReturnType<typeof setTimeout>;
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
@@ -206,7 +222,7 @@ function replayHistoryFromTranscript(options: ReplayHistoryOptions): void {
     const stepKey = obj.step_index ?? index;
     if (obj.type === "USER_INPUT" && typeof obj.content === "string") {
       const text = extractUserText(obj.content);
-      if (!text) continue;
+      if (!text || text === TRANSIENT_CONTINUATION_PROMPT) continue;
       emit({
         type: "timeline.item",
         sessionId,
@@ -369,6 +385,7 @@ export class Session {
     const driver = this.state.driver;
     const turn: Turn = {
       id: randomUUID(),
+      retries: 0,
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
@@ -448,6 +465,7 @@ export class Session {
   async interrupt(): Promise<void> {
     if (this.state.type !== "running") return;
     const { driver, turn } = this.state;
+    clearTimeout(turn.retryTimer);
     this.state = { type: "stopping", driver };
     await driver.stop("interrupt");
     this.finishTools(turn, "canceled");
@@ -462,6 +480,7 @@ export class Session {
 
   async close(): Promise<void> {
     const state = this.state;
+    if (state.type === "running") clearTimeout(state.turn.retryTimer);
     this.state = { type: "closed" };
     try {
       if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
@@ -560,6 +579,32 @@ export class Session {
       });
     }
     if (result.status === "ERROR") {
+      if (isTransientStreamError(result.error) && turn.retries < MAX_TRANSIENT_RETRIES) {
+        turn.retries += 1;
+        const delayMs = this.options.launch.env?.AGY_TEST_LOG ? 10 : TRANSIENT_RETRY_DELAY_MS;
+        clearTimeout(turn.retryTimer);
+        turn.retryTimer = setTimeout(() => {
+          turn.retryTimer = undefined;
+          if (
+            this.state.type !== "running" ||
+            this.state.turn !== turn ||
+            this.state.driver !== driver
+          )
+            return;
+          void driver.prompt(TRANSIENT_CONTINUATION_PROMPT).catch((error) => {
+            if (
+              this.state.type === "running" &&
+              this.state.turn === turn &&
+              this.state.driver === driver
+            ) {
+              this.failTurn(
+                new AntigravityError(error instanceof Error ? error.message : String(error)),
+              );
+            }
+          });
+        }, delayMs);
+        return;
+      }
       const canceled = result.error === "interrupted";
       this.finishTools(turn, canceled ? "canceled" : "failed");
       this.retire(driver);
@@ -571,6 +616,7 @@ export class Session {
         error: { message: diagnostic(result.error) },
       });
     } else {
+      clearTimeout(turn.retryTimer);
       this.finishTools(turn, "completed");
       this.state = { type: "idle", driver };
       this.emit({
@@ -624,6 +670,7 @@ export class Session {
   private failTurn(error: AntigravityError): void {
     const state = this.state;
     if (state.type !== "running" && state.type !== "idle") return;
+    if (state.type === "running") clearTimeout(state.turn.retryTimer);
     this.retire(state.driver);
     if (state.type === "running") {
       this.finishTools(state.turn, "failed");
