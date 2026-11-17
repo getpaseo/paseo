@@ -170,6 +170,8 @@ export interface ModelTriggerLabelState {
   modelShown: boolean;
   modelText: string;
   modelTruncated: boolean;
+  /** The browser clips the model label with its own ellipsis: the label overflows its box. */
+  modelOverflows: boolean;
 }
 
 declare global {
@@ -194,12 +196,13 @@ function readModelTriggerLabelStateInPage(): ModelTriggerLabelState {
   };
   const modelShown = model !== undefined && shown(model);
   const modelText = model?.textContent ?? "";
+  const modelOverflows = model !== undefined && model.scrollWidth > model.clientWidth;
   return {
     modelShown,
     modelText,
     thinkingShown: modelShown && thinking !== undefined,
-    modelTruncated:
-      model !== undefined && (modelText.endsWith("…") || model.scrollWidth > model.clientWidth),
+    modelTruncated: modelText.endsWith("…") || modelOverflows,
+    modelOverflows,
   };
 }
 
@@ -217,13 +220,25 @@ export async function recordModelTriggerFramesFromLoad(page: Page): Promise<void
   })()`);
 }
 
-/** The model control's labels once two reads 100ms apart agree. */
+/**
+ * The model control's labels once it has caught up with its width: two reads 100ms apart agree
+ * and the model label fits its box. A resize reflows the page at once, so the browser clips the
+ * label with its own ellipsis until the control's layout event arrives and it chooses its labels
+ * again; on a slow runner that takes longer than 100ms.
+ */
 export async function readSettledModelTriggerLabels(page: Page): Promise<ModelTriggerLabelState> {
+  const deadline = Date.now() + 10_000;
   let previous = await page.evaluate(readModelTriggerLabelStateInPage);
   for (;;) {
     await page.waitForTimeout(100);
     const next = await page.evaluate(readModelTriggerLabelStateInPage);
-    if (JSON.stringify(next) === JSON.stringify(previous)) return next;
+    const agrees = JSON.stringify(next) === JSON.stringify(previous);
+    if (agrees && !next.modelOverflows) return next;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the model control never settled with its label in its box: ${JSON.stringify(next)}`,
+      );
+    }
     previous = next;
   }
 }
