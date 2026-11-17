@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
-import { signalPlan } from "./internal/signals.js";
+import { signalPlan, signalProcess } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -686,6 +686,29 @@ describe("process signal plans", () => {
         pid: -123,
         signal,
       });
+    },
+  );
+  it("falls back to the leader PID when POSIX group signaling fails with EPERM", () => {
+    const calls: Array<[number, NodeJS.Signals]> = [];
+    const fakeKill = (pid: number, signal: NodeJS.Signals) => {
+      calls.push([pid, signal]);
+      if (pid < 0) throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    };
+    signalProcess({ platform: "darwin", pid: 456, signal: "SIGINT" }, fakeKill);
+    expect(calls).toEqual([
+      [-456, "SIGINT"],
+      [456, "SIGINT"],
+    ]);
+  });
+  it.each(["ESRCH", "EPERM"] as const)(
+    "ignores %s when the fallback leader PID already exited",
+    (code) => {
+      const alwaysFail = () => {
+        throw Object.assign(new Error(`kill ${code}`), { code });
+      };
+      expect(() =>
+        signalProcess({ platform: "darwin", pid: 456, signal: "SIGKILL" }, alwaysFail),
+      ).not.toThrow();
     },
   );
 });

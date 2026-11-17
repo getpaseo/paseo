@@ -17,13 +17,33 @@ export function signalPlan(options: SignalOptions): SignalPlan {
   return { type: "group", pid: -options.pid, signal: options.signal };
 }
 
-export function signalProcess(options: SignalOptions): void | Promise<void> {
+export function signalProcess(
+  options: SignalOptions,
+  kill: (pid: number, signal: NodeJS.Signals) => void = process.kill,
+): void | Promise<void> {
   const plan = signalPlan(options);
   if (plan.type === "tree") return killTree(plan);
   try {
-    process.kill(plan.pid, plan.signal);
+    kill(plan.pid, plan.signal);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ESRCH") return;
+    // On macOS/XNU, kill(-pgid, sig) fails with EPERM when the group leader has exited into a
+    // zombie state before waitpid reaps it, or when a descendant executed a setuid binary.
+    if (code === "EPERM") {
+      try {
+        kill(options.pid, options.signal);
+      } catch (fallbackError) {
+        const fallbackCode =
+          fallbackError instanceof Error && "code" in fallbackError
+            ? fallbackError.code
+            : undefined;
+        if (fallbackCode === "ESRCH" || fallbackCode === "EPERM") return;
+        throw fallbackError;
+      }
+      return;
+    }
+    throw error;
   }
 }
 
