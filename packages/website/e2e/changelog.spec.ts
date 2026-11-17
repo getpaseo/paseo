@@ -84,3 +84,17 @@ test("opens a minor from a deep link with its highlights in view", async ({ page
   await expect(linked).toBeInViewport();
   await expect(minorWithHighlights(page).getByRole("listitem").first()).toBeVisible();
 });
+
+test("opens a minor's entries when a link points at one of them", async ({ page }) => {
+  await openChangelog(page);
+  const minor = minorWithHighlights(page);
+  // The entry's own heading link is inside the closed block, so it is read without being shown.
+  const entryLink = minor.locator("details .changelog-heading-anchor").first();
+  const anchor = await entryLink.getAttribute("href");
+
+  await page.goto(`/changelog${anchor}`);
+  await waitForHydration(page);
+
+  await expect(page.locator(`[id="${anchor!.slice(1)}"]`)).toBeInViewport();
+  await expect(minor.getByText("Hide all changes", { exact: true })).toBeVisible();
+});

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown, { type Components } from "react-markdown";
 import {
@@ -143,9 +144,31 @@ function hasNotes(release: ChangelogRelease): boolean {
   return release.highlights !== "" || release.sections !== "";
 }
 
+/**
+ * A link to one entry, such as `#release-0.16.1`, targets a heading inside its minor's closed
+ * Show all changes block. Not every browser opens a closed `<details>` for a fragment link, so the
+ * page opens the block and scrolls the entry into view.
+ */
+function useOpenLinkedEntry() {
+  useEffect(() => {
+    function openLinkedEntry() {
+      const id = decodeURIComponent(window.location.hash.slice(1));
+      const entry = id ? document.getElementById(id) : null;
+      const block = entry?.closest("details");
+      if (!entry || !block || block.open) return;
+      block.open = true;
+      entry.scrollIntoView();
+    }
+    openLinkedEntry();
+    window.addEventListener("hashchange", openLinkedEntry);
+    return () => window.removeEventListener("hashchange", openLinkedEntry);
+  }, []);
+}
+
 function Changelog() {
   const { t } = useTranslation();
   const locale = useLocale();
+  useOpenLinkedEntry();
   return (
     <SiteShell width="default">
       <div className="max-w-2xl">
