@@ -1172,6 +1172,44 @@ describe("ImportSessionSheet", () => {
     });
   });
 
+  it("keeps the loaded list in place while Load more fetches the next page", async () => {
+    let releaseNextPage: () => void = () => undefined;
+    const nextPage = new Promise<void>((resolve) => {
+      releaseNextPage = resolve;
+    });
+    const fetchRecentProviderSessions = vi.fn(async (options: { limit?: number } | undefined) => {
+      if (options?.limit !== 15) await nextPage;
+      return {
+        requestId: "recent-provider-sessions",
+        entries: createPageOfEntries(options?.limit === 15 ? 15 : 20),
+      };
+    });
+
+    renderSheet(createRecentSessionsClient(fetchRecentProviderSessions, vi.fn()), {
+      cwd: null,
+      snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+    });
+
+    fireEvent.click(await screen.findByTestId("import-session-load-more"));
+    // The list the user scrolled to Load more is the one they keep: replacing it would drop
+    // them back at the top, behind a loading state, until the larger page lands.
+    const list = screen.getByTestId("import-session-list");
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        providers: ["claude"],
+        limit: 45,
+      });
+    });
+    expect(screen.getByTestId("import-session-list")).toBe(list);
+    expect(screen.queryByText("Loading sessions...")).toBeNull();
+
+    releaseNextPage();
+    await waitFor(() => {
+      expect(screen.queryByTestId("import-session-load-more")).toBeNull();
+    });
+    expect(screen.getByTestId("import-session-list")).toBe(list);
+  });
+
   it("stops the refresh spinner and retries only the failed provider", async () => {
     const fetchRecentProviderSessions = vi.fn(
       async (options: { providers?: string[] } | undefined) => {
