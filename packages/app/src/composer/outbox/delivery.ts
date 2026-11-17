@@ -196,12 +196,24 @@ export async function deliverOutboxItem(input: {
     inFlight.delete(item.id);
     activeAgents.delete(agentKey);
   }
+  await checkLatestUncertainItem(item.id, client);
   return true;
+}
+
+async function checkLatestUncertainItem(id: string, client: OutboxDeliveryClient): Promise<void> {
+  const latest = useOutboxStore.getState().items.find((current) => current.id === id);
+  if (
+    latest?.status === "needs_review" &&
+    client.isConnected &&
+    client.getAgentMessageDeliveryStatus
+  )
+    await checkOutboxItem({ item: latest, client });
 }
 
 export async function drainPendingOutbox(input: {
   serverId: string;
   client: OutboxDeliveryClient;
+  checkUnknown?: boolean;
 }): Promise<void> {
   if (drains.has(input.serverId)) return;
   drains.add(input.serverId);
@@ -212,7 +224,8 @@ export async function drainPendingOutbox(input: {
       .items.filter(
         (item) =>
           item.serverId === input.serverId &&
-          (item.status === "needs_review" || item.status === "in_flight"),
+          (item.status === "in_flight" ||
+            (input.checkUnknown !== false && item.status === "needs_review")),
       );
     for (const item of uncertain) await checkOutboxItem({ item, client: input.client });
     const deferredAgents = new Set<string>();

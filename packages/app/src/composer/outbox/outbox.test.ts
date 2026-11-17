@@ -220,14 +220,14 @@ describe("offline message outbox", () => {
     const delivery = await import("./delivery");
     const client = {
       ...idleClient(sendAgentMessage),
-      getAgentMessageDeliveryStatus: vi.fn(async () => ({
-        status: "accepted" as const,
-        failure: undefined,
-      })),
+      getAgentMessageDeliveryStatus: vi
+        .fn()
+        .mockResolvedValueOnce({ status: "unknown" })
+        .mockResolvedValueOnce({ status: "accepted" }),
     };
     await delivery.drainPendingOutbox({ serverId: "host-1", client });
     expect(store.useOutboxStore.getState().items).toMatchObject([
-      { id: "message-2", status: "needs_review", error: "Connection dropped" },
+      { id: "message-2", status: "needs_review" },
     ]);
 
     vi.resetModules();
@@ -318,7 +318,6 @@ it("keeps slow delivery in flight and resolves its receipt without resending", a
   };
   const delivery = await import("./delivery");
   await delivery.deliverOutboxItem({ item, client });
-  await delivery.drainPendingOutbox({ serverId: item.serverId, client });
   expect(store.useOutboxStore.getState().items[0]?.status).toBe("in_flight");
   await delivery.drainPendingOutbox({ serverId: item.serverId, client });
   expect(store.useOutboxStore.getState().items).toEqual([]);
@@ -404,12 +403,17 @@ it("queues a definite retry visibly while the agent is busy", async () => {
 it("preserves the original wire image payload for read-only reconciliation after reload", async () => {
   const { store, item } = await saveMessage("image-wire");
   const images = [{ data: "original-payload", mimeType: "image/png" }];
+  let connected = true;
   const client = {
     ...idleClient(
       vi.fn(async () => {
+        connected = false;
         throw new Error("Connection lost");
       }),
     ),
+    get isConnected() {
+      return connected;
+    },
     getAgentMessageDeliveryStatus: vi.fn(async () => ({
       status: "accepted" as const,
       failure: undefined,
@@ -418,6 +422,7 @@ it("preserves the original wire image payload for read-only reconciliation after
   const delivery = await import("./delivery");
   await delivery.deliverOutboxItem({ item, client, encode: async () => images });
   expect(store.useOutboxStore.getState().items[0]?.wireImages).toEqual(images);
+  connected = true;
   vi.resetModules();
   const restored = await import("./store");
   await restored.hydrateOutbox();

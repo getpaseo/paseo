@@ -1205,6 +1205,68 @@ test.describe("Agent message submission", () => {
     await toasts.expectNeverShown("agent-updating-toast");
   });
 
+  for (const width of [1280, 390]) {
+    test(`outbox retries a definite failure with its original identity at width ${width}`, async ({
+      page,
+      unrelatedRunningScenario,
+    }, testInfo) => {
+      const { agent, gate } = unrelatedRunningScenario;
+      await page.setViewportSize({ width, height: 844 });
+      await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+      await expectComposerVisible(page);
+      await fillComposerDraft(page, "Retry this original saved message");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      const first = await gate.waitForRequest();
+      gate.reject({ outcome: "not_submitted" });
+      await expect(
+        page.getByText("Not delivered. Retry this saved message.", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`outbox-failed-${width}.png`) });
+      await page.getByRole("button", { name: "Retry delivery", exact: true }).click();
+      const second = await gate.waitForRequest(2);
+      expect(first.messageId).toBeTruthy();
+      expect(second.messageId).toBe(first.messageId);
+      gate.accept(1);
+      await expect(page.getByRole("button", { name: "Retry delivery", exact: true })).toHaveCount(
+        0,
+      );
+      await expect(
+        page.getByTestId("user-message").filter({ hasText: "Retry this original saved message" }),
+      ).toHaveCount(1);
+      await page.screenshot({ path: testInfo.outputPath(`outbox-retry-${width}.png`) });
+    });
+  }
+  test("outbox checks uncertain delivery without submitting another prompt", async ({
+    page,
+    unrelatedRunningScenario,
+  }) => {
+    const { gate } = unrelatedRunningScenario;
+    await fillComposerDraft(page, "Check this uncertain delivery");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await gate.waitForRequest();
+    gate.reject({ outcome: "unknown" });
+    await expect(
+      page.getByText("Delivery is unconfirmed. Check status before taking another action.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Check delivery status", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Check delivery status", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(
+      "Check this uncertain delivery",
+    );
+    await expect(
+      page.getByText("Delivery is unconfirmed. Check status before taking another action.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(gate.requestCount()).toBe(1);
+    await expect(page.getByRole("button", { name: "Retry delivery", exact: true })).toHaveCount(0);
+  });
+
   test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,

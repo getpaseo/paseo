@@ -162,6 +162,7 @@ import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit
 import {
   createPendingOutboxItem,
   discardOutboxItem,
+  updateOutboxItem,
   enqueueOutboxItem,
   hydrateOutbox,
   useOutboxStore,
@@ -747,8 +748,10 @@ function OutboxRow({
   client,
   connected,
   t,
+  onFindMessage,
 }: {
   item: OutboxItem;
+  onFindMessage?: (id: string) => Promise<boolean>;
   client: ReturnType<typeof useHostRuntimeClient>;
   connected: boolean;
   t: TFunction;
@@ -759,13 +762,35 @@ function OutboxRow({
   const discard = useCallback(() => {
     void discardOutboxItem(item.id);
   }, [item.id]);
-  let status: string;
-  if (item.status === "pending") status = t("composer.outbox.pending");
-  else if (item.status === "sending") status = t("composer.outbox.sending");
-  else if (item.status === "failed") status = t("composer.outbox.failed");
-  else if (item.status === "in_flight") status = t("composer.outbox.inFlight");
-  else if (item.status === "checking") status = t("composer.outbox.checking");
-  else status = t("composer.outbox.needsReview");
+  const findMessage = useMutation({
+    networkMode: "always",
+    mutationFn: async () => {
+      if (!onFindMessage) return;
+      let found: boolean;
+      try {
+        found = await onFindMessage(item.id);
+      } catch (cause) {
+        throw new Error(t("composer.errors.messageLookupFailed"), { cause });
+      }
+      if (!found) throw new Error(t("composer.errors.messageNotFound"));
+    },
+    onError: (error) =>
+      updateOutboxItem(item.id, (current) => ({ ...current, error: error.message })),
+  });
+  const { mutate: findSavedMessage } = findMessage;
+  const find = useCallback(() => findSavedMessage(), [findSavedMessage]);
+  const status = t(
+    (
+      {
+        pending: "composer.outbox.pending",
+        sending: "composer.outbox.sending",
+        failed: "composer.outbox.failed",
+        in_flight: "composer.outbox.inFlight",
+        checking: "composer.outbox.checking",
+        needs_review: "composer.outbox.needsReview",
+      } as const
+    )[item.status],
+  );
   return (
     <View style={styles.queueItem}>
       <View style={styles.outboxDescription}>
@@ -781,6 +806,17 @@ function OutboxRow({
         >
           {status}
         </Text>
+        {onFindMessage && (item.status === "needs_review" || item.status === "in_flight") ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={findMessage.isPending}
+            onPress={find}
+            style={styles.viewMessageButton}
+          >
+            {t("composer.viewMessage")}
+          </Button>
+        ) : null}
         {item.error ? <Text style={styles.sendErrorText}>{item.error}</Text> : null}
       </View>
       <View style={styles.queueActions}>
@@ -2675,16 +2711,35 @@ function ComposerContentImpl({
     [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
+  const revealOutboxMessage = useCallback(
+    async (id: string) => {
+      if (!onViewSubmittedMessage) return false;
+      const version = messageLocationVersion.current;
+      editingSession.setFullscreen(false);
+      if (isNative) await KeyboardController.dismiss();
+      if (version !== messageLocationVersion.current) return true;
+      return onViewSubmittedMessage(id);
+    },
+    [editingSession, onViewSubmittedMessage],
+  );
+
   const outboxList = useMemo(() => {
     if (outboxItems.length === 0) return null;
     return (
       <View style={styles.queueTrack}>
         {outboxItems.map((item) => (
-          <OutboxRow key={item.id} item={item} client={client} connected={isConnected} t={t} />
+          <OutboxRow
+            key={item.id}
+            item={item}
+            client={client}
+            connected={isConnected}
+            t={t}
+            onFindMessage={onViewSubmittedMessage ? revealOutboxMessage : undefined}
+          />
         ))}
       </View>
     );
-  }, [client, isConnected, outboxItems, t]);
+  }, [client, isConnected, outboxItems, t, onViewSubmittedMessage, revealOutboxMessage]);
 
   const autocompleteConfiguration = useMemo(
     () => ({
