@@ -546,6 +546,15 @@ function isOpenCodeNotFoundError(error: unknown): boolean {
   );
 }
 
+async function isOpenCodeSessionMissing(
+  client: Pick<OpencodeClient, "session">,
+  sessionId: string,
+  directory: string,
+): Promise<boolean> {
+  const response = await client.session.get({ sessionID: sessionId, directory });
+  return isOpenCodeNotFoundError(response.error);
+}
+
 async function abortOpenCodeSession(params: {
   client: Pick<OpencodeClient, "session">;
   sessionId: string;
@@ -1457,8 +1466,18 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
+    const connection = await this.connectServer(openCodeConfig, launchContext);
+    return this.startNewSession(connection, config, openCodeConfig, launchContext, options);
+  }
+
+  private async startNewSession(
+    connection: OpenCodeServerConnection,
+    config: AgentSessionConfig,
+    openCodeConfig: OpenCodeAgentConfig,
+    launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession> {
     const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
-    const connection = await connectServer();
     const { client } = connection;
 
     // OpenCode stores permission rules on the session, so they are set here and on resume
@@ -1546,6 +1565,23 @@ export class OpenCodeAgentClient implements AgentClient {
       ? this.toServerConnection(registeredAcquisition, openCodeConfig.cwd)
       : await connectServer();
     const { client } = connection;
+
+    let sessionMissing: boolean;
+    try {
+      sessionMissing = await isOpenCodeSessionMissing(client, handle.sessionId, openCodeConfig.cwd);
+    } catch (error) {
+      await connection.release();
+      throw error;
+    }
+    if (sessionMissing) {
+      // Every prompt to a session OpenCode no longer has fails, so the agent
+      // continues in a new native session instead of staying unusable.
+      this.logger.warn(
+        { sessionId: handle.sessionId },
+        "OpenCode session no longer exists; continuing in a new session",
+      );
+      return this.startNewSession(connection, config, openCodeConfig, launchContext);
+    }
 
     try {
       await this.applySessionPermissionRules(client, openCodeConfig, handle.sessionId);
