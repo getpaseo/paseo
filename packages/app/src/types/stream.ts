@@ -148,6 +148,16 @@ export function isUnreconciledLocalUserMessage(message: UserMessageItem): boolea
   );
 }
 
+export function findSubmittedUserMessage(
+  tail: readonly StreamItem[],
+  head: readonly StreamItem[],
+  clientMessageId: string,
+): UserMessageItem | undefined {
+  const matches = (item: StreamItem): item is UserMessageItem =>
+    item.kind === "user_message" && item.clientMessageId === clientMessageId;
+  return tail.find(matches) ?? head.find(matches);
+}
+
 export function appendSubmittedUserMessage(input: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -161,7 +171,7 @@ export function appendSubmittedUserMessage(input: {
     (item) => item.kind === "user_message" && item.clientMessageId === clientMessageId,
   );
   if (alreadyExists) {
-    throw new Error(`Submitted user message already exists: ${clientMessageId}`);
+    return { tail: input.tail, head: input.head };
   }
   return input.head.length > 0
     ? { tail: input.tail, head: [...input.head, input.message] }

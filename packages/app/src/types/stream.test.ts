@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyStreamEvent,
+  findSubmittedUserMessage,
   createUserMessage,
   handoffCreatedAgentUserMessageToStream,
   hydrateStreamState,
@@ -2405,4 +2406,20 @@ it("retains agent-message provenance through live delivery and repeated history"
   const replay = reduceStreamUpdate(live, event, new Date(2));
   expect(replay).toHaveLength(1);
   expect(replay[0]).toMatchObject({ payload: { data: { agentMessage } } });
+});
+
+it("locates a submitted message by identity across both timeline lanes", () => {
+  const first = createUserMessage({
+    clientMessageId: "first",
+    text: "same text",
+    timestamp: new Date(0),
+  });
+  const second = createUserMessage({
+    clientMessageId: "second",
+    text: "same text",
+    timestamp: new Date(1),
+  });
+  expect(findSubmittedUserMessage([first], [second], "second")).toBe(second);
+  expect(findSubmittedUserMessage([first], [second], "first")).toBe(first);
+  expect(findSubmittedUserMessage([first], [second], "absent")).toBeUndefined();
 });

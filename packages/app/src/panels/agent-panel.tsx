@@ -1154,6 +1154,12 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const parentCallout = parentAgentId ? (
     <ParentAgentCallout serverId={serverId} parentAgentId={parentAgentId} />
   ) : null;
+  const viewSubmittedMessage = useCallback(
+    async (clientMessageId: string) => {
+      return (await streamViewRef.current?.focusSubmittedMessage(clientMessageId)) ?? false;
+    },
+    [streamViewRef],
+  );
   const agentComposerSection = showsComposer ? (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
       <AgentComposerSection
@@ -1170,6 +1176,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
+        onViewSubmittedMessage={viewSubmittedMessage}
       />
     </RenderProfile>
   ) : (
@@ -1544,6 +1551,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onViewSubmittedMessage,
 }: {
   agentId?: string;
   serverId: string;
@@ -1558,6 +1566,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onViewSubmittedMessage: (clientMessageId: string) => Promise<boolean>;
 }) {
   if (!agentId) {
     return null;
@@ -1582,6 +1591,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
       onAttentionPromptSend={onAttentionPromptSend}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
+      onViewSubmittedMessage={onViewSubmittedMessage}
     />
   );
 });
@@ -1598,6 +1608,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onViewSubmittedMessage,
 }: {
   agentId: string;
   serverId: string;
@@ -1610,6 +1621,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onViewSubmittedMessage: (clientMessageId: string) => Promise<boolean>;
 }) {
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
@@ -1709,6 +1721,7 @@ function ActiveAgentComposer({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onViewSubmittedMessage={onViewSubmittedMessage}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
       />

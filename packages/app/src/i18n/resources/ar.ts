@@ -138,6 +138,7 @@ export const ar: TranslationResources = {
       discard: "حذف الرسالة المحفوظة",
       attachmentMessage: "رسالة مع مرفقات",
     },
+    viewMessage: "البحث عن الرسالة",
     placeholders: {
       desktop: "أرسل رسالة إلى الوكيل أو ضع علامة على @files أو استخدم /commands و /skills",
       mobile: "الرسالة، @files ، /commands",
@@ -200,6 +201,9 @@ export const ar: TranslationResources = {
       removeReview: "إزالة مرفق المراجعة",
     },
     errors: {
+      messageLookupFailed:
+        "تعذر تحديث المحادثة. لا يزال التسليم غير مؤكد. أعد الاتصال وحاول البحث عن الرسالة مرة أخرى.",
+      messageNotFound: "تعذر العثور على هذه الرسالة في السجل المتاح. لا يزال التسليم غير مؤكد.",
       failedToSend: "فشل في إرسال الرسالة",
       failedToCreateAgent: "فشل في إنشاء الوكيل",
       noHostSelected: "لم يتم تحديد مضيف",

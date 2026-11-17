@@ -140,6 +140,7 @@ export const fr: TranslationResources = {
       discard: "Supprimer le message enregistré",
       attachmentMessage: "Message avec pièces jointes",
     },
+    viewMessage: "Rechercher le message",
     placeholders: {
       desktop: "Écrivez à l’agent, mentionnez des @fichiers ou utilisez les /commandes et /skills",
       mobile: "Message, @fichiers, /commandes",
@@ -202,6 +203,10 @@ export const fr: TranslationResources = {
       removeReview: "Retirer la revue jointe",
     },
     errors: {
+      messageLookupFailed:
+        "Impossible d’actualiser la conversation. La livraison reste incertaine. Reconnectez-vous et recherchez le message à nouveau.",
+      messageNotFound:
+        "Ce message est introuvable dans l’historique disponible. Sa livraison reste incertaine.",
       failedToSend: "Impossible d’envoyer le message",
       failedToCreateAgent: "Impossible de créer l’agent",
       noHostSelected: "Aucun hôte sélectionné",
