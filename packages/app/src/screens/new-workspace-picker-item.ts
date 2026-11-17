@@ -67,6 +67,18 @@ export function buildBranchPickerItems(details: readonly BranchPickerDetail[]): 
   const items: PickerItem[] = [];
 
   for (const detail of details) {
+    if (detail.name.startsWith(REMOTE_TRACKING_PREFIX)) {
+      const remote = refQualifier(detail.name);
+      const name = `${branchNameFromRef(detail.name)} (${remote})`;
+      items.push({
+        kind: "branch",
+        name,
+        refName: detail.name,
+        accessibilityLabel: `${name}, ${remote} branch`,
+        committerDate: detail.committerDate,
+      });
+      continue;
+    }
     const hasKnownProvenance = detail.hasLocal !== undefined || detail.hasRemote !== undefined;
     if (!hasKnownProvenance) {
       items.push({

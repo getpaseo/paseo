@@ -1058,6 +1058,7 @@ export function NewWorkspaceScreen({
   const branchSuggestionsQuery = useQuery({
     queryKey: [
       "branch-suggestions",
+      "all-remotes",
       selectedServerId,
       selectedSourceDirectory,
       debouncedPickerSearchQuery,
@@ -1067,11 +1068,26 @@ export function NewWorkspaceScreen({
         throw new Error("Choose a project");
       }
       const connectedClient = withConnectedClient();
-      return connectedClient.getBranchSuggestions({
+      const request = {
         cwd: selectedSourceDirectory,
         query: debouncedPickerSearchQuery || undefined,
-        limit: 20,
-      });
+      };
+      // Keep origin's local/remote divergence rows while making other remotes selectable.
+      const [suggestions, exactRefs] = await Promise.all([
+        connectedClient.getBranchSuggestions({ ...request, limit: 20 }),
+        connectedClient.getBranchSuggestions({ ...request, refMode: "exact", limit: 200 }),
+      ]);
+      return {
+        ...suggestions,
+        branchDetails: [
+          ...normalizeBranchDetails(suggestions),
+          ...normalizeBranchDetails(exactRefs).filter(
+            (detail) =>
+              detail.name.startsWith("refs/remotes/") &&
+              !detail.name.startsWith("refs/remotes/origin/"),
+          ),
+        ],
+      };
     },
     enabled: pickerQueryEnabled,
     staleTime: 15_000,

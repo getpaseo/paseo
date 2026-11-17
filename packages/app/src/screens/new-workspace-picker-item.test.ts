@@ -107,6 +107,42 @@ describe("pickerItemToCheckoutRequest", () => {
 });
 
 describe("buildBranchPickerItems", () => {
+  it("keeps exact non-origin refs distinct from local and origin branches", () => {
+    const items = buildBranchPickerItems([
+      { name: "main", committerDate: 1, hasLocal: true, hasRemote: false },
+      { name: "refs/remotes/company/main", committerDate: 2, hasLocal: false, hasRemote: true },
+      { name: "refs/remotes/upstream/main", committerDate: 3, hasLocal: false, hasRemote: true },
+    ]);
+    expect(items).toEqual([
+      {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+        committerDate: 1,
+      },
+      {
+        kind: "branch",
+        name: "main (company)",
+        refName: "refs/remotes/company/main",
+        accessibilityLabel: "main (company), company branch",
+        committerDate: 2,
+      },
+      {
+        kind: "branch",
+        name: "main (upstream)",
+        refName: "refs/remotes/upstream/main",
+        accessibilityLabel: "main (upstream), upstream branch",
+        committerDate: 3,
+      },
+    ]);
+    expect(items.map(pickerItemToCheckoutRequest)).toEqual([
+      { action: "branch-off", refName: "refs/heads/main" },
+      { action: "branch-off", refName: "refs/remotes/company/main" },
+      { action: "branch-off", refName: "refs/remotes/upstream/main" },
+    ]);
+  });
+
   it("keeps a single origin row when local and origin match", () => {
     expect(
       buildBranchPickerItems([
