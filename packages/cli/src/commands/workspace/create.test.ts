@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildWorkspaceSource } from "./create.js";
 
@@ -6,6 +7,25 @@ describe("workspace create source", () => {
     expect(
       buildWorkspaceSource({ isolation: "local", path: "/tmp/project", project: "project-1" }),
     ).toEqual({ kind: "directory", path: "/tmp/project", projectId: "project-1" });
+  });
+
+  it("resolves a relative path against the directory the command runs in", () => {
+    expect(buildWorkspaceSource({ isolation: "local", path: "." })).toEqual({
+      kind: "directory",
+      path: process.cwd(),
+    });
+    expect(buildWorkspaceSource({ isolation: "worktree", path: "../sibling" })).toEqual({
+      kind: "worktree",
+      cwd: path.resolve(process.cwd(), "../sibling"),
+      action: "branch-off",
+    });
+  });
+
+  it("passes an absolute path from another operating system through unchanged", () => {
+    expect(buildWorkspaceSource({ isolation: "local", path: "C:\\repos\\project" })).toEqual({
+      kind: "directory",
+      path: "C:\\repos\\project",
+    });
   });
 
   it("keeps branch names separate from managed worktree slugs", () => {

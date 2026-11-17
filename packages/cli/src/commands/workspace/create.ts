@@ -1,3 +1,6 @@
+import { isAbsolute as isPosixAbsolute } from "node:path/posix";
+import { isAbsolute as isWindowsAbsolute } from "node:path/win32";
+import { resolve } from "node:path";
 import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { resolveCallerAgentId } from "../../utils/caller-agent.js";
@@ -121,12 +124,20 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
   }
 }
 
+// The daemon resolves a relative path against its own working directory, so
+// --path is made absolute here, where the caller's directory is known. An
+// absolute path can target a daemon on a different operating system.
+function resolveCallerPath(input: string): string {
+  return isPosixAbsolute(input) || isWindowsAbsolute(input) ? input : resolve(input);
+}
+
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
+  const callerPath = options.path === undefined ? undefined : resolveCallerPath(options.path);
   if (options.isolation === "local") {
-    return buildLocalWorkspaceSource(options, options.path ?? process.cwd());
+    return buildLocalWorkspaceSource(options, callerPath ?? process.cwd());
   }
   if (options.isolation === "worktree") {
-    const sourcePath = options.path ?? (options.project ? undefined : process.cwd());
+    const sourcePath = callerPath ?? (options.project ? undefined : process.cwd());
     return buildWorktreeWorkspaceSource(options, sourcePath);
   }
   throw new Error(`Unsupported workspace isolation: ${String(options.isolation)}`);
