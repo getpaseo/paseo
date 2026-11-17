@@ -1146,7 +1146,9 @@ describe("PiRpcAgentSession", () => {
     const fakeSession = pi.latestSession();
 
     fakeSession.holdNextPrompt();
-    const firstTurn = await session.startTurn("/silent-search");
+    const firstTurn = session.startTurn("/silent-search");
+    const failedAdmission = expect(firstTurn).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    await waitForImmediate();
     fakeSession.emit({
       type: "extension_ui_request",
       id: "notify-1",
@@ -1157,12 +1159,13 @@ describe("PiRpcAgentSession", () => {
     const cancellation = await events.nextTurnCancellation();
     await session.startTurn("next request");
     await fakeSession.failHeldPrompt(new Error("Canceled prompt timed out"));
+    await failedAdmission;
 
     expect(cancellation).toEqual({
       type: "turn_canceled",
       provider: "pi",
       reason: "interrupted",
-      turnId: firstTurn.turnId,
+      turnId: expect.any(String),
     });
     expect(fakeSession.prompts).toEqual([
       { message: "/silent-search", imageCount: 0 },
@@ -3198,13 +3201,14 @@ describe("PiRpcAgentClient", () => {
     const handler = session.tryHandleOutOfBand("/compact");
     const compaction = handler!.run({ emit: () => {} });
 
-    const { turnId } = await session.startTurn("continue after compaction");
+    const starting = session.startTurn("continue after compaction");
     await flushTurnScheduling();
     expect(fakeSession.compactRequests).toEqual([{}]);
     expect(fakeSession.prompts).toEqual([]);
 
     compactionFinished.resolve();
     await compaction;
+    const { turnId } = await starting;
     await flushTurnScheduling();
     expect(fakeSession.prompts).toEqual([{ message: "continue after compaction", imageCount: 0 }]);
 
@@ -3225,12 +3229,15 @@ describe("PiRpcAgentClient", () => {
       const handler = session.tryHandleOutOfBand("/compact");
       const compaction = handler!.run({ emit: () => {} });
 
-      await session.startTurn("do not send this prompt");
+      const starting = session.startTurn("do not send this prompt");
+      const canceled = expect(starting).rejects.toMatchObject({ deliveryOutcome: "not_submitted" });
+      await flushTurnScheduling();
       await session[action]();
       compactionFinished.resolve();
       await compaction;
       await flushTurnScheduling();
 
+      await canceled;
       expect(fakeSession.prompts).toEqual([]);
     },
   );
@@ -3245,7 +3252,9 @@ describe("PiRpcAgentClient", () => {
     fakeSession.clearQueueCompletion = clearQueueFinished.promise;
     const handler = session.tryHandleOutOfBand("/compact");
     const compaction = handler!.run({ emit: () => {} });
-    const { turnId } = await session.startTurn("do not send this prompt");
+    const starting = session.startTurn("do not send this prompt");
+    const canceled = expect(starting).rejects.toMatchObject({ deliveryOutcome: "not_submitted" });
+    await flushTurnScheduling();
 
     const interruption = session.interrupt();
     compactionFinished.resolve();
@@ -3256,7 +3265,10 @@ describe("PiRpcAgentClient", () => {
 
     clearQueueFinished.resolve();
     await interruption;
-    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_canceled", turnId }]);
+    await canceled;
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_canceled", turnId: expect.any(String) },
+    ]);
     expect(fakeSession.prompts).toEqual([]);
   });
 
@@ -4090,16 +4102,17 @@ test("interrupting Pi during image conversion cancels the admitted turn and perm
       admitted = true;
       return result;
     });
+  const canceled = expect(first).rejects.toThrow("canceled before starting");
   await waitForImmediate();
   expect(admitted).toBe(false);
   expect(pi.latestSession().prompts).toHaveLength(0);
   await session.interrupt();
   const followup = await session.startTurn("follow-up after image interrupt");
-  const original = await first;
+  await canceled;
   expect(events).toContainEqual(
-    expect.objectContaining({ type: "turn_canceled", turnId: original.turnId }),
+    expect.objectContaining({ type: "turn_canceled", turnId: expect.any(String) }),
   );
-  expect(followup.turnId).not.toBe(original.turnId);
+  expect(followup.turnId).toBeTruthy();
   expect(pi.latestSession().prompts).toEqual([
     { message: "follow-up after image interrupt", imageCount: 0 },
   ]);
@@ -4231,3 +4244,37 @@ test("Pi image rendering preserves turn ownership across an interrupt and follow
   native.finishTurn();
   await events.nextTurnCompletion();
 });
+
+for (const nativeStarted of [false, true]) {
+  test(`PI startup waits for native evidence (start event: ${nativeStarted})`, async () => {
+    const runtime = new FakePi();
+    const session = await createClient(runtime).createSession({
+      provider: "pi",
+      cwd: process.cwd(),
+    });
+    onTestFinished(() => session.close());
+    const native = runtime.latestSession();
+    let acknowledge!: () => void;
+    const ack = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const prompt = native.prompt.bind(native);
+    native.prompt = async (...args: Parameters<typeof native.prompt>) => {
+      const result = await prompt(...args);
+      await ack;
+      return result;
+    };
+    let settled = false;
+    const starting = session.startTurn("Wait for admission").then((result) => {
+      settled = true;
+      return result;
+    });
+    await waitForImmediate();
+    expect(settled).toBe(false);
+    if (nativeStarted) native.emit({ type: "turn_start" });
+    else acknowledge();
+    await starting;
+    expect(settled).toBe(true);
+    acknowledge();
+  });
+}
