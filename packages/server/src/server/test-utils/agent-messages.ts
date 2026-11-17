@@ -50,7 +50,11 @@ export function createTestAgentMessages(params: {
         runOptions: { clientMessageId: request.messageIds[0] },
       });
       if (result.disposition === "turn_started")
-        await waitForAgentRunStartWithTimeout(params.agentManager, request.recipientId);
+        await waitForAgentRunStartWithTimeout(
+          params.agentManager,
+          request.recipientId,
+          result.started,
+        );
       return result.disposition;
     },
     onError: (error, request) =>

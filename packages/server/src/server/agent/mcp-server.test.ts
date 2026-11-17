@@ -1,3 +1,4 @@
+import { AgentRunState, ForegroundPromptStart } from "./agent-run-state.js";
 import {
   createFinishSubscriptions,
   createFinishObservation,
@@ -279,8 +280,15 @@ function buildAgentManagerSpies() {
     steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
-    streamAgent: vi.fn(() => (async function* noop() {})()),
-    waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
+    streamAgent: vi.fn(
+      (agentId: string, _prompt: unknown, _options: unknown, start?: ForegroundPromptStart) => {
+        const runs = new AgentRunState();
+        const run = runs.createPendingRun(agentId);
+        runs.settleForegroundStart(run, { status: "started", turnId: `${agentId}-turn` });
+        start?.bind(run);
+        return (async function* noop() {})();
+      },
+    ),
     respondToPermission: vi.fn(),
     cancelAgentRun: vi.fn(),
     getPendingPermissions: vi.fn(),
