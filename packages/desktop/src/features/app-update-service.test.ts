@@ -395,6 +395,97 @@ describe("app update service", () => {
     ]);
   });
 
+  it("waits for daemon shutdown before installing an update on quit", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    let finishShutdown!: () => void;
+    let announceShutdown!: () => void;
+    const shutdownStarted = new Promise<void>((resolve) => {
+      announceShutdown = resolve;
+    });
+    const shutdownFinished = new Promise<void>((resolve) => {
+      finishShutdown = resolve;
+    });
+    const installed = service.installUpdateOnQuit(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {
+        announceShutdown();
+        await shutdownFinished;
+      },
+    );
+
+    await Promise.race([shutdownStarted, installed]);
+    expect(runtime.installedVersions).toEqual([]);
+    finishShutdown();
+    expect(await installed).toBe(true);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
+  });
+
+  it("does not install an update on quit when daemon shutdown fails", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await expect(
+      service.installUpdateOnQuit(
+        {
+          currentVersion: "1.2.3",
+          releaseChannel: "stable",
+          signal: new AbortController().signal,
+        },
+        async () => {
+          throw new Error("Daemon shutdown failed");
+        },
+      ),
+    ).rejects.toThrow("Daemon shutdown failed");
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("does not install after the quit deadline expires during daemon shutdown", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const deadline = new AbortController();
+
+    const installed = await service.installUpdateOnQuit(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: deadline.signal,
+      },
+      async () => {
+        deadline.abort();
+      },
+    );
+
+    expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
   it("does not install an older download while its replacement is still rolling out", async () => {
     const now = Date.parse("2026-04-28T12:00:00.000Z");
     const { runtime, service } = createService({ now: () => now, bucket: async () => 0.4 });
@@ -473,6 +564,34 @@ describe("app update service", () => {
     });
 
     expect(installed).toBe(false);
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("leaves the daemon running when quit-time validation finds no update", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck(null);
+    let shutdowns = 0;
+
+    const installed = await service.installUpdateOnQuit(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {
+        shutdowns += 1;
+      },
+    );
+
+    expect(installed).toBe(false);
+    expect(shutdowns).toBe(0);
     expect(runtime.installedVersions).toEqual([]);
   });
 
