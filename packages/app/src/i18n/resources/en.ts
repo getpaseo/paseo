@@ -508,6 +508,8 @@ export const en = {
       copyRelativePath: "Copy relative path",
       revealIn: "Reveal in {{target}}",
       download: "Download",
+      share: "Share",
+      openWith: "Open with…",
       addToChat: "Add to chat",
       moreActions: "More actions",
       newFile: "New file",
@@ -2047,6 +2049,8 @@ export const en = {
     failed: "Failed to download file.",
     shareFile: "Share file",
     shareFileNamed: "Share {{fileName}}",
+    noAppToOpen: "No app on this device can open {{fileName}}.",
+    notificationChannel: "Downloads",
   },
   menu: {
     backdrop: "Menu backdrop",

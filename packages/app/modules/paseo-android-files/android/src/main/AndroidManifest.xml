@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- The F-Droid build drops expo-notifications, which otherwise brings this in. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+</manifest>

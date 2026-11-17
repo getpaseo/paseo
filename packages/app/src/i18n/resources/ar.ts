@@ -509,6 +509,8 @@ export const ar: TranslationResources = {
       copyRelativePath: "نسخ المسار النسبي",
       revealIn: "إظهار في {{target}}",
       download: "تحميل",
+      share: "مشاركة",
+      openWith: "فتح باستخدام…",
       addToChat: "إضافة إلى الدردشة",
       moreActions: "المزيد من الإجراءات",
       newFile: "ملف جديد",
@@ -2019,6 +2021,8 @@ export const ar: TranslationResources = {
     failed: "فشل تنزيل الملف.",
     shareFile: "مشاركة الملف",
     shareFileNamed: "مشاركة{{fileName}}",
+    noAppToOpen: "لا يوجد تطبيق على هذا الجهاز يمكنه فتح {{fileName}}.",
+    notificationChannel: "التنزيلات",
   },
   menu: {
     backdrop: "خلفية القائمة",
