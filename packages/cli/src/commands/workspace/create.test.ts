@@ -28,6 +28,18 @@ describe("workspace create source", () => {
     });
   });
 
+  it("leaves a home-relative path for the daemon to expand", () => {
+    expect(buildWorkspaceSource({ isolation: "local", path: "~/repo" })).toEqual({
+      kind: "directory",
+      path: "~/repo",
+    });
+    expect(buildWorkspaceSource({ isolation: "worktree", path: "~" })).toEqual({
+      kind: "worktree",
+      cwd: "~",
+      action: "branch-off",
+    });
+  });
+
   it("keeps branch names separate from managed worktree slugs", () => {
     expect(
       buildWorkspaceSource({

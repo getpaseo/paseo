@@ -126,9 +126,13 @@ function buildWorktreeWorkspaceSource(options: WorkspaceCreateOptions, path: str
 
 // The daemon resolves a relative path against its own working directory, so
 // --path is made absolute here, where the caller's directory is known. An
-// absolute path can target a daemon on a different operating system.
+// absolute path can target a daemon on a different operating system, and the
+// daemon expands a leading ~ to its own home directory.
 function resolveCallerPath(input: string): string {
-  return isPosixAbsolute(input) || isWindowsAbsolute(input) ? input : resolve(input);
+  const isHomeRelative = input === "~" || input.startsWith("~/");
+  return isHomeRelative || isPosixAbsolute(input) || isWindowsAbsolute(input)
+    ? input
+    : resolve(input);
 }
 
 export function buildWorkspaceSource(options: WorkspaceCreateOptions) {
