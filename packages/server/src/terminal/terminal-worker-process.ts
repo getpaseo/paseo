@@ -582,6 +582,9 @@ function runWorker(argv: string[]): void {
   async function handleKillTerminalAndWaitRequest(
     message: Extract<TerminalWorkerRequest, { type: "killTerminalAndWait" }>,
   ): Promise<void> {
+    // A lost creation reply can be followed by cancellation while creation is
+    // still queued. A close acknowledgement must also cover that terminal.
+    await createTerminalQueue;
     const preserveSession =
       message.options?.preserveSession === true && retainedTerminalIds.has(message.terminalId);
     if (preserveSession) {
@@ -674,6 +677,8 @@ function runWorker(argv: string[]): void {
       }
 
       case "listTerminals": {
+        // Recovery must include creations accepted before the disconnect.
+        await createTerminalQueue;
         sendToController({
           type: "response",
           requestId: message.requestId,

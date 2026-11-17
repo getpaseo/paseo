@@ -95,7 +95,7 @@ describe("WorkspaceLaunchManager", () => {
 
     terminalManager.failNextCreate();
     await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
-    expect(terminalManager.killed).toEqual([dev.terminalId]);
+    expect(terminalManager.killed).toEqual([dev.terminalId, expect.any(String)]);
     expect(await manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "dev", lifecycle: "running", active: true }),
@@ -108,7 +108,11 @@ describe("WorkspaceLaunchManager", () => {
     expect(restoredDev?.terminalId).not.toBe(dev.terminalId);
 
     const full = await manager.start(context, "full");
-    expect(terminalManager.killed).toEqual([dev.terminalId, restoredDev?.terminalId]);
+    expect(terminalManager.killed).toEqual([
+      dev.terminalId,
+      expect.any(String),
+      restoredDev?.terminalId,
+    ]);
     expect(terminalManager.manager.getTerminal(restoredDev!.terminalId!)).toBeDefined();
     expect(full).toMatchObject({
       launchName: "full",
@@ -148,6 +152,143 @@ describe("WorkspaceLaunchManager", () => {
       ]),
     );
     await manager.disposeWorkspace(context.workspaceId);
+  });
+
+  it("cleans an unacknowledged creation before rollback and a later retry", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-lost-reply-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+        launches: { dev: { command: "./bin/dev" }, full: { command: "./bin/full" } },
+      }),
+    );
+    let loseReply = false;
+    const terminals = createTerminalManager({
+      afterCreate: async () => {
+        if (loseReply) {
+          loseReply = false;
+          throw new Error("Creation reply lost");
+        }
+      },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminals.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "lost-creation-reply",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    try {
+      const dev = await manager.start(context, "dev");
+      loseReply = true;
+      await expect(manager.start(context, "full")).rejects.toThrow("Creation reply lost");
+      expect(terminals.created.map((terminal) => terminal.name)).toEqual([
+        "launch:dev",
+        "launch:full",
+        "launch:dev",
+      ]);
+      expect(terminals.killed).toEqual([dev.terminalId, terminals.created[1]?.id]);
+      const afterRollback = await terminals.manager.getTerminals(directory);
+      expect(
+        afterRollback
+          .filter((terminal) => terminal.getExitInfo() === null)
+          .map((terminal) => terminal.workspaceLaunch?.launchName),
+      ).toEqual(["dev"]);
+      await manager.start(context, "full");
+      const afterRetry = await terminals.manager.getTerminals(directory);
+      expect(
+        afterRetry
+          .filter((terminal) => terminal.getExitInfo() === null)
+          .map((terminal) => terminal.workspaceLaunch?.launchName),
+      ).toEqual(["full"]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("blocks retry and disposal until an ambiguous creation is confirmed closed", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-pending-cleanup-"));
+    tempDirs.push(directory);
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "43000-43003", blockSize: 4 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    let loseReply = true;
+    let allowClose = false;
+    const terminals = createTerminalManager({
+      afterCreate: async () => {
+        if (loseReply) {
+          loseReply = false;
+          throw new Error("Creation reply lost");
+        }
+      },
+      beforeKill: async () => {
+        if (!allowClose) throw new Error("IPC unavailable");
+      },
+    });
+    const environment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminals.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: environment,
+      assertAutomationAllowed: async () => {},
+      getDaemonTcpPort: null,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "pending-creation-cleanup",
+      workspaceDirectory: directory,
+      projectSlug: "app",
+      branchName: null,
+    };
+    try {
+      await expect(manager.start(context, "dev")).rejects.toThrow("Cannot confirm launch cleanup");
+      await expect(manager.start(context, "dev")).rejects.toThrow("Cannot confirm launch cleanup");
+      expect(terminals.created).toHaveLength(1);
+      await expect(manager.disposeWorkspace(context.workspaceId)).rejects.toThrow(
+        "Cannot confirm launch cleanup",
+      );
+      expect(environment.get(context.workspaceId)).toMatchObject({ portBase: 43000 });
+      await expect(
+        environment.ensure({
+          workspaceId: "waiting-for-creation-cleanup",
+          cwd: directory,
+          branchName: null,
+          allocation: { range: "43000-43003", blockSize: 4 },
+        }),
+      ).rejects.toThrow("No available workspace port block");
+      allowClose = true;
+      await manager.start(context, "dev");
+      expect(terminals.created).toHaveLength(2);
+      const surviving = await terminals.manager.getTerminals(directory);
+      expect(surviving.map((terminal) => terminal.id)).toEqual([terminals.created[1]?.id]);
+    } finally {
+      allowClose = true;
+      await manager.disposeWorkspace(context.workspaceId);
+    }
   });
 
   it("reads current global policy for new leases while preserving existing workspace blocks", async () => {
@@ -892,7 +1033,7 @@ describe("WorkspaceLaunchManager", () => {
     });
     const deps: WorkspaceLaunchManagerDependencies = {
       terminalManager: terminals.manager,
-      serviceProxy: null,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
       workspaceRuntimeEnvironment: environment,
       assertAutomationAllowed: async () => {},
       getDaemonTcpPort: null,
@@ -908,7 +1049,8 @@ describe("WorkspaceLaunchManager", () => {
       branchName: null,
     };
     const launch = await manager.start(context, "dev");
-    expect(launch.terminalId).toBe("terminal-1");
+    const terminalId = launch.terminalId;
+    if (terminalId === null) throw new Error("Expected launch terminal");
     terminals.created[0]!.triggerExit(1);
     // After confirmed worker death the pool owns no terminals, while the
     // stopped launch still remembers the terminal that produced its output.
@@ -919,7 +1061,7 @@ describe("WorkspaceLaunchManager", () => {
       closeAll: async () => {},
     });
     deps.terminalManager = emptyPool;
-    await expect(emptyPool.killTerminalAndWait("terminal-1")).rejects.toThrow(
+    await expect(emptyPool.killTerminalAndWait(terminalId)).rejects.toThrow(
       NoTerminalWorkerAvailableError,
     );
     await expect(manager.disposeWorkspace(context.workspaceId)).resolves.toBeUndefined();
@@ -2406,11 +2548,13 @@ function createTerminalManager(
   managerOptions: {
     unavailableError?: Error;
     beforeKill?: (terminalId: string) => Promise<void>;
+    afterCreate?: (terminal: TerminalSession) => Promise<void>;
     afterList?: () => Promise<void>;
   } = {},
 ): {
   manager: TerminalManager;
   created: Array<{
+    id: string;
     env: Record<string, string> | undefined;
     name: string;
     retainOnExit: boolean;
@@ -2422,6 +2566,7 @@ function createTerminalManager(
   const sessions = new Map<string, TerminalSession>();
   const closingSessions = new Map<string, TerminalSession>();
   const created: Array<{
+    id: string;
     env: Record<string, string> | undefined;
     name: string;
     retainOnExit: boolean;
@@ -2436,6 +2581,7 @@ function createTerminalManager(
     listDirectories: () =>
       Array.from(new Set(Array.from(sessions.values(), (session) => session.cwd))),
     createTerminal: async (options: {
+      id?: string;
       cwd: string;
       workspaceId: string;
       name?: string;
@@ -2449,7 +2595,7 @@ function createTerminalManager(
         failNextCreate = false;
         throw new Error("Failed to create terminal");
       }
-      const id = `terminal-${++nextId}`;
+      const id = options.id ?? `terminal-${++nextId}`;
       let exitListener: ((info: { exitCode: number | null }) => void) | null = null;
       let exitInfo: { exitCode: number | null } | null = null;
       const triggerExit = (exitCode: number | null) => {
@@ -2481,6 +2627,7 @@ function createTerminalManager(
       } as unknown as TerminalSession;
       sessions.set(id, terminal);
       created.push({
+        id,
         env: options.env,
         name: terminal.name,
         retainOnExit: options.retainOnExit === true,
@@ -2491,6 +2638,7 @@ function createTerminalManager(
       Object.assign(terminal, {
         __exit: () => triggerExit(0),
       });
+      await managerOptions.afterCreate?.(terminal);
       return terminal;
     },
     getTerminals: async (cwd: string, options?: { workspaceId?: string }) => {
