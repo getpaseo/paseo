@@ -110,3 +110,18 @@ for (const finalOutcome of ["accept", "reject"] as const) {
     }
   });
 }
+
+test("a prior canonical attempt does not prove that a failed same-ID retry was accepted", () => {
+  initializeSession(CANONICAL_ONLY_SERVER_ID, { canonicalSubmittedPrompts: true });
+  const canonical = { ...submittedMessage("rejected-history"), messageId: "rejected-history" };
+  useSessionStore
+    .getState()
+    .setAgentStreamState(CANONICAL_ONLY_SERVER_ID, "agent-1", { tail: [canonical], head: [] });
+  const writer = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+  writer.begin("agent-1", submittedMessage("rejected-history"));
+  expect(writer.reject("agent-1", "rejected-history")).toBe("rejected");
+  expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual([]);
+  expect(
+    useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID].agentStreamTail.get("agent-1"),
+  ).toEqual([canonical]);
+});

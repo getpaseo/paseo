@@ -6,6 +6,8 @@ export type MessageSubmissionRecord = PendingMessageSubmission & {
   providerAcknowledged: boolean;
   rpcSettled: boolean;
   pendingAttempts?: number;
+  /** Preserve an existing history row without treating its presence as acceptance. */
+  existingTimelineRow?: true;
 };
 
 const EMPTY_MESSAGE_SUBMISSIONS: readonly MessageSubmissionRecord[] = [];
@@ -43,7 +45,7 @@ export interface MessageSubmissionRejectionResult {
 
 export function beginMessageSubmission(
   submissions: readonly MessageSubmissionRecord[],
-  input: PendingMessageSubmission,
+  input: PendingMessageSubmission & { existingTimelineRow?: true },
 ): MessageSubmissionRecord[] {
   if (submissions.some((submission) => submission.clientMessageId === input.clientMessageId)) {
     return submissions.map((record) =>
@@ -64,7 +66,7 @@ export function acceptMessageSubmission(
   );
   if (index < 0) return submissions as MessageSubmissionRecord[];
   const submission = submissions[index];
-  if (submission.providerAcknowledged) {
+  if (submission.providerAcknowledged || submission.existingTimelineRow) {
     return submissions.filter((_, submissionIndex) => submissionIndex !== index);
   }
   if (submission.rpcSettled) return submissions as MessageSubmissionRecord[];
