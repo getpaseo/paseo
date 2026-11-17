@@ -1476,7 +1476,7 @@ export class OpenCodeAgentClient implements AgentClient {
     openCodeConfig: OpenCodeAgentConfig,
     launchContext?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
-  ): Promise<AgentSession> {
+  ): Promise<OpenCodeAgentSession> {
     const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
     const { client } = connection;
 
@@ -1541,7 +1541,7 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
-    _options?: AgentResumeSessionOptions,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1566,12 +1566,19 @@ export class OpenCodeAgentClient implements AgentClient {
       : await connectServer();
     const { client } = connection;
 
-    let sessionMissing: boolean;
-    try {
-      sessionMissing = await isOpenCodeSessionMissing(client, handle.sessionId, openCodeConfig.cwd);
-    } catch (error) {
-      await connection.release();
-      throw error;
+    // History loads stay read-only, so only an interactive resume replaces a lost session.
+    let sessionMissing = false;
+    if ((options?.purpose ?? "interactive") === "interactive") {
+      try {
+        sessionMissing = await isOpenCodeSessionMissing(
+          client,
+          handle.sessionId,
+          openCodeConfig.cwd,
+        );
+      } catch (error) {
+        await connection.release();
+        throw error;
+      }
     }
     if (sessionMissing) {
       // Every prompt to a session OpenCode no longer has fails, so the agent
@@ -1580,7 +1587,9 @@ export class OpenCodeAgentClient implements AgentClient {
         { sessionId: handle.sessionId },
         "OpenCode session no longer exists; continuing in a new session",
       );
-      return this.startNewSession(connection, config, openCodeConfig, launchContext);
+      const session = await this.startNewSession(connection, config, openCodeConfig, launchContext);
+      session.persistenceUpdatedOnResume = true;
+      return session;
     }
 
     try {
@@ -3416,6 +3425,8 @@ interface OpenCodeServerConnection {
 }
 
 class OpenCodeAgentSession implements AgentSession {
+  /** Set when resume replaced a lost native session, so the new handle is saved at once. */
+  persistenceUpdatedOnResume = false;
   readonly provider = "opencode" as const;
   readonly capabilities = OPENCODE_CAPABILITIES;
   readonly openOptionsPatch: Record<string, unknown>;

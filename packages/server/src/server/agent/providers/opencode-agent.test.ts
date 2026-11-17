@@ -848,6 +848,37 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
 
         expect(turn.turnCompleted).toBe(true);
         expect(session.describePersistence()?.sessionId).toBe("ses_fresh");
+        expect(session.persistenceUpdatedOnResume).toBe(true);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loading history of an agent whose OpenCode session is gone creates no session", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const execution = new TestOpenCodeClient();
+    execution.sessionGetResponse = {
+      error: { name: "NotFoundError", data: { message: "Session not found: ses_lost" } },
+    };
+    runtime.enqueueClient(execution);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const cwd = tmpCwd();
+    try {
+      const session = await client.resumeSession(
+        { provider: "opencode", sessionId: "ses_lost", metadata: { cwd } },
+        undefined,
+        undefined,
+        { purpose: "history" },
+      );
+      try {
+        expect(execution.calls.sessionCreate).toEqual([]);
+        expect(session.describePersistence()?.sessionId).toBe("ses_lost");
       } finally {
         await session.close();
       }
