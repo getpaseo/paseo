@@ -101,6 +101,17 @@ function buildQueryMock(events: unknown[]) {
   };
 }
 
+/** Last status each replayed child reached, keyed by its descriptor id. */
+function lastSubagentStatusesById(
+  events: Extract<AgentStreamEvent, { type: "provider_subagent" }>[],
+): Record<string, string> {
+  const statuses: Record<string, string> = {};
+  for (const { event } of events) {
+    if (event.type === "upsert" && event.status) statuses[event.id] = event.status;
+  }
+  return statuses;
+}
+
 describe("ClaudeAgentSession persisted subagent replay", () => {
   const logger = createTestLogger();
   const queryFactory = vi.fn(() => {
@@ -674,6 +685,198 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
       });
 
       expect(upserts(await replayDescriptors()).at(-1)).toMatchObject({ status: "completed" });
+    });
+  });
+
+  describe("a process that died with children running", () => {
+    const KILLED_AGENT_ID = "a4d6ec6abc41971c8";
+    const SECOND_TOOL_USE_ID = "toolu_01SecondLaunch";
+    const SECOND_AGENT_ID = "af1bac5e1cafacbc7";
+
+    function launch(toolUseId: string, agentId: string): string[] {
+      return [
+        parentEntry([
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: "Agent",
+            input: {
+              subagent_type: "general-purpose",
+              description: "probe sleeper",
+              run_in_background: true,
+            },
+          },
+        ]),
+        JSON.stringify({
+          type: "user",
+          sessionId: "replay-session",
+          timestamp: "2026-07-26T06:27:48.000Z",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: [
+                  { type: "text", text: `Async agent launched successfully.\nagentId: ${agentId}` },
+                ],
+              },
+            ],
+          },
+          toolUseResult: { isAsync: true, status: "async_launched", agentId },
+        }),
+      ];
+    }
+
+    /**
+     * A notice as Claude Code writes it: the message content is the notice text itself, not a
+     * content-block array.
+     */
+    function notice(content: string, uuid: string): string {
+      return JSON.stringify({
+        type: "user",
+        sessionId: "replay-session",
+        uuid,
+        timestamp: "2026-07-26T06:30:00.000Z",
+        message: { role: "user", content },
+      });
+    }
+
+    /**
+     * The notice Claude Code 2.1.32x writes once, on the first resume after a kill: one message
+     * naming every task the dead process left running, with no tool id to key them by.
+     */
+    const RESTART_NOTICE = [
+      "<task-notification>",
+      `<task-id>${KILLED_AGENT_ID}</task-id>`,
+      `<task-id>${SECOND_AGENT_ID}</task-id>`,
+      "<status>stopped</status>",
+      `<summary>2 background agents didn't finish before the previous session ended: "Widget config" (${KILLED_AGENT_ID}), "Rewards layout" (${SECOND_AGENT_ID}).</summary>`,
+      "<note>No completion record was found for them in the previous session. They may have been stopped, or they may have been running when the previous Claude Code process exited — either way their transcripts are saved, so their progress is not lost. Resume any of them by sending a message to its id with SendMessage, or check its worktree/output for partial work before assuming the task landed.</note>",
+      "</task-notification>",
+    ].join("\n");
+
+    /**
+     * The other notice shape Claude Code 2.1.32x writes: one task, and a tool id to key it by.
+     * The note is the singular form of the same text; the parser ignores it.
+     */
+    const SHELL_TOOL_USE_ID = "toolu_01U14w7XTggYhXUHd6AdZpT6";
+    const SHELL_NOTICE = [
+      "<task-notification>",
+      "<task-id>bba7xrti8</task-id>",
+      `<tool-use-id>${SHELL_TOOL_USE_ID}</tool-use-id>`,
+      "<status>stopped</status>",
+      "<summary>Background shell command didn't finish before the previous session ended</summary>",
+      "<note>No completion record was found for it in the previous session. It may have been stopped, or it may have been running when the previous Claude Code process exited — either way its transcript is saved, so its progress is not lost. Resume it by sending a message to its id with SendMessage, or check its worktree/output for partial work before assuming the task landed.</note>",
+      "</task-notification>",
+    ].join("\n");
+
+    function diedMidTool(agentId: string): string[] {
+      // Stopped between a tool call and its result: no end_turn, no interrupt placeholder.
+      return [sidechainEntry({ agentId, stopReason: "tool_use" })];
+    }
+
+    function writeKilledSession(...notices: string[]): void {
+      const subagentDir = writeParentSession([
+        ...launch(TOOL_USE_ID, KILLED_AGENT_ID),
+        ...launch(SECOND_TOOL_USE_ID, SECOND_AGENT_ID),
+        ...notices,
+      ]);
+      for (const [agentId, toolUseId] of [
+        [KILLED_AGENT_ID, TOOL_USE_ID],
+        [SECOND_AGENT_ID, SECOND_TOOL_USE_ID],
+      ] as const) {
+        writeSubagent({
+          subagentDir,
+          agentId,
+          meta: JSON.stringify({ toolUseId }),
+          sidechainLines: diedMidTool(agentId),
+        });
+      }
+    }
+
+    test("settles every child a restart notice names", async () => {
+      writeKilledSession(notice(RESTART_NOTICE, "restart-notice"));
+
+      expect(lastSubagentStatusesById(await replayDescriptors())).toEqual({
+        [TOOL_USE_ID]: "canceled",
+        [SECOND_TOOL_USE_ID]: "canceled",
+      });
+    });
+
+    test("settles a child a single-task notice names by its tool id", async () => {
+      // The notice's task id is the shell's, not the child's, so the tool id is the only key that
+      // reaches this child.
+      const subagentDir = writeParentSession([
+        ...launch(SHELL_TOOL_USE_ID, KILLED_AGENT_ID),
+        notice(SHELL_NOTICE, "shell-notice"),
+      ]);
+      writeSubagent({
+        subagentDir,
+        agentId: KILLED_AGENT_ID,
+        meta: JSON.stringify({ toolUseId: SHELL_TOOL_USE_ID }),
+        sidechainLines: diedMidTool(KILLED_AGENT_ID),
+      });
+
+      expect(lastSubagentStatusesById(await replayDescriptors())).toEqual({
+        [SHELL_TOOL_USE_ID]: "canceled",
+      });
+    });
+
+    test("gives each block of one message its own status", async () => {
+      // One user message can carry several notices. Reading every task id out of the message and
+      // pairing them all with its first status settles the wrong children.
+      writeKilledSession(
+        notice(
+          [
+            "<task-notification>",
+            `<task-id>${KILLED_AGENT_ID}</task-id>`,
+            "<status>completed</status>",
+            "<summary>Widget config finished</summary>",
+            "</task-notification>",
+            "<task-notification>",
+            `<task-id>${SECOND_AGENT_ID}</task-id>`,
+            "<status>stopped</status>",
+            "<summary>Rewards layout was stopped</summary>",
+            "</task-notification>",
+          ].join("\n"),
+          "two-block-notice",
+        ),
+      );
+
+      expect(lastSubagentStatusesById(await replayDescriptors())).toEqual({
+        [TOOL_USE_ID]: "completed",
+        [SECOND_TOOL_USE_ID]: "canceled",
+      });
+    });
+
+    test("keeps the last outcome a notice gives a child", async () => {
+      writeKilledSession(
+        notice(
+          [
+            "<task-notification>",
+            `<task-id>${KILLED_AGENT_ID}</task-id>`,
+            "<status>stopped</status>",
+            "</task-notification>",
+          ].join("\n"),
+          "first-notice",
+        ),
+        notice(
+          [
+            "<task-notification>",
+            `<task-id>${KILLED_AGENT_ID}</task-id>`,
+            "<status>completed</status>",
+            "</task-notification>",
+          ].join("\n"),
+          "second-notice",
+        ),
+      );
+
+      expect(lastSubagentStatusesById(await replayDescriptors())).toEqual({
+        [TOOL_USE_ID]: "completed",
+        // No notice ever named the other child, so it is still the child the dead process left.
+        [SECOND_TOOL_USE_ID]: "running",
+      });
     });
   });
 

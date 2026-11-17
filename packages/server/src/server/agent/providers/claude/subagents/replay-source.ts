@@ -147,6 +147,14 @@ export interface ClaudeReplayParentFacts {
    * none: its immediate result only says the child started.
    */
   outcomesByToolCallId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
+  /**
+   * agentId -> outcome, for the outcomes a task id is the only key to.
+   *
+   * When Claude resumes a session a killed process left running, it writes one notice naming every
+   * orphaned task by `<task-id>` and no tool id at all. That id is the child's agentId, which is
+   * what the sidecar and its transcript carry, so it is enough to settle the child.
+   */
+  outcomesByAgentId: ReadonlyMap<string, { status: ProviderSubagentStatus }>;
 }
 
 interface ParentLink {
@@ -188,7 +196,10 @@ function resolveParentLink(
       : parent.linksByAgentId.get(subagent.agentId)?.toolCallId;
   if (!toolCallId || !parent.toolCalls.has(toolCallId)) return null;
 
-  const status = parent.outcomesByToolCallId.get(toolCallId)?.status ?? null;
+  const status =
+    parent.outcomesByToolCallId.get(toolCallId)?.status ??
+    parent.outcomesByAgentId.get(subagent.agentId)?.status ??
+    null;
   return { id: toolCallId, toolCallId, status };
 }
 

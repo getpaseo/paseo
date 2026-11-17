@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AgentTimelineItem } from "../../agent-sdk-types.js";
 
 const TASK_NOTIFICATION_MARKER = "<task-notification>";
+const TASK_NOTIFICATION_BLOCK_PATTERN = /<task-notification>([\s\S]*?)<\/task-notification>/gi;
 const TAG_NAME_PATTERN = /[.*+?^${}()|[\]\\]/g;
 
 const OptionalNonEmptyTrimmedStringSchema = z.preprocess(
@@ -15,6 +16,12 @@ const TaskNotificationEnvelopeSchema = z.object({
   notificationId: z.string().optional(),
   messageId: z.string().nullable(),
   taskId: z.string().nullable(),
+  /**
+   * Every task the notice names. Claude Code puts one `<task-id>` per task in the single notice it
+   * sends when it resumes a session a killed process left running, and that notice carries no
+   * tool id, so this list is the only way to match those outcomes to their children.
+   */
+  taskIds: z.array(z.string()),
   toolUseId: z.string().nullable(),
   status: z.string().nullable(),
   summary: z.string().nullable(),
@@ -145,39 +152,102 @@ function readTaskNotificationTagValue(input: ReadTaskNotificationTagInput): stri
   return toNonEmptyString(match[1]);
 }
 
-function parseTaskNotificationFromUserContent(
-  input: MapTaskNotificationUserContentToToolCallInput,
-): TaskNotificationEnvelope | null {
-  const parsedInput = MapTaskNotificationUserContentToToolCallInputSchema.safeParse(input);
-  if (!parsedInput.success) {
-    return null;
+/** Every value of a repeated tag, in order, without duplicates. */
+function readTaskNotificationTagValues(input: ReadTaskNotificationTagInput): string[] {
+  const escapedTagName = input.tagName.replace(TAG_NAME_PATTERN, "\\$&");
+  const pattern = new RegExp(`<${escapedTagName}>\\s*([\\s\\S]*?)\\s*</${escapedTagName}>`, "gi");
+  const values: string[] = [];
+  for (const match of input.text.matchAll(pattern)) {
+    const value = toNonEmptyString(match[1]);
+    if (value && !values.includes(value)) values.push(value);
   }
+  return values;
+}
 
-  const rawText = extractUserContentText(parsedInput.data.content);
-  if (!rawText || !rawText.includes(TASK_NOTIFICATION_MARKER)) {
-    return null;
+function readTaskIds(rawText: string | null, explicitTaskId: string | null): string[] {
+  const taskIds = rawText
+    ? readTaskNotificationTagValues({ text: rawText, tagName: "task-id" })
+    : [];
+  if (explicitTaskId && !taskIds.includes(explicitTaskId)) taskIds.unshift(explicitTaskId);
+  return taskIds;
+}
+
+/**
+ * The body of each `<task-notification>` block, in order.
+ *
+ * One user message can carry several notices — Claude batches them when tasks settle together —
+ * and a block's tags describe only the tasks in that block. Reading the tags off the joined
+ * message pairs every task id with the first block's status, which settles children with an
+ * outcome that belongs to a sibling.
+ */
+function readTaskNotificationBlocks(rawText: string): string[] {
+  const blocks: string[] = [];
+  for (const match of rawText.matchAll(TASK_NOTIFICATION_BLOCK_PATTERN)) {
+    const block = toNonEmptyString(match[1]);
+    if (block) blocks.push(block);
   }
+  // A truncated notice has no closing tag; keep the best-effort read of the whole body.
+  return blocks.length > 0 ? blocks : [rawText];
+}
 
+/**
+ * One notice's envelope. `blockText` is the block's own body, so its tags scope to its own tasks;
+ * `rawText` stays the whole delivered message, which is what the timeline shows.
+ */
+function buildTaskNotificationEnvelope(
+  blockText: string,
+  rawText: string,
+  identity: { notificationId?: string; messageId: string | null },
+): TaskNotificationEnvelope {
   return TaskNotificationEnvelopeSchema.parse({
-    notificationId: parsedInput.data.notificationId,
-    messageId: toNonEmptyString(parsedInput.data.messageId),
-    taskId: readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }),
+    notificationId: identity.notificationId,
+    messageId: identity.messageId,
+    taskId: readTaskNotificationTagValue({ text: blockText, tagName: "task-id" }),
+    taskIds: readTaskIds(blockText, null),
     toolUseId:
-      readTaskNotificationTagValue({ text: rawText, tagName: "tool-use-id" }) ??
-      readTaskNotificationTagValue({ text: rawText, tagName: "tool_use_id" }),
-    status: readTaskNotificationTagValue({ text: rawText, tagName: "status" }),
-    summary: readTaskNotificationTagValue({ text: rawText, tagName: "summary" }),
+      readTaskNotificationTagValue({ text: blockText, tagName: "tool-use-id" }) ??
+      readTaskNotificationTagValue({ text: blockText, tagName: "tool_use_id" }),
+    status: readTaskNotificationTagValue({ text: blockText, tagName: "status" }),
+    summary: readTaskNotificationTagValue({ text: blockText, tagName: "summary" }),
     outputFile:
-      readTaskNotificationTagValue({ text: rawText, tagName: "output-file" }) ??
-      readTaskNotificationTagValue({ text: rawText, tagName: "output_file" }),
+      readTaskNotificationTagValue({ text: blockText, tagName: "output-file" }) ??
+      readTaskNotificationTagValue({ text: blockText, tagName: "output_file" }),
     rawText,
   });
 }
 
-function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificationEnvelope | null {
+function parseTaskNotificationsFromUserContent(
+  input: MapTaskNotificationUserContentToToolCallInput,
+): TaskNotificationEnvelope[] {
+  const parsedInput = MapTaskNotificationUserContentToToolCallInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return [];
+  }
+
+  const rawText = extractUserContentText(parsedInput.data.content);
+  if (!rawText || !rawText.includes(TASK_NOTIFICATION_MARKER)) {
+    return [];
+  }
+
+  const identity = {
+    notificationId: parsedInput.data.notificationId,
+    messageId: toNonEmptyString(parsedInput.data.messageId),
+  };
+  return readTaskNotificationBlocks(rawText).map((block) =>
+    buildTaskNotificationEnvelope(block, rawText, identity),
+  );
+}
+
+function parseTaskNotificationFromUserContent(
+  input: MapTaskNotificationUserContentToToolCallInput,
+): TaskNotificationEnvelope | null {
+  return parseTaskNotificationsFromUserContent(input)[0] ?? null;
+}
+
+function parseTaskNotificationsFromSystemRecord(record: unknown): TaskNotificationEnvelope[] {
   const parsedRecord = TaskNotificationHistoryRecordSchema.safeParse(record);
   if (!parsedRecord.success) {
-    return null;
+    return [];
   }
 
   const systemRecord: TaskNotificationHistoryRecord = parsedRecord.data;
@@ -186,36 +256,63 @@ function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificatio
   const isQueuedTaskNotification =
     systemRecord.type === "queue-operation" && isTaskNotificationUserContent(systemRecord.content);
   if (!isSystemTaskNotification && !isQueuedTaskNotification) {
-    return null;
+    return [];
   }
   const rawText = toNonEmptyString(systemRecord.content);
-
-  return TaskNotificationEnvelopeSchema.parse({
+  const identity = {
     notificationId: systemRecord.notificationId,
     messageId: toNonEmptyString(systemRecord.uuid) ?? toNonEmptyString(systemRecord.message_id),
-    taskId:
-      toNonEmptyString(systemRecord.task_id) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }) : null),
-    toolUseId:
-      toNonEmptyString(systemRecord.tool_use_id) ??
-      (rawText
-        ? (readTaskNotificationTagValue({ text: rawText, tagName: "tool-use-id" }) ??
-          readTaskNotificationTagValue({ text: rawText, tagName: "tool_use_id" }))
-        : null),
-    status:
-      toNonEmptyString(systemRecord.status) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "status" }) : null),
-    summary:
-      toNonEmptyString(systemRecord.summary) ??
-      (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "summary" }) : null),
-    outputFile:
-      toNonEmptyString(systemRecord.output_file) ??
-      (rawText
-        ? (readTaskNotificationTagValue({ text: rawText, tagName: "output-file" }) ??
-          readTaskNotificationTagValue({ text: rawText, tagName: "output_file" }))
-        : null),
-    rawText,
-  });
+  };
+  if (isQueuedTaskNotification && rawText) {
+    // Queue bookkeeping stores the delivered message verbatim, so it carries its blocks too.
+    return readTaskNotificationBlocks(rawText).map((block) =>
+      buildTaskNotificationEnvelope(block, rawText, identity),
+    );
+  }
+
+  // A structured record states its own fields; tags in its body only fill the gaps.
+  const taskId =
+    toNonEmptyString(systemRecord.task_id) ??
+    (rawText ? readTaskNotificationTagValue({ text: rawText, tagName: "task-id" }) : null);
+  return [
+    TaskNotificationEnvelopeSchema.parse({
+      notificationId: identity.notificationId,
+      messageId: identity.messageId,
+      taskId,
+      taskIds: readTaskIds(rawText, taskId),
+      toolUseId: readStructuredField(systemRecord.tool_use_id, rawText, [
+        "tool-use-id",
+        "tool_use_id",
+      ]),
+      status: readStructuredField(systemRecord.status, rawText, ["status"]),
+      summary: readStructuredField(systemRecord.summary, rawText, ["summary"]),
+      outputFile: readStructuredField(systemRecord.output_file, rawText, [
+        "output-file",
+        "output_file",
+      ]),
+      rawText,
+    }),
+  ];
+}
+
+/** A structured record's own value, or the first tag of the given names that its body carries. */
+function readStructuredField(
+  value: unknown,
+  rawText: string | null,
+  tagNames: readonly string[],
+): string | null {
+  const explicit = toNonEmptyString(value);
+  if (explicit) return explicit;
+  if (!rawText) return null;
+  for (const tagName of tagNames) {
+    const tagged = readTaskNotificationTagValue({ text: rawText, tagName });
+    if (tagged) return tagged;
+  }
+  return null;
+}
+
+function parseTaskNotificationFromSystemRecord(record: unknown): TaskNotificationEnvelope | null {
+  return parseTaskNotificationsFromSystemRecord(record)[0] ?? null;
 }
 
 /** Normalize notification identity for one transcript traversal. Queue bookkeeping and delivery
@@ -232,15 +329,16 @@ export async function* assignTaskNotificationReplayIds<T>(
       continue;
     }
     const data = record.data;
-    const envelope =
+    const envelopes =
       data.type === "user"
-        ? parseTaskNotificationFromUserContent({ content: data.message?.content })
-        : parseTaskNotificationFromSystemRecord(data);
-    if (!envelope?.taskId || !data.type) {
+        ? parseTaskNotificationsFromUserContent({ content: data.message?.content })
+        : parseTaskNotificationsFromSystemRecord(data);
+    if (envelopes.length === 0 || !envelopes[0]?.taskId || !data.type) {
       yield entry;
       continue;
     }
-    const signature = taskNotificationReplaySignature(envelope);
+    // A record with several notices is one delivered message; its blocks keep it distinct.
+    const signature = envelopes.map(taskNotificationReplaySignature).join("");
     const source = data.type === "queue-operation" ? `queue-${data.operation}` : data.type;
     const counts = occurrences.get(signature) ?? new Map<string, number>();
     const occurrence = (counts.get(source) ?? 0) + 1;
@@ -264,6 +362,7 @@ function taskNotificationReplaySignature(envelope: TaskNotificationEnvelope): st
     .update(
       JSON.stringify([
         envelope.taskId,
+        envelope.taskIds,
         envelope.toolUseId,
         envelope.status,
         envelope.summary,
@@ -410,18 +509,30 @@ export function readTaskNotificationToolUseIdFromHistoryRecord(record: unknown):
   return readTaskNotificationFromHistoryRecord(record)?.toolUseId ?? null;
 }
 
-export function readTaskNotificationFromHistoryRecord(
+/**
+ * Every notice a transcript record carries, one per `<task-notification>` block.
+ *
+ * A message may hold several blocks with different outcomes, so callers that bank outcomes per
+ * task must read them all rather than the first.
+ */
+export function readTaskNotificationsFromHistoryRecord(
   record: unknown,
-): TaskNotificationEnvelope | null {
+): TaskNotificationEnvelope[] {
   const parsedRecord = TaskNotificationHistoryRecordSchema.safeParse(record);
-  if (!parsedRecord.success) return null;
+  if (!parsedRecord.success) return [];
   if (parsedRecord.data.type === "user" && parsedRecord.data.message) {
-    return parseTaskNotificationFromUserContent({
+    return parseTaskNotificationsFromUserContent({
       content: parsedRecord.data.message.content,
       messageId: parsedRecord.data.uuid ?? parsedRecord.data.message_id,
     });
   }
-  return parseTaskNotificationFromSystemRecord(record);
+  return parseTaskNotificationsFromSystemRecord(record);
+}
+
+export function readTaskNotificationFromHistoryRecord(
+  record: unknown,
+): TaskNotificationEnvelope | null {
+  return readTaskNotificationsFromHistoryRecord(record)[0] ?? null;
 }
 
 export function coerceTaskNotificationHistoryRecordToSystemMessage(

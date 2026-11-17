@@ -38,7 +38,7 @@ import {
   mapTaskNotificationSystemRecordToToolCall,
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
-  readTaskNotificationFromHistoryRecord,
+  readTaskNotificationsFromHistoryRecord,
 } from "./task-notification-tool-call.js";
 import { isClaudeInterruptPlaceholderText } from "./interrupt-placeholder.js";
 import {
@@ -6497,12 +6497,9 @@ async function readClaudeReplayParentFacts(
   const toolCalls = new Map<string, { title?: string; description?: string }>();
   const linksByAgentId = new Map<string, { toolCallId: string }>();
   const outcomes: Map<string, { status: ProviderSubagentStatus }> = new Map();
+  const outcomesByAgentId: Map<string, { status: ProviderSubagentStatus }> = new Map();
   for await (const entry of entries) {
-    const notification = readTaskNotificationFromHistoryRecord(entry);
-    const status = mapTaskStatus(notification?.status ?? undefined);
-    if (notification?.toolUseId && status) {
-      outcomes.set(notification.toolUseId, { status });
-    }
+    recordReplayNotificationOutcomes(entry, outcomes, outcomesByAgentId);
     const content = toObjectRecord(entry.message)?.content;
     if (!Array.isArray(content)) continue;
     for (const value of content) {
@@ -6530,7 +6527,33 @@ async function readClaudeReplayParentFacts(
     toolCalls,
     linksByAgentId,
     outcomesByToolCallId: new Map([...outcomes].filter(([id]) => toolCalls.has(id))),
+    outcomesByAgentId,
   };
+}
+
+/**
+ * Bank what each task notification says about the children it names.
+ *
+ * A notice may identify its child by tool call or by task id. Claude's one resume notice for the
+ * tasks a killed process left running names every one of them by task id and carries no tool id,
+ * so both keys are kept: the tool id settles a child linked through its Task call, and the task id
+ * settles one whose sidecar and transcript only carry its agentId.
+ *
+ * A record can carry several notices, one block each, and a block's status belongs only to the
+ * tasks in that block. Reading the record as a single notice hands every id the first block's
+ * outcome, so each block is banked separately.
+ */
+function recordReplayNotificationOutcomes(
+  entry: ClaudeHistoryEntry,
+  outcomesByToolCallId: Map<string, { status: ProviderSubagentStatus }>,
+  outcomesByAgentId: Map<string, { status: ProviderSubagentStatus }>,
+): void {
+  for (const notification of readTaskNotificationsFromHistoryRecord(entry)) {
+    const status = mapTaskStatus(notification.status ?? undefined);
+    if (!status) continue;
+    if (notification.toolUseId) outcomesByToolCallId.set(notification.toolUseId, { status });
+    for (const taskId of notification.taskIds) outcomesByAgentId.set(taskId, { status });
+  }
 }
 
 function readClaudeReplayTaskDeclaration(
