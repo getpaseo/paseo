@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Carlos Precioso.
 import { execFile } from "node:child_process";
 import { constants, existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -65,8 +65,9 @@ export async function copyWorktreeIncludes(worktree: string, source: string): Pr
 }
 
 // Git lists a directory it ignores as a whole, such as node_modules/, as one entry.
-// Only directories that a pattern matches or names a path inside are searched, so
-// creating a worktree does not walk every file in large ignored trees.
+// Only directories that a pattern matches or names a path inside are searched, and
+// only as deep as the pattern names, so creating a worktree does not walk every file
+// in large ignored trees.
 async function findIncludedFiles(source: string): Promise<string[]> {
   const ignored = splitNul(
     await git(source, [
@@ -81,13 +82,20 @@ async function findIncludedFiles(source: string): Promise<string[]> {
   if (ignored.length === 0) return [];
 
   const patterns = parsePatterns(await readFile(join(source, INCLUDE_FILE), "utf8"));
-  const matched = await matchIncludePatterns(source, ignored);
-  const files = ignored.filter((entry) => !isDirectory(entry) && matched(entry));
-  const searched = ignored.filter(
-    (entry) =>
-      isDirectory(entry) && (matched(entry) || patterns.some((p) => reachesInside(p, entry))),
-  );
-  if (searched.length === 0) return files;
+  const matched = new Set(await matchIncludePatterns(source, ignored));
+  const files = ignored.filter((entry) => !isDirectory(entry) && matched.has(entry));
+  const searched = new Set<string>();
+  for (const directory of ignored.filter(isDirectory)) {
+    if (matched.has(directory)) {
+      searched.add(directory);
+      continue;
+    }
+    for (const pattern of patterns) {
+      const inside = searchedPathInside(pattern, directory);
+      if (inside !== null) searched.add(inside);
+    }
+  }
+  if (searched.size === 0) return files;
 
   const inside = splitNul(
     await git(source, [
@@ -97,41 +105,33 @@ async function findIncludedFiles(source: string): Promise<string[]> {
       `--exclude-from=${INCLUDE_FILE}`,
       "-z",
       "--",
-      ...searched.map((directory) => `:(literal)${directory}`),
+      ...[...searched].map((path) => `:(literal)${path}`),
     ]),
   );
-  return [...files, ...inside];
+  return [...new Set([...files, ...inside])];
 }
 
-// Match entries against .worktreeinclude alone by recreating them, empty, in a scratch
-// repository where no other ignore rules apply.
-async function matchIncludePatterns(
-  source: string,
-  entries: string[],
-): Promise<(entry: string) => boolean> {
+// Match entries against .worktreeinclude alone, in a scratch repository where no other
+// ignore rules apply. Directory entries keep their trailing slash, so directory
+// patterns match them without anything on disk.
+async function matchIncludePatterns(source: string, entries: string[]): Promise<string[]> {
   const scratch = await mkdtemp(join(tmpdir(), "paseo-worktree-include-"));
   try {
     await git(scratch, ["init", "-q"]);
-    for (const entry of entries) {
-      if (isDirectory(entry)) {
-        await mkdir(join(scratch, entry), { recursive: true });
-      } else {
-        await mkdir(dirname(join(scratch, entry)), { recursive: true });
-        await writeFile(join(scratch, entry), "");
-      }
-    }
-    const matched = splitNul(
-      await git(scratch, [
-        "ls-files",
-        "--others",
-        "--ignored",
-        `--exclude-from=${join(source, INCLUDE_FILE)}`,
-        "--directory",
-        "-z",
-      ]),
+    return splitNul(
+      await gitAllowExit1(
+        scratch,
+        [
+          "-c",
+          `core.excludesFile=${join(source, INCLUDE_FILE)}`,
+          "check-ignore",
+          "--no-index",
+          "--stdin",
+          "-z",
+        ],
+        entries.join("\0") + "\0",
+      ),
     );
-    return (entry) =>
-      matched.some((match) => match === entry || (isDirectory(match) && entry.startsWith(match)));
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -146,9 +146,13 @@ function parsePatterns(contents: string): string[] {
 
 // A pattern with a slash before its end is anchored to the checkout root, so it can
 // name a path inside `directory` when its literal start and the directory overlap.
-function reachesInside(pattern: string, directory: string): boolean {
+// Returns the narrowest path to search: the folder the pattern names inside
+// `directory`, or `directory` itself.
+function searchedPathInside(pattern: string, directory: string): string | null {
   const path = pattern.replace(/^\//, "");
-  if (!path.replace(/\/$/, "").includes("/")) return false;
+  if (!path.replace(/\/$/, "").includes("/")) return null;
   const literal = path.slice(0, path.search(/[*?[\\]|$/));
-  return literal.startsWith(directory) || directory.startsWith(literal);
+  if (!literal.startsWith(directory) && !directory.startsWith(literal)) return null;
+  const literalFolder = literal.slice(0, literal.lastIndexOf("/") + 1);
+  return literalFolder.length > directory.length ? literalFolder : directory;
 }

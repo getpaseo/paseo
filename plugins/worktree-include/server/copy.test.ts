@@ -61,6 +61,28 @@ describe("copyWorktreeIncludes", () => {
     expect(await copied()).toEqual([".env", "node_modules/pkg/.env"]);
   });
 
+  it("copies a file in an untracked directory once when a **/ pattern also searches it", async () => {
+    await writeSource({
+      ".gitignore": ".env\n",
+      ".worktreeinclude": "**/.env\nnew-package/.env\n",
+      "new-package/.env": "SECRET=new",
+    });
+
+    const result = await copyWorktreeIncludes(worktree, source);
+    expect(result).toEqual({ kind: "copied", copied: ["new-package/.env"], skipped: [] });
+  });
+
+  it("copies a path a pattern names inside an ignored directory", async () => {
+    await writeSource({
+      ".gitignore": "node_modules/\n",
+      ".worktreeinclude": "node_modules/pkg/.env\n",
+      "node_modules/pkg/.env": "SECRET=package",
+      "node_modules/other/.env": "SECRET=other",
+    });
+
+    expect(await copied()).toEqual(["node_modules/pkg/.env"]);
+  });
+
   it("copies an ignored directory that a pattern names", async () => {
     await writeSource({
       ".gitignore": ".secrets/\nbuild/\n",
