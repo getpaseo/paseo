@@ -10,7 +10,6 @@ export interface WorkerTerminalState {
 }
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
-import type { CreateTerminalRequest } from "@getpaseo/protocol/messages";
 
 export interface WorkerTerminalInfo {
   id: string;
@@ -40,7 +39,6 @@ export interface WorkerCreateTerminalOptions {
   // letting the worker reuse whatever it inherited at launch.
   baseEnv?: Record<string, string>;
   paseoCliPath?: string | null;
-  defaultColors?: CreateTerminalRequest["defaultColors"];
 }
 
 // Bumped when a request, response or event changes shape. The frozen envelope never changes
@@ -48,7 +46,7 @@ export interface WorkerCreateTerminalOptions {
 // `shutdown`. A daemon drives a worker of its own version, drains one a version older (no new
 // terminals; it exits after its last terminal), shuts down anything older, and leaves a newer
 // worker running untouched. See docs/terminal-worker.md.
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 8;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 7;
 
 // Test-only: the protocol version a worker reports, so tests can stand up older and newer
 // workers from one build.

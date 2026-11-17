@@ -3274,14 +3274,6 @@ export const CreateTerminalRequestSchema = z.object({
   agentId: z.string().optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
-  // Creation-time colors used for OSC 10/11/12 queries.
-  defaultColors: z
-    .object({
-      foreground: z.string(),
-      background: z.string(),
-      cursor: z.string().optional(),
-    })
-    .optional(),
   // Initial PTY size. Added in v0.1.107; the app no longer sends it (the estimate cache that fed
   // it was removed — the pane-focus resize claim sizes the PTY instead). Kept and honored
   // permanently: released v0.1.107 clients still send it, and programmatic callers may pass an

@@ -35,7 +35,7 @@ The worker writes `$PASEO_HOME/terminal-worker/<pid>.json` (owner-only) with its
 
 ## Protocol versions
 
-`TERMINAL_WORKER_PROTOCOL_VERSION` (`terminal-worker-protocol.ts`) is bumped whenever a request, response or event changes shape. Version 8 adds the optional creation-time default terminal colors used for OSC 10/11/12 queries. A daemon classifies each live worker at start:
+`TERMINAL_WORKER_PROTOCOL_VERSION` (`terminal-worker-protocol.ts`) is bumped whenever a request, response or event changes shape. A daemon classifies each live worker at start:
 
 | Worker reports                     | Daemon does                                                                                                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |

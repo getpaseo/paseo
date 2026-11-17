@@ -16,7 +16,6 @@ import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
-import type { CreateTerminalRequest } from "@getpaseo/protocol/messages";
 
 export interface TerminalListItem {
   id: string;
@@ -78,7 +77,6 @@ export interface TerminalManager {
     activityUrl?: string | null;
     baseEnv?: Record<string, string>;
     paseoCliPath?: string | null;
-    defaultColors?: CreateTerminalRequest["defaultColors"];
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   validateTerminalActivityToken(terminalId: string, token: string): "valid" | "unknown" | "invalid";
@@ -350,7 +348,6 @@ export function createTerminalManager(
       activityUrl?: string | null;
       baseEnv?: Record<string, string>;
       paseoCliPath?: string | null;
-      defaultColors?: CreateTerminalRequest["defaultColors"];
     }): Promise<LocalTerminalSession> {
       assertAbsolutePath(options.cwd);
 
@@ -387,7 +384,6 @@ export function createTerminalManager(
             ...(mergedEnv ? { env: mergedEnv } : {}),
             ...(options.baseEnv ? { baseEnv: options.baseEnv } : {}),
             ...(options.paseoCliPath === undefined ? {} : { paseoCliPath: options.paseoCliPath }),
-            defaultColors: options.defaultColors,
             activityEnv,
           }),
         );
