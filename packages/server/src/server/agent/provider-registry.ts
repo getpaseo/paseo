@@ -139,6 +139,7 @@ interface ResolvedProvider {
   profileModels: ProviderProfileModel[];
   additionalModels: ProviderProfileModel[];
   profileModelsAreAdditive: boolean;
+  hiddenModelIds: readonly string[];
   enabled: boolean;
   derivedFromProviderId: string | null;
   providerOptions?: ProviderOptions;
@@ -369,23 +370,32 @@ function resolveConfiguredModels(
   });
 }
 
+function markHiddenModels(
+  models: AgentModelDefinition[],
+  hiddenModelIds: readonly string[] | undefined,
+): AgentModelDefinition[] {
+  if (!hiddenModelIds || hiddenModelIds.length === 0) return models;
+  const hidden = new Set(hiddenModelIds);
+  return models.map((model) => (hidden.has(model.id) ? { ...model, pickerHidden: true } : model));
+}
+
 function mergeModels(
   provider: AgentProvider,
   profileModels: ProviderProfileModel[],
   additionalModels: ProviderProfileModel[],
   runtimeModels: AgentModelDefinition[],
-  options?: { profileModelsAreAdditive?: boolean },
+  options?: { profileModelsAreAdditive?: boolean; hiddenModelIds?: readonly string[] },
 ): AgentModelDefinition[] {
   const baseModels = runtimeModels.map((model) => mapModel(provider, model));
-  if (profileModels.length > 0 && options?.profileModelsAreAdditive !== true) {
-    return mergeModelAdditions(
-      provider,
-      profileModels.map((model) => mapModel(provider, model)),
-      additionalModels,
-    );
-  }
-
-  return mergeModelAdditions(provider, baseModels, [...profileModels, ...additionalModels]);
+  const merged =
+    profileModels.length > 0 && options?.profileModelsAreAdditive !== true
+      ? mergeModelAdditions(
+          provider,
+          profileModels.map((model) => mapModel(provider, model)),
+          additionalModels,
+        )
+      : mergeModelAdditions(provider, baseModels, [...profileModels, ...additionalModels]);
+  return markHiddenModels(merged, options?.hiddenModelIds);
 }
 
 function mergeModelAdditions(
@@ -496,6 +506,7 @@ function wrapClientProvider(
   additionalModels: ProviderProfileModel[],
   profileModelsAreAdditive: boolean,
   configuredOptions: ProviderOptions | undefined,
+  hiddenModelIds: readonly string[],
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
@@ -555,6 +566,7 @@ function wrapClientProvider(
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
           profileModelsAreAdditive,
+          hiddenModelIds,
         }),
         modes: catalog.modes,
       };
@@ -692,7 +704,10 @@ function createRegistryEntry(
         // Replacement models skip runtime model discovery, but additionalModels
         // must still be merged on top. If modes are dynamic, probe for modes via
         // the single catalog API; otherwise use static/empty modes with no runtime.
-        const models = mergeModelAdditions(provider, replacementModels, additionalModels);
+        const models = markHiddenModels(
+          mergeModelAdditions(provider, replacementModels, additionalModels),
+          resolved.hiddenModelIds,
+        );
         if (hasStaticModes) {
           const defaultModeId = await runProviderRefreshActivity(
             context,
@@ -721,6 +736,7 @@ function createRegistryEntry(
         ...catalog,
         models: mergeModels(provider, profileModels, additionalModels, catalog.models, {
           profileModelsAreAdditive: resolved.profileModelsAreAdditive,
+          hiddenModelIds: resolved.hiddenModelIds,
         }),
         modes: decorateModes(catalog.modes),
       };
@@ -743,6 +759,7 @@ function createResolvedProviderClient(
     additionalModels,
     resolved.profileModelsAreAdditive,
     resolved.providerOptions,
+    resolved.hiddenModelIds,
   );
 }
 
@@ -763,6 +780,7 @@ function resolveRegisteredProvider(input: RegisteredProvider): ResolvedProvider 
     profileModels: override?.models ?? [],
     additionalModels: override?.additionalModels ?? [],
     profileModelsAreAdditive: false,
+    hiddenModelIds: override?.hiddenModelIds ?? [],
     enabled: override?.enabled ?? definition.enabledByDefault ?? true,
     derivedFromProviderId: null,
     providerOptions: configuredProviderOptions(override),
@@ -848,6 +866,7 @@ function addDerivedProviders(
         profileModels: override.models ?? [],
         additionalModels: override.additionalModels ?? [],
         profileModelsAreAdditive: false,
+        hiddenModelIds: override.hiddenModelIds ?? [],
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerOptions: configuredProviderOptions(override),
@@ -903,6 +922,7 @@ function addDerivedProviders(
       profileModels: override.models ?? [],
       additionalModels: override.additionalModels ?? [],
       profileModelsAreAdditive: false,
+      hiddenModelIds: override.hiddenModelIds ?? [],
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
       providerOptions,

@@ -172,7 +172,7 @@ Z.AI 通过兼容 Anthropic 的端点提供 GLM 模型。把 `ANTHROPIC_BASE_URL
 
 ## 添加模型或重新命名模型 {#adding-or-relabeling-models}
 
-`models` 会完全替换模型列表。`additionalModels` 会与运行时发现的模型（ACP）或 `models` 合并；用它来添加一个额外条目，或重新命名一个已发现的模型，而不必重新声明整个列表。`id` 与已发现模型相同的条目会就地更新该模型。
+`models` 会完全替换模型列表。`additionalModels` 会与运行时发现的模型（ACP）或 `models` 合并；用它来添加一个额外条目，或重新命名一个已发现的模型，而不必重新声明整个列表。`id` 与已发现模型相同的条目会就地更新该模型。`hiddenModelIds` 列出不出现在对话选择器里的模型 id。其余模型保持选中。Provider 的模型表在每条已发现模型上有一个勾选框。
 
 ```json
 {

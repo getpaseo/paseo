@@ -52,6 +52,22 @@ describe("combined model selector data", () => {
     };
   }
 
+  it("omits models hidden from the conversation", () => {
+    const providers = buildSelectableProviderSelectorProviders([
+      snapshotEntry({
+        provider: "codex",
+        models: [
+          { provider: "codex", id: "shown", label: "Shown" },
+          { provider: "codex", id: "hidden", label: "Hidden", pickerHidden: true },
+        ],
+      }),
+    ]);
+    const selection = providers[0]?.modelSelection;
+    expect(selection.kind === "models" ? selection.rows.map((row) => row.modelId) : []).toEqual([
+      "shown",
+    ]);
+  });
+
   it("builds selector providers from ready enabled snapshot entries", () => {
     expect(
       buildSelectableProviderSelectorProviders([

@@ -3110,6 +3110,8 @@ export const ptBR: TranslationResources = {
         retrying: "Tentando novamente...",
         noSearchMatches: "Nenhum modelo corresponde à sua busca",
         noneDetected: "Nenhum modelo detectado",
+        toggleDiscovered: "Alternar modelos descobertos",
+        showInConversation: "Mostrar {{model}} na conversa",
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",

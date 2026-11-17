@@ -3129,6 +3129,8 @@ export const es: TranslationResources = {
         retrying: "Reintentando...",
         noSearchMatches: "Ningún modelo coincide con tu búsqueda",
         noneDetected: "No se detectaron modelos",
+        toggleDiscovered: "Alternar modelos detectados",
+        showInConversation: "Mostrar {{model}} en la conversación",
         discovered: "descubierto",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",

@@ -15,6 +15,7 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   FetchCatalogOptions,
+  ProviderCatalog,
   ProviderRefreshContext,
   ResolveAgentCreateConfigInput,
 } from "./agent-sdk-types.js";
@@ -1669,6 +1670,132 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       for (const cwd of cwds) await manager.warmUpSnapshotForCwd({ cwd });
       expect(calls).toEqual({ claude: 2, codex: 1 });
       expect(listener).not.toHaveBeenCalled();
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("model visibility updates every cached scope without rediscovery or replacing clients", async () => {
+    let discoveries = 0;
+    const models: AgentModelDefinition[] = [
+      {
+        provider: "codex",
+        id: "first",
+        label: "First",
+        thinkingOptions: [{ id: "high", label: "High" }],
+      },
+      { provider: "codex", id: "second", label: "Second" },
+    ];
+    const config = {
+      claude: { enabled: false },
+      codex: { enabled: true },
+      copilot: { enabled: false },
+      opencode: { enabled: false },
+      pi: { enabled: false },
+      omp: { enabled: false },
+    };
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: config,
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            discoveries++;
+            return { models, modes: [] };
+          },
+        }),
+      },
+    });
+    const scopes = [undefined, resolve("/tmp/visibility-a"), resolve("/tmp/visibility-b")];
+    const entries = () => {
+      const found = [];
+      for (const cwd of scopes) {
+        const record = manager
+          .getSnapshot(cwd)
+          .records.find(({ entry }) => entry.provider === "codex")!;
+        found.push(record.entry);
+      }
+      return found;
+    };
+    try {
+      for (const cwd of scopes) await manager.warmUpSnapshotForCwd({ cwd, providers: ["codex"] });
+      const original = entries();
+      const client = manager.getAgentManagerProviderState().clients.codex;
+      const definition = manager.getAgentManagerProviderState().providerDefinitions.codex;
+      expect(discoveries).toBe(1);
+
+      for (const hiddenModelIds of [["first", "second"], ["second"], []]) {
+        manager.applyMutableProviderConfig(
+          {
+            ...config,
+            codex: { enabled: true, hiddenModelIds },
+          },
+          { replace: true },
+        );
+        const current = entries();
+        expect(current.map((entry) => entry.status)).toEqual(["ready", "ready", "ready"]);
+        expect(current.map((entry) => entry.fetchedAt)).toEqual(
+          original.map((entry) => entry.fetchedAt),
+        );
+        for (const entry of current) {
+          expect(
+            entry.models?.filter((model) => model.pickerHidden).map((model) => model.id),
+          ).toEqual(hiddenModelIds);
+          expect(entry.models?.[0].thinkingOptions).toEqual(models[0].thinkingOptions);
+        }
+        for (const cwd of scopes) await manager.warmUpSnapshotForCwd({ cwd, providers: ["codex"] });
+        expect(manager.getAgentManagerProviderState().clients.codex).toBe(client);
+        expect(manager.getAgentManagerProviderState().providerDefinitions.codex).toEqual(
+          definition,
+        );
+        expect(discoveries).toBe(1);
+      }
+      expect(models.every((model) => model.pickerHidden === undefined)).toBe(true);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("model visibility uses the latest settings when pending discovery completes", async () => {
+    let finish!: (catalog: ProviderCatalog) => void;
+    const pending = new Promise<ProviderCatalog>((complete) => {
+      finish = complete;
+    });
+    let started!: () => void;
+    const start = new Promise<void>((complete) => {
+      started = complete;
+    });
+    let discoveries = 0;
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: { codex: { enabled: true } },
+      extraClients: {
+        codex: createExtraClient("codex", {
+          async isAvailable() {
+            return true;
+          },
+          async fetchCatalog() {
+            discoveries++;
+            started();
+            return pending;
+          },
+        }),
+      },
+    });
+    try {
+      const warm = manager.warmUpSnapshotForCwd({ providers: ["codex"] });
+      await start;
+      manager.applyMutableProviderConfig({ codex: { hiddenModelIds: ["first"] } });
+      finish({ models: [{ provider: "codex", id: "first", label: "First" }], modes: [] });
+      await warm;
+      await manager.warmUpSnapshotForCwd({ providers: ["codex"] });
+      expect((await manager.getProvider({ provider: "codex" })).models).toMatchObject([
+        { id: "first", pickerHidden: true },
+      ]);
+      expect(discoveries).toBe(1);
     } finally {
       manager.destroy();
     }

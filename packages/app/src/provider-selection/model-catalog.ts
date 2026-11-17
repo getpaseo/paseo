@@ -14,8 +14,14 @@ export function findModelByReference(
   );
 }
 
-export function filterSelectableModels(
+export function filterListedModels(
   models: AgentModelDefinition[] | null,
 ): AgentModelDefinition[] | null {
   return models?.filter((model) => model.isSelectable !== false) ?? null;
+}
+
+export function filterSelectableModels(
+  models: AgentModelDefinition[] | null,
+): AgentModelDefinition[] | null {
+  return filterListedModels(models)?.filter((model) => model.pickerHidden !== true) ?? null;
 }

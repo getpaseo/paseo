@@ -496,6 +496,13 @@
                   "required": ["id", "label"]
                 }
               },
+              "hiddenModelIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "disallowedTools": {
                 "type": "array",
                 "items": {

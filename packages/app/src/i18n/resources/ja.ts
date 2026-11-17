@@ -3097,6 +3097,8 @@ export const ja: TranslationResources = {
         retrying: "再試行中...",
         noSearchMatches: "検索に一致するモデルがありません",
         noneDetected: "モデルが検出されませんでした",
+        toggleDiscovered: "検出済みモデルを切り替え",
+        showInConversation: "会話に{{model}}を表示",
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
