@@ -20,6 +20,25 @@ interface DiscoverableAgent {
   workspaceId?: string;
   internal?: boolean;
   background?: boolean;
+  labels?: Record<string, string>;
+}
+
+/**
+ * One discovery match before projection. Paging reads sort and cursor on these, and only the
+ * page's worth of them becomes an `AgentSnapshotPayload`.
+ */
+export type AgentDirectoryCandidate =
+  | { kind: "live"; agent: ManagedAgent; record: StoredAgentRecord | null }
+  | { kind: "stored"; record: StoredAgentRecord };
+
+export interface AgentDirectoryFilter {
+  workspaceIds?: Iterable<string>;
+  /** Include parent chains by ID for workspace root classification. */
+  includeAncestors?: boolean;
+  labels?: Record<string, string>;
+  includeArchived?: boolean;
+  includeBackground?: BackgroundVisibility;
+  includeUnavailablePersisted?: boolean;
 }
 
 /** Public agent discovery owns background visibility for live and durable records. */
@@ -94,15 +113,12 @@ export class AgentDirectory {
     }
   }
 
-  async list(filter?: {
-    workspaceIds?: Iterable<string>;
-    /** Include parent chains by ID for workspace root classification. */
-    includeAncestors?: boolean;
-    labels?: Record<string, string>;
-    includeArchived?: boolean;
-    includeBackground?: BackgroundVisibility;
-    includeUnavailablePersisted?: boolean;
-  }): Promise<AgentSnapshotPayload[]> {
+  /**
+   * Every match, in discovery order, with no UI projection. Archive/background/label/provider
+   * predicates are answered from the stored record (live agents keep their record for the
+   * archive flag and title, which storage owns).
+   */
+  async listCandidates(filter?: AgentDirectoryFilter): Promise<AgentDirectoryCandidate[]> {
     const requested = filter?.workspaceIds ? new Set(filter.workspaceIds) : null;
     const live = this.deps.manager.listAgents();
     const liveIds = new Set(live.map((agent) => agent.id));
@@ -129,30 +145,57 @@ export class AgentDirectory {
         if ((await this.deps.workspaces.get(id))?.background) backgroundWorkspaceIds.add(id);
       }
     }
-    const matches = (
-      agent: DiscoverableAgent & { archivedAt?: string | null; labels?: Record<string, string> },
-    ) =>
-      (filter?.includeArchived || !agent.archivedAt) &&
-      admits(
-        agent,
-        agent.workspaceId !== undefined && backgroundWorkspaceIds.has(agent.workspaceId),
-        visibility,
-      ) &&
-      labels.every(([key, value]) => agent.labels?.[key] === value);
-    const stored = records
-      .filter((record) => !liveIds.has(record.id) && matches(record))
-      .filter(
-        (record) =>
-          filter?.includeUnavailablePersisted || this.deps.isStoredProviderAvailable(record),
-      )
-      .map((record) => this.deps.projectStored(record));
-    const active = await Promise.all(
-      selectedLive.filter(matches).map((agent) => this.deps.projectLive(agent)),
+    const matches = (candidate: AgentDirectoryCandidate) => {
+      const record = candidate.record;
+      const agent: DiscoverableAgent =
+        candidate.kind === "live" ? candidate.agent : candidate.record;
+      const workspaceId = agent.workspaceId;
+      return (
+        (filter?.includeArchived || !record?.archivedAt) &&
+        admits(
+          agent,
+          workspaceId !== undefined && backgroundWorkspaceIds.has(workspaceId),
+          visibility,
+        ) &&
+        labels.every(([key, value]) => agent.labels?.[key] === value) &&
+        this.deps.isProviderVisible(providerOf(candidate))
+      );
+    };
+
+    const liveCandidates = await Promise.all(
+      selectedLive.map(async (agent): Promise<AgentDirectoryCandidate> => {
+        const record = await this.deps.storage.get(agent.id);
+        return { kind: "live", agent, record: record ?? null };
+      }),
     );
-    return [...active, ...stored]
+    const stored: AgentDirectoryCandidate[] = records
+      .filter((record) => !liveIds.has(record.id))
+      .map((record): AgentDirectoryCandidate => ({ kind: "stored", record }))
       .filter(matches)
-      .filter((agent) => this.deps.isProviderVisible(agent.provider));
+      .filter(
+        (candidate) =>
+          candidate.kind !== "stored" ||
+          filter?.includeUnavailablePersisted ||
+          this.deps.isStoredProviderAvailable(candidate.record),
+      );
+    return [...liveCandidates.filter(matches), ...stored];
   }
+
+  /** Project one candidate into the wire payload. */
+  project(candidate: AgentDirectoryCandidate): Promise<AgentSnapshotPayload> {
+    return candidate.kind === "live"
+      ? this.deps.projectLive(candidate.agent)
+      : Promise.resolve(this.deps.projectStored(candidate.record));
+  }
+
+  async list(filter?: AgentDirectoryFilter): Promise<AgentSnapshotPayload[]> {
+    const candidates = await this.listCandidates(filter);
+    return Promise.all(candidates.map((candidate) => this.project(candidate)));
+  }
+}
+
+function providerOf(candidate: AgentDirectoryCandidate): string {
+  return candidate.kind === "live" ? candidate.agent.provider : candidate.record.provider;
 }
 
 function admits(
