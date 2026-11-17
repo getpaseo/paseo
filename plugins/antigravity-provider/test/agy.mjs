@@ -74,6 +74,145 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (text.includes("STEER_PROSE")) {
+    interrupted = {
+      event: "result",
+      result: { conversation_id: conversationId, status: "ERROR", error: "interrupted" },
+    };
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: "Thinking...",
+      },
+    });
+    setTimeout(() => {
+      emit({
+        event: "step_update",
+        step_update: {
+          conversation_id: conversationId,
+          step_index: 2,
+          state: "ACTIVE",
+          step_type: "tool",
+          tool_name: "run_command",
+          tool_info: {
+            name: "run_command",
+            parameters: { CommandLine: "echo PROSE_STEP_2_SHOULD_BE_SKIPPED" },
+            output: "",
+            error: null,
+          },
+        },
+      });
+    }, 150);
+    return;
+  }
+  if (text.includes("STEER_WAIT")) {
+    interrupted = {
+      event: "result",
+      result: { conversation_id: conversationId, status: "ERROR", error: "interrupted" },
+    };
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "sleep 1" },
+          output: "",
+          error: null,
+        },
+      },
+    });
+    setTimeout(() => {
+      emit({
+        event: "step_update",
+        step_update: {
+          conversation_id: conversationId,
+          step_index: 1,
+          state: "DONE",
+          step_type: "tool",
+          tool_name: "run_command",
+          tool_info: {
+            name: "run_command",
+            parameters: { CommandLine: "sleep 1" },
+            output: "TOOL_COMPLETED_OK",
+            error: null,
+          },
+        },
+      });
+      setTimeout(() => {
+        emit({
+          event: "step_update",
+          step_update: {
+            conversation_id: conversationId,
+            step_index: 2,
+            state: "ACTIVE",
+            step_type: "tool",
+            tool_name: "run_command",
+            tool_info: {
+              name: "run_command",
+              parameters: { CommandLine: "echo STEP_2_SHOULD_BE_SKIPPED" },
+              output: "",
+              error: null,
+            },
+          },
+        });
+      }, 120);
+    }, 80);
+    return;
+  }
+  if (text.includes("STEER_FOLLOWUP")) {
+    if (!args.includes("--conversation")) {
+      emit({
+        event: "result",
+        result: {
+          conversation_id: conversationId,
+          status: "ERROR",
+          error: "Expected --conversation on steered leg",
+        },
+      });
+      return;
+    }
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 3,
+        state: "DONE",
+        step_type: "tool",
+        tool_name: "read_file",
+        tool_info: {
+          name: "read_file",
+          parameters: { Path: "/tmp/demo.txt" },
+          output: "demo",
+          error: null,
+        },
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 4,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "STEERED_DONE\n",
+        usage: { input_tokens: 1200, output_tokens: 60, cache_read_tokens: 2000 },
+      },
+    });
+    emit({
+      event: "result",
+      result: { conversation_id: conversationId, status: "SUCCESS", response: "STEERED_DONE\n" },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

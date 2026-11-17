@@ -29,7 +29,8 @@ export async function getCatalog(launch: ProviderLaunch, cwd?: string): Promise<
       throw new AntigravityError("Invalid `agy models` output", "INVALID_CATALOG");
     if (models.some((model) => model.id === id))
       throw new AntigravityError(`Duplicate Antigravity model: ${id}`, "INVALID_CATALOG");
-    models.push({ id, label });
+    const contextWindowMaxTokens = contextWindowForModel(id);
+    models.push({ id, label, ...(contextWindowMaxTokens ? { contextWindowMaxTokens } : {}) });
   }
   return { models, modes, thinkingOptions: [], defaultMode: "full-access" };
 }
@@ -71,4 +72,21 @@ export function validateSelection(
       "Antigravity effort is selected through the model ID",
       "UNSUPPORTED_THINKING",
     );
+}
+
+export function contextWindowForModel(id?: string): number | undefined {
+  if (!id) return 1_048_576;
+  const lower = id.toLowerCase();
+  if (lower.startsWith("gemini-")) return 1_048_576;
+  if (
+    lower.startsWith("claude-opus-5") ||
+    lower.startsWith("claude-sonnet-5") ||
+    lower.startsWith("claude-opus-4-6") ||
+    lower.startsWith("claude-sonnet-4-6")
+  ) {
+    return 1_000_000;
+  }
+  if (lower.startsWith("claude-")) return 200_000;
+  if (lower.startsWith("gpt-oss-")) return 131_072;
+  return undefined;
 }

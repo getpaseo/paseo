@@ -37,16 +37,18 @@ function toolDetail(step: Step): ProviderToolCallDetail {
   }
   const info = step.tool_info;
   if (!info) return { type: "plain_text", label: step.tool_name, text: "" };
-  const path = info.parameters.AbsolutePath || info.parameters.TargetFile;
+  const path = info.parameters.Path || info.parameters.AbsolutePath || info.parameters.TargetFile;
   if (info.name === "run_command" && typeof info.parameters.CommandLine === "string") {
     return { type: "shell", command: info.parameters.CommandLine, output: info.output };
   }
-  if (info.name === "view_file" && typeof path === "string")
+  if ((info.name === "view_file" || info.name === "read_file") && typeof path === "string")
     return { type: "read", filePath: path, content: info.output };
-  if (info.name === "write_to_file" && typeof path === "string")
+  if ((info.name === "write_to_file" || info.name === "write_file") && typeof path === "string")
     return { type: "write", filePath: path };
   if (
-    (info.name === "replace_file_content" || info.name === "multi_replace_file_content") &&
+    (info.name === "replace_file_content" ||
+      info.name === "multi_replace_file_content" ||
+      info.name === "edit_file") &&
     typeof path === "string"
   )
     return { type: "edit", filePath: path };

@@ -161,6 +161,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
     "prompt.image",
+    "prompt.steer",
     "session.configure",
     "session.persistence",
   ]);
@@ -541,10 +542,31 @@ it.each(["auth", "exit", "stderr"])(
   },
 );
 
-it("rejects mid-turn steering and reports a busy message without queueing a second native turn", async () => {
+it("rejects auto prompts while busy and steers active turns without interrupting running tools", async () => {
   const h = await harness();
   await h.open();
-  await h.prompt("HANG");
+  await h.connection.send({
+    type: "session.prompt",
+    sessionId: "s",
+    prompt: {
+      clientMessageId: "idle-steer",
+      delivery: "steer",
+      input: { type: "message", content: [{ type: "text", text: "x" }] },
+    },
+  });
+  await h.wait(
+    (event) => event.type === "session.prompt_result" && event.clientMessageId === "idle-steer",
+  );
+  expect(
+    h.events.find(
+      (event) => event.type === "session.prompt_result" && event.clientMessageId === "idle-steer",
+    ),
+  ).toMatchObject({
+    result: { type: "failed", error: { code: "TURN_INACTIVE" } },
+  });
+
+  const first = await h.prompt("STEER_WAIT");
+  await h.wait((event) => event.type === "timeline.item" && event.item.type === "tool_call");
   const second = await h.prompt("SECOND");
   expect(
     h.events.find(
@@ -554,17 +576,93 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
     type: "session.prompt_result",
     result: { type: "failed", error: { code: "TURN_ACTIVE" } },
   });
-  await expect(
-    h.connection.send({
-      type: "session.prompt",
-      sessionId: "s",
-      prompt: {
-        clientMessageId: "steer",
-        delivery: "steer",
-        input: { type: "message", content: [{ type: "text", text: "x" }] },
-      },
-    }),
-  ).rejects.toThrow(/prompt.steer/);
+
+  await h.connection.send({
+    type: "session.prompt",
+    sessionId: "s",
+    prompt: {
+      clientMessageId: "live-steer",
+      delivery: "steer",
+      input: { type: "message", content: [{ type: "text", text: "STEER_FOLLOWUP" }] },
+    },
+  });
+  const admitted = await h.wait(
+    (event) => event.type === "session.prompt_result" && event.clientMessageId === "live-steer",
+  );
+  expect(admitted).toMatchObject({
+    type: "session.prompt_result",
+    result: { type: "steer" },
+  });
+  expect(await h.completed(first)).toMatchObject({ state: "completed" });
+  const records = await h.records();
+  expect(records.filter((entry) => entry.signal === "SIGINT")).toHaveLength(1);
+  const skippedStep = h.events.find(
+    (event) =>
+      event.type === "timeline.item" &&
+      event.item.type === "tool_call" &&
+      event.item.detail.type === "shell" &&
+      event.item.detail.command.includes("STEP_2_SHOULD_BE_SKIPPED"),
+  );
+  expect(skippedStep).toBeUndefined();
+  expect(h.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "tool_call",
+          name: "run_command",
+          status: "completed",
+          detail: expect.objectContaining({ type: "shell", output: "TOOL_COMPLETED_OK" }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "tool_call",
+          name: "read_file",
+          status: "completed",
+          detail: expect.objectContaining({ type: "read", filePath: "/tmp/demo.txt" }),
+        }),
+      }),
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({ type: "assistant_message", text: "STEERED_DONE\n" }),
+      }),
+      expect.objectContaining({
+        type: "session.usage",
+        usage: expect.objectContaining({
+          contextWindowUsedTokens: 3260,
+          contextWindowMaxTokens: 1_048_576,
+        }),
+      }),
+    ]),
+  );
+
+  const proseTurn = await h.prompt("STEER_PROSE");
+  await h.wait(
+    (event) =>
+      event.type === "timeline.item" &&
+      event.item.type === "assistant_message" &&
+      event.item.text === "Thinking...",
+  );
+  await h.connection.send({
+    type: "session.prompt",
+    sessionId: "s",
+    prompt: {
+      clientMessageId: "prose-steer",
+      delivery: "steer",
+      input: { type: "message", content: [{ type: "text", text: "STEER_FOLLOWUP" }] },
+    },
+  });
+  expect(await h.completed(proseTurn)).toMatchObject({ state: "completed" });
+  const skippedProseTool = h.events.find(
+    (event) =>
+      event.type === "timeline.item" &&
+      event.item.type === "tool_call" &&
+      event.item.detail.type === "shell" &&
+      event.item.detail.command.includes("PROSE_STEP_2_SHOULD_BE_SKIPPED"),
+  );
+  expect(skippedProseTool).toBeUndefined();
 });
 
 describe("discovery", () => {
@@ -599,7 +697,11 @@ describe("discovery", () => {
       type: "catalog",
       catalog: {
         models: expect.arrayContaining([
-          { id: "gemini-3.8-flash-low", label: "Gemini 3.8 Flash (Low)" },
+          {
+            id: "gemini-3.8-flash-low",
+            label: "Gemini 3.8 Flash (Low)",
+            contextWindowMaxTokens: 1_048_576,
+          },
         ]),
         thinkingOptions: [],
         defaultMode: "full-access",

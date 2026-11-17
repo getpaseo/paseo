@@ -14,11 +14,7 @@ export class PromptFiles {
   private directory: string | null = null;
 
   async encode(prompt: ProviderPrompt): Promise<EncodedPrompt> {
-    if (
-      prompt.input.type !== "message" ||
-      prompt.delivery === "steer" ||
-      prompt.outputSchema !== undefined
-    )
+    if (prompt.input.type !== "message" || prompt.outputSchema !== undefined)
       throw new AntigravityError("Antigravity supports messages only");
     const parts = prompt.input.content.map((part) => {
       if (part.type === "text") return part;

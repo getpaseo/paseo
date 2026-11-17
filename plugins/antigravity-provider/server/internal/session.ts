@@ -12,7 +12,7 @@ import type {
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
-import { validateSelection } from "./catalog.js";
+import { contextWindowForModel, validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -22,8 +22,14 @@ const persistenceSchema = z
   .strict();
 interface Turn {
   id: string;
-  text: Map<number, string>;
-  usageSteps: Set<number>;
+  leg: number;
+  legStarted: boolean;
+  activeTools: Set<number>;
+  pendingSteer: string[];
+  steering: boolean;
+  steerTimer: ReturnType<typeof setTimeout> | null;
+  text: Map<string, string>;
+  usageSteps: Set<string>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
   usage: Required<Pick<ProviderUsage, "inputTokens" | "outputTokens" | "cachedInputTokens">>;
 }
@@ -79,17 +85,67 @@ export class Session {
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
-    if (this.state.type === "running")
-      throw new AntigravityError(
-        "Antigravity already has an active turn; wait for it to finish",
-        "TURN_ACTIVE",
-      );
+    if (this.state.type === "running") {
+      if (prompt.delivery !== "steer") {
+        throw new AntigravityError(
+          "Antigravity already has an active turn; wait for it to finish",
+          "TURN_ACTIVE",
+        );
+      }
+      const { turn } = this.state;
+      const { text, nativeText } = await this.promptFiles.encode(prompt);
+      if (this.state.type !== "running" || this.state.turn !== turn) {
+        this.emit({
+          type: "session.prompt_result",
+          sessionId: this.options.id,
+          clientMessageId: prompt.clientMessageId,
+          result: {
+            type: "failed",
+            error: { message: "Active turn finished before steer", code: "TURN_INACTIVE" },
+          },
+        });
+        return;
+      }
+      turn.pendingSteer.push(nativeText);
+      this.emit({
+        type: "session.prompt_result",
+        sessionId: this.options.id,
+        clientMessageId: prompt.clientMessageId,
+        result: { type: "steer", turnId: turn.id },
+      });
+      this.item({
+        type: "user_message",
+        id: prompt.clientMessageId,
+        clientMessageId: prompt.clientMessageId,
+        text,
+      });
+      this.scheduleSteerFlush(turn);
+      return;
+    }
+    if (prompt.delivery === "steer") {
+      this.emit({
+        type: "session.prompt_result",
+        sessionId: this.options.id,
+        clientMessageId: prompt.clientMessageId,
+        result: {
+          type: "failed",
+          error: { message: "No active turn to steer", code: "TURN_INACTIVE" },
+        },
+      });
+      return;
+    }
     const { text, nativeText } = await this.promptFiles.encode(prompt);
     await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
     const turn: Turn = {
       id: randomUUID(),
+      leg: 0,
+      legStarted: false,
+      activeTools: new Set(),
+      pendingSteer: [],
+      steering: false,
+      steerTimer: null,
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
@@ -123,7 +179,7 @@ export class Session {
       this.firstMessage = false;
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      this.failTurn(new AntigravityError(error.message));
+      this.failTurn(driver, new AntigravityError(error.message));
       await driver.stop("interrupt");
     }
   }
@@ -207,12 +263,12 @@ export class Session {
     }
     if (this.state.type !== "dormant") return;
     this.reportedDenials.clear();
-    const driver = startDriver({
+    const driver: Driver = startDriver({
       launch: this.options.launch,
       config: this.config,
       conversationId: this.conversationId,
-      onFrame: (frame) => this.accept(frame),
-      onExit: (error) => this.failTurn(error),
+      onFrame: (frame) => this.accept(driver, frame),
+      onExit: (error) => this.failTurn(driver, error),
     });
     this.state = { type: "starting", driver };
     try {
@@ -237,14 +293,15 @@ export class Session {
     }
   }
 
-  private accept(frame: Frame): void {
-    if (this.state.type !== "running") return;
-    const { turn, driver } = this.state;
+  private accept(driver: Driver, frame: Frame): void {
+    if (this.state.type !== "running" || this.state.driver !== driver) return;
+    const { turn } = this.state;
     if (frame.event === "step_update") {
       this.acceptStep(frame.step_update, turn);
       return;
     }
     if (frame.event !== "result") return;
+    if (turn.steering) return;
     const result = frame.result;
     const denied = takeNewDenials(result.denied_actions, this.reportedDenials);
     if (denied.length > 0) {
@@ -252,7 +309,7 @@ export class Session {
         type: "session.notice",
         sessionId: this.options.id,
         notice: {
-          id: `${turn.id}:denied`,
+          id: turn.leg === 0 ? `${turn.id}:denied` : `${turn.id}:${turn.leg}:denied`,
           severity: "warning",
           title: denialNoticeTitle(denied),
           description: "Antigravity's own policy denied it.",
@@ -260,7 +317,12 @@ export class Session {
       });
     }
     if (result.status === "ERROR") {
-      const canceled = result.error === "interrupted";
+      const canceled = isInterruptedError(result.error);
+      if (canceled && turn.pendingSteer.length > 0) {
+        turn.activeTools.clear();
+        this.scheduleSteerFlush(turn, true);
+        return;
+      }
       this.finishTools(turn, canceled ? "canceled" : "failed");
       this.retire(driver);
       this.emit({
@@ -271,6 +333,34 @@ export class Session {
         error: { message: diagnostic(result.error) },
       });
     } else {
+      turn.activeTools.clear();
+      if (turn.pendingSteer.length > 0) {
+        this.finishTools(turn, "completed");
+        if (driver.selection !== selection(this.config)) {
+          this.scheduleSteerFlush(turn, true);
+          return;
+        }
+        this.clearSteerTimer(turn);
+        turn.leg += 1;
+        turn.legStarted = false;
+        const combined = turn.pendingSteer.splice(0).join("\n\n");
+        void driver.prompt(combined).then(
+          () => {
+            this.firstMessage = false;
+            if (turn.pendingSteer.length > 0) this.scheduleSteerFlush(turn);
+            return undefined;
+          },
+          (error: unknown) => {
+            const failure =
+              error instanceof AntigravityError
+                ? error
+                : new AntigravityError(error instanceof Error ? error.message : String(error));
+            this.failTurn(driver, failure);
+            void driver.stop("interrupt");
+          },
+        );
+        return;
+      }
       this.finishTools(turn, "completed");
       this.state = { type: "idle", driver };
       this.emit({
@@ -283,34 +373,132 @@ export class Session {
   }
 
   private acceptStep(step: Step, turn: Turn): void {
-    const id = `${turn.id}:${step.step_index}`;
+    turn.legStarted = true;
+    const stepKey = turn.leg === 0 ? `${step.step_index}` : `${turn.leg}:${step.step_index}`;
+    const id = `${turn.id}:${stepKey}`;
     if (step.step_type === "agent_response") {
-      const previous = turn.text.get(step.step_index) || "";
+      const previous = turn.text.get(stepKey) || "";
       const text = previous + step.text_delta;
-      turn.text.set(step.step_index, text);
+      turn.text.set(stepKey, text);
       if (step.text_delta) this.item({ type: "assistant_message", id, messageId: id, text });
-      if (step.state === "DONE" && step.usage && !turn.usageSteps.has(step.step_index)) {
-        turn.usageSteps.add(step.step_index);
+      if (step.state === "DONE" && step.usage && !turn.usageSteps.has(stepKey)) {
+        turn.usageSteps.add(stepKey);
         turn.usage.inputTokens += step.usage.input_tokens;
         turn.usage.outputTokens += step.usage.output_tokens;
         turn.usage.cachedInputTokens += step.usage.cache_read_tokens;
+        const contextWindowUsedTokens =
+          step.usage.input_tokens + step.usage.cache_read_tokens + step.usage.output_tokens;
+        const inferredMax = contextWindowForModel(this.config.model);
+        const contextWindowMaxTokens =
+          inferredMax !== undefined ? Math.max(inferredMax, contextWindowUsedTokens) : undefined;
         this.emit({
           type: "session.usage",
           sessionId: this.options.id,
           turnId: turn.id,
-          usage: { ...turn.usage },
+          usage: {
+            ...turn.usage,
+            ...(contextWindowUsedTokens > 0 ? { contextWindowUsedTokens } : {}),
+            ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+          },
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {
+      if (step.state === "ACTIVE") turn.activeTools.add(step.step_index);
+      else turn.activeTools.delete(step.step_index);
       const item = toolItem(step, id);
       turn.tools.set(id, item);
       this.item(item);
     }
+    if (turn.pendingSteer.length > 0 && turn.activeTools.size === 0) {
+      this.scheduleSteerFlush(turn);
+    }
   }
 
-  private failTurn(error: AntigravityError): void {
+  private clearSteerTimer(turn: Turn): void {
+    if (turn.steerTimer !== null) {
+      clearTimeout(turn.steerTimer);
+      turn.steerTimer = null;
+    }
+  }
+
+  private scheduleSteerFlush(turn: Turn, allowUnstarted = false): void {
+    if (this.state.type !== "running" || this.state.turn !== turn) return;
+    if (turn.steering || turn.pendingSteer.length === 0 || turn.activeTools.size > 0) return;
+    if (!turn.legStarted && !allowUnstarted) {
+      if (turn.steerTimer === null) {
+        turn.steerTimer = setTimeout(() => {
+          turn.steerTimer = null;
+          this.scheduleSteerFlush(turn, true);
+        }, 200);
+        turn.steerTimer.unref?.();
+      }
+      return;
+    }
+    this.clearSteerTimer(turn);
+    queueMicrotask(() => {
+      void this.flushSteer(turn);
+    });
+  }
+
+  private async flushSteer(turn: Turn): Promise<void> {
+    if (this.state.type !== "running" || this.state.turn !== turn) return;
+    if (turn.steering || turn.pendingSteer.length === 0 || turn.activeTools.size > 0) return;
+    if (this.conversationId === null) return;
+    turn.steering = true;
+    const oldDriver = this.state.driver;
+    try {
+      await oldDriver.stop("interrupt");
+      if (this.state.type !== "running" || this.state.turn !== turn) return;
+      this.reportedDenials.clear();
+      const nextDriver: Driver = startDriver({
+        launch: this.options.launch,
+        config: this.config,
+        conversationId: this.conversationId,
+        onFrame: (frame) => this.accept(nextDriver, frame),
+        onExit: (error) => this.failTurn(nextDriver, error),
+      });
+      this.state = { type: "running", driver: nextDriver, turn };
+      const init = await nextDriver.ready;
+      if (
+        this.state.type !== "running" ||
+        this.state.turn !== turn ||
+        this.state.driver !== nextDriver
+      ) {
+        await nextDriver.stop("interrupt");
+        return;
+      }
+      if (init.conversation_id !== this.conversationId) {
+        throw new AntigravityError(
+          "Antigravity restored a different conversation",
+          "INVALID_RESUME",
+        );
+      }
+      this.finishTools(turn, "canceled");
+      turn.leg += 1;
+      turn.legStarted = false;
+      turn.steering = false;
+      const combined = turn.pendingSteer.splice(0).join("\n\n");
+      if (!combined) return;
+      await nextDriver.prompt(combined);
+      this.firstMessage = false;
+      if (turn.pendingSteer.length > 0) {
+        this.scheduleSteerFlush(turn);
+      }
+    } catch (error) {
+      turn.steering = false;
+      if (this.state.type !== "running" || this.state.turn !== turn) return;
+      const failure =
+        error instanceof AntigravityError
+          ? error
+          : new AntigravityError(error instanceof Error ? error.message : String(error));
+      this.failTurn(this.state.driver, failure);
+    }
+  }
+
+  private failTurn(driver: Driver, error: AntigravityError): void {
     const state = this.state;
-    if (state.type !== "running" && state.type !== "idle") return;
+    if ((state.type !== "running" && state.type !== "idle") || state.driver !== driver) return;
+    if (state.type === "running" && state.turn.steering) return;
     this.retire(state.driver);
     if (state.type === "running") {
       this.finishTools(state.turn, "failed");
@@ -339,6 +527,7 @@ export class Session {
   }
 
   private finishTools(turn: Turn, status: "completed" | "failed" | "canceled"): void {
+    this.clearSteerTimer(turn);
     for (const item of turn.tools.values()) {
       if (item.status !== "running") continue;
       if (status === "failed") this.item({ ...item, status, error: "Antigravity turn failed" });
@@ -371,6 +560,10 @@ export class Session {
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
   }
+}
+
+function isInterruptedError(error: string): boolean {
+  return error === "interrupted" || error.includes("The stream was interrupted");
 }
 
 // Native results contain every denial since this driver started, including repeated actions.
