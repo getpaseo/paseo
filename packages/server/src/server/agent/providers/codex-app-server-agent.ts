@@ -5388,8 +5388,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   async canStopRuntime(): Promise<boolean> {
     // A history session released its app-server once it read the thread, so nothing runs.
     if (this.connectionState === "history-ready") return true;
+    // A disconnected transport cannot answer inventory RPCs. Release the stale
+    // session through the normal close lane, which still owns process cleanup.
+    if (!this.client || this.client.isDisposed()) return true;
     if (
-      !this.client ||
       this.client.hasPendingRequests() ||
       !this.currentThreadId ||
       this.activeForegroundTurnId ||

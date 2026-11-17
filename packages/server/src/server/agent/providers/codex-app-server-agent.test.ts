@@ -8778,6 +8778,10 @@ test("Codex runtime safety queries live terminals and retains unsupported app se
         .requests()
         .findLast((request) => request.method === "thread/backgroundTerminals/list"),
     ).toMatchObject({ params: { threadId: "thread-1" } });
+    const requestCount = appServer.requests().length;
+    appServer.disconnect();
+    expect(await session.canStopRuntime()).toBe(true);
+    expect(appServer.requests()).toHaveLength(requestCount);
     appServer.assertNoErrors();
   } finally {
     await session.close();
