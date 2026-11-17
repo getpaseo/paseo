@@ -351,7 +351,12 @@ async function fetchDownload(fetchFile: typeof fetch, url: string): Promise<Blob
   if (!response.ok) {
     throw new Error(i18n.t("downloads.httpFailed", { status: response.status }));
   }
-  return response.blob();
+  try {
+    // The body streams after the headers, so the connection can still drop here.
+    return await response.blob();
+  } catch {
+    throw new Error(i18n.t("downloads.failed"));
+  }
 }
 
 /**

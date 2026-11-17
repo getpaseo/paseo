@@ -238,6 +238,24 @@ describe("download store transport selection", () => {
     expect(download).toMatchObject({ status: "error", message: i18n.t("downloads.failed") });
   });
 
+  it("fails with a readable message when the connection drops while the file is downloading", async () => {
+    const saver = createFileSaver();
+    const download = await startDownload({
+      profile: profileWith([localTcpConnection]),
+      activeConnectionId: localTcpConnection.id,
+      fetchFile: async () =>
+        new Response(
+          new ReadableStream({
+            start: (controller) => controller.error(new TypeError("network error")),
+          }),
+        ),
+      saver,
+    });
+
+    expect(download).toMatchObject({ status: "error", message: i18n.t("downloads.failed") });
+    expect(saver.savedFiles).toEqual([]);
+  });
+
   it("fails the download and saves nothing when the session read fails", async () => {
     const reader = createFileReader(async () => {
       throw new Error("Connection lost");
