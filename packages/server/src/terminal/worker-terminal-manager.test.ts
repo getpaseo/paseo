@@ -355,13 +355,22 @@ it.each(["detach", "closeTerminals"] as const)(
       ...nodeTerminalCommand("setInterval(() => {}, 1000)"),
     });
     const [record] = await workerRecords(paseoHome);
-    process.kill(record!.pid, "SIGKILL");
-    await manager[operation]();
-    await expect(
-      manager.createTerminal({ workspaceId: "ws-stop-recovery", cwd: paseoHome }),
-    ).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
-    await manager.closeTerminals();
-    expect(await workerRecords(paseoHome)).toEqual([]);
+    const programPid = record!.terminals[0]!.pid;
+    try {
+      process.kill(record!.pid, "SIGKILL");
+      await manager[operation]();
+      await expect(
+        manager.createTerminal({ workspaceId: "ws-stop-recovery", cwd: paseoHome }),
+      ).rejects.toBeInstanceOf(NoTerminalWorkerAvailableError);
+      await manager.closeTerminals();
+      expect(await workerRecords(paseoHome)).toEqual([]);
+    } finally {
+      // A hard-crashed Windows worker can leave its terminal program alive.
+      // The test owns that program even after the manager retires its record.
+      if (isProcessAlive(programPid)) process.kill(programPid, "SIGKILL");
+      await waitForCondition(() => !isProcessAlive(programPid), 5000);
+      await waitForCondition(() => !isProcessAlive(record!.pid), 5000);
+    }
   },
   30000,
 );
