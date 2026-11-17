@@ -978,3 +978,46 @@ test("interrupt retirement completes child compaction markers", async () => {
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+for (const timeline of ["root", "child"] as const) {
+  test(`interrupt retirement settles ordinary tools in the ${timeline} timeline`, async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "codex-retire-tool-"));
+    const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+    const session = await new ProcessExitCodexClient([appServer]).createSession({
+      provider: "codex",
+      cwd: workdir,
+      modeId: "auto",
+    });
+    const statuses: string[] = [];
+    session.subscribe((event) => {
+      let item;
+      if (event.type === "timeline") item = event.item;
+      else if (event.type === "provider_subagent" && event.event.type === "timeline")
+        item = event.event.item;
+      if (item?.type === "tool_call" && item.callId === "running-tool") statuses.push(item.status);
+    });
+    try {
+      await session.startTurn("run a tool");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn" });
+      if (timeline === "child")
+        appServer.startsSubAgent({
+          callId: "spawn",
+          threadId: "child",
+          parentThreadId: "thread-1",
+          agentPath: "/root/child",
+        });
+      appServer.startsTerminalCommand({
+        threadId: timeline === "root" ? "thread-1" : "child",
+        turnId: "turn",
+        itemId: "running-tool",
+        command: "sleep 7200",
+      });
+      await expect.poll(() => statuses).toEqual(["running"]);
+      await session.interrupt();
+      expect(statuses).toEqual(["running", "canceled"]);
+    } finally {
+      await session.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+}

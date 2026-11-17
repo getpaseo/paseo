@@ -3662,6 +3662,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingReasoning = new Map<string, string[]>();
   private pendingCommandOutputDeltas = new Map<string, string[]>();
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
+  private readonly runningToolRows = new Map<
+    string,
+    { item: Extract<ToolCallTimelineItem, { status: "running" }>; subagentId?: string }
+  >();
   private pendingToolCallDetails = new Map<string, ToolCallTimelineItem["detail"]>();
   private pendingAssistantMessageBoundary = false;
   // The root turn's model-stream reconnect run that has not yet resumed or ended.
@@ -5431,6 +5435,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     for (const [callId, state] of this.subAgentCallsByCallId) {
       if (state.toolCall.status === "running") this.emitSubAgentActivityUpdate(callId, "canceled");
     }
+    this.cancelRunningToolRows();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.terminalProcessIdsByTurnId.clear();
     this.settleStreamRetry({ status: "canceled" });
@@ -5666,6 +5671,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (client) {
       await client.dispose();
     }
+    this.runningToolRows.clear();
     this.client = null;
   }
 
@@ -5977,7 +5983,30 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.historySubagentEvents.push(event);
       return;
     }
+    if (event.type === "timeline") this.trackRunningToolRow(event.item);
+    if (event.type === "provider_subagent" && event.event.type === "timeline")
+      this.trackRunningToolRow(event.event.item, event.event.id);
     this.notifySubscribers(event);
+  }
+
+  private trackRunningToolRow(item: AgentTimelineItem, subagentId?: string): void {
+    if (item.type !== "tool_call") return;
+    const key = JSON.stringify([subagentId ?? null, item.callId]);
+    if (item.status === "running") this.runningToolRows.set(key, { item, subagentId });
+    else this.runningToolRows.delete(key);
+  }
+
+  private cancelRunningToolRows(): void {
+    for (const { item, subagentId } of this.runningToolRows.values()) {
+      const canceled = { ...item, status: "canceled" as const, error: null };
+      if (subagentId !== undefined)
+        this.emitEvent({
+          type: "provider_subagent",
+          provider: CODEX_PROVIDER,
+          event: { type: "timeline", id: subagentId, item: canceled },
+        });
+      else this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: canceled });
+    }
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
