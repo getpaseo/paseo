@@ -206,20 +206,24 @@ describe("download store transport selection", () => {
   });
 
   it("fails with the HTTP status when a proxy in front of the host rejects the download", async () => {
+    const requests: Array<RequestInit | undefined> = [];
     const download = await startDownload({
       profile: profileWith([localTcpConnection]),
       activeConnectionId: localTcpConnection.id,
-      fetchFile: async () =>
-        new Response("<h1>401 Authorization Required</h1>", {
+      fetchFile: async (_url, init) => {
+        requests.push(init);
+        return new Response("<h1>401 Authorization Required</h1>", {
           status: 401,
           headers: { "WWW-Authenticate": 'Basic realm="Paseo"' },
-        }),
+        });
+      },
     });
 
     expect(download).toMatchObject({
       status: "error",
       message: i18n.t("downloads.httpFailed", { status: 401 }),
     });
+    expect(requests).toEqual([{ credentials: "include", redirect: "error" }]);
   });
 
   it("fails with a readable message when the download request cannot reach the host", async () => {

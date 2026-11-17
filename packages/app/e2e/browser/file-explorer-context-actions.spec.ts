@@ -10,7 +10,7 @@ import {
 } from "../support/helpers/file-explorer";
 import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
-import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { daemonWsRoutePattern, getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 
 let workspace: SeededWorkspace;
@@ -466,9 +466,12 @@ test("downloads a file over direct TCP with its original filename and bytes", as
   await gotoWorkspace(page, workspace.workspaceId);
   await openFileExplorer(page);
 
+  const daemonRequest = page.waitForRequest("**/api/files/download?*");
   const downloaded = await downloadFileFromExplorer(page, fileName);
-  const url = new URL(downloaded.url());
-  expect(url.protocol).toBe("blob:");
+  const requestUrl = new URL((await daemonRequest).url());
+  expect(requestUrl.port).toBe(getE2EDaemonPort());
+  expect(requestUrl.searchParams.get("token")).toBeTruthy();
+  expect(new URL(downloaded.url()).protocol).toBe("blob:");
   expect(downloaded.suggestedFilename()).toBe(fileName);
   const savedFile = testInfo.outputPath(fileName);
   await downloaded.saveAs(savedFile);

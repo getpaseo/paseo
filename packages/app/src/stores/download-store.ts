@@ -341,8 +341,10 @@ function buildDownloadUrl(baseUrl: string, token: string): string {
 async function fetchDownload(fetchFile: typeof fetch, url: string): Promise<Blob> {
   let response: Response;
   try {
-    // A proxy that redirects to a login page would otherwise be saved as the file.
-    response = await fetchFile(url, { redirect: "error" });
+    // Send the same cookies the host's WebSocket handshake sends, so a proxy in front of the
+    // host lets the download through. Refuse redirects: a proxy that redirects to a login page
+    // would otherwise be saved as the file.
+    response = await fetchFile(url, { credentials: "include", redirect: "error" });
   } catch {
     throw new Error(i18n.t("downloads.failed"));
   }
