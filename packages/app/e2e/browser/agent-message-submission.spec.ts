@@ -1565,7 +1565,11 @@ test.describe("compact message recovery", () => {
     rejectionScenario,
   }) => {
     const prompt = "Recover this prompt in the compact layout.";
-    await submitMessageThatWillBeRejected(page, prompt);
+    await attachImageFromMenu(page, IMAGE);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await fillComposerDraft(page, prompt);
+    // Compact editors use Enter for a newline; send through the visible control.
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await page.getByRole("button", { name: "Find message", exact: true }).click();
     await expect(page.getByTestId("user-message-highlight")).toContainText(prompt);
