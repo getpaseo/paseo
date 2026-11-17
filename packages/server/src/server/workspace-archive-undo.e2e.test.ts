@@ -307,6 +307,43 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32").each([
+  { name: "detached", detach: true },
+  { name: "on a branch", detach: false },
+] as const)(
+  "restoring a worktree archived $name brings it back as it was after a new worktree used its folder",
+  async ({ detach }) => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const first = await createWorktreeWorkspaceWithAgent(repo.repoDir, "reused-folder");
+    const branch = gitOutput(first.directory, ["branch", "--show-current"]);
+    if (detach) git(first.directory, ["checkout", "--detach"]);
+    const archivedCommit = commitWork(first.directory, "work.txt");
+    await ctx.client.archiveWorkspace(first.workspaceId);
+    const second = await createWorktreeWorkspaceWithAgent(repo.repoDir, "reused-folder");
+    const secondCommit = gitOutput(second.directory, ["rev-parse", "HEAD"]);
+    await ctx.client.archiveWorkspace(second.workspaceId);
+    collectUnreachableCommits(repo.repoDir);
+
+    await ctx.client.restoreWorkspace(first.workspaceId);
+
+    expect({
+      secondDirectory: second.directory,
+      workspaceActive: await isWorkspaceActive(first.workspaceId),
+      head: gitOutput(first.directory, ["rev-parse", "HEAD"]),
+      branch: gitOutput(first.directory, ["branch", "--show-current"]),
+      savedHeads: gitOutput(repo.repoDir, ["for-each-ref", "--format=%(objectname)", "refs/paseo"]),
+    }).toEqual({
+      secondDirectory: first.directory,
+      workspaceActive: true,
+      head: archivedCommit,
+      branch: detach ? "" : branch,
+      savedHeads: secondCommit,
+    });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32").each([
   ["root", "subdirectory"],
   ["subdirectory", "root"],
 ] as const)(

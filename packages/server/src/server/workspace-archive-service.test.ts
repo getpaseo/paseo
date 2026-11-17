@@ -162,7 +162,6 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
     } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
-    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
     archiveWorkspaceRecord: async (workspaceId: string) => {
@@ -1171,7 +1170,6 @@ describe("resolveWorkspaceIdAtPath", () => {
 
     const result = await resolveWorkspaceIdAtPath(
       {
-        listAllWorkspaces: async () => [],
         listActiveWorkspaces: async () => [
           { workspaceId: "ws-local", cwd: targetPath, kind: "local_checkout" },
           { workspaceId: "ws-worktree", cwd: targetPath, kind: "worktree" },
@@ -1189,7 +1187,6 @@ describe("resolveWorkspaceIdAtPath", () => {
 
     const result = await resolveWorkspaceIdAtPath(
       {
-        listAllWorkspaces: async () => [],
         listActiveWorkspaces: async () => [
           { workspaceId: "ws-nested", cwd: "/worktrees/repo", kind: "worktree" },
         ],

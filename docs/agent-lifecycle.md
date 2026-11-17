@@ -281,16 +281,17 @@ hides the row by the latest local intent, so a late remove or upsert from a supe
 does not flip it back. Tabs and layout are purged only once the undo window closes with the
 archive committed.
 
-Before deleting the directory, the archive saves HEAD once for each workspace record on it,
-including records archived from it earlier while it stayed on disk:
+Archiving a workspace in a Paseo-owned worktree saves the worktree's HEAD for that workspace at
+that moment, whether or not the directory is deleted:
 `refs/paseo/archived/<hash of the workspace ID>/<name>`, whose value is HEAD's commit and whose
 `<name>` is `git rev-parse --abbrev-ref HEAD` (`feature`, or `HEAD` when detached). The ref keeps
 git's cleanup from deleting commits only that HEAD held. Recovery checks out the saved name when it
 still resolves to the saved commit and the saved commit otherwise, so git decides whether the
 worktree comes back on its branch or detached; restore never creates, moves, or deletes a branch.
 Paseo does not sort HEAD into kinds: the only place it reads the name is that check in
-`archived-head.ts`. The ref belongs to the workspace record, so a later worktree at the same path
-cannot replace it. Unarchiving the record (Undo, Restore, or reopening the directory) deletes it,
+`archived-head.ts`. The ref belongs to the workspace record: only its own archive writes it, so
+a later worktree on the same directory, archived later, saves its own ref and leaves this one alone.
+Unarchiving the record (Undo, Restore, or reopening the directory) deletes it,
 and the unarchive fails if git cannot. Nothing else deletes it: a workspace that stays archived,
 including one whose project was removed, keeps its ref for the life of the repository. With no
 saved HEAD (archived before saved HEADs existed, or the directory was already gone), recovery

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 
 // Removing a worktree folder at archive deletes its HEAD, and with it the only hold on commits
-// that no branch reaches. Before the folder goes, archive saves HEAD once for each workspace on
-// the folder:
+// that no branch reaches. Archive saves HEAD for each workspace it archives, at that moment and
+// whether or not the folder goes:
 //
 //   refs/paseo/archived/<sha256 of the workspace ID>/<git's name for HEAD>  ->  HEAD's commit
 //
@@ -14,8 +14,8 @@ import { runGitCommand } from "../../../utils/run-git-command.js";
 // The ref keeps the commit alive, and recovery hands the name back to git when it still means
 // that commit, so git decides whether the worktree comes back on a branch or detached.
 //
-// The ref belongs to the workspace record: unarchiving the record deletes it, and nothing else
-// does. The ID is hashed because pre-v0.1.95 IDs are paths, which git rejects in a ref name.
+// The ref belongs to the workspace record: only its archive writes it, only its restore reads it,
+// and only its unarchive deletes it. The ID is hashed because pre-v0.1.95 IDs are paths, which git rejects in a ref name.
 // Refs outside refs/heads, refs/tags and refs/remotes are shared by every worktree of a
 // repository and hidden from branch lists, pushes and fetches.
 
@@ -66,8 +66,8 @@ async function readHeadName(worktreePath: string): Promise<string | null> {
 }
 
 /**
- * Saves the worktree's HEAD for each workspace on it, before archive removes its folder. A folder
- * without a HEAD has nothing to save, and what an earlier archive saved for these workspaces stays.
+ * Saves the worktree's HEAD for each workspace being archived from it. A folder without a HEAD has
+ * nothing to save, and what an earlier archive saved for these workspaces stays.
  */
 export async function saveArchivedHead(input: {
   worktreePath: string;

@@ -124,7 +124,6 @@ async function createWorkspaceJourney() {
       },
       getSnapshot: async () => snapshot(),
     },
-    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () =>
       active ? [{ workspaceId, cwd: worktree.worktreePath, kind: "worktree" as const }] : [],
   } as unknown as AutoArchiveOnMergeOptions;
@@ -227,7 +226,6 @@ async function createUnobservedWorkspace(journeyOptions?: {
       },
     },
     getAutoArchivedChangeRequestUrl: async () => null,
-    listAllWorkspaces: async () => [],
     listActiveWorkspaces: async () =>
       active ? [{ workspaceId: "workspace-under-test", cwd, kind: "worktree" }] : [],
   } as unknown as AutoArchiveOnMergeOptions;

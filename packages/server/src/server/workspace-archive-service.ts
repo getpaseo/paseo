@@ -23,8 +23,6 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
 import { saveArchivedHead } from "./session/workspace-recovery/archived-head.js";
 
-export type WorkspaceWorktreeRef = Pick<PersistedWorkspaceRecord, "workspaceId" | "worktreeRoot">;
-
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
@@ -48,9 +46,6 @@ export interface ArchiveDependencies {
   // break a same-cwd tie in favor of the worktree-kind record when archiving by
   // path (no explicit workspaceId).
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
-  // Every workspace record, archived ones included, so removing a worktree folder can save its
-  // HEAD for each workspace on it.
-  listAllWorkspaces: () => Promise<WorkspaceWorktreeRef[]>;
   archiveWorkspaceRecord: (workspaceId: string, archivedAt: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -423,22 +418,6 @@ async function archiveTargetRecords(
   return { archivedAgents, archivedWorkspaceIds };
 }
 
-// The workspaces this archive took off the folder, and the ones archived from it earlier while
-// it stayed on disk. COMPAT(archiveMissingWorkspacePlacement): an already-archived record without
-// worktreeRoot (before v0.1.110) is not found here, and restores from its branch as before.
-async function listWorkspaceIdsOnFolder(
-  dependencies: Pick<ArchiveDependencies, "listAllWorkspaces">,
-  backing: BackingDirectory,
-  archivedWorkspaceIds: readonly string[],
-): Promise<string[]> {
-  const recordedOnFolder = (await dependencies.listAllWorkspaces())
-    .filter(
-      (workspace) => workspace.worktreeRoot && resolve(workspace.worktreeRoot) === backing.path,
-    )
-    .map((workspace) => workspace.workspaceId);
-  return [...new Set([...archivedWorkspaceIds, ...recordedOnFolder])];
-}
-
 async function maybeRemoveDirectory(
   dependencies: ArchiveDependencies,
   request: { requestId: string; checkpoint: () => void },
@@ -466,6 +445,20 @@ async function maybeRemoveDirectory(
       };
     }
     return { removedDirectory: false };
+  }
+
+  try {
+    // Each workspace this archive took off the folder keeps the HEAD it had, whether or not the
+    // folder goes, so no later archive of the folder writes for it.
+    await saveArchivedHead({ worktreePath: backing.path, workspaceIds: archivedWorkspaceIds });
+  } catch (error) {
+    // Without the saved HEAD, removing the folder could delete commits that only its HEAD holds.
+    const reason = "could not save its HEAD";
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath: backing.path, requestId: request.requestId },
+      `Worktree directory left in place during archive: ${reason}`,
+    );
+    return { removedDirectory: false, directoryLeftBehind: { path: backing.path, reason } };
   }
 
   const archivedWorkspaceIdSet = new Set(archivedWorkspaceIds);
@@ -513,20 +506,6 @@ async function maybeRemoveDirectory(
   // Last chance to keep the directory. Teardown commands already ran, so a cancel here restores
   // a workspace whose teardown hooks fired; that beats deleting what the user asked to keep.
   request.checkpoint();
-  try {
-    await saveArchivedHead({
-      worktreePath: backing.path,
-      workspaceIds: await listWorkspaceIdsOnFolder(dependencies, backing, archivedWorkspaceIds),
-    });
-  } catch (error) {
-    // Without the saved HEAD, removing the folder could delete commits that only its HEAD holds.
-    const reason = "could not save its HEAD";
-    dependencies.sessionLogger?.warn(
-      { err: error, targetPath: backing.path, requestId: request.requestId },
-      `Worktree directory left in place during archive: ${reason}`,
-    );
-    return { removedDirectory: false, directoryLeftBehind: { path: backing.path, reason } };
-  }
   try {
     await deletePaseoWorktree({
       cwd: backing.mainRepoRoot,
