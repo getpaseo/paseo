@@ -129,13 +129,17 @@ export const en = {
   },
   composer: {
     outbox: {
-      pending: "Saved on this device. Sends when the host reconnects.",
+      pending: "Saved on this device. Waiting for the host or agent to be ready.",
       sending: "Sending…",
-      needsReview:
-        "Delivery may have succeeded. Check the agent timeline before retrying or discarding.",
+      needsReview: "Delivery is unconfirmed. Check status before taking another action.",
       retry: "Retry delivery",
       discard: "Discard saved message",
       attachmentMessage: "Message with attachments",
+
+      failed: "Not delivered. Retry this saved message.",
+      inFlight: "The host is still processing this message. Checking automatically…",
+      checking: "Checking delivery…",
+      check: "Check delivery status",
     },
     viewMessage: "Find message",
     placeholders: {

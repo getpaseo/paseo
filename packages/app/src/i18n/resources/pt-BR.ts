@@ -132,12 +132,17 @@ export const ptBR: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "Salvo neste dispositivo. Será enviado quando o host reconectar.",
+      pending: "Salvo neste dispositivo. Aguardando o host ou agente.",
       sending: "Enviando…",
-      needsReview: "Verifique a entrega. Tente novamente com o mesmo ID ou descarte a mensagem.",
+      needsReview: "Entrega não confirmada. Verifique o status antes de outra ação.",
       retry: "Tentar enviar novamente",
       discard: "Descartar mensagem salva",
       attachmentMessage: "Mensagem com anexos",
+
+      failed: "Não entregue. Tente enviar esta mensagem salva novamente.",
+      inFlight: "O host ainda está processando. Verificando automaticamente…",
+      checking: "Verificando a entrega…",
+      check: "Verificar a entrega",
     },
     viewMessage: "Buscar mensagem",
     placeholders: {

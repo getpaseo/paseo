@@ -20,7 +20,9 @@ const OutboxItemSchema = z.strictObject({
   activeTurnId: z.string().optional(),
   images: z.array(AttachmentMetadataSchema),
   attachments: z.array(AgentAttachmentSchema),
-  status: z.enum(["pending", "sending", "needs_review"]),
+  status: z.enum(["pending", "sending", "needs_review", "failed", "in_flight", "checking"]),
+  wireImages: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(),
+  statusChecks: z.number().optional(),
   createdAt: z.number(),
   error: z.string().optional(),
 });
@@ -46,7 +48,8 @@ async function readItems(): Promise<OutboxItem[]> {
     .flatMap(([, raw]) => {
       if (!raw) return [];
       const item = OutboxItemSchema.parse(JSON.parse(raw));
-      if (item.status === "sending" && !ownedSending.has(item.id)) item.status = "needs_review";
+      if ((item.status === "sending" || item.status === "checking") && !ownedSending.has(item.id))
+        item.status = "needs_review";
       return [item];
     })
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
@@ -103,7 +106,7 @@ export function updateOutboxItem(
     const raw = await AsyncStorage.getItem(itemKey(id));
     if (!raw) return;
     const item = update(OutboxItemSchema.parse(JSON.parse(raw)));
-    if (item.status === "sending") ownedSending.add(id);
+    if (item.status === "sending" || item.status === "checking") ownedSending.add(id);
     else ownedSending.delete(id);
     await AsyncStorage.setItem(itemKey(id), JSON.stringify(item));
   });
@@ -119,11 +122,7 @@ export function removeOutboxItem(id: string): Promise<void> {
 export function discardOutboxItem(id: string): Promise<void> {
   return mutateItem(async () => {
     const raw = await AsyncStorage.getItem(itemKey(id));
-    if (
-      !raw ||
-      (OutboxItemSchema.parse(JSON.parse(raw)).status === "sending" && ownedSending.has(id))
-    )
-      return;
+    if (!raw || ownedSending.has(id)) return;
     await AsyncStorage.removeItem(itemKey(id));
   });
 }

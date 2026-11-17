@@ -133,12 +133,17 @@ export const fr: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "Enregistré sur cet appareil. Envoi à la reconnexion de l’hôte.",
+      pending: "Enregistré sur cet appareil. En attente de l’hôte ou de l’agent.",
       sending: "Envoi en cours…",
-      needsReview: "Vérifiez la livraison. Réessayez avec le même ID ou supprimez le message.",
+      needsReview: "Livraison non confirmée. Vérifiez son état avant toute autre action.",
       retry: "Réessayer l’envoi",
       discard: "Supprimer le message enregistré",
       attachmentMessage: "Message avec pièces jointes",
+
+      failed: "Non livré. Réessayez ce message enregistré.",
+      inFlight: "L’hôte traite encore ce message. Vérification automatique…",
+      checking: "Vérification de la livraison…",
+      check: "Vérifier la livraison",
     },
     viewMessage: "Rechercher le message",
     placeholders: {

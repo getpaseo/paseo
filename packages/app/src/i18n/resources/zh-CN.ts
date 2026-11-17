@@ -131,12 +131,17 @@ export const zhCN: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "已保存在此设备上，主机重新连接后发送。",
+      pending: "已保存在此设备，等待主机或代理就绪。",
       sending: "发送中…",
-      needsReview: "请检查发送结果。可使用相同的消息 ID 重试或丢弃。",
+      needsReview: "发送结果未确认，请先检查状态。",
       retry: "重试发送",
       discard: "丢弃已保存的消息",
       attachmentMessage: "带附件的消息",
+
+      failed: "未发送。可重试此消息。",
+      inFlight: "主机仍在处理此消息，正在自动检查…",
+      checking: "正在检查发送状态…",
+      check: "检查发送状态",
     },
     viewMessage: "查找消息",
     placeholders: {

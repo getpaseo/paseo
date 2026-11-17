@@ -132,12 +132,17 @@ export const es: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "Guardado en este dispositivo. Se enviará cuando el host vuelva a conectarse.",
+      pending: "Guardado en este dispositivo. Esperando al host o al agente.",
       sending: "Enviando…",
-      needsReview: "Revisa la entrega. Puedes reintentar con el mismo ID de mensaje o descartarlo.",
+      needsReview: "Entrega sin confirmar. Comprueba el estado antes de otra acción.",
       retry: "Reintentar envío",
       discard: "Descartar mensaje guardado",
       attachmentMessage: "Mensaje con archivos adjuntos",
+
+      failed: "No entregado. Reintenta este mensaje guardado.",
+      inFlight: "El host sigue procesando el mensaje. Comprobando automáticamente…",
+      checking: "Comprobando la entrega…",
+      check: "Comprobar la entrega",
     },
     viewMessage: "Buscar mensaje",
     placeholders: {

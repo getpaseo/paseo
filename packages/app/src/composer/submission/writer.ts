@@ -65,6 +65,8 @@ export function createMessageSubmissionWriter(serverId: string): MessageSubmissi
     return createUntrackedMessageSubmissionWriter(serverId);
   }
   return {
+    release: (agentId, clientMessageId) =>
+      useSessionStore.getState().releaseAgentMessageSubmission(serverId, agentId, clientMessageId),
     begin: (agentId, message) =>
       useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message),
     accept: (agentId, clientMessageId) =>

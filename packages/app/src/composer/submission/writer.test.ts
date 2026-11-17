@@ -141,3 +141,14 @@ test.each<Record<string, boolean>>([{}, { canonicalSubmittedPrompts: false }])(
     ).toEqual([message]);
   },
 );
+
+test("releases uncertain submissions without deleting their timeline identity or acknowledging them", () => {
+  initializeSession(CANONICAL_ONLY_SERVER_ID, { canonicalSubmittedPrompts: true });
+  const writer = createMessageSubmissionWriter(CANONICAL_ONLY_SERVER_ID);
+  writer.begin("agent-1", submittedMessage("uncertain"));
+  writer.release?.("agent-1", "uncertain");
+  expect(submissionIds(CANONICAL_ONLY_SERVER_ID)).toEqual([]);
+  expect(
+    useSessionStore.getState().sessions[CANONICAL_ONLY_SERVER_ID]?.agentStreamTail.get("agent-1"),
+  ).toMatchObject([{ clientMessageId: "uncertain" }]);
+});

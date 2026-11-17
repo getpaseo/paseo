@@ -196,7 +196,10 @@ function OutboxDrain({
 }) {
   const connected = useHostRuntimeIsConnected(serverId);
   const hasPending = useOutboxStore((state) =>
-    state.items.some((item) => item.serverId === serverId && item.status === "pending"),
+    state.items.some(
+      (item) =>
+        item.serverId === serverId && (item.status === "pending" || item.status === "in_flight"),
+    ),
   );
   useEffect(() => {
     if (!connected) return;

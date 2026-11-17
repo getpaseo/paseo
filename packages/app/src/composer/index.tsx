@@ -762,6 +762,9 @@ function OutboxRow({
   let status: string;
   if (item.status === "pending") status = t("composer.outbox.pending");
   else if (item.status === "sending") status = t("composer.outbox.sending");
+  else if (item.status === "failed") status = t("composer.outbox.failed");
+  else if (item.status === "in_flight") status = t("composer.outbox.inFlight");
+  else if (item.status === "checking") status = t("composer.outbox.checking");
   else status = t("composer.outbox.needsReview");
   return (
     <View style={styles.queueItem}>
@@ -769,22 +772,35 @@ function OutboxRow({
         <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
           {item.text || t("composer.outbox.attachmentMessage")}
         </Text>
-        <Text style={item.status === "needs_review" ? styles.sendErrorText : styles.outboxStatus}>
+        <Text
+          style={
+            item.status === "needs_review" || item.status === "failed"
+              ? styles.sendErrorText
+              : styles.outboxStatus
+          }
+        >
           {status}
         </Text>
+        {item.error ? <Text style={styles.sendErrorText}>{item.error}</Text> : null}
       </View>
       <View style={styles.queueActions}>
-        {item.status === "needs_review" && connected && client ? (
+        {(item.status === "needs_review" ||
+          item.status === "in_flight" ||
+          item.status === "failed") &&
+        connected &&
+        client ? (
           <Pressable
             onPress={retry}
             style={[styles.queueActionButton, styles.queueSendButton]}
             accessibilityRole="button"
-            accessibilityLabel={t("composer.outbox.retry")}
+            accessibilityLabel={t(
+              item.status === "failed" ? "composer.outbox.retry" : "composer.outbox.check",
+            )}
           >
             <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
           </Pressable>
         ) : null}
-        {item.status !== "sending" ? (
+        {item.status !== "sending" && item.status !== "checking" ? (
           <Pressable
             onPress={discard}
             style={styles.queueActionButton}

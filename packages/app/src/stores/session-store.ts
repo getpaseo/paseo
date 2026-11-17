@@ -587,6 +587,11 @@ interface SessionStoreActions {
     agentId: string,
     clientMessageId: string,
   ) => void;
+  releaseAgentMessageSubmission: (
+    serverId: string,
+    agentId: string,
+    clientMessageId: string,
+  ) => void;
   rejectAgentMessageSubmission: (
     serverId: string,
     agentId: string,
@@ -1225,6 +1230,24 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: { ...session, messageSubmissions },
             },
+          };
+        });
+      },
+
+      // Uncertainty ends the local request spinner, but keeps the stable timeline row.
+      releaseAgentMessageSubmission: (serverId, agentId, clientMessageId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const messageSubmissions = new Map(session.messageSubmissions);
+          const remaining = (messageSubmissions.get(agentId) ?? []).filter(
+            (item) => item.clientMessageId !== clientMessageId,
+          );
+          if (remaining.length) messageSubmissions.set(agentId, remaining);
+          else messageSubmissions.delete(agentId);
+          return {
+            ...prev,
+            sessions: { ...prev.sessions, [serverId]: { ...session, messageSubmissions } },
           };
         });
       },

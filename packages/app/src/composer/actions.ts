@@ -76,6 +76,7 @@ export interface ComposerCancelClient {
 }
 
 export interface MessageSubmissionWriter {
+  release?: (agentId: string, clientMessageId: string) => void;
   begin: (agentId: string, message: UserMessageItem) => void;
   accept: (agentId: string, clientMessageId: string) => void;
   reject: (agentId: string, clientMessageId: string) => MessageSubmissionRejectionOutcome;

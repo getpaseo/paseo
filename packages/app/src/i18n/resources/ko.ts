@@ -131,12 +131,17 @@ export const ko: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "이 기기에 저장했습니다. 호스트가 다시 연결되면 전송합니다.",
+      pending: "기기에 저장되었습니다. 호스트 또는 에이전트를 기다리는 중입니다.",
       sending: "전송 중…",
-      needsReview: "전송 결과를 확인하세요. 같은 메시지 ID로 다시 시도하거나 삭제할 수 있습니다.",
+      needsReview: "전송 결과가 확인되지 않았습니다. 먼저 상태를 확인하세요.",
       retry: "전송 다시 시도",
       discard: "저장된 메시지 삭제",
       attachmentMessage: "첨부 파일이 있는 메시지",
+
+      failed: "전송되지 않았습니다. 이 메시지를 다시 시도하세요.",
+      inFlight: "호스트가 처리 중입니다. 자동으로 확인 중…",
+      checking: "전송 확인 중…",
+      check: "전송 상태 확인",
     },
     viewMessage: "메시지 찾기",
     placeholders: {

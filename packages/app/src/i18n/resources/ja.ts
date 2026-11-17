@@ -132,12 +132,17 @@ export const ja: TranslationResources = {
   },
   composer: {
     outbox: {
-      pending: "この端末に保存しました。ホストの再接続時に送信します。",
+      pending: "この端末に保存済みです。ホストまたはエージェントの準備を待っています。",
       sending: "送信中…",
-      needsReview: "配信結果を確認してください。同じメッセージ ID で再試行するか破棄できます。",
+      needsReview: "配信は未確認です。操作する前に状態を確認してください。",
       retry: "送信を再試行",
       discard: "保存したメッセージを破棄",
       attachmentMessage: "添付ファイル付きメッセージ",
+
+      failed: "未配信です。このメッセージを再試行できます。",
+      inFlight: "ホストが処理中です。自動確認しています…",
+      checking: "配信を確認中…",
+      check: "配信状態を確認",
     },
     viewMessage: "メッセージを探す",
     placeholders: {
