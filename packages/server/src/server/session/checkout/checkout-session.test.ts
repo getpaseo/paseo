@@ -1756,7 +1756,7 @@ it("creates a PR from a restored exact base using the host metadata and a forge 
       cwd: repo,
       paseoHome,
       worktreeSlug: "restored-pr",
-      source: { kind: "restore", branchName: created.branchName, baseRef },
+      source: { kind: "restore", ref: created.branchName, baseRef },
     });
     const requests: Array<Parameters<ForgeService["createPullRequest"]>[0]> = [];
     const service: ForgeService = {

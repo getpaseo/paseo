@@ -361,6 +361,33 @@ test("preserves ordinary checkout behavior when no separate base was recorded", 
   ).toMatchObject({ currentBranch: "feature", baseRef: "feature" });
 });
 
+test("records the branch and commit of an archived checkout", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  const commit = execFileSync("git", ["rev-parse", "feature"], {
+    cwd: fixture.repoDir,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+    commit,
+  });
+});
+
+test("archives a workspace whose worktree Git administration is missing", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  rmSync(gitDir, { recursive: true, force: true });
+  await archivePersistedWorkspaceRecord({
+    workspaceId: fixture.workspace.workspaceId,
+    workspaceRegistry: fixture.registry,
+  });
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).toBeTruthy();
+});
+
 test("restores a branchless workspace from its recorded base so work can continue", async () => {
   const fixture = await createBaseRecoveryFixture("refs/heads/release");
   execFileSync("git", ["switch", "-c", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
@@ -423,7 +450,7 @@ test("restores a branchless workspace from the repository default when its base 
 });
 
 test("restores the archived detached checkout at its recorded commit", async () => {
-  const fixture = await createBaseRecoveryFixture("main");
+  const fixture = await createBaseRecoveryFixture("refs/heads/main");
   execFileSync("git", ["switch", "--detach"], { cwd: fixture.workspace.cwd });
   writeFileSync(join(fixture.workspace.cwd, "detached.txt"), "detached\n");
   execFileSync("git", ["add", "detached.txt"], { cwd: fixture.workspace.cwd });
@@ -442,6 +469,10 @@ test("restores the archived detached checkout at its recorded commit", async () 
   execFileSync("git", ["reflog", "expire", "--expire=now", "--all"], { cwd: fixture.repoDir });
   execFileSync("git", ["gc", "--prune=now"], { cwd: fixture.repoDir });
   await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(await readPaseoWorktreeMetadata(fixture.workspace.cwd)).toMatchObject({
+    baseRefName: "main",
+    baseRef: "refs/heads/main",
+  });
   expect(
     execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: fixture.workspace.cwd,

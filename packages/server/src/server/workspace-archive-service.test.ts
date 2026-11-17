@@ -210,7 +210,7 @@ describe("archiveByScope", () => {
         paseoHome,
         worktreeSlug: "external",
         worktreePath: recordedPath,
-        source: { kind: "restore", branchName: "external", baseRef: "main" },
+        source: { kind: "restore", ref: "external", baseRef: "main" },
       });
       expect(existsSync(await getPaseoWorktreeMetadataPath(restored.worktreePath))).toBe(true);
       const workspaceId = "external-workspace";
@@ -784,12 +784,9 @@ describe("archiveByScope", () => {
     expect(deps.emitWorkspaceUpdatesForWorkspaceIds).not.toHaveBeenCalled();
   });
 
-  test.each([
-    ["intact", true],
-    ["missing", false],
-  ] as const)(
-    "worktree scope handles an owned directory with zero matching records and %s Git administration",
-    async (gitAdministration, removedDirectory) => {
+  test.each(["intact", "missing"] as const)(
+    "worktree scope removes an owned directory with zero matching records and %s Git administration",
+    async (gitAdministration) => {
       const { tempDir, repoDir } = createGitRepo();
       const paseoHome = path.join(tempDir, ".paseo");
       const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "zero-records");
@@ -812,10 +809,10 @@ describe("archiveByScope", () => {
 
       assertArchiveResult(result, {
         archivedWorkspaceIds: [],
-        removedDirectory,
+        removedDirectory: true,
       });
-      expect(existsSync(worktree.worktreePath)).toBe(!removedDirectory);
-      expect(invalidateWorktrees).toHaveBeenCalledTimes(removedDirectory ? 1 : 0);
+      expect(existsSync(worktree.worktreePath)).toBe(false);
+      expect(invalidateWorktrees).toHaveBeenCalledTimes(1);
     },
   );
 

@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { stat } from "node:fs/promises";
 
 import type { Logger } from "pino";
 
@@ -9,6 +8,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  readWorktreeHead,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
@@ -712,21 +712,15 @@ export async function archivePersistedWorkspaceRecord(input: {
   if (existingWorkspace.kind === "worktree") {
     const cwd = existingWorkspace.worktreeRoot ?? existingWorkspace.cwd;
     try {
-      const [head, branch] = await Promise.all([
-        runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], { cwd }),
+      const [commit, branch] = await Promise.all([
+        readWorktreeHead(cwd),
         runGitCommand(["symbolic-ref", "--quiet", "--short", "HEAD"], {
           cwd,
           acceptExitCodes: [0, 1],
         }),
       ]);
-      const branchName = branch.stdout.trim() || null;
-      checkout = { branch: branchName, commit: branchName ? undefined : head.stdout.trim() };
-    } catch (error) {
-      const missing = await stat(cwd).then(
-        () => false,
-        (failure: NodeJS.ErrnoException) => failure.code === "ENOENT",
-      );
-      if (!missing) throw error;
+      if (commit) checkout = { branch: branch.stdout.trim() || null, commit };
+    } catch {
       // An unavailable checkout retains its previously recorded placement.
     }
   }

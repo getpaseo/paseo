@@ -152,12 +152,11 @@ export function createWorkspaceRecoveryService(deps: {
     sourceRepoRoot: string,
   ): Promise<void> {
     let source: WorktreeSource;
-    if (workspace.branch) {
-      source = { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch };
-    } else if (workspace.commit) {
+    const ref = workspace.branch ?? workspace.commit;
+    if (ref) {
       source = {
-        kind: "restore-detached",
-        commit: workspace.commit,
+        kind: "restore",
+        ref,
         baseRef: workspace.baseBranch,
       };
     } else {

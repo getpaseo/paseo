@@ -3,7 +3,7 @@ import type { WorktreeSource } from "../utils/worktree.js";
 
 export type WorktreeCreationIntent = Exclude<
   WorktreeSource,
-  { kind: "restore" | "restore-from-base" | "restore-detached" }
+  { kind: "restore" | "restore-from-base" }
 >;
 
 export interface ResolveWorktreeCreationIntentInput {

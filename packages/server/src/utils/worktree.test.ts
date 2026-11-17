@@ -3,6 +3,7 @@ import {
   createWorktree as createWorktreePrimitive,
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
+  readWorktreeHead,
   isPaseoOwnedWorktreeCwd,
   mapWorkspaceCwdToWorktree,
   runWorktreeTeardownCommands,
@@ -278,7 +279,7 @@ describe("paseo worktree manager", () => {
     });
   });
 
-  it("keeps a worktree when its commit cannot be protected", async () => {
+  it("deletes a worktree whose .git admin dir has already been removed", async () => {
     const created = await createLegacyWorktreeForTest({
       branchName: "orphan-delete-branch",
       cwd: repoDir,
@@ -293,15 +294,19 @@ describe("paseo worktree manager", () => {
     });
     expect(existsSync(created.worktreePath)).toBe(true);
 
-    await expect(
-      deletePaseoWorktree({
-        cwd: repoDir,
-        worktreePath: created.worktreePath,
-        paseoHome,
-      }),
-    ).rejects.toThrow();
+    await deletePaseoWorktree({
+      cwd: repoDir,
+      worktreePath: created.worktreePath,
+      paseoHome,
+    });
 
-    expect(existsSync(created.worktreePath)).toBe(true);
+    expect(existsSync(created.worktreePath)).toBe(false);
+  });
+
+  it("does not read a parent repository's HEAD when the worktree has no .git", async () => {
+    const directory = join(repoDir, "missing-worktree");
+    mkdirSync(directory);
+    await expect(readWorktreeHead(directory)).resolves.toBeNull();
   });
 
   it("keeps a worktree when writing its retention ref fails", async () => {

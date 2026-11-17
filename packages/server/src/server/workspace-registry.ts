@@ -127,7 +127,7 @@ export interface WorkspaceMutationContext {
 
 export interface WorkspaceArchiveContext {
   autoArchivedChangeRequestUrl?: string;
-  checkout?: { branch: string | null; commit?: string };
+  checkout?: { branch: string | null; commit: string };
 }
 
 export interface ProjectMutation {
