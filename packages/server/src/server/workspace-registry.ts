@@ -588,7 +588,7 @@ export class FileBackedWorkspaceRegistry
           ...existing,
           updatedAt: archivedAt,
           archivedAt,
-          ...(context?.head ? { head: context.head } : {}),
+          head: context?.head,
           ...(context?.autoArchivedChangeRequestUrl
             ? { autoArchivedChangeRequestUrl: context.autoArchivedChangeRequestUrl }
             : {}),

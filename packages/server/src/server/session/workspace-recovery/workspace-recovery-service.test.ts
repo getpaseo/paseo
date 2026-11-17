@@ -433,6 +433,62 @@ test("restores detached HEAD even when the stored branch is stale", async () => 
   ).toBe(commit);
 });
 
+test.each(["manual", "reconciliation"] as const)(
+  "a later %s archive without a readable HEAD restores the latest recorded branch",
+  async (route) => {
+    const fixture = await createBaseRecoveryFixture("main");
+    await fixture.archiveAndRemove();
+    await fixture.service.restore(fixture.workspace.workspaceId);
+    execFileSync("git", ["switch", "-c", "feature-b"], { cwd: fixture.workspace.cwd });
+    writeFileSync(join(fixture.workspace.cwd, "newer.txt"), "newer\n");
+    execFileSync("git", ["add", "newer.txt"], { cwd: fixture.workspace.cwd });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "newer"], {
+      cwd: fixture.workspace.cwd,
+    });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim();
+    // Placement reconciliation records the branch observed while the workspace is active.
+    await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+      ...workspace,
+      branch: "feature-b",
+    }));
+    execFileSync("git", ["worktree", "remove", "--force", fixture.workspace.cwd], {
+      cwd: fixture.repoDir,
+    });
+    if (route === "manual") {
+      await archivePersistedWorkspaceRecord({
+        workspaceId: fixture.workspace.workspaceId,
+        workspaceRegistry: fixture.registry,
+      });
+    } else {
+      await fixture.registry.archive(fixture.workspace.workspaceId, new Date().toISOString());
+    }
+
+    expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+      branch: "feature-b",
+      head: undefined,
+    });
+    expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+      branch: "feature-b",
+    });
+    await fixture.service.restore(fixture.workspace.workspaceId);
+    expect(
+      execFileSync("git", ["symbolic-ref", "HEAD"], {
+        cwd: fixture.workspace.cwd,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("refs/heads/feature-b");
+    expect(
+      execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: fixture.workspace.cwd,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(commit);
+  },
+);
+
 test("restores a branchless workspace from its recorded base so work can continue", async () => {
   const fixture = await createBaseRecoveryFixture("refs/heads/release");
   execFileSync("git", ["switch", "-c", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
