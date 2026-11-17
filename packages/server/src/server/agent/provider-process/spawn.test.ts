@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { spawnProviderProcess } from "./spawn.js";
+import { settleProviderCleanups, spawnProviderProcess } from "./spawn.js";
 
 const logger = pino({ level: "silent" });
 let tempDir: string;
@@ -90,7 +90,9 @@ describe("spawnProviderProcess", () => {
     const exited = exitOf(provider);
     provider.kill("SIGKILL");
     await exited;
+    await settleProviderCleanups();
 
+    // Stopped; the wait only covers its new parent reaping it.
     await waitFor(() => !isRunning(commandPid), "the provider's command kept running");
   });
 
@@ -103,6 +105,7 @@ describe("spawnProviderProcess", () => {
     const exited = exitOf(first);
     first.kill("SIGKILL");
     await exited;
+    await settleProviderCleanups();
     await waitFor(() => !isRunning(firstCommand), "the first provider's command kept running");
 
     expect(isRunning(secondCommand)).toBe(true);

@@ -42,6 +42,7 @@ describe("Claude SDK env", () => {
       const query = claudeQuery(
         { prompt: "", options: {} },
         {
+          logger: createTestLogger(),
           runtimeSettings: { env: { CLAUDE_CODE_ENTRYPOINT: "sdk-ts" } },
           launchEnv: entrypoint === undefined ? {} : { CLAUDE_CODE_ENTRYPOINT: entrypoint },
           queryFactory: ({ options }) => {

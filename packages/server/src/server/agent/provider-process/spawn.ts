@@ -2,11 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { Logger } from "pino";
 import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js";
-import {
-  findMarkedProcesses,
-  terminatePosixProcesses,
-  terminateWindowsProcesses,
-} from "./leftovers.js";
+import { stopMarkedPosixProcesses, terminateWindowsProcesses } from "./leftovers.js";
 import { listWindowsProcesses, WindowsLineageRecorder } from "./windows-lineage.js";
 
 /** Set on every provider process; its descendants inherit it unless they clear their environment. */
@@ -17,6 +13,7 @@ export interface SpawnProviderProcessOptions extends SpawnProcessOptions {
 }
 
 let windowsLineage: WindowsLineageRecorder | null = null;
+const pendingCleanups = new Set<Promise<void>>();
 
 function getWindowsLineage(logger: Logger): WindowsLineageRecorder {
   windowsLineage ??= new WindowsLineageRecorder(listWindowsProcesses, (err) =>
@@ -47,8 +44,17 @@ export function spawnProviderProcess(
   if (pid === undefined) return child;
   const lineage = process.platform === "win32" ? getWindowsLineage(logger) : null;
   lineage?.track(pid, spawnedAtMs);
-  child.once("exit", () => void reportLeftovers({ pid, marker, lineage, logger }));
+  child.once("exit", () => {
+    const cleanup = reportLeftovers({ pid, marker, lineage, logger });
+    pendingCleanups.add(cleanup);
+    void cleanup.finally(() => pendingCleanups.delete(cleanup));
+  });
   return child;
+}
+
+/** Resolves once every provider that already exited has had its leftovers stopped. */
+export async function settleProviderCleanups(): Promise<void> {
+  await Promise.all(pendingCleanups);
 }
 
 // Runs detached from any caller, so a failure is logged here rather than left unhandled.
@@ -80,11 +86,9 @@ async function stopLeftovers(input: {
     await terminateWindowsProcesses(leftovers);
     return leftovers;
   }
-  const leftovers = await findMarkedProcesses({
+  return stopMarkedPosixProcesses({
     platform: process.platform,
     name: PROVIDER_PROCESS_ENV,
     value: input.marker,
   });
-  await terminatePosixProcesses(leftovers);
-  return leftovers;
 }

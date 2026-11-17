@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { WindowsLineageRecorder, type WindowsProcess } from "./windows-lineage.js";
 
-function recorderWith(tables: WindowsProcess[][]): WindowsLineageRecorder {
+function recorderWith(
+  tables: Array<WindowsProcess[] | Promise<WindowsProcess[]>>,
+): WindowsLineageRecorder {
   const queue = [...tables];
   return new WindowsLineageRecorder(
     async () => {
@@ -52,6 +54,42 @@ describe("WindowsLineageRecorder", () => {
     await recorder.record();
 
     await expect(recorder.release(PROVIDER.pid)).resolves.toEqual([]);
+  });
+
+  test("ignores the children of a process that reuses the exited provider's PID", async () => {
+    const reusedProviderPid = { pid: PROVIDER.pid, ppid: 1, createdMs: 9_000 };
+    const childOfReused = { pid: 400, ppid: PROVIDER.pid, createdMs: 9_500 };
+    const recorder = recorderWith([[PROVIDER], [reusedProviderPid, childOfReused]]);
+    recorder.track(PROVIDER.pid, 900);
+    await recorder.record(); // joins the record `track` started
+
+    await expect(recorder.release(PROVIDER.pid)).resolves.toEqual([]);
+  });
+
+  test("ignores the children of a process that reuses the PID before any record", async () => {
+    const reusedProviderPid = { pid: PROVIDER.pid, ppid: 1, createdMs: 9_000 };
+    const childOfReused = { pid: 400, ppid: PROVIDER.pid, createdMs: 9_500 };
+    const recorder = recorderWith([[], [reusedProviderPid, childOfReused]]);
+    recorder.track(PROVIDER.pid, 900);
+
+    await expect(recorder.release(PROVIDER.pid)).resolves.toEqual([]);
+  });
+
+  test("keeps what a record still querying when the provider exits finds", async () => {
+    let finishQuery!: (table: WindowsProcess[]) => void;
+    const slowQuery = new Promise<WindowsProcess[]>((resolve) => {
+      finishQuery = resolve;
+    });
+    const recorder = recorderWith([[PROVIDER], slowQuery, [SERVER]]);
+    recorder.track(PROVIDER.pid, 900);
+    await recorder.record(); // joins the record `track` started
+    const recording = recorder.record();
+
+    const released = recorder.release(PROVIDER.pid);
+    finishQuery([PROVIDER, SHELL, SERVER]);
+    await recording;
+
+    await expect(released).resolves.toEqual([SERVER.pid]);
   });
 
   test("ignores a process naming the provider's PID as parent but started before it", async () => {

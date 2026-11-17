@@ -3,7 +3,7 @@ import { execCommand } from "../../../utils/spawn.js";
 
 const PS_TIMEOUT_MS = 15_000;
 const TERMINATE_GRACE_MS = 2_000;
-const EXIT_POLL_MS = 50;
+const RESCAN_INTERVAL_MS = 200;
 
 /**
  * Processes whose environment carries `NAME=value`. Claude Code and Antigravity start each shell
@@ -39,35 +39,74 @@ async function findMarkedLinuxProcesses(entry: string): Promise<number[]> {
   return found;
 }
 
-// macOS has no /proc. `ps -E` appends the environment to the command line, space-separated,
-// for the caller's own processes.
+// macOS has no /proc. `ps -E` prints the command line followed by the environment, both
+// space-separated, for the caller's own processes. The same listing without `-E` gives the
+// command line alone, so only what follows it is matched: a marker passed as an argument does
+// not count.
 async function findMarkedPsProcesses(entry: string): Promise<number[]> {
-  const { stdout } = await execCommand("ps", ["-A", "-ww", "-E", "-o", "pid=,command="], {
+  const commandLines = await runPs(["-A", "-ww", "-o", "pid=,command="]);
+  const withEnvironment = await runPs(["-A", "-ww", "-E", "-o", "pid=,command="]);
+  return markedPidsFromPs({ commandLines, withEnvironment, entry }).filter(
+    (pid) => pid !== process.pid,
+  );
+}
+
+/** PIDs whose environment, the part of the `ps -E` line after the command line, holds `entry`. */
+export function markedPidsFromPs(input: {
+  commandLines: string;
+  withEnvironment: string;
+  entry: string;
+}): number[] {
+  const commandLines = parsePsLines(input.commandLines);
+  const found: number[] = [];
+  for (const [pid, line] of parsePsLines(input.withEnvironment)) {
+    const commandLine = commandLines.get(pid);
+    if (commandLine === undefined || !line.startsWith(commandLine)) continue;
+    if (line.slice(commandLine.length).split(/\s+/).includes(input.entry)) found.push(pid);
+  }
+  return found;
+}
+
+async function runPs(args: string[]): Promise<string> {
+  const { stdout } = await execCommand("ps", args, {
     envMode: "internal",
     envOverlay: { LC_ALL: "C" },
     timeout: PS_TIMEOUT_MS,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const found: number[] = [];
-  for (const line of stdout.split("\n")) {
-    const match = line.match(/^\s*(\d+)\s+(.*)$/);
-    if (!match) continue;
-    const pid = Number(match[1]);
-    if (pid !== process.pid && match[2].split(/\s+/).includes(entry)) found.push(pid);
-  }
-  return found;
+  return stdout;
 }
 
-/** SIGTERM, then SIGKILL whatever is still running after a short grace period. */
-export async function terminatePosixProcesses(pids: number[]): Promise<void> {
-  signalAll(pids, "SIGTERM");
-  const deadline = Date.now() + TERMINATE_GRACE_MS;
-  let running = pids.filter(isRunning);
-  while (running.length > 0 && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, EXIT_POLL_MS));
-    running = running.filter(isRunning);
+function parsePsLines(stdout: string): Map<number, string> {
+  const lines = new Map<number, string>();
+  for (const line of stdout.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s(.*)$/);
+    if (match) lines.set(Number(match[1]), match[2]);
   }
-  signalAll(running, "SIGKILL");
+  return lines;
+}
+
+/**
+ * SIGTERM every marked process, then SIGKILL whatever still carries the marker after a short
+ * grace period. Each pass looks the processes up again by marker, so a PID that exited and was
+ * reused in between is not signalled. Returns every PID that was signalled.
+ */
+export async function stopMarkedPosixProcesses(input: {
+  platform: NodeJS.Platform;
+  name: string;
+  value: string;
+}): Promise<number[]> {
+  const stopped = new Set(await findMarkedProcesses(input));
+  signalAll([...stopped], "SIGTERM");
+  const deadline = Date.now() + TERMINATE_GRACE_MS;
+  let remaining = [...stopped];
+  while (remaining.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, RESCAN_INTERVAL_MS));
+    remaining = await findMarkedProcesses(input);
+  }
+  signalAll(remaining, "SIGKILL");
+  for (const pid of remaining) stopped.add(pid);
+  return [...stopped];
 }
 
 export async function terminateWindowsProcesses(pids: number[]): Promise<void> {
@@ -92,16 +131,6 @@ function signalAll(pids: number[], signal: NodeJS.Signals): void {
     } catch (error) {
       if (!isErrnoCode(error, ["ESRCH"])) throw error;
     }
-  }
-}
-
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (isErrnoCode(error, ["ESRCH"])) return false;
-    throw error;
   }
 }
 

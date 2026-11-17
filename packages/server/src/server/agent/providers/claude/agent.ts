@@ -1719,6 +1719,7 @@ export class ClaudeAgentClient implements AgentClient {
     try {
       const advertisedModels = await runProviderRefreshActivity(context, "models", () =>
         this.discoverModels({
+          logger: this.logger,
           resolveBinary: this.resolveBinary,
           runtimeSettings: this.runtimeSettings,
           env,
@@ -3622,6 +3623,7 @@ class ClaudeAgentSession implements AgentSession {
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
+        logger: this.logger,
         runtimeSettings: this.runtimeSettings,
         launchEnv: this.launchEnv,
         queryFactory: this.queryFactory,

@@ -4,6 +4,7 @@
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import pino from "pino";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -122,7 +123,10 @@ describe("Claude SDK direct behavior", () => {
           settingSources: ["user", "project"],
         },
       },
-      { runtimeSettings: getRealProviderRuntimeSettings("claude") },
+      {
+        logger: pino({ level: "silent" }),
+        runtimeSettings: getRealProviderRuntimeSettings("claude"),
+      },
     );
 
     try {

@@ -79,7 +79,10 @@ import {
   probeExecutable,
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
-import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js";
+import {
+  spawnProviderProcess,
+  type SpawnProviderProcessOptions,
+} from "../provider-process/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
   buildCodexControls,
@@ -309,7 +312,7 @@ interface CodexAppServerLaunchPrefix {
 }
 
 interface CodexAppServerProcessSpawnInput extends CodexAppServerLaunchPrefix {
-  options: SpawnProcessOptions;
+  options: SpawnProviderProcessOptions;
 }
 
 interface CodexAppServerProcessPort {
@@ -651,7 +654,7 @@ async function resolveCodexLaunchPrefix(
 
 const defaultCodexAppServerProcess: CodexAppServerProcessPort = {
   resolvePrefix: ({ runtimeSettings }) => resolveCodexLaunchPrefix(runtimeSettings),
-  spawn: ({ command, args, options }) => spawnProcess(command, args, options),
+  spawn: ({ command, args, options }) => spawnProviderProcess(command, args, options),
 };
 
 async function resolveCodexLaunch(
@@ -7899,6 +7902,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           detached: process.platform !== "win32",
           stdio: ["pipe", "pipe", "pipe"],
           baseEnv: options.environment,
+          logger: this.logger,
         },
       });
       assertChildWithPipes(child);
