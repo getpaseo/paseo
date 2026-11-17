@@ -387,6 +387,27 @@ it.each(["HANG", "TOOL_HANG"])(
   },
 );
 
+it("settles CLI 1.5+ stream-interrupted errors as canceled and ignores stale error replay on later clean turns", async () => {
+  const h = await harness();
+  await h.open();
+  const interruptedTurn = await h.prompt("HANG_15");
+  await h.wait((event) => event.type === "timeline.item" && event.item.type === "tool_call");
+  await h.request({ type: "session.interrupt", requestId: "interrupt-15", sessionId: "s" });
+  expect(await h.completed(interruptedTurn)).toMatchObject({
+    type: "session.turn",
+    state: "canceled",
+  });
+
+  const cleanTurn = await h.prompt("STALE_ERR_TURN");
+  expect(await h.completed(cleanTurn)).toMatchObject({
+    type: "session.turn",
+    state: "completed",
+  });
+  await h.completed(await h.prompt("HELLO"));
+  const launches = (await h.records()).filter((entry) => entry.args?.includes("--input-format"));
+  expect(launches).toHaveLength(2);
+});
+
 it("stops an unresponsive driver and still respawns the conversation", async () => {
   const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
   await h.open();

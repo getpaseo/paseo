@@ -22,6 +22,8 @@ const persistenceSchema = z
   .strict();
 interface Turn {
   id: string;
+  sawStepError: boolean;
+  lastStep: { type: string; state: Step["state"] } | null;
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
@@ -90,6 +92,8 @@ export class Session {
     const driver = this.state.driver;
     const turn: Turn = {
       id: randomUUID(),
+      sawStepError: false,
+      lastStep: null,
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
@@ -259,8 +263,8 @@ export class Session {
         },
       });
     }
-    if (result.status === "ERROR") {
-      const canceled = result.error === "interrupted";
+    if (result.status === "ERROR" && !isStaleResultError(turn, result)) {
+      const canceled = isInterruptedError(result.error);
       this.finishTools(turn, canceled ? "canceled" : "failed");
       this.retire(driver);
       this.emit({
@@ -283,6 +287,8 @@ export class Session {
   }
 
   private acceptStep(step: Step, turn: Turn): void {
+    if (step.state === "ERROR") turn.sawStepError = true;
+    turn.lastStep = { type: step.step_type, state: step.state };
     const id = `${turn.id}:${step.step_index}`;
     if (step.step_type === "agent_response") {
       const previous = turn.text.get(step.step_index) || "";
@@ -394,4 +400,23 @@ function denialNoticeTitle(
 ): string {
   if (actions.length > 1) return `${actions.length} actions denied`;
   return actions[0].action === "command" ? "Shell command denied" : "Action denied";
+}
+
+function isInterruptedError(message: string): boolean {
+  return message === "interrupted" || /\bthe stream was interrupted\b/i.test(message);
+}
+
+// Antigravity CLI 1.5+ scans the entire conversation history for step_type=17 (ERROR_MESSAGE)
+// at end-of-turn instead of filtering to the current turn, re-emitting historical errors on
+// subsequent clean turns even when every step succeeded and the final response completed.
+function isStaleResultError(
+  turn: Turn,
+  result: Extract<Frame, { event: "result" }>["result"],
+): boolean {
+  if (turn.sawStepError) return false;
+  if (turn.lastStep?.type !== "agent_response" || turn.lastStep.state !== "DONE") return false;
+  for (const item of turn.tools.values()) {
+    if (item.status === "running") return false;
+  }
+  return result.response.trim().length > 0;
 }

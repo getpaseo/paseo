@@ -74,6 +74,79 @@ lines.on("line", (line) => {
   if (text.includes("RESUME")) name = "resume";
   if (text.includes("HANG")) name = "sigint-mid-text";
   if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  if (text.includes("HANG_15")) {
+    interrupted = {
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error:
+          "[System Error] The stream was interrupted. Please continue the task you were working on.",
+      },
+    };
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 1,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "Starting tool...",
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 2,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "run_command",
+        tool_info: {
+          name: "run_command",
+          parameters: { CommandLine: "sleep 10" },
+          output: "",
+          error: null,
+        },
+      },
+    });
+    return;
+  }
+  if (text.includes("STALE_ERR_TURN")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 3,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: "CLEAN_TURN_OK\n",
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 3,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "",
+        usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0 },
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "CLEAN_TURN_OK\n",
+        error:
+          "[System Error] The stream was interrupted. Please continue the task you were working on.",
+      },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];
