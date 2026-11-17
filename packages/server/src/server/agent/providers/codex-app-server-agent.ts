@@ -3683,7 +3683,11 @@ export class CodexAppServerAgentSession implements AgentSession {
   private pendingFileChangeOutputDeltas = new Map<string, string[]>();
   private readonly runningToolRows = new Map<
     string,
-    { item: Extract<ToolCallTimelineItem, { status: "running" }>; subagentId?: string }
+    {
+      item: Extract<ToolCallTimelineItem, { status: "running" }>;
+      subagentId?: string;
+      turnId?: string;
+    }
   >();
   private pendingToolCallDetails = new Map<string, ToolCallTimelineItem["detail"]>();
   private pendingAssistantMessageBoundary = false;
@@ -5522,6 +5526,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  hasPendingInterruptRecovery(): boolean {
+    return this.interruptRecoveryClient !== null;
+  }
+
   private async retireInterruptedClient(client: CodexAppServerClient): Promise<void> {
     this.logger.warn(
       this.traceContext(),
@@ -6088,29 +6096,42 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.historySubagentEvents.push(event);
       return;
     }
-    if (event.type === "timeline") this.trackRunningToolRow(event.item);
+    const turnId = getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId ?? undefined;
+    if (event.type === "timeline") this.trackRunningToolRow(event.item, undefined, turnId);
     if (event.type === "provider_subagent" && event.event.type === "timeline")
-      this.trackRunningToolRow(event.event.item, event.event.id);
+      this.trackRunningToolRow(event.event.item, event.event.id, turnId);
     this.notifySubscribers(event);
   }
 
-  private trackRunningToolRow(item: AgentTimelineItem, subagentId?: string): void {
+  private trackRunningToolRow(item: AgentTimelineItem, subagentId?: string, turnId?: string): void {
     if (item.type !== "tool_call") return;
     const key = JSON.stringify([subagentId ?? null, item.callId]);
-    if (item.status === "running") this.runningToolRows.set(key, { item, subagentId });
+    if (item.status === "running")
+      this.runningToolRows.set(key, {
+        item,
+        subagentId,
+        turnId: this.runningToolRows.get(key)?.turnId ?? turnId,
+      });
     else this.runningToolRows.delete(key);
   }
 
   private cancelRunningToolRows(): void {
-    for (const { item, subagentId } of this.runningToolRows.values()) {
+    for (const { item, subagentId, turnId } of this.runningToolRows.values()) {
       const canceled = { ...item, status: "canceled" as const, error: null };
       if (subagentId !== undefined)
         this.emitEvent({
           type: "provider_subagent",
           provider: CODEX_PROVIDER,
           event: { type: "timeline", id: subagentId, item: canceled },
+          ...(turnId ? { turnId } : {}),
         });
-      else this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: canceled });
+      else
+        this.emitEvent({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          item: canceled,
+          ...(turnId ? { turnId } : {}),
+        });
     }
   }
 

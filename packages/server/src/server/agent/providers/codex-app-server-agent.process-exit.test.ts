@@ -1092,3 +1092,91 @@ test("a lost steer acknowledgement has a bounded wait so Stop can proceed", asyn
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("retiring a later turn settles background tools under their original turn identity", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-background-tool-turn-"));
+  const appServer = createFakeCodexAppServer({ "turn/interrupt": () => new Promise(() => {}) });
+  const session = await new ProcessExitCodexClient([appServer]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const first = session.run("start background shell");
+    await appServer.waitForTurnStart();
+    appServer.startsTurn({ threadId: "thread-1", turnId: "first-turn" });
+    appServer.startsTerminalCommand({
+      threadId: "thread-1",
+      turnId: "first-turn",
+      itemId: "background-tool",
+      command: "sleep 7200",
+    });
+    await expect
+      .poll(() =>
+        events.some(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.callId === "background-tool",
+        ),
+      )
+      .toBe(true);
+    const originalTurnId = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "background-tool",
+    )?.turnId;
+    expect(originalTurnId).toBeTruthy();
+    appServer.completeTurn({ turnId: "first-turn" });
+    await first;
+    await session.startTurn("next turn");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "second-turn" });
+    await session.interrupt();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        turnId: originalTurnId,
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "background-tool",
+          status: "canceled",
+        }),
+      }),
+    );
+  } finally {
+    await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("manager Stop can retry a failed startup retirement after its run is cleared", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-start-stop-recovery-"));
+  const old = createFakeCodexAppServer({ "turn/start": () => new Promise(() => {}) });
+  old.child.kill = () => true;
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([old]) },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const run = manager.runAgent(agent.id, "possibly started");
+    const failed = expect(run).rejects.toMatchObject({ deliveryOutcome: "unknown" });
+    await old.waitForRequest("turn/start");
+    await vi.advanceTimersByTimeAsync(94_000);
+    await failed;
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    old.child.exitCode = 0;
+    old.child.emit("exit", 0, null);
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+  } finally {
+    vi.useRealTimers();
+    old.child.exitCode = 0;
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

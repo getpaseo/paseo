@@ -3901,6 +3901,10 @@ export class AgentManager {
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);
     if (!run) {
+      if (agent.session.hasPendingInterruptRecovery?.()) {
+        const stopped = await this.interruptSession(agent.session, agentId);
+        return { status: stopped ? "settled" : "refused" };
+      }
       return { status: "not_running" };
     }
 
