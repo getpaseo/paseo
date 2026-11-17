@@ -104,18 +104,44 @@ async function findIncludedFiles(source: string): Promise<string[]> {
   }
   if (searched.size === 0) return files;
 
-  const inside = splitNul(
-    await git(source, [
+  const pathspecs = [...searched].map(
+    (path) => `:(${ignoreCase ? "literal,icase" : "literal"})${path}`,
+  );
+  const inside: string[] = [];
+  for (const batch of commandLineBatches(pathspecs)) {
+    const listed = await git(source, [
       "ls-files",
       "--others",
       "--ignored",
       `--exclude-from=${INCLUDE_FILE}`,
       "-z",
       "--",
-      ...[...searched].map((path) => `:(${ignoreCase ? "literal,icase" : "literal"})${path}`),
-    ]),
-  );
+      ...batch,
+    ]);
+    inside.push(...splitNul(listed));
+  }
   return [...new Set([...files, ...inside])];
+}
+
+// Windows caps a command line at 32,767 characters, so a pattern such as `**/.env` in a
+// repo with many ignored folders searches them over several Git calls.
+const COMMAND_LINE_BATCH_CHARS = 16_000;
+
+function commandLineBatches(args: string[]): string[][] {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let length = 0;
+  for (const arg of args) {
+    if (batch.length > 0 && length + arg.length + 1 > COMMAND_LINE_BATCH_CHARS) {
+      batches.push(batch);
+      batch = [];
+      length = 0;
+    }
+    batch.push(arg);
+    length += arg.length + 1;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
 }
 
 // Match entries against .worktreeinclude alone, in a scratch repository where no other
@@ -175,7 +201,9 @@ function searchedPathInside(
   rawDirectory: string,
   ignoreCase: boolean,
 ): string | null {
-  const fold = (text: string) => (ignoreCase ? text.toLowerCase() : text);
+  // Git folds only ASCII letters when it ignores case.
+  const fold = (text: string) =>
+    ignoreCase ? text.replace(/[A-Z]+/g, (letters) => letters.toLowerCase()) : text;
   const path = fold(pattern.replace(/^\//, ""));
   const directory = fold(rawDirectory);
   const depth = (text: string) => text.replace(/\/$/, "").split("/").length;

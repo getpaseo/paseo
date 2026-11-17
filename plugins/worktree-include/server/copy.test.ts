@@ -247,6 +247,40 @@ describe("copyWorktreeIncludes", () => {
     expect(await copied()).toEqual([".env", "config/a.json"]);
   });
 
+  it("searches a pattern's path in the case it has on disk when the source repo ignores case", async () => {
+    execFileSync("git", ["-C", source, "config", "core.ignoreCase", "true"]);
+    await writeSource({
+      ".gitignore": "Config/\nÉTÉ/\n",
+      ".worktreeinclude": "config/a.json\nÉTÉ/sub/.env\n",
+      "Config/a.json": "a",
+      "ÉTÉ/sub/.env": "SECRET=summer",
+    });
+
+    expect(await copied()).toEqual(["Config/a.json", "ÉTÉ/sub/.env"]);
+  });
+
+  // Each searched folder is one argument to Git. Linux caps a command line at 2 MB and
+  // Windows at 32,767 characters, so this many long folder names exceeds both.
+  it.skipIf(process.platform === "win32")(
+    "searches more ignored folders than fit on one command line",
+    async () => {
+      const folders = 9_000;
+      const name = (i: number) => `${"x".repeat(240)}${i}`;
+      await writeSource({
+        ".gitignore": "x*/\n.env\n",
+        ".worktreeinclude": "**/.env\n",
+        [`${name(folders - 1)}/.env`]: "SECRET=last",
+      });
+      for (let i = 0; i < folders - 1; i++) await mkdir(join(source, name(i)));
+      await Promise.all(
+        Array.from({ length: folders - 1 }, (_, i) => writeFile(join(source, name(i), "a"), "")),
+      );
+
+      expect(await copied()).toEqual([`${name(folders - 1)}/.env`]);
+    },
+    60_000,
+  );
+
   it("copies ignored files inside an untracked directory a pattern names", async () => {
     await writeSource({
       ".gitignore": ".env\n",
