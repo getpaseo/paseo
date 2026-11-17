@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import { flushSync } from "react-dom";
 import { View } from "react-native";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { placeAboveAnchor, type AnchorAtRest, type PopoverFrameProps } from "./placement";
 
 type AnchorRect = Omit<AnchorAtRest, "height">;
@@ -26,11 +27,13 @@ export function PopoverFrame({
   anchorRef,
   anchorAtRest,
   reservedLift,
-  topInset,
   children,
 }: PopoverFrameProps): ReactElement {
   "use no memo";
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
+  // The frame renders in the portal host, so these are the host's insets, not the composer's: a
+  // host against the window's top edge keeps the popover below the status bar.
+  const topInset = useSafeAreaInsets().top;
   const frameRef = useRef<View>(null);
   const [anchor, setAnchor] = useState<AnchorRect>(anchorAtRest);
 
