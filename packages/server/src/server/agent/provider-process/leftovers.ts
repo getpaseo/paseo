@@ -10,11 +10,13 @@ const RESCAN_INTERVAL_MS = 200;
  * command in a new session, so once the provider is gone neither its process tree nor its
  * process group reaches them; the inherited variable does.
  */
-export async function findMarkedProcesses(input: {
+export interface ProcessMarker {
   platform: NodeJS.Platform;
   name: string;
   value: string;
-}): Promise<number[]> {
+}
+
+export async function findMarkedProcesses(input: ProcessMarker): Promise<number[]> {
   const entry = `${input.name}=${input.value}`;
   if (input.platform === "linux") return findMarkedLinuxProcesses(entry);
   return findMarkedPsProcesses(entry);
@@ -52,11 +54,15 @@ async function findMarkedPsProcesses(entry: string): Promise<number[]> {
 }
 
 /** PIDs whose environment, the part of the `ps -E` line after the command line, holds `entry`. */
-export function markedPidsFromPs(input: {
+export interface PsListings {
+  /** `ps -A -ww -o pid=,command=` */
   commandLines: string;
+  /** The same with `-E`. */
   withEnvironment: string;
   entry: string;
-}): number[] {
+}
+
+export function markedPidsFromPs(input: PsListings): number[] {
   const commandLines = parsePsLines(input.commandLines);
   const found: number[] = [];
   for (const [pid, line] of parsePsLines(input.withEnvironment)) {
@@ -91,11 +97,7 @@ function parsePsLines(stdout: string): Map<number, string> {
  * grace period. Each pass looks the processes up again by marker, so a PID that exited and was
  * reused in between is not signalled. Returns every PID that was signalled.
  */
-export async function stopMarkedPosixProcesses(input: {
-  platform: NodeJS.Platform;
-  name: string;
-  value: string;
-}): Promise<number[]> {
+export async function stopMarkedPosixProcesses(input: ProcessMarker): Promise<number[]> {
   const stopped = new Set(await findMarkedProcesses(input));
   signalAll([...stopped], "SIGTERM");
   const deadline = Date.now() + TERMINATE_GRACE_MS;

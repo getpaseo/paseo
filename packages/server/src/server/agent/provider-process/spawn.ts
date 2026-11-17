@@ -57,13 +57,14 @@ export async function settleProviderCleanups(): Promise<void> {
   await Promise.all(pendingCleanups);
 }
 
-// Runs detached from any caller, so a failure is logged here rather than left unhandled.
-async function reportLeftovers(input: {
+interface ExitedProvider {
   pid: number;
   marker: string;
   lineage: WindowsLineageRecorder | null;
-  logger: Logger;
-}): Promise<void> {
+}
+
+// Runs detached from any caller, so a failure is logged here rather than left unhandled.
+async function reportLeftovers(input: ExitedProvider & { logger: Logger }): Promise<void> {
   let stopped: number[];
   try {
     stopped = await stopLeftovers(input);
@@ -76,11 +77,7 @@ async function reportLeftovers(input: {
   }
 }
 
-async function stopLeftovers(input: {
-  pid: number;
-  marker: string;
-  lineage: WindowsLineageRecorder | null;
-}): Promise<number[]> {
+async function stopLeftovers(input: ExitedProvider): Promise<number[]> {
   if (input.lineage) {
     const leftovers = await input.lineage.release(input.pid);
     await terminateWindowsProcesses(leftovers);

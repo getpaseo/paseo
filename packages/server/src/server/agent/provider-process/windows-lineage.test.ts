@@ -75,6 +75,24 @@ describe("WindowsLineageRecorder", () => {
     await expect(recorder.release(PROVIDER.pid)).resolves.toEqual([]);
   });
 
+  test("does not take a reused PID for the provider when the first record ends after exit", async () => {
+    const reusedProviderPid = { pid: PROVIDER.pid, ppid: 1, createdMs: 9_000 };
+    const childOfReused = { pid: 400, ppid: PROVIDER.pid, createdMs: 9_500 };
+    let finishQuery!: (table: WindowsProcess[]) => void;
+    const firstQuery = new Promise<WindowsProcess[]>((resolve) => {
+      finishQuery = resolve;
+    });
+    const recorder = recorderWith([firstQuery, [reusedProviderPid, childOfReused]]);
+    recorder.track(PROVIDER.pid, 900);
+
+    // The provider exits while the first record is still querying; the query then sees a
+    // newer process under its PID.
+    const released = recorder.release(PROVIDER.pid);
+    finishQuery([reusedProviderPid, childOfReused]);
+
+    await expect(released).resolves.toEqual([]);
+  });
+
   test("keeps what a record still querying when the provider exits finds", async () => {
     let finishQuery!: (table: WindowsProcess[]) => void;
     const slowQuery = new Promise<WindowsProcess[]>((resolve) => {

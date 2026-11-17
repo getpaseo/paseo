@@ -67,6 +67,8 @@ interface ProviderLineage {
   /** Exact start once a record has seen the provider; until then, when Paseo spawned it. */
   startMs: number;
   startSeen: boolean;
+  /** Set as soon as Paseo sees the exit; a query finishing later may show a reuse of the PID. */
+  exited: boolean;
   /** Descendant PID -> start time, as recorded while the provider ran. */
   descendants: Map<number, number>;
 }
@@ -83,7 +85,12 @@ export class WindowsLineageRecorder {
   ) {}
 
   track(pid: number, spawnedAtMs: number): void {
-    this.lineages.set(pid, { startMs: spawnedAtMs, startSeen: false, descendants: new Map() });
+    this.lineages.set(pid, {
+      startMs: spawnedAtMs,
+      startSeen: false,
+      exited: false,
+      descendants: new Map(),
+    });
     this.timer ??= setInterval(() => void this.record(), RECORD_INTERVAL_MS);
     this.timer.unref();
     void this.record();
@@ -91,9 +98,10 @@ export class WindowsLineageRecorder {
 
   /** Stops recording `pid` and returns its descendants that are still running. */
   async release(pid: number): Promise<number[]> {
+    const lineage = this.lineages.get(pid);
+    if (lineage) lineage.exited = true;
     // A record already querying may hold the last snapshot that shows an intermediate shell.
     await this.recording;
-    const lineage = this.lineages.get(pid);
     this.lineages.delete(pid);
     if (this.lineages.size === 0 && this.timer) {
       clearInterval(this.timer);
@@ -103,7 +111,7 @@ export class WindowsLineageRecorder {
     const table = await this.listProcesses();
     const descendants = walkWindowsDescendants(
       table,
-      liveRoots({ table, providerPid: pid, lineage, providerExited: true }),
+      liveRoots({ table, providerPid: pid, lineage }),
     );
     descendants.delete(pid);
     return [...descendants.keys()];
@@ -128,14 +136,20 @@ export class WindowsLineageRecorder {
     }
     for (const [pid, lineage] of this.lineages) {
       const provider = table.find((entry) => entry.pid === pid);
-      // Started after Paseo spawned it, so it is the provider and not a later reuse of its PID.
-      if (provider && !lineage.startSeen && provider.createdMs >= lineage.startMs) {
+      // While Paseo still holds the provider's handle its PID cannot be reused, so before the exit
+      // a process under that PID started after the spawn is the provider.
+      if (
+        provider &&
+        !lineage.startSeen &&
+        !lineage.exited &&
+        provider.createdMs >= lineage.startMs
+      ) {
         lineage.startMs = provider.createdMs;
         lineage.startSeen = true;
       }
       for (const [descendant, createdMs] of walkWindowsDescendants(
         table,
-        liveRoots({ table, providerPid: pid, lineage, providerExited: false }),
+        liveRoots({ table, providerPid: pid, lineage }),
       )) {
         if (descendant !== pid) lineage.descendants.set(descendant, createdMs);
       }
@@ -143,24 +157,25 @@ export class WindowsLineageRecorder {
   }
 }
 
+interface LineageSnapshot {
+  table: WindowsProcess[];
+  providerPid: number;
+  lineage: ProviderLineage;
+}
+
 /**
  * Where to walk from: the provider, unless its PID now names another process, plus every
  * recorded descendant still running with the same start time. A recorded PID that now names a
  * newer process is dropped, so that process's children are not mistaken for the provider's.
  */
-function liveRoots(input: {
-  table: WindowsProcess[];
-  providerPid: number;
-  lineage: ProviderLineage;
-  providerExited: boolean;
-}): Map<number, number> {
+function liveRoots(input: LineageSnapshot): Map<number, number> {
   const { table, providerPid, lineage } = input;
   const roots = new Map<number, number>();
   const current = table.find((entry) => entry.pid === providerPid);
   // Without a recorded start, a live process under an exited provider's PID can only be a reuse.
   const isReusedPid = lineage.startSeen
     ? current !== undefined && current.createdMs !== lineage.startMs
-    : current !== undefined && input.providerExited;
+    : current !== undefined && lineage.exited;
   if (!isReusedPid) roots.set(providerPid, lineage.startMs);
   for (const entry of table) {
     if (lineage.descendants.get(entry.pid) === entry.createdMs)
