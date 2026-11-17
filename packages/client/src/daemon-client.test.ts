@@ -10237,3 +10237,102 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("slow host message acknowledgement keeps the original request pending beyond the RPC deadline", async () => {
+  vi.useFakeTimers();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "slow-send",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  try {
+    const connecting = client.connect();
+    transport.triggerOpen();
+    await connecting;
+    const send = client.sendAgentMessage("recipient", "hello", { messageId: "stable-id" });
+    let settled = false;
+    void send.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(91_000);
+    expect(settled).toBe(false);
+    const requests = transport.sent
+      .filter(
+        (frame) =>
+          typeof frame === "string" &&
+          JSON.parse(frame).message?.type === "send_agent_message_request",
+      )
+      .map(parseSentFrame);
+    expect(requests).toHaveLength(1);
+    const request = requests[0];
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "recipient",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await expect(send).resolves.toEqual({});
+    expect(request.messageId).toBe("stable-id");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a slow message acknowledgement still has a bounded deadline", async () => {
+  vi.useFakeTimers();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "unresponsive-send",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  try {
+    const connecting = client.connect();
+    transport.triggerOpen();
+    await connecting;
+    const send = client.sendAgentMessage("recipient", "hello", { messageId: "stable-id" });
+    const rejected = expect(send).rejects.toMatchObject({ code: "DAEMON_REQUEST_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(180_000);
+    await rejected;
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a disconnected message acknowledgement fails immediately with an unknown outcome", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "disconnected-send",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+  const send = client.sendAgentMessage("recipient", "hello", { messageId: "stable-id" });
+  const rejected = expect(send).rejects.toMatchObject({
+    code: "DAEMON_CONNECTION_LOST",
+    outcome: "unknown",
+  });
+  transport.triggerClose();
+  await rejected;
+});
