@@ -1598,9 +1598,21 @@ test(
       path: b.staticDir,
       title: "Destination workspace",
     });
+    const bMcp = new Client({ name: "destination-labels", version: "1" });
+    cleanup.push(() => bMcp.close());
+    await bMcp.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${b.port}/mcp/agents`)),
+    );
+    const labelResult = await bMcp.callTool({
+      name: "set_workspace_label",
+      arguments: { workspaceId: destination.workspaceId, name: "review", assigned: true },
+    });
+    expect(labelResult.isError, JSON.stringify(labelResult)).not.toBe(true);
     expect(await call("list_workspaces", { serverId })).toMatchObject({
       serverId,
-      workspaces: [expect.objectContaining({ workspaceId: destination.workspaceId })],
+      workspaces: [
+        expect.objectContaining({ workspaceId: destination.workspaceId, labels: ["review"] }),
+      ],
     });
     const self = await call("create_agent", {
       title: "Self child",

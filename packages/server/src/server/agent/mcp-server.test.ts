@@ -42,6 +42,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
+import { createWorkspaceLabelService } from "../workspace-labels/index.js";
 import {
   AgentListItemPayloadSchema,
   AgentPermissionRequestPayloadSchema,
@@ -50,6 +51,7 @@ import {
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  FileBackedWorkspaceRegistry,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -2727,6 +2729,7 @@ describe("create_agent MCP tool", () => {
       cwd: "/tmp/paseo/worktrees/repo/feature",
       kind: "worktree",
       displayName: "feature",
+      labels: ["review"],
       createdAt: "2026-07-17T00:00:00.000Z",
       updatedAt: "2026-07-17T00:00:00.000Z",
     });
@@ -2746,8 +2749,92 @@ describe("create_agent MCP tool", () => {
     const response = await tool.handler({});
 
     expect(response.structuredContent.workspaces).toEqual([
-      expect.objectContaining({ workspaceId: "ws-feature", isolation: "worktree" }),
+      expect.objectContaining({
+        workspaceId: "ws-feature",
+        isolation: "worktree",
+        labels: ["review"],
+      }),
     ]);
+  });
+
+  it("defaults labels to the caller workspace, targets explicit workspaces, and removes labels", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-workspace-labels-"));
+    try {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      const parentWorkspace = createPersistedWorkspaceRecord({
+        workspaceId: "wks_parent",
+        projectId: "proj_parent",
+        cwd: REPO_CWD,
+        kind: "local_checkout",
+        displayName: "main",
+        createdAt: "2026-07-03T09:00:00.000Z",
+        updatedAt: "2026-07-03T09:00:00.000Z",
+      });
+      const relatedWorkspace = createPersistedWorkspaceRecord({
+        workspaceId: "wks_related",
+        projectId: "proj_related",
+        cwd: TARGET_CWD,
+        kind: "local_checkout",
+        displayName: "related",
+        createdAt: "2026-07-03T09:00:00.000Z",
+        updatedAt: "2026-07-03T09:00:00.000Z",
+      });
+      const workspaceRegistry = new FileBackedWorkspaceRegistry(
+        join(tempDir, "projects", "workspaces.json"),
+        logger,
+      );
+      await workspaceRegistry.upsert(parentWorkspace);
+      await workspaceRegistry.upsert(relatedWorkspace);
+      const workspaceLabelService = createWorkspaceLabelService({
+        paseoHome: tempDir,
+        workspaceRegistry,
+      });
+      await workspaceLabelService.initialize();
+      spies.agentManager.getAgent.mockReturnValue(
+        createManagedAgent({
+          id: "parent-agent",
+          cwd: REPO_CWD,
+          workspaceId: parentWorkspace.workspaceId,
+        }),
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        workspaceLabelService,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+      const tool = registeredTool(server, "set_workspace_label");
+
+      const assigned = await invokeToolWithParsedInput(tool, { name: "review", assigned: true });
+      expect(assigned.structuredContent).toEqual({
+        workspaceId: "wks_parent",
+        labels: ["review"],
+      });
+      expect((await workspaceRegistry.get("wks_parent"))?.labels).toEqual(["review"]);
+
+      const related = await invokeToolWithParsedInput(tool, {
+        workspaceId: "wks_related",
+        name: "review",
+        assigned: true,
+      });
+      expect(related.structuredContent).toEqual({
+        workspaceId: "wks_related",
+        labels: ["review"],
+      });
+
+      const removed = await invokeToolWithParsedInput(tool, {
+        name: "review",
+        assigned: false,
+      });
+      expect(removed.structuredContent).toEqual({ workspaceId: "wks_parent", labels: [] });
+      expect((await workspaceRegistry.get("wks_parent"))?.labels).toBeUndefined();
+      expect((await workspaceRegistry.get("wks_related"))?.labels).toEqual(["review"]);
+      await server.close();
+    } finally {
+      await removeTempDir(tempDir);
+    }
   });
 
   it("creates an background local workspace and leaves it out of list_workspaces", async () => {

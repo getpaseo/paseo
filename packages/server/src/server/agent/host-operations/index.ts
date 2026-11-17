@@ -395,6 +395,7 @@ function workspaceSummary(workspace: FetchWorkspacesEntry) {
     kind: workspace.workspaceKind === "checkout" ? "local_checkout" : workspace.workspaceKind,
     title: workspace.title,
     background: workspace.background,
+    labels: workspace.labels ?? [],
   };
 }
 

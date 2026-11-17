@@ -223,6 +223,12 @@ export const PASEO_TOOL_CATALOG = {
   },
   list_hosts: { label: "List hosts", completedLabel: "Listed hosts" },
   list_workspaces: { label: "List workspaces", completedLabel: "Listed workspaces" },
+  set_workspace_label: {
+    label: "Set workspace label",
+    completedLabel: "Set workspace label",
+    context: field("name"),
+    detail: { inputOrder: ["name", "assigned", "workspaceId", "color"] },
+  },
   rename_workspace: {
     label: "Rename workspace",
     completedLabel: "Renamed workspace",

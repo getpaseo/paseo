@@ -16,7 +16,11 @@ import type { Logger } from "pino";
 
 import type { AgentMode, AgentProvider, AgentSessionConfig } from "../agent-sdk-types.js";
 import type { AgentManager } from "../agent-manager.js";
-import { ActiveTurnBehaviorSchema, AgentProfileSchema } from "@getpaseo/protocol/messages";
+import {
+  ActiveTurnBehaviorSchema,
+  AgentProfileSchema,
+  WorkspaceLabelColorSchema,
+} from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../../daemon-config-store.js";
 import { featuresFromControls } from "@getpaseo/protocol/option-controls";
 import {
@@ -117,6 +121,7 @@ import {
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
+import type { WorkspaceLabelService } from "../../workspace-labels/index.js";
 
 export interface PaseoToolHostDependencies {
   agentMessages?: () => AgentMessageDelivery;
@@ -140,6 +145,7 @@ export interface PaseoToolHostDependencies {
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   workspaceRegistry?: Pick<WorkspaceRegistry, "get" | "listActive" | "upsert">;
+  workspaceLabelService?: WorkspaceLabelService;
   projectRegistry?: Pick<ProjectRegistry, "get" | "list">;
   createDirectoryWorkspace?: (
     cwd: string,
@@ -197,6 +203,7 @@ const WorkspaceAutomationSummarySchema = z.object({
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
   background: z.boolean().optional(),
+  labels: z.array(z.string()),
 });
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
@@ -208,6 +215,7 @@ function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
     kind: workspace.kind,
     title: workspace.title,
     background: workspace.background,
+    labels: workspace.labels ?? [],
     parentWorkspaceId: workspace.parentWorkspaceId,
   };
 }
@@ -925,7 +933,7 @@ function createToolCatalog(
     return options.ensureWorkspaceForCreate(resolvedCwd);
   }
 
-  function resolveWorkspaceIdForRename(requestedWorkspaceId?: string): string {
+  function resolveWorkspaceId(requestedWorkspaceId?: string): string {
     const explicitWorkspaceId = requestedWorkspaceId?.trim();
     if (explicitWorkspaceId) {
       return explicitWorkspaceId;
@@ -1555,6 +1563,40 @@ function createToolCatalog(
       return {
         content: [],
         structuredContent: ensureValidJson({ workspaces }),
+      };
+    },
+  );
+
+  registerTool(
+    "set_workspace_label",
+    {
+      title: "Set workspace label",
+      description:
+        "Assign or remove a label from your current workspace or a specified active workspace on this host.",
+      inputSchema: {
+        workspaceId: z.string().trim().min(1).optional(),
+        name: z.string(),
+        assigned: z.boolean(),
+        color: WorkspaceLabelColorSchema.optional().default("violet"),
+      },
+      outputSchema: {
+        workspaceId: z.string(),
+        labels: z.array(z.string()),
+      },
+    },
+    async ({ workspaceId: requestedWorkspaceId, name, assigned, color }) => {
+      if (!options.workspaceLabelService) {
+        throw new Error("Workspace label service is not configured");
+      }
+      const workspaceId = resolveWorkspaceId(requestedWorkspaceId);
+      const result = await options.workspaceLabelService.setAssignment({
+        workspaceId,
+        label: { name, color },
+        assigned,
+      });
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ workspaceId, labels: result.workspaceLabels }),
       };
     },
   );
@@ -2362,7 +2404,7 @@ function createToolCatalog(
         throw new Error("Workspace update emitter is required to rename workspaces");
       }
 
-      const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
+      const workspaceId = resolveWorkspaceId(requestedWorkspaceId);
       const existing = await options.workspaceRegistry.get(workspaceId);
       if (!existing) {
         throw new PaseoToolInputError(`Workspace ${workspaceId} not found`);
