@@ -351,7 +351,6 @@ const CurrentPullRequestStatusSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().optional(),
-  commits: z.array(z.object({ oid: z.string() })).optional(),
   updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   statusCheckRollup: z.unknown().optional(),
@@ -638,6 +637,22 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
   }
 }`;
 
+const PullRequestCommitPageSchema = z.object({
+  nodes: z.array(z.object({ commit: z.object({ oid: z.string() }) })),
+  pageInfo: z
+    .object({ hasPreviousPage: z.boolean(), startCursor: z.string().nullable() })
+    .refine(
+      (page) => !page.hasPreviousPage || !!page.startCursor,
+      "A previous commit page requires a cursor",
+    ),
+});
+
+type PullRequestMembership =
+  | { kind: "unknown" }
+  | { kind: "partial"; commitOids: string[]; cursor: string }
+  | { kind: "complete"; commitOids: string[] }
+  | { kind: "failed"; error: unknown };
+
 const BatchPollPrNodeSchema = z.object({
   number: z.number(),
   url: z.string().catch(""),
@@ -647,14 +662,6 @@ const BatchPollPrNodeSchema = z.object({
   baseRefName: z.string().catch(""),
   headRefName: z.string().catch(""),
   headRefOid: z.string().catch(""),
-  commits: z
-    .object({
-      nodes: z.array(z.object({ commit: z.object({ oid: z.string() }) })),
-      pageInfo: z
-        .object({ hasPreviousPage: z.boolean(), startCursor: z.string().nullable() })
-        .optional(),
-    })
-    .optional(),
   updatedAt: z.string().optional(),
   mergedAt: z.string().nullable().optional(),
   mergeable: PullRequestMergeableSchema.optional().default("UNKNOWN"),
@@ -1138,6 +1145,7 @@ interface GitHubBatchDistribution {
 }
 
 interface ResolvedPullRequestCandidate {
+  membership: PullRequestMembership;
   status: CurrentPullRequestStatus;
   headSha?: string;
   headRepositoryOwner?: string;
@@ -1186,7 +1194,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   // Rollup nodes for merged/closed PRs keyed by repo#number@headOid: their
   // checks can no longer change, so each is fetched at most once per daemon run.
   const frozenPullRequestChecksCache = new Map<string, unknown[]>();
-  const terminalCommitPages = new Map<string, NonNullable<BatchPollPrNode["commits"]>>();
+  const readCommits = createPullRequestCommitReader();
+  const terminalCommitPages = new Map<string, PullRequestMembership>();
+  const batchMembership = new WeakMap<BatchPollPrNode, PullRequestMembership>();
   const pollRepositoryRedirects = new Map<
     string,
     { owner: string; name: string; headRepositoryOwner: string }
@@ -1675,17 +1685,29 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return;
     }
 
-    const failedCommitEntries = await loadBatchCommitPages(addressedEntries, response.aliases);
+    const repositories = new Map<GitHubBatchPollEntry, BatchPollRepository>();
+    for (const [index, entry] of addressedEntries.entries()) {
+      const parsed = BatchPollRepositorySchema.safeParse(response.aliases[batchAlias(index)]);
+      if (parsed.success) repositories.set(entry, parsed.data);
+    }
+    const failedCommitEntries = await loadBatchCommitPages(addressedEntries, repositories);
     const distribution = distributeGitHubPollBatch({
       entries: addressedEntries,
-      aliases: response.aliases,
+      repositories,
       args,
       startedAt,
       failedCommitEntries,
     });
+    if ((pollPausedUntilByHost.get(firstEntry.host) ?? 0) > deps.now()) {
+      for (const item of distribution.pendingChecks) {
+        finalizeBatchPollTarget({ ...item, rollup: null, startedAt });
+      }
+      return;
+    }
     if (distribution.pendingChecks.length > 0) {
       await loadBatchPullRequestChecks(distribution.pendingChecks, startedAt);
     }
+    if ((pollPausedUntilByHost.get(firstEntry.host) ?? 0) > deps.now()) return;
     await Promise.all(distribution.legacyFallback.map((target) => runGitHubPoll(target)));
     if (distribution.redirected.length > 0) {
       await runGitHubPollBatch(distribution.redirected, startedAt);
@@ -1721,45 +1743,46 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
   function collectBatchCommitPages(
     entries: GitHubBatchPollEntry[],
-    aliases: Record<string, unknown>,
+    repositories: Map<GitHubBatchPollEntry, BatchPollRepository>,
   ): Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }> {
-    const pending: Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }> = [];
-    for (const [index, entry] of entries.entries()) {
-      const parsed = BatchPollRepositorySchema.safeParse(aliases[batchAlias(index)]);
-      if (!parsed.success) continue;
-      aliases[batchAlias(index)] = parsed.data;
-      if (parsed.data.isFork && parsed.data.parent) continue;
-      if (selectBatchPollNode(entry, parsed.data)?.state === "OPEN") continue;
-      for (const node of batchPollNodesForWorkspace(entry, parsed.data)) {
-        const key = `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`;
-        const cachedCommits = terminalCommitPages.get(key);
-        if (node.state !== "OPEN" && cachedCommits)
-          node.commits = { ...cachedCommits, nodes: [...cachedCommits.nodes] };
-        if (node.state !== "OPEN" && !node.commits)
-          node.commits = { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: null } };
-        if (node.state !== "OPEN" && entry.target.headSha) pending.push({ entry, node });
+    const candidates: Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }> = [];
+    for (const entry of entries) {
+      const repository = repositories.get(entry);
+      if (!repository || (repository.isFork && repository.parent)) continue;
+      const nodes = batchPollNodesForWorkspace(entry, repository);
+      if (nodes.some((node) => node.state === "OPEN")) continue;
+      for (const node of nodes) {
+        batchMembership.set(
+          node,
+          terminalCommitPages.get(batchCommitKey(entry, node)) ?? { kind: "unknown" },
+        );
+        if (entry.target.headSha) candidates.push({ entry, node });
       }
     }
-    return pending;
+    return candidates;
+  }
+
+  function batchCommitKey(entry: GitHubBatchPollEntry, node: BatchPollPrNode): string {
+    return `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`;
   }
 
   async function loadBatchCommitPages(
     entries: GitHubBatchPollEntry[],
-    aliases: Record<string, unknown>,
+    repositories: Map<GitHubBatchPollEntry, BatchPollRepository>,
   ): Promise<Set<GitHubBatchPollEntry>> {
-    const pending = collectBatchCommitPages(entries, aliases);
-    const errors = new Map<BatchPollPrNode, unknown>();
+    const pending = collectBatchCommitPages(entries, repositories);
     while (pending.length) {
       const blocked = new Set<GitHubBatchPollEntry>();
       const needing = unresolvedBatchCommitPages(pending).filter(({ entry, node }) => {
-        if (errors.has(node)) blocked.add(entry);
+        if (batchMembership.get(node)?.kind === "failed") blocked.add(entry);
         return !blocked.has(entry);
       });
       if (!needing.length) break;
-      const fields = needing.map(
-        ({ entry, node }, index) =>
-          `${batchAlias(index)}: repository(owner: ${graphqlString(entry.owner)}, name: ${graphqlString(entry.name)}) { pullRequest(number: ${node.number}) { commits(last:100${node.commits!.pageInfo!.startCursor ? `, before:${graphqlString(node.commits!.pageInfo!.startCursor!)}` : ""}) { nodes { commit { oid } } pageInfo { hasPreviousPage startCursor } } } }`,
-      );
+      const fields = needing.map(({ entry, node }, index) => {
+        const membership = batchMembership.get(node);
+        const cursor = membership?.kind === "partial" ? membership.cursor : null;
+        return `${batchAlias(index)}: repository(owner: ${graphqlString(entry.owner)}, name: ${graphqlString(entry.name)}) { pullRequest(number: ${node.number}) { commits(last:100${cursor ? `, before:${graphqlString(cursor)}` : ""}) { nodes { commit { oid } } pageInfo { hasPreviousPage startCursor } } } }`;
+      });
       const args = [
         "api",
         "graphql",
@@ -1773,40 +1796,45 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args,
         onError: (affected, error) => {
           for (const { entry, node } of needing)
-            if (affected.includes(entry)) errors.set(node, error);
+            if (affected.includes(entry)) batchMembership.set(node, { kind: "failed", error });
         },
       });
-      if (!response) {
-        if ((pollPausedUntilByHost.get(needingEntries[0]!.host) ?? 0) > deps.now())
-          return new Set(entries);
-        break;
-      }
+      if (!response) break;
       const rateLimit = parseGraphqlBatchRateLimit(response.stdout);
       if (rateLimit && pauseGitHubPollsAtReserve(entries[0]!.host, rateLimit)) {
-        reportGitHubBatchError(entries, new GitHubGraphqlPollPausedError(rateLimit));
-        return new Set(entries);
+        const error = new GitHubGraphqlPollPausedError(rateLimit);
+        for (const { node } of needing) batchMembership.set(node, { kind: "failed", error });
+        break;
       }
       for (const [index, { entry, node }] of needing.entries()) {
         const parsed = z
           .object({
-            pullRequest: z.object({ commits: BatchPollPrNodeSchema.shape.commits.unwrap() }),
+            pullRequest: z.object({ commits: PullRequestCommitPageSchema }),
           })
           .safeParse(response.aliases[batchAlias(index)]);
         if (!parsed.success) {
-          errors.set(node, parsed.error);
+          batchMembership.set(node, { kind: "failed", error: parsed.error });
           continue;
         }
         const page = parsed.data.pullRequest.commits;
-        node.commits!.nodes.push(...page.nodes);
-        node.commits!.pageInfo = page.pageInfo;
-        const key = `${entry.host}/${entry.owner}/${entry.name}#${node.number}@${node.headRefOid}`;
+        const previous = batchMembership.get(node);
+        const commitOids = [
+          ...(previous?.kind === "partial" ? previous.commitOids : []),
+          ...page.nodes.map(({ commit }) => commit.oid),
+        ];
+        const membership: PullRequestMembership =
+          page.pageInfo.hasPreviousPage && page.pageInfo.startCursor
+            ? { kind: "partial", commitOids, cursor: page.pageInfo.startCursor }
+            : { kind: "complete", commitOids };
+        batchMembership.set(node, membership);
+        const key = batchCommitKey(entry, node);
         terminalCommitPages.delete(key);
-        terminalCommitPages.set(key, node.commits!);
+        terminalCommitPages.set(key, membership);
         if (terminalCommitPages.size > 512)
           terminalCommitPages.delete(terminalCommitPages.keys().next().value!);
       }
     }
-    return reportUnresolvedCommitReads(pending, errors);
+    return reportUnresolvedCommitReads(pending);
   }
 
   function unresolvedBatchCommitPages(
@@ -1825,20 +1853,20 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
   function reportUnresolvedCommitReads(
     candidates: Array<{ entry: GitHubBatchPollEntry; node: BatchPollPrNode }>,
-    errors: Map<BatchPollPrNode, unknown>,
   ): Set<GitHubBatchPollEntry> {
     const failed = new Set<GitHubBatchPollEntry>();
     for (const { entry, node } of unresolvedBatchCommitPages(candidates)) {
-      if (!errors.has(node) || failed.has(entry)) continue;
+      const membership = batchMembership.get(node);
+      if (membership?.kind !== "failed" || failed.has(entry)) continue;
       failed.add(entry);
-      updatePollTargetAfterError(entry.target, errors.get(node));
+      updatePollTargetAfterError(entry.target, membership.error);
     }
     return failed;
   }
 
   function distributeGitHubPollBatch(input: {
     entries: GitHubBatchPollEntry[];
-    aliases: Record<string, unknown>;
+    repositories: Map<GitHubBatchPollEntry, BatchPollRepository>;
     args: string[];
     startedAt: number;
     failedCommitEntries: ReadonlySet<GitHubBatchPollEntry>;
@@ -1848,11 +1876,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       legacyFallback: [],
       redirected: [],
     };
-    for (const [index, entry] of input.entries.entries()) {
+    for (const entry of input.entries) {
       if (input.failedCommitEntries.has(entry)) continue;
-      const aliasValue = input.aliases[batchAlias(index)];
-      const repository = aliasValue ? BatchPollRepositorySchema.safeParse(aliasValue) : null;
-      if (!repository?.success) {
+      const repository = input.repositories.get(entry);
+      if (!repository) {
         updatePollTargetAfterError(
           entry.target,
           new GitHubCommandError({
@@ -1864,32 +1891,29 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         );
         continue;
       }
-      if (repository.data.isFork && repository.data.parent) {
-        const forkOwner = repository.data.owner?.login ?? entry.owner;
+      if (repository.isFork && repository.parent) {
+        const forkOwner = repository.owner?.login ?? entry.owner;
         pollRepositoryRedirects.set(batchRepositoryRedirectKey(entry), {
-          owner: repository.data.parent.owner.login,
-          name: repository.data.parent.name,
+          owner: repository.parent.owner.login,
+          name: repository.parent.name,
           headRepositoryOwner: forkOwner,
         });
         distribution.redirected.push(entry);
         continue;
       }
-      const node = selectBatchPollNode(entry, repository.data);
+      const node = selectBatchPollNode(entry, repository);
       if (!node) {
         // Legacy fallback covers the two ways "no match" can be wrong: a fork
         // whose PR lives in the parent repository, and a full candidate page —
         // ten newer same-named fork PRs can crowd the checkout's own PR out of
         // the first:N window, so absence is only conclusive on a partial page.
-        if (
-          repository.data.isFork ||
-          repository.data.pullRequests.nodes.length >= BATCH_PR_CANDIDATE_LIMIT
-        ) {
+        if (repository.isFork || repository.pullRequests.nodes.length >= BATCH_PR_CANDIDATE_LIMIT) {
           distribution.legacyFallback.push(entry.target);
         } else {
           finalizeBatchPollTarget({
             entry,
             node: null,
-            repository: repository.data,
+            repository: repository,
             rollup: null,
             startedAt: input.startedAt,
           });
@@ -1906,7 +1930,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         finalizeBatchPollTarget({
           entry,
           node,
-          repository: repository.data,
+          repository: repository,
           rollup: cachedRollup,
           startedAt: input.startedAt,
         });
@@ -1914,7 +1938,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         distribution.pendingChecks.push({
           entry,
           node,
-          repository: repository.data,
+          repository: repository,
           cacheKey: frozenKey,
         });
       }
@@ -1977,15 +2001,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         entry.target.headRef,
       );
       if (!candidate) continue;
-      if (
-        node.commits?.pageInfo?.hasPreviousPage &&
-        !pullRequestContainsCommit({
-          workspaceCommit: entry.target.headSha,
-          pullRequestCommits: candidate.status.commitOids,
-        })
-      ) {
-        delete candidate.status.commitOids;
-      }
+      candidate.membership = batchMembership.get(node) ?? { kind: "unknown" };
       nodeByCandidate.set(candidate, node);
       candidates.push(candidate);
     }
@@ -2123,7 +2139,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         toBatchCurrentPullRequestItem(node, input.rollup ?? undefined),
         entry.target.headRef,
       );
-      status = built ? { ...built, forgeSpecific: { forge: "github", ...facts } } : null;
+      const membership = batchMembership.get(node);
+      const commitOids =
+        membership?.kind === "complete" || membership?.kind === "partial"
+          ? membership.commitOids
+          : undefined;
+      status = built
+        ? { ...built, commitOids, forgeSpecific: { forge: "github", ...facts } }
+        : null;
     }
     const cacheKey = buildCacheKey({
       cwd: entry.target.cwd,
@@ -2339,6 +2362,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         readOptions: input,
         load: async () => {
           const status = await resolveCurrentPullRequestView({
+            readCommits,
             cwd: input.cwd,
             headRef: input.headRef,
             headSha: input.headSha,
@@ -3151,6 +3175,7 @@ async function resolveCurrentPullRequestView(options: {
   headRef: string;
   headSha?: string;
   headRepositoryOwner?: string;
+  readCommits: ReturnType<typeof createPullRequestCommitReader>;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
   const viewCandidate = await tryCurrentPullRequestView(options);
@@ -3190,6 +3215,7 @@ async function resolveCurrentPullRequestView(options: {
     run: options.run,
   });
   const match = await loadAndPickPullRequestCandidate({
+    readCommits: options.readCommits,
     cwd: options.cwd,
     run: options.run,
     candidates: [...candidates, ...viewCandidates],
@@ -3215,6 +3241,7 @@ async function resolveForkPullRequestView(options: {
   forkOwner: string;
   viewCandidate: ResolvedPullRequestCandidate | null;
   repo: string;
+  readCommits: ReturnType<typeof createPullRequestCommitReader>;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<CurrentPullRequestStatus | null> {
   const numbers = await listForkPullRequestNumbers(options);
@@ -3229,6 +3256,7 @@ async function resolveForkPullRequestView(options: {
     ),
   );
   const match = await loadAndPickPullRequestCandidate({
+    readCommits: options.readCommits,
     cwd: options.cwd,
     run: options.run,
     candidates: [
@@ -3334,11 +3362,10 @@ async function loadPullRequestGithubFacts(options: {
   }
 }
 
-const readGitHubCommitList = createPullRequestCommitReader();
-
 async function loadAndPickPullRequestCandidate(
   options: Parameters<typeof pickPullRequestCandidate>[0] & {
     cwd: string;
+    readCommits: ReturnType<typeof createPullRequestCommitReader>;
     run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
   },
 ): Promise<ResolvedPullRequestCandidate | null> {
@@ -3356,6 +3383,7 @@ async function completeCandidateCommits(
     cwd: string;
     headRef: string;
     headRepositoryOwner?: string;
+    readCommits: ReturnType<typeof createPullRequestCommitReader>;
     run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
   },
 ): Promise<void> {
@@ -3363,8 +3391,8 @@ async function completeCandidateCommits(
   if (!isCandidateForHeadRef(candidate, options.headRef)) return;
   if (options.headRepositoryOwner && candidate.headRepositoryOwner !== options.headRepositoryOwner)
     return;
-  if (status.state === "open" || status.commitOids !== undefined) return;
-  status.commitOids = await readGitHubCommitList(`${status.url}@${status.headSha}`, async () => {
+  if (status.state === "open" || candidate.membership.kind === "complete") return;
+  const commitOids = await options.readCommits(`${status.url}@${status.headSha}`, async () => {
     const commits: string[] = [];
     let cursor: string | null = null;
     for (;;) {
@@ -3376,7 +3404,7 @@ async function completeCandidateCommits(
         .object({
           data: z.object({
             repository: z.object({
-              pullRequest: z.object({ commits: BatchPollPrNodeSchema.shape.commits.unwrap() }),
+              pullRequest: z.object({ commits: PullRequestCommitPageSchema }),
             }),
           }),
         })
@@ -3386,6 +3414,8 @@ async function completeCandidateCommits(
       cursor = page.pageInfo.startCursor;
     }
   });
+  candidate.membership = { kind: "complete", commitOids };
+  status.commitOids = commitOids;
 }
 
 async function tryCurrentPullRequestView(options: {
@@ -3628,7 +3658,6 @@ function toBatchCurrentPullRequestItem(
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     ...(node.headRefOid ? { headRefOid: node.headRefOid } : {}),
-    commits: node.commits?.nodes.map(({ commit }) => ({ oid: commit.oid })),
     updatedAt: node.updatedAt,
     mergedAt: node.mergedAt ?? null,
     ...(statusCheckRollup ? { statusCheckRollup } : {}),
@@ -3650,6 +3679,7 @@ function toCurrentPullRequestCandidate(
   const headSha = item.headRefOid;
   return {
     status,
+    membership: { kind: "unknown" },
     updatedAt: item.updatedAt,
     ...(headSha ? { headSha } : {}),
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
@@ -3687,11 +3717,14 @@ function inspectPullRequestCandidates(options: Parameters<typeof pickPullRequest
     if (
       pullRequestContainsCommit({
         workspaceCommit: options.headSha,
-        pullRequestCommits: candidate.status.commitOids,
+        pullRequestCommits:
+          candidate.membership.kind === "complete" || candidate.membership.kind === "partial"
+            ? candidate.membership.commitOids
+            : undefined,
       })
     )
       return { match: candidate, pending };
-    if (candidate.status.commitOids === undefined) pending.push(candidate);
+    if (candidate.membership.kind !== "complete") pending.push(candidate);
   }
   return { match: null, pending };
 }
@@ -4287,7 +4320,6 @@ function toCurrentPullRequestStatus(
     baseRefName: item.baseRefName,
     headRefName: item.headRefName || fallbackHeadRefName,
     ...(item.headRefOid ? { headSha: item.headRefOid } : {}),
-    commitOids: item.commits?.map((commit) => commit.oid),
     isMerged: mergedAt !== null,
     isDraft: item.isDraft ?? false,
     mergeable: item.mergeable,

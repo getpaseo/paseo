@@ -392,6 +392,40 @@ describe("createGitLabService", () => {
     expect(calls[2]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
+  it("checks fork MR membership on a reused base branch and caches successful lists", async () => {
+    const requests = Array.from({ length: 100 }, (_, index) => ({
+      ...OPEN_MR,
+      iid: index + 1,
+      source_branch: "main",
+      state: "closed",
+      source_project_id: 202,
+      target_project_id: 101,
+      sha: `fork-head-${index}`,
+      web_url: `https://gitlab.example.com/example-group/example-project/-/merge_requests/${index + 1}`,
+    }));
+    let commitReads = 0;
+    const { service } = makeService((args) => {
+      if (args[1] === "list") return ok(JSON.stringify(requests));
+      if (args[1]?.includes("/commits?")) {
+        commitReads++;
+        return ok(JSON.stringify([{ id: "fork-own-commit" }]));
+      }
+      if (args[1] === "view") return ok(JSON.stringify(requests[0]));
+      return ok("{}");
+    });
+    const input = { cwd: "/repo", headRef: "main", headSha: "inherited-base" };
+    await expect(service.getCurrentPullRequestStatus(input)).resolves.toBeNull();
+    expect(commitReads).toBe(100);
+    await expect(
+      service.getCurrentPullRequestStatus({ ...input, force: true }),
+    ).resolves.toBeNull();
+    expect(commitReads).toBe(100);
+    await expect(
+      service.getCurrentPullRequestStatus({ ...input, headSha: "fork-own-commit", force: true }),
+    ).resolves.toMatchObject({ number: 1, state: "closed" });
+    expect(commitReads).toBe(100);
+  });
+
   it("rejects an unknown newer MR instead of choosing an older match and retries", async () => {
     const older = { ...OPEN_MR, iid: 270, state: "merged", sha: "older-head" };
     const newer = { ...older, iid: 271, state: "closed", sha: "newer-head" };

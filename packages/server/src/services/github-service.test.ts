@@ -214,12 +214,26 @@ function currentPullRequestJson(overrides: Record<string, unknown> = {}): string
     baseRefName: "main",
     headRefName: "feature/fork",
     headRefOid: "1111111111111111111111111111111111111111",
-    commits: [{ oid: overrides.headRefOid ?? "1111111111111111111111111111111111111111" }],
     mergedAt: null,
     statusCheckRollup: [],
     reviewDecision: "REVIEW_REQUIRED",
     ...overrides,
   });
+}
+
+function commitPageJson(commitOids: string[]): Record<string, unknown> {
+  return {
+    pullRequest: {
+      commits: {
+        nodes: commitOids.map((oid) => ({ commit: { oid } })),
+        pageInfo: { hasPreviousPage: false, startCursor: null },
+      },
+    },
+  };
+}
+
+function directCommitsJson(commitOids: string[]): string {
+  return JSON.stringify({ data: { repository: commitPageJson(commitOids) } });
 }
 
 function currentPullRequestGithubFactsJson(overrides: Record<string, unknown> = {}): string {
@@ -269,7 +283,6 @@ function batchPollPrNodeJson(overrides: Record<string, unknown> = {}): Record<st
     viewerCanUpdateBranch: false,
     isMergeQueueEnabled: false,
     isInMergeQueue: false,
-    commits: { nodes: [{ commit: { oid: overrides.headRefOid ?? "oid-42" } }] },
     ...overrides,
   };
 }
@@ -1141,17 +1154,23 @@ describe("ForgeService", () => {
             batchPollPrNodeJson({
               number: 60,
               headRefName: "a",
-              commits: { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: "next" } },
             }),
             batchPollPrNodeJson({
               number: 50,
               headRefName: "a",
-              commits: { nodes: [{ commit: { oid: "own-a" } }] },
             }),
           ]),
           t1: batchPollRepositoryJson([
             batchPollPrNodeJson({ headRefName: "b", state: "OPEN", mergedAt: null }),
           ]),
+        }),
+        batchPollStatusJson({
+          t0: {
+            pullRequest: {
+              commits: { nodes: [], pageInfo: { hasPreviousPage: true, startCursor: "next" } },
+            },
+          },
+          t1: commitPageJson(["own-a"]),
         }),
         failure === "transport"
           ? { error: new Error("HTTP 502") }
@@ -1195,14 +1214,14 @@ describe("ForgeService", () => {
   it.each(["cached", "failed-lower", "paged-lower", "pending-higher"])(
     "ignores a lower-ranked unresolved PR after the preferred match (%s)",
     async (scenario) => {
-      const cold = scenario !== "cached";
+      let now = 0;
+      const cold = true;
       const pendingHigher = scenario === "pending-higher";
       const own = batchPollPrNodeJson({
         number: 50,
         headRefName: "a",
-        commits: cold ? undefined : { nodes: [{ commit: { oid: "own-a" } }] },
       });
-      const older = batchPollPrNodeJson({ number: 42, headRefName: "a", commits: undefined });
+      const older = batchPollPrNodeJson({ number: 42, headRefName: "a" });
       const runner = createScriptedRunner([
         batchPollStatusJson({ t0: batchPollRepositoryJson([older, own]) }),
         ...(cold
@@ -1248,8 +1267,12 @@ describe("ForgeService", () => {
             ]
           : []),
         batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+        ...(scenario === "cached"
+          ? [batchPollStatusJson({ t0: batchPollRepositoryJson([older, own]) })]
+          : []),
       ]);
       const service = createGitHubService({
+        now: () => now,
         runner: runner.runner,
         resolveGhPath: async () => "/usr/bin/gh",
         resolveRepoHost: async () => null,
@@ -1266,9 +1289,15 @@ describe("ForgeService", () => {
       });
       await vi.advanceTimersByTimeAsync(0);
       await flushMicrotasks();
+      if (scenario === "cached") {
+        now = EXPECTED_GITHUB_SLOW_POLL_MS;
+        await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+        await flushMicrotasks();
+      }
       service.dispose?.();
       expect(errors).toEqual([]);
-      expect(statuses).toEqual([expect.objectContaining({ number: 50 })]);
+      expect(statuses).toHaveLength(scenario === "cached" ? 2 : 1);
+      expect(statuses.every((status) => status?.number === 50)).toBe(true);
       expect(
         runner.calls.filter(({ args }) => args.join(" ").includes("PaseoBatchCommitPages")),
       ).toHaveLength(Number(cold) + Number(pendingHigher));
@@ -1288,7 +1317,6 @@ describe("ForgeService", () => {
             batchPollPrNodeJson({
               headRefName: "feature",
               headRefOid: pullRequestCommit,
-              commits: undefined,
             }),
           ]),
         }),
@@ -1368,6 +1396,7 @@ describe("ForgeService", () => {
           }),
         ]),
       }),
+      batchPollStatusJson({ t0: commitPageJson(["oid-a"]), t1: commitPageJson(["oid-b"]) }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
@@ -1423,7 +1452,7 @@ describe("ForgeService", () => {
     await flushMicrotasks();
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(3);
     expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
     expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
     expect(runner.calls[0]?.args[3]).toContain('t1: repository(owner: "acme", name: "gadgets")');
@@ -1450,7 +1479,7 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
     await flushMicrotasks();
 
-    expect(runner.calls).toHaveLength(3);
+    expect(runner.calls).toHaveLength(4);
     expect(statusesA).toHaveLength(2);
     expect(statusesA[1]).toEqual(expect.objectContaining({ number: 41, checksStatus: "success" }));
 
@@ -1484,6 +1513,7 @@ describe("ForgeService", () => {
           }),
         ]),
       }),
+      batchPollStatusJson({ t0: commitPageJson(["oid-a"]), t1: commitPageJson(["oid-b"]) }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([]),
         t1: batchPollChecksAliasJson([]),
@@ -1527,7 +1557,7 @@ describe("ForgeService", () => {
     await flushMicrotasks();
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(3);
     expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
     expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
     expect(runner.calls[0]?.args[3]).toContain('t1: repository(owner: "acme", name: "gadgets")');
@@ -1727,6 +1757,7 @@ describe("ForgeService", () => {
         t0: batchPollRepositoryJson([], { isFork: true, parent }),
       }),
       batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
+      batchPollStatusJson({ t0: commitPageJson(["oid-a"]) }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
@@ -1768,7 +1799,7 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
     await flushMicrotasks();
 
-    expect(runner.calls[3]?.args[3]).toContain(
+    expect(runner.calls[4]?.args[3]).toContain(
       't0: repository(owner: "upstream", name: "widgets")',
     );
 
@@ -1846,6 +1877,64 @@ describe("ForgeService", () => {
     subscription?.unsubscribe();
     service.dispose?.();
   });
+
+  it.each(["reserve", "error"])(
+    "publishes resolved statuses when commit paging pauses the host (%s)",
+    async (failure) => {
+      const runner = createScriptedRunner([
+        batchPollStatusJson({
+          t0: batchPollRepositoryJson([batchPollPrNodeJson({ commits: undefined })]),
+          t1: batchPollRepositoryJson([
+            batchPollPrNodeJson({ state: "OPEN", mergedAt: null, headRefName: "open" }),
+          ]),
+        }),
+        ...(failure === "reserve"
+          ? [
+              batchPollStatusWithRateLimitJson({
+                aliases: {},
+                limit: 5000,
+                remaining: 0,
+                resetAt: new Date(300000).toISOString(),
+              }),
+            ]
+          : [
+              {
+                error: Object.assign(new Error("gh exited 1"), {
+                  code: 1,
+                  stderr: "GraphQL: API rate limit already exceeded for user ID 123",
+                }),
+              },
+              JSON.stringify({ resources: { graphql: { remaining: 0, reset: 300 } } }),
+            ]),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveRepoSlug: async () => "acme/widgets",
+        now: () => 0,
+      });
+      const statuses: Array<CurrentPullRequestStatus | null> = [];
+      const errors: unknown[] = [];
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/terminal",
+        headRef: "feat-a",
+        headSha: "oid-42",
+      });
+      service.retainCurrentPullRequestStatusPoll?.({
+        cwd: "/open",
+        headRef: "open",
+        onStatus: (status) => statuses.push(status),
+        onError: (error) => errors.push(error),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await flushMicrotasks();
+      service.dispose?.();
+      expect(statuses).toEqual([expect.objectContaining({ state: "open" })]);
+      expect(errors).toEqual([]);
+      expect(runner.calls).toHaveLength(failure === "reserve" ? 2 : 3);
+    },
+  );
 
   it("pauses a host until reset when a batch reaches the GraphQL reserve", async () => {
     let now = 0;
@@ -1953,6 +2042,7 @@ describe("ForgeService", () => {
     });
     const runner = createScriptedRunner([
       batchPollStatusJson({ t0: batchPollRepositoryJson([closedNode]) }),
+      batchPollStatusJson({ t0: commitPageJson(["oid-closed"]) }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "PENDING" },
@@ -1984,7 +2074,7 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(0);
     await flushMicrotasks();
 
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(3);
     expect(statuses).toEqual([expect.objectContaining({ number: 9, checksStatus: "pending" })]);
 
     // Pending checks are never frozen, so the next cycle re-runs the checks
@@ -1993,7 +2083,7 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
     await flushMicrotasks();
 
-    expect(runner.calls).toHaveLength(4);
+    expect(runner.calls).toHaveLength(5);
     expect(statuses[1]).toEqual(expect.objectContaining({ number: 9, checksStatus: "success" }));
 
     subscription?.unsubscribe();
@@ -2106,6 +2196,7 @@ describe("ForgeService", () => {
           stderr: "GraphQL: Could not resolve to a Repository",
         }),
       },
+      batchPollStatusJson({ t0: commitPageJson(["oid-a"]) }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
@@ -2138,7 +2229,7 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(0);
     await flushMicrotasks();
 
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(3);
     expect(statuses).toEqual([
       expect.objectContaining({ number: 41, state: "merged", checksStatus: "success" }),
     ]);
@@ -3382,7 +3473,6 @@ describe("ForgeService", () => {
         mergedAt: "2026-01-01T00:00:00Z",
         headRefName: "feature",
         headRepositoryOwner: { login: "acme" },
-        commits: undefined,
       }),
     );
     const open = JSON.parse(
@@ -3390,7 +3480,6 @@ describe("ForgeService", () => {
         number: 2,
         headRefName: "feature",
         headRepositoryOwner: { login: "acme" },
-        commits: undefined,
       }),
     );
     const runner = createScriptedRunner([
@@ -3554,12 +3643,16 @@ describe("ForgeService", () => {
 
   it("keeps a merged PR when headRefOid matches the checkout HEAD", async () => {
     const headSha = "2222222222222222222222222222222222222222";
-    const runner = createRunner([
-      currentPullRequestJson({
-        state: "MERGED",
-        mergedAt: "2026-07-17T12:00:00Z",
-        headRefOid: headSha,
-      }),
+    const candidate = currentPullRequestJson({
+      state: "MERGED",
+      mergedAt: "2026-07-17T12:00:00Z",
+      headRefOid: headSha,
+      headRepositoryOwner: { login: "forkOwner" },
+    });
+    const runner = createScriptedRunner([
+      candidate,
+      JSON.stringify([JSON.parse(candidate)]),
+      directCommitsJson([headSha]),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3570,6 +3663,7 @@ describe("ForgeService", () => {
       cwd: "/repo",
       headRef: "feature/fork",
       headSha,
+      headRepositoryOwner: "forkOwner",
     });
 
     expect(status?.number).toBe(42);
@@ -3585,12 +3679,12 @@ describe("ForgeService", () => {
       state: "MERGED",
       mergedAt: "2026-07-17T12:00:00Z",
       headRefOid: pullRequestCommit,
-      commits: [{ oid: workspaceCommit }, { oid: pullRequestCommit }],
     });
     const runner = createScriptedRunner([
       stale,
       JSON.stringify({ owner: { login: "parentOwner" }, name: "parentRepo", parent: null }),
       JSON.stringify([JSON.parse(stale)]),
+      directCommitsJson([workspaceCommit, pullRequestCommit]),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3622,7 +3716,11 @@ describe("ForgeService", () => {
           headRepositoryOwner: { login: "forkOwner" },
         }),
       );
-      const runner = createScriptedRunner([JSON.stringify(candidate), JSON.stringify([candidate])]);
+      const runner = createScriptedRunner([
+        JSON.stringify(candidate),
+        JSON.stringify([candidate]),
+        directCommitsJson([history.workspaceCommit]),
+      ]);
       const service = createGitHubService({
         runner: runner.runner,
         resolveGhPath: async () => "/usr/bin/gh",
@@ -3647,11 +3745,14 @@ describe("ForgeService", () => {
         currentPullRequestJson({
           state,
           headRefOid: history.pullRequestCommit,
-          commits: [{ oid: history.pullRequestCommit }],
           headRepositoryOwner: { login: "forkOwner" },
         }),
       );
-      const runner = createScriptedRunner([JSON.stringify(candidate), JSON.stringify([candidate])]);
+      const runner = createScriptedRunner([
+        JSON.stringify(candidate),
+        JSON.stringify([candidate]),
+        directCommitsJson([history.pullRequestCommit]),
+      ]);
       const service = createGitHubService({
         runner: runner.runner,
         resolveGhPath: async () => "/usr/bin/gh",
@@ -3672,7 +3773,7 @@ describe("ForgeService", () => {
       number: 987,
       state: "MERGED",
       headRefOid: "cold-own-head",
-      commits: undefined,
+
       headRepositoryOwner: { login: "forkOwner" },
     });
     const runner = createScriptedRunner([
@@ -3751,7 +3852,13 @@ describe("ForgeService", () => {
       ["old", 41],
       ["other", undefined],
     ] as const) {
-      const runner = createScriptedRunner([JSON.stringify(older), JSON.stringify([older, newer])]);
+      const runner = createScriptedRunner([
+        JSON.stringify(older),
+        JSON.stringify([older, newer]),
+        ...(headSha === "old"
+          ? [directCommitsJson(["old"])]
+          : [directCommitsJson(["old"]), directCommitsJson(["new"])]),
+      ]);
       const service = createGitHubService({
         runner: runner.runner,
         resolveGhPath: async () => "/usr/bin/gh",
@@ -3791,6 +3898,7 @@ describe("ForgeService", () => {
     const runner = createScriptedRunner([
       JSON.stringify(closedDraft),
       JSON.stringify([closedDraft, merged]),
+      directCommitsJson(["exact"]),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3863,6 +3971,7 @@ describe("ForgeService", () => {
         parent: { owner: { login: "acme" }, name: "app" },
       }),
       "[]",
+      directCommitsJson(["checkout-head"]),
     ]);
     const service = createGitHubService({
       runner: runner.runner,
@@ -3902,6 +4011,11 @@ describe("ForgeService", () => {
         headRefOid: headSha,
         updatedAt,
       };
+      const commitResponses: string[] = [];
+      if (state !== "OPEN") {
+        commitResponses.push(directCommitsJson(["local-head"]));
+        if (expected !== 7) commitResponses.push(directCommitsJson(["other"]));
+      }
       const runner = createScriptedRunner([
         JSON.stringify(local),
         JSON.stringify({
@@ -3911,6 +4025,7 @@ describe("ForgeService", () => {
         }),
         JSON.stringify([{ number: 8 }]),
         JSON.stringify(parent),
+        ...commitResponses,
       ]);
       const service = createGitHubService({
         runner: runner.runner,
@@ -4007,6 +4122,8 @@ describe("ForgeService", () => {
           stderr: "",
         };
       }
+      if (args[0] === "api" && args[1] === "graphql")
+        return { stdout: directCommitsJson([checkoutSha]), stderr: "" };
       if (args[0] === "api") {
         // Newest first, and the checkout is sitting on the oldest attempt.
         return {
