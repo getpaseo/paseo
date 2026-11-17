@@ -205,4 +205,56 @@ describe("copyWorktreeIncludes", () => {
       delete process.env.GIT_TEMPLATE_DIR;
     }
   });
+
+  it("does not search an ignored directory deeper than a pattern without ** can reach", async () => {
+    const packages: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) packages[`apps/web/node_modules/pkg${i}/lib/index.js`] = "code";
+    await writeSource({
+      ".gitignore": "node_modules/\n.env\n",
+      ".worktreeinclude": "apps/*/.env\n",
+      "apps/web/.env": "SECRET=web",
+      ...packages,
+    });
+
+    let result: Awaited<ReturnType<typeof copyWorktreeIncludes>> | undefined;
+    const visited = await directoriesVisited(async () => {
+      result = await copyWorktreeIncludes(worktree, source);
+    });
+
+    expect(result).toEqual({ kind: "copied", copied: ["apps/web/.env"], skipped: [] });
+    expect(visited).toBeLessThan(10);
+  });
+
+  it("reads the first pattern after a UTF-8 byte order mark", async () => {
+    await writeSource({
+      ".gitignore": "node_modules/\n",
+      ".worktreeinclude": "\uFEFFnode_modules/.cache/\n",
+      "node_modules/.cache/state.json": "cache",
+    });
+
+    expect(await copied()).toEqual(["node_modules/.cache/state.json"]);
+  });
+
+  it("matches patterns case-insensitively when the source repo ignores case", async () => {
+    execFileSync("git", ["-C", source, "config", "core.ignoreCase", "true"]);
+    await writeSource({
+      ".gitignore": ".env\nconfig/\n",
+      ".worktreeinclude": ".ENV\nCONFIG/a.json\n",
+      ".env": "SECRET=root",
+      "config/a.json": "a",
+    });
+
+    expect(await copied()).toEqual([".env", "config/a.json"]);
+  });
+
+  it("copies ignored files inside an untracked directory a pattern names", async () => {
+    await writeSource({
+      ".gitignore": ".env\n",
+      ".worktreeinclude": "newdir/\n",
+      "newdir/.env": "SECRET=new",
+      "newdir/notes.txt": "untracked",
+    });
+
+    expect(await copied()).toEqual(["newdir/.env"]);
+  });
 });
