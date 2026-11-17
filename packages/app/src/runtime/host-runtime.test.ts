@@ -2256,6 +2256,59 @@ describe("HostRuntimeController", () => {
   });
 });
 
+const REGISTRY_KEY = "@paseo:daemon-registry";
+const futureConnection = { id: "future:1", type: "futureKind", address: "future.example.com" };
+const directA: HostConnection = {
+  id: "direct:lan-a:6767",
+  type: "directTcp",
+  endpoint: "lan-a:6767",
+};
+const directB: HostConnection = {
+  id: "direct:lan-b:6767",
+  type: "directTcp",
+  endpoint: "lan-b:6767",
+};
+// What a build with a connection kind this one doesn't know leaves behind: an extra connection
+// on a host this build can reach, and a host reached only through it.
+const storedWithUnreadableEntries = [
+  {
+    ...makeHost({ serverId: "srv_a", password: "secret-a" }),
+    connections: [futureConnection, directA],
+  },
+  makeHost({ serverId: "srv_b", password: "secret-b", connections: [directB] }),
+  { serverId: "srv_future", label: "future host", connections: [futureConnection] },
+];
+
+async function bootWithRegistry(registry: string): Promise<{
+  store: HostRuntimeStore;
+  storage: HostRuntimeStorage;
+}> {
+  const storage = createMemoryHostRuntimeStorage({
+    [REGISTRY_KEY]: registry,
+    "@paseo:e2e": "1",
+  });
+  const store = new HostRuntimeStore({
+    storage,
+    deps: {
+      createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+      connectToDaemon: async ({ host }) => ({
+        client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+        serverId: host.serverId,
+        hostname: host.label ?? null,
+      }),
+      getClientId: async () => "cid_test_runtime",
+    },
+    revokePushNotifications: async () => undefined,
+  });
+  await store.boot();
+  return { store, storage };
+}
+
+async function readRegistry(storage: HostRuntimeStorage): Promise<unknown> {
+  const raw = await storage.getItem(REGISTRY_KEY);
+  return raw === null ? null : JSON.parse(raw);
+}
+
 describe("HostRuntimeStore", () => {
   function gatewayRecoveryFixture() {
     const parent = new FakeDaemonClient();
@@ -2684,6 +2737,98 @@ describe("HostRuntimeStore", () => {
 
     store.syncHosts([]);
     session.clearSession(host.serverId);
+  });
+
+  it("keeps readable hosts when the registry holds entries this build can't read", async () => {
+    const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
+
+    expect(store.getHosts().map((host) => [host.serverId, host.password])).toEqual([
+      ["srv_a", "secret-a"],
+      ["srv_b", "secret-b"],
+    ]);
+    expect(store.getHosts()[0]?.connections.map((connection) => connection.id)).toEqual([
+      directA.id,
+    ]);
+    expect(await readRegistry(storage)).toEqual(storedWithUnreadableEntries);
+
+    store.syncHosts([]);
+  });
+
+  it("keeps the entries it can't read when it saves the registry", async () => {
+    const { store, storage } = await bootWithRegistry(JSON.stringify(storedWithUnreadableEntries));
+
+    await store.renameHost("srv_b", "renamed");
+
+    expect(await readRegistry(storage)).toMatchObject([
+      {
+        serverId: "srv_a",
+        password: "secret-a",
+        connections: [{ id: directA.id }, futureConnection],
+      },
+      { serverId: "srv_b", password: "secret-b", label: "renamed" },
+      storedWithUnreadableEntries[2],
+    ]);
+
+    store.syncHosts([]);
+  });
+
+  it("moves a stored connection password to its host and keeps the connection it can't read", async () => {
+    const { store, storage } = await bootWithRegistry(
+      JSON.stringify([
+        {
+          serverId: "srv_legacy",
+          connections: [
+            { type: "directTcp", endpoint: "lan-a:6767", password: "old-secret" },
+            futureConnection,
+          ],
+        },
+      ]),
+    );
+
+    expect(store.getHosts().map((host) => [host.serverId, host.password])).toEqual([
+      ["srv_legacy", "old-secret"],
+    ]);
+    await vi.waitFor(async () =>
+      expect(await readRegistry(storage)).toMatchObject([
+        { serverId: "srv_legacy", password: "old-secret" },
+      ]),
+    );
+    expect(await readRegistry(storage)).toMatchObject([
+      { connections: [{ ...directA, useTls: false }, futureConnection] },
+    ]);
+    const [written] = (await readRegistry(storage)) as Array<{ connections: unknown[] }>;
+    expect(written?.connections[0]).not.toHaveProperty("password");
+
+    store.syncHosts([]);
+  });
+
+  it("forgets an entry it can't read once that host is paired again and removed", async () => {
+    const { store, storage } = await bootWithRegistry(
+      JSON.stringify([{ serverId: "srv_future", connections: [futureConnection] }]),
+    );
+    expect(store.getHosts()).toEqual([]);
+
+    await store.upsertDirectConnection({ serverId: "srv_future", endpoint: directA.endpoint });
+    await vi.waitFor(async () =>
+      expect(await readRegistry(storage)).toMatchObject([
+        { serverId: "srv_future", connections: [{ id: directA.id }] },
+      ]),
+    );
+
+    await store.removeHost("srv_future");
+    expect(await readRegistry(storage)).toEqual([]);
+
+    store.syncHosts([]);
+  });
+
+  it("copies a registry that isn't JSON aside instead of deleting it", async () => {
+    const { store, storage } = await bootWithRegistry("{not json");
+
+    expect(store.getHosts()).toEqual([]);
+    expect(await storage.getItem(`${REGISTRY_KEY}:unreadable`)).toBe("{not json");
+    expect(await storage.getItem(REGISTRY_KEY)).toBe("{not json");
+
+    store.syncHosts([]);
   });
 
   it("marks the host registry loaded after boot reads storage", async () => {

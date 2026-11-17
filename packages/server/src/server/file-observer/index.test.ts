@@ -193,10 +193,11 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  // Native recursive delivery can be coalesced before the backend's deletion audit.
-  // Assert eventual classification without imposing Vitest's one-second default.
+  // macOS FSEvents can replay the write above as a create after the subscription starts,
+  // so the delete is the latest event for the path, not the first. Native recursive delivery
+  // can also be coalesced before the backend's deletion audit, hence the longer timeout.
   await expect
-    .poll(() => events.find((event) => event.path === target)?.type, { timeout: 10_000 })
+    .poll(() => events.findLast((event) => event.path === target)?.type, { timeout: 10_000 })
     .toBe("delete");
   await subscription.unsubscribe();
 });

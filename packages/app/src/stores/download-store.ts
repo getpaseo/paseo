@@ -4,7 +4,6 @@ import * as LegacyFileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import type { HostProfile } from "@/types/host-connection";
 import { buildDaemonWebSocketUrl } from "@/utils/daemon-endpoints";
-import { openExternalUrl } from "@/utils/open-external-url";
 import { isWeb } from "@/constants/platform";
 import { i18n } from "@/i18n/i18next";
 
@@ -59,6 +58,7 @@ interface DownloadState {
     /** Reads the whole file over the session socket; used when no direct HTTP endpoint is active. */
     readFile: (path: string, maxBytes: number) => Promise<{ bytes: Uint8Array; size: number }>;
     saveFile?: typeof saveDownloadedBytes;
+    fetchFile?: typeof fetch;
   }) => Promise<void>;
 
   updateProgress: (id: string, progress: DownloadProgress) => void;
@@ -86,6 +86,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     requestFileDownloadToken,
     readFile,
     saveFile = saveDownloadedBytes,
+    fetchFile = fetch,
   }) => {
     const id = generateDownloadId();
     const download: Download = {
@@ -144,14 +145,11 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         throw new Error(i18n.t("downloads.hostUnavailable"));
       }
 
-      const downloadUrl = buildDownloadUrl(
-        downloadTarget.baseUrl,
-        tokenResponse.token,
-        isWeb ? downloadTarget.authCredentials : null,
-      );
+      const downloadUrl = buildDownloadUrl(downloadTarget.baseUrl, tokenResponse.token);
 
       if (isWeb) {
-        triggerBrowserDownload(downloadUrl, resolvedFileName);
+        const file = await fetchDownload(fetchFile, downloadUrl);
+        saveBrowserFile(file, resolvedFileName);
         get().completeDownload(id);
         return;
       }
@@ -198,11 +196,6 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       await shareSavedFile(result.uri, tokenResponse.mimeType, resolvedFileName);
     } catch (error) {
       const message = error instanceof Error ? error.message : i18n.t("downloads.failed");
-      if (isWeb) {
-        console.warn("[DownloadStore] Download failed:", message);
-        get().failDownload(id, message);
-        return;
-      }
       get().failDownload(id, message);
     }
   },
@@ -283,7 +276,6 @@ function findMostRecentDownloadId(downloads: Map<string, Download>): string | nu
 interface DownloadTarget {
   baseUrl: string | null;
   authHeader: string | null;
-  authCredentials: { username: string; password: string } | null;
 }
 
 /**
@@ -306,7 +298,7 @@ function resolveDaemonDownloadTarget(
       buildDaemonWebSocketUrl(connection.endpoint, { useTls: connection.useTls ?? false }),
     );
   } catch {
-    return { baseUrl: null, authHeader: null, authCredentials: null };
+    return { baseUrl: null, authHeader: null };
   }
 
   if (parsed.protocol === "ws:") {
@@ -332,21 +324,39 @@ function resolveDaemonDownloadTarget(
     ? `Basic ${btoa(`${authCredentials.username}:${authCredentials.password}`)}`
     : null;
 
-  return { baseUrl, authHeader, authCredentials };
+  return { baseUrl, authHeader };
 }
 
-function buildDownloadUrl(
-  baseUrl: string,
-  token: string,
-  authCredentials: { username: string; password: string } | null,
-): string {
+function buildDownloadUrl(baseUrl: string, token: string): string {
   const url = new URL("/api/files/download", baseUrl);
   url.searchParams.set("token", token);
-  if (authCredentials) {
-    url.username = authCredentials.username;
-    url.password = authCredentials.password;
-  }
   return url.toString();
+}
+
+/**
+ * Fetches the file instead of navigating to it. The app runs on another origin than the host
+ * (paseo://app on desktop), so a link to the download URL navigates the whole window, and any
+ * response that is not the file (a proxy's 401 page, a 404) replaces the app.
+ */
+async function fetchDownload(fetchFile: typeof fetch, url: string): Promise<Blob> {
+  let response: Response;
+  try {
+    // Send the same cookies the host's WebSocket handshake sends, so a proxy in front of the
+    // host lets the download through. Refuse redirects: a proxy that redirects to a login page
+    // would otherwise be saved as the file.
+    response = await fetchFile(url, { credentials: "include", redirect: "error" });
+  } catch {
+    throw new Error(i18n.t("downloads.failed"));
+  }
+  if (!response.ok) {
+    throw new Error(i18n.t("downloads.httpFailed", { status: response.status }));
+  }
+  try {
+    // The body streams after the headers, so the connection can still drop here.
+    return await response.blob();
+  } catch {
+    throw new Error(i18n.t("downloads.failed"));
+  }
 }
 
 /**
@@ -361,12 +371,7 @@ async function saveDownloadedBytes({
   if (isWeb) {
     const buffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(buffer).set(bytes);
-    const url = URL.createObjectURL(
-      new Blob([buffer], { type: mimeType ?? "application/octet-stream" }),
-    );
-    triggerBrowserDownload(url, fileName);
-    // The browser may still be reading the blob while its save prompt is open.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    saveBrowserFile(new Blob([buffer], { type: mimeType ?? "application/octet-stream" }), fileName);
     return null;
   }
   // Resolve and write in one tick so two downloads of the same name cannot pick the same path.
@@ -390,14 +395,12 @@ async function shareSavedFile(
   }
 }
 
-function triggerBrowserDownload(url: string, fileName: string) {
+function saveBrowserFile(file: Blob, fileName: string) {
   if (typeof document === "undefined") {
-    if (typeof window !== "undefined") {
-      void openExternalUrl(url);
-    }
     return;
   }
 
+  const url = URL.createObjectURL(file);
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
@@ -405,6 +408,8 @@ function triggerBrowserDownload(url: string, fileName: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+  // The browser may still be reading the blob while its save prompt is open.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function resolveDownloadTargetFile(fileName: string): FSFile {

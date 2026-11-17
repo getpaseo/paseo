@@ -21,8 +21,7 @@ import {
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
-
-const WINDOW_CONTENT_DATASET = { "window-content": "" };
+import { WINDOW_CONTENT_DATASET } from "@/components/desktop/titlebar-drag-region";
 
 export function OpenProjectScreen() {
   const { t } = useTranslation();
