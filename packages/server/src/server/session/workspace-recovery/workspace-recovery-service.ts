@@ -17,7 +17,7 @@ import {
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
 } from "../../workspace-registry.js";
-import { readArchivedCommit, releaseArchivedCommit } from "./archived-commit.js";
+import { readArchivedCommit } from "./archived-commit.js";
 
 export type WorkspaceRecoveryAction = "unarchive" | "restore";
 
@@ -143,10 +143,6 @@ export function createWorkspaceRecoveryService(deps: {
 
     if (resolved.kind === "restore") {
       await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
-      await releaseArchivedCommit({
-        repoRoot: resolved.sourceRepoRoot,
-        workspaceId: resolved.workspace.workspaceId,
-      });
     }
     await deps.unarchiveWorkspace(resolved.workspace);
     return { workspaceId, action: resolved.kind };

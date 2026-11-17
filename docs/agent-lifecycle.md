@@ -280,9 +280,9 @@ return: an undo after it recreates the worktree through workspace recovery. Reco
 the workspace's branch, which stays in the repository. A worktree on a detached HEAD has no
 branch to come back to, so before deleting its directory the archive records HEAD as
 `refs/paseo/archived/<workspaceId>`. The ref keeps git's cleanup from deleting commits only that
-HEAD held, and recovery creates a new `restored/…` branch at it, then deletes the ref. Recovery
-reads the ref before the record's `branch`, which can still name the branch HEAD left. The ref
-lives as long as the workspace stays archived. The client shows or
+HEAD held, and recovery creates a new `restored/…` branch at it. Recovery reads the ref before the
+record's `branch`, which can still name the branch HEAD left. Every unarchive deletes the ref
+(Undo, Restore, or reopening the directory), so it exists only while the workspace is archived. The client shows or
 hides the row by the latest local intent, so a late remove or upsert from a superseded request
 does not flip it back. Tabs and layout are purged only once the undo window closes with the
 archive committed.

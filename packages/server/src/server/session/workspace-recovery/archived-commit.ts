@@ -57,11 +57,18 @@ export async function readArchivedCommit(input: {
   return exitCode === 0 ? stdout.trim() : null;
 }
 
-/** Stops keeping the commit once a restored worktree holds it on a new branch. */
+/** Stops keeping the commit when its workspace is unarchived, however the folder came back. */
 export async function releaseArchivedCommit(input: {
   repoRoot: string;
   workspaceId: string;
 }): Promise<void> {
+  // Without a repository there is no ref to delete.
+  if (!(await isDirectory(input.repoRoot))) return;
+  const repository = await runGitCommand(["rev-parse", "--git-dir"], {
+    cwd: input.repoRoot,
+    acceptExitCodes: [0, 128],
+  });
+  if (repository.exitCode !== 0) return;
   await runGitCommand(["update-ref", "-d", archivedCommitRef(input.workspaceId)], {
     cwd: input.repoRoot,
   });

@@ -23,6 +23,7 @@ import { deriveProjectKey } from "../../project-key.js";
 import { areEquivalentPaths, createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import type { UntrustedWorkspaceSource } from "../../workspace-automation-gate.js";
 import { readPaseoWorktreeMetadata } from "../../../utils/worktree-metadata.js";
+import { releaseArchivedCommit } from "../workspace-recovery/archived-commit.js";
 
 export interface ResolveOrCreateWorkspaceIdInput {
   createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
@@ -434,6 +435,21 @@ export function createWorkspaceProvisioningService(deps: {
       : workspace.autoArchivedChangeRequestUrl;
   }
 
+  // Every unarchive passes through ensureWorkspaceRecordUnarchived, so releasing here means a
+  // kept commit exists only while its workspace is archived.
+  async function releaseKeptCommit(
+    workspace: PersistedWorkspaceRecord,
+    project: PersistedProjectRecord,
+  ): Promise<void> {
+    if (!workspace.archivedAt || workspace.kind !== "worktree") return;
+    await releaseArchivedCommit({
+      // COMPAT(worktreeRestoreMissingMainRepoRoot): records created before v0.1.110 lack
+      // mainRepoRoot; remove the project-root fallback after 2027-01-17.
+      repoRoot: workspace.mainRepoRoot ?? project.rootPath,
+      workspaceId: workspace.workspaceId,
+    });
+  }
+
   async function ensureWorkspaceRecordUnarchived(
     workspace: PersistedWorkspaceRecord,
     archivedAt = workspace.archivedAt,
@@ -461,6 +477,7 @@ export function createWorkspaceProvisioningService(deps: {
         updatedAt: timestamp,
       };
     }
+    await releaseKeptCommit(workspace, project);
     if (project.archivedAt || workspace.archivedAt) {
       const projectCheckout =
         checkout && areEquivalentPaths(project.rootPath, workspace.cwd)

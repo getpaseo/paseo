@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from "node:fs";
@@ -25,6 +26,7 @@ import {
 } from "../../workspace-registry.js";
 import { checkoutLiteFromGitSnapshot } from "../../workspace-registry-model.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
+import { keepArchivedCommit } from "../workspace-recovery/archived-commit.js";
 import {
   createWorkspaceProvisioningService,
   WorkspaceProvisioningError,
@@ -584,6 +586,52 @@ test("ensureWorkspaceRecordUnarchived restores the owning archived project with 
   expect(unarchived.archivedAt).toBeNull();
   expect((await workspaceRegistry.get(created.workspaceId))?.archivedAt).toBeNull();
   expect((await projectRegistry.get(created.projectId))?.archivedAt).toBeNull();
+});
+
+test("ensureWorkspaceRecordUnarchived stops keeping the commit the archive kept", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const worktree = path.join(tmpDir, "worktree");
+  const git = (cwd: string, args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  mkdirSync(repo);
+  git(repo, ["init", "-b", "main"]);
+  git(repo, [
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "commit",
+    "--allow-empty",
+    "-m",
+    "base",
+  ]);
+  git(repo, ["worktree", "add", "--detach", worktree]);
+  gitRoots.add(repo);
+  const project = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-detached-worktree",
+    projectId: project.projectId,
+    cwd: worktree,
+    kind: "worktree",
+    displayName: "detached",
+    worktreeRoot: worktree,
+    isPaseoOwnedWorktree: true,
+    mainRepoRoot: repo,
+    createdAt: ARCHIVED_AT,
+    updatedAt: ARCHIVED_AT,
+    archivedAt: ARCHIVED_AT,
+  });
+  await workspaceRegistry.upsert(workspace);
+  // The archive kept the detached HEAD, then failed to remove the folder.
+  await keepArchivedCommit({ worktreePath: worktree, workspaceIds: [workspace.workspaceId] });
+  expect(git(repo, ["for-each-ref", "--format=%(refname)", "refs/paseo"])).toBe(
+    "refs/paseo/archived/ws-detached-worktree",
+  );
+
+  const unarchived = await provisioning.ensureWorkspaceRecordUnarchived(workspace);
+
+  expect(unarchived.archivedAt).toBeNull();
+  expect(git(repo, ["for-each-ref", "refs/paseo"])).toBe("");
 });
 
 test("ensureWorkspaceRecordUnarchived preserves the consumed auto-archive change request", async () => {
