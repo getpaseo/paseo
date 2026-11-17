@@ -95,19 +95,44 @@ function PatchRelease({ release }: { release: ChangelogRelease }) {
   );
 }
 
-function Patches({ group }: { group: ChangelogReleaseGroup }) {
+/** One version of a minor, closed until the reader opens it to its changes. */
+function VersionRow({ release }: { release: ChangelogRelease }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   return (
-    <div className="changelog-patches">
-      {group.releases.map((release) => (
-        <PatchRelease key={release.version} release={release} />
-      ))}
-    </div>
+    <section
+      className="changelog-version-row"
+      aria-labelledby={`${releaseAnchor(release.version)}-title`}
+    >
+      <details>
+        <summary id={releaseAnchor(release.version)} className="changelog-patch-heading">
+          <HeadingAnchor version={release.version} />
+          <h3 id={`${releaseAnchor(release.version)}-title`} className="changelog-patch-title">
+            {release.version}
+          </h3>
+          <time dateTime={release.date} className="changelog-release-date">
+            {formatDate(release.date, locale, "long")}
+          </time>
+        </summary>
+        <div className="changelog-release-notes" lang={release.locale}>
+          <UntranslatedNotice
+            contentLocale={release.locale}
+            message={t("changelog.untranslatedRelease")}
+          />
+          {release.highlights ? (
+            <ReactMarkdown components={patchMarkdownComponents}>{release.highlights}</ReactMarkdown>
+          ) : null}
+          <ReactMarkdown components={patchMarkdownComponents}>{release.sections}</ReactMarkdown>
+        </div>
+      </details>
+    </section>
   );
 }
 
 /**
- * A minor version: its highlights, then every entry of it behind one control, newest first.
- * A minor without highlights shows its entries, since nothing stands in for them.
+ * A minor version: its highlights, then one closed row per version of it, newest first, each
+ * opening to that version's changes. A minor without highlights shows its versions, since nothing
+ * stands in for them.
  */
 function Release({ group }: { group: ChangelogReleaseGroup }) {
   const { t } = useTranslation();
@@ -131,40 +156,36 @@ function Release({ group }: { group: ChangelogReleaseGroup }) {
             />
             <ReactMarkdown components={patchMarkdownComponents}>{group.highlights}</ReactMarkdown>
           </div>
-          {group.releases.some(hasNotes) ? (
-            <details className="changelog-all-changes">
-              <summary className="changelog-all-changes-summary">
-                <span className="changelog-all-changes-show">{t("changelog.showAllChanges")}</span>
-                <span className="changelog-all-changes-hide">{t("changelog.hideAllChanges")}</span>
-              </summary>
-              <Patches group={group} />
-            </details>
-          ) : null}
+          <div className="changelog-version-rows">
+            {group.releases.map((release) => (
+              <VersionRow key={release.version} release={release} />
+            ))}
+          </div>
         </>
       ) : (
-        <Patches group={group} />
+        <div className="changelog-patches">
+          {group.releases.map((release) => (
+            <PatchRelease key={release.version} release={release} />
+          ))}
+        </div>
       )}
     </article>
   );
 }
 
-function hasNotes(release: ChangelogRelease): boolean {
-  return release.highlights !== "" || release.sections !== "";
-}
-
 /**
- * A link to one entry, such as `#release-0.16.1`, targets a heading inside its minor's closed
- * Show all changes block. Not every browser opens a closed `<details>` for a fragment link, so the
- * page opens the block and scrolls the entry into view.
+ * A link to one version, such as `#release-0.16.1`, targets the heading of its closed row. Not
+ * every browser opens a closed `<details>` for a fragment link, so the page opens the row and
+ * scrolls it into view. Version ids need no percent-encoding, so the fragment is compared as is.
  */
 function useOpenLinkedEntry() {
   useEffect(() => {
     function openLinkedEntry() {
-      const id = decodeURIComponent(window.location.hash.slice(1));
+      const id = window.location.hash.slice(1);
       const entry = id ? document.getElementById(id) : null;
-      const block = entry?.closest("details");
-      if (!entry || !block || block.open) return;
-      block.open = true;
+      const row = entry?.closest("details");
+      if (!entry || !row || row.open) return;
+      row.open = true;
       entry.scrollIntoView();
     }
     openLinkedEntry();

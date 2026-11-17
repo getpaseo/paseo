@@ -3,12 +3,11 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
 import {
   allChangesToggle,
-  hideAllChanges,
   minor,
   openWhatsNew,
   release,
   serveChangelog,
-  showAllChanges,
+  toggleVersion,
 } from "../support/helpers/changelog";
 
 const DISCORD_DESTINATION =
@@ -125,19 +124,29 @@ test("renders the changelog in the app and links the website", async ({ page }) 
   const latest = minor(sheet, "9.1");
   const older = minor(sheet, "9.0");
 
-  await test.step("leads a minor with its highlights when a patch has shipped", async () => {
+  await test.step("leads a minor with its highlights over closed version rows", async () => {
     await expect(latest.getByText("9.1", { exact: true })).toBeVisible();
     await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
+    await expect(
+      release(latest, "9.1.1").getByText("March 5, 2026", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      release(latest, "9.1.0").getByText("March 4, 2026", { exact: true }),
+    ).toBeVisible();
     await expect(latest.getByText("Fixed a patch crash")).toHaveCount(0);
     await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
+    const patchBox = await release(latest, "9.1.1").boundingBox();
+    const minorBox = await release(latest, "9.1.0").boundingBox();
+    expect(patchBox!.y).toBeLessThan(minorBox!.y);
   });
 
-  await test.step("shows every entry on request, newest first, and tucks them away", async () => {
-    await showAllChanges(latest);
+  await test.step("opens one version to its changes and closes it again", async () => {
+    await toggleVersion(latest, "9.1.1");
     await expect(release(latest, "9.1.1").getByText("Fixed a patch crash")).toBeVisible();
-    await expect(release(latest, "9.1.1").getByText("March 5, 2026", { exact: true })).toBeVisible();
+    await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
+
+    await toggleVersion(latest, "9.1.0");
     const minorEntry = release(latest, "9.1.0");
-    await expect(minorEntry.getByText("March 4, 2026", { exact: true })).toBeVisible();
     await expect(minorEntry.getByText("Sparkles", { exact: true })).toBeVisible();
     await expect(minorEntry.getByText("Added a brand new thing")).toBeVisible();
     await expect(minorEntry.getByText("Read this before upgrading.")).toBeVisible();
@@ -146,11 +155,8 @@ test("renders the changelog in the app and links the website", async ({ page }) 
       minorEntry.getByText("Paseo now shows the tasks an agent is running."),
     ).toHaveCount(0);
     await expect(release(sheet, "0.0.0")).toHaveCount(0);
-    const patchBox = await release(latest, "9.1.1").boundingBox();
-    const minorBox = await minorEntry.boundingBox();
-    expect(patchBox!.y).toBeLessThan(minorBox!.y);
 
-    await hideAllChanges(latest);
+    await toggleVersion(latest, "9.1.1");
     await expect(latest.getByText("Fixed a patch crash")).toHaveCount(0);
     await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
   });

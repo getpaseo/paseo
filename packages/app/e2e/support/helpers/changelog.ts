@@ -34,17 +34,14 @@ export function release(sheet: Locator, version: string): Locator {
   return sheet.getByTestId(`changelog-release-${version}`);
 }
 
-/** The one control a minor with highlights has for its entries, in either state. */
+/** The control an entry with highlights has for its sections, in either state. */
 export function allChangesToggle(entry: Locator): Locator {
   return entry.getByRole("button", { name: /^(Show|Hide) all changes$/ });
 }
 
-export async function showAllChanges(entry: Locator): Promise<void> {
-  await entry.getByRole("button", { name: "Show all changes" }).click();
-  await expect(entry.getByRole("button", { name: "Hide all changes" })).toBeVisible();
-}
-
-export async function hideAllChanges(entry: Locator): Promise<void> {
-  await entry.getByRole("button", { name: "Hide all changes" }).click();
-  await expect(entry.getByRole("button", { name: "Show all changes" })).toBeVisible();
+/** Opens or closes one version row of a minor. */
+export async function toggleVersion(group: Locator, version: string): Promise<void> {
+  await release(group, version)
+    .getByRole("button", { name: new RegExp(`^${version}`) })
+    .click();
 }

@@ -1,8 +1,8 @@
 import { expect, test, waitForHydration, type Locator, type Page } from "./fixtures";
 
-// The page renders the repository's CHANGELOG.md, so minors are found by shape, never by version:
-// a minor with highlights has the toggle, a minor without them does not. Each minor is an article,
-// and each entry of it, the x.y.0 and every patch, is a region inside it.
+// The page renders the repository's CHANGELOG.md, so minors are found by shape, never by version.
+// Each minor is an article. A minor with highlights lists its versions as closed rows; a minor
+// without them shows its versions open. Each version is a region named by its version.
 function minors(page: Page): Locator {
   return page.getByRole("article");
 }
@@ -14,60 +14,50 @@ async function openChangelog(page: Page): Promise<void> {
 
 function minorWithHighlights(page: Page): Locator {
   return minors(page)
-    .filter({ has: page.getByText("Show all changes", { exact: true }) })
+    .filter({ has: page.locator("details") })
     .first();
 }
 
 function minorWithoutHighlights(page: Page): Locator {
   return minors(page)
-    .filter({ hasNot: page.getByText(/^(Show|Hide) all changes$/) })
+    .filter({ hasNot: page.locator("details") })
     .first();
 }
 
-function entries(minor: Locator): Locator {
+function versions(minor: Locator): Locator {
   return minor.getByRole("region");
 }
 
-function sectionHeadings(minor: Locator): Locator {
-  return minor.getByRole("heading", { level: 4 });
+function sectionHeadings(scope: Locator): Locator {
+  return scope.getByRole("heading", { level: 4 });
 }
 
-async function showAllChanges(minor: Locator): Promise<void> {
-  await minor.getByText("Show all changes", { exact: true }).click();
-  await expect(minor.getByText("Hide all changes", { exact: true })).toBeVisible();
+async function toggleVersion(version: Locator): Promise<void> {
+  await version.getByRole("heading", { level: 3 }).click();
 }
 
-async function hideAllChanges(minor: Locator): Promise<void> {
-  await minor.getByText("Hide all changes", { exact: true }).click();
-  await expect(minor.getByText("Show all changes", { exact: true })).toBeVisible();
-}
-
-test("shows each minor's highlights and opens its entries on request", async ({ page }) => {
+test("shows each minor's highlights over closed version rows", async ({ page }) => {
   await openChangelog(page);
   const highlighted = minorWithHighlights(page);
-  const plain = minorWithoutHighlights(page);
+  const newest = versions(highlighted).first();
 
-  await test.step("tucks away every entry of a minor with highlights", async () => {
+  await test.step("shows the highlights and every version closed", async () => {
     await expect(highlighted.getByRole("listitem").first()).toBeVisible();
-    await expect(entries(highlighted)).toHaveCount(0);
+    await expect(newest.getByRole("heading", { level: 3 })).toBeVisible();
     await expect(sectionHeadings(highlighted)).toHaveCount(0);
   });
 
-  await test.step("opens and closes them again, under the highlights", async () => {
-    const highlight = highlighted.getByRole("listitem").first();
-    await showAllChanges(highlighted);
-    await expect(entries(highlighted).first()).toBeVisible();
-    await expect(sectionHeadings(highlighted).first()).toBeVisible();
-    const highlightBox = await highlight.boundingBox();
-    const entryBox = await entries(highlighted).first().boundingBox();
-    expect(entryBox!.y).toBeGreaterThan(highlightBox!.y);
+  await test.step("opens one version to its changes and closes it again", async () => {
+    await toggleVersion(newest);
+    await expect(sectionHeadings(newest).first()).toBeVisible();
+    await expect(highlighted.getByRole("listitem").first()).toBeVisible();
 
-    await hideAllChanges(highlighted);
-    await expect(entries(highlighted)).toHaveCount(0);
+    await toggleVersion(newest);
+    await expect(sectionHeadings(highlighted)).toHaveCount(0);
   });
 
-  await test.step("shows the entries of a minor without highlights whole", async () => {
-    await expect(sectionHeadings(plain).first()).toBeVisible();
+  await test.step("shows the versions of a minor without highlights open", async () => {
+    await expect(sectionHeadings(minorWithoutHighlights(page)).first()).toBeVisible();
   });
 });
 
@@ -85,16 +75,17 @@ test("opens a minor from a deep link with its highlights in view", async ({ page
   await expect(minorWithHighlights(page).getByRole("listitem").first()).toBeVisible();
 });
 
-test("opens a minor's entries when a link points at one of them", async ({ page }) => {
+test("opens the version a link points at", async ({ page }) => {
   await openChangelog(page);
-  const minor = minorWithHighlights(page);
-  // The entry's own heading link is inside the closed block, so it is read without being shown.
-  const entryLink = minor.locator("details .changelog-heading-anchor").first();
-  const anchor = await entryLink.getAttribute("href");
+  const newest = versions(minorWithHighlights(page)).first();
+  const anchor = await newest.getByRole("link", { name: /^Link to Paseo / }).getAttribute("href");
 
+  // A link opened from elsewhere is a fresh page load, not a hash change on this one.
+  await page.goto("about:blank");
   await page.goto(`/changelog${anchor}`);
   await waitForHydration(page);
 
+  const linked = versions(minorWithHighlights(page)).first();
   await expect(page.locator(`[id="${anchor!.slice(1)}"]`)).toBeInViewport();
-  await expect(minor.getByText("Hide all changes", { exact: true })).toBeVisible();
+  await expect(sectionHeadings(linked).first()).toBeVisible();
 });

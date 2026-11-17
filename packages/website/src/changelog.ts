@@ -18,8 +18,8 @@ export interface ChangelogRelease {
  *
  * `CHANGELOG.md` keeps one entry per version, because the release scripts read each version's
  * heading and installed apps keep the parser they shipped with. Grouping is how the page shows
- * those entries, so the highlights stay those of the minor: a patch sits behind Show all changes
- * with the rest of the record and never replaces or pushes them down.
+ * those entries, so the highlights stay those of the minor: a patch adds one closed row under
+ * them and never replaces or pushes them down.
  */
 export interface ChangelogReleaseGroup {
   /** `0.16` for `0.16.1`; the group's anchor. */

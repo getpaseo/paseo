@@ -277,6 +277,41 @@
   font-size: 0.875em;
 }
 
+.changelog-version-rows {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 1.75rem;
+}
+
+.changelog-version-row summary {
+  cursor: pointer;
+  list-style: none;
+  margin-bottom: 0;
+  padding-block: 0.375rem;
+}
+
+.changelog-version-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.changelog-version-row summary::before {
+  content: "+";
+  color: rgba(255, 255, 255, 0.4);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.changelog-version-row details[open] > summary::before {
+  content: "−";
+}
+
+.changelog-version-row details[open] > summary {
+  margin-bottom: 1rem;
+}
+
+.changelog-version-row details[open] {
+  padding-bottom: 1.5rem;
+}
+
 .changelog-all-changes {
   margin-top: 1rem;
 }
@@ -315,11 +350,11 @@
 }
 
 .changelog-all-changes-hide,
-.changelog-all-changes[open] > summary .changelog-all-changes-show {
+.changelog-all-changes[open] .changelog-all-changes-show {
   display: none;
 }
 
-.changelog-all-changes[open] > summary .changelog-all-changes-hide {
+.changelog-all-changes[open] .changelog-all-changes-hide {
   display: inline;
 }
 

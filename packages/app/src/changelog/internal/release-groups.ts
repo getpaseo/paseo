@@ -7,14 +7,12 @@ import type { ChangelogRelease } from "./parse-changelog";
  * `CHANGELOG.md` keeps one entry per version, because the release scripts read
  * each version's heading and installed apps keep the parser they shipped with.
  * Grouping is how the sheet shows those entries, so the highlights stay those
- * of the minor: a patch sits behind Show all changes with the rest of the
- * record and never replaces or pushes them down.
+ * of the minor: a patch adds one closed row under them and never replaces or
+ * pushes them down.
  */
 export interface ChangelogReleaseGroup {
   /** `0.16` for `0.16.1`. A version that has no minor is a group of its own. */
   version: string;
-  /** The minor, or the beta's version while the minor has shipped only as a beta. */
-  label: string;
   /** The highlights of the entry that opened the minor. */
   highlights: string;
   /**
@@ -42,7 +40,6 @@ export function groupReleases(releases: readonly ChangelogRelease[]): ChangelogR
     const opening = entries[entries.length - 1];
     return {
       version,
-      label: isPrerelease(opening.version) ? opening.version : version,
       highlights: opening.highlights,
       releases: [...entries.slice(0, -1), { ...opening, highlights: "" }],
     };
@@ -53,10 +50,6 @@ function minorVersion(version: string): string {
   return version.match(MINOR_VERSION)?.[1] ?? version;
 }
 
-function isPrerelease(version: string): boolean {
-  return version.includes("-");
-}
-
 export interface RevealedGroups {
   groups: ChangelogReleaseGroup[];
   hasMore: boolean;
@@ -64,7 +57,7 @@ export interface RevealedGroups {
 
 /**
  * The groups that fit in `count` items. A group with highlights is one item,
- * because its entries render only when the reader opens them. A group without
+ * because its entries render as closed rows until the reader opens one. A group without
  * highlights shows its entries, so each one is an item and the group is cut at
  * the one that reaches the count: the oldest minor holds over a hundred.
  */

@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
-import { ExternalLink, Gift } from "lucide-react-native";
+import { ChevronDown, ChevronRight, ExternalLink, Gift } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 
@@ -12,6 +12,7 @@ import {
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -30,6 +31,8 @@ const WEBSITE_CHANGELOG_URL = "https://paseo.sh/changelog";
 
 const ThemedGift = withUnistyles(Gift);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const sheetLeadingIcon = <ThemedGift size={ICON_SIZE.md} uniProps={mutedColorMapping} />;
 
@@ -144,58 +147,85 @@ interface ReleaseGroupViewProps {
 }
 
 /**
- * A minor version: its highlights, then every entry of it behind one control,
- * newest first. A minor without highlights has nothing to stand in for its
- * entries, so it shows them as it always did. Each entry keeps its date.
+ * A minor version: its highlights, then one closed row per version of it,
+ * newest first, each opening to that version's changes. A minor without
+ * highlights has nothing to stand in for its versions, so it shows them as it
+ * always did.
  */
 const ReleaseGroupView = memo(function ReleaseGroupView({
   group,
   installedVersion,
 }: ReleaseGroupViewProps) {
-  const { t } = useTranslation();
-  const [showingAllChanges, setShowingAllChanges] = useState(false);
-  const toggleAllChanges = useCallback(() => setShowingAllChanges((value) => !value), []);
-  const allChangesState = useMemo(() => ({ expanded: showingAllChanges }), [showingAllChanges]);
-  const hasHighlights = group.highlights.length > 0;
-  const hasEntryNotes = group.releases.some(hasNotes);
-  const showsEntries = !hasHighlights || showingAllChanges;
-  const isInstalled = group.releases.some((release) => release.version === installedVersion);
+  if (!group.highlights) {
+    return (
+      <View style={styles.releaseList} testID={`changelog-release-group-${group.version}`}>
+        {group.releases.map((release) => (
+          <ReleaseView
+            key={`${release.version}:${release.date}`}
+            release={release}
+            isCurrent={release.version === installedVersion}
+          />
+        ))}
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.group} testID={`changelog-release-group-${group.version}`}>
+    <View style={styles.release} testID={`changelog-release-group-${group.version}`}>
       <View style={styles.releaseHeading}>
-        <Text style={styles.version}>{group.label}</Text>
-        {isInstalled ? <StatusBadge label={t("changelog.installed")} /> : null}
+        <Text style={styles.version}>{group.version}</Text>
       </View>
-      {hasHighlights ? <MarkdownRenderer text={group.highlights} compact /> : null}
-      {hasHighlights && hasEntryNotes ? (
-        <Button
-          variant="ghost"
-          style={styles.allChangesToggle}
-          accessibilityState={allChangesState}
-          onPress={toggleAllChanges}
-        >
-          {t(showingAllChanges ? "changelog.hideAllChanges" : "changelog.showAllChanges")}
-        </Button>
-      ) : null}
-      {showsEntries ? (
-        <View style={styles.releaseList}>
-          {group.releases.map((release) => (
-            <ReleaseView
-              key={`${release.version}:${release.date}`}
-              release={release}
-              isCurrent={release.version === installedVersion}
-            />
-          ))}
+      <MarkdownRenderer text={group.highlights} compact />
+      <View style={styles.versionRows}>
+        {group.releases.map((release) => (
+          <VersionRow
+            key={`${release.version}:${release.date}`}
+            release={release}
+            isCurrent={release.version === installedVersion}
+          />
+        ))}
+      </View>
+    </View>
+  );
+});
+
+interface VersionRowProps {
+  release: ChangelogRelease;
+  isCurrent: boolean;
+}
+
+/** One version of a minor, closed until the reader opens it to its changes. */
+const VersionRow = memo(function VersionRow({ release, isCurrent }: VersionRowProps) {
+  const { t } = useTranslation();
+  const date = formatChangelogDate(release.date);
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((value) => !value), []);
+  const accessibilityState = useMemo(() => ({ expanded: open }), [open]);
+  const Chevron = open ? ThemedChevronDown : ThemedChevronRight;
+
+  return (
+    <View style={styles.versionRow} testID={`changelog-release-${release.version}`}>
+      <PressHighlight
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        onPress={toggle}
+        style={styles.versionRowHeading}
+      >
+        <Chevron size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        <Text style={styles.versionRowLabel}>{release.version}</Text>
+        {isCurrent ? <StatusBadge label={t("changelog.installed")} /> : null}
+        <View style={styles.headingSpacer} />
+        {date ? <Text style={styles.date}>{date}</Text> : null}
+      </PressHighlight>
+      {open ? (
+        <View style={styles.versionRowBody}>
+          {release.highlights ? <MarkdownRenderer text={release.highlights} compact /> : null}
+          <ReleaseSections sections={release.sections} />
         </View>
       ) : null}
     </View>
   );
 });
-
-function hasNotes(release: ChangelogRelease): boolean {
-  return release.highlights.length > 0 || release.sections.length > 0;
-}
 
 interface ReleaseViewProps {
   release: ChangelogRelease;
@@ -273,11 +303,29 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[8],
     paddingBottom: theme.spacing[4],
   },
-  group: {
-    gap: theme.spacing[4],
-  },
   releaseList: {
     gap: theme.spacing[8],
+  },
+  versionRows: {
+    gap: theme.spacing[1],
+  },
+  versionRow: {
+    gap: theme.spacing[3],
+  },
+  versionRowHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+  },
+  versionRowLabel: {
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  versionRowBody: {
+    gap: theme.spacing[4],
+    paddingBottom: theme.spacing[3],
   },
   release: {
     gap: theme.spacing[4],

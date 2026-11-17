@@ -43,7 +43,6 @@ describe("groupReleases", () => {
   it("keeps the minor's highlights when a patch ships", () => {
     expect(latest).toMatchObject({
       version: "0.16",
-      label: "0.16",
       highlights: "- **Background tasks:** Paseo shows the tasks an agent runs.",
     });
   });
@@ -72,21 +71,11 @@ describe("groupReleases", () => {
     expect(group.releases[0].highlights).toBe("A sponsor joined.");
   });
 
-  it("labels a minor that has shipped only as a beta with the beta's version", () => {
-    const [beta, stable] = groupReleases(
-      parseChangelog("## 0.17.0-beta.2 - 2026-11-20\n\n- **New:** Thing.\n\n" + CHANGELOG),
-    );
-
-    expect(beta).toMatchObject({ version: "0.17", label: "0.17.0-beta.2" });
-    expect(stable.label).toBe("0.16");
-  });
-
-  it("keeps the minor's label when a patch of it is in beta", () => {
+  it("puts a patch in beta with its minor", () => {
     const [group] = groupReleases(
       parseChangelog("## 0.16.2-beta.1 - 2026-11-20\n\n### Fixed\n\n- One\n\n" + CHANGELOG),
     );
 
-    expect(group.label).toBe("0.16");
     expect(versions(group)).toEqual(["0.16.2-beta.1", "0.16.1", "0.16.0"]);
   });
 
