@@ -483,7 +483,7 @@ export interface SendMessageOptions {
   sourceAgentServerId?: string;
   sessionMode?: string;
   messageId?: string;
-  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
+  /** Agent sources wait for turn end unless interrupt is explicit. Human sources default to interrupt. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];

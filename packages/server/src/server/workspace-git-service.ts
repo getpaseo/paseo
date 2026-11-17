@@ -123,6 +123,11 @@ const WATCH_RECOVERY_BASE_DELAY_MS = 30_000;
 // restart, which kills running agents. Back off, but keep trying.
 const WATCH_RECOVERY_MAX_DELAY_MS = 300_000;
 const WATCH_RECOVERY_MAX_BACKOFF_STEPS = 4;
+// A startup scan that missed the subscribe deadline on a CPU-starved host misses it again on the
+// next attempt, and every attempt repeats the full scan. Consecutive setup timeouts therefore
+// keep doubling the recovery delay past the ladder cap, up to an hour.
+const WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS = 3_600_000;
+const WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS = 7;
 // Auxiliary reads may reuse cached values within this window; snapshots do not expire on read.
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
@@ -574,6 +579,10 @@ interface WatchRecoveryState {
   // use (SMB/NFS, Docker virtiofs, some FUSE) resets the ladder on every
   // attempt and the backoff never engages.
   establishedAt: number | null;
+  // Setup attempts that hit WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS since the last accepted
+  // subscription. Reset on acceptance: finishing the startup scan in time is the proof that
+  // the next attempt is affordable.
+  setupTimeoutCount: number;
 }
 
 function setsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -1519,7 +1528,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null },
+      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
       listeners: new Set(),
       closed: false,
     };
@@ -1549,9 +1558,12 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     let removeAbortListener = () => {};
     let unsubscribePromise: Promise<void> | null = null;
     let subscriptionPromise: Promise<FileObserverSubscription>;
+    // Abandoning the race is not enough: the observer's startup scan would keep walking the
+    // tree after the deadline. Abort it so a timed-out attempt stops costing CPU.
+    const setupController = new AbortController();
     try {
       subscriptionPromise = this.deps
-        .subscribe(watchPath, callback, options)
+        .subscribe(watchPath, callback, { ...options, signal: setupController.signal })
         .finally(onSubscribeSettled);
     } catch (error) {
       onSubscribeSettled();
@@ -1570,12 +1582,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         outcome = "expired";
-        reject(new WorkspaceGitWatcherSubscriptionTimeoutError(watchPath));
+        const error = new WorkspaceGitWatcherSubscriptionTimeoutError(watchPath);
+        setupController.abort(error);
+        reject(error);
       }, WORKSPACE_GIT_WATCHER_SUBSCRIBE_TIMEOUT_MS);
     });
     const disposalPromise = new Promise<never>((_resolve, reject) => {
       const rejectForDisposal = () => {
         outcome = "expired";
+        setupController.abort(signal.reason);
         reject(signal.reason);
       };
       if (signal.aborted) {
@@ -1710,6 +1725,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // `scheduleWorkingTreeWatchRecovery` only resets the ladder once this
       // one has survived long enough to prove itself durable.
       target.recovery.establishedAt = this.deps.now().getTime();
+      target.recovery.setupTimeoutCount = 0;
       if (options?.replaceFallback && target.repoRoot !== null) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -1730,6 +1746,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         { err: error, cwd: target.cwd },
         "Failed to start working tree watcher; using degraded polling",
       );
+      this.noteWatchSetupFailure(target.recovery, error);
       if (!options?.replaceFallback) {
         this.startWorkingTreeWatchFallback(target, "watcher_setup_failed");
       }
@@ -1952,11 +1969,26 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
     recovery.establishedAt = null;
     recovery.attemptCount += 1;
-    return Math.min(
+    const ladderDelayMs = Math.min(
       WATCH_RECOVERY_BASE_DELAY_MS *
         2 ** Math.min(recovery.attemptCount - 1, WATCH_RECOVERY_MAX_BACKOFF_STEPS),
       WATCH_RECOVERY_MAX_DELAY_MS,
     );
+    if (recovery.setupTimeoutCount === 0) {
+      return ladderDelayMs;
+    }
+    const setupTimeoutDelayMs = Math.min(
+      WATCH_RECOVERY_BASE_DELAY_MS *
+        2 ** Math.min(recovery.setupTimeoutCount - 1, WATCH_SETUP_TIMEOUT_MAX_BACKOFF_STEPS),
+      WATCH_SETUP_TIMEOUT_RECOVERY_MAX_DELAY_MS,
+    );
+    return Math.max(ladderDelayMs, setupTimeoutDelayMs);
+  }
+
+  private noteWatchSetupFailure(recovery: WatchRecoveryState, error: unknown): void {
+    if (error instanceof WorkspaceGitWatcherSubscriptionTimeoutError) {
+      recovery.setupTimeoutCount += 1;
+    }
   }
 
   private scheduleWorkingTreeWatchRecovery(target: WorkingTreeWatchTarget): void {
@@ -2430,7 +2462,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       fallbackPolling: false,
       fallbackPollTimer: null,
       fallbackPollQuietTickCount: 0,
-      recovery: { attemptCount: 0, timer: null, establishedAt: null },
+      recovery: { attemptCount: 0, timer: null, establishedAt: null, setupTimeoutCount: 0 },
       intervalId: null,
       fetchInFlight: false,
       bufferedFetchMetadataEvents: [],
@@ -2580,6 +2612,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       // subscribe success alone, only record when this subscription was
       // established.
       target.recovery.establishedAt = this.deps.now().getTime();
+      target.recovery.setupTimeoutCount = 0;
       if (options?.replaceFallback) {
         target.fallbackPolling = false;
         if (target.fallbackPollTimer) {
@@ -2603,6 +2636,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         { err: error, repoGitRoot: target.repoGitRoot },
         "Failed to start repository metadata watcher; using degraded polling",
       );
+      this.noteWatchSetupFailure(target.recovery, error);
       if (!options?.replaceFallback) {
         this.startRepoMetadataFallback(target);
       }

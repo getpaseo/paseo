@@ -1,4 +1,5 @@
 import {
+  AgentTurnStartCanceledError,
   getAgentStreamEventTurnId,
   type AgentPromptInput,
   type AgentRunOptions,
@@ -90,6 +91,9 @@ export async function runProviderTurn({
       processEvent(event);
     }
     await completion;
+  } catch (error) {
+    if (!(error instanceof AgentTurnStartCanceledError)) throw error;
+    return { sessionId: await getSessionId(), finalText: "", timeline: [], canceled: true };
   } finally {
     unsubscribe();
   }

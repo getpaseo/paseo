@@ -28,6 +28,7 @@ export class V2Harness {
   readonly prompts: string[] = [];
   readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
   readonly mcpAdds: string[] = [];
+  readonly instructions = new Map<string, string>();
   releases = 0;
   active = false;
   activeReads = 0;
@@ -153,7 +154,17 @@ export class V2Harness {
       environment: async (input) => {
         this.environments.push(input);
       },
-      instructions: { entry: { list: unexpected, put: unexpected, remove: unexpected } },
+      instructions: {
+        entry: {
+          list: async () => [...this.instructions].map(([key, value]) => ({ key, value })),
+          put: async ({ key, value }) => {
+            this.instructions.set(key, String(value));
+          },
+          remove: async ({ key }) => {
+            this.instructions.delete(key);
+          },
+        },
+      },
       prompt: async (input, options) => {
         const before = this.executions.length;
         await this.prompt(input, options);
