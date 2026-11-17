@@ -250,7 +250,11 @@ async function resolveRecoverySource(
 ): Promise<WorktreeSource> {
   const { workspace, sourceRepoRoot, archivedHead } = plan;
   if (archivedHead) {
-    return { kind: "restore-archived-head", ...archivedHead, baseRef: workspace.baseBranch };
+    return {
+      kind: "restore-archived-head",
+      ...archivedHead,
+      baseRef: workspace.baseBranch ?? (await resolveRepositoryDefaultBranch(sourceRepoRoot)),
+    };
   }
   if (workspace.branch) {
     return { kind: "restore", branchName: workspace.branch, baseRef: workspace.baseBranch };

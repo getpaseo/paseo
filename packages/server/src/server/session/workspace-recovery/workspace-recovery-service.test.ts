@@ -441,6 +441,22 @@ test.each([
   },
 );
 
+test("restores the HEAD archive saved against the repository default when the record has no base", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  await saveArchivedHead({
+    worktreePath: fixture.workspace.cwd,
+    repoRoot: fixture.repoDir,
+    hadActiveWorkspace: true,
+  });
+  await fixture.archiveAndRemove();
+
+  await fixture.service.restore(fixture.workspace.workspaceId);
+
+  expect(await readPaseoWorktreeMetadata(fixture.workspace.cwd)).toMatchObject({
+    baseRefName: "main",
+  });
+});
+
 test("restores a branchless workspace from the repository default when its base is missing", async () => {
   const fixture = await createBaseRecoveryFixture("refs/heads/deleted-base");
   await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({

@@ -289,7 +289,8 @@ when it still resolves to the saved commit and the saved commit otherwise, so gi
 whether the worktree comes back on its branch or detached; restore never creates, moves, or
 deletes a branch. Paseo does not sort HEAD into kinds: the only place it reads the name is that
 check in `archived-head.ts`. The ref belongs to the directory, not to a workspace, because
-several workspaces can open one worktree. Every unarchive deletes it (Undo, Restore, or
+several workspaces can open one worktree. While it exists, a new worktree does not take that
+directory path, because archiving the new one would replace the saved HEAD. Every unarchive deletes it (Undo, Restore, or
 reopening the directory). A failed delete only logs, and the next archive of an active workspace
 drops what it left. With no saved HEAD (archived before saved HEADs existed, or the directory was
 already gone), recovery checks out the record's `branch`, or a new `restored/…` branch from the

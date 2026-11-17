@@ -120,3 +120,12 @@ export async function releaseArchivedHead(input: {
   if (!(await isRepository(input.repoRoot))) return;
   await discardSavedHeads(input.repoRoot, savedHeadPrefix(input.worktreePath));
 }
+
+/** Whether an archived worktree still holds this path, so a new worktree must not take it. */
+export async function isHeldByArchivedWorktree(input: {
+  repoRoot: string;
+  worktreePath: string;
+}): Promise<boolean> {
+  const saved = await listSavedHeads(input.repoRoot, savedHeadPrefix(input.worktreePath));
+  return saved.length > 0;
+}
