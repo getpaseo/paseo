@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPointerCapabilitiesSource, hasTouchPrimaryPointer } from "./pointer-capabilities";
+import { describe, expect, it } from "vitest";
+import { createPointerCapabilitiesSource } from "./pointer-capabilities";
 
 class FakeMediaQueryList {
   private readonly listeners = new Set<() => void>();
@@ -23,10 +23,18 @@ class FakeMediaQueryList {
   }
 }
 
-function createFakeDisplay(initial: { finePointer: boolean; touchScreen: boolean }) {
+function createFakeDisplay(initial: {
+  finePointer: boolean;
+  touchScreen: boolean;
+  touchPrimaryPointer?: boolean;
+}) {
   const queries = {
     finePointer: new FakeMediaQueryList("(hover: hover) and (pointer: fine)", initial.finePointer),
     touchScreen: new FakeMediaQueryList("(any-pointer: coarse)", initial.touchScreen),
+    touchPrimaryPointer: new FakeMediaQueryList(
+      "(pointer: coarse)",
+      initial.touchPrimaryPointer ?? false,
+    ),
   };
   const matchMedia = (query: string) => {
     const match = Object.values(queries).find((list) => list.media === query);
@@ -77,29 +85,23 @@ describe("pointer capabilities", () => {
 });
 
 describe("hasTouchPrimaryPointer", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  function stubDisplay(matching: string[]) {
-    vi.stubGlobal("window", {
-      matchMedia: (query: string) => new FakeMediaQueryList(query, matching.includes(query)),
-    });
-  }
-
   it("is false on a touch-screen laptop driven by its trackpad", () => {
-    // Chromium on Windows: touch is available, but the primary pointer is the trackpad.
-    stubDisplay(["(any-pointer: coarse)", "(pointer: fine)", "(hover: hover)"]);
-    expect(hasTouchPrimaryPointer()).toBe(false);
+    const display = createFakeDisplay({ finePointer: true, touchScreen: true });
+    expect(createPointerCapabilitiesSource(display.matchMedia).hasTouchPrimaryPointer()).toBe(
+      false,
+    );
   });
 
-  it("is true on an iPad with a trackpad attached", () => {
-    // WebKit on iPadOS keeps touch primary; the trackpad only adds a fine any-pointer.
-    stubDisplay(["(pointer: coarse)", "(any-pointer: coarse)", "(any-pointer: fine)"]);
-    expect(hasTouchPrimaryPointer()).toBe(true);
+  it("is true when the primary pointer is coarse", () => {
+    const display = createFakeDisplay({
+      finePointer: false,
+      touchScreen: true,
+      touchPrimaryPointer: true,
+    });
+    expect(createPointerCapabilitiesSource(display.matchMedia).hasTouchPrimaryPointer()).toBe(true);
   });
 
   it("is false without media queries", () => {
-    expect(hasTouchPrimaryPointer()).toBe(false);
+    expect(createPointerCapabilitiesSource(null).hasTouchPrimaryPointer()).toBe(false);
   });
 });

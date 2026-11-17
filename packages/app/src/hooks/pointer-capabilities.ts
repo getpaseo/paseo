@@ -22,6 +22,7 @@ type MatchMedia = (query: string) => MediaQueryList;
 export interface PointerCapabilitiesSource {
   getSnapshot: () => PointerCapabilities;
   subscribe: (onChange: () => void) => () => void;
+  hasTouchPrimaryPointer: () => boolean;
 }
 
 export function createPointerCapabilitiesSource(
@@ -29,9 +30,11 @@ export function createPointerCapabilitiesSource(
 ): PointerCapabilitiesSource {
   const finePointerQuery = matchMedia?.(FINE_POINTER_QUERY) ?? null;
   const touchScreenQuery = matchMedia?.(TOUCH_SCREEN_QUERY) ?? null;
+  const touchPrimaryPointerQuery = matchMedia?.(TOUCH_PRIMARY_POINTER_QUERY) ?? null;
   let snapshot: PointerCapabilities = { finePointer: false, touchScreen: false };
 
   return {
+    hasTouchPrimaryPointer: () => touchPrimaryPointerQuery?.matches ?? false,
     getSnapshot() {
       const finePointer = finePointerQuery?.matches ?? false;
       const touchScreen = touchScreenQuery?.matches ?? false;
@@ -62,6 +65,7 @@ const NATIVE_POINTER_CAPABILITIES: PointerCapabilities = { finePointer: false, t
 const nativeSource: PointerCapabilitiesSource = {
   getSnapshot: () => NATIVE_POINTER_CAPABILITIES,
   subscribe: () => () => {},
+  hasTouchPrimaryPointer: () => true,
 };
 
 const source = isWeb ? createPointerCapabilitiesSource(browserMatchMedia()) : nativeSource;
@@ -86,6 +90,5 @@ export function hasFinePointer(): boolean {
  * pointer.
  */
 export function hasTouchPrimaryPointer(): boolean {
-  if (!isWeb) return true;
-  return browserMatchMedia()?.(TOUCH_PRIMARY_POINTER_QUERY).matches ?? false;
+  return source.hasTouchPrimaryPointer();
 }
