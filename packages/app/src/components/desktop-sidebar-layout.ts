@@ -52,6 +52,18 @@ export function resolveDesktopSidebarInsetLeft(input: {
   return input.overlay ? input.safeAreaLeft : 0;
 }
 
+/**
+ * The overlay sidebar also starts at the window's top edge, over the layout surface's top padding,
+ * so it takes the window's top inset. The dock reads the inset the surface leaves its content.
+ */
+export function resolveDesktopSidebarInsetTop(input: {
+  overlay: boolean;
+  safeAreaTop: number;
+  windowSafeAreaTop: number;
+}): number {
+  return input.overlay ? input.windowSafeAreaTop : input.safeAreaTop;
+}
+
 export function resolveDesktopAppChromeLayout(input: {
   desktopSidebarRendered: boolean;
   hasTopLeftWindowControls: boolean;
