@@ -274,7 +274,13 @@ function resolveThinkingOptions(
   modelId: string,
 ): NonNullable<AgentModelDefinition["thinkingOptions"]> {
   const model = resolveEffectiveModel(resolveAvailableModels(entries, provider), modelId);
-  return model?.thinkingOptions ?? [];
+  const options = model?.thinkingOptions ?? [];
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+  // Schedules still use a single effort field.
+  return findThinkingOptionReplacement(options, "ultracode") &&
+    !options.some((option) => option.id === "ultracode")
+    ? [...options, { id: "ultracode", label: "Ultra Code" }]
+    : options;
 }
 
 function resolveModelDisplay(input: {
@@ -572,18 +578,11 @@ function updateDerivedState(input: {
   providerEntries: readonly ProviderSnapshotEntry[];
 }): ScheduleFormState {
   const modeOptions = resolveModeOptions(input.providerEntries, input.state.selectedProvider);
-  const thinkingOptions = resolveThinkingOptions(
+  const availableThinkingOptions = resolveThinkingOptions(
     input.providerEntries,
     input.state.selectedProvider,
     input.state.selectedModel,
   );
-  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
-  const availableThinkingOptions =
-    input.state.selectedThinkingOptionId === "ultracode" &&
-    findThinkingOptionReplacement(thinkingOptions, "ultracode") &&
-    !thinkingOptions.some((option) => option.id === "ultracode")
-      ? [...thinkingOptions, { id: "ultracode", label: "Ultra Code" }]
-      : thinkingOptions;
   const canUseWorktreeIsolation = resolveCanUseWorktreeIsolation({
     state: input.state,
     hosts: input.hosts,

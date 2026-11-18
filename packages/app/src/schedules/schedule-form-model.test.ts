@@ -187,7 +187,7 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
-  it("preserves a legacy Ultra Code choice until the user changes the schedule's effort", () => {
+  it("keeps Ultra Code available in the schedule effort picker", () => {
     const model = "claude-opus-4-8";
     const form = open({
       mode: "edit",
@@ -232,7 +232,7 @@ describe("schedule form model", () => {
     );
     form.setThinking("high");
     expect(form.getState().selectedThinkingOptionId).toBe("high");
-    expect(form.getState().availableThinkingOptions.map((option) => option.id)).not.toContain(
+    expect(form.getState().availableThinkingOptions.map((option) => option.id)).toContain(
       "ultracode",
     );
   });

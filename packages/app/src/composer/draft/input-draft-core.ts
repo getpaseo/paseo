@@ -24,7 +24,6 @@ export function buildDraftAgentControls(input: {
   optionControls?: DraftAgentControlsProps["optionControls"];
   options: DraftAgentControlsProps["options"];
   onSetOption: DraftAgentControlsProps["onSetOption"];
-  onSelectThinkingOption?: DraftAgentControlsProps["onSelectThinkingOption"];
   onApplyAgentProfile: DraftAgentControlsProps["onApplyAgentProfile"];
   onDropdownClose?: DraftAgentControlsProps["onDropdownClose"];
   context: NonNullable<DraftAgentControlsProps["context"]>;
@@ -57,7 +56,7 @@ export function buildDraftAgentControls(input: {
     onSelectProviderAndModel: formState.setProviderAndModelFromUser,
     thinkingOptions: formState.availableThinkingOptions,
     selectedThinkingOptionId: formState.selectedThinkingOptionId,
-    onSelectThinkingOption: input.onSelectThinkingOption ?? formState.setThinkingOptionFromUser,
+    onSelectThinkingOption: formState.setThinkingOptionFromUser,
     onApplyAgentProfile,
     optionControls,
     options,
