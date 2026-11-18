@@ -1,13 +1,23 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough, Readable, Writable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import {
+  AgentSideConnection,
+  PROTOCOL_VERSION,
+  ndJsonStream,
+  type Agent,
+  type SessionUpdate,
+} from "@agentclientprotocol/sdk";
 
 import { ACPAgentSession } from "./acp-agent.js";
 import type { AgentStreamEvent, AgentTimelineItem } from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import * as spawnUtils from "../../../utils/spawn.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
 
 type StopReason = "end_turn" | "cancelled" | "refusal";
@@ -21,6 +31,7 @@ interface SessionInternals {
   connection: unknown;
   historyPending: boolean;
   persistedHistory: AgentTimelineItem[];
+  antigravityStreamsWakeupsLive: boolean;
 }
 
 interface SessionHarness {
@@ -74,6 +85,7 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     for (const dir of tempDirs) {
       rmSync(dir, { recursive: true, force: true });
@@ -1329,6 +1341,361 @@ describe("ACP Antigravity background turn and transcript catch-up", () => {
       "assistant:Reviewer confirmed all checks pass.",
       "turn_completed",
     ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("initialize detects agy >= 1.5.10 persistent stream from agentInfo.version", async () => {
+    async function initializeWithVersion(version: string | undefined): Promise<boolean> {
+      const workDir = mkdtempSync(path.join(tmpdir(), "paseo-agy-init-"));
+      tempDirs.push(workDir);
+      const clientToAgent = new PassThrough();
+      const agentToClient = new PassThrough();
+      const child = new EventEmitter() as ChildProcessWithoutNullStreams;
+      child.stdin = clientToAgent as unknown as ChildProcessWithoutNullStreams["stdin"];
+      child.stdout = agentToClient as unknown as ChildProcessWithoutNullStreams["stdout"];
+      child.stderr = new PassThrough() as unknown as ChildProcessWithoutNullStreams["stderr"];
+      child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
+
+      vi.spyOn(spawnUtils, "spawnProcess").mockReturnValueOnce(child);
+      const agent: Agent = {
+        async initialize() {
+          return {
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities: {},
+            ...(version ? { agentInfo: { name: "antigravity", version } } : {}),
+          };
+        },
+        async newSession() {
+          return { sessionId: "session-init-1" };
+        },
+        async prompt() {
+          return { stopReason: "end_turn" };
+        },
+        async authenticate() {},
+        async cancel() {},
+      };
+      const agentConnection = new AgentSideConnection(
+        () => agent,
+        ndJsonStream(
+          Writable.toWeb(agentToClient) as unknown as WritableStream<Uint8Array>,
+          Readable.toWeb(clientToAgent) as unknown as ReadableStream<Uint8Array>,
+        ),
+      );
+
+      const session = new ACPAgentSession(
+        { provider: "antigravity", cwd: workDir },
+        {
+          provider: "antigravity",
+          logger: createTestLogger(),
+          defaultCommand: ["agy", "acp"],
+          defaultModes: [],
+          capabilities: {
+            supportsMcpServers: false,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: true,
+            supportsModelSelection: true,
+            supportsReasoningConfig: true,
+          },
+          antigravityBrainDir: workDir,
+        },
+      );
+
+      await session.initializeNewSession();
+      expect(agentConnection.signal.aborted).toBe(false);
+      const streamsLive = asInternals<SessionInternals>(session).antigravityStreamsWakeupsLive;
+      clientToAgent.end();
+      agentToClient.end();
+      child.emit("exit", 0, null);
+      return streamsLive;
+    }
+
+    expect(await initializeWithVersion("1.5.9")).toBe(false);
+    expect(await initializeWithVersion("1.5.10")).toBe(true);
+    expect(await initializeWithVersion("1.6.0-rc.1")).toBe(true);
+    expect(await initializeWithVersion(undefined)).toBe(false);
+  });
+
+  test("agy >= 1.5.10 streams live wakeup updates without duplicating transcript.jsonl steps", async () => {
+    const { session, sessionId, events, answer, writeTranscript } = createHarness();
+    const internals = asInternals<SessionInternals>(session);
+    internals.antigravityStreamsWakeupsLive = true;
+
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "run bg check" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [{ id: "call-1", name: "run_command", args: '{"CommandLine":"make check"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        content: `Tool is running as a background task with task id: ${sessionId}/task-1`,
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Running check in background.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("run bg check");
+    await answer({ stopReason: "end_turn" });
+    expect(summarizeEvents(events)).toEqual([]);
+
+    // agy >= 1.5.10 keeps StreamConversationUpdates open and streams wakeup steps live.
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Checking command result." },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "live-call-1",
+        title: "Verify health",
+        kind: "execute",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "live-call-1",
+        status: "completed",
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "live-msg-1",
+        content: { type: "text", text: "Background check " },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "live-msg-1",
+        content: { type: "text", text: "passed." },
+      } as SessionUpdate,
+    });
+
+    // Transcript flush sees the same completed wakeup steps and settles without re-emitting them.
+    writeTranscript([
+      ...baseRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-18T10:00:00.000Z",
+        content: `[Message] timestamp=2026-11-18T10:00:00Z sender=${sessionId}/task-1 content=Done`,
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        thinking: "Checking command result.",
+        tool_calls: [
+          { id: "live-call-1", name: "run_command", args: '{"CommandLine":"verify-health"}' },
+        ],
+      },
+      {
+        step_index: 7,
+        type: "GENERIC",
+        status: "DONE",
+        content: "healthy",
+      },
+      {
+        step_index: 8,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Background check passed.",
+        tool_calls: [],
+      },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual([
+      "reasoning:Checking command result.",
+      "tool:execute:running",
+      "tool:execute:completed",
+      "assistant:Background check ",
+      "assistant:passed.",
+      "turn_completed",
+    ]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("latches live wakeup suppression at runtime when live chunks arrive before transcript catch-up", async () => {
+    const { session, sessionId, events, answer, writeTranscript } = createHarness();
+    const internals = asInternals<SessionInternals>(session);
+    expect(internals.antigravityStreamsWakeupsLive).toBe(false);
+
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "wait for task" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [{ id: "call-1", name: "run_command", args: '{"CommandLine":"sleep 1"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        content: `Tool is running as a background task with task id: ${sessionId}/task-9`,
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Waiting.",
+        tool_calls: [],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("wait for task");
+    await answer({ stopReason: "end_turn" });
+    expect(summarizeEvents(events)).toEqual([]);
+
+    await session.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "latched-msg",
+        content: { type: "text", text: "Live wakeup finished." },
+      } as SessionUpdate,
+    });
+    expect(internals.antigravityStreamsWakeupsLive).toBe(true);
+
+    writeTranscript([
+      ...baseRows,
+      {
+        step_index: 5,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-18T10:05:00.000Z",
+        content: `[Message] timestamp=2026-11-18T10:05:00Z sender=${sessionId}/task-9 content=Done`,
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Live wakeup finished.",
+        tool_calls: [],
+      },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual(["assistant:Live wakeup finished.", "turn_completed"]);
+    expect(await session.canStopRuntime()).toBe(true);
+  });
+
+  test("ask_question completes foreground turn while active concurrent background task and subagent still protect runtime", async () => {
+    const { session, sessionId, events, answer, writeTranscript } = createHarness();
+    const baseRows = [
+      { step_index: 1, type: "USER_INPUT", status: "DONE", content: "audit while asking" },
+      {
+        step_index: 2,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [{ id: "call-bg", name: "run_command", args: '{"CommandLine":"long-scan"}' }],
+      },
+      {
+        step_index: 3,
+        type: "GENERIC",
+        status: "DONE",
+        content: `Tool is running as a background task with task id: ${sessionId}/task-12`,
+      },
+      {
+        step_index: 4,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        tool_calls: [
+          {
+            id: "send-sub",
+            name: "send_message",
+            args: '{"Recipient":"subagent-uuid-77","Message":"Continue scan"}',
+          },
+        ],
+      },
+      {
+        step_index: 5,
+        type: "GENERIC",
+        status: "DONE",
+        content: 'Message sent to "subagent-uuid-77"',
+      },
+      {
+        step_index: 6,
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Should I proceed with step 2?",
+        tool_calls: [
+          {
+            id: "call-ask",
+            name: "ask_question",
+            args: '{"questions":[{"question":"Proceed?","options":["Yes","No"]}]}',
+          },
+        ],
+      },
+    ];
+    writeTranscript(baseRows);
+
+    await session.startTurn("audit while asking");
+    await answer({ stopReason: "end_turn" });
+
+    // Foreground turn completes so user can answer ask_question, but runtime stays protected.
+    expect(summarizeEvents(events)).toEqual(["turn_completed"]);
+    expect(await session.canStopRuntime()).toBe(false);
+
+    // Settling only the background task leaves the subagent active.
+    const taskSettledRows = [
+      ...baseRows,
+      {
+        step_index: 7,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-18T10:10:00.000Z",
+        content: `[Message] timestamp=2026-11-18T10:10:00Z sender=${sessionId}/task-12 content=Done`,
+      },
+    ];
+    writeTranscript(taskSettledRows);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+    expect(await session.canStopRuntime()).toBe(false);
+
+    // Settling the subagent releases runtime protection without emitting extra turn_completed.
+    writeTranscript([
+      ...taskSettledRows,
+      {
+        step_index: 8,
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        created_at: "2026-11-18T10:11:00.000Z",
+        content:
+          "[Message] timestamp=2026-11-18T10:11:00Z sender=subagent-uuid-77 content=Scan finished.",
+      },
+    ]);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushAsyncIo();
+
+    expect(summarizeEvents(events)).toEqual(["turn_completed"]);
     expect(await session.canStopRuntime()).toBe(true);
   });
 });
