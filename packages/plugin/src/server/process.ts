@@ -33,6 +33,7 @@ function hasPathSeparator(value: string): boolean {
 
 function shouldUseWindowsShell(
   command: string,
+  args: string[],
   requestedShell?: boolean | string,
 ): boolean | string {
   if (isWindowsCommandScript(command)) {
@@ -40,6 +41,17 @@ function shouldUseWindowsShell(
   }
   if (requestedShell !== undefined) {
     return requestedShell;
+  }
+  // cmd.exe cannot carry a newline inside a single command line. Any argument
+  // that contains one (e.g. `gh api graphql -f query=<multiline>`) gets cut off
+  // at the first newline before the child sees it. Bypassing the shell passes
+  // argv straight to CreateProcess, which preserves the value verbatim. Only
+  // .cmd/.bat shims still need cmd.exe, handled above.
+  if (
+    process.platform === "win32" &&
+    args.some((arg) => arg.includes("\n") || arg.includes("\r"))
+  ) {
+    return false;
   }
   return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
 }
@@ -58,7 +70,7 @@ export function spawnProcess(
 ): ChildProcess {
   const spawnOptions = options ?? {};
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
+  const shell = shouldUseWindowsShell(command, args, spawnOptions.shell);
 
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
@@ -79,7 +91,7 @@ export async function execCommand(
   options?: ExecCommandOptions,
 ): Promise<ExecCommandResult> {
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, options?.shell);
+  const shell = shouldUseWindowsShell(command, args, options?.shell);
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
   const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
