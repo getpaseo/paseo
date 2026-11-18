@@ -33,6 +33,8 @@ import {
   expectNoHostPasswordControls,
   removeHostFromHostPage,
   addDirectHostFromSettings,
+  expectAddHostFieldDrawnAsInput,
+  selectHostConnectionType,
   expectHostOnlineWithoutError,
   expectIdleAgentRelease,
   editRestartRecoveryPrompt,
@@ -306,6 +308,24 @@ async function closeAddHostAndChangeTheme(page: import("@playwright/test").Page)
   await expect(page.getByRole("button", { name: "Direct connection", exact: true })).toBeHidden();
   await page.keyboard.press("Control+Alt+t");
 }
+
+test("Add host draws its text fields as bordered inputs", async ({ page }) => {
+  await gotoAppShell(page);
+
+  await test.step("the pairing link field", async () => {
+    await openSidebarAddHost(page);
+    await selectHostConnectionType(page, "relay");
+    await expectAddHostFieldDrawnAsInput(page, "pair-link-input");
+    await page.getByTestId("pair-link-cancel").click();
+  });
+
+  await test.step("the direct connection fields", async () => {
+    await selectHostConnectionType(page, "direct");
+    await expectAddHostFieldDrawnAsInput(page, "direct-host-input");
+    await expectAddHostFieldDrawnAsInput(page, "direct-port-input");
+    await expectAddHostFieldDrawnAsInput(page, "direct-password-input");
+  });
+});
 
 test("sidebar Add host completes without navigating", async ({ page }) => {
   await gotoAppShell(page);

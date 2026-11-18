@@ -4,7 +4,7 @@ import { useKeyboardShortcutsStore } from "./keyboard-shortcuts-store";
 beforeEach(() => {
   useKeyboardShortcutsStore.setState({
     commandCenterOpen: false,
-    commandCenterScope: null,
+    commandCenterTab: "all",
     shortcutsDialogOpen: false,
     capturingShortcut: false,
     altDown: false,
@@ -20,18 +20,21 @@ describe("keyboard-shortcuts-store", () => {
     expect(useKeyboardShortcutsStore.getState().commandCenterOpen).toBe(true);
   });
 
-  it("opens the command center with a scope and clears it when closed", () => {
+  it("opens the command center on a tab and returns to All when closed", () => {
     useKeyboardShortcutsStore.getState().setCommandCenterOpen(true, "files");
     expect(useKeyboardShortcutsStore.getState()).toMatchObject({
       commandCenterOpen: true,
-      commandCenterScope: "files",
+      commandCenterTab: "files",
     });
 
     useKeyboardShortcutsStore.getState().setCommandCenterOpen(false);
     expect(useKeyboardShortcutsStore.getState()).toMatchObject({
       commandCenterOpen: false,
-      commandCenterScope: null,
+      commandCenterTab: "all",
     });
+
+    useKeyboardShortcutsStore.getState().setCommandCenterOpen(true);
+    expect(useKeyboardShortcutsStore.getState().commandCenterTab).toBe("all");
   });
 
   it("toggles shortcut capture state", () => {

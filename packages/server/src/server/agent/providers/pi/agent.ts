@@ -52,7 +52,7 @@ import {
   type ResolvedProviderLaunch,
 } from "../../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { composeSystemPromptParts } from "../../system-prompt.js";
+import { composeAgentSystemPrompt } from "../../system-prompt.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -83,6 +83,7 @@ import {
   listPiImportableSessions,
   readPiImportSessionConfig,
 } from "./session-descriptor.js";
+import { modelDisplayLabel } from "../model-label.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -312,36 +313,6 @@ interface PiSlashCommandInvocation {
 }
 
 type AutoCompactMode = boolean | "toggle" | "unknown";
-
-function normalizePiModelLabel(label: string): string {
-  const normalizedLabel = label.trim().replace(/[_\s]+/g, " ");
-  const vendorSeparatorIndex = normalizedLabel.indexOf(": ");
-  if (vendorSeparatorIndex === -1) {
-    return normalizedLabel;
-  }
-
-  return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
-}
-
-export function transformPiModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
-  return models.map((model) => {
-    if (!model.label.includes("/")) {
-      return model;
-    }
-
-    const segments = model.label.split("/").filter((segment) => segment.length > 0);
-    const rawLabel = segments.at(-1);
-    if (!rawLabel) {
-      return model;
-    }
-
-    return {
-      ...model,
-      label: normalizePiModelLabel(rawLabel),
-      description: model.description ?? model.label,
-    };
-  });
-}
 
 function isPiThinkingLevel(value: string | null | undefined): value is PiThinkingLevel {
   return (
@@ -1166,7 +1137,7 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
   return {
     provider,
     id: `${model.provider}/${model.id}`,
-    label: `${model.provider}/${model.name ?? model.id}`,
+    label: modelDisplayLabel(model),
     description: `${model.provider}/${model.id}`,
     metadata: {
       provider: model.provider,
@@ -2630,7 +2601,7 @@ export class PiRpcAgentClient implements AgentClient {
     const mcp = await this.prepareMcpInjection(config.cwd, config.mcpServers, mcpEnv, runtime);
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
-      systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
+      systemPrompt: composeAgentSystemPrompt(config),
       mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
     });
     let runtimeSession: PiRuntimeSession;
@@ -2699,10 +2670,7 @@ export class PiRpcAgentClient implements AgentClient {
     );
     const mcpConfigFile = mcp?.kind === "adapter" ? mcp.configFile : null;
     const paseoExtension = createPiPaseoExtensionFile({
-      systemPrompt: composeSystemPromptParts(
-        resumeConfig.config.systemPrompt,
-        resumeConfig.config.daemonAppendSystemPrompt,
-      ),
+      systemPrompt: composeAgentSystemPrompt(resumeConfig.config),
       mcpServers: mcp?.kind === "builtin" ? mcp.servers : undefined,
     });
     const tempFiles = mcpConfigFile ? [mcpConfigFile, paseoExtension] : [paseoExtension];
@@ -2817,15 +2785,13 @@ export class PiRpcAgentClient implements AgentClient {
         "get_state",
         () => catalogSession.getState(),
       );
-      const models = transformPiModels(
-        piModels.map((model) => {
-          const mapped = mapPiModel(model, PI_PROVIDER);
-          const isConfigured =
-            model.provider === configuredModel?.provider && model.id === configuredModel?.id;
-          if (isConfigured) mapped.isDefault = true;
-          return mapped;
-        }),
-      );
+      const models = piModels.map((model) => {
+        const mapped = mapPiModel(model, PI_PROVIDER);
+        const isConfigured =
+          model.provider === configuredModel?.provider && model.id === configuredModel?.id;
+        if (isConfigured) mapped.isDefault = true;
+        return mapped;
+      });
       return { models, modes: [] };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);

@@ -19,7 +19,12 @@ import {
   HostsRouteFrameSchema,
   HostsRouteClosedSchema,
 } from "./hosts.js";
-import { PluginRegistryIdentitySchema } from "./plugin-registry.js";
+import {
+  PluginRegistryIdSchema,
+  PluginRegistryIdentitySchema,
+  PluginListingDetailSchema,
+  PluginListingIndexSchema,
+} from "./plugin-registry.js";
 import { AgentProfileSchema, AgentSkillSelectionSchema } from "./agent-profile.js";
 export {
   AgentProfileSchema,
@@ -1671,6 +1676,17 @@ export const PluginSourceStatusRequestSchema = z.object({
   type: z.literal("plugin.source.status.request"),
   requestId: z.string(),
   pluginId: PluginIdSchema.optional(),
+});
+
+export const PluginRegistryListRequestSchema = z.object({
+  type: z.literal("plugin.registry.list.request"),
+  requestId: z.string(),
+});
+
+export const PluginRegistryGetRequestSchema = z.object({
+  type: z.literal("plugin.registry.get.request"),
+  requestId: z.string(),
+  id: PluginRegistryIdSchema,
 });
 
 export const PluginSourceUpdateRequestSchema = z.object({
@@ -3560,6 +3576,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDirectoryInspectRequestSchema,
   PluginSourceInstallRequestSchema,
   PluginSourceStatusRequestSchema,
+  PluginRegistryListRequestSchema,
+  PluginRegistryGetRequestSchema,
   PluginSourceUpdateRequestSchema,
   PluginUpdatePreviewRequestSchema,
   PluginUpdateApplyRequestSchema,
@@ -3973,6 +3991,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginSourceInstallation: z.boolean().optional(),
         // COMPAT(pluginSourceUpdates): added in v0.8.0; remove gate after 2027-03-16 once daemon floor supports reviewed updates.
         pluginSourceUpdates: z.boolean().optional(),
+        // COMPAT(pluginRegistry): added in v0.16.0, remove gate after 2027-05-15.
+        pluginRegistry: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
@@ -4328,6 +4348,22 @@ export const WorkspaceScriptPayloadSchema = z.object({
   terminalId: z.string().nullable().optional().default(null),
 });
 
+/**
+ * Where a workspace's forge is on the web, resolved by the daemon so every
+ * client builds the same links.
+ */
+export const ForgeWebSchema = z.object({
+  /** Web host of the forge: the SSH config alias resolved, cloud SSH hosts mapped to their web host. */
+  host: z.string(),
+  /**
+   * Repository path that owns issue and change-request numbers when it is not
+   * the origin repository, such as a fork's parent. Absent: the origin repository.
+   */
+  referenceRepository: z.string().optional(),
+});
+
+export type ForgeWeb = z.infer<typeof ForgeWebSchema>;
+
 const WorkspaceGitRuntimePayloadSchema = z
   .object({
     currentBranch: z.string().nullable().optional(),
@@ -4464,6 +4500,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     // until 2027-01-17; remove the consumer fallback once the supported daemon
     // floor is >= v0.2.0.
     forge: z.string().optional(),
+    // Absent from daemons older than v0.16.0; clients then derive links from the origin remote.
+    forgeWeb: ForgeWebSchema.optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
     syncSeq: z.number().int().positive().optional(),
@@ -5697,6 +5735,7 @@ const CheckoutStatusCommonSchema = z.object({
   // upstream branch name is not necessarily currentBranch, so composing one is wrong.
   // aheadOfOrigin/behindOfOrigin are measured against exactly this ref.
   upstreamRef: z.string().nullable().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
@@ -7240,6 +7279,17 @@ export const PluginSourceStatusItemSchema = z.object({
 });
 export type PluginSourceStatusItem = z.infer<typeof PluginSourceStatusItemSchema>;
 
+/** The host's plugin directory index, fetched by the daemon from its configured registry. */
+export const PluginRegistryListResponseSchema = z.object({
+  type: z.literal("plugin.registry.list.response"),
+  payload: z.object({ requestId: z.string(), index: PluginListingIndexSchema }),
+});
+
+export const PluginRegistryGetResponseSchema = z.object({
+  type: z.literal("plugin.registry.get.response"),
+  payload: z.object({ requestId: z.string(), plugin: PluginListingDetailSchema }),
+});
+
 export const PluginSourceStatusResponseSchema = z.object({
   type: z.literal("plugin.source.status.response"),
   payload: z.object({ requestId: z.string(), plugins: z.array(PluginSourceStatusItemSchema) }),
@@ -7390,6 +7440,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDirectoryInspectResponseSchema,
   PluginSourceInstallResponseSchema,
   PluginSourceStatusResponseSchema,
+  PluginRegistryListResponseSchema,
+  PluginRegistryGetResponseSchema,
   PluginSourceUpdateResponseSchema,
   PluginUpdatePreviewResponseSchema,
   PluginUpdateApplyResponseSchema,

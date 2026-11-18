@@ -130,3 +130,39 @@ describe("Settings sidebar presentation", () => {
     expect(settings.attachSidebar().offset).toBe(0);
   });
 });
+
+describe("Settings sidebar return", () => {
+  it("retains the origin through nested Settings and consumes it on return", () => {
+    const settings = createSettingsPresentation();
+    const origin = { serverId: "host", workspaceId: "workspace" };
+    settings.beginSidebarVisit(origin);
+    settings.enterRoute({ key: "root", pathname: "/settings" }, "host");
+    settings.enterRoute({ key: "appearance", pathname: "/settings/appearance" }, "host");
+    expect(settings.store.getState().sidebarReturn).toEqual({ ...origin, phase: "opening" });
+    settings.presentContent();
+    expect(settings.store.getState().sidebarReturn).toEqual({ ...origin, phase: "covered" });
+    expect(
+      settings.enterRoute({ key: "workspace", pathname: "/h/host/workspace/workspace" }, "host"),
+    ).toBe(false);
+    expect(settings.store.getState().sidebarReturn).toBeNull();
+  });
+
+  it("discards the sidebar when returning to a different workspace", () => {
+    const settings = createSettingsPresentation();
+    settings.beginSidebarVisit({ serverId: "host", workspaceId: "workspace" });
+    settings.enterRoute({ key: "root", pathname: "/settings" }, "host");
+    expect(settings.enterRoute({ key: "other", pathname: "/h/host/workspace/other" }, "host")).toBe(
+      true,
+    );
+    expect(settings.store.getState().sidebarReturn).toBeNull();
+  });
+
+  it("does not carry sidebar returns into another visit or a wide layout", () => {
+    const settings = createSettingsPresentation();
+    settings.beginSidebarVisit({ serverId: "host", workspaceId: "workspace" });
+    settings.clearSidebarReturn();
+    settings.enterRoute({ key: "root", pathname: "/settings" }, "host");
+    expect(settings.store.getState().sidebarReturn).toBeNull();
+    expect(createSettingsPresentation().store.getState().sidebarReturn).toBeNull();
+  });
+});

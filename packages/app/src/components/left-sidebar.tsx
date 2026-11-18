@@ -1,6 +1,5 @@
 import { SidebarViewSlot } from "@/plugins/sidebar-view";
 import { useAddHost } from "@/hosts/add-host";
-import { router } from "expo-router";
 import {
   CircleGauge,
   FolderPlus,
@@ -10,7 +9,16 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   Pressable,
   ScrollView,
@@ -20,12 +28,19 @@ import {
   View,
   type LayoutChangeEvent,
 } from "react-native";
-import { Gesture, ScrollView as GHScrollView } from "react-native-gesture-handler";
+import {
+  Gesture,
+  type GestureType,
+  ScrollView as GHScrollView,
+} from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
+import {
+  TitlebarDragRegion,
+  WINDOW_CONTENT_DATASET,
+} from "@/components/desktop/titlebar-drag-region";
 import { SidebarCloseButton } from "@/components/headers/sidebar-close-button";
 import {
   resolveDesktopSidebarInsetLeft,
@@ -40,7 +55,7 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import { SidebarDisplayPreferencesMenu } from "@/components/sidebar/display-preferences/menu";
 import { SidebarSeparator } from "@/components/sidebar/sidebar-separator";
 import { SidebarToastRegion } from "@/components/sidebar/sidebar-toast-region";
-import { SidebarNavRows } from "@/components/sidebar/sidebar-nav-rows";
+import { SidebarNavRows, useVisibleSidebarNavItems } from "@/components/sidebar/sidebar-nav-rows";
 import { SidebarFooterIconHighlight } from "@/components/sidebar/sidebar-footer-icon-highlight";
 import { SidebarHelpMenu } from "@/components/sidebar/sidebar-help-menu";
 import { SidebarFooterOverflowMenu } from "@/components/sidebar/sidebar-footer-overflow-menu";
@@ -85,8 +100,9 @@ import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { useLeftPanelWidth } from "@/mobile-panels/provider";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import { buildSettingsRoute } from "@/utils/host-routes";
-import { openHostOverview } from "@/navigation/settings-navigation";
+import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
+import { openSettingsFromSidebar } from "@/navigation/settings-navigation";
 import { UsageSidebarItem, UsageSidebarRoot, useUsageSummary, useOpenSidebarUsage } from "@/usage";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
@@ -157,6 +173,7 @@ export const LeftSidebar = memo(function LeftSidebar({
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isCompactLayout = useIsCompactFormFactor();
+  const activeWorkspace = useActiveWorkspaceSelection();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
   const {
@@ -193,25 +210,26 @@ export const LeftSidebar = memo(function LeftSidebar({
   const openProjectPicker = useOpenAddProject();
   const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
-  // Each destination closes the navigation overlay first. Closing is idempotent, so a docked
-  // sidebar runs the same handler.
+  // Workspace destinations close the overlay; Settings retains it for the return journey.
   const handleOpenProject = useCallback(() => {
     void openProjectPicker();
   }, [openProjectPicker]);
 
   const handleSettings = useCallback(() => {
-    showMobileAgent();
-    router.push(buildSettingsRoute());
-  }, [showMobileAgent]);
+    openSettingsFromSidebar({ workspace: activeWorkspace, isCompact: isCompactLayout });
+  }, [activeWorkspace, isCompactLayout]);
 
   const handleAddHost = useAddHost();
 
   const handleOpenHostSettings = useCallback(
     (serverId: string) => {
-      showMobileAgent();
-      openHostOverview(serverId);
+      openSettingsFromSidebar({
+        workspace: activeWorkspace,
+        isCompact: isCompactLayout,
+        route: buildSettingsHostSectionRoute(serverId, "host"),
+      });
     },
-    [showMobileAgent],
+    [activeWorkspace, isCompactLayout],
   );
 
   const labels = useMemo(
@@ -620,29 +638,7 @@ function MobileSidebar({
     >
       <View style={styles.sidebarContent} pointerEvents="auto">
         <WindowChromeSafeArea placement="below" />
-        {platformIsNative ? (
-          <GHScrollView
-            // Same contract as the workspace list: vertical drags scroll the nav
-            // block, a clear horizontal intent still activates the close pan.
-            simultaneousHandlers={closeGestureRef}
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </GHScrollView>
-        ) : (
-          <ScrollView
-            style={styles.mobileNavScroll}
-            showsVerticalScrollIndicator={false}
-            alwaysBounceVertical={false}
-            testID="sidebar-nav-scroll"
-          >
-            {navRows}
-          </ScrollView>
-        )}
-        <SidebarSeparator />
+        <SidebarNavScroll closeGestureRef={closeGestureRef}>{navRows}</SidebarNavScroll>
 
         <SidebarViewSlot dismiss={handleWorkspacePress}>
           <SidebarToastRegion active={active}>
@@ -684,6 +680,47 @@ function MobileSidebar({
         />
       </View>
     </MobilePanelOverlay>
+  );
+}
+
+interface SidebarNavScrollProps {
+  closeGestureRef: RefObject<GestureType | undefined>;
+  /** Web only: the viewport emits no window regions (see WINDOW_CONTENT_DATASET). */
+  windowContent?: boolean;
+  children: ReactNode;
+}
+
+// The capped, scrolling nav block shared by the mobile and desktop sidebars, with the
+// divider below it. The divider is a sibling because Unistyles does not patch the
+// gesture-handler ScrollView.
+function SidebarNavScroll({ closeGestureRef, windowContent, children }: SidebarNavScrollProps) {
+  return (
+    <>
+      {platformIsNative ? (
+        <GHScrollView
+          // Same contract as the workspace list: vertical drags scroll the nav
+          // block, a clear horizontal intent still activates the close pan.
+          simultaneousHandlers={closeGestureRef}
+          style={styles.navScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {children}
+        </GHScrollView>
+      ) : (
+        <ScrollView
+          dataSet={windowContent ? WINDOW_CONTENT_DATASET : undefined}
+          style={styles.navScroll}
+          showsVerticalScrollIndicator={false}
+          alwaysBounceVertical={false}
+          testID="sidebar-nav-scroll"
+        >
+          {children}
+        </ScrollView>
+      )}
+      <SidebarSeparator testID="sidebar-nav-separator" />
+    </>
   );
 }
 
@@ -807,12 +844,14 @@ function DesktopSidebar({
     ],
     [insetsTop, insets.bottom, insets.left, overlay, divisionLayout],
   );
-  // Below the window controls' row, or in the top band's place, the first row starts flush.
   const inTopBand = useTopBand() !== null;
-  const sidebarHeaderGroupStyle = useMemo(
-    () => [styles.sidebarHeaderGroup, (ownsTopLeft || inTopBand) && styles.sidebarHeaderGroupFlush],
-    [ownsTopLeft, inTopBand],
-  );
+  // Windows and Linux draw their window controls top-right, so the sidebar has no chrome
+  // row there. The strip above the scrolling rows is then its window drag surface.
+  const showsChromeRow = ownsTopLeft || Boolean(DEV_BUILD_LABEL);
+  // With every top item hidden the sidebar starts at the Workspaces section, as before the
+  // nav scroller existed: no strip above it and no divider below it.
+  const hasNavRows = useVisibleSidebarNavItems().length > 0;
+  const showsDragStrip = hasNavRows && !showsChromeRow && !inTopBand;
   return (
     <MobilePanelOverlay
       panel="agent-list"
@@ -823,7 +862,7 @@ function DesktopSidebar({
       <Animated.View style={desktopSidebarStyle}>
         <View style={desktopSidebarBorderStyle}>
           <View style={styles.sidebarDragArea}>
-            {ownsTopLeft || DEV_BUILD_LABEL ? (
+            {showsChromeRow ? (
               <View style={styles.desktopChromeRow}>
                 <TitlebarDragRegion />
                 {DEV_BUILD_LABEL ? (
@@ -840,11 +879,21 @@ function DesktopSidebar({
                   </View>
                 ) : null}
               </View>
-            ) : (
-              <TitlebarDragRegion />
-            )}
-            <SidebarNavRows style={sidebarHeaderGroupStyle} onBeforeNavigate={closeSidebar} />
+            ) : null}
+            {showsDragStrip ? (
+              <View style={styles.desktopDragStrip} testID="sidebar-nav-drag-strip">
+                <TitlebarDragRegion />
+              </View>
+            ) : null}
           </View>
+          {/* The drag overlay stays above this viewport: Electron does not clip
+              app-region rects to scroll viewports, so a scrolled-out row would
+              still claim its no-drag rect. */}
+          {hasNavRows ? (
+            <SidebarNavScroll closeGestureRef={closeGestureRef} windowContent>
+              <SidebarNavRows style={styles.sidebarHeaderGroup} onBeforeNavigate={closeSidebar} />
+            </SidebarNavScroll>
+          ) : null}
 
           <SidebarViewSlot dismiss={closeSidebar}>
             <SidebarToastRegion active={active}>
@@ -933,19 +982,18 @@ const staticStyles = RNStyleSheet.create({
 });
 
 const styles = StyleSheet.create((theme) => ({
+  // The rows start flush: the chrome row, drag strip, or top band above them gives the inset.
   sidebarHeaderGroup: {
-    paddingTop: theme.spacing[2],
     gap: 2,
     paddingBottom: theme.spacing[1.5],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
-  sidebarHeaderGroupFlush: {
-    paddingTop: 0,
+  desktopDragStrip: {
+    position: "relative",
+    height: theme.spacing[2],
   },
   // The nav block caps at half the sidebar; a long item list scrolls inside the
   // cap instead of crowding the workspace list off a short screen.
-  mobileNavScroll: {
+  navScroll: {
     flexGrow: 0,
     flexShrink: 1,
     maxHeight: "50%",
