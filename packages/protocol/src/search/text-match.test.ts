@@ -7,6 +7,7 @@ import {
   scoreMatch,
   scorePathMatch,
   scoreTextFields,
+  textFieldsMatchClass,
 } from "./text-match.js";
 
 function markUp(query: string, text: string, options?: Parameters<typeof scoreMatch>[2]): string {
@@ -245,6 +246,24 @@ describe("scoreTextFields", () => {
     expect(scoreTextFields("labdes", fields, { subsequence: false })).toBeNull();
     expect(scoreTextFields("labdes", fields)).toBeNull();
     expect(scoreTextFields("lbl dsgn", fields)).not.toBeNull();
+  });
+});
+
+describe("textFieldsMatchClass", () => {
+  it("keeps positional tier differences inside one class", () => {
+    expect(textFieldsMatchClass("lo", ["fix-login-bug"])).toBe("word");
+    expect(textFieldsMatchClass("lo", ["Login page fix"])).toBe("word");
+  });
+
+  it("takes the loosest token's class", () => {
+    expect(textFieldsMatchClass("auth", ["oauth-refactor"])).toBe("inside-word");
+    expect(textFieldsMatchClass("fix auth", ["fix", "oauth"])).toBe("inside-word");
+    expect(textFieldsMatchClass("fix lgn", ["fix", "login"])).toBe("scattered");
+    expect(textFieldsMatchClass("stipe", ["stripe"], { typoTolerant: true })).toBe("scattered");
+  });
+
+  it("returns null when a token matches no field", () => {
+    expect(textFieldsMatchClass("fix zebra", ["fix"])).toBeNull();
   });
 });
 

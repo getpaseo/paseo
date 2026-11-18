@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildWorkspaceSource } from "./create.js";
 
@@ -6,6 +7,49 @@ describe("workspace create source", () => {
     expect(
       buildWorkspaceSource({ isolation: "local", path: "/tmp/project", project: "project-1" }),
     ).toEqual({ kind: "directory", path: "/tmp/project", projectId: "project-1" });
+  });
+
+  it("resolves a relative path against the directory the command runs in", () => {
+    const daemonTarget = { kind: "instance" as const, home: "/tmp/paseo-home" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "." })).toEqual({
+      kind: "directory",
+      path: process.cwd(),
+    });
+    expect(
+      buildWorkspaceSource({ daemonTarget, isolation: "worktree", path: "../sibling" }),
+    ).toEqual({
+      kind: "worktree",
+      cwd: path.resolve(process.cwd(), "../sibling"),
+      action: "branch-off",
+    });
+  });
+
+  it("sends a relative path to an explicit daemon endpoint as written", () => {
+    const daemonTarget = { kind: "endpoint" as const, host: "other-box:6767" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "repo" })).toEqual({
+      kind: "directory",
+      path: "repo",
+    });
+  });
+
+  it("passes an absolute path from another operating system through unchanged", () => {
+    expect(buildWorkspaceSource({ isolation: "local", path: "C:\\repos\\project" })).toEqual({
+      kind: "directory",
+      path: "C:\\repos\\project",
+    });
+  });
+
+  it("leaves a home-relative path for the daemon to expand", () => {
+    const daemonTarget = { kind: "instance" as const, home: "/tmp/paseo-home" };
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "local", path: "~/repo" })).toEqual({
+      kind: "directory",
+      path: "~/repo",
+    });
+    expect(buildWorkspaceSource({ daemonTarget, isolation: "worktree", path: "~" })).toEqual({
+      kind: "worktree",
+      cwd: "~",
+      action: "branch-off",
+    });
   });
 
   it("keeps branch names separate from managed worktree slugs", () => {

@@ -4,6 +4,7 @@ import type {
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
   AgentPersistenceHandle,
   FetchCatalogOptions,
   ProviderRefreshContext,
@@ -149,13 +150,24 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
     const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
+    if (options.force) await this.reprobeLegacySelection();
     return (await this.client()).fetchCatalog(options, context);
+  }
+  // Updating the binary does not change provider config, so the client survives it. A forced
+  // refresh re-probes a v1 pick so a 1.x to 2.x update takes effect without a daemon restart.
+  // A v2 pick owns live sessions and stays.
+  private async reprobeLegacySelection() {
+    const current = this.selected;
+    if (!current) return;
+    const client = await current.catch(() => null);
+    if (client === this.legacy && this.selected === current) this.selected = null;
   }
   async listCommands(config: AgentSessionConfig) {
     return (await this.client()).listCommands(config);

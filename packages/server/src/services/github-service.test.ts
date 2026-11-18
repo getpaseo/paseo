@@ -528,6 +528,65 @@ describe("ForgeService", () => {
     vi.useFakeTimers();
   });
 
+  describe("getReferenceRepository", () => {
+    const forkView = JSON.stringify({
+      owner: { login: "fork-owner" },
+      name: "repo",
+      parent: { owner: { login: "main-owner" }, name: "repo" },
+    });
+
+    it("names the parent of a fork checkout, asking about the origin repository explicitly", async () => {
+      const runner = createRunner([forkView]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "fork-owner/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).resolves.toBe(
+        "main-owner/repo",
+      );
+      expect(runner.calls).toHaveLength(1);
+      expect(runner.calls[0].args).toEqual([
+        "repo",
+        "view",
+        "fork-owner/repo",
+        "--json",
+        "owner,name,parent,defaultBranchRef",
+      ]);
+    });
+
+    it("rejects when gh cannot answer, so a failed lookup is not mistaken for a repository without a parent", async () => {
+      const service = createGitHubService({
+        runner: async () => {
+          throw new GitHubCommandError({
+            args: ["repo", "view"],
+            cwd: "/tmp/repo",
+            exitCode: 1,
+            stderr: "error connecting to api.github.com",
+          });
+        },
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "fork-owner/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).rejects.toBeInstanceOf(
+        GitHubCommandError,
+      );
+    });
+
+    it("is null for a repository that is not a fork", async () => {
+      const runner = createRunner([JSON.stringify({ owner: { login: "acme" }, name: "repo" })]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveRepoHost: async () => null,
+        resolveOriginRepository: async () => "acme/repo",
+      });
+
+      await expect(service.getReferenceRepository?.({ cwd: "/tmp/repo" })).resolves.toBeNull();
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -803,7 +862,7 @@ describe("ForgeService", () => {
     expect(runner.calls).toHaveLength(2);
     expect(runner.calls[0]).toEqual({
       cwd: "/repo",
-      args: ["repo", "view", "--json", "owner,name,parent"],
+      args: ["repo", "view", "--json", "owner,name,parent,defaultBranchRef"],
     });
     expect(runner.calls[1]?.cwd).toBe("/repo");
     expect(runner.calls[1]?.args.slice(0, 3)).toEqual(["api", "graphql", "-f"]);
@@ -1051,6 +1110,56 @@ describe("ForgeService", () => {
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(1);
   });
+
+  it.each([
+    { currentBranch: undefined, state: "MERGED", expected: null, calls: 1 },
+    { currentBranch: undefined, state: "OPEN", expected: "open", calls: 2 },
+    { currentBranch: "fork/trunk", state: "MERGED", expected: "merged", calls: 2 },
+  ])(
+    "polls a $state PR with source trunk from checkout $currentBranch",
+    async ({ currentBranch, state, expected, calls }) => {
+      const runner = createScriptedRunner([
+        batchPollStatusJson({
+          t0: batchPollRepositoryJson(
+            [
+              batchPollPrNodeJson({
+                headRefName: "trunk",
+                state,
+                ...(state === "OPEN" ? { mergedAt: null } : {}),
+              }),
+            ],
+            {
+              defaultBranchRef: { name: "trunk" },
+            },
+          ),
+        }),
+        batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+      ]);
+      const service = createGitHubService({
+        runner: runner.runner,
+        resolveGhPath: async () => "/usr/bin/gh",
+        resolveRepoHost: async () => null,
+        resolveRepoSlug: async () => "acme/widgets",
+        now: () => 0,
+      });
+      const statuses: Array<CurrentPullRequestStatus | null> = [];
+      try {
+        service.retainCurrentPullRequestStatusPoll?.({
+          cwd: "/repo",
+          headRef: "trunk",
+          currentBranch,
+          onStatus: (status) => statuses.push(status),
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        await flushMicrotasks();
+
+        expect(statuses.map((status) => status?.state ?? null)).toEqual([expected]);
+        expect(runner.calls).toHaveLength(calls);
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
 
   it("batches PR status polls across workspaces into one GraphQL request", async () => {
     let now = 0;
@@ -1431,13 +1540,19 @@ describe("ForgeService", () => {
       batchPollStatusJson({
         t0: batchPollRepositoryJson([], { isFork: true, parent }),
       }),
-      batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([forkPr], { defaultBranchRef: { name: "feat-a" } }),
+        origin0: { defaultBranchRef: { name: "main" } },
+      }),
       batchPollStatusJson({
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
         ]),
       }),
-      batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([forkPr], { defaultBranchRef: { name: "feat-a" } }),
+        origin0: { defaultBranchRef: { name: "main" } },
+      }),
     ]);
     const service = createGitHubService({
       ttlMs: 0,
@@ -1464,6 +1579,9 @@ describe("ForgeService", () => {
     );
     expect(runner.calls[1]?.args[3]).toContain(
       't0: repository(owner: "upstream", name: "widgets")',
+    );
+    expect(runner.calls[1]?.args[3]).toContain(
+      'origin0: repository(owner: "forkowner", name: "widgets")',
     );
     expect(statuses).toEqual([
       expect.objectContaining({ number: 42, repoOwner: "upstream", checksStatus: "success" }),
@@ -3219,6 +3337,30 @@ describe("ForgeService", () => {
     });
   });
 
+  it.each([
+    ["main", "CLOSED"],
+    ["master", "MERGED"],
+  ])("hides a %s PR on the default branch in a direct read (state %s)", async (headRef, state) => {
+    const historical = currentPullRequestJson({
+      headRefName: headRef,
+      headRepositoryOwner: { login: "acme" },
+      state,
+    });
+    const runner = createScriptedRunner([
+      historical,
+      JSON.stringify({ owner: { login: "acme" }, defaultBranchRef: { name: headRef } }),
+      JSON.stringify([JSON.parse(historical)]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef }),
+    ).resolves.toBeNull();
+  });
+
   it("keeps a merged PR when headRefOid matches the checkout HEAD", async () => {
     const headSha = "2222222222222222222222222222222222222222";
     const runner = createRunner([
@@ -3546,7 +3688,7 @@ describe("ForgeService", () => {
     });
     expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
-      ["repo", "view", "--json", "owner,name,parent"],
+      ["repo", "view", "--json", "owner,name,parent,defaultBranchRef"],
       ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
       ["pr", "view", "41", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
       ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
@@ -3778,7 +3920,7 @@ describe("ForgeService", () => {
     });
     expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
-      ["repo", "view", "--json", "owner,name,parent"],
+      ["repo", "view", "--json", "owner,name,parent,defaultBranchRef"],
       ["api", `repos/parentOwner/parentRepo/pulls?${FORK_PR_QUERY}`],
       ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
       [
@@ -3843,7 +3985,7 @@ describe("ForgeService", () => {
     ).resolves.toBeNull();
     expect(calls.map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
-      ["repo", "view", "--json", "owner,name,parent"],
+      ["repo", "view", "--json", "owner,name,parent,defaultBranchRef"],
       [
         "pr",
         "list",
@@ -4691,7 +4833,12 @@ describe("ForgeService", () => {
       }),
     ).resolves.toEqual({ url: "https://github.com/acme/repo/pull/7", number: 7 });
 
-    expect(runner.calls[0]?.args).toEqual(["repo", "view", "--json", "owner,name,parent"]);
+    expect(runner.calls[0]?.args).toEqual([
+      "repo",
+      "view",
+      "--json",
+      "owner,name,parent,defaultBranchRef",
+    ]);
     expect(runner.calls[1]?.args).toEqual([
       "api",
       "-X",
@@ -4765,7 +4912,7 @@ describe("ForgeService", () => {
         expect(readFakeGitHubCliLog(fixture.logPath)).toEqual(
           expect.arrayContaining([
             "auth status --hostname github.acme.internal|",
-            "repo view --json owner,name,parent|github.acme.internal",
+            "repo view --json owner,name,parent,defaultBranchRef|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );
@@ -4810,7 +4957,7 @@ describe("ForgeService", () => {
         ).toHaveLength(2);
         expect(log).toEqual(
           expect.arrayContaining([
-            "repo view --json owner,name,parent|github.acme.internal",
+            "repo view --json owner,name,parent,defaultBranchRef|github.acme.internal",
             "api -X POST repos/acme/repo/pulls -f title=Add thing -f head=feature -f base=main|github.acme.internal",
           ]),
         );

@@ -396,6 +396,15 @@ export class PluginService {
     });
   }
 
+  /** Reads the default registry's directory. Not queued: it touches no local state. */
+  listRegistry() {
+    return this.requireManagedSources().listRegistry();
+  }
+
+  getRegistryPlugin(id: string) {
+    return this.requireManagedSources().getRegistryPlugin(id);
+  }
+
   async statusSources(pluginId?: string): Promise<PluginSourceStatusItem[]> {
     return this.enqueue(async () => {
       const sources = this.configStore.get().plugins ?? {};

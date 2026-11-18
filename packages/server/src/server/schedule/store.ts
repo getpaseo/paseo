@@ -100,6 +100,17 @@ function parseStoredSchedule(
   return StoredScheduleSchema.safeParse(json);
 }
 
+async function readScheduleFile(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export class ScheduleStore {
   private readonly scheduleMutations = new Map<string, Promise<unknown>>();
   private readonly identityMutations = new Map<string, Promise<unknown>>();
@@ -108,6 +119,7 @@ export class ScheduleStore {
   constructor(
     private readonly dir: string,
     private readonly logger: Logger,
+    private readonly onChange?: (schedule: StoredSchedule, change: "write" | "delete") => void,
   ) {}
 
   private filePath(id: string): string {
@@ -128,12 +140,17 @@ export class ScheduleStore {
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
         .map(async (entry) => {
           const filePath = join(this.dir, entry.name);
-          return { filePath, parsed: parseStoredSchedule(await readFile(filePath, "utf-8")) };
+          const content = await readScheduleFile(filePath);
+          return content === null ? null : { filePath, parsed: parseStoredSchedule(content) };
         }),
     );
     const schedules: StoredSchedule[] = [];
     const invalidFiles = new Set<string>();
-    for (const { filePath, parsed } of files) {
+    for (const file of files) {
+      if (!file) {
+        continue;
+      }
+      const { filePath, parsed } = file;
       if (parsed.success) {
         schedules.push(parsed.data);
         continue;
@@ -149,21 +166,16 @@ export class ScheduleStore {
 
   async get(id: string): Promise<StoredSchedule | null> {
     await this.ensureDir();
-    try {
-      const content = await readFile(this.filePath(id), "utf-8");
-      return StoredScheduleSchema.parse(JSON.parse(content));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return null;
-      }
-      throw error;
-    }
+    const content = await readScheduleFile(this.filePath(id));
+    return content === null ? null : StoredScheduleSchema.parse(JSON.parse(content));
   }
 
   async create(schedule: Omit<StoredSchedule, "id">): Promise<StoredSchedule> {
     const created = StoredScheduleSchema.parse({ ...schedule, id: generateScheduleId() });
-    await this.write(created);
-    return created;
+    return this.serializeScheduleMutation(created.id, async () => {
+      await this.write(created);
+      return created;
+    });
   }
 
   async update(id: string, updater: ScheduleUpdater): Promise<StoredSchedule | null> {
@@ -204,8 +216,10 @@ export class ScheduleStore {
           if (!matchesNameAndTarget(created, name, target)) {
             throw new Error("Created schedule does not match requested identity");
           }
-          await this.write(created);
-          return created;
+          return this.serializeScheduleMutation(created.id, async () => {
+            await this.write(created);
+            return created;
+          });
         }
 
         const updated = await this.updateMatchedSchedule(existing.id, name, target, options.update);
@@ -219,12 +233,22 @@ export class ScheduleStore {
   private async write(schedule: StoredSchedule): Promise<void> {
     await this.ensureDir();
     await writeJsonFileAtomic(this.filePath(schedule.id), schedule);
+    this.onChange?.(schedule, "write");
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(
+    id: string,
+    assertDeletable?: (schedule: StoredSchedule | null) => void,
+  ): Promise<void> {
     await this.serializeScheduleMutation(id, async () => {
-      await this.ensureDir();
+      const content = await readScheduleFile(this.filePath(id));
+      const parsed = content === null ? null : parseStoredSchedule(content);
+      const schedule = parsed?.success ? parsed.data : null;
+      assertDeletable?.(schedule);
       await rm(this.filePath(id), { force: true });
+      if (schedule) {
+        this.onChange?.(schedule, "delete");
+      }
     });
   }
 

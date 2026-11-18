@@ -9,10 +9,13 @@ import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
 import { LRUCache } from "lru-cache";
+import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
+import { bypassApprovesAsk } from "./bypass-approval.js";
 import {
   type AgentDefinition,
   type CanUseTool,
+  type HookCallback,
   type McpServerConfig as ClaudeSdkMcpServerConfig,
   type PermissionMode,
   type PermissionResult,
@@ -81,7 +84,7 @@ import {
   type ClaudeProviderOptions,
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
-import { discoverClaudeModels } from "./model-discovery.js";
+import { discoverClaudeModels, killExitingClaudeModelDiscoveries } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
 import {
   findSteeredMessageParent,
@@ -1749,6 +1752,10 @@ export class ClaudeAgentClient implements AgentClient {
     };
   }
 
+  async shutdown(): Promise<void> {
+    await killExitingClaudeModelDiscoveries();
+  }
+
   async resolveDefaultModeId({ env: launchEnv }: ResolveAgentDefaultModeInput): Promise<string> {
     return claudeModeCatalog(this.buildProviderEnv(launchEnv)).defaultModeId;
   }
@@ -2332,6 +2339,14 @@ class ClaudeAgentSession implements AgentSession {
   private pendingPermissions = new Map<string, PendingPermission>();
   private activeForegroundTurnId: string | null = null;
   private autonomousTurn: AutonomousTurnState | null = null;
+  /**
+   * The turn the last background task notification started. A notification that arrives while no
+   * turn runs starts a turn, and Claude's next run belongs to it unless Claude announces another
+   * start first: a later notification starts the next turn, and a queued command (the user's
+   * message, a scheduled wake-up) starts its own. When Claude does not respond, the notification is
+   * a turn in itself. See observeNotificationTurn.
+   */
+  private notificationTurnId: string | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly timelineAssembler = new TimelineAssembler();
   private readonly taskState = new ClaudeTaskState();
@@ -2552,6 +2567,7 @@ class ClaudeAgentSession implements AgentSession {
     this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
+    this.notificationTurnId = null;
     this.foregroundHasVisibleActivity = false;
     this.activeTurnHasAssistantText = false;
     this.withheldErrorReply = [];
@@ -2630,7 +2646,10 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
-    if (this.compacting || activeTurnId !== options.expectedTurnId) {
+    // A compacting turn still takes a steer: Claude Code holds a `next` message until the
+    // compaction finishes. Refusing it makes the manager replace the turn, and that interrupt
+    // cancels the compaction.
+    if (activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
 
@@ -2852,6 +2871,7 @@ class ClaudeAgentSession implements AgentSession {
         ? thinkingOptionId
         : null;
 
+    const previousThinkingOptionId = this.config.thinkingOptionId;
     if (!normalizedThinkingOptionId || normalizedThinkingOptionId === "default") {
       this.config.thinkingOptionId = undefined;
     } else if (isClaudeThinkingOption(normalizedThinkingOptionId)) {
@@ -2860,9 +2880,32 @@ class ClaudeAgentSession implements AgentSession {
     } else {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
-    this.queryRestartNeeded = true;
+    if (!(await this.applyEffortToRunningQuery(previousThinkingOptionId))) {
+      this.queryRestartNeeded = true;
+    }
     if (this.activeForegroundTurnId || this.autonomousTurn) {
       return THINKING_APPLIES_NEXT_TURN_NOTICE;
+    }
+  }
+
+  // A move between two effort levels changes only the effort, which a running Claude process
+  // takes through flag settings, so the process and its background work stay. Switching thinking
+  // off, to ultracode or back to the default changes how the query is launched, so it still
+  // restarts the query. The recorded option feeds every later launch either way.
+  private async applyEffortToRunningQuery(
+    previousThinkingOptionId: string | undefined,
+  ): Promise<boolean> {
+    const effort = this.config.thinkingOptionId;
+    if (!this.query || this.queryRestartNeeded) return false;
+    if (!isClaudeThinkingEffort(previousThinkingOptionId) || !isClaudeThinkingEffort(effort)) {
+      return false;
+    }
+    try {
+      await this.query.applyFlagSettings({ effortLevel: effort });
+      return true;
+    } catch (error) {
+      this.logger.warn({ err: error, effort }, "Claude did not take a live effort change");
+      return false;
     }
   }
 
@@ -3042,7 +3085,11 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
-    const { providerOptions: _providerOptions, ...persistedConfig } = this.config;
+    const {
+      providerOptions: _providerOptions,
+      pluginAppendSystemPrompt: _pluginAppendSystemPrompt,
+      ...persistedConfig
+    } = this.config;
     this.persistence = {
       provider: "claude",
       sessionId: this.claudeSessionId,
@@ -3089,6 +3136,7 @@ class ClaudeAgentSession implements AgentSession {
     this.activeForegroundQuery = null;
     this.activeForegroundInput = null;
     this.autonomousTurn = null;
+    this.notificationTurnId = null;
     this.cancelCurrentTurn = null;
     this.turnState = "idle";
     this.sidechainTracker.clear();
@@ -3710,7 +3758,11 @@ class ClaudeAgentSession implements AgentSession {
 
   private buildAppendedSystemPrompt(): string {
     return (
-      composeSystemPromptParts(this.config.systemPrompt, this.config.daemonAppendSystemPrompt) ?? ""
+      composeSystemPromptParts(
+        this.config.systemPrompt,
+        this.config.daemonAppendSystemPrompt,
+        ...(this.config.pluginAppendSystemPrompt ?? []),
+      ) ?? ""
     );
   }
 
@@ -3803,7 +3855,7 @@ class ClaudeAgentSession implements AgentSession {
       // subagents keep running. Without this declaration an interrupt kills every one of them.
       // Claude stops a helper itself with its TaskStop tool.
       perTaskStopAffordance: true,
-      hooks: this.buildSubagentEffortHooks(),
+      hooks: { ...this.buildSubagentEffortHooks(), Stop: [{ hooks: [this.observeStopHook] }] },
       ...(this.persistSession === undefined ? {} : { persistSession: this.persistSession }),
       env: sdkEnv,
     };
@@ -4129,8 +4181,9 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.autonomousTurn = {
-      id: this.createTurnId("autonomous"),
+      id: this.notificationTurnId ?? this.createTurnId("autonomous"),
     };
+    this.notificationTurnId = null;
     this.activeForegroundQuery = this.query;
     this.activeForegroundInput = this.input;
     this.activeTurnHasAssistantText = false;
@@ -4401,6 +4454,20 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   /**
+   * Tracks notificationTurnId from the starts Claude announces between turns. A task a subagent
+   * started reports to that subagent, so its notification starts no main-session turn.
+   */
+  private observeNotificationTurn(message: SDKMessage): void {
+    if (this.activeForegroundTurnId || this.autonomousTurn) return;
+    if (message.type === "system" && message.subtype === "task_notification") {
+      if (this.taskProtocolSource.resolveTaskOwner(message.task_id, message.tool_use_id)) return;
+      this.notificationTurnId = this.createTurnId("autonomous");
+    } else if (readClaudeCommandLifecycle(message)?.state === "started") {
+      this.notificationTurnId = null;
+    }
+  }
+
+  /**
    * Only the main session's own turn start opens an autonomous turn. Everything a background
    * subagent emits (its task frames, its own background jobs' notifications, rate limit events)
    * arrives outside one, and no result would ever close a turn it opened.
@@ -4418,6 +4485,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.observeMainTurnBracket(message);
+    this.observeNotificationTurn(message);
     if (this.shouldSuppressStaleResult(message)) {
       return;
     }
@@ -4968,6 +5036,7 @@ class ClaudeAgentSession implements AgentSession {
         type: "timeline",
         item: taskNotificationItem,
         provider: "claude",
+        ...(this.notificationTurnId ? { turnId: this.notificationTurnId } : {}),
       });
     }
   }
@@ -5305,6 +5374,11 @@ class ClaudeAgentSession implements AgentSession {
     input,
     options,
   ): Promise<PermissionResult> => {
+    // Decide before publishing anything: bypassed asks never enter the permission UI.
+    if (this.currentMode === "bypassPermissions" && bypassApprovesAsk(toolName, options)) {
+      return { behavior: "allow", updatedInput: input, toolUseID: options.toolUseID };
+    }
+
     const requestId = `permission-${randomUUID()}`;
     const kind = resolvePermissionKind(toolName, input);
     const requestInput = normalizeClaudeAskUserQuestionRequestInput(toolName, input);
@@ -5330,6 +5404,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      description: readNonEmptyString(stripAnsi(options.decisionReason ?? ""))?.trim(),
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
@@ -5477,6 +5552,12 @@ class ClaudeAgentSession implements AgentSession {
       SubagentStop: [{ hooks: [observe] }],
     };
   }
+
+  // Observation-only, like the effort hooks: it never alters turn control.
+  private readonly observeStopHook: HookCallback = async (input) => {
+    if (input.hook_event_name === "Stop") this.runtimeSafety.observeStop(input.session_crons);
+    return {};
+  };
 
   private notifySubscribers(event: AgentStreamEvent): void {
     const turnId =

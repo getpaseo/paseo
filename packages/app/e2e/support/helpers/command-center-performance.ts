@@ -11,7 +11,7 @@ export async function seedSearchableCommandCenter() {
   });
   try {
     const agents = [];
-    for (let index = 0; index < 60; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       agents.push(
         await createMockIdleAgent(seed.client, {
           cwd: seed.repoPath,
@@ -49,11 +49,27 @@ export async function searchCommandCenter(panel: Locator, query: string) {
 }
 
 export async function warmCommandCenterRows(page: Page) {
-  // FlatList fills its overscan window in timed batches after the first visible frame.
-  await page.waitForTimeout(600);
-  await page.evaluate(() => {
-    globalThis.__PASEO_RENDER_PROFILE_REASONS__ = {};
-  });
+  // FlatList fills its overscan window in timed batches after the first visible frame,
+  // and a slow runner can still be mounting rows long after it. Start counting only
+  // once a quiet period passes with no row render.
+  await expect
+    .poll(() => page.evaluate(countRowRendersOverQuietPeriod), {
+      intervals: [0],
+      timeout: 15_000,
+    })
+    .toBe(0);
+}
+
+// Runs in the page: resets the render profile and counts row renders over two frames and 300ms.
+async function countRowRendersOverQuietPeriod() {
+  globalThis.__PASEO_RENDER_PROFILE_REASONS__ = {};
+  await new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return Object.keys(globalThis.__PASEO_RENDER_PROFILE_REASONS__ ?? {}).filter((id) =>
+    id.startsWith("CommandCenterResultRow:"),
+  ).length;
 }
 
 export async function expectOnlyCommandCenterRowRendered(page: Page, resultId: string) {
@@ -73,16 +89,17 @@ export async function expectOnlyCommandCenterRowRendered(page: Page, resultId: s
   expect(renders).toEqual({ [`CommandCenterResultRow:${resultId}`]: { render: 1 } });
 }
 
-export async function expectCommandCenterAgentWindow(panel: Locator, total: number) {
-  const rows = panel.locator(
-    '[data-testid^="command-center-agent-"]:not([data-testid="command-center-agent-subtitle"])',
-  );
-  const count = await rows.count();
+const WORKSPACE_ROWS =
+  '[data-testid^="command-center-workspace-"]:not([data-testid="command-center-workspace-subtitle"]):not([data-testid="command-center-workspace-agent"])';
+
+/** The list mounts a window of rows, not every match. */
+export async function expectCommandCenterWorkspaceWindow(panel: Locator, total: number) {
+  const count = await panel.locator(WORKSPACE_ROWS).count();
   expect(count).toBeGreaterThan(0);
   expect(count).toBeLessThan(total);
 }
 
-export async function scrollToOldestCommandCenterAgent(panel: Locator) {
+export async function scrollToOldestCommandCenterWorkspace(panel: Locator) {
   await panel.getByTestId("command-center-results").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
     element.dispatchEvent(new Event("scroll"));
