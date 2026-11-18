@@ -29,7 +29,7 @@ export function PluginEnvironmentProvider({
 }: PluginEnvironmentProviderProps) {
   return (
     <ToastApiProvider api={environment.toast}>
-      <PluginInstallationProvider plugin={environment.installation}>
+      <PluginInstallationProvider plugin={environment.installation} state={environment.state}>
         {children}
       </PluginInstallationProvider>
     </ToastApiProvider>
