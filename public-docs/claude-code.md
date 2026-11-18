@@ -2,7 +2,7 @@
 title: Claude Code
 description: Run Claude Code in Paseo using your existing Claude plan.
 nav: Claude Code
-order: 23
+order: 24
 category: Providers
 ---
 

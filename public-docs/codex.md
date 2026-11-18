@@ -2,7 +2,7 @@
 title: Codex
 description: Run Codex in Paseo using the official Codex CLI and your existing OpenAI account.
 nav: Codex
-order: 24
+order: 25
 category: Providers
 ---
 
