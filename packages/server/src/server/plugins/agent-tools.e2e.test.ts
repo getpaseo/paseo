@@ -764,33 +764,72 @@ test("a reopen during a tool replay keeps the reopen's tool definitions in the p
   }
 }, 60_000);
 
-const failFirstReplaySource = (arm: string) =>
+const failingReplaySource = (arm: string, opens: string) =>
   pluginSource
     .replace(
       'import { z } from "zod";',
-      'import { existsSync } from "node:fs";\nimport { z } from "zod";',
+      'import { appendFileSync, existsSync } from "node:fs";\nimport { z } from "zod";',
     )
-    .replace("let calls = 0;", "let calls = 0;\nlet opens = 0;")
     .replace(
       'if (request.labels.x !== "y") return;',
       `if (request.labels.x !== "y") return;
-    if (++opens === 1 && existsSync(${JSON.stringify(arm)})) throw new Error("replay failed once");`,
+    appendFileSync(${JSON.stringify(opens)}, "o");
+    if (existsSync(${JSON.stringify(arm)})) throw new Error("replay failed");`,
     );
 
-test("a failed tool replay is retried on the agent's next MCP request", async () => {
-  const armDirectory = await mkdtemp(path.join(tmpdir(), "paseo-replay-arm-"));
-  const arm = path.join(armDirectory, "arm");
-  const h = await setup(false, failFirstReplaySource(arm));
+test("a failed tool replay is not repeated for the same plugin instance, and the next restart replays again", async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), "paseo-replay-arm-"));
+  const arm = path.join(scratch, "arm");
+  const opens = path.join(scratch, "opens");
+  const openCount = async () => (await readFile(opens, "utf8")).length;
+  const h = await setup(false, failingReplaySource(arm, opens));
   try {
     const a = await h.create({ x: "y" });
+    expect(await openCount()).toBe(1);
     await writeFile(arm, "");
     await h.client.reloadPlugin("tools-test");
-    // The MCP connect's first request hits the failing replay; a later request retries it.
+    // Connecting and listing send several agent MCP requests. Only the first one replays the open.
+    const mcp = await h.mcp(a.id);
+    expect(await listedToolNames(mcp)).toContain("list_agents");
+    expect(await listedToolNames(mcp)).not.toContain("plugin_echo");
+    expect(await openCount()).toBe(2);
+    await mcp.close();
+
+    await rm(arm);
+    await h.client.reloadPlugin("tools-test");
     expect(await listedToolNames(await h.mcp(a.id))).toContain("plugin_echo");
+    expect(await openCount()).toBe(3);
     expect(h.launches).toHaveLength(1);
   } finally {
     await h.close();
-    await rm(armDirectory, { recursive: true, force: true });
+    await rm(scratch, { recursive: true, force: true });
+  }
+}, 60_000);
+
+const openReasonSource = `
+import { z } from "zod";
+import { defineAgentTool } from "@getpaseo/plugin/server";
+export default function contribute(server) {
+  server.addHook("agent.open.before", async ({ request }) => ({
+    ...request,
+    tools: [...request.tools, defineAgentTool({ name: "open_reason", description: request.reason, input: z.object({}), async execute() { return { text: request.reason }; } })],
+  }));
+  return () => {};
+}
+`;
+
+test("a tool replay reaches the restarted plugin with reason refresh", async () => {
+  const h = await setup(false, openReasonSource);
+  try {
+    const a = await h.create();
+    await h.client.reloadPlugin("tools-test");
+    const mcp = await h.mcp(a.id);
+    expect((await mcp.listTools()).tools.find((t) => t.name === "open_reason")).toMatchObject({
+      description: "refresh",
+    });
+    expect(h.launches).toHaveLength(1);
+  } finally {
+    await h.close();
   }
 }, 60_000);
 

@@ -285,6 +285,8 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
 
 export class PluginRuntime {
   private readonly plugins = new Map<string, LoadedPlugin>();
+  /** Per agent, the plugin instance whose tool replay failed. That instance is not replayed again for the agent. */
+  private readonly failedToolReplays = new Map<string, Map<string, string>>();
   private readonly pendingEvents = new Set<Promise<void>>();
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
@@ -717,17 +719,24 @@ export class PluginRuntime {
   // A restarted plugin has a new instance id, so a live session's tools from it are stranded until the session
   // reopens. Only the named plugins see the replayed open, so no other plugin's hook runs twice for one session.
   // Env and MCP server changes are dropped: those belong to the provider process and still need a reopen.
+  // The replay arrives as `refresh`, like the reopen the same restart causes for an idle agent.
   // A plugin that is stopped, mid-restart, or fails the replay is left out of the result, so the caller keeps it
-  // eligible for a retry.
+  // eligible. A failed replay is not repeated for the same plugin instance: the next restart gets a new try.
   async reattachTools(
     request: SessionOpenWireRequest,
     pluginIds: readonly string[],
   ): Promise<ReattachedAgentTools[]> {
-    const input: SessionOpenWireRequest = { ...request, tools: [], mcpServers: {} };
+    const input: SessionOpenWireRequest = {
+      ...request,
+      reason: "refresh",
+      tools: [],
+      mcpServers: {},
+    };
+    const failed = this.failedToolReplays.get(request.agentId);
     const replayed: ReattachedAgentTools[] = [];
     for (const pluginId of pluginIds) {
       const loaded = this.plugins.get(pluginId);
-      if (!loaded) continue;
+      if (!loaded || failed?.get(pluginId) === loaded.instanceId) continue;
       if (!loaded.child || !loaded.hooks.includes("agent.open.before")) {
         replayed.push({ pluginId, tools: [] });
         continue;
@@ -744,7 +753,10 @@ export class PluginRuntime {
         this.collectAgentTools(tools, loaded, opened.tools);
         replayed.push({ pluginId, tools });
       } catch (error) {
-        // Left out like a stopped plugin, so a later request retries it.
+        // Left out like a stopped plugin. The next instance of this plugin is replayed again.
+        const record = this.failedToolReplays.get(request.agentId) ?? new Map<string, string>();
+        record.set(pluginId, loaded.instanceId);
+        this.failedToolReplays.set(request.agentId, record);
         this.logger.warn(
           { err: error, pluginId, agentId: request.agentId },
           "Plugin tool reattach failed",
@@ -754,8 +766,11 @@ export class PluginRuntime {
     return replayed;
   }
 
-  detachTools(agentId: string): void {
+  /** Drops an agent's tools inside the named plugins, or inside every plugin when none are named. */
+  detachTools(agentId: string, pluginIds?: readonly string[]): void {
+    if (!pluginIds) this.failedToolReplays.delete(agentId);
     for (const loaded of this.plugins.values()) {
+      if (pluginIds && !pluginIds.includes(loaded.id)) continue;
       if (loaded.child) void send(loaded.child, { type: "tools.detach", agentId }).catch(() => {});
     }
   }

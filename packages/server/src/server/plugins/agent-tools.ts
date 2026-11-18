@@ -42,7 +42,8 @@ export interface PluginAgentToolsRuntime {
     request: SessionOpenWireRequest,
     pluginIds: readonly string[],
   ): Promise<ReattachedAgentTools[]>;
-  detachTools(agentId: string): void;
+  /** Drops an agent's tools inside the named plugins, or inside every plugin when none are named. */
+  detachTools(agentId: string, pluginIds?: readonly string[]): void;
   callTool(
     pluginId: string,
     pluginInstanceId: string,

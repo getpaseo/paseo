@@ -159,8 +159,8 @@ export class PluginService {
     return (await this.runtime.reattachTools?.(request, pluginIds)) ?? [];
   };
 
-  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId) => {
-    this.runtime.detachTools?.(agentId);
+  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId, pluginIds) => {
+    this.runtime.detachTools?.(agentId, pluginIds);
   };
 
   readonly callTool: PluginAgentToolsRuntime["callTool"] = async (

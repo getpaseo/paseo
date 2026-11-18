@@ -1105,15 +1105,20 @@ export class AgentManager {
     let taken: Set<string>;
     try {
       replayed = await runtime.reattachTools(request, stale);
+      if (replayed.length === 0) return;
       taken = await this.takenAgentToolNames(agentId);
     } catch (err) {
       this.logger.warn({ err, agentId, plugins: stale }, "Plugin tool reattach failed");
       return;
     }
     if (this.pluginOpenRequests.get(agentId) !== request) {
-      // The session closed during the replay, after its detach went out. A reopen waits for this refresh, so
-      // dropping what the replay attached inside the plugins cannot touch a newer open's tools.
-      runtime.detachTools(agentId);
+      // The session closed during the replay, after its detach went out. A reopen waits for every pending refresh
+      // before it detaches, so dropping what the replay attached inside the replayed plugins cannot touch a newer
+      // open's tools.
+      runtime.detachTools(
+        agentId,
+        replayed.map((entry) => entry.pluginId),
+      );
       return;
     }
     const replayedIds = new Set(replayed.map((entry) => entry.pluginId));
@@ -6349,7 +6354,14 @@ export class AgentManager {
     },
   ): Promise<AgentLaunchContext> {
     // A tool replay still in flight would otherwise attach its definitions inside the plugin after this open's.
-    await this.pluginToolRefreshes.get(agentId);
+    // The check and the detach below run in one tick, so no replay can start between them.
+    for (
+      let pending = this.pluginToolRefreshes.get(agentId);
+      pending;
+      pending = this.pluginToolRefreshes.get(agentId)
+    ) {
+      await pending;
+    }
     // A plugin changing during this open must still make the resulting session stale.
     const generation = this.sessionOpenGeneration;
     this.detachPluginTools(agentId);
