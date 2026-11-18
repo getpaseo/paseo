@@ -15650,6 +15650,7 @@ async function collectedAgentForReads(h: ReturnType<typeof idleCleanupHarness>) 
   h.probes[0] = async () => true;
   expect((await h.sweep({ now: h.later(61) })).collected).toHaveLength(1);
   expect(h.manager.getAgent(agent.id)).toBeNull();
+  h.probes[1] = async () => true;
   const read = () =>
     ensureAgentLoaded(agent.id, {
       agentManager: h.manager,
