@@ -555,6 +555,7 @@ function resolveStaticLoadConfigSettings(
     usageEnabled: resolveUsageEnabled(persisted),
     browserToolsEnabled: resolveBrowserToolsEnabled(persisted),
     autoArchiveAfterMerge: persisted.daemon?.autoArchiveAfterMerge ?? false,
+    agentFinishedNotifications: resolveAgentFinishedNotifications(persisted),
     appendSystemPrompt: resolveAppendSystemPrompt(persisted),
     ...resolveProfileLists(persisted),
     hostnames: mergeHostnames([
@@ -586,6 +587,7 @@ export type ResolvedDaemonSettings = Pick<
   | "git"
   | "autoArchiveAfterMerge"
   | "enableTerminalAgentHooks"
+  | "agentFinishedNotifications"
   | "appendSystemPrompt"
   | "terminalProfiles"
   | "agentProfiles"
@@ -835,6 +837,10 @@ function resolveSpeechOverrideControlledPaths(
   if (env.PASEO_VOICE_LLM_PROVIDER !== undefined) paths.push("features.voiceMode.llm.provider");
   if (env.PASEO_LOCAL_MODELS_DIR !== undefined) paths.push("providers.local.modelsDir");
   return paths;
+}
+
+function resolveAgentFinishedNotifications(persisted: PersistedConfig): boolean {
+  return persisted.daemon?.agentFinishedNotifications ?? true;
 }
 
 function resolveRestartRecoveryConfig(agents: PersistedConfig["agents"]) {

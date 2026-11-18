@@ -9,6 +9,8 @@ import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-
 interface UseDaemonConfigResult {
   config: MutableDaemonConfig | null;
   isLoading: boolean;
+  loadError: Error | null;
+  reload: () => void;
   patchConfig: (patch: MutableDaemonConfigPatch) => Promise<MutableDaemonConfig | undefined>;
 }
 
@@ -44,9 +46,16 @@ export function useDaemonConfig(serverId: string | null): UseDaemonConfigResult 
     [client, queryClient, queryKey],
   );
 
+  const { refetch } = configQuery;
+  const reload = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
   return {
     config: configQuery.data ?? null,
     isLoading: configQuery.isLoading,
+    loadError: configQuery.error ?? null,
+    reload,
     patchConfig,
   };
 }
