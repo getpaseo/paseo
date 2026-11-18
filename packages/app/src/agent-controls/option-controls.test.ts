@@ -3,6 +3,7 @@ import type { AgentOptionControl } from "@getpaseo/protocol/agent-types";
 import {
   getControlTooltip,
   isControlActive,
+  mergeOptionValue,
   readSelectOption,
   readToggleOption,
 } from "./option-controls";
@@ -46,5 +47,26 @@ describe("option controls", () => {
       "Toggle plan mode",
     );
     expect(getControlTooltip({ label: "Custom" })).toBe("Custom");
+  });
+});
+
+describe("mergeOptionValue", () => {
+  it("creates the record when the agent has no options yet", () => {
+    expect(mergeOptionValue(undefined, "agent_team", true)).toEqual({ agent_team: true });
+  });
+
+  it("sets the pressed key without touching the others", () => {
+    const options = { plan_mode: false, agent_team: false, permission_preset: "auto" };
+    expect(mergeOptionValue(options, "agent_team", true)).toEqual({
+      plan_mode: false,
+      agent_team: true,
+      permission_preset: "auto",
+    });
+  });
+
+  it("does not mutate the options record it was given", () => {
+    const options = { agent_team: false };
+    mergeOptionValue(options, "agent_team", true);
+    expect(options).toEqual({ agent_team: false });
   });
 });
