@@ -88,13 +88,6 @@ export function classifyOmpRpcUiPermissionRequest(
         toolArgs: descriptor.args,
         approveValue,
         denyValue: TOOL_APPROVAL_DENY_VALUE,
-        ...(extraActions.length > 0
-          ? {
-              approvalOptionValues: Object.fromEntries(
-                extraActions.map((action) => [action.id, action.label]),
-              ),
-            }
-          : {}),
       },
     },
   };
@@ -124,15 +117,13 @@ export function buildOmpRpcUiPermissionResponse(
   if (response.behavior !== "allow") {
     return { value: denyValue };
   }
-  const optionValues = request.metadata.approvalOptionValues;
-  const selectedValue =
-    response.selectedActionId !== undefined &&
-    typeof optionValues === "object" &&
-    optionValues !== null &&
-    !Array.isArray(optionValues)
-      ? readString((optionValues as Record<string, unknown>)[response.selectedActionId])
-      : null;
-  return { value: selectedValue ?? approveValue };
+  // Each extra choice's action label is the exact select value OMP offered.
+  const selectedExtraChoice = request.actions?.find(
+    (action) =>
+      action.id === response.selectedActionId &&
+      action.id.startsWith(TOOL_APPROVAL_EXTRA_ACTION_PREFIX),
+  );
+  return { value: selectedExtraChoice?.label ?? approveValue };
 }
 
 function parseToolApprovalDescriptor(
