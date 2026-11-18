@@ -176,7 +176,7 @@ describe("daemon E2E - Reload agent brings in what the on-disk session added", (
     expect(again.entries).toEqual(after.entries);
   }, 30_000);
 
-  test("Reload agent reports an external edit to an earlier answer and keeps the history", async () => {
+  test("Reload agent reports an external edit to an earlier prompt and keeps the history", async () => {
     const logger = pino({ level: "silent" });
     daemon = await createTestPaseoDaemon({
       agentClients: {
@@ -197,10 +197,10 @@ describe("daemon E2E - Reload agent brings in what the on-disk session added", (
       projection: "canonical",
     });
 
-    // The session file now holds a different first answer, with only its spacing changed.
+    // The session file now holds a different first prompt, with only its spacing changed.
     const edited: ClaudeJsonlEntry[] = [
-      userEntry(sessionId, cwd, "first hello", "user-uuid-1"),
-      assistantEntry(sessionId, cwd, "first  reply"),
+      userEntry(sessionId, cwd, "first  hello", "user-uuid-1"),
+      assistantEntry(sessionId, cwd, "first reply"),
       userEntry(sessionId, cwd, "second hello", "user-uuid-2"),
       assistantEntry(sessionId, cwd, "second reply"),
     ];

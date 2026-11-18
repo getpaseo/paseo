@@ -2065,8 +2065,7 @@ export class AgentManager {
   /**
    * Brings in what the provider's own history adds to the agent's owned history, which is never
    * changed: rows the provider has after the owned conversation are appended as ordinary live rows.
-   * Any other difference, including an answer Paseo saw only part of, is reported as `diverged`
-   * and changes nothing.
+   * A mismatch in the prompt sequence is reported as `diverged` and changes nothing.
    */
   reconcileProviderHistory(agentId: string): Promise<ProviderHistoryReconcile> {
     return this.runLifecycleMutation(agentId, async () => {

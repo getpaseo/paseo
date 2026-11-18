@@ -1089,13 +1089,10 @@ test("Reload agent keeps the history when the provider history differs or cannot
     await expect(reloadAgent(manager, agent.id)).rejects.toThrow("history stream closed");
     expect(await manager.fetchTimeline(agent.id)).toEqual(committed);
 
-    // Edited outside Paseo under the same prompt: the owned answer stays.
+    // A replayed answer can differ from what Paseo recorded. Keep the owned answer.
     failRead = false;
     providerHistory = [providerHistory[0]!, { type: "assistant_message", text: "rewritten" }];
-    expect(await reloadAgent(manager, agent.id)).toEqual({
-      kind: "diverged",
-      reason: "The provider history has a different last answer",
-    });
+    expect(await reloadAgent(manager, agent.id)).toEqual({ kind: "unchanged" });
     expect(await manager.fetchTimeline(agent.id)).toEqual(committed);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);

@@ -1231,7 +1231,7 @@ function mapCodexStreamRetryToStatusLine(
       ...(retry.details ? { text: retry.details } : {}),
       icon: "sparkles" as const,
     },
-    metadata: { synthetic: true, source: "codex_stream_retry", liveOnly: true },
+    metadata: { synthetic: true, source: "codex_stream_retry" },
   };
   if (outcome.status === "failed") {
     return { ...base, status: "failed", error: outcome.error };

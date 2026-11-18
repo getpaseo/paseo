@@ -40,10 +40,11 @@ deleting the agent, or a provider removing one of its own children, deletes hist
 - **Rewind** retires a range of rows. They leave the conversation and stay stored, in the same
   epoch. See [Rewind retires rows](#rewind-retires-rows).
 - **Provider history** is imported only into an agent that has no history. After that, resume
-  does not read it. Reload agent and Unarchive append only the rows the provider has after the
-  owned conversation, as ordinary live rows. Any other difference, including an answer Paseo saw only part of or a prompt sent with
-  attachments, changes nothing and is reported as diverged. A provider child Paseo already holds,
-  listed or retired, is never imported again.
+  does not read it. Reload agent and Unarchive require the provider history to start with the
+  same prompt IDs and text in order. They then append whole new turns, starting at the next
+  prompt. Existing replies, including partial replies, stay as recorded. If the prompts differ,
+  for example because the provider stored expanded attachment text, the chat stays unchanged and
+  Paseo reports a mismatch. A provider child Paseo already holds, listed or retired, is never imported again.
 - **Archive and reload** keep the history and the provider children. An archived chat reads them
   without its provider. Deleting the agent deletes its history and every child's, retired ones
   included.
