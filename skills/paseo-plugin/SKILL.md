@@ -52,6 +52,29 @@ Pick the contribution that matches the request. Each row names the registration,
 | Inject launch-only MCP servers and save Codex sandbox/approval options | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
 | Attach a tool to selected agents                                       | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 |
 
+## Edit the source, not the installation
+
+Develop a plugin only as a directory plugin: a folder you own, installed by path. Paseo runs it from
+that folder, `paseo plugin reload <id>` loads your edits, and `paseo plugin update` skips it.
+
+Never edit, build, or commit inside a Git or npm installation. Its folder is Paseo's managed copy
+under the daemon home's `plugins/` directory. `paseo plugin update` replaces it and
+`paseo plugin remove` deletes it, together with every edit and commit made there.
+
+Before editing an installed plugin, run `paseo plugin ls <id>`. A `git:` or `npm:` source, or a
+registry entry such as `<registry host>/owner/slug`, under SOURCE means a managed installation,
+even though DIRECTORY shows a path. To develop it, clone or unpack the source outside the daemon
+home, replace the managed installation with the clone, and edit the clone:
+
+```bash
+git clone <repository> /absolute/path/to/my-plugin
+paseo plugin remove my-plugin
+paseo plugin install /absolute/path/to/my-plugin
+```
+
+If a managed copy already holds work, move that work out first, for example by pushing its commits
+or copying the changed files into the clone. Do not run `update` or `remove` on it before then.
+
 ## Create the project
 
 Use an absolute path on the daemon machine. `init` writes files but does not install packages.
