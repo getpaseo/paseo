@@ -269,7 +269,7 @@ function normalizeVersion(version: string | null): string | null {
 }
 
 function shouldRestartForVersion(current: DesktopDaemonStatus): boolean {
-  if (!current.ownedByDesktop) return false;
+  if (!current.desktopManaged) return false;
   const appVersion = normalizeVersion(resolveDesktopAppVersion());
   const daemonVersion = normalizeVersion(current.version);
   return Boolean(appVersion && daemonVersion && appVersion !== daemonVersion);
@@ -336,12 +336,14 @@ export async function stopDesktopDaemon(
 ): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
   const instance = await readDaemonInstance(home);
-  const owned = Boolean(
+  const launchedThisSession = Boolean(
     instance &&
     ownedLaunch &&
     ownedLaunch.home === home &&
     isSameDaemonInstance(instance, ownedLaunch.instance),
   );
+  const owned =
+    launchedThisSession || (replacesDaemon(reason) && instance?.desktopManaged === true);
   const explicit =
     reason === "manual_ipc" &&
     confirmedInstance &&
@@ -361,8 +363,18 @@ export async function stopDesktopDaemon(
     keepTerminals,
   });
   await stopCapturedDaemon({ home, instance, reason, keepTerminals });
-  if (owned) ownedLaunch = null;
+  if (launchedThisSession) ownedLaunch = null;
   return resolveDesktopDaemonStatus();
+}
+
+/**
+ * An app update or a version mismatch replaces the daemon with the one this Desktop bundles.
+ * That applies to every daemon Desktop launched, which `paseo.pid` records as `desktopManaged`,
+ * including one an earlier Desktop session left running. Other automatic stops apply only to a
+ * daemon this session launched.
+ */
+function replacesDaemon(reason: DesktopDaemonStopReason): boolean {
+  return reason === "app_update" || reason === "version_mismatch";
 }
 
 export interface StopCapturedDaemonInput {
@@ -428,7 +440,7 @@ export function keepsTerminalsOnStop(
   platform: NodeJS.Platform,
 ): boolean {
   if (platform === "win32") return false;
-  return reason === "app_update" || reason === "version_mismatch";
+  return replacesDaemon(reason);
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
