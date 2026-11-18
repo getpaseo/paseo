@@ -640,6 +640,44 @@ describe("selectProjectedTimelinePage", () => {
     ).toEqual([25, 26]);
   });
 
+  test("whole-turn pages keep a row that belongs to no turn out of the turns around it", () => {
+    // A background command's notification arrives between the user's turn and the turn Claude
+    // starts for it.
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: new Date(1).toISOString(),
+        turnId: "first",
+        item: { type: "user_message", text: "go" },
+      },
+      { ...toolRow(2, "completed"), turnId: "first" },
+      {
+        seq: 3,
+        timestamp: new Date(3).toISOString(),
+        turnId: "first",
+        item: { type: "assistant_message", text: "first reply" },
+      },
+      toolRow(4, "completed"),
+      {
+        seq: 5,
+        timestamp: new Date(5).toISOString(),
+        turnId: "second",
+        item: { type: "assistant_message", text: "second reply" },
+      },
+    ];
+    const page = (cursorSeq?: number) =>
+      selectProjectedTimelinePage({
+        rows,
+        direction: cursorSeq === undefined ? "tail" : "before",
+        cursorSeq,
+        limit: 1,
+        wholeTurns: true,
+      }).entries.map((entry) => entry.seqStart);
+    expect(page()).toEqual([5]);
+    expect(page(5)).toEqual([4]);
+    expect(page(4)).toEqual([1, 2, 3]);
+  });
+
   test("whole-turn tails close interleaved source coverage without changing forward catch-up", () => {
     const rows: AgentTimelineRow[] = [
       {

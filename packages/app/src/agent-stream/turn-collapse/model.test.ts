@@ -275,6 +275,24 @@ describe("collapseTurns", () => {
     expect(result.tail[1]).toMatchObject({ kind: "turn_summary", turnId: "first" });
   });
 
+  it("keeps each reply visible when a row that belongs to no turn sits between two turns", () => {
+    // Claude finishes the user's turn, a background command's notification arrives while no turn
+    // runs, then Claude starts a turn of its own for it.
+    const first = [user("prompt"), shell("start-command"), reply("first-reply")].map((item) =>
+      Object.assign(item, { turnId: "first" }),
+    );
+    const notification = shell("notification");
+    const second = Object.assign(reply("second-reply"), { turnId: "second" });
+    const result = collapse([...first, notification, second]);
+    expect(ids(result.tail)).toEqual([
+      "prompt",
+      "turn-summary:prompt",
+      "first-reply",
+      "notification",
+      "second-reply",
+    ]);
+  });
+
   it("keeps mid-turn messages visible when work is folded", () => {
     const tail = [user("prompt"), shell("work"), user("steer"), shell("more"), reply("done")];
     for (const item of tail) item.turnId = "same-turn";

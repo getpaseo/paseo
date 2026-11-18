@@ -1427,133 +1427,46 @@ test("Claude waking up after a helper finishes gets an autonomous turn that its 
   await session.close();
 });
 
-// The main session's own background Bash command ending. Not a subagent, so its notification is a
-// row on the main timeline.
-function backgroundCommandNotification(status: "completed" | "stopped") {
-  return {
-    type: "system",
-    subtype: "task_notification",
-    task_id: "bg-command",
-    tool_use_id: "toolu_bg_command",
-    status,
-    summary: "Background command ended",
-    output_file: "/tmp/bg-command.output",
-    uuid: `uuid-bg-command-${status}`,
-    session_id: "sess-1",
-  };
-}
+// A turn starts with the user's message or Claude's init, nothing else. A background command's
+// notification is a report: for a completed command Claude's init follows it, for a stopped one
+// nothing does, and while other background work lives Claude does not report idle either.
+test.each(["completed", "stopped"])(
+  "a background command's %s notification between turns belongs to no turn",
+  async (status) => {
+    const session = await createSession();
+    const internal: SessionStateInternals = asInternals(session);
+    const queryMock = createPendingQueryMock();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
-function isTaskNotificationRow(event: AgentStreamEvent): boolean {
-  return (
-    event.type === "timeline" &&
-    event.item.type === "tool_call" &&
-    event.item.name === "task_notification"
-  );
-}
+    await internal.routeSdkMessageFromPump(
+      {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bg-command",
+        tool_use_id: "toolu_bg_command",
+        status,
+        summary: "Background command ended",
+        output_file: "/tmp/bg-command.output",
+        uuid: "uuid-bg-command",
+        session_id: "sess-1",
+      },
+      queryMock,
+    );
 
-test("a background command that finishes between turns lands in the turn Claude starts for it", async () => {
-  const session = await createSession();
-  const internal: SessionStateInternals = asInternals(session);
-  const queryMock = createPendingQueryMock();
-  const events: AgentStreamEvent[] = [];
-  session.subscribe((event) => events.push(event));
+    const rows = events.filter(
+      (event) => event.type === "timeline" && event.item.type === "tool_call",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ item: { name: "task_notification" } });
+    expect(rows[0]).not.toHaveProperty("turnId");
+    expect(events.filter((event) => event.type === "turn_started")).toHaveLength(0);
+    expect(internal.autonomousTurn).toBeNull();
+    expect(internal.turnState).toBe("idle");
 
-  // The order Claude Code 2.1.321 sends: the notification first, then the turn it reacts with.
-  await internal.routeSdkMessageFromPump(backgroundCommandNotification("completed"), queryMock);
-  await internal.routeSdkMessageFromPump(sessionState("running"), queryMock);
-  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
-  const autonomousTurnId = internal.autonomousTurn?.id;
-  await internal.routeSdkMessageFromPump(unboundTextDelta("the command is done"), queryMock);
-  await internal.routeSdkMessageFromPump(successResult(), queryMock);
-
-  // A row with no turn joins the reply before it to the reply after it, so the app shows the two
-  // turns as one and folds the first reply away.
-  expect(autonomousTurnId).toEqual(expect.stringMatching(/^autonomous-turn-/));
-  expect(events.filter(isTaskNotificationRow)).toEqual([
-    expect.objectContaining({ turnId: autonomousTurnId }),
-  ]);
-  expect(events.findIndex(isTaskNotificationRow)).toBeGreaterThan(
-    events.findIndex((event) => event.type === "turn_started"),
-  );
-
-  await session.close();
-});
-
-test("a background command the user stopped shows at once, even while a background helper keeps Claude running", async () => {
-  const session = await createSession();
-  const internal: SessionStateInternals = asInternals(session);
-  const queryMock = createPendingQueryMock();
-  const events: AgentStreamEvent[] = [];
-  session.subscribe((event) => events.push(event));
-
-  // Claude does not react to a command the user stopped, and a live background helper keeps the
-  // session "running", so no idle comes either.
-  await internal.routeSdkMessageFromPump(sessionState("running"), queryMock);
-  await internal.routeSdkMessageFromPump(helperTaskStarted, queryMock);
-  await internal.routeSdkMessageFromPump(backgroundCommandNotification("stopped"), queryMock);
-  expect(events.filter(isTaskNotificationRow)).toHaveLength(1);
-
-  // The helper's wake-up turn is not the stopped command's turn.
-  await internal.routeSdkMessageFromPump(helperCompleted, queryMock);
-  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
-  await internal.routeSdkMessageFromPump(unboundTextDelta("the helper is done"), queryMock);
-  await internal.routeSdkMessageFromPump(successResult(), queryMock);
-  expect(events.filter(isTaskNotificationRow)).toEqual([
-    expect.not.objectContaining({ turnId: expect.anything() }),
-  ]);
-
-  await session.close();
-});
-
-test("a finished background command that no turn follows shows when Claude reports idle", async () => {
-  const session = await createSession();
-  const internal: SessionStateInternals = asInternals(session);
-  const queryMock = createPendingQueryMock();
-  const events: AgentStreamEvent[] = [];
-  session.subscribe((event) => events.push(event));
-
-  await internal.routeSdkMessageFromPump(backgroundCommandNotification("completed"), queryMock);
-  await internal.routeSdkMessageFromPump(sessionState("idle"), queryMock);
-
-  expect(internal.autonomousTurn).toBeNull();
-  expect(events.filter(isTaskNotificationRow)).toHaveLength(1);
-  expect(events.some((event) => event.type === "turn_started")).toBe(false);
-
-  await session.close();
-});
-
-test("a background command that finishes before the user's next message stays out of that turn", async () => {
-  sdkQueryFactory.mockImplementation(() => createPendingQueryMock());
-  const session = await createSession();
-  const internal: SessionStateInternals = asInternals(session);
-  const queryMock = createPendingQueryMock();
-  const events: AgentStreamEvent[] = [];
-  session.subscribe((event) => events.push(event));
-
-  await internal.routeSdkMessageFromPump(backgroundCommandNotification("completed"), queryMock);
-  await session.startTurn("hello");
-
-  const notification = events.findIndex(isTaskNotificationRow);
-  expect(notification).toBeGreaterThanOrEqual(0);
-  expect(notification).toBeLessThan(events.findIndex((event) => event.type === "turn_started"));
-  expect(events[notification]).not.toHaveProperty("turnId");
-
-  await session.close();
-});
-
-test("a background command's notification is not lost when the session closes first", async () => {
-  const session = await createSession();
-  const internal: SessionStateInternals = asInternals(session);
-  const queryMock = createPendingQueryMock();
-  const events: AgentStreamEvent[] = [];
-  session.subscribe((event) => events.push(event));
-
-  await internal.routeSdkMessageFromPump(sessionState("running"), queryMock);
-  await internal.routeSdkMessageFromPump(backgroundCommandNotification("stopped"), queryMock);
-  await session.close();
-
-  expect(events.filter(isTaskNotificationRow)).toHaveLength(1);
-});
+    await session.close();
+  },
+);
 
 test("a steer folded into a turn keeps one turn, and a turn Claude starts after it gets its own", async () => {
   sdkQueryFactory.mockImplementation(() => createPendingQueryMock());
