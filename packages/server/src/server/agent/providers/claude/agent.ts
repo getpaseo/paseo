@@ -2389,7 +2389,7 @@ class ClaudeAgentSession implements AgentSession {
   private turnState: TurnState = "idle";
   private readonly turnNamespace = randomUUID();
   private nextTurnOrdinal = 1;
-  private cancelCurrentTurn: (() => void) | null = null;
+  private cancelCurrentTurn: (() => Promise<void>) | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
@@ -2568,30 +2568,32 @@ class ClaudeAgentSession implements AgentSession {
     if (sdkUserMessageId) this.unstartedMessageUuids.add(sdkUserMessageId);
 
     let cancelIssued = false;
-    const requestCancel = () => {
-      if (cancelIssued) {
-        return;
-      }
-      cancelIssued = true;
-      if (this.cancelCurrentTurn === requestCancel) {
-        this.cancelCurrentTurn = null;
-      }
-      // Whether Claude has this message in hand. A late idle from the previous turn can clear
-      // mainTurnInFlight after Claude started it, so the message's own lifecycle counts too.
-      const claudeStartedTurn =
-        this.mainTurnInFlight ||
-        (sdkUserMessageId !== null && !this.unstartedMessageUuids.has(sdkUserMessageId));
-      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
-      this.finishForegroundTurn({
-        type: "turn_canceled",
-        provider: "claude",
-        reason: "Interrupted",
+    let submitted = false;
+    let cancellation: Promise<void> | undefined;
+    this.cancelCurrentTurn = () => {
+      cancellation ??= (async () => {
+        if (submitted) {
+          // Claude can dequeue the prompt before it announces a turn.
+          const started =
+            this.mainTurnInFlight ||
+            (sdkUserMessageId !== null && !this.unstartedMessageUuids.has(sdkUserMessageId));
+          await this.interruptActiveTurn(started);
+        } else {
+          cancelIssued = true;
+          if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
+        }
+        if (this.activeForegroundTurnId !== turnId) return;
+        this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+        this.finishForegroundTurn({
+          type: "turn_canceled",
+          provider: "claude",
+          reason: "Interrupted",
+        });
+      })().finally(() => {
+        cancellation = undefined;
       });
-      void this.interruptActiveTurn(claudeStartedTurn).catch((error) => {
-        this.logger.warn({ err: error }, "Failed to interrupt during cancel");
-      });
+      return cancellation;
     };
-    this.cancelCurrentTurn = requestCancel;
 
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
@@ -2610,6 +2612,7 @@ class ClaudeAgentSession implements AgentSession {
       this.startQueryPump();
       this.runtimeSafety.notePromptSent();
       this.input.push(sdkMessage);
+      submitted = true;
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           void this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId).catch(
@@ -2726,16 +2729,17 @@ class ClaudeAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     if (this.cancelCurrentTurn) {
-      this.cancelCurrentTurn();
+      await this.cancelCurrentTurn();
       return;
     }
 
-    if (this.autonomousTurn) {
-      this.flushPendingToolCalls();
-      this.completeAutonomousTurn();
-    }
-
+    const autonomousTurn = this.autonomousTurn;
     await this.interruptActiveTurn();
+    if (autonomousTurn && this.autonomousTurn === autonomousTurn) {
+      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+      this.flushPendingToolCalls();
+      this.dispatchEvents([{ type: "turn_canceled", provider: "claude", reason: "Interrupted" }]);
+    }
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -4636,67 +4640,64 @@ class ClaudeAgentSession implements AgentSession {
    * perTaskStopAffordance), and no result would follow to consume pendingInterruptAbort.
    */
   private async interruptActiveTurn(claudeStartedTurn = this.mainTurnInFlight): Promise<void> {
-    const queryToInterrupt = this.query;
-    if (!queryToInterrupt || typeof queryToInterrupt.interrupt !== "function") {
-      this.logger.trace(
-        {
-          agentId: this.agentId,
-          provider: "claude",
-          sessionId: this.claudeSessionId,
-          turnId: this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? undefined,
-        },
-        "provider.claude.interrupt.no_query",
-      );
-      return;
-    }
-    if (claudeStartedTurn) {
-      this.pendingInterruptAbort = true;
-      await this.withdrawUnstartedMessages(queryToInterrupt);
-    } else {
-      // Claude can dequeue a message for its next turn before announcing it started; withdrawing
-      // it is then a no-op, and only an interrupt stops it. Withdraw once: a prompt sent while
-      // this withdrawal was in flight belongs to the next turn.
-      if (await this.withdrawUnstartedMessages(queryToInterrupt)) return;
-      this.pendingInterruptAbort = true;
+    const query = this.query;
+    if (!query) return;
+    const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
+    const ownsTurn = () =>
+      this.query === query && (this.activeForegroundTurnId ?? this.autonomousTurn?.id) === turnId;
+    const queued = [...this.unstartedMessageUuids];
+    const withdrewAll = await this.withdrawUnstartedMessages(query, queued);
+    if (!ownsTurn() || (!claudeStartedTurn && withdrewAll)) return;
+
+    if (typeof query.interrupt !== "function") {
+      throw new Error("Claude does not support interrupting this turn");
     }
     try {
-      await this.awaitWithTimeout(
-        queryToInterrupt.interrupt(),
-        "interruptActiveTurn query.interrupt()",
-      );
+      await withTimeout(query.interrupt(), 3_000, "Claude did not acknowledge Stop");
     } catch (error) {
-      this.logger.warn({ err: error }, "Failed to interrupt active turn");
+      if (ownsTurn()) throw error;
+      return;
     }
+    if (!ownsTurn()) return;
+    this.pendingInterruptAbort = true;
+    for (const uuid of queued) this.forgetUnstartedMessage(uuid);
   }
 
-  /**
-   * Interrupt means interrupt: a message Claude never started dies with the turn instead of
-   * resuming it. One already dequeued cannot be recalled, and does not need to be, since the
-   * interrupt kills it. Returns whether Claude confirmed every message withdrawn.
-   */
-  private async withdrawUnstartedMessages(query: Query): Promise<boolean> {
-    const uuids = [...this.unstartedMessageUuids];
-    this.unstartedMessageUuids.clear();
-    this.permissionClearingSteerUuids.clear();
+  private forgetUnstartedMessage(uuid: string): void {
+    this.unstartedMessageUuids.delete(uuid);
+    this.permissionClearingSteerUuids.delete(uuid);
+  }
+
+  /** Retain unconfirmed withdrawals so another Stop can try them again. */
+  private async withdrawUnstartedMessages(
+    query: Query,
+    uuids: readonly string[],
+  ): Promise<boolean> {
     if (uuids.length === 0) return true;
-    // The SDK runtime supports this, but its public Query type has not caught up. Keep the
-    // compatibility escape hatch inside the Claude adapter.
+    // The SDK runtime supports this, but its public Query type has not caught up.
     const cancelAsyncMessage = (
       query as Query & {
         cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
       }
     ).cancelAsyncMessage;
     if (!cancelAsyncMessage) return false;
-    let withdrewAll = true;
-    for (const uuid of uuids) {
-      try {
-        if (!(await cancelAsyncMessage.call(query, uuid))) withdrewAll = false;
-      } catch (error) {
-        withdrewAll = false;
-        this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
-      }
+    try {
+      const withdrawn = await withTimeout(
+        Promise.all(
+          uuids.map(async (uuid) => {
+            const canceled = await cancelAsyncMessage.call(query, uuid);
+            if (canceled && this.query === query) this.forgetUnstartedMessage(uuid);
+            return canceled;
+          }),
+        ),
+        3_000,
+        "Claude did not acknowledge prompt withdrawal",
+      );
+      return withdrawn.every(Boolean);
+    } catch (error) {
+      this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
+      return false;
     }
-    return withdrewAll;
   }
 
   private async translateMessageToEvents(

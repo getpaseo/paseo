@@ -1597,26 +1597,72 @@ test("an interrupt after Claude took the message but before it started stops it"
   await session.close();
 });
 
-test("a prompt sent while a stopped prompt is being withdrawn is not withdrawn too", async () => {
+test("a replacement cannot start until Claude acknowledges Stop", async () => {
   const queryMock = createInterruptibleQueryMock();
-  let settleWithdrawal: (cancelled: boolean) => void = () => {};
-  queryMock.cancelAsyncMessage.mockImplementationOnce(
-    () => new Promise<boolean>((resolve) => (settleWithdrawal = resolve)),
-  );
+  const withdrawal = Promise.withResolvers<boolean>();
+  queryMock.cancelAsyncMessage.mockReturnValueOnce(withdrawal.promise);
   sdkQueryFactory.mockImplementation(() => queryMock);
   const session = await createSession();
 
   await session.startTurn("first");
   const firstUuid = await readFirstPromptUuid();
-  await session.interrupt();
-  await vi.waitFor(() => expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1));
+  const stopping = session.interrupt();
+  await vi.waitFor(() => expect(queryMock.cancelAsyncMessage).toHaveBeenCalledWith(firstUuid));
+  await expect(session.startTurn("second")).rejects.toThrow("already active");
+  withdrawal.resolve(true);
+  await stopping;
 
-  await session.startTurn("second");
-  settleWithdrawal(false);
-
-  await vi.waitFor(() => expect(queryMock.interrupt).toHaveBeenCalledTimes(1));
+  await expect(session.startTurn("second")).resolves.toMatchObject({ turnId: expect.any(String) });
   expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1);
-  expect(queryMock.cancelAsyncMessage).toHaveBeenCalledWith(firstUuid);
+  expect(queryMock.interrupt).not.toHaveBeenCalled();
+
+  await session.close();
+});
+
+test("a late withdrawal never sends an interrupt to a successor", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  const withdrawal = Promise.withResolvers<boolean>();
+  queryMock.cancelAsyncMessage.mockReturnValueOnce(withdrawal.promise);
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+
+  await session.startTurn("first");
+  const stopping = session.interrupt();
+  await vi.waitFor(() => expect(queryMock.cancelAsyncMessage).toHaveBeenCalledTimes(1));
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  const next = await session.startTurn("second");
+  withdrawal.resolve(false);
+  await stopping;
+
+  expect(queryMock.interrupt).not.toHaveBeenCalled();
+  expect(internal.activeForegroundTurnId).toBe(next.turnId);
+  await session.close();
+});
+
+test("a rejected Claude interrupt leaves the turn active and Stop can retry", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  queryMock.interrupt.mockRejectedValueOnce(new Error("Native interrupt rejected"));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  const { turnId } = await session.startTurn("keep ownership after failed Stop");
+  const promptUuid = await readFirstPromptUuid();
+  await internal.routeSdkMessageFromPump(commandLifecycle(promptUuid ?? "", "started"), queryMock);
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+
+  await expect(session.interrupt()).rejects.toThrow("Native interrupt rejected");
+  expect(internal.activeForegroundTurnId).toBe(turnId);
+  expect(internal.pendingInterruptAbort).toBe(false);
+  expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(0);
+  await expect(session.startTurn("replacement")).rejects.toThrow("already active");
+
+  await session.interrupt();
+  expect(queryMock.interrupt).toHaveBeenCalledTimes(2);
+  expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
 
   await session.close();
 });
