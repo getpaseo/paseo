@@ -700,6 +700,7 @@ export const fr: TranslationResources = {
         close: "Fermer",
         renameTerminal: "Renommer le terminal",
         renameAgent: "Renommer l’agent",
+        renameTab: "Renommer l’onglet",
       },
       actions: {
         newTab: "Nouvel onglet",
