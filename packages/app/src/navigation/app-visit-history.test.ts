@@ -56,10 +56,22 @@ describe("app visit history", () => {
       visit: third,
       navigateRoute: true,
     });
-    history.record(second);
-    history.record(third);
     expect(history.move(1, third, available)).toBeNull();
   });
+
+  it.each([third, fourth])(
+    "records a new visit after a coalesced round trip from $tabId",
+    (start) => {
+      const history = historyFromVisits(first, second, start);
+
+      expect(history.move(-1, start, available)?.visit).toEqual(second);
+      expect(history.move(1, start, available)?.visit).toEqual(start);
+      // Neither replay commits a distinct selection before the user visits the editor again.
+      history.record(second);
+
+      expect(history.move(-1, second, available)?.visit).toEqual(start);
+    },
+  );
 
   it("skips closed visits and drops forward history after a new visit", () => {
     const history = historyFromVisits(first, second, third);

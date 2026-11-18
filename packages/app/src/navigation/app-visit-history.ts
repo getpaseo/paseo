@@ -44,15 +44,15 @@ export function createAppVisitHistory() {
 
   return {
     record(visit: AppVisit) {
+      const previous = observed;
+      observed = visit;
       if (sameVisit(visits[cursor], visit)) {
-        observed = visit;
         pendingVisits.length = 0;
         return;
       }
       if (pendingVisits.some((pending) => sameVisit(pending, visit))) return;
-      if (sameVisit(observed, visit)) return;
+      if (sameVisit(previous, visit)) return;
 
-      observed = visit;
       pendingVisits.length = 0;
       visits.splice(cursor + 1, visits.length, visit);
       if (visits.length > MAX_VISITS) visits.shift();
@@ -74,7 +74,10 @@ export function createAppVisitHistory() {
         if ((!returningFromDetour && sameVisit(current, visit)) || !canRestore(visit)) continue;
 
         const routeInFlight = pendingVisits.length > 0 && !sameVisitRoute(current, visit);
-        if (!pendingVisits.some((pending) => sameVisit(pending, current))) {
+        if (activeRoute && sameVisit(observed, visit)) {
+          // A coalesced round trip can end on the already-observed visit without a new commit.
+          pendingVisits.length = 0;
+        } else if (!pendingVisits.some((pending) => sameVisit(pending, current))) {
           pendingVisits.push(current);
         }
         cursor = index;
