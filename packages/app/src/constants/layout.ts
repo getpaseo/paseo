@@ -1,4 +1,4 @@
-import { useUnistyles } from "react-native-unistyles";
+import { useUnistyles, type UnistylesBreakpoints } from "react-native-unistyles";
 import { bySizing, TOUCH_TARGET } from "@/components/ui/control-sizing";
 import { isWeb } from "@/constants/platform";
 
@@ -51,6 +51,14 @@ export function isCompactBreakpoint(breakpoint: string | undefined): boolean {
 export function useIsCompactFormFactor(): boolean {
   const { rt } = useUnistyles();
   return isCompactBreakpoint(rt.breakpoint);
+}
+
+export type Breakpoint = keyof UnistylesBreakpoints;
+
+/** Reactive breakpoint for layout decisions that depend on width. */
+export function useBreakpoint(): Breakpoint {
+  const { rt } = useUnistyles();
+  return rt.breakpoint ?? "xs";
 }
 
 // SplitContainer relies on dnd-kit and DOM-backed accessibility helpers.
