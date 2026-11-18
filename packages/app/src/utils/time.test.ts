@@ -5,8 +5,10 @@ import {
   formatCompactTimeAgo,
   formatCompactTimeAgoAsProse,
   formatDuration,
+  formatFullMessageTimestamp,
   formatMessageTimestamp,
   formatTimeAgo,
+  formatTimeOfDay,
 } from "./time";
 
 describe("formatTimeAgo", () => {
@@ -113,6 +115,27 @@ describe("formatDuration", () => {
   it("guards against negative and NaN", () => {
     expect(formatDuration(-1)).toBe("0s");
     expect(formatDuration(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("formatFullMessageTimestamp", () => {
+  it.each([
+    [new Date(2026, 10, 18, 18, 42), "2026-11-18"],
+    [new Date(2026, 10, 17, 18, 42), "2026-11-17"],
+    [new Date(2026, 9, 1, 18, 42), "2026-10-01"],
+    [new Date(2025, 11, 31, 18, 42), "2025-12-31"],
+  ])("includes the full calendar date for %s", (date, dateLabel) => {
+    expect(formatFullMessageTimestamp(date)).toBe(`${dateLabel} ${formatTimeOfDay(date)}`);
+  });
+
+  it("uses the local calendar date at midnight across a year boundary", () => {
+    const date = new Date(2026, 0, 1, 0, 5);
+    expect(formatFullMessageTimestamp(date)).toBe(`2026-01-01 ${formatTimeOfDay(date)}`);
+  });
+
+  it("pads the month and day and omits seconds", () => {
+    const date = new Date(2026, 0, 2, 9, 5, 59);
+    expect(formatFullMessageTimestamp(date)).toMatch(/^2026-01-02 (?:9:05 AM|09:05|9:05)$/);
   });
 });
 

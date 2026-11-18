@@ -24,6 +24,7 @@ import {
   sendDraftToQueue,
   startRunningMockAgent,
   submitMessage,
+  submitMessageWithButton,
 } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -913,7 +914,82 @@ async function completeDraftCreateSubmission(
   await expectCreatedAgentHandoff(page, pending.prompt, pending.userMessage);
 }
 
+function currentLocalCalendarDate(): string {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 test.describe("Agent message submission", () => {
+  for (const locale of ["en-US", "en-GB"]) {
+    test.describe(`Message timestamps in ${locale}`, () => {
+      test.use({ locale, timezoneId: "Asia/Shanghai" });
+
+      for (const width of [1280, 390]) {
+        test(`shows the submitted message timestamp in a ${width}px browser`, async ({
+          page,
+        }, testInfo) => {
+          await page.setViewportSize({ width, height: 960 });
+          const agent = await seedMockAgentWorkspace({
+            repoPrefix: "submission-timestamp-",
+            title: "Message timestamp",
+            model: "e2e-fast-stream",
+          });
+          try {
+            await openAgentRoute(page, agent);
+            await expectComposerVisible(page);
+            const prompt = "emit 1 coalesced agent stream updates";
+            await submitMessageWithButton(page, prompt);
+            const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
+            await expect(submittedPrompt).toHaveCount(1);
+            await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
+            await expectAgentIdle(page);
+            await submittedPrompt.getByText(prompt, { exact: true }).hover();
+            const timestamp = submittedPrompt.getByTestId("user-message-timestamp");
+            await expect(timestamp).toBeVisible();
+            const date = await page.evaluate(currentLocalCalendarDate);
+            const timestampPattern =
+              locale === "en-US"
+                ? new RegExp(`^${date} (?:[1-9]|1[0-2]):[0-5]\\d [AP]M$`)
+                : new RegExp(`^${date} (?:[01]\\d|2[0-3]):[0-5]\\d$`);
+            await expect(timestamp).toHaveText(timestampPattern);
+            await testInfo.attach(`user-message-${width}-${locale}-timestamp.after`, {
+              body: await timestamp.innerText(),
+              contentType: "text/plain",
+            });
+            const screenshotPath = testInfo.outputPath(`user-message-${width}-${locale}.after.png`);
+            await page.screenshot({ path: screenshotPath });
+            await testInfo.attach(`user-message-${width}-${locale}.after`, {
+              path: screenshotPath,
+              contentType: "image/png",
+            });
+            const footer = page.getByRole("button", { name: /^Worked for/ }).last();
+            await footer.hover();
+            const footerTimestamp = footer.getByTestId("turn-footer-timing-label");
+            await expect(footerTimestamp).toHaveText(timestampPattern);
+            await testInfo.attach(`turn-footer-${width}-${locale}-timestamp.after`, {
+              body: await footerTimestamp.innerText(),
+              contentType: "text/plain",
+            });
+            const footerScreenshotPath = testInfo.outputPath(
+              `turn-footer-${width}-${locale}.after.png`,
+            );
+            await page.screenshot({ path: footerScreenshotPath });
+            await testInfo.attach(`turn-footer-${width}-${locale}.after`, {
+              path: footerScreenshotPath,
+              contentType: "image/png",
+            });
+          } finally {
+            await agent.cleanup();
+          }
+        });
+      }
+    });
+  }
+
   test("settles an immediately interrupted first prompt", async ({ page }, testInfo) => {
     const workspace = await seedWorkspace({
       repoPrefix: `submission-immediate-interrupt-${testInfo.workerIndex}-`,

@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { expect, test as baseTest } from "../support/fixtures";
 import { expectAgentIdle } from "../support/helpers/agent-stream";
 import { submitMessage } from "../support/helpers/composer";
@@ -405,15 +405,21 @@ async function expectTimingInsideFooter(page: Page): Promise<void> {
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     const lines: boolean[] = [];
     while (walker.nextNode()) {
+      // A range for the whole node includes collapsed wrap spaces outside the painted text.
       const range = document.createRange();
       range.selectNodeContents(walker.currentNode);
-      for (const rect of range.getClientRects()) {
-        lines.push(
-          rect.left >= Math.max(rowBounds.left, labelBounds.left) - 0.5 &&
-            rect.right <= Math.min(rowBounds.right, labelBounds.right) + 0.5 &&
-            rect.top >= Math.max(rowBounds.top, labelBounds.top) - 0.5 &&
-            rect.bottom <= Math.min(rowBounds.bottom, labelBounds.bottom) + 0.5,
-        );
+      const text = range.toString();
+      for (const match of text.matchAll(/\S+/g)) {
+        range.setStart(walker.currentNode, match.index);
+        range.setEnd(walker.currentNode, match.index + match[0].length);
+        for (const rect of range.getClientRects()) {
+          lines.push(
+            rect.left >= Math.max(rowBounds.left, labelBounds.left) - 0.5 &&
+              rect.right <= Math.min(rowBounds.right, labelBounds.right) + 0.5 &&
+              rect.top >= Math.max(rowBounds.top, labelBounds.top) - 0.5 &&
+              rect.bottom <= Math.min(rowBounds.bottom, labelBounds.bottom) + 0.5,
+          );
+        }
       }
     }
     return lines;
@@ -422,7 +428,15 @@ async function expectTimingInsideFooter(page: Page): Promise<void> {
   expect(paintedLines.every(Boolean)).toBe(true);
 }
 
-async function expectFooterWithinWidth(page: Page, width: number): Promise<void> {
+interface FooterWidthInput {
+  width: number;
+  testInfo: TestInfo;
+}
+
+async function expectFooterWithinWidth(
+  page: Page,
+  { width, testInfo }: FooterWidthInput,
+): Promise<void> {
   const footer = page.getByTestId("turn-footer").last();
   await footer.evaluate((element, availableWidth) => {
     element.style.width = `${availableWidth}px`;
@@ -441,6 +455,18 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
   const labelBefore = await label.boundingBox();
   await label.hover({ position: { x: labelBefore!.width - 2, y: labelBefore!.height - 2 } });
   await expect(label.getByTestId("turn-footer-timing-label")).toContainText(/\d:\d\d/);
+  const timestamp = await label.getByTestId("turn-footer-timing-label").innerText();
+  expect(timestamp).toMatch(/^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(?: [AP]M)?$/);
+  await testInfo.attach(`footer-${width}-timestamp.after`, {
+    body: timestamp,
+    contentType: "text/plain",
+  });
+  const screenshotPath = testInfo.outputPath(`footer-${width}.after.png`);
+  await page.screenshot({ path: screenshotPath });
+  await testInfo.attach(`footer-${width}.after`, {
+    path: screenshotPath,
+    contentType: "image/png",
+  });
   expect(await label.boundingBox()).toMatchObject({
     x: labelBefore!.x,
     width: labelBefore!.width,
@@ -467,12 +493,13 @@ async function expectFooterWithinWidth(page: Page, width: number): Promise<void>
 test("footer timing fits the chat column and swapping labels keeps controls in place", async ({
   page,
   agent,
-}) => {
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 960 });
   await openAgentRoute(page, agent);
-  await expectFooterWithinWidth(page, 140);
-  await expectFooterWithinWidth(page, 150);
-  await expectFooterWithinWidth(page, 300);
-  await expectFooterWithinWidth(page, 880);
+  await expectFooterWithinWidth(page, { width: 140, testInfo });
+  await expectFooterWithinWidth(page, { width: 150, testInfo });
+  await expectFooterWithinWidth(page, { width: 300, testInfo });
+  await expectFooterWithinWidth(page, { width: 880, testInfo });
 });
 
 async function visibleFooterLeftEdges(page: Page): Promise<number[]> {

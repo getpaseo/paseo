@@ -1,0 +1,150 @@
+Validation evidence: full chat message timestamps
+Base: 0e67045c4b220162637c54ff470468fbafe201c9
+Runtime: Linux, Node v22.22.0, test-local Git 2.47.3, locked Playwright/Chromium.
+Tested: browser widths 1280 and 390; locales en-US and en-GB; timezone Asia/Shanghai.
+Native apps and Electron were not tested.
+
+COMMAND: TZ=Asia/Shanghai npm --prefix packages/app run test -- src/utils/time.test.ts --bail=1
+> @getpaseo/app@0.16.1 test
+> vitest run src/utils/time.test.ts --bail=1
+
+
+ RUN  v4.1.7 /data00/home/lijiahao.me/project/worktree/27bb37fa/full-chat-timestamps/packages/app
+
+ ✓ |unit| src/utils/time.test.ts (41 tests) 30ms
+
+ Test Files  1 passed (1)
+      Tests  41 passed (41)
+   Start at  21:15:11
+   Duration  424ms (transform 71ms, setup 57ms, import 37ms, tests 30ms, environment 0ms)
+
+COMMAND: TZ=America/Los_Angeles npm --prefix packages/app run test -- src/utils/time.test.ts --bail=1
+> @getpaseo/app@0.16.1 test
+> vitest run src/utils/time.test.ts --bail=1
+
+
+ RUN  v4.1.7 /data00/home/lijiahao.me/project/worktree/27bb37fa/full-chat-timestamps/packages/app
+
+ ✓ |unit| src/utils/time.test.ts (41 tests) 34ms
+
+ Test Files  1 passed (1)
+      Tests  41 passed (41)
+   Start at  05:15:13
+   Duration  393ms (transform 70ms, setup 57ms, import 36ms, tests 34ms, environment 0ms)
+
+COMMAND: npm run typecheck
+> paseo@0.16.1 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/builtin-plugins@0.16.1 typecheck
+> tsgo -p tsconfig.json --noEmit
+
+
+> @getpaseo/expo-two-way-audio@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.16.1 typecheck
+> tsgo --noEmit && npm run typecheck:examples
+
+
+> @getpaseo/plugin@0.16.1 typecheck:examples
+> npm --prefix ../../plugin-examples/markdown-panel install --ignore-scripts --no-audit --no-fund && tsgo -p tsconfig.examples.json --noEmit
+
+
+up to date in 224ms
+
+> @getpaseo/protocol@0.16.1 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.16.1 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts: envelope + 252 session message validators
+
+> @getpaseo/protocol@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.16.1 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.16.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.16.1 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.16.1 typecheck
+> tsgo --noEmit
+
+COMMAND: npm run lint
+> paseo@0.16.1 lint
+> oxlint
+
+Found 0 warnings and 0 errors.
+Finished in 5.8s on 5565 files with 177 rules using 32 threads.
+
+COMMAND: npm run format
+> paseo@0.16.1 format
+> oxfmt .
+
+Finished in 2495ms on 6073 files using 32 threads.
+
+OLD-UI ACCEPTANCE CHECK:
+The requested full-date contract is absent in the previous presentation.
+    Expected pattern: /^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(?: [AP]M)?$/
+    Received string:  "9:16 PM"
+
+BROWSER RUN:
+PATH=/tmp/paseo-timestamp-git/bin:$PATH npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/agent-turn-end.spec.ts e2e/browser/agent-message-submission.spec.ts --grep 'footer timing fits|submitted message timestamp' --workers=1 --reporter=list,json --output=/tmp/full-chat-timestamps-evidence/after
+  ✓  1 [browser] › e2e/browser/agent-message-submission.spec.ts:923:9 › Agent message submission › Message timestamps in en-US › shows the submitted message timestamp in a 1280px browser (11.1s)
+  ✓  2 [browser] › e2e/browser/agent-message-submission.spec.ts:923:9 › Agent message submission › Message timestamps in en-US › shows the submitted message timestamp in a 390px browser (9.9s)
+  ✓  3 [browser] › e2e/browser/agent-message-submission.spec.ts:923:9 › Agent message submission › Message timestamps in en-GB › shows the submitted message timestamp in a 1280px browser (10.9s)
+  ✓  4 [browser] › e2e/browser/agent-message-submission.spec.ts:923:9 › Agent message submission › Message timestamps in en-GB › shows the submitted message timestamp in a 390px browser (10.2s)
+  ✘  5 [browser] › e2e/browser/agent-turn-end.spec.ts:483:1 › footer timing fits the chat column and swapping labels keeps controls in place (10.1s)
+  1 failed
+  4 passed (1.3m)
+
+The four message cases passed. The footer check initially included an unpainted wrap space:
+date rect right=864.5625, label right=867; wrap-space rect right=868.703125.
+The final check measures non-whitespace text and retains the original 0.5px tolerance.
+
+FINAL FOOTER RUN: PATH=/tmp/paseo-timestamp-git/bin:$PATH npm run test:e2e --workspace=@getpaseo/app -- e2e/browser/agent-turn-end.spec.ts --grep 'footer timing fits' --workers=1 --reporter=list,json --output=/tmp/full-chat-timestamps-evidence/footer-final
+  ✓  1 [browser] › e2e/browser/agent-turn-end.spec.ts:492:1 › footer timing fits the chat column and swapping labels keeps controls in place (10.9s)
+  1 passed (33.5s)
+
+ACTUAL AFTER LABELS:
+footer-140-timestamp.after.txt: 2026-11-18 9:23 PM
+footer-150-timestamp.after.txt: 2026-11-18 9:23 PM
+footer-300-timestamp.after.txt: 2026-11-18 9:23 PM
+footer-880-timestamp.after.txt: 2026-11-18 9:23 PM
+turn-footer-1280-en-GB-timestamp.after.txt: 2026-11-18 21:19
+turn-footer-1280-en-US-timestamp.after.txt: 2026-11-18 9:18 PM
+turn-footer-390-en-GB-timestamp.after.txt: 2026-11-18 21:19
+turn-footer-390-en-US-timestamp.after.txt: 2026-11-18 9:19 PM
+user-message-1280-en-GB-timestamp.after.txt: 2026-11-18 21:19
+user-message-1280-en-US-timestamp.after.txt: 2026-11-18 9:18 PM
+user-message-390-en-GB-timestamp.after.txt: 2026-11-18 21:19
+user-message-390-en-US-timestamp.after.txt: 2026-11-18 9:19 PM

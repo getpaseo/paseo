@@ -26,7 +26,7 @@ import { setAssistantMessageHeight } from "@/utils/assistant-message-height-esti
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
-import { formatDuration, formatMessageTimestamp } from "@/utils/time";
+import { formatDuration, formatFullMessageTimestamp } from "@/utils/time";
 import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { useToolCallExpanded } from "@/tool-calls/expansion-context";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
@@ -424,7 +424,7 @@ export const UserMessage = memo(function UserMessage({
   const hasAttachments = attachments.length > 0;
   const showTrailingRow = !isPending && hasText && (isCompact || isNative || isHovered);
   const formattedTimestamp = useMemo(
-    () => formatMessageTimestamp(new Date(timestamp)),
+    () => formatFullMessageTimestamp(new Date(timestamp)),
     [timestamp],
   );
   const rewindMutation = useRewindAgentMutation({ serverId, agentId, client, messageId });
@@ -634,7 +634,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     [durationMs, t],
   );
   const timestampLabel = useMemo(
-    () => (completedAt ? formatMessageTimestamp(completedAt) : ""),
+    () => (completedAt ? formatFullMessageTimestamp(completedAt) : ""),
     [completedAt],
   );
 
