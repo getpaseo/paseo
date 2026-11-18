@@ -19,12 +19,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import {
-  PiProviderOptionsSchema,
-  PiRpcAgentClient,
-  PiRpcAgentSession,
-  transformPiModels,
-} from "./agent.js";
+import { PiProviderOptionsSchema, PiRpcAgentClient, PiRpcAgentSession } from "./agent.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
@@ -1892,6 +1887,7 @@ describe("PiRpcAgentSession", () => {
       createConfig({
         systemPrompt: "Agent prompt",
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       }),
     );
 
@@ -1910,7 +1906,9 @@ describe("PiRpcAgentSession", () => {
 
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
 
     await session.close();
   });
@@ -1933,6 +1931,7 @@ describe("PiRpcAgentSession", () => {
       },
       {
         daemonAppendSystemPrompt: "Daemon prompt",
+        pluginAppendSystemPrompt: ["Plugin one", "Plugin two"],
       },
     );
 
@@ -1956,7 +1955,9 @@ describe("PiRpcAgentSession", () => {
     ]);
     await expect(
       applyPaseoExtensionSystemPrompt(actualLaunch.extensionPaths[0]!, "Pi project prompt"),
-    ).resolves.toBe("Pi project prompt\n\nAgent prompt\n\nDaemon prompt");
+    ).resolves.toBe(
+      "Pi project prompt\n\nAgent prompt\n\nDaemon prompt\n\nPlugin one\n\nPlugin two",
+    );
   });
 
   test("updates model and thinking through Pi runtime commands", async () => {
@@ -3970,35 +3971,73 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   });
 });
 
-describe("transformPiModels", () => {
-  test("normalizes labels that include the upstream provider prefix", () => {
-    expect(
-      transformPiModels([
-        {
-          provider: "pi",
-          id: "openrouter/google/gemini-2.5-flash-lite",
-          label: "openrouter/google/gemini_2.5 flash lite",
-        },
-        {
-          provider: "pi",
-          id: "openrouter/openai/gpt-5.5",
-          label: "openrouter/OpenAI: GPT-5.5",
-        },
-      ]),
-    ).toEqual([
-      {
-        provider: "pi",
-        id: "openrouter/google/gemini-2.5-flash-lite",
-        label: "gemini 2.5 flash lite",
-        description: "openrouter/google/gemini_2.5 flash lite",
+describe("Pi catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
       },
-      {
-        provider: "pi",
-        id: "openrouter/openai/gpt-5.5",
-        label: "GPT-5.5",
-        description: "openrouter/OpenAI: GPT-5.5",
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
       },
-    ]);
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "shortens a path-like name to its last segment",
+      model: {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+      },
+      label: "gemini-2.5-flash-lite",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "openrouter", id: "google/gemini_2.5-flash-lite" },
+      label: "gemini 2.5-flash-lite",
+    },
+    {
+      name: "falls back to an id with spaces when the name is blank",
+      model: { provider: "local", id: "DeepSeek-V4.1-Flash 2.25bpw (Strata)", name: "  " },
+      label: "DeepSeek-V4.1-Flash 2.25bpw (Strata)",
+    },
+  ])("$name", async ({ model, label }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
   });
 });
 

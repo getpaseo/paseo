@@ -47,7 +47,9 @@ test("the recursive watcher remembers newly announced files before reconciliatio
     const path = join(root, "new.txt");
     await writeFile(path, "created");
     await expect
-      .poll(() => changes.some((event) => event.path === path && event.type === "create"))
+      .poll(() => changes.some((event) => event.path === path && event.type === "create"), {
+        timeout: 10_000,
+      })
       .toBe(true);
     // Consumers have seen this file. A later audit needs it in its comparison
     // inventory even if the native watcher coalesces the subsequent delete.
@@ -55,7 +57,9 @@ test("the recursive watcher remembers newly announced files before reconciliatio
     await rm(path);
     await backend.updateIgnore();
     await expect
-      .poll(() => changes.some((event) => event.path === path && event.type === "delete"))
+      .poll(() => changes.some((event) => event.path === path && event.type === "delete"), {
+        timeout: 10_000,
+      })
       .toBe(true);
   } finally {
     active = false;

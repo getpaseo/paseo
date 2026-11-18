@@ -91,8 +91,12 @@ You need at least one agent CLI installed and configured with your credentials:
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
-- [Antigravity](https://paseo.sh/docs/supported-providers#antigravity)
-- [Muse Code](https://paseo.sh/docs/muse-code)
+- [Antigravity](https://paseo.sh/docs/supported-providers/antigravity)
+- [Muse Code](https://paseo.sh/docs/supported-providers/muse-code)
+- [fx](https://paseo.sh/docs/supported-providers/fx)
+- [Hoplite](https://paseo.sh/docs/supported-providers/hoplite)
+
+Paseo also runs Cursor, Gemini CLI, and many other agents. See [Supported providers](https://paseo.sh/docs/supported-providers) for the full list and setup steps.
 
 ### Desktop app (recommended)
 

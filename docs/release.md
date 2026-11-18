@@ -248,6 +248,7 @@ npm run release:promote          # Promote X.Y.Z-beta.N to stable X.Y.Z
 
 - Beta tags are published GitHub prereleases like `v0.1.41-beta.1`
 - Betas publish npm packages with `--tag beta`, so `npm install @getpaseo/cli@beta` opts in while plain `npm install @getpaseo/cli` stays on `latest`
+- The user-facing beta instructions, including the public TestFlight join link for the `Paseo Beta` group, live in `public-docs/updates.md` and its `zh-CN` pair. Update them when a beta path is added or removed.
 - Betas publish desktop assets and APKs for testing. They also build iOS, upload it to TestFlight, add it to the `Paseo Beta` external group, and submit it for Beta App Review. They do not submit mobile builds to the production stores.
 - `release:promote` creates a fresh stable tag like `v0.1.41`; the final release never reuses the beta tag
 - Desktop assets now come from the Electron package at `packages/desktop`
@@ -488,7 +489,7 @@ The GitHub Release body is populated automatically by the `Release Notes Sync` w
 
 - The website download page defaults to GitHub's latest published **stable** release.
 - A published beta prerelease is offered behind the Stable/Beta switch on `/download` (`?channel=beta`), never as the default. The switch only appears while the newest prerelease leads stable on its core version, so promoting `X.Y.Z-beta.N` to `X.Y.Z` retires the beta channel from the page until the next beta line opens.
-- Homebrew, the Play Store, the App Store, and `app.paseo.sh` have no beta. The Beta view drops those rows, and the whole Web section, rather than showing an inert "stable only" placeholder. When a surface gains a beta path — say a public TestFlight link — add its row back in `packages/website/src/routes/download.tsx`.
+- Homebrew, the Play Store, and `app.paseo.sh` have no beta. The Beta view drops those rows, and the whole Web section, rather than showing an inert "stable only" placeholder. The iOS row swaps the App Store pill for the public TestFlight link (`testFlightBetaUrl` in `packages/website/src/downloads.tsx`). When another surface gains a beta path, add its row back in `packages/website/src/routes/{-$locale}/download.tsx`.
 - The default download target only moves when you publish the final stable release tag like `v0.1.41`.
 - The public `/changelog` page renders `CHANGELOG.md` as-is, so the in-flight `-beta.N` entry shows there once it lands on `main` — that's intended, it's where beta users check what's coming. Only the **default download target** stays pinned to the latest stable; the download links read GitHub's releases API, not the changelog, so a `-beta.N` heading on top never affects them.
 - The download page's "What's new" link deep-links the **minor group** anchor (`/changelog#release-0.3`), not the exact entry: the beta entry is renamed on each beta and on promotion, so the minor group remains the durable target. A version with no entry in the bundled changelog — a tag whose changelog commit hasn't redeployed the site yet — links the plain `/changelog` instead of a dead anchor.
@@ -669,9 +670,9 @@ Every section bullet must be scannable at a glance. The changelog is not release
 ## Changelog highlights
 
 Every release entry leads with highlights: the changes a user would name first when asked what is
-new. They are a list above the first `###` section, biggest first. The sections below are the
-full record; a reader who stops after the highlights should have missed nothing they would ask
-about.
+new. They are a list above the first `###` section, ranked as
+[Changelog ordering](#changelog-ordering) describes. The sections below are the full record; a
+reader who stops after the highlights should have missed nothing they would ask about.
 
 ```markdown
 ## 0.16.0 - 2026-11-20
@@ -715,7 +716,7 @@ about.
 | The same shortcuts as desktop: command center, file picker, new workspace, workspace jumps | The same shortcuts as desktop, including your custom bindings                                                    |
 
 Before showing a draft, read only the bold lead-ins top to bottom. Each one must answer "what is
-new?" without its description.
+new?" without its description, and each must outrank the one below it.
 
 ## Changelog attribution
 
@@ -748,7 +749,32 @@ Rules:
 
 ## Changelog ordering
 
-Highlights come first, ordered by user impact. Entries within each section (Added, Improved, Fixed) follow the same order:
+Rank highlights by how much of a user's day the change touches: how many users get it, and how
+often they meet it. Put every highlight in one of four groups, then order each group by the same
+question.
+
+1. **New capabilities.** Something a user could not see or do in the last release:
+   `Background tasks`, `Plugin sidebar views`.
+2. **Everyday things that got better.** Speed, steadiness and polish in what users already do
+   every session: `Faster diff loading`, `Polish`.
+3. **Changes for part of the audience.** They need a particular device, provider or setup:
+   `Keyboard shortcuts on mobile`, `Touch-sized tablet controls`.
+4. **Small conveniences and highlighted fixes.** A user is glad to find them and would not update
+   for them: `Undo workspace archive`, `Fewer reconnects on return`. Fixes are routine, so one
+   that earned a highlight still follows everything new or improved.
+
+- **Reach decides before kind.** A new capability that needs a hardware keyboard is in group 3.
+- **Rank the whole list in one pass.** The order you collected the pull requests in, the alphabet
+  and the order of the sections below are not rankings.
+- **Show the groups with the draft.** List each highlight under its group when you ask for
+  approval, so the maintainer corrects the test and not one position.
+- **A maintainer's note that a change is big moves that change up.** It does not rank the changes
+  it names against each other, and it does not lower the ones it leaves out.
+- **A correction to one highlight is a correction to the test.** Work out which group or question
+  you got wrong, rank every highlight again, and then edit the file. Moving only the named item
+  leaves the same mistake in the others.
+
+Bullets within each section (Added, Changed, Fixed) follow this order:
 
 1. **User-facing features and changes first** — things users will notice, want to try, or that change their workflow.
 2. **Quality-of-life improvements** — polish, performance, smoother interactions.

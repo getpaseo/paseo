@@ -114,7 +114,7 @@ nav: API 参考
 
 ### 时间线句柄 {#timeline-handle}
 
-`agent.timeline.refetch(options?)` 获取一页时间线。选项有 `direction`、`cursor`、`limit`、`projection` 和 `requestId`。
+`agent.timeline.refetch(options?)` 获取一页时间线。选项有 `direction`、`cursor`、`limit`、`projection`、`wholeTurns` 和 `requestId`。`wholeTurns: true` 会把 `tail` 或 `before` 页向前扩展到它所触及的最早一轮的开头，因此 `{ direction: "tail", limit: 1, wholeTurns: true }` 返回最近一轮。它需要 `features.wholeTurnTimeline`；旧版主机会忽略它，返回 `limit` 条记录。
 
 `agent.timeline.subscribe(handler)` 为该 Agent 建立网络订阅需求，并在重连后恢复它。它返回的取消订阅函数会释放这项需求；开始工作之前，请 await `unsubscribe.ready` 以等待 daemon 的初始确认。投递只包含实时内容。重连时会发出一个本地的 `subscription_restored` 事件；错过的历史请用 `refetch()` 显式请求。实时的替换会使之前的 epoch 失效。回调的形状、分页和失败行为见[时间线事件](./events.md#follow-timeline-events)。
 

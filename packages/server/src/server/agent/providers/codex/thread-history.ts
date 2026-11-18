@@ -124,15 +124,28 @@ async function* readPaginatedHistory(
 ): AsyncGenerator<CodexHistoryRow> {
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
+  let limit = PAGE_SIZE;
   for (;;) {
-    const page = CodexItemsPageSchema.parse(
-      await requestHistory(
-        client,
-        "thread/items/list",
-        { threadId, limit: PAGE_SIZE, sortDirection: "asc", cursor },
+    let response: unknown;
+    try {
+      response = await client.request("thread/items/list", {
+        threadId,
+        limit,
+        sortDirection: "asc",
+        cursor,
+      });
+    } catch (error) {
+      if (!(error instanceof CodexAppServerResponseTooLargeError)) throw error;
+      // Image-heavy items can push a full page past the line cap; retry the same cursor smaller.
+      if (limit > 1) {
+        limit = Math.max(1, Math.floor(limit / 2));
+        continue;
+      }
+      throw new CodexThreadHistoryTooLargeError(
         "The rest of this Codex thread's history is too large to load.",
-      ),
-    );
+      );
+    }
+    const page = CodexItemsPageSchema.parse(response);
     for (const row of page.data) {
       yield {
         item: row.item,

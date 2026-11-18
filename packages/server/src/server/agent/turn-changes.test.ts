@@ -38,6 +38,9 @@ test("turn snapshots compare full worktrees while leaving the real index alone",
     expect(after).toMatch(/^[0-9a-f]{40,64}$/);
     await retainTurnChanges(cwd, "agent-1", { turnId: "turn-1", before: before!, after: after! });
 
+    await discardAgentTurnChanges(cwd, "absent-agent");
+    await retainPendingTurnStart(cwd, "partial-agent", before!);
+    await discardAgentTurnChanges(cwd, "partial-agent");
     await retainPendingTurnStart(cwd, "other-agent", before!);
     await discardAgentTurnChanges(cwd, "agent-1");
     expect(

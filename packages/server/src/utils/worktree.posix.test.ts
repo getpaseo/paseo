@@ -1406,6 +1406,32 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       rmSync(tempDir, { recursive: true, force: true });
     });
 
+    it("keeps an otherwise unreachable detached commit after deleting the worktree", async () => {
+      const result = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "keep-commit",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "feature/keep-commit" },
+        paseoHome,
+      });
+      execFileSync("git", ["checkout", "--detach"], { cwd: result.worktreePath });
+      writeFileSync(join(result.worktreePath, "file.txt"), "detached change\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: result.worktreePath });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "detached"], {
+        cwd: result.worktreePath,
+      });
+      const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: result.worktreePath,
+        encoding: "utf8",
+      }).trim();
+
+      await deletePaseoWorktree({ cwd: repoDir, worktreePath: result.worktreePath, paseoHome });
+      execFileSync("git", ["reflog", "expire", "--expire=now", "--all"], { cwd: repoDir });
+      execFileSync("git", ["gc", "--prune=now"], { cwd: repoDir });
+      expect(
+        execFileSync("git", ["cat-file", "-t", commit], { cwd: repoDir, encoding: "utf8" }).trim(),
+      ).toBe("commit");
+    });
+
     it("places, owns, lists, and deletes a worktree outside the legacy root", async () => {
       // Sibling layout: <repo-parent>/wt-<slug>
 
