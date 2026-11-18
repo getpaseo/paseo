@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
@@ -20,8 +20,14 @@ const initial: ChangeRequestSnapshot = {
 
 afterEach(() => vi.useRealTimers());
 
+async function createTestHome() {
+  const artifacts = join(import.meta.dirname, "../../../../../../.artifacts");
+  await mkdir(artifacts, { recursive: true });
+  return mkdtemp(join(artifacts, "pr-watches-"));
+}
+
 test("shares one observation and restores a busy recipient's unsent digest", async () => {
-  const home = await mkdtemp(join(process.cwd(), "../../.artifacts/pr-watches-"));
+  const home = await createTestHome();
   vi.useFakeTimers();
   let listener: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
   let observations = 0;
@@ -95,7 +101,7 @@ test("shares one observation and restores a busy recipient's unsent digest", asy
 });
 
 test("withdraws an unsent update without blocking another PR or stopping another recipient", async () => {
-  const home = await mkdtemp(join(process.cwd(), "../../.artifacts/pr-watches-"));
+  const home = await createTestHome();
   vi.useFakeTimers();
   const observers = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
   const attempt = Promise.withResolvers<void>();

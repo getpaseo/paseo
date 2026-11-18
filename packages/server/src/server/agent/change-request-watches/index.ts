@@ -179,7 +179,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
                   ? { ...last, events: [...last.events, ...changes] }
                   : { id: randomUUID(), dueAt: windowEnd, events: changes };
               return {
-                ...watcher,
+                agentId: watcher.agentId,
                 digests: [
                   ...(last?.dueAt === windowEnd ? watcher.digests.slice(0, -1) : watcher.digests),
                   digest,
