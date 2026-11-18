@@ -340,20 +340,38 @@ export default function contribute(server) {
   }
 }, 60_000);
 
-test.each(["builtin", "directory"])(
-  "%s usage plugins reach the environment proxy",
-  async (mode) => {
+async function startRecordingProxy(tunnels: string[]) {
+  const proxy = createServer();
+  proxy.on("connect", (request, socket) => {
+    tunnels.push(request.url!);
+    socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const address = proxy.address();
+  if (!address || typeof address === "string") throw new Error("Missing proxy address");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    async close() {
+      proxy.closeAllConnections();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    },
+  };
+}
+
+test.each([
+  { mode: "builtin", claudeSettingsProxy: false },
+  { mode: "directory", claudeSettingsProxy: false },
+  { mode: "builtin", claudeSettingsProxy: true },
+  { mode: "directory", claudeSettingsProxy: true },
+])(
+  "$mode usage plugins reach the environment proxy (Claude settings.json proxy: $claudeSettingsProxy)",
+  async ({ mode, claudeSettingsProxy }) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "usage-proxy-"));
-    const tunnels: string[] = [];
-    const proxy = createServer();
-    proxy.on("connect", (request, socket) => {
-      tunnels.push(request.url!);
-      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
-    });
-    proxy.listen(0, "127.0.0.1");
-    await once(proxy, "listening");
-    const address = proxy.address();
-    if (!address || typeof address === "string") throw new Error("Missing proxy address");
+    const daemonTunnels: string[] = [];
+    const claudeTunnels: string[] = [];
+    const daemonProxy = await startRecordingProxy(daemonTunnels);
+    const claudeProxy = await startRecordingProxy(claudeTunnels);
     const guard = path.join(root, "network-guard.cjs");
     // Prevent vendor DNS/network access even when proxy support is broken.
     await writeFile(
@@ -371,6 +389,12 @@ dns.lookup = function(host, ...args) {
       path.join(root, ".claude", ".credentials.json"),
       JSON.stringify({ claudeAiOauth: { accessToken: "fixture-claude" } }),
     );
+    if (claudeSettingsProxy) {
+      await writeFile(
+        path.join(root, ".claude", "settings.json"),
+        JSON.stringify({ env: { HTTPS_PROXY: claudeProxy.url } }),
+      );
+    }
     await writeFile(
       path.join(root, ".codex", "auth.json"),
       JSON.stringify({ tokens: { access_token: "fixture-codex", account_id: "fixture-account" } }),
@@ -394,17 +418,25 @@ dns.lookup = function(host, ...args) {
             CODEX_HOME: path.join(root, ".codex"),
             CLAUDE_CONFIG_DIR: path.join(root, ".claude"),
             NODE_OPTIONS: `--require=${JSON.stringify(guard.replaceAll("\\", "/"))}`,
-            https_proxy: `http://127.0.0.1:${address.port}`,
+            https_proxy: daemonProxy.url,
             no_proxy: "",
             NO_PROXY: "",
           },
         },
       );
-      expect(tunnels).toContain("api.anthropic.com:443");
-      expect(tunnels).toContain("chatgpt.com:443");
+      expect(daemonTunnels).toContain("chatgpt.com:443");
+      if (claudeSettingsProxy) {
+        // Claude Code's settings.json proxy applies to Claude account requests only.
+        expect(claudeTunnels).toContain("api.anthropic.com:443");
+        expect(claudeTunnels).not.toContain("chatgpt.com:443");
+        expect(daemonTunnels).not.toContain("api.anthropic.com:443");
+      } else {
+        expect(daemonTunnels).toContain("api.anthropic.com:443");
+        expect(claudeTunnels).toEqual([]);
+      }
     } finally {
-      proxy.closeAllConnections();
-      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await daemonProxy.close();
+      await claudeProxy.close();
       await rm(root, { recursive: true, force: true });
     }
   },

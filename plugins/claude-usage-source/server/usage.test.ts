@@ -8,7 +8,10 @@ import { inputSchema, type UsageInput } from "../shared/input.js";
 import { hashAccountKey, type UsageReport } from "@getpaseo/plugin/server/usage";
 
 function credentialInput(directory: string): UsageInput {
-  return { route: { store: "claude", path: join(directory, ".credentials.json") } };
+  return {
+    route: { store: "claude", path: join(directory, ".credentials.json") },
+    settingsPath: join(directory, "settings.json"),
+  };
 }
 
 function writeClaudeCredentials(
@@ -790,6 +793,7 @@ it("discovery and fetch share the explicit macOS keychain route", async () => {
           account: "fixture",
           service: `Claude Code-credentials-${hashAccountKey(directory).slice(0, 8)}`,
         },
+        settingsPath: join(directory, "settings.json"),
       },
       async () =>
         jsonResponse({
@@ -918,6 +922,7 @@ it("keeps an expired Keychain login without calling the network and prefers Keyc
         harness: "Claude",
         input: {
           route: { store: "keychain", service: "Claude Code-credentials", account: "fixture" },
+          settingsPath: join(directory, "settings.json"),
         },
       },
     ]);

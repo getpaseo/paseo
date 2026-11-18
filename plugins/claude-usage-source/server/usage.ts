@@ -1,4 +1,5 @@
 import { discoverOmp, piAuthPath, readHarness, type StoreLookup } from "./stores.js";
+import { claudeSettingsFetch, type ClaudeFetch } from "./proxy.js";
 import type { UsageInput } from "../shared/input.js";
 import { execFile } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
@@ -343,11 +344,14 @@ interface ClaudeCredentialLookup extends StoreLookup {
   claudeHome?: string;
 }
 
-function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
+function claudeHomeDirectory(lookup: ClaudeCredentialLookup): string {
   const home = lookup.home ?? homedir();
   const env = lookup.env ?? process.env;
-  const claudeHome = lookup.claudeHome ?? env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
-  return join(claudeHome, ".credentials.json");
+  return lookup.claudeHome ?? env.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
+}
+
+function claudeCredentialPath(lookup: ClaudeCredentialLookup): string {
+  return join(claudeHomeDirectory(lookup), ".credentials.json");
 }
 
 async function keychainCredentialRecord(
@@ -366,7 +370,7 @@ async function keychainCredentialRecord(
 export async function discover(
   scope: UsageScope,
   lookup: ClaudeCredentialLookup = {},
-  fetchApi: typeof fetch = fetch,
+  fetchApi?: ClaudeFetch,
 ): Promise<UsageAccount[]> {
   if (scope.kind === "session")
     lookup = {
@@ -391,7 +395,7 @@ export async function discover(
     try {
       const profile = await readProfile(
         credentials.oauth.accessToken,
-        fetchApi,
+        fetchApi ?? (await claudeSettingsFetch(input.settingsPath)),
         lookup.now ?? Date.now,
       );
       accounts.push("status" in profile ? fallback : { ...profile, harness, input });
@@ -420,9 +424,10 @@ function claudeKeychainRoute(lookup: ClaudeCredentialLookup) {
 
 async function claudeRoute(lookup: ClaudeCredentialLookup): Promise<UsageInput> {
   const route = claudeKeychainRoute(lookup);
+  const settingsPath = join(claudeHomeDirectory(lookup), "settings.json");
   return (await keychainCredentialRecord(lookup, route))
-    ? { route }
-    : { route: { store: "claude", path: claudeCredentialPath(lookup) } };
+    ? { route, settingsPath }
+    : { route: { store: "claude", path: claudeCredentialPath(lookup) }, settingsPath };
 }
 
 async function globalRoutes(lookup: ClaudeCredentialLookup): Promise<UsageInput[]> {
@@ -493,7 +498,7 @@ function toCredentialRecord(credentials: ClaudeCredentials): ClaudeCredentialRec
 
 export async function fetchUsage(
   input: UsageInput,
-  fetchApi: typeof fetch = fetch,
+  fetchApi?: ClaudeFetch,
   credentialLookup: ClaudeCredentialLookup = {},
 ): Promise<UsageReport> {
   /**
@@ -534,7 +539,8 @@ export async function fetchUsage(
       throw rateLimitedError(limitedUntil - now);
     rateLimitedUntil.delete(tokenKey);
 
-    const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
+    const api = fetchApi ?? (await claudeSettingsFetch(input.settingsPath));
+    const res = await api("https://api.anthropic.com/api/oauth/usage", {
       signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
@@ -653,7 +659,7 @@ function pruneProfileCache(now: number): void {
 
 async function readProfile(
   token: string,
-  fetchApi: typeof fetch,
+  fetchApi: ClaudeFetch,
   now: () => number,
 ): Promise<ClaudeIdentity> {
   const tokenHash = hashAccountKey(token);
