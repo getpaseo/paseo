@@ -47,20 +47,12 @@ export function useDraftProviderOptions(input: {
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
-  const providerPreferences = preferences.providerPreferences?.[provider ?? ""];
-  const persisted = providerPreferences?.options;
-  const savedEffort = providerPreferences?.thinkingByModel?.[modelId ?? ""];
+  const persisted = preferences.providerPreferences?.[provider ?? ""]?.options;
 
   useEffect(() => model.observeProvider(provider), [model, provider]);
   useEffect(() => model.setRemembered(persisted ?? {}), [model, persisted]);
-  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
-  useEffect(() => {
-    if (provider === "claude" && modelId && savedEffort === "ultracode") {
-      model.seedModel(modelId, { ultracode: persisted?.ultracode !== false });
-    }
-  }, [model, modelId, persisted, provider, savedEffort]);
 
-  const ownOptions = ownDraftOptions(state, modelId);
+  const ownOptions = ownDraftOptions(state);
   const draftConfig = useMemo(
     () =>
       draftControlsRequest(state, {
@@ -77,6 +69,14 @@ export function useDraftProviderOptions(input: {
     [draftConfig, serverId],
   );
   const requestKey = JSON.stringify(queryKey);
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+  const retainLegacyUltracode = useCallback(
+    () =>
+      thinkingOptionId === "ultracode"
+        ? model.retainResolvedOption("ultracode", requestKey)
+        : undefined,
+    [model, requestKey, thinkingOptionId],
+  );
 
   const { data } = useFetchQuery({
     queryKey,
@@ -130,13 +130,14 @@ export function useDraftProviderOptions(input: {
   );
 
   // What the draft will create with, the plugin's own edits included, before the daemon answers.
-  const shownOptions = shownDraftOptions(state, { provider, requestKey, modelId });
+  const shownOptions = shownDraftOptions(state, { provider, requestKey });
 
   return {
     optionControls,
     options: ownOptions,
     shownOptions,
     setOption,
+    retainLegacyUltracode,
     applyProfile: model.applyProfile,
   };
 }

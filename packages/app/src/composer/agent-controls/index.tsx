@@ -21,6 +21,7 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { findThinkingOptionReplacement } from "@/provider-selection/resolve-agent-form";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -1318,10 +1319,9 @@ export function DraftAgentControls({
 
   // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
   const effectiveSelectedThinkingOption =
-    selectedThinkingOptionId === "ultracode" &&
-    !mappedThinkingOptions.some((option) => option.id === selectedThinkingOptionId)
-      ? "xhigh"
-      : selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
+    findThinkingOptionReplacement(thinkingOptions, selectedThinkingOptionId) ||
+    selectedThinkingOptionId ||
+    mappedThinkingOptions[0]?.id;
 
   const modelOptions = useMemo<AgentControlOption[]>(
     () =>

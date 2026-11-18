@@ -14,6 +14,7 @@ import {
 import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
+  findThinkingOptionReplacement,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
   resolveDefaultModelId,
@@ -578,8 +579,8 @@ function updateDerivedState(input: {
   );
   // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
   const availableThinkingOptions =
-    input.state.selectedProvider === "claude" &&
     input.state.selectedThinkingOptionId === "ultracode" &&
+    findThinkingOptionReplacement(thinkingOptions, "ultracode") &&
     !thinkingOptions.some((option) => option.id === "ultracode")
       ? [...thinkingOptions, { id: "ultracode", label: "Ultra Code" }]
       : thinkingOptions;

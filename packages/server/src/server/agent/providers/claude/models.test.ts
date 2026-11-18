@@ -410,7 +410,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       { id: "low", label: "Low" },
       { id: "medium", label: "Medium" },
       { id: "high", label: "High", isDefault: true },
-      { id: "xhigh", label: "Extra High" },
+      {
+        id: "xhigh",
+        label: "Extra High",
+        metadata: { replacesThinkingOptionId: "ultracode" },
+      },
       { id: "max", label: "Max" },
     ];
     const configDir = await createClaudeConfigDir({

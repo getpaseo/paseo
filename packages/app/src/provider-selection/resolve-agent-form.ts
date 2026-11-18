@@ -167,6 +167,14 @@ function resolvePreferredThinkingOptionId(input: {
   return "";
 }
 
+// COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+export function findThinkingOptionReplacement(
+  options: NonNullable<AgentModelDefinition["thinkingOptions"]>,
+  legacyId: string,
+): string | undefined {
+  return options.find((option) => option.metadata?.replacesThinkingOptionId === legacyId)?.id;
+}
+
 export function resolveThinkingOptionId(args: {
   availableModels: AgentModelDefinition[] | null;
   modelId: string;
@@ -183,12 +191,7 @@ export function resolveThinkingOptionId(args: {
   ) {
     return normalizedThinkingOptionId;
   }
-  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
-  if (
-    normalizedThinkingOptionId === "ultracode" &&
-    effectiveModel?.provider === "claude" &&
-    thinkingOptions.some((option) => option.id === "xhigh")
-  ) {
+  if (findThinkingOptionReplacement(thinkingOptions, normalizedThinkingOptionId)) {
     return normalizedThinkingOptionId;
   }
 

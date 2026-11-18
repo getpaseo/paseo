@@ -30,21 +30,23 @@ function answer(
 }
 
 describe("draft options model", () => {
-  it("keeps a legacy model option when a different effort is chosen", () => {
+  it("retains an Ultracode option only after the current host advertises it", () => {
     const model = openDraftOptions({ provider: "claude" });
-    model.seedModel("opus", { ultracode: true });
-    const form = { provider: "claude", cwd: "/repo", modelId: "opus" };
+    const legacy = { provider: "claude", cwd: "/repo", thinkingOptionId: "ultracode" };
+    model.applyResolved(answer("claude", "old-host", {}, []));
+    expect(model.retainResolvedOption("ultracode", "old-host")).toBeUndefined();
+    expect(draftControlsRequest(model.getState(), legacy)).toEqual(legacy);
+
+    model.applyResolved(
+      answer("claude", "new-host", { ultracode: true }, [
+        { type: "toggle", key: "ultracode", label: "Ultracode" },
+      ]),
+    );
+    expect(model.retainResolvedOption("ultracode", "old-host")).toBeUndefined();
+    expect(model.retainResolvedOption("ultracode", "new-host")).toEqual({ ultracode: true });
     expect(
-      draftControlsRequest(model.getState(), { ...form, thinkingOptionId: "ultracode" }),
-    ).toMatchObject({ providerOptions: { ultracode: true } });
-    expect(
-      draftControlsRequest(model.getState(), { ...form, thinkingOptionId: "high" }),
-    ).toMatchObject({ providerOptions: { ultracode: true } });
-    expect(
-      draftControlsRequest(model.getState(), { ...form, modelId: "sonnet" })?.providerOptions,
-    ).toBeUndefined();
-    model.setOption("ultracode", false);
-    expect(ownDraftOptions(model.getState(), "opus")).toEqual({ ultracode: false });
+      draftControlsRequest(model.getState(), { ...legacy, thinkingOptionId: "high" }),
+    ).toMatchObject({ thinkingOptionId: "high", providerOptions: { ultracode: true } });
   });
 
   it("draws a legacy Fast profile as the Fast tier the daemon resolved", () => {

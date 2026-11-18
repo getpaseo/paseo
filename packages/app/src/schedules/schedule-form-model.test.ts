@@ -215,7 +215,11 @@ describe("schedule form model", () => {
               label: "Opus 4.8",
               thinkingOptions: [
                 { id: "high", label: "High" },
-                { id: "xhigh", label: "Extra high" },
+                {
+                  id: "xhigh",
+                  label: "Extra high",
+                  metadata: { replacesThinkingOptionId: "ultracode" },
+                },
               ],
             },
           ],

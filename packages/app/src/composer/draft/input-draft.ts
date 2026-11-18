@@ -293,6 +293,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     options: draftOptions,
     shownOptions: draftShownOptions,
     setOption: setDraftOption,
+    retainLegacyUltracode,
     applyProfile: applyProfileOptions,
   } = useDraftProviderOptions({
     serverId: formState.selectedServerId,
@@ -311,6 +312,11 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       applyProfileOptions({ provider: profile.provider, options: profile.options });
     },
     [applyProfileOptions, formState],
+  );
+  const setDraftThinking = useCallback(
+    (thinkingOptionId: string) =>
+      formState.setThinkingOptionFromUser(thinkingOptionId, retainLegacyUltracode()),
+    [formState, retainLegacyUltracode],
   );
 
   const commandDraft = useMemo(
@@ -343,6 +349,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         optionControls: draftOptionControls,
         options: draftShownOptions,
         onSetOption: setDraftOption,
+        onSelectThinkingOption: setDraftThinking,
         onApplyAgentProfile: applyDraftAgentProfile,
         context: composerOptions.context ?? "draft",
         metadata,
@@ -360,6 +367,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     draftOptions,
     draftShownOptions,
     setDraftOption,
+    setDraftThinking,
     applyDraftAgentProfile,
     formState,
     metadata,

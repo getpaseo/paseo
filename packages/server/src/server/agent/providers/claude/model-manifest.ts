@@ -238,6 +238,10 @@ function buildThinkingOptions(
       id,
       label: CLAUDE_EFFORT_LABELS[id],
       ...(id === defaultThinkingOptionId ? { isDefault: true } : {}),
+      // COMPAT(claudeUltracodeThinkingOption): added in v0.17.0, remove after 2027-05-18.
+      ...(independentUltracode && id === "xhigh"
+        ? { metadata: { replacesThinkingOptionId: CLAUDE_ULTRACODE_THINKING_OPTION_ID } }
+        : {}),
     })),
     ...(!independentUltracode && effortLevels.includes("xhigh")
       ? [{ id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" }]
