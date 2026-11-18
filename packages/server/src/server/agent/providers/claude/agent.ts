@@ -2400,6 +2400,13 @@ class ClaudeAgentSession implements AgentSession {
   /** True from the moment a query's launch options are copied until the query exists. */
   private queryStarting = false;
   private pendingInterruptAbort = false;
+  private nativeStop: { query: Query; turnId: string | undefined; confirm: () => void } | null =
+    null;
+  private readonly stopPendingSteers = new Set<string>();
+
+  hasPendingInterruptRecovery(): boolean {
+    return this.stopPendingSteers.size > 0;
+  }
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
    * pushed message's command_lifecycle "started" (/compact works for seconds before its init),
@@ -2540,6 +2547,8 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error("A foreground turn is already active");
     }
 
+    if (this.hasPendingInterruptRecovery())
+      throw new Error("Retry Stop before sending another message");
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
       const turnId = this.createTurnId("foreground");
@@ -2577,7 +2586,7 @@ class ClaudeAgentSession implements AgentSession {
           const started =
             this.mainTurnInFlight ||
             (sdkUserMessageId !== null && !this.unstartedMessageUuids.has(sdkUserMessageId));
-          await this.interruptActiveTurn(started);
+          await this.interruptActiveTurn(started, sdkUserMessageId);
         } else {
           cancelIssued = true;
           if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
@@ -2643,7 +2652,7 @@ class ClaudeAgentSession implements AgentSession {
     // A compacting turn still takes a steer: Claude Code holds a `next` message until the
     // compaction finishes. Refusing it makes the manager replace the turn, and that interrupt
     // cancels the compaction.
-    if (activeTurnId !== options.expectedTurnId) {
+    if (this.hasPendingInterruptRecovery() || activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
 
@@ -3099,6 +3108,7 @@ class ClaudeAgentSession implements AgentSession {
       !this.activeForegroundTurnId &&
       !this.autonomousTurn &&
       !this.mainTurnInFlight &&
+      !this.hasPendingInterruptRecovery() &&
       this.unstartedMessageUuids.size === 0 &&
       this.pendingPermissions.size === 0 &&
       this.processingSdkMessages === 0 &&
@@ -3121,6 +3131,8 @@ class ClaudeAgentSession implements AgentSession {
       "provider.claude.session_close.start",
     );
     this.closed = true;
+    this.nativeStop = null;
+    this.stopPendingSteers.clear();
     await this.ensureHistoryReady();
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
     // AgentManager settles the run after runtime release. Preserve cleanup records
@@ -4381,10 +4393,36 @@ class ClaudeAgentSession implements AgentSession {
       }
     } finally {
       if (this.query === activeQuery) {
+        this.nativeStop = null;
+        this.stopPendingSteers.clear();
+        this.unstartedMessageUuids.clear();
+        this.permissionClearingSteerUuids.clear();
         this.query = null;
         this.input = null;
       }
     }
+  }
+
+  private consumeStopResult(message: SDKMessage): boolean {
+    const stop = this.nativeStop;
+    if (
+      stop &&
+      stop.query === this.query &&
+      stop.turnId !== undefined &&
+      stop.turnId === (this.activeForegroundTurnId ?? this.autonomousTurn?.id) &&
+      message.type === "result" &&
+      message.subtype !== "success" &&
+      this.isAbortError(message) &&
+      !readClaudeParentToolUseId(message)
+    ) {
+      stop.confirm();
+      this.nativeStop = null;
+      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+      this.flushPendingToolCalls();
+      this.dispatchEvents([{ type: "turn_canceled", provider: "claude", reason: "Interrupted" }]);
+      return true;
+    }
+    return this.shouldSuppressStaleResult(message);
   }
 
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
@@ -4464,7 +4502,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.observeMainTurnBracket(message);
-    if (this.shouldSuppressStaleResult(message)) {
+    if (this.consumeStopResult(message)) {
       return;
     }
 
@@ -4639,31 +4677,78 @@ class ClaudeAgentSession implements AgentSession {
    * would reach only background helpers (and kill them on a CLI that ignores
    * perTaskStopAffordance), and no result would follow to consume pendingInterruptAbort.
    */
-  private async interruptActiveTurn(claudeStartedTurn = this.mainTurnInFlight): Promise<void> {
+  private async interruptActiveTurn(
+    claudeStartedTurn = this.mainTurnInFlight,
+    foregroundUuid: string | null = null,
+  ): Promise<void> {
     const query = this.query;
     if (!query) return;
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
     const ownsTurn = () =>
       this.query === query && (this.activeForegroundTurnId ?? this.autonomousTurn?.id) === turnId;
     const queued = [...this.unstartedMessageUuids];
-    const withdrewAll = await this.withdrawUnstartedMessages(query, queued);
-    if (!ownsTurn() || (!claudeStartedTurn && withdrewAll)) return;
-
-    if (typeof query.interrupt !== "function") {
-      throw new Error("Claude does not support interrupting this turn");
+    for (const uuid of queued) {
+      if (uuid !== foregroundUuid) this.stopPendingSteers.add(uuid);
     }
+    const capturedSteers = [...this.stopPendingSteers];
+    const withdrawal = await this.withdrawUnstartedMessages(query, queued);
+    const hasUnconfirmedSteer = () =>
+      capturedSteers.some((uuid) => this.stopPendingSteers.has(uuid));
+    const assertSteersSettled = () => {
+      if (hasUnconfirmedSteer()) {
+        throw new Error("Claude did not confirm the queued message stopped. Try Stop again.");
+      }
+    };
+    if (!ownsTurn() || !turnId || withdrawal === "unknown") assertSteersSettled();
+    if (!ownsTurn() || (!claudeStartedTurn && withdrawal === "withdrawn" && !hasUnconfirmedSteer()))
+      return;
+
+    const releaseSteers = () => {
+      for (const uuid of capturedSteers) this.stopPendingSteers.delete(uuid);
+    };
     try {
-      await withTimeout(query.interrupt(), 3_000, "Claude did not acknowledge Stop");
+      await this.requestNativeStop(query, turnId, releaseSteers);
     } catch (error) {
-      if (ownsTurn()) throw error;
+      if (ownsTurn() || hasUnconfirmedSteer()) throw error;
       return;
     }
-    if (!ownsTurn()) return;
+    if (!ownsTurn()) {
+      assertSteersSettled();
+      return;
+    }
+    releaseSteers();
+    this.nativeStop = null;
     this.pendingInterruptAbort = true;
     for (const uuid of queued) this.forgetUnstartedMessage(uuid);
   }
 
+  private async requestNativeStop(
+    query: Query,
+    turnId: string | undefined,
+    releaseSteers: () => void,
+  ): Promise<void> {
+    if (typeof query.interrupt !== "function") {
+      throw new Error("Claude does not support interrupting this turn");
+    }
+    const aborted = new Promise<void>((resolve) => {
+      this.nativeStop = {
+        query,
+        turnId,
+        confirm: () => {
+          releaseSteers();
+          resolve();
+        },
+      };
+    });
+    await withTimeout(
+      Promise.race([query.interrupt(), aborted]),
+      3_000,
+      "Claude did not acknowledge Stop",
+    );
+  }
+
   private forgetUnstartedMessage(uuid: string): void {
+    this.stopPendingSteers.delete(uuid);
     this.unstartedMessageUuids.delete(uuid);
     this.permissionClearingSteerUuids.delete(uuid);
   }
@@ -4672,15 +4757,15 @@ class ClaudeAgentSession implements AgentSession {
   private async withdrawUnstartedMessages(
     query: Query,
     uuids: readonly string[],
-  ): Promise<boolean> {
-    if (uuids.length === 0) return true;
+  ): Promise<"withdrawn" | "dequeued" | "unknown"> {
+    if (uuids.length === 0) return "withdrawn";
     // The SDK runtime supports this, but its public Query type has not caught up.
     const cancelAsyncMessage = (
       query as Query & {
         cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
       }
     ).cancelAsyncMessage;
-    if (!cancelAsyncMessage) return false;
+    if (!cancelAsyncMessage) return "unknown";
     try {
       const withdrawn = await withTimeout(
         Promise.all(
@@ -4693,10 +4778,10 @@ class ClaudeAgentSession implements AgentSession {
         3_000,
         "Claude did not acknowledge prompt withdrawal",
       );
-      return withdrawn.every(Boolean);
+      return withdrawn.every(Boolean) ? "withdrawn" : "dequeued";
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to withdraw a queued Claude message");
-      return false;
+      return "unknown";
     }
   }
 
@@ -4788,6 +4873,7 @@ class ClaudeAgentSession implements AgentSession {
   private forgetStartedMessage(message: unknown): void {
     const lifecycle = readClaudeCommandLifecycle(message);
     if (!lifecycle || lifecycle.state === "queued") return;
+    if (lifecycle.state !== "started") this.stopPendingSteers.delete(lifecycle.commandUuid);
     this.unstartedMessageUuids.delete(lifecycle.commandUuid);
     this.permissionClearingSteerUuids.delete(lifecycle.commandUuid);
   }
