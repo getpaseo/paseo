@@ -1544,6 +1544,60 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("accepts a steer while Claude compacts, so the compaction is not interrupted", async () => {
+    const { queryFactory, push } = createStreamingQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      const { turnId } = await session.startTurn("/compact");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      const iterator = input[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ type: "user_message" }),
+          }),
+        ),
+      );
+      push({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "session-1",
+      } as unknown as SDKMessage);
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: { type: "compaction", status: "loading" },
+          }),
+        ),
+      );
+
+      const admission = await session.steerActiveTurn?.("message during compaction", {
+        expectedTurnId: turnId,
+      });
+
+      // Claude Code holds a `next` message until the compaction finishes. Refusing it makes the
+      // manager replace the turn, and the interrupt cancels the compaction.
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      await expect(iterator.next()).resolves.toMatchObject({
+        value: { type: "user", priority: "next" },
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test("a human steer supersedes blocking permissions until Claude reads it", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({

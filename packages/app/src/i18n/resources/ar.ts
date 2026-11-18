@@ -411,6 +411,7 @@ export const ar: TranslationResources = {
       otherPlaceholder: "آخر...",
     },
     backgroundWork: {
+      heartbeat: "نبضة دورية",
       pillOne: "مهمة واحدة في الخلفية",
       pillMany: "{{count}} مهمة في الخلفية",
       notRunning: "لم يعد قيد التشغيل",
@@ -501,8 +502,7 @@ export const ar: TranslationResources = {
         archivedTitle: "مساحة العمل مؤرشفة",
         restoreDescription:
           "استعد {{workspaceName}} للعودة إلى وكلائها. ستستخدم شجرة العمل الفرع {{branch}}.",
-        restoreWithoutBranchDescription:
-          "استعد {{workspaceName}} للعودة إلى وكلائها. سيبدأ فرع جديد من الفرع الأساسي المحفوظ أو الفرع الافتراضي للمستودع.",
+        restoreWithoutBranchDescription: "استعد {{workspaceName}} للعودة إلى وكلائها.",
         unarchiveDescription: "{{workspaceName}} مؤرشفة. ألغِ أرشفتها لفتحها مجددًا.",
         restoreAction: "استعادة",
         unarchiveAction: "إلغاء الأرشفة",

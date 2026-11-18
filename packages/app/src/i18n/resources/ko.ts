@@ -412,6 +412,7 @@ export const ko: TranslationResources = {
       otherPlaceholder: "기타...",
     },
     backgroundWork: {
+      heartbeat: "하트비트",
       pillOne: "백그라운드 작업 1개",
       pillMany: "백그라운드 작업 {{count}}개",
       notRunning: "더 이상 실행 중이 아님",
@@ -502,8 +503,7 @@ export const ko: TranslationResources = {
         archivedTitle: "워크스페이스가 보관되었습니다",
         restoreDescription:
           "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 워크트리는 {{branch}} 브랜치를 사용합니다.",
-        restoreWithoutBranchDescription:
-          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 저장된 기반 브랜치 또는 저장소 기본 브랜치에서 새 브랜치를 만듭니다.",
+        restoreWithoutBranchDescription: "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다.",
         unarchiveDescription: "{{workspaceName}}가 보관되었습니다. 다시 열려면 보관을 취소하세요.",
         restoreAction: "복원",
         unarchiveAction: "보관 취소",

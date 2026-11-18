@@ -417,6 +417,7 @@ export const es: TranslationResources = {
       otherPlaceholder: "Otro...",
     },
     backgroundWork: {
+      heartbeat: "Latido",
       pillOne: "1 tarea en segundo plano",
       pillMany: "{{count}} tareas en segundo plano",
       notRunning: "Ya no está en ejecución",
@@ -507,8 +508,7 @@ export const es: TranslationResources = {
         archivedTitle: "Espacio de trabajo archivado",
         restoreDescription:
           "Restaura {{workspaceName}} para volver a sus agentes. Su worktree usará la rama {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restaura {{workspaceName}} para volver a sus agentes. Se creará una rama nueva desde la base guardada o la rama predeterminada del repositorio.",
+        restoreWithoutBranchDescription: "Restaura {{workspaceName}} para volver a sus agentes.",
         unarchiveDescription:
           "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
         restoreAction: "Restaurar",

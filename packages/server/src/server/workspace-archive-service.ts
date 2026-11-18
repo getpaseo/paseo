@@ -8,6 +8,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   deletePaseoWorktree,
+  readWorktreeHeadReference,
   isPaseoOwnedWorktreeCwd,
   runWorktreeTeardownCommands,
   WorktreeTeardownError,
@@ -707,7 +708,15 @@ export async function archivePersistedWorkspaceRecord(input: {
   }
 
   const archivedAt = input.archivedAt ?? new Date().toISOString();
-  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
+  let head: string | null = null;
+  if (existingWorkspace.kind === "worktree") {
+    const cwd = existingWorkspace.worktreeRoot ?? existingWorkspace.cwd;
+    head = await readWorktreeHeadReference(cwd);
+  }
+  await input.workspaceRegistry.archive(input.workspaceId, archivedAt, {
+    ...input.context,
+    ...(head ? { head } : {}),
+  });
 
   return existingWorkspace;
 }

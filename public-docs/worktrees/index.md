@@ -122,6 +122,19 @@ Both fields accept a multiline shell script or an array of commands; commands ru
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
+Teardown commands share a one minute limit. Set `teardownTimeoutMs` to change it, in milliseconds:
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+At the limit, Paseo tries to stop the command and its child processes and stops waiting for output. If teardown fails or reaches the limit, the workspace still archives and the worktree stays on disk. `teardownTimeoutMs` accepts whole numbers from 1 to 2147483647. Other values use the default.
+
 ## Scripts and services
 
 `scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Paseo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.
