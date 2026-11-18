@@ -1500,6 +1500,53 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("Windows .git paths that differ only in case share one repository target", async () => {
+    const watcher = createWatcherHarness();
+    // `git rev-parse --git-common-dir` keeps each caller's cwd spelling.
+    const gitCommonDirByCwd = new Map([
+      [path.resolve("/tmp/paseo-case-main"), "D:\\Work\\Repo\\.git"],
+      [path.resolve("/tmp/paseo-case-worktree"), "d:\\work\\repo\\.git"],
+    ]);
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string): Promise<CheckoutSnapshotFacts> => {
+      const gitCommonDir = gitCommonDirByCwd.get(cwd)!;
+      return {
+        ...createCheckoutFacts(cwd),
+        absoluteGitDir: `${gitCommonDir}\\worktrees\\${path.basename(cwd)}`,
+        gitCommonDir,
+      };
+    });
+    const service = createService(watcher, {
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd)),
+    });
+    const [first, second] = [...gitCommonDirByCwd.keys()].map((cwd) =>
+      service.registerWorkspace({ cwd }, vi.fn()),
+    );
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workingTreeWatchSetupInFlightCount).toBe(0);
+    });
+
+    expect(service.getMetrics()).toMatchObject({
+      workspaceTargetCount: 2,
+      repositoryTargetCount: 1,
+      repositoryWorkspaceLinkCount: 2,
+    });
+    const gitDirWatches = watcher.records.filter(
+      (record) => record.directory.toLowerCase() === "d:\\work\\repo\\.git",
+    );
+    expect(gitDirWatches).toHaveLength(1);
+
+    second?.unsubscribe();
+    expect(service.getMetrics().repositoryTargetCount).toBe(1);
+    first?.unsubscribe();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().repositoryTargetCount).toBe(0);
+    });
+    service.dispose();
+  });
+
   test("watcher setup failure uses scoped non-overlapping polling", async () => {
     const watcher = createWatcherHarness({ failDirectories: new Set([REPO_CWD]) });
     const blockedPoll = createDeferred<CheckoutStatusGit>();
