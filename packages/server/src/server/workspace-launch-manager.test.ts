@@ -1639,7 +1639,7 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("preserves retained launch output across a failed configuration read", async () => {
+  it("preserves retained launch output across configuration and restart failures", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-launch-config-read-failure-"));
     tempDirs.push(directory);
     const port = await getFreePort();
@@ -1688,9 +1688,19 @@ describe("WorkspaceLaunchManager", () => {
       expect(await manager.buildSnapshot(context)).toEqual([retainedLaunch]);
       expect(terminalManager.manager.getTerminal(terminalId)).toBe(terminal);
 
+      terminalManager.failNextCreate();
+      await expect(manager.start(context, "dev")).rejects.toThrow("Failed to create terminal");
+      expect(await manager.buildSnapshot(context)).toEqual([retainedLaunch]);
+      expect(terminalManager.manager.getTerminal(terminalId)).toBe(terminal);
+
+      const restarted = await manager.start(context, "dev");
+      expect(restarted).toMatchObject({ lifecycle: "running", active: true });
+      expect(terminalManager.manager.getTerminal(terminalId)).toBeUndefined();
+      await manager.stop(context, "dev");
+
       writeFileSync(configPath, JSON.stringify({ launches: {} }));
       expect(await manager.buildSnapshot(context)).toEqual([]);
-      expect(terminalManager.manager.getTerminal(terminalId)).toBeUndefined();
+      expect(terminalManager.manager.getTerminal(restarted.terminalId!)).toBeUndefined();
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
     }

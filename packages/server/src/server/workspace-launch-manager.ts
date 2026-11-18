@@ -342,9 +342,6 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       throw new Error("Workspace launches are not available on this daemon");
     }
     const previousRuntime = this.runtimes.get(context.workspaceId)?.get(launchName);
-    if (previousRuntime?.lifecycle === "stopped" && previousRuntime.terminalId) {
-      terminalManager.killTerminal(previousRuntime.terminalId);
-    }
     // A rejected IPC request can still have created a live terminal. Keep its
     // identity until creation or compensating cleanup is confirmed.
     const terminalId = randomUUID();
@@ -387,6 +384,9 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     this.runtimes.set(context.workspaceId, workspaceRuntimes);
     this.activeLaunches.set(context.workspaceId, launchName);
     this.listenForRuntimeExit(runtime, terminal);
+    if (previousRuntime?.lifecycle === "stopped" && previousRuntime.terminalId) {
+      terminalManager.killTerminal(previousRuntime.terminalId);
+    }
 
     try {
       if (this.isCurrentRunningRuntime(runtime)) {
