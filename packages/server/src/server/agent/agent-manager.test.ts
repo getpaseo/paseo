@@ -800,7 +800,10 @@ test("a subscriber that throws on publication leaves the committed item in histo
     await expect(
       manager.appendTimelineItem(agent.id, { type: "assistant_message", text: " and next" }),
     ).resolves.toMatchObject({ seq: 2 });
-    expect(await manager.getLastAssistantMessage(agent.id)).toBe("kept and next");
+    expect(await manager.getTimeline(agent.id)).toEqual([
+      { type: "assistant_message", text: "kept" },
+      { type: "assistant_message", text: " and next" },
+    ]);
     expect(logs).toContainEqual(
       expect.objectContaining({
         msg: "Failed to publish committed timeline item",
@@ -7206,17 +7209,13 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
     text: "row two",
   });
 
-  await expect(manager.getTimelineRows(snapshot.id)).resolves.toEqual([
-    {
-      seq: 2,
-      seqStart: 1,
-      seqEnd: 2,
-      sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
-      collapsed: ["assistant_merge"],
-      timestamp: expect.any(String),
-      item: { type: "assistant_message", text: "row onerow two" },
-    },
+  const rows = await manager.getTimelineRows(snapshot.id);
+  expect(rows.map(({ seq, item }) => ({ seq, item }))).toEqual([
+    { seq: 1, item: { type: "assistant_message", text: "row one" } },
+    { seq: 2, item: { type: "assistant_message", text: "row two" } },
   ]);
+  expect(rows.map((row) => row.turnId)).toEqual([expect.any(String), expect.any(String)]);
+  expect(rows[0]?.turnId).not.toBe(rows[1]?.turnId);
 });
 
 test("getAgent does not expose committed history internals once manager owns the seam", async () => {
@@ -9967,7 +9966,17 @@ test("streamAgent clears pending run when startTurn fails before a turn id exist
       clientMessageId: "rejected-prompt",
       messageId: "rejected-prompt",
     },
-    { type: "assistant_message", text: "[System Error] Invalid request: missing field `text`" },
+    {
+      type: "assistant_message",
+      text: "[System Error] Invalid request: missing field `text`",
+      messageId: expect.any(String),
+    },
+  ]);
+
+  const rejectedRows = await manager.getTimelineRows(agent.id);
+  expect(rejectedRows.map((row) => row.turnId)).toEqual([
+    expect.any(String),
+    rejectedRows[0]?.turnId,
   ]);
 
   await expect(manager.runAgent(agent.id, "second turn")).resolves.toEqual(
@@ -13227,6 +13236,7 @@ test("authoritative timeline records a daemon-handled submitted prompt before it
 
     const timeline = (await manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }))
       .rows;
+    expect(timeline.map((row) => row.turnId)).toEqual([expect.any(String), timeline[0]?.turnId]);
     expect(timeline.map((row) => row.item)).toEqual([
       {
         type: "user_message",

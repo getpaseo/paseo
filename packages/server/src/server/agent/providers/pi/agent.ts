@@ -2073,7 +2073,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.method === "notify" && message) {
       const extensionMapping = this.extensionHost.mapRuntimeNotification(message);
       if (extensionMapping) {
-        this.emitExtensionOutput(extensionMapping, this.currentTurnIdForEvent());
+        this.emitExtensionOutput(extensionMapping);
         return;
       }
       if (
@@ -2086,7 +2086,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
           level: toNotificationLevel(event.notifyType),

@@ -126,6 +126,8 @@ export type TimelineReconcileResult =
   | { kind: "rewind_open" };
 
 export interface TimelineIngestOptions {
+  /** A direct write using an open or standalone turn as fallback for an existing item. */
+  inheritItemTurn?: boolean;
   /**
    * Runs right after the commit, before any later operation on the agent's timeline starts, so
    * publications leave in commit order. Not called when the commit fails or is a duplicate.
@@ -275,6 +277,10 @@ export class AgentTimeline {
     });
   }
 
+  itemTurnId(scope: TimelineScope, item: AgentTimelineItem): Promise<string | undefined> {
+    return this.run(scope, () => this.backend.itemTurnId(scope, item));
+  }
+
   ingest(
     scope: TimelineScope,
     entry: TimelineEntry,
@@ -293,6 +299,11 @@ export class AgentTimeline {
             retirementCount: head.retirementCount,
           };
         }
+      }
+      // Upserts resolve the original turn under the same lock as the write.
+      if (options?.inheritItemTurn) {
+        const originalTurnId = await this.backend.itemTurnId(scope, entry.item);
+        if (originalTurnId) entry = { ...entry, turnId: originalTurnId };
       }
       if (await this.backend.isRetired(scope, entry)) return { kind: "dropped" };
       const [commit] = await this.commit(scope, [entry]);

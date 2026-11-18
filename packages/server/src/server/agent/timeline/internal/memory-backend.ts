@@ -145,6 +145,9 @@ export class MemoryTimelineBackend implements AgentTimelineBackend {
     return { rows: rows.map(cloneRow), head: this.describe(state) };
   }
 
+  itemTurnId(scope: TimelineScope, item: AgentTimelineItem) {
+    return this.requireState(scope).projection.itemTurnId(item);
+  }
   isRetired(scope: TimelineScope, entry: TimelineEntry): boolean {
     return this.requireState(scope).projection.isRetired(entry);
   }

@@ -12,6 +12,8 @@ import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { AgentTimeline } from "./timeline/index.js";
+import { OmpAgentClient } from "./providers/omp/agent.js";
+import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 import { DeferredTimelineBackend } from "./timeline/testing.js";
 import type {
   AgentCapabilityFlags,
@@ -424,6 +426,172 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("root live turn membership", () => {
+  test.each([
+    { sequence: "while idle", agentStarted: false, emptyCycle: false },
+    { sequence: "between agent_start and turn_start", agentStarted: true, emptyCycle: false },
+    { sequence: "after an empty cycle", agentStarted: true, emptyCycle: true },
+  ])(
+    "keeps OMP replies in separate turns with a notice $sequence",
+    async ({ agentStarted, emptyCycle }) => {
+      const runtime = new FakeOmp();
+      const provider = "omp";
+      const logger = createTestLogger();
+      const manager = new AgentManager({
+        clients: { omp: new OmpAgentClient({ runtime, logger }) },
+        logger,
+      });
+      const workdir = mkdtempSync(join(tmpdir(), "omp-live-turns-"));
+      const events: AgentManagerEvent[] = [];
+      manager.subscribe((event) => events.push(event), { replayState: false });
+      const { id } = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      try {
+        const session = runtime.latestSession();
+        const finishReply = async (text: string) => {
+          const completed = () =>
+            getStreamEvents(events, id).filter(
+              (event) => event.type === "agent_stream" && event.event.type === "turn_completed",
+            ).length;
+          const before = completed();
+          session.streamAssistantText(text, text);
+          session.finishTurn({ role: "assistant", content: [] });
+          await vi.waitFor(() => {
+            expect(completed()).toBe(before + 1);
+          });
+        };
+        const notice = (message: string) => {
+          session.emit({ type: "extension_ui_request", id: message, method: "notify", message });
+        };
+        session.beginTurn();
+        await finishReply("First reply");
+
+        if (agentStarted) session.emit({ type: "agent_start" });
+        if (emptyCycle) session.emit({ type: "agent_end", messages: [] });
+        notice("Idle notice");
+        session.beginTurn();
+        session.acceptCustomMessage("<system-notice>Completion</system-notice>");
+        notice("Running notice");
+        await finishReply("Second reply");
+
+        const page = await manager.fetchTimeline(id, { wholeTurns: true, limit: 0 });
+        const ids = page.rows.map((row) => row.turnId);
+        expect(
+          page.rows.map(({ item }) => {
+            if (item.type === "assistant_message") return item.text;
+            if (item.type === "notification") return item.message;
+            return item.type;
+          }),
+        ).toEqual(["First reply", "Idle notice", "Completion", "Running notice", "Second reply"]);
+        const [first, idle, wake] = ids;
+        expect(ids).toEqual([
+          expect.any(String),
+          expect.any(String),
+          expect.any(String),
+          wake,
+          wake,
+        ]);
+        expect(new Set([first, idle, wake]).size).toBe(3);
+        expect(
+          getTimelineStreamEvents(events, id).map((event) =>
+            event.type === "agent_stream" && event.event.type === "timeline"
+              ? event.event.turnId
+              : null,
+          ),
+        ).toEqual(ids);
+        expect(
+          (await manager.fetchTimeline(id, { wholeTurns: true, limit: 1 })).rows.map(
+            (row) => row.turnId,
+          ),
+        ).toEqual([wake, wake, wake]);
+      } finally {
+        await manager.closeAgent(id);
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("keeps a Claude completion with the run it wakes after an independent notice", async () => {
+    const harness = createHarness({ provider: "claude" });
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent(assistant("First reply", "claude", "first"));
+      session.pushEvent(
+        timelineEvent({ type: "notification", level: "info", message: "Idle" }, "claude"),
+      );
+      session.pushEvent(
+        timelineEvent(
+          { type: "notification", level: "info", message: "Task finished" },
+          "claude",
+          "wake",
+        ),
+      );
+      session.pushEvent({ type: "turn_started", provider: "claude", turnId: "wake" });
+      session.pushEvent(assistant("Second reply", "claude", "wake"));
+      session.pushEvent({ type: "turn_completed", provider: "claude", turnId: "wake" });
+      await vi.waitFor(() => {
+        expect(getStreamEvents(harness.events, agentId).at(-1)).toMatchObject({
+          event: { type: "turn_completed", turnId: "wake" },
+        });
+      });
+      const page = await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 0 });
+      expect(page.rows.map((row) => row.turnId)).toEqual([
+        "first",
+        expect.any(String),
+        "wake",
+        "wake",
+      ]);
+      expect(page.rows[1]?.turnId).not.toBe("first");
+      expect(page.rows[1]?.turnId).not.toBe("wake");
+      expect(
+        (await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 1 })).rows.map(
+          (row) => row.item,
+        ),
+      ).toEqual([
+        { type: "notification", level: "info", message: "Task finished" },
+        { type: "assistant_message", text: "Second reply" },
+      ]);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  test("a late tool update keeps the turn where the tool started", async () => {
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "first" });
+      session.pushEvent(timelineEvent(toolCall()));
+      session.pushEvent(terminalEvent("turn_completed", "first"));
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "second" });
+      session.pushEvent(timelineEvent(toolCall({ status: "completed" })));
+      session.pushEvent(assistant("Second reply"));
+      session.pushEvent(terminalEvent("turn_completed", "second"));
+      await vi.waitFor(() => {
+        expect(getStreamEvents(harness.events, agentId).at(-1)).toMatchObject({
+          event: { type: "turn_completed", turnId: "second" },
+        });
+      });
+
+      const page = await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 0 });
+      expect(page.rows.map(({ turnId, item }) => ({ turnId, item }))).toEqual([
+        { turnId: "first", item: { ...toolCall({ status: "completed" }), metadata: undefined } },
+        { turnId: "second", item: { type: "assistant_message", text: "Second reply" } },
+      ]);
+      expect(
+        getTimelineStreamEvents(harness.events, agentId).map((event) =>
+          event.type === "agent_stream" && event.event.type === "timeline"
+            ? event.event.turnId
+            : null,
+        ),
+      ).toEqual(["first", "first", "second"]);
+    } finally {
+      harness.cleanup();
+    }
+  });
+});
+
 describe("target coalesced behavior", () => {
   test("bounds tool output before persisting and streaming it", async () => {
     const harness = createHarness();
@@ -533,6 +701,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       for (let i = 0; i < 1000; i++) {
         session.pushEvent(assistant("x"));
@@ -559,11 +728,13 @@ describe("target coalesced behavior", () => {
         {
           type: "timeline",
           provider: "codex",
+          turnId: "streaming-turn",
           item: { type: "assistant_message", text: "x" },
         },
         {
           type: "timeline",
           provider: "codex",
+          turnId: "streaming-turn",
           item: { type: "assistant_message", text: "x".repeat(999) },
         },
       ]);
@@ -582,6 +753,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       for (let i = 0; i < 100; i++) {
         session.pushEvent(reasoning("r"));
@@ -609,6 +781,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
       const runningToolCall = toolCall({ output: "running" });
 
       for (let i = 0; i < 500; i++) {
@@ -732,6 +905,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("before"));
       session.pushEvent(timelineEvent(toolCall({ output: "running" })));
@@ -768,6 +942,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("a"));
       session.pushEvent(timelineEvent(toolCall({ output: "first" })));
@@ -799,6 +974,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("a1"));
       session.pushEvent(reasoning("r1"));
@@ -880,10 +1056,10 @@ describe("target coalesced behavior", () => {
         workdir: secondWorkdir,
       });
 
-      first.session.pushEvent(assistant("a"));
-      second.session.pushEvent(assistant("b"));
-      first.session.pushEvent(assistant("a"));
-      second.session.pushEvent(assistant("b"));
+      first.session.pushEvent(assistant("a", "codex", "first"));
+      second.session.pushEvent(assistant("b", "codex", "second"));
+      first.session.pushEvent(assistant("a", "codex", "first"));
+      second.session.pushEvent(assistant("b", "codex", "second"));
       await waitForSessionEventQueue();
       await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
 
@@ -917,6 +1093,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("codex", "codex"));
       session.pushEvent(assistant("claude", "claude"));
@@ -928,10 +1105,16 @@ describe("target coalesced behavior", () => {
 
       expect(getTimelineItems(rows)).toEqual([{ type: "assistant_message", text: "codexclaude" }]);
       expect(events.map((event) => (event.type === "agent_stream" ? event.event : null))).toEqual([
-        { type: "timeline", provider: "codex", item: { type: "assistant_message", text: "codex" } },
+        {
+          type: "timeline",
+          provider: "codex",
+          turnId: "streaming-turn",
+          item: { type: "assistant_message", text: "codex" },
+        },
         {
           type: "timeline",
           provider: "claude",
+          turnId: "streaming-turn",
           item: { type: "assistant_message", text: "claude" },
         },
       ]);
@@ -986,6 +1169,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant(""));
       session.pushEvent(assistant(" "));
@@ -1256,6 +1440,7 @@ describe("target coalesced behavior", () => {
     const idempotencyHarness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(idempotencyHarness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("a"));
       session.pushEvent(assistant("b"));
@@ -1285,6 +1470,7 @@ describe("target coalesced behavior", () => {
     const reentryHarness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(reentryHarness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
       let didPushDuringFlush = false;
       reentryHarness.manager.subscribe(
         (event) => {
@@ -1336,6 +1522,7 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant("flush"));
       session.pushEvent(assistant("-pending"));

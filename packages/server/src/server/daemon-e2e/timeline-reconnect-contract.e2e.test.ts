@@ -150,13 +150,11 @@ test("reconnect catches up committed rows without replaying a provisional seed",
       expect(catchUp.startCursor).toEqual({ epoch, seq: 121 });
       expect(catchUp.endCursor).toEqual({ epoch, seq: 121 });
       expect(catchUp.projection).toBe("projected");
-      expect(catchUp.entries[0]?.seqStart).toBe(1);
+      expect(catchUp.entries[0]?.seqStart).toBe(121);
       expect(catchUp.entries[0]?.seqEnd).toBe(121);
       expect(catchUp.entries[0]?.item).toEqual({
         type: "assistant_message",
-        text:
-          Array.from({ length: 120 }, (_, index) => `committed row ${index + 1}`).join("") +
-          "finalized while disconnected",
+        text: "finalized while disconnected",
       });
     } finally {
       reconnectCollector.unsubscribe();

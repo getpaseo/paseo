@@ -82,6 +82,9 @@ export class DeferredTimelineBackend implements AgentTimelineBackend {
       return result;
     });
   }
+  itemTurnId(scope: TimelineScope, item: AgentTimelineItem) {
+    return this.defer(() => this.inner.itemTurnId(scope, item));
+  }
   isRetired(scope: TimelineScope, entry: TimelineEntry): Promise<boolean> {
     return this.defer(() => this.inner.isRetired(scope, entry));
   }

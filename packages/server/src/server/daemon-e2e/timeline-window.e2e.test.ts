@@ -364,11 +364,16 @@ describe("daemon E2E - timeline window", () => {
         title: "Timeline Projected Page Limit Test",
         modeId: "full-access",
       });
+      const tool = {
+        type: "tool_call",
+        callId: "page-tool",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "unknown", input: { cmd: "sleep 10" }, output: null },
+      } as const;
       for (let seq = 1; seq <= 200; seq += 1) {
-        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
-          type: "assistant_message",
-          text: "x",
-        });
+        await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, tool);
       }
       for (let seq = 201; seq <= 350; seq += 1) {
         await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
@@ -401,17 +406,19 @@ describe("daemon E2E - timeline window", () => {
         entryCount: 100,
         firstEntry: {
           provider: "codex",
-          item: { type: "assistant_message", text: "x".repeat(200) },
+          item: tool,
           timestamp: expect.any(String),
+          turnId: expect.any(String),
           seqStart: 1,
           seqEnd: 200,
           sourceSeqRanges: [{ startSeq: 1, endSeq: 200 }],
-          collapsed: ["assistant_merge"],
+          collapsed: ["tool_lifecycle"],
         },
         lastEntry: {
           provider: "codex",
           item: { type: "user_message", text: "message 99" },
           timestamp: expect.any(String),
+          turnId: expect.any(String),
           seqStart: 299,
           seqEnd: 299,
           sourceSeqRanges: [{ startSeq: 299, endSeq: 299 }],

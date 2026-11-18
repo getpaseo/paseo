@@ -177,10 +177,14 @@ export default function contribute(server: PluginServerContext) {
     await expect(
       client.invokePluginRpc("paseo-api", "append", { agentId, status: "running" }),
     ).resolves.toEqual({ seq: expect.any(Number), epoch: expect.any(String) });
+    const first = await client.fetchAgentTimeline(agentId, { projection: "projected" });
+    const firstItem = first.entries.find((entry) => entry.item.type === "plugin");
+    expect(firstItem?.turnId).toEqual(expect.any(String));
     await client.invokePluginRpc("paseo-api", "append", { agentId, status: "complete" });
     const timeline = await client.fetchAgentTimeline(agentId, { projection: "projected" });
     expect(timeline.entries.filter((entry) => entry.item.type === "plugin")).toEqual([
       expect.objectContaining({
+        turnId: firstItem?.turnId,
         item: expect.objectContaining({
           type: "plugin",
           id: "review-1",

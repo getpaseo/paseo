@@ -113,6 +113,7 @@ export interface AgentTimelineBackend {
     scope: TimelineScope,
     entries: readonly TimelineEntry[],
   ): MaybePromise<TimelineBackendAppendResult>;
+  itemTurnId(scope: TimelineScope, item: AgentTimelineItem): MaybePromise<string | undefined>;
   /** Whether a new entry would land on retired history (see `TimelineProjection.isRetired`). */
   isRetired(scope: TimelineScope, entry: TimelineEntry): MaybePromise<boolean>;
   /** Active user prompts in display order. */

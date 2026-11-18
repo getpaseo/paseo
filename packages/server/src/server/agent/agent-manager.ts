@@ -499,6 +499,7 @@ type ActiveTurnTerminalDisposition = "closed_current" | "stale" | "untracked";
 
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
+  displayTurnId?: string;
 }
 
 interface ManagedAgentBase {
@@ -624,9 +625,9 @@ type AgentMetadata = Record<string, JsonValue>;
 
 function attachManagedTurnIdentity(
   agent: ActiveManagedAgent,
-  event: AgentStreamEvent,
+  event: Exclude<AgentStreamEvent, { type: "timeline" }>,
   fromHistory: boolean,
-): { event: AgentStreamEvent; turnId: string | undefined } {
+): { event: Exclude<AgentStreamEvent, { type: "timeline" }>; turnId: string | undefined } {
   const existingTurnId = getAgentStreamEventTurnId(event);
   if (fromHistory || existingTurnId !== undefined) {
     return { event, turnId: existingTurnId };
@@ -640,12 +641,6 @@ function attachManagedTurnIdentity(
     case "turn_completed":
     case "turn_failed":
     case "turn_canceled": {
-      const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
-      return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
-    }
-    case "timeline": {
-      // Live provider items belong to the foreground turn that owns their dispatch.
-      // Provider history deliberately keeps absent IDs because it has no daemon turn identity.
       const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
       return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
     }
@@ -3187,46 +3182,51 @@ export class AgentManager {
       return false;
     }
     onAccepted?.();
-    this.touchUpdatedAt(agent);
-    if (options?.clientMessageId) {
-      await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted");
-      this.emitState(agent);
-    }
-    const scope: TimelineScope = { agentId: agent.id };
-    const dispatch = (event: AgentStreamEvent): void => {
-      // Persist timeline items so they show up in fetchAgentTimeline; broadcast
-      // for live subscribers. Other event types are broadcast only, after the
-      // timeline items emitted before them.
-      if (event.type === "timeline") {
+    await new Promise<void>((promptRecorded, reject) => {
+      void this.runForegroundMutation(agentId, async () => {
+        const turnId = this.liveTurnId(agent);
         this.touchUpdatedAt(agent);
-        const write = this.timeline
-          .ingest(
-            scope,
-            { item: event.item },
-            { publish: (commit) => this.publishTimelineEvent(agent.id, event, commit) },
-          )
-          .then((result) => this.reportUnpublished(agent.id, result));
-        this.trackTimelineWrite(agent.id, write);
-        return;
-      }
-      const timestamp = new Date().toISOString();
-      const publish = (async () => {
-        await this.timeline.settled(scope);
-        this.dispatchStream(agent.id, event, { timestamp });
-      })();
-      this.trackTimelineWrite(agent.id, publish);
-    };
-    void this.runForegroundMutation(agentId, async () => {
-      try {
-        await handler.run({ emit: dispatch });
-      } catch (error) {
-        const text = error instanceof Error ? error.message : "Out-of-band command failed";
-        dispatch({
-          type: "timeline",
-          provider: agent.provider,
-          item: { type: "assistant_message", text: `[Error] ${text}` },
-        });
-      }
+        if (options?.clientMessageId) {
+          await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "accepted", {
+            turnId,
+          });
+          this.emitState(agent);
+        }
+        promptRecorded();
+
+        const scope: TimelineScope = { agentId: agent.id };
+        const dispatch = (event: AgentStreamEvent): void => {
+          if (event.type === "timeline") {
+            this.touchUpdatedAt(agent);
+            this.trackTimelineWrite(
+              agent.id,
+              this.recordAndDispatchTimelineItem(
+                agent.id,
+                limitAgentTimelineItemContent(event.item),
+                event.provider,
+                event.turnId ?? turnId,
+              ),
+            );
+            return;
+          }
+          const timestamp = new Date().toISOString();
+          const publish = (async () => {
+            await this.timeline.settled(scope);
+            this.dispatchStream(agent.id, event, { timestamp });
+          })();
+          this.trackTimelineWrite(agent.id, publish);
+        };
+        try {
+          await handler.run({ emit: dispatch, turnId });
+        } catch (error) {
+          const text = error instanceof Error ? error.message : "Out-of-band command failed";
+          dispatch({
+            type: "timeline",
+            provider: agent.provider,
+            item: { type: "assistant_message", text: `[Error] ${text}` },
+          });
+        }
+      }).catch(reject);
     });
     return true;
   }
@@ -3238,16 +3238,13 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
     this.touchUpdatedAt(agent);
-    const event: AgentStreamEvent = { type: "timeline", item, provider: agent.provider };
-    const result = await this.timeline.ingest(
-      { agentId },
-      { item },
-      { publish: (commit) => this.publishTimelineEvent(agentId, event, commit) },
-    );
+    const turnId = this.liveTurnId(agent);
+    const result = await this.recordAndDispatchTimelineItem(agentId, item, agent.provider, turnId, {
+      inheritItemTurn: item.type === "tool_call",
+    });
     if (result.kind === "dropped") {
       throw new Error("Timeline item belongs to a rewound turn");
     }
-    this.reportUnpublished(agentId, result);
     await this.persistSnapshot(agent);
     return { seq: result.row.seq, epoch: result.epoch, retirementCount: result.retirementCount };
   }
@@ -3259,6 +3256,7 @@ export class AgentManager {
       type: "timeline",
       item,
       provider: agent.provider,
+      turnId: this.liveTurnId(agent),
     });
   }
 
@@ -3315,16 +3313,22 @@ export class AgentManager {
       this.runs.settleForegroundStart(pendingRun, { status: "failed", error: errorMsg });
       try {
         // A terminal rejection belongs after the submitted prompt even though no provider turn exists.
+        const turnId = randomUUID();
         if (options?.clientMessageId) {
           await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, "rejected", {
             messageId: options.clientMessageId,
+            turnId,
           });
         }
-        await this.handleStreamEvent(agent, {
-          type: "turn_failed",
-          provider: agent.provider,
-          error: errorMsg,
-        });
+        await this.handleStreamEvent(
+          agent,
+          {
+            type: "turn_failed",
+            provider: agent.provider,
+            error: errorMsg,
+          },
+          { displayTurnId: turnId },
+        );
         this.finalizeForegroundTurn(agent);
       } finally {
         // A steer waiting on this start is released only once the run is cleared.
@@ -5055,7 +5059,10 @@ export class AgentManager {
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
-    const matchingWaiters = this.runs.getMatchingWaiters(agent, turnId);
+    const matchingWaiters = this.runs.getMatchingWaiters(
+      agent,
+      event.type === "timeline" ? (turnId ?? agent.activeForegroundTurnId ?? undefined) : turnId,
+    );
     this.logger.trace(
       {
         agentId: agent.id,
@@ -5068,7 +5075,13 @@ export class AgentManager {
       "agent.manager.dispatch_session_event",
     );
 
-    const shouldNotifyWaiters = await this.handleStreamEvent(agent, event);
+    const shouldNotifyWaiters =
+      event.type === "timeline"
+        ? await this.onLiveTimelineEvent(agent, {
+            ...event,
+            item: limitAgentTimelineItemContent(event.item),
+          })
+        : await this.handleStreamEvent(agent, event);
 
     if (!shouldNotifyWaiters) {
       return;
@@ -5222,13 +5235,14 @@ export class AgentManager {
 
   private async handleStreamEvent(
     agent: ActiveManagedAgent,
-    event: AgentStreamEvent,
+    sourceEvent: Exclude<AgentStreamEvent, { type: "timeline" }>,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    event = limitAgentStreamEventContent(event);
-    const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
-    event = identified.event;
-    const eventTurnId = identified.turnId;
+    const { event, turnId: eventTurnId } = attachManagedTurnIdentity(
+      agent,
+      sourceEvent,
+      options?.fromHistory === true,
+    );
     const isForegroundEvent = agent.activeForegroundTurnId === eventTurnId;
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
@@ -5243,10 +5257,6 @@ export class AgentManager {
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
       this.touchUpdatedAt(agent);
-      if (this.agentStreamCoalescer.handle(agent.id, event)) {
-        this.traceCoalescerBuffered(agent, event, eventTurnId);
-        return false;
-      }
       this.agentStreamCoalescer.flushFor(agent.id);
       // A flushed chunk is committed and published before this event, e.g. a terminal status.
       await this.timeline.settled({ agentId: agent.id });
@@ -5371,7 +5381,7 @@ export class AgentManager {
 
   private dispatchStreamEventByType(params: {
     agent: ActiveManagedAgent;
-    event: AgentStreamEvent;
+    event: Exclude<AgentStreamEvent, { type: "timeline" }>;
     options: HandleStreamEventOptions | undefined;
     isForegroundEvent: boolean;
     eventTurnId: string | undefined;
@@ -5423,8 +5433,6 @@ export class AgentManager {
       case "options_changed":
         this.onStreamOptionsChanged({ agent, patch: event.patch, flags });
         return undefined;
-      case "timeline":
-        return this.onStreamTimelineEvent({ agent, event, options, flags });
       case "turn_completed":
         this.onStreamTurnCompleted({
           agent,
@@ -5483,36 +5491,50 @@ export class AgentManager {
     }
   }
 
-  private async onStreamTimelineEvent(params: {
-    agent: ActiveManagedAgent;
-    event: Extract<AgentStreamEvent, { type: "timeline" }>;
-    options: { fromHistory?: boolean } | undefined;
-    flags: StreamEventFlags;
-  }): Promise<void> {
-    const { agent, event, options, flags } = params;
+  private async onLiveTimelineEvent(
+    agent: ActiveManagedAgent,
+    event: Extract<AgentStreamEvent, { type: "timeline" }>,
+  ): Promise<boolean> {
+    const sourceItem = event.item;
+    // Capture the open turn at admission, before an identity lookup can yield.
+    const fallbackTurnId = this.liveTurnId(agent, event.turnId);
+    const originalTurnId =
+      event.turnId === undefined && sourceItem.type === "tool_call"
+        ? (this.agentStreamCoalescer.pendingToolTurnId(agent.id, sourceItem.callId) ??
+          (await this.timeline.itemTurnId({ agentId: agent.id }, sourceItem)))
+        : undefined;
+    const turnId = originalTurnId ?? fallbackTurnId;
+    const liveEvent = { ...event, turnId };
+    this.touchUpdatedAt(agent);
+    if (this.agentStreamCoalescer.handle(agent.id, liveEvent)) {
+      this.traceCoalescerBuffered(agent, liveEvent, turnId);
+      return false;
+    }
+    this.agentStreamCoalescer.flushFor(agent.id);
+    await this.timeline.settled({ agentId: agent.id });
 
-    flags.shouldDispatchEvent = false;
-    flags.shouldNotifyWaiters = false;
+    let notifyWaiters = false;
     for (const item of projectAgentMessages(event.item)) {
       if (
         item.type === "user_message" &&
         item.clientMessageId &&
-        (await this.reconcileSubmittedPromptEcho(agent, item, event.turnId))
+        (await this.reconcileSubmittedPromptEcho(agent, item, turnId))
       )
         continue;
-
-      if (options?.fromHistory) {
-        await this.timeline.append({ agentId: agent.id }, [toTimelineEntry({ ...event, item })]);
-        continue;
-      }
-
-      await this.recordAndDispatchTimelineItem(agent.id, item, event.provider, event.turnId);
+      const result = await this.recordAndDispatchTimelineItem(
+        agent.id,
+        item,
+        event.provider,
+        turnId,
+      );
+      if (result.kind === "dropped") continue;
       if (item.type === "user_message") {
         agent.lastUserMessageAt = new Date();
         this.emitState(agent);
       }
-      flags.shouldNotifyWaiters = true;
+      notifyWaiters = true;
     }
+    return notifyWaiters;
   }
 
   private onStreamTurnCompleted(params: {
@@ -5559,7 +5581,7 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
     this.logger.warn(
@@ -5586,6 +5608,7 @@ export class AgentManager {
       agent,
       event.provider,
       this.formatTurnFailedMessage(event),
+      this.liveTurnId(agent, options?.displayTurnId ?? eventTurnId),
       options,
     );
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
@@ -5711,34 +5734,40 @@ export class AgentManager {
     }
   }
 
+  private liveTurnId(agent: ActiveManagedAgent, turnId?: string): string {
+    return turnId ?? agent.activeForegroundTurnId ?? agent.activeTurnId ?? randomUUID();
+  }
+
   private async recordAndDispatchTimelineItem(
     agentId: string,
     item: AgentTimelineItem,
     provider: AgentProvider,
-    turnId?: string,
+    turnId: string,
     options?: {
       providerMessageId?: string;
       notifyWaiters?: boolean;
+      inheritItemTurn?: boolean;
       onRecorded?: () => void;
     },
-  ): Promise<void> {
+  ): Promise<TimelineIngestResult> {
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
       provider,
-      ...(turnId !== undefined ? { turnId } : {}),
+      turnId,
     };
     const result = await this.timeline.ingest(
       { agentId },
       {
         item,
-        ...(turnId !== undefined ? { turnId } : {}),
+        turnId,
         ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
       },
       {
+        inheritItemTurn: item.type === "plugin" || options?.inheritItemTurn,
         publish: (commit) => {
           options?.onRecorded?.();
-          this.publishTimelineEvent(agentId, event, commit);
+          this.publishTimelineEvent(agentId, { ...event, turnId: commit.row.turnId }, commit);
           if (options?.notifyWaiters) this.notifyForegroundTurnWaiters(agentId, event);
           if (
             item.type === "tool_call" &&
@@ -5755,6 +5784,7 @@ export class AgentManager {
       },
     );
     this.reportUnpublished(agentId, result);
+    return result;
   }
 
   private publishTimelineEvent(agentId: string, event: AgentStreamEvent, commit: TimelineCommit) {
@@ -5857,11 +5887,12 @@ export class AgentManager {
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     });
+    const turnId = this.liveTurnId(agent, options?.turnId);
     const writes: Promise<void>[] = [];
     for (const item of items) {
       // Human attempts stay in history on rejection; delivery notifications require acceptance.
       if (outcome === "rejected" && item.type !== "user_message") continue;
-      writes.push(this.recordSubmittedPromptItem(agent, item, options));
+      writes.push(this.recordSubmittedPromptItem(agent, item, { ...options, turnId }));
     }
     await Promise.all(writes);
   }
@@ -5872,13 +5903,19 @@ export class AgentManager {
     item: AgentTimelineItem,
     options?: { providerMessageId?: string; turnId?: string },
   ): Promise<void> {
-    return this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, {
-      ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
-      onRecorded: () => {
-        this.touchUpdatedAt(agent);
-        if (item.type === "user_message") agent.lastUserMessageAt = new Date();
+    return this.recordAndDispatchTimelineItem(
+      agent.id,
+      item,
+      agent.provider,
+      this.liveTurnId(agent, options?.turnId),
+      {
+        ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+        onRecorded: () => {
+          this.touchUpdatedAt(agent);
+          if (item.type === "user_message") agent.lastUserMessageAt = new Date();
+        },
       },
-    });
+    ).then(() => undefined);
   }
 
   /** Returns whether the echo belongs to a prompt Paseo submitted, which it records only once. */
@@ -5913,6 +5950,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     provider: AgentProvider,
     message: string,
+    turnId: string,
     options?: { fromHistory?: boolean },
   ): Promise<void> {
     if (options?.fromHistory) {
@@ -5930,8 +5968,8 @@ export class AgentManager {
       return;
     }
 
-    const item: AgentTimelineItem = { type: "assistant_message", text };
-    await this.recordAndDispatchTimelineItem(agent.id, item, provider);
+    const item: AgentTimelineItem = { type: "assistant_message", text, messageId: randomUUID() };
+    await this.recordAndDispatchTimelineItem(agent.id, item, provider, turnId);
   }
 
   private formatTurnFailedMessage(

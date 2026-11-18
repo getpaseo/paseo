@@ -4,6 +4,7 @@ import type { AgentProvider, AgentStreamEvent } from "./agent-sdk-types.js";
 import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
   AgentStreamCoalescer,
+  type LiveTimelineEvent,
   type AgentStreamCoalescerFlush,
   type AgentStreamCoalescerTimers,
 } from "./agent-stream-coalescer.js";
@@ -49,12 +50,12 @@ function timeline(
     provider?: AgentProvider;
     turnId?: string;
   },
-): Extract<AgentStreamEvent, { type: "timeline" }> {
+): LiveTimelineEvent {
   return {
     type: "timeline",
     item,
     provider: options?.provider ?? "codex",
-    ...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
+    turnId: options?.turnId ?? "turn",
   };
 }
 
@@ -65,7 +66,7 @@ function assistant(
     turnId?: string;
     messageId?: string;
   },
-): Extract<AgentStreamEvent, { type: "timeline" }> {
+): LiveTimelineEvent {
   return timeline(
     {
       type: "assistant_message",
@@ -82,7 +83,7 @@ function reasoning(
     provider?: AgentProvider;
     turnId?: string;
   },
-): Extract<AgentStreamEvent, { type: "timeline" }> {
+): LiveTimelineEvent {
   return timeline({ type: "reasoning", text }, options);
 }
 
@@ -93,7 +94,7 @@ function toolCall(options?: {
   provider?: AgentProvider;
   turnId?: string;
   error?: unknown;
-}): Extract<AgentStreamEvent, { type: "timeline" }> {
+}): LiveTimelineEvent {
   const status = options?.status ?? "running";
   return timeline(
     {
@@ -130,6 +131,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "hel" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -151,6 +153,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "hello" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -186,6 +189,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "fast" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -201,6 +205,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "before" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -209,7 +214,10 @@ describe("AgentStreamCoalescer", () => {
 
   test("does not consume non-chunkable events", () => {
     const { coalescer, flushes } = createHarness();
-    const nonChunkableEvents: AgentStreamEvent[] = [
+    const nonChunkableEvents: (
+      | Exclude<AgentStreamEvent, { type: "timeline" }>
+      | LiveTimelineEvent
+    )[] = [
       timeline({ type: "todo", items: [{ text: "ship it", completed: false }] }),
       timeline({ type: "user_message", text: "hi", messageId: "message-1" }),
       timeline({ type: "error", message: "boom" }),
@@ -264,16 +272,19 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "a1" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-1",
         item: { type: "reasoning", text: "r1" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "a2" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -307,11 +318,13 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "c" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "o" },
+        turnId: "turn",
         provider: "opencode",
       },
     ]);
@@ -384,6 +397,7 @@ describe("AgentStreamCoalescer", () => {
           type: "assistant_message",
           text: " \n\t mixed \n\t whitespace ",
         },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -412,6 +426,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -432,11 +447,13 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "ab" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-2",
         item: { type: "assistant_message", text: "xy" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -455,11 +472,13 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "a" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-2",
         item: { type: "assistant_message", text: "b" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -476,6 +495,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "once" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -505,6 +525,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "first" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -514,11 +535,13 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "first" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "second" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -535,6 +558,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "manual" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -551,6 +575,7 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "durable" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -588,11 +613,13 @@ describe("AgentStreamCoalescer", () => {
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "old" },
+        turnId: "turn",
         provider: "codex",
       },
       {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "new" },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -619,6 +646,7 @@ describe("AgentStreamCoalescer", () => {
           text: "hello",
           futureOptionalField: { preserved: true },
         },
+        turnId: "turn",
         provider: "codex",
       },
     ]);
@@ -649,6 +677,7 @@ describe("AgentStreamCoalescer", () => {
             exitCode: null,
           },
         },
+        turnId: "turn",
         provider: "codex",
       },
     ]);

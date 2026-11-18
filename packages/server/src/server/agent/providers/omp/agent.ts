@@ -865,17 +865,18 @@ export class OmpAgentSession implements AgentSession {
     options,
     streamingBehavior,
     announceTurn = false,
+    turnId = randomUUID(),
   }: {
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
     streamingBehavior?: "steer" | "followUp";
     announceTurn?: boolean;
+    turnId?: string;
   }): Promise<StartTurnResult> {
     if (this.activeTurnId) {
       throw new Error("An OMP turn is already active");
     }
 
-    const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
     this.activeAssistantMessageId = null;
@@ -1267,7 +1268,7 @@ export class OmpAgentSession implements AgentSession {
 
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
-  ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {
+  ): ReturnType<NonNullable<AgentSession["tryHandleOutOfBand"]>> {
     if (typeof prompt !== "string") {
       return null;
     }
@@ -1298,9 +1299,14 @@ export class OmpAgentSession implements AgentSession {
       }
       const streamingBehavior = commandName === "steer" ? "steer" : "followUp";
       return {
-        run: async () => {
+        run: async ({ turnId }) => {
           if (!this.activeTurnId && !this.activeTurnStarted) {
-            await this.startPrompt({ prompt: message, streamingBehavior, announceTurn: true });
+            await this.startPrompt({
+              prompt: message,
+              streamingBehavior,
+              announceTurn: true,
+              turnId,
+            });
           } else {
             await this.runtimeSession.prompt({ message, streamingBehavior });
           }
@@ -1589,7 +1595,6 @@ export class OmpAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
           level:
@@ -1607,7 +1612,6 @@ export class OmpAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: sideEffectItem,
       });
       return;

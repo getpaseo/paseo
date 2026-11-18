@@ -424,6 +424,12 @@ export class TimelineProjection {
     this.spans.splice(index + 1, end - index - 1);
   }
 
+  itemTurnId(item: AgentTimelineItem): string | undefined {
+    const identity = timelineItemIdentity(item);
+    const index = identity === null ? undefined : this.identities.get(identity);
+    return index === undefined ? undefined : this.rows[index].turnId;
+  }
+
   getRows(): ProjectedTimelineRow[] {
     return this.rows.map((row) => ({ ...row }));
   }

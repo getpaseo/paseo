@@ -7,7 +7,11 @@ type CoalescableTextKind = "assistant_message" | "reasoning";
 type CoalescableTimelineKind = CoalescableTextKind | "tool_call";
 type CoalescableTextItem = Extract<AgentTimelineItem, { type: CoalescableTextKind }>;
 type CoalescableTimelineItem = Extract<AgentTimelineItem, { type: CoalescableTimelineKind }>;
-type CoalescableTimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }> & {
+export type LiveTimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }> & {
+  turnId: string;
+};
+type CoalescerEvent = Exclude<AgentStreamEvent, { type: "timeline" }> | LiveTimelineEvent;
+type CoalescableTimelineEvent = LiveTimelineEvent & {
   item: CoalescableTimelineItem;
 };
 
@@ -20,7 +24,7 @@ export interface AgentStreamCoalescerFlush {
   agentId: string;
   item: CoalescableTimelineItem;
   provider: AgentProvider;
-  turnId?: string;
+  turnId: string;
 }
 
 export interface AgentStreamCoalescerOptions {
@@ -35,14 +39,14 @@ interface PendingTextEntry {
   item: CoalescableTextItem;
   text: string;
   provider: AgentProvider;
-  turnId?: string;
+  turnId: string;
 }
 
 interface PendingToolCallEntry {
   kind: "tool_call";
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
-  turnId?: string;
+  turnId: string;
 }
 
 type PendingAgentStreamEntry = PendingTextEntry | PendingToolCallEntry;
@@ -51,12 +55,13 @@ interface PendingAgentStreamBuffer {
   agentId: string;
   entries: PendingAgentStreamEntry[];
   toolCallEntryIndexes: Map<string, number>;
+  latestToolTurns: Map<string, string>;
   timer: ReturnType<typeof setTimeout> | null;
   flushing: boolean;
   lastFlushAt: number | null;
 }
 
-function isCoalescableTimelineEvent(event: AgentStreamEvent): event is CoalescableTimelineEvent {
+function isCoalescableTimelineEvent(event: CoalescerEvent): event is CoalescableTimelineEvent {
   return (
     event.type === "timeline" &&
     (event.item.type === "assistant_message" ||
@@ -100,7 +105,7 @@ export class AgentStreamCoalescer {
     this.onFlush = options.onFlush;
   }
 
-  handle(agentId: string, event: AgentStreamEvent): boolean {
+  handle(agentId: string, event: CoalescerEvent): boolean {
     if (!isCoalescableTimelineEvent(event)) {
       return false;
     }
@@ -134,6 +139,11 @@ export class AgentStreamCoalescer {
     return true;
   }
 
+  pendingToolTurnId(agentId: string, callId: string): string | undefined {
+    const buffer = this.buffers.get(agentId);
+    return buffer?.latestToolTurns.get(callId);
+  }
+
   flushFor(agentId: string): void {
     this.flushBuffer(agentId);
   }
@@ -163,6 +173,7 @@ export class AgentStreamCoalescer {
       agentId,
       entries: [],
       toolCallEntryIndexes: new Map(),
+      latestToolTurns: new Map(),
       timer: null,
       flushing: false,
       lastFlushAt: null,
@@ -178,12 +189,14 @@ export class AgentStreamCoalescer {
         item: event.item,
         text: event.item.text,
         provider: event.provider,
-        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        turnId: event.turnId,
       });
       return;
     }
 
-    const existingIndex = buffer.toolCallEntryIndexes.get(event.item.callId);
+    buffer.latestToolTurns.set(event.item.callId, event.turnId);
+    const key = JSON.stringify([event.item.callId, event.turnId]);
+    const existingIndex = buffer.toolCallEntryIndexes.get(key);
     const existing = existingIndex !== undefined ? buffer.entries[existingIndex] : undefined;
     // Merge rather than replace, so an update that carries less (an unknown detail after a
     // labeled one) cannot erase what the timeline would have kept had both been flushed.
@@ -195,7 +208,7 @@ export class AgentStreamCoalescer {
       kind: "tool_call",
       item,
       provider: event.provider,
-      ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      turnId: event.turnId,
     };
 
     if (existingIndex !== undefined) {
@@ -203,7 +216,7 @@ export class AgentStreamCoalescer {
       return;
     }
 
-    buffer.toolCallEntryIndexes.set(event.item.callId, buffer.entries.length);
+    buffer.toolCallEntryIndexes.set(key, buffer.entries.length);
     buffer.entries.push(entry);
   }
 
@@ -243,6 +256,7 @@ export class AgentStreamCoalescer {
     const entries = buffer.entries;
     buffer.entries = [];
     buffer.toolCallEntryIndexes.clear();
+    buffer.latestToolTurns.clear();
     buffer.flushing = true;
     buffer.lastFlushAt = this.now();
 
@@ -258,7 +272,7 @@ export class AgentStreamCoalescer {
                 }
               : entry.item,
           provider: entry.provider,
-          ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+          turnId: entry.turnId,
         });
       }
     } finally {
