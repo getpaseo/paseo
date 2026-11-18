@@ -12,6 +12,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { traceCheckoutRequest, type CheckoutPhaseRow } from "./checkout-phase.js";
+import { runGitCommand } from "./run-git-command.js";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
@@ -3869,18 +3870,63 @@ const x = 1;
       cwd: repoDir,
     });
 
-    let callCount = 0;
-    const github = createGitHubServiceForStatus(createPullRequestStatus(), {
-      onStatus: () => {
-        callCount += 1;
-      },
+    let releaseStatus!: (status: CurrentPullRequestStatus | null) => void;
+    let markStatusStarted!: () => void;
+    const statusStarted = new Promise<void>((resolve) => {
+      markStatusStarted = resolve;
     });
-    const [first, second] = await Promise.all([
-      getPullRequestStatus(repoDir, github),
-      getPullRequestStatus(repoDir, github),
-    ]);
-    expect(first).toEqual(second);
-    expect(callCount).toBe(1);
+    const status = new Promise<CurrentPullRequestStatus | null>((resolve) => {
+      releaseStatus = resolve;
+    });
+    const github = createGitHubServiceForStatus(null);
+    github.getCurrentPullRequestStatus = async () => {
+      markStatusStarted();
+      return status;
+    };
+    const firstRows: CheckoutPhaseRow[] = [];
+    const secondRows: CheckoutPhaseRow[] = [];
+    let secondReads = 0;
+    let markSecondReadsDone!: () => void;
+    const secondReadsDone = new Promise<void>((resolve) => {
+      markSecondReadsDone = resolve;
+    });
+    vi.useFakeTimers();
+    try {
+      const first = traceCheckoutRequest({
+        id: "first-pr-request",
+        sink: (row) => firstRows.push(row),
+        run: () => getPullRequestStatus(repoDir, github),
+      });
+      await statusStarted;
+      const secondContext = {
+        runGitCommand: async (...args: Parameters<typeof runGitCommand>) => {
+          const result = await runGitCommand(...args);
+          secondReads += 1;
+          if (secondReads === 2) markSecondReadsDone();
+          return result;
+        },
+      };
+      const second = traceCheckoutRequest({
+        id: "second-pr-request",
+        sink: (row) => secondRows.push(row),
+        run: () => getPullRequestStatus(repoDir, github, undefined, secondContext),
+      });
+      await secondReadsDone;
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(secondRows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ phase: "forge_cache", outcome: "start", alreadyActive: true }),
+        ]),
+      );
+      releaseStatus(createPullRequestStatus());
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult).toEqual(secondResult);
+      expect(firstRows[0]?.requestId).not.toBe(secondRows[0]?.requestId);
+    } finally {
+      releaseStatus(createPullRequestStatus());
+      vi.useRealTimers();
+    }
   });
 
   it("returns typed MergeConflictError on merge conflicts", async () => {
