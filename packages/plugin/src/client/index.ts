@@ -91,6 +91,8 @@ export type {
   PluginComposerFocusOptions,
   PluginComposerItemContribution,
   PluginComposerItemProps,
+  PluginComposerSectionProps,
+  PluginComposerSectionContribution,
   PluginComposerSelector,
 } from "./composer.js";
 export { useNewWorkspace } from "./new-workspace.js";

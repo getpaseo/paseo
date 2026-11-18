@@ -595,6 +595,52 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it("registers inline composer sections and removes them on cleanup", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "replies",
+      bundle(`
+      function Section() { return null; }
+      const remove = plugin.addComposerSection({ id: "suggestions", Component: Section });
+      remove();
+      remove();
+      plugin.addComposerSection({ id: "suggestions", Component: Section });
+    `),
+    );
+    expect(plugin.composerSections.map((section) => section.id)).toEqual(["suggestions"]);
+    expect(plugin.composerItems).toEqual([]);
+    await plugin.cleanup();
+    expect(plugin.composerSections).toEqual([]);
+  });
+
+  it("rejects duplicate and invalid composer sections", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "replies",
+        bundle(`
+      function Section() { return null; }
+      plugin.addComposerSection({ id: "suggestions", Component: Section });
+      plugin.addComposerSection({ id: "suggestions", Component: Section });
+    `),
+      ),
+    ).toThrow("Duplicate composer section: suggestions");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "replies",
+        bundle(`
+      plugin.addComposerSection({ id: "suggestions", Component: "nope" });
+    `),
+      ),
+    ).toThrow("Composer section suggestions is not a component");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "replies",
+        bundle(`
+      plugin.addComposerSection({ id: "Bad ID", Component() { return null; } });
+    `),
+      ),
+    ).toThrow("Invalid composer section id");
+  });
+
   it("collects composer items and releases an id on removal", () => {
     const plugin = evaluatePluginClientBundle(
       "review",

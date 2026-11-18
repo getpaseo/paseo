@@ -30,6 +30,7 @@ function plugin(input: {
     workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [],
     commandCenterItems: [],

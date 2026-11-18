@@ -81,6 +81,7 @@ import {
 import { WorkspaceDraftComposer } from "@/composer/draft/workspace-tab";
 import { type DraftConversation, useDraftTimeline } from "@/composer/draft/timeline";
 import { AgentTracks } from "@/panels/agent-tracks";
+import { PluginComposerSections } from "@/plugins/composer-sections";
 import { OverlayDismissalScope } from "@/components/ui/overlay-dismissal";
 import { ParentAgentCallout, useParentAgentId } from "@/subagents/parent";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
@@ -1102,6 +1103,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const composerEditingSession = useComposerEditingSession("chat");
   const isComposerFullscreen = useComposerFullscreen(composerEditingSession);
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  const hasVisibleAgentComposer = showsComposer && hasActiveComposer && !draft;
   const parentAgentId = useParentAgentId(serverId, agentId);
   // With a composer the parent is a pill above it; without one, the box takes the composer's place.
   const parentPillAgentId = showsComposer ? parentAgentId : null;
@@ -1193,6 +1195,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     <View
       style={animatedStaticStyles.content}
       onStartShouldSetResponderCapture={handleAttentionInteraction}
+      testID="agent-transcript-tracks"
     >
       {showsComposer ? null : <SheetAgentFacts serverId={serverId} agentId={agentId} />}
       <RenderProfile id={`AgentStreamSection:${agentId}`}>
@@ -1229,6 +1232,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   const dockContent = (
     <View style={styles.contentContainer}>
       {streamContent}
+      {hasVisibleAgentComposer ? (
+        <PluginComposerSections serverId={serverId} workspaceId={workspaceId} agentId={agentId} />
+      ) : null}
 
       {showHistorySyncError ? (
         <TimelineSyncErrorCallout isRetrying={isRetryingHistorySync} onRetry={retryTimelineSync} />
@@ -1276,7 +1282,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     </RewindComposerRestoreProvider>
   );
   return wrapAgentCommandProvider({
-    enabled: showsComposer && hasActiveComposer && !draft,
+    enabled: hasVisibleAgentComposer,
     serverId,
     agentId,
     editingSession: composerEditingSession,

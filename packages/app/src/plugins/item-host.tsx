@@ -48,14 +48,14 @@ export function usePluginItemHost(
 }
 
 /** Mounts each item behind its own boundary; a throwing item draws nothing. */
-export function PluginItemList({
+export function PluginItemList<Props extends PluginHostProps>({
   plugin,
   items,
   props,
 }: {
   plugin: InstalledPlugin;
-  items: readonly { id: string; Component: ComponentType<PluginHostProps> }[];
-  props: PluginHostProps;
+  items: readonly { id: string; Component: ComponentType<Props> }[];
+  props: Props;
 }) {
   return (
     <>

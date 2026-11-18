@@ -27,6 +27,7 @@ function installed(): InstalledPlugin {
     workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
+    composerSections: [],
     newWorkspaceItems: [],
     workspacePanels: [
       {
