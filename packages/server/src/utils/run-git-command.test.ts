@@ -241,7 +241,15 @@ describe("runGitCommand", () => {
     const git = await loadRunGitCommand(1);
     const { closeRefresh, joinRefresh, newRefresh, runRefresh, traceCheckoutRequest } =
       await import("./checkout-phase.js");
-    enqueueSpawnBehaviors({ delayMs: 1_000 }, { delayMs: 0 });
+    const cwd = "/tmp/git-cwd-sentinel";
+    const argv = ["diff", "argv-sentinel-ref"];
+    const binaryPath = "/tmp/git-bin-sentinel";
+    const rawError = new Error("git-raw-error-sentinel");
+    enqueueSpawnBehaviors(
+      { delayMs: 1_000 },
+      { delayMs: 0 },
+      { emitError: rawError, delayMs: 600 },
+    );
     git.startGitCommandMetrics();
     const firstRows: CheckoutPhaseRow[] = [];
     const secondRows: CheckoutPhaseRow[] = [];
@@ -254,7 +262,7 @@ describe("runGitCommand", () => {
         run: () => {
           joinRefresh({ refresh, alreadyActive: false });
           return runRefresh(refresh, () =>
-            git.runGitCommand(["status"], { cwd: process.cwd() }),
+            git.runGitCommand(argv, { cwd, envOverlay: { PATH: binaryPath } }),
           ).finally(() => closeRefresh(refresh));
         },
       });
@@ -303,6 +311,27 @@ describe("runGitCommand", () => {
     expect(secondRows.some((row) => row.refreshId === firstRefresh.id)).toBe(false);
     expect(firstRows.every((row) => row.requestId === firstId)).toBe(true);
     expect(firstRows.some((row) => row.refreshId === secondRefresh.id)).toBe(false);
+    const errorRefresh = newRefresh();
+    const errorRows: CheckoutPhaseRow[] = [];
+    const failed = submit("77777777-7777-4777-8777-777777777777", errorRefresh, errorRows);
+    const rejection = expect(failed).rejects.toBe(rawError);
+    await vi.advanceTimersByTimeAsync(600);
+    await rejection;
+    expect(errorRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ refreshId: errorRefresh.id, phase: "git_queue", outcome: "ok" }),
+        expect.objectContaining({
+          refreshId: errorRefresh.id,
+          phase: "git_spawn",
+          outcome: "error",
+        }),
+      ]),
+    );
+    for (const rows of [firstRows, secondRows, errorRows]) {
+      for (const sentinel of [cwd, ...argv, binaryPath, rawError.message]) {
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      }
+    }
     expect(git.stopGitCommandMetrics().pending).toBe(0);
   });
 

@@ -592,36 +592,74 @@ describe("ForgeService", () => {
     vi.useRealTimers();
   });
 
-  it("records the injected GitHub runner boundary with safe fields", async () => {
-    const runner = createDeferredRunner();
+  it.each([false, true])("records safe GitHub runner rows when failure is %s", async (fails) => {
+    const cwd = "/tmp/forge-runner-cwd-sentinel";
+    const ghPath = "/tmp/forge-runner-bin-sentinel";
+    const argvSentinel = "forge-argv-sentinel";
+    const rawError = new Error("forge-runner-error-sentinel");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       markStarted = resolve;
     });
+    const calls: RunnerCall[] = [];
     const service = createGitHubService({
-      runner: (args, options) => {
+      runner: async (args, options) => {
+        calls.push({ args, cwd: options.cwd });
         markStarted();
-        return runner.runner(args, options);
+        await gate;
+        if (fails) throw rawError;
+        return { stdout: "[]", stderr: "" };
       },
-      resolveGhPath: async () => "/tmp/private-gh-path",
+      resolveGhPath: async () => ghPath,
+      resolveRepoHost: async () => null,
       now: () => 100,
     });
     const rows: CheckoutPhaseRow[] = [];
     const task = traceCheckoutRequest({
-      id: "invalid-id",
+      id: "88888888-8888-4888-8888-888888888888",
       sink: (row) => rows.push(row),
-      run: () => service.isAuthenticated({ cwd: "/tmp/private-cwd" }),
+      run: () => service.listIssues({ cwd, query: argvSentinel }),
     });
-    await started;
-    await vi.advanceTimersByTimeAsync(500);
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ phase: "forge_runner", outcome: "start" }),
-      ]),
+    const result = task.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
     );
-    expect(JSON.stringify(rows)).not.toContain("private");
-    runner.resolveNext("");
-    await expect(task).resolves.toBe(true);
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(500);
+      release();
+      if (fails) {
+        expect(await result).toMatchObject({
+          error: expect.objectContaining({
+            name: "GitHubCommandError",
+            stderr: rawError.message,
+            cwd,
+            args: expect.arrayContaining([argvSentinel]),
+          }),
+        });
+      } else {
+        expect(await result).toEqual({ value: [] });
+      }
+      expect(calls).toEqual([
+        expect.objectContaining({ cwd, args: expect.arrayContaining([argvSentinel]) }),
+      ]);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ phase: "forge_runner", outcome: "start" }),
+          expect.objectContaining({ phase: "forge_runner", outcome: fails ? "error" : "ok" }),
+        ]),
+      );
+      for (const sentinel of [cwd, ghPath, argvSentinel, rawError.message]) {
+        expect(JSON.stringify(rows)).not.toContain(sentinel);
+      }
+    } finally {
+      release();
+      await result;
+    }
   });
 
   it.each([
