@@ -85,6 +85,27 @@ function MobileTabDropdownMenuItem({
   );
 }
 
+/** A tab menu's rows, for any menu surface: dropdown, context menu or sheet. */
+export function WorkspaceTabMenuEntryItems({
+  entries,
+  openWith,
+}: {
+  entries: WorkspaceTabMenuEntry[];
+  openWith?: FilePanelOpenWithMenu;
+}): ReactElement {
+  return (
+    <>
+      {entries.map((entry) => {
+        if (entry.kind === "separator") return <DropdownMenuSeparator key={entry.key} />;
+        if (entry.kind === "file-panel-open-with") {
+          return <Fragment key={entry.key}>{openWith?.trigger}</Fragment>;
+        }
+        return <MobileTabDropdownMenuItem key={entry.key} entry={entry} />;
+      })}
+    </>
+  );
+}
+
 export function MobileTabTrailingAccessory({
   menuTestIDBase,
   presentationLabel,
@@ -117,13 +138,7 @@ export function MobileTabTrailingAccessory({
         pages={openWith?.pages}
         testID={menuTestIDBase}
       >
-        {menuEntries.map((entry) => {
-          if (entry.kind === "separator") return <DropdownMenuSeparator key={entry.key} />;
-          if (entry.kind === "file-panel-open-with") {
-            return <Fragment key={entry.key}>{openWith?.trigger}</Fragment>;
-          }
-          return <MobileTabDropdownMenuItem key={entry.key} entry={entry} />;
-        })}
+        <WorkspaceTabMenuEntryItems entries={menuEntries} openWith={openWith} />
       </DropdownMenuContent>
     </DropdownMenu>
   );

@@ -4,6 +4,16 @@ import UIKit
 public final class PaseoWindowLayoutModule: Module {
   public func definition() -> ModuleDefinition {
     Name("PaseoWindowLayout")
+    OnCreate {
+      DispatchQueue.main.async { VerticalBarPreference.restore() }
+    }
+    Function("setVerticalBarBehavior") { (behavior: String) in
+      let disabled = behavior == "disabled"
+      DispatchQueue.main.async { VerticalBarPreference.setDisabled(disabled) }
+    }
+    Function("getVerticalBarBehavior") { () -> String in
+      VerticalBarPreference.disabled ? "disabled" : "automatic"
+    }
     View(WindowLayoutView.self) {
       Events("onGeometryChange")
     }
@@ -15,11 +25,11 @@ final class WindowLayoutView: ExpoView {
   private var updateScheduled = false
   private var previousPayload: [String: Any]?
   private var divisions: [CGRect] = []
+  private var occlusions: [CGRect] = []
   private var barGuide: UILayoutGuide?
   private var barEdge = "none"
   private var bottomBarGuide: UILayoutGuide?
   private var topBarGuide: UILayoutGuide?
-  private var occlusions: [CGRect] = []
   private var measuredBounds = CGRect.zero
 
   required init(appContext: AppContext? = nil) {
@@ -34,6 +44,18 @@ final class WindowLayoutView: ExpoView {
       }
     }
     #endif
+    NotificationCenter.default.addObserver(
+      self,
+      selector: #selector(verticalBarPreferenceDidChange),
+      name: VerticalBarPreference.didChange,
+      object: nil
+    )
+  }
+
+  @objc private func verticalBarPreferenceDidChange() {
+    previousPayload = nil
+    setNeedsUpdateConstraints()
+    scheduleUpdate()
   }
 
   override func didMoveToWindow() {
@@ -65,6 +87,7 @@ final class WindowLayoutView: ExpoView {
     if #available(iOS 27.1, *) {
       // UIKit tracks these reads and invalidates constraints when regions change.
       divisions = reservedRegions(kind: .division).compactMap { $0.isActive ? $0.frame : nil }
+      // Elements drawn over the window, such as the status bar pill with the vertical bar off.
       // Frames already include the system's interactive margins.
       occlusions = reservedRegions(kind: .occlusion).compactMap { $0.isActive ? $0.frame : nil }
       let edge: String
@@ -107,7 +130,9 @@ final class WindowLayoutView: ExpoView {
 
   private func publish() {
     guard window != nil, bounds.width > 0, bounds.height > 0 else { return }
-    let bar = barGuide?.layoutFrame
+    // A disabled bar keeps its preferred edge in the traits, but nothing occupies it.
+    let barDisabled = VerticalBarPreference.disabled
+    let bar = barDisabled ? nil : barGuide?.layoutFrame
     var barPayload: Any = NSNull()
     if let bar, bar.width > 0, bar.height > 0 { barPayload = rect(bar) }
     // Before UIKit resolves the guide its frame has no height: publish null (the
@@ -124,8 +149,9 @@ final class WindowLayoutView: ExpoView {
       "bounds": rect(bounds),
       "verticalBarEdge": barEdge,
       "verticalBar": barPayload,
-      "bottomClearance": bottomClearance,
+      "verticalBarBehavior": barDisabled ? "disabled" : "automatic",
       "topBar": topBar,
+      "bottomClearance": bottomClearance,
       "occlusions": occlusions.map(rect),
       "divisions": divisions.map(rect)
     ]
@@ -137,4 +163,64 @@ final class WindowLayoutView: ExpoView {
   private func rect(_ frame: CGRect) -> [String: CGFloat] {
     ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
   }
+}
+
+/// The app-wide vertical bar preference (iOS 27.1). Disabling it moves the status bar back to the
+/// top and removes the bar's leading or trailing safe-area inset, so content takes the full width.
+///
+/// React Native owns the root view controller, so the override is installed on
+/// `UIViewController.preferredVerticalBarBehavior` and applies only to a window's root view
+/// controller; every other view controller keeps UIKit's answer.
+enum VerticalBarPreference {
+  static let didChange = Notification.Name("PaseoVerticalBarPreferenceDidChange")
+  private static let defaultsKey = "paseo.verticalBarDisabled"
+  /// Persisted, so an expanded window stays expanded across launches.
+  private(set) static var disabled = UserDefaults.standard.bool(forKey: defaultsKey)
+  private static var installed = false
+
+  static func setDisabled(_ value: Bool) {
+    guard value != disabled else { return }
+    disabled = value
+    UserDefaults.standard.set(value, forKey: defaultsKey)
+    apply()
+  }
+
+  /// Applies the persisted preference once the app has windows to apply it to.
+  static func restore() {
+    if disabled { apply() }
+  }
+
+  private static func apply() {
+    #if compiler(>=6.4)
+    if #available(iOS 27.1, *) {
+      install()
+      for scene in UIApplication.shared.connectedScenes {
+        guard let windowScene = scene as? UIWindowScene else { continue }
+        for window in windowScene.windows {
+          window.rootViewController?.setNeedsUpdateOfVerticalBarConfiguration()
+        }
+      }
+    }
+    #endif
+    NotificationCenter.default.post(name: didChange, object: nil)
+  }
+
+  #if compiler(>=6.4)
+  @available(iOS 27.1, *)
+  private static func install() {
+    guard !installed else { return }
+    installed = true
+    let selector = #selector(getter: UIViewController.preferredVerticalBarBehavior)
+    guard let method = class_getInstanceMethod(UIViewController.self, selector) else { return }
+    typealias Getter = @convention(c) (UIViewController, Selector) -> UIVerticalBarBehavior
+    let original = unsafeBitCast(method_getImplementation(method), to: Getter.self)
+    let replacement: @convention(block) (UIViewController) -> UIVerticalBarBehavior = { controller in
+      if disabled, let window = controller.viewIfLoaded?.window, window.rootViewController === controller {
+        return .disabled
+      }
+      return original(controller, selector)
+    }
+    method_setImplementation(method, imp_implementationWithBlock(replacement))
+  }
+  #endif
 }
