@@ -52,7 +52,8 @@ interface ProviderTurn extends Turn {
  *
  * Compared: assistant and reasoning text exactly, tool calls by `callId`, `name`, `status`,
  * `error` and `detail`, and every other item except the ones Paseo writes itself (errors,
- * notifications, plugin rows). Tool call `metadata` is not compared.
+ * notifications, plugin rows) or the provider marks as live-only. Tool call `metadata` is not
+ * otherwise compared.
  */
 export function planProviderHistory(input: {
   rows: readonly ProjectedTimelineRow[];
@@ -204,6 +205,8 @@ function addToSegments(segments: Segment[], item: AgentTimelineItem): number | n
       return segments.length - 1;
     }
     case "tool_call": {
+      // Live status rows stay in the timeline but have no counterpart in provider history.
+      if (item.metadata?.liveOnly === true) return null;
       const index = segments.findIndex(
         (segment) => segment.kind === "tool_call" && segment.item.callId === item.callId,
       );

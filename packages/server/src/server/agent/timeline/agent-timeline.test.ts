@@ -1272,6 +1272,35 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     expect(await timeline.describe(scope)).toMatchObject({ epoch: "e", retirementCount: 0 });
   });
 
+  it("appends provider history without dropping live-only status rows", async () => {
+    const status: AgentTimelineItem = {
+      type: "tool_call",
+      name: "codex_retry",
+      callId: "retry",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", label: "Reconnected" },
+      metadata: { liveOnly: true },
+    };
+    const { timeline } = await owned([prompt("a"), reply("A"), { item: status }]);
+
+    const result = await timeline.reconcileProviderHistory(scope, [
+      prompt("a"),
+      reply("A"),
+      prompt("b"),
+      reply("B"),
+    ]);
+
+    expect(result).toMatchObject({ kind: "appended" });
+    expect((await timeline.readRows(scope)).map((row) => row.item)).toEqual([
+      prompt("a").item,
+      reply("A").item,
+      status,
+      prompt("b").item,
+      reply("B").item,
+    ]);
+  });
+
   it("appends the turns the provider has after the owned conversation", async () => {
     const { timeline } = await owned([prompt("a"), reply("A")]);
     const published: TimelineCommit[][] = [];

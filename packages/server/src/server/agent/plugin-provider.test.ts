@@ -1764,7 +1764,7 @@ describe("PluginAgentClientRegistry", () => {
         ]);
         harness.emit({ type: "session.closed", sessionId: "reusable-child" });
         await nextTurn();
-        expect(manager.listProviderSubagents(agent.id)).toMatchObject([
+        expect(await manager.listProviderSubagents(agent.id)).toMatchObject([
           { id: child.id, title: child.title, status: outcome },
         ]);
       } finally {
