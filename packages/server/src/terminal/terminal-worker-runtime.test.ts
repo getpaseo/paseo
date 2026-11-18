@@ -18,7 +18,6 @@ import { isPlatform } from "../test-utils/platform.js";
 import {
   prepareTerminalWorkerRuntime,
   pruneTerminalWorkerRuntimes,
-  shouldRetryRemove,
   TerminalWorkerRuntimeError,
 } from "./terminal-worker-runtime.js";
 import {
@@ -78,8 +77,8 @@ function recordNaming(runtime: string | null, pid = 4242): TerminalWorkerRecord 
   };
 }
 
-// Well under the 3 s retry window, well above one pass over a small copy on a slow CI runner.
-const FAILED_PRUNE_BUDGET_MS = 1_000;
+// Inside the 3 s delete retry window, and well past one delete attempt on a small copy.
+const DELETABLE_AGAIN_AFTER_MS = 300;
 
 describe("terminal worker runtime copy", () => {
   it("copies the bundle, its shell integration and this platform's node-pty into the home", () => {
@@ -197,8 +196,10 @@ describe("terminal worker runtime copy", () => {
     expect(existsSync(copy.scriptPath)).toBe(true);
   });
 
-  // A copy the daemon user cannot delete (one left by a daemon that ran under sudo, say) fails
-  // with EACCES on Linux and macOS. That never clears, so waiting for it only delays start and stop.
+  // On Linux and macOS, EACCES on a copy means the daemon user cannot delete it (a copy left by a
+  // daemon that ran under sudo, say), so the delete fails at once. This copy turns deletable again
+  // after a moment: a delete that waited for it would remove it. chmod cannot stop root from
+  // deleting, and Windows has no read-only directories.
   it.skipIf(isPlatform("win32") || process.getuid?.() === 0)(
     "fails at once on a copy the daemon cannot delete",
     async () => {
@@ -210,43 +211,19 @@ describe("terminal worker runtime copy", () => {
       });
       const directory = path.dirname(copy.scriptPath);
       chmodSync(directory, 0o555);
+      const restore = setTimeout(() => chmodSync(directory, 0o755), DELETABLE_AGAIN_AFTER_MS);
       try {
-        const startedAt = Date.now();
         const result = await pruneTerminalWorkerRuntimes(home);
-        const elapsedMs = Date.now() - startedAt;
 
         expect(result.removed).toEqual([]);
         expect(result.failed.map((entry) => entry.directory)).toEqual([directory]);
         expect(result.failed[0]?.error).toMatch(/EACCES/);
-        expect(elapsedMs).toBeLessThan(FAILED_PRUNE_BUDGET_MS);
       } finally {
-        chmodSync(directory, 0o755);
+        clearTimeout(restore);
+        if (existsSync(directory)) chmodSync(directory, 0o755);
       }
     },
   );
-});
-
-describe("terminal worker copy delete retry", () => {
-  it.each(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"])(
-    "retries %s on Windows, where a just-exited worker's lock clears",
-    (code) => {
-      expect(shouldRetryRemove({ code, platform: "win32" })).toBe(true);
-    },
-  );
-
-  it.each(["linux", "darwin"] as const)(
-    "does not retry a permission or busy error on %s, where it does not clear",
-    (platform) => {
-      for (const code of ["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]) {
-        expect(shouldRetryRemove({ code, platform })).toBe(false);
-      }
-    },
-  );
-
-  it("does not retry other errors on any platform", () => {
-    expect(shouldRetryRemove({ code: "ENOENT", platform: "win32" })).toBe(false);
-    expect(shouldRetryRemove({ code: undefined, platform: "win32" })).toBe(false);
-  });
 });
 
 describe("terminal worker bundle", () => {

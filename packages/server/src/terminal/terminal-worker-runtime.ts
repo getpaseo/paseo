@@ -194,28 +194,16 @@ export function prepareTerminalWorkerRuntime(input: {
   return entry;
 }
 
-// Windows keeps a just-exited worker's files open for a moment, so a delete that fails with one
-// of these codes is retried for a short window. Each attempt is a single rm: rm's own maxRetries
-// repeats at every directory level, so a file that stays locked deep in node-pty would hold
-// daemon start and stop far past any window.
-const TRANSIENT_REMOVE_ERRORS = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+// Windows keeps a just-exited worker's files open for a moment, so there a delete that fails with
+// one of these codes is retried for a short window. On Linux and macOS the same codes mean the
+// daemon user cannot delete the copy, which never clears, so the delete fails at once. Each attempt
+// is a single rm: rm's own maxRetries repeats at every directory level, so a file that stays locked
+// deep in node-pty would hold daemon start and stop far past any window.
+const TRANSIENT_REMOVE_ERRORS = new Set<string>(
+  process.platform === "win32" ? ["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"] : [],
+);
 const TRANSIENT_REMOVE_WINDOW_MS = 3_000;
 const TRANSIENT_REMOVE_PAUSE_MS = 100;
-
-/**
- * Only Windows clears these codes on its own. On Linux and macOS, EACCES and EPERM mean the daemon
- * user cannot delete there (a copy left by a daemon that ran under sudo), so a retry only delays
- * daemon start and stop by the whole window and then fails the same way.
- */
-export function shouldRetryRemove(input: RemoveFailure): boolean {
-  const { code, platform = process.platform } = input;
-  return platform === "win32" && code !== undefined && TRANSIENT_REMOVE_ERRORS.has(code);
-}
-
-export interface RemoveFailure {
-  code: string | undefined;
-  platform?: NodeJS.Platform;
-}
 
 async function removeCopy(directory: string): Promise<void> {
   const deadline = Date.now() + TRANSIENT_REMOVE_WINDOW_MS;
@@ -225,7 +213,7 @@ async function removeCopy(directory: string): Promise<void> {
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (!shouldRetryRemove({ code }) || Date.now() >= deadline) throw error;
+      if (!code || !TRANSIENT_REMOVE_ERRORS.has(code) || Date.now() >= deadline) throw error;
       await delay(TRANSIENT_REMOVE_PAUSE_MS);
     }
   }
@@ -233,7 +221,10 @@ async function removeCopy(directory: string): Promise<void> {
 
 export interface PruneTerminalWorkerRuntimesResult {
   removed: string[];
-  /** Copies that could not be deleted (a worker that just exited can still hold files on Windows). */
+  /**
+   * Copies that could not be deleted: a worker that just exited can still hold files on Windows, or
+   * the daemon user cannot delete them.
+   */
   failed: Array<{ directory: string; error: string }>;
 }
 
