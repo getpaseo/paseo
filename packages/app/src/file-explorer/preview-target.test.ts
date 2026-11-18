@@ -48,6 +48,46 @@ describe("resolveFilePreviewReadTarget", () => {
       cwd: "~",
       path: "~/.paseo/plans/file-preview.md",
     });
+    expect(
+      resolveFilePreviewReadTarget({
+        path: "~/foo/../bar.md",
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      cwd: "~",
+      path: "~/foo/../bar.md",
+    });
+  });
+
+  it("uses a containing directory when a tilde path walks above home", () => {
+    // `cwd: "~"` would resolve the file outside home and the daemon would refuse the read.
+    expect(
+      resolveFilePreviewReadTarget({
+        path: "~/../other/plan.md",
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      cwd: "~/../other",
+      path: "~/../other/plan.md",
+    });
+    expect(
+      resolveFilePreviewReadTarget({
+        path: "~/foo/../../other/plan.md",
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      cwd: "~/../other",
+      path: "~/foo/../../other/plan.md",
+    });
+    expect(
+      resolveFilePreviewReadTarget({
+        path: "~/../plan.md",
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      cwd: "~/..",
+      path: "~/../plan.md",
+    });
   });
 
   it("uses the drive root for Windows absolute paths outside the workspace", () => {
