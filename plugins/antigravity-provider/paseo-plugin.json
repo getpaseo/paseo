@@ -1,1 +1,1 @@
-{ "id": "antigravity-provider", "requirements": { "paseo": ">=0.10.0" } }
+{ "id": "antigravity-provider", "requirements": { "paseo": ">=0.11.0" } }
