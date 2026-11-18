@@ -182,7 +182,7 @@ export class AgentTimeline {
       const existing = await this.backend.head(scope);
       if (existing) return { kind: "present", head: existing };
       const head = await this.backend.create(scope, {
-        entries: entries.map(boundEntry),
+        entries: entries.map(providerHistoryEntry),
         timestamp: options.timestamp,
       });
       return { kind: "imported", head: this.track(scope, head) };
@@ -205,7 +205,7 @@ export class AgentTimeline {
       const plan = planProviderHistory({
         rows: await this.backend.readRows(scope),
         prompts: await this.backend.prompts(scope),
-        provider: entries.map(boundEntry),
+        provider: entries.map(providerHistoryEntry),
       });
       if (plan.kind !== "append") return plan;
       const commits = await this.commit(scope, plan.entries);
@@ -509,6 +509,15 @@ function settledOperation(): void {}
 
 function boundEntry(entry: TimelineEntry): TimelineEntry {
   return { ...entry, item: limitAgentTimelineItemContent(entry.item) };
+}
+
+/** Replay proves delivery even when the provider includes Paseo's original client ID. */
+function providerHistoryEntry(entry: TimelineEntry): TimelineEntry {
+  const { item } = entry;
+  const providerMessageId =
+    entry.providerMessageId ??
+    (item.type === "user_message" && item.clientMessageId ? item.messageId : undefined);
+  return boundEntry({ ...entry, ...(providerMessageId ? { providerMessageId } : {}) });
 }
 
 interface PublishFailure {

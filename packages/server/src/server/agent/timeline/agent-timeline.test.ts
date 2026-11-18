@@ -1211,6 +1211,28 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     expect(tail).toMatchObject({ epoch: first.head.epoch, startSeq: 1, endSeq: 4 });
   });
 
+  it("acknowledges provider prompts that replay with a client ID", async () => {
+    const timeline = new AgentTimeline(new DeferredTimelineBackend(create()));
+    const steer = (id: string): TimelineEntry => ({
+      item: { type: "user_message", messageId: id, clientMessageId: `client-${id}`, text: id },
+    });
+    const history = [prompt("a"), reply("A"), steer("b"), reply("B")];
+    await timeline.importHistory(scope, history);
+
+    expect(await timeline.reconcileProviderHistory(scope, history)).toEqual({ kind: "unchanged" });
+    const continued = [...history, steer("c"), reply("C")];
+    expect(await timeline.reconcileProviderHistory(scope, continued)).toMatchObject({
+      kind: "appended",
+    });
+    expect(await timeline.reconcileProviderHistory(scope, continued)).toEqual({
+      kind: "unchanged",
+    });
+    expect((await timeline.readRows(scope))[4]).toMatchObject({
+      item: { messageId: "c", clientMessageId: "client-c" },
+      providerMessageId: "c",
+    });
+  });
+
   it("leaves existing history alone when asked to import", async () => {
     const { timeline } = await owned([prompt("a"), reply("A")]);
 

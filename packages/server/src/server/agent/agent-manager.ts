@@ -819,6 +819,9 @@ function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): A
         seq: rows.length + 1,
         timestamp: entry.timestamp ?? new Date().toISOString(),
         item: limitAgentTimelineItemContent(item),
+        ...(item.type === "user_message" && item.clientMessageId && item.messageId
+          ? { providerMessageId: item.messageId }
+          : {}),
       });
     }
   }
@@ -4676,6 +4679,7 @@ export class AgentManager {
             buildImportedTimelineRows(session.initialTimeline).map((row) => ({
               item: row.item,
               timestamp: row.timestamp,
+              providerMessageId: row.providerMessageId,
             })),
           );
         }
