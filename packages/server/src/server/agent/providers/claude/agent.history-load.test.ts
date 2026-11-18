@@ -174,6 +174,40 @@ describe("ClaudeAgentSession persisted history load", () => {
     }
   }, 60_000);
 
+  test("replays many small records in a bounded number of event-loop turns", async () => {
+    // Every turn waits behind the rest of the daemon's work, so a replay that awaits per record
+    // takes minutes on a busy daemon however little work each record is.
+    const count = 20_000;
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    const lines: string[] = [];
+    for (let index = 0; index < count; index++) {
+      lines.push(
+        JSON.stringify({ type: "assistant", uuid: `a${index}`, message: { content: `${index}` } }),
+      );
+    }
+    writeFileSync(transcriptPath(), `${lines.join("\n")}\n`);
+
+    const { result: replayed, filesystemRequests } = await measureMainThreadWork(
+      "Claude small-record replay",
+      async () => {
+        const session = await resume();
+        try {
+          let replayedCount = 0;
+          for await (const event of session.streamHistory()) {
+            if (event.type === "timeline") replayedCount++;
+          }
+          return replayedCount;
+        } finally {
+          await session.close();
+        }
+      },
+    );
+
+    expect(replayed).toBe(count);
+    // Reading record by record costs at least one request per record and pass.
+    expect(filesystemRequests).toBeLessThan(count / 100);
+  }, 60_000);
+
   test("rebinds ordered history before returning from rewind and accepts a live turn", async () => {
     const entries = [
       { type: "user", uuid: "u1", message: { content: "first" } },

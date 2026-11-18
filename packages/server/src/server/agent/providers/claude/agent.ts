@@ -2760,9 +2760,14 @@ class ClaudeAgentSession implements AgentSession {
     this.persistedHistory = [];
     this.persistedProviderSubagentEvents = [];
     this.historyPending = false;
-    let replayed = 0;
+    // Yield after a slice of work rather than every few entries: each yield costs a full
+    // event-loop turn, which a busy daemon makes expensive.
+    let sliceStartedAt = performance.now();
     for (const entry of history) {
-      if (++replayed % 32 === 0) await setImmediate();
+      if (performance.now() - sliceStartedAt >= 8) {
+        await setImmediate();
+        sliceStartedAt = performance.now();
+      }
       yield {
         type: "timeline",
         item: entry.item,
