@@ -1333,7 +1333,6 @@ describe("OMP agent client and session", () => {
       notifyType: "warning",
     });
     omp.runtime().finishTurn();
-    await expect.poll(() => omp.completedTurnCount()).toBe(1);
     omp.emit({
       type: "extension_ui_request",
       id: "n2",
@@ -1343,9 +1342,54 @@ describe("OMP agent client and session", () => {
     });
     expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
       { type: "notification", level: "warning", message: "Working" },
-      { type: "notification", level: "info", message: "Done", outsideTurn: true },
+      { type: "notification", level: "info", message: "Done" },
     ]);
     expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([]);
+  });
+
+  test("gives each idle extension notice its own turn without starting an execution", async () => {
+    const runtime = new FakeOmp();
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession({ provider: "omp", cwd: process.cwd() });
+    onTestFinished(() => session.close());
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const turnCompleted = (event: AgentStreamEvent) => event.type === "turn_completed";
+    const provider = runtime.latestSession();
+    const notify = (id: string) => {
+      provider.emit({ type: "extension_ui_request", id, method: "notify", message: id });
+    };
+
+    const { turnId: foregroundTurnId } = await session.startTurn("start background work");
+    provider.beginTurn();
+    notify("while working");
+    provider.streamAssistantText("first reply");
+    provider.finishTurn();
+    await expect.poll(() => events.some(turnCompleted)).toBe(true);
+
+    const settledEvents = events.length;
+    notify("idle notice");
+    notify("another idle notice");
+    const idleNotices = events.slice(settledEvents);
+    expect(idleNotices.map(({ type }) => type)).toEqual(["timeline", "timeline"]);
+
+    provider.emit({ type: "agent_start" });
+    provider.beginTurn();
+    notify("during the autonomous run");
+    provider.streamAssistantText("second reply");
+    provider.finishTurn();
+
+    const noticeTurnIds = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "notification" ? [event.turnId] : [],
+    );
+    expect(noticeTurnIds).toEqual([
+      foregroundTurnId,
+      expect.any(String),
+      expect.any(String),
+      undefined, // The manager assigns the active autonomous turn ID.
+    ]);
+    expect(new Set(noticeTurnIds).size).toBe(noticeTurnIds.length);
   });
 
   test("maps legacy select options without descriptions and preserves ordinary responses", async () => {

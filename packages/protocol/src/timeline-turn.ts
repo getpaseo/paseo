@@ -3,9 +3,7 @@ export function continuesTimelineTurn(
   previousTurnId: string | undefined,
   nextTurnId: string | undefined,
   nextIsTrigger: boolean,
-  includesOutsideTurnRow = false,
 ): boolean {
-  if (includesOutsideTurnRow) return false;
   if (previousTurnId !== undefined && nextTurnId !== undefined) {
     return previousTurnId === nextTurnId;
   }

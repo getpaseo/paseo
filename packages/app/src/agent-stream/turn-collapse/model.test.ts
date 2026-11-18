@@ -275,41 +275,6 @@ describe("collapseTurns", () => {
     expect(result.tail[1]).toMatchObject({ kind: "turn_summary", turnId: "first" });
   });
 
-  it("keeps the first reply visible across an idle notice and an autonomous turn", () => {
-    const first = [user("prompt"), shell("bash"), reply("first-reply")];
-    for (const item of first) item.turnId = "first";
-    const idleNotice: StreamItem = {
-      kind: "notification",
-      sourceType: "notification",
-      id: "idle-notice",
-      timestamp: at,
-      level: "info",
-      message: "An extension emitted an idle notice",
-      outsideTurn: true,
-    };
-    const completion: StreamItem = {
-      kind: "notification",
-      sourceType: "notification",
-      id: "completion",
-      timestamp: at,
-      level: "info",
-      message: "The background job completed",
-      turnId: "second",
-    };
-    const secondReply = { ...reply("second-reply"), turnId: "second" };
-
-    const result = collapse([...first, idleNotice, completion, secondReply]);
-
-    expect(ids(result.tail)).toEqual([
-      "prompt",
-      "turn-summary:prompt",
-      "first-reply",
-      "idle-notice",
-      "completion",
-      "second-reply",
-    ]);
-  });
-
   it("keeps mid-turn messages visible when work is folded", () => {
     const tail = [user("prompt"), shell("work"), user("steer"), shell("more"), reply("done")];
     for (const item of tail) item.turnId = "same-turn";

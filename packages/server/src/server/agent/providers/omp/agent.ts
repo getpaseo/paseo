@@ -1580,10 +1580,13 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
+      // An idle UI notice has no model response. It is a turn of its own.
+      const turnId =
+        this.currentTurnIdForEvent() ?? (this.activeTurnStarted ? undefined : randomUUID());
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
+        turnId,
         item: {
           type: "notification",
           level:
@@ -1591,7 +1594,6 @@ export class OmpAgentSession implements AgentSession {
               ? event.notifyType
               : "info",
           message,
-          ...(this.activeTurnId === null && !this.activeTurnStarted ? { outsideTurn: true } : {}),
         },
       });
       return;

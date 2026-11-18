@@ -534,35 +534,6 @@ describe("selectProjectedTimelinePage", () => {
     };
   }
 
-  test("whole-turn pages keep a completion with its reply after a standalone notice", () => {
-    const items: Array<{ item: AgentTimelineRow["item"]; turnId?: string }> = [
-      { item: { type: "user_message", text: "Run Bash" }, turnId: "first" },
-      { item: { type: "assistant_message", text: "First reply" }, turnId: "first" },
-      { item: { type: "notification", message: "Idle", level: "info", outsideTurn: true } },
-      {
-        item: { type: "notification", message: "Bash completed", level: "info" },
-        turnId: "second",
-      },
-      { item: { type: "assistant_message", text: "Second reply" }, turnId: "second" },
-    ];
-    const rows = items.map(({ item, turnId }, index) => ({
-      item,
-      turnId,
-      seq: index + 1,
-      timestamp: new Date(index + 1).toISOString(),
-    }));
-
-    const page = selectProjectedTimelinePage({
-      rows,
-      direction: "tail",
-      limit: 1,
-      wholeTurns: true,
-    });
-
-    expect(page.entries.map(({ seqStart }) => seqStart)).toEqual([4, 5]);
-    expect(page.hasOlder).toBe(true);
-  });
-
   test("whole-turn pages extend past the soft target and keep prompt jumps whole", () => {
     const rows: AgentTimelineRow[] = Array.from({ length: 125 }, (_, index) => ({
       seq: index + 1,

@@ -75,12 +75,10 @@ Reading history remains available on older hosts, whose pages can still split tu
 catch-up stays incremental, but its reset snapshot honors a supported whole-turn request.
 Source coverage still includes interleaved tool updates.
 
-Canonical IDs define runs. A provider notice explicitly emitted outside a run stays between
-turns. A notice that prompted a response carries that response's turn ID. With missing IDs,
-human prompts, heartbeats and typed received agent messages each start a fallback turn.
-Paging and presentation share this fallback. It cannot recover historical batching or steering.
-An underfilled viewport loads older history until it fills or history is exhausted. Further
-history is user-driven.
+Canonical IDs define runs. With missing IDs, human prompts, heartbeats and typed received
+agent messages each start a fallback turn. This deterministic fallback is shared by paging
+and presentation; it cannot recover historical batching or steering. An underfilled viewport
+loads older history until it fills or history is exhausted. Further history is user-driven.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active
