@@ -363,4 +363,80 @@ describe("desktop-settings", () => {
     expect(persisted.settings.releaseChannel).toBe("stable");
     expect(persisted.settings.tray).toEqual({ enabled: true });
   });
+  it("persists browser routing per host beside the renderer-facing settings", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+    const partition = "persist:paseo-browser-via-0123456789abcdef";
+
+    expect(await store.getBrowserRouting()).toEqual({});
+    await store.setBrowserRoutingHost("server-a", { enabled: true, partition });
+    await store.setBrowserRoutingHost("server-a", { enabled: false, partition });
+    const persisted = JSON.parse(await readFile(settingsFilePath(userDataPath), "utf8")) as {
+      settings: Record<string, unknown>;
+      browserRouting: unknown;
+    };
+
+    expect(await store.getBrowserRouting()).toEqual({ "server-a": { enabled: false, partition } });
+    expect(await store.get()).toEqual(DEFAULT_DESKTOP_SETTINGS);
+    expect(persisted.settings.browserRouting).toBeUndefined();
+    expect(persisted.browserRouting).toEqual({ "server-a": { enabled: false, partition } });
+    await expect(
+      store.setBrowserRoutingHost("server-b", {
+        enabled: true,
+        partition: "persist:paseo-browser",
+      }),
+    ).rejects.toThrow(/partition/);
+  });
+
+  it("drops unusable browser routing entries instead of the whole document", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    await writeFile(
+      settingsFilePath(userDataPath),
+      JSON.stringify({
+        version: 1,
+        settings: { releaseChannel: "beta" },
+        migrations: { legacyRendererSettingsImported: true, daemonStopOnQuitDefaultApplied: true },
+        browserRouting: {
+          "server-a": { enabled: true, partition: "persist:paseo-browser-via-0123456789abcdef" },
+          "server-b": { enabled: true, partition: "persist:paseo-browser" },
+          "server-c": "nonsense",
+        },
+      }),
+    );
+    const store = createDesktopSettingsStore({ userDataPath });
+
+    expect(await store.getBrowserRouting()).toEqual({
+      "server-a": { enabled: true, partition: "persist:paseo-browser-via-0123456789abcdef" },
+    });
+    expect((await store.get()).releaseChannel).toBe("beta");
+  });
+  it("serializes concurrent mutations so no host or patch is lost", async () => {
+    const userDataPath = await createTempUserDataDir();
+    directories.add(userDataPath);
+    const store = createDesktopSettingsStore({ userDataPath });
+    await store.get();
+    const partitionA = "persist:paseo-browser-via-aaaaaaaaaaaaaaaa";
+    const partitionB = "persist:paseo-browser-via-bbbbbbbbbbbbbbbb";
+
+    await Promise.all([
+      store.setBrowserRoutingHost("a", { enabled: true, partition: partitionA }),
+      store.setBrowserRoutingHost("b", { enabled: true, partition: partitionB }),
+      store.patch({ notifications: { playSound: false } }),
+      store.patch({ daemon: { keepRunningAfterQuit: true } }),
+    ]);
+    const persisted = JSON.parse(await readFile(settingsFilePath(userDataPath), "utf8")) as {
+      settings: DesktopSettings;
+      browserRouting: Record<string, unknown>;
+    };
+
+    expect(await store.getBrowserRouting()).toEqual({
+      a: { enabled: true, partition: partitionA },
+      b: { enabled: true, partition: partitionB },
+    });
+    expect(Object.keys(persisted.browserRouting).sort()).toEqual(["a", "b"]);
+    expect(persisted.settings.notifications.playSound).toBe(false);
+    expect(persisted.settings.daemon.keepRunningAfterQuit).toBe(true);
+  });
 });

@@ -56,6 +56,8 @@ export const CLIENT_CAPS = {
   // update subscriptions, because older apps auto-open a tab for every replicated root agent.
   backgroundAgents: "background_agents",
   browserHost: "browser_host",
+  // COMPAT(networkTunnel): added in v0.12.0, remove permission projection after 2027-10-08 once client floor >= v0.12.0.
+  networkTunnel: "network_tunnel",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

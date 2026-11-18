@@ -1,5 +1,6 @@
 import { decodeDiffFrame, DiffOpcode, type DiffFrame } from "./diff.js";
 import { HOST_ROUTE_OPCODE, decodeHostRouteFrame, type HostRouteFrame } from "./host-route.js";
+import { decodeTunnelFrame, TunnelOpcode, type TunnelFrame } from "./tunnel.js";
 import {
   decodeFileTransferFrame,
   FileTransferOpcode,
@@ -17,11 +18,16 @@ export type BinaryFrame =
   | { kind: "host_route"; frame: HostRouteFrame }
   | { kind: "terminal"; frame: TerminalStreamFrame }
   | { kind: "file_transfer"; frame: FileTransferFrame }
-  | { kind: "plugin"; frame: PluginFrame };
+  | { kind: "plugin"; frame: PluginFrame }
+  | { kind: "tunnel"; frame: TunnelFrame };
 
 export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   if (Object.values(DiffOpcode).some((opcode) => opcode === bytes[0])) {
     return { kind: "diff", frame: decodeDiffFrame(bytes) };
+  }
+  if (Object.values(TunnelOpcode).some((opcode) => opcode === bytes[0])) {
+    const frame = decodeTunnelFrame(bytes);
+    return frame ? { kind: "tunnel", frame } : null;
   }
   return decodeExistingBinaryFrame(bytes);
 }

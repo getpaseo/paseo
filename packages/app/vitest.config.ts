@@ -17,6 +17,17 @@ const resolvePackageEntry = (packageName: string) => {
     : path.resolve(rootNodeModules, packageName);
 };
 
+// Points Reanimated's `./webUtils` at a stub that imports react-native-web's style helpers as
+// ES modules (see test-stubs/reanimated-web-utils.ts). Browser project only.
+const reanimatedWebUtils = {
+  name: "paseo-test:reanimated-web-utils",
+  enforce: "pre" as const,
+  resolveId(source: string, importer?: string) {
+    if (source !== "./webUtils" || !importer?.includes("/react-native-reanimated/")) return null;
+    return path.resolve(__dirname, "test-stubs/reanimated-web-utils.ts");
+  },
+};
+
 export default defineConfig({
   plugins: [
     {
@@ -128,6 +139,7 @@ export default defineConfig({
             },
           ],
         },
+        plugins: [reanimatedWebUtils],
         test: {
           name: "browser",
           fileParallelism: false,
@@ -207,7 +219,7 @@ export default defineConfig({
       "react/jsx-dev-runtime",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
-      // Loaded by the reanimated-web-style-helpers plugin, which the dependency scan does not see.
+      // Loaded by the Reanimated web helpers used in browser tests.
       "react-native-web/dist/exports/StyleSheet/compiler/createReactDOMStyle",
       "react-native-web/dist/exports/StyleSheet/preprocess",
     ],
