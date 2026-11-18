@@ -489,7 +489,7 @@ export const ru: TranslationResources = {
         restoreDescription:
           "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Worktree будет использовать ветку {{branch}}.",
         restoreWithoutBranchDescription:
-          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Новая ветка будет создана от сохранённой базовой или ветки репозитория по умолчанию.",
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам.",
         unarchiveDescription:
           "Рабочее пространство «{{workspaceName}}» находится в архиве. Разархивируйте его, чтобы снова открыть.",
         restoreAction: "Восстановить",
