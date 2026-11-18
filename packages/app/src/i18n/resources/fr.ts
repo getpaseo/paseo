@@ -2521,6 +2521,7 @@ export const fr: TranslationResources = {
         title: "Ajouter un projet",
         startOnDirectorySearch: {
           label: "Ouvrir sur la recherche de dossier",
+          inlineLabel: "Toujours ouvrir sur la recherche de dossier",
           description:
             "Ajouter un projet commence par la recherche de dossier. Retour revient aux autres options.",
         },

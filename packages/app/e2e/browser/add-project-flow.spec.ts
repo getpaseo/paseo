@@ -353,6 +353,72 @@ test.describe("Add Project command-center flow", () => {
     await expect(addProjectFlow(page)).not.toBeVisible();
   });
 
+  test("Always open on directory search turns the preference on and off from the flow", async ({
+    page,
+  }, testInfo) => {
+    const alwaysOpenOnSearch = () =>
+      addProjectFlow(page).getByRole("checkbox", {
+        name: "Always open on directory search",
+        exact: true,
+      });
+    const openWithShortcut = async () => {
+      await expect(addProjectFlow(page)).not.toBeVisible();
+      await page.keyboard.press("ControlOrMeta+o");
+    };
+
+    await gotoAppShell(page);
+    await expect(page.locator('[data-testid="sidebar-add-project"]:visible')).toBeVisible({
+      timeout: 30_000,
+    });
+    await openWithShortcut();
+    await expectAddProjectPage(page, "method");
+    await expect(alwaysOpenOnSearch()).not.toBeChecked();
+
+    // Ticking it on the method list changes the preference without leaving the page.
+    await alwaysOpenOnSearch().click();
+    await expect(alwaysOpenOnSearch()).toBeChecked();
+    await expectAddProjectPage(page, "method");
+    await page.screenshot({ path: testInfo.outputPath("method-list-always-open-ticked.png") });
+
+    await page.keyboard.press("Escape");
+    await openWithShortcut();
+    await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toBeFocused();
+    await expect(alwaysOpenOnSearch()).toBeChecked();
+
+    // Unticking it on directory search keeps the page and the typing focus.
+    await alwaysOpenOnSearch().click();
+    await expect(alwaysOpenOnSearch()).not.toBeChecked();
+    await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toBeFocused();
+    await page.screenshot({
+      path: testInfo.outputPath("directory-search-always-open-unticked.png"),
+    });
+
+    // It is reachable from the keyboard and Space toggles it.
+    await alwaysOpenOnSearch().focus();
+    await page.keyboard.press("Space");
+    await expect(alwaysOpenOnSearch()).toBeChecked();
+    await page.keyboard.press("Space");
+    await expect(alwaysOpenOnSearch()).not.toBeChecked();
+
+    await page.keyboard.press("Escape");
+    await expectAddProjectPage(page, "method");
+    await page.keyboard.press("Escape");
+    await openWithShortcut();
+    await expectAddProjectPage(page, "method");
+    await expect(alwaysOpenOnSearch()).not.toBeChecked();
+
+    // The Settings switch edits the same value.
+    await alwaysOpenOnSearch().click();
+    await expect(alwaysOpenOnSearch()).toBeChecked();
+    await page.keyboard.press("Escape");
+    await page.goto("/settings/general");
+    await expect(
+      page.getByRole("switch", { name: "Open on directory search", exact: true }),
+    ).toBeChecked();
+  });
+
   test("keyboard navigation keeps the selected row inside the visible results", async ({
     page,
   }) => {

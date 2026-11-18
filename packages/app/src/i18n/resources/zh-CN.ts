@@ -2439,6 +2439,7 @@ export const zhCN: TranslationResources = {
         title: "添加 project",
         startOnDirectorySearch: {
           label: "从目录搜索打开",
+          inlineLabel: "始终从目录搜索打开",
           description: "添加 project 时直接进入目录搜索。返回可选择其他方式。",
         },
       },

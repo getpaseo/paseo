@@ -2593,6 +2593,7 @@ export const en = {
         title: "Add project",
         startOnDirectorySearch: {
           label: "Open on directory search",
+          inlineLabel: "Always open on directory search",
           description:
             "Add project starts on Search for directory. Back returns to the other options.",
         },

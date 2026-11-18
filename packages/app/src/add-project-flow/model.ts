@@ -98,6 +98,18 @@ function hostEntryPages(input: {
     : [methodPage(hostId)];
 }
 
+/**
+ * Whether the page shows the "Always open on directory search" checkbox: on the two pages the
+ * preference chooses between, and only for hosts it applies to.
+ */
+export function showsStartOnDirectorySearchToggle(
+  page: AddProjectPage,
+  host: AddProjectHost | null | undefined,
+): boolean {
+  if (host?.canAddProject !== true) return false;
+  return page.kind === "method" || page.kind === "directory-search";
+}
+
 function initialAddProjectHost(input: OpenAddProjectFlowInput): AddProjectHost | null {
   const preferredHost = input.preferredHostId
     ? input.hosts.find((host) => host.serverId === input.preferredHostId)

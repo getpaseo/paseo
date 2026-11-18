@@ -2507,6 +2507,7 @@ export const ru: TranslationResources = {
         title: "Добавить проект",
         startOnDirectorySearch: {
           label: "Открывать с поиска каталога",
+          inlineLabel: "Всегда открывать с поиска каталога",
           description:
             "Добавление проекта начинается с поиска каталога. «Назад» возвращает к другим вариантам.",
         },

@@ -2489,6 +2489,7 @@ export const ja: TranslationResources = {
         title: "プロジェクトを追加",
         startOnDirectorySearch: {
           label: "ディレクトリ検索から開く",
+          inlineLabel: "常にディレクトリ検索から開く",
           description:
             "プロジェクトの追加をディレクトリ検索から始めます。戻ると他の方法を選べます。",
         },

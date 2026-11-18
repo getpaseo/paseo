@@ -7,6 +7,7 @@ import { router } from "expo-router";
 import type { WorkspaceProjectDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   ArrowLeft,
+  Check,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -30,6 +31,7 @@ import {
   EditingTextInput as TextInput,
   type EditingTextInputHandle,
 } from "@/components/ui/text-input";
+import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import {
@@ -47,6 +49,7 @@ import {
   setAddProjectActiveIndex,
   setAddProjectPageInput,
   setNewDirectoryName,
+  showsStartOnDirectorySearchToggle,
   updateCurrentAddProjectPage,
   type AddProjectFlowState,
   type AddProjectHost,
@@ -75,7 +78,7 @@ import { getIsElectronRuntime } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
-import { useSettings } from "@/hooks/use-settings";
+import { useAppSettings, useSettings } from "@/hooks/use-settings";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
@@ -124,6 +127,7 @@ const MutedFlowIcon = withUnistyles(FlowIcon, (theme) => ({
   color: theme.colors.foregroundMuted,
 }));
 const ThemedArrowLeft = withUnistyles(ArrowLeft);
+const ThemedCheck = withUnistyles(Check, (theme) => ({ color: theme.colors.accentForeground }));
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
@@ -311,6 +315,65 @@ function FlowHint({ keys, action }: { keys: string[]; action: string }) {
   );
 }
 
+/**
+ * The same preference as Settings > General > Add project, offered where its effect is seen.
+ * Changing it never moves the open flow; it applies the next time Add project opens.
+ */
+function StartOnDirectorySearchToggle({ onToggled }: { onToggled: () => void }) {
+  const { t } = useTranslation();
+  const { settings, updateSettings } = useAppSettings();
+  const checked = settings.addProjectStartsOnDirectorySearch;
+  const label = t("settings.general.addProject.startOnDirectorySearch.inlineLabel");
+  const accessibilityState = useMemo(() => ({ checked }), [checked]);
+  const toggle = useCallback(
+    () => void updateSettings({ addProjectStartsOnDirectorySearch: !checked }),
+    [checked, updateSettings],
+  );
+  // A click hands focus back to the search input; a keyboard toggle leaves it on the checkbox.
+  const toggleFromPress = useCallback(() => {
+    toggle();
+    onToggled();
+  }, [onToggled, toggle]);
+  // react-native-web presses only button-role elements on Space, so the checkbox handles it.
+  const webKeyProps = useMemo(
+    () =>
+      isWeb
+        ? {
+            onKeyDown: (event: { key: string; preventDefault: () => void }) => {
+              if (event.key !== " ") return;
+              event.preventDefault();
+              toggle();
+            },
+          }
+        : null,
+    [toggle],
+  );
+  return (
+    <Pressable
+      {...webKeyProps}
+      onPress={toggleFromPress}
+      hitSlop={8}
+      style={styles.toggle}
+      accessibilityRole="checkbox"
+      accessibilityLabel={label}
+      accessibilityState={accessibilityState}
+      aria-checked={checked}
+      testID="add-project-flow-start-on-directory-search"
+    >
+      {({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => (
+        <>
+          <View style={checked ? styles.toggleBoxChecked : styles.toggleBox}>
+            {checked ? <ThemedCheck size={10} strokeWidth={3} /> : null}
+          </View>
+          <Text style={hovered || pressed ? styles.toggleLabelActive : styles.toggleLabel}>
+            {label}
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+}
+
 function setPageStatus(
   state: AddProjectFlowState,
   kind: AddProjectPage["kind"],
@@ -401,6 +464,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
   const query = page.kind === "new-directory-name" || page.kind === "method" ? "" : page.query;
+  const focusInput = useCallback(() => inputRef.current?.focus(), []);
   const pageInputValueRef = useRef(page.kind === "method" ? "" : pageInput(page));
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
@@ -971,6 +1035,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
             <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
             <FlowHint keys={SELECT_HINT_KEYS} action="Select" />
             <FlowHint keys={ESCAPE_HINT_KEYS} action={state.pages.length > 1 ? "Back" : "Close"} />
+            {showsStartOnDirectorySearchToggle(page, host) ? (
+              <StartOnDirectorySearchToggle onToggled={focusInput} />
+            ) : null}
           </View>
         </View>
       </View>
@@ -1106,6 +1173,39 @@ const styles = StyleSheet.create((theme) => ({
   },
   footerAction: {
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  toggle: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+  },
+  toggleBox: {
+    width: 14,
+    height: 14,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleBoxChecked: {
+    width: 14,
+    height: 14,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  toggleLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  toggleLabelActive: {
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
 }));

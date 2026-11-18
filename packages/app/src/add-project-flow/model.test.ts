@@ -9,11 +9,13 @@ import {
   openAddProjectFlow,
   openDirectorySearchPage,
   openGithubLocationPage,
+  openGithubSearchPage,
   openNewDirectoryNamePage,
   openNewDirectoryParentPage,
   setAddProjectActiveIndex,
   setAddProjectPageInput,
   setNewDirectoryName,
+  showsStartOnDirectorySearchToggle,
   type AddProjectHost,
 } from "./model";
 import {
@@ -211,6 +213,43 @@ describe("Add Project opening on directory search", () => {
     const state = openAddProjectFlow({ hosts: [outdatedHost], startsOnDirectorySearch: true });
 
     expect(pageKinds(state)).toEqual(["method"]);
+  });
+
+  it("does not move an open flow when the preference changes", () => {
+    const onMethods = openAddProjectFlow({ hosts: [HOST], startsOnDirectorySearch: false });
+    const turnedOn = applyAvailableAddProjectHosts(onMethods, {
+      hosts: [HOST],
+      startsOnDirectorySearch: true,
+    });
+    expect(pageKinds(turnedOn)).toEqual(["method"]);
+
+    const onSearch = openAddProjectFlow({ hosts: [HOST], startsOnDirectorySearch: true });
+    const turnedOff = applyAvailableAddProjectHosts(onSearch, {
+      hosts: [HOST],
+      startsOnDirectorySearch: false,
+    });
+    expect(pageKinds(turnedOff)).toEqual(["method", "directory-search"]);
+  });
+
+  it("shows the inline toggle on the method list and directory search only", () => {
+    const methods = openAddProjectFlow({ hosts: [HOST] });
+    const search = openDirectorySearchPage(methods, HOST.serverId);
+    const github = openGithubSearchPage(methods, HOST.serverId);
+    const hostPage = openAddProjectFlow({ hosts: [HOST, SECOND_HOST] });
+
+    expect(showsStartOnDirectorySearchToggle(currentAddProjectPage(methods), HOST)).toBe(true);
+    expect(showsStartOnDirectorySearchToggle(currentAddProjectPage(search), HOST)).toBe(true);
+    expect(showsStartOnDirectorySearchToggle(currentAddProjectPage(github), HOST)).toBe(false);
+    expect(showsStartOnDirectorySearchToggle(currentAddProjectPage(hostPage), null)).toBe(false);
+  });
+
+  it("hides the inline toggle for a host that cannot add projects", () => {
+    const outdatedHost = { ...HOST, canAddProject: false };
+    const state = openAddProjectFlow({ hosts: [outdatedHost] });
+
+    expect(showsStartOnDirectorySearchToggle(currentAddProjectPage(state), outdatedHost)).toBe(
+      false,
+    );
   });
 });
 
