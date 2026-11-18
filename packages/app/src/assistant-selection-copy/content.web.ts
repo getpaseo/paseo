@@ -65,6 +65,10 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
   });
   turndown.use(gfm);
   if (flavor === "markdown") {
+    // Turndown leaves `<` unescaped, so displayed text such as `<http://localhost>`
+    // would render back into text/html as an autolink.
+    const escapeMarkdown = turndown.escape.bind(turndown);
+    turndown.escape = (text) => escapeMarkdown(text).replace(/</g, "\\<");
     turndown.addRule("escapedGfmTableCell", {
       filter: ["th", "td"],
       replacement: (content, node) => {

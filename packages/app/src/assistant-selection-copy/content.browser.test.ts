@@ -887,6 +887,15 @@ it("copies a recognized inline-code path without its link", () => {
   expect(content?.html).not.toContain('href="src/app.tsx"');
 });
 
+it("keeps literal angle brackets around a recognized URL in both clipboard flavors", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Open &lt;<a href="http://localhost:3000" data-paseo-markdown-unwrap="true">http://localhost:3000</a>&gt; before the call.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open <http://localhost:3000> before the call.");
+  expect(content?.html).toContain("<p>Open &lt;http://localhost:3000&gt; before the call.</p>");
+});
+
 it("copies literal table cell pipes in both clipboard flavors", () => {
   const message = mountFixture();
   message.innerHTML =
