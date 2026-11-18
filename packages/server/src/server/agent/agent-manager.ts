@@ -99,7 +99,7 @@ import {
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { parseAgentMessage, projectAgentMessages } from "./agent-messages/index.js";
-import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
+import { isReopenableProviderSessionError } from "./stale-provider-session-error.js";
 import {
   PASEO_MCP_SERVER_NAME,
   stripInternalPaseoMcpServer,
@@ -3199,7 +3199,7 @@ export class AgentManager {
       if (pendingRun.settled) {
         throw error;
       }
-      if (isStaleProviderSessionError(error)) {
+      if (isReopenableProviderSessionError(error)) {
         this.runs.settleForegroundStart(pendingRun, {
           status: "failed",
           error: error.message,

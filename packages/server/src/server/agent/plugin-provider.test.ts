@@ -23,6 +23,8 @@ import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import {
+  ClosedProviderSessionError,
+  isClosedProviderSessionError,
   isStaleProviderSessionError,
   StaleProviderSessionError,
 } from "./stale-provider-session-error.js";
@@ -2092,6 +2094,10 @@ describe("PluginAgentClientRegistry", () => {
       expect(isStaleProviderSessionError(failure)).toBe(true);
       expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(false);
       expect(isStaleProviderSessionError(new Error("boom"))).toBe(false);
+      // A closed session is its own class: it must not be mistaken for stale (or the
+      // reverse), because each one reopens from a different place.
+      expect(isClosedProviderSessionError(new ClosedProviderSessionError("sess-1"))).toBe(true);
+      expect(isClosedProviderSessionError(failure)).toBe(false);
     } finally {
       await registry.shutdown();
     }
@@ -2392,8 +2398,8 @@ describe("pending provider responses", () => {
   );
 
   test.each([
-    ["session.open", "Provider session closed"],
-    ["session.configure", "Provider session closed"],
+    ["session.open", ClosedProviderSessionError],
+    ["session.configure", ClosedProviderSessionError],
     ["session.prompt", StaleProviderSessionError],
   ] as const)("contains session closure while accepting %s", async (kind, error) => {
     await withObservedProvider(

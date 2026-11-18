@@ -67,7 +67,7 @@ import {
 import { readPluginOptionState } from "./plugin-provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
-import { StaleProviderSessionError } from "./stale-provider-session-error.js";
+import { ClosedProviderSessionError, StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -441,7 +441,7 @@ class ProviderRuntime {
     } else if (event.type === "session.closed") {
       this.settleClosedSessionRequests(
         event.sessionId,
-        new Error(event.error?.message ?? `Provider session ${event.sessionId} closed`),
+        new ClosedProviderSessionError(event.sessionId, event.error?.message),
         event,
       );
     }
@@ -791,7 +791,11 @@ class ProviderRuntimeSession {
       if (this.terminal) return;
       this.terminal = true;
       this.publish(event);
-      this.rejectPending(new Error(event.error?.message ?? `Provider session ${this.id} closed`));
+      this.rejectPending(
+        event.type === "session.closed"
+          ? new ClosedProviderSessionError(this.id, event.error?.message)
+          : new Error(event.error?.message ?? `Provider session ${this.id} closed`),
+      );
       return;
     }
     this.publish(event);

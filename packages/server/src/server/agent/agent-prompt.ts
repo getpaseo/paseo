@@ -6,7 +6,7 @@ import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import { ForegroundPromptStart } from "./agent-run-state.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
-import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
+import { isReopenableProviderSessionError } from "./stale-provider-session-error.js";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
 export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "unarchiveSnapshot">;
@@ -137,13 +137,14 @@ export async function startAgentRun(
       await agentManager.reloadStalePluginSession(agentId);
       return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
     } catch (error) {
-      if (!isStaleProviderSessionError(error)) throw error;
+      if (!isReopenableProviderSessionError(error)) throw error;
       logger.info(
         { agentId, err: error },
-        "Provider session went stale; reopening from persistence",
+        "Provider session ended or went stale; reopening from persistence",
       );
-      // The live session belongs to a retired plugin runtime. Reload swaps in a
-      // fresh session on the current runtime while preserving history and labels.
+      // The live session is gone: retired with its plugin runtime, or closed by the
+      // provider. Reload rebuilds it from the agent's persistence handle, so history
+      // and labels survive and the prompt can be retried.
       await agentManager.reloadAgentSession(agentId);
       return await startAgentRunInner(agentManager, agentId, prompt, logger, options, promptStart);
     }
@@ -190,10 +191,10 @@ async function startAgentRunInner(
       try {
         await drainAgentRunIterator(iterator);
       } catch (error) {
-        if (!isStaleProviderSessionError(error)) throw error;
+        if (!isReopenableProviderSessionError(error)) throw error;
         logger.info(
           { agentId, err: error },
-          "Provider session went stale; reopening from persistence",
+          "Provider session ended or went stale; reopening from persistence",
         );
         await agentManager.reloadAgentSession(agentId);
         const retry = await startOrReplaceRun(agentManager, agentId, prompt, options, promptStart);
