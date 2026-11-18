@@ -393,6 +393,7 @@ export const en = {
       otherPlaceholder: "Other...",
     },
     backgroundWork: {
+      heartbeat: "Heartbeat",
       pillOne: "1 background task",
       pillMany: "{{count}} background tasks",
       notRunning: "No longer running",
