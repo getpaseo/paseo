@@ -9920,6 +9920,166 @@ test("canceling a pending Codex start settles as canceled without accepting its 
   }
 });
 
+test("a Codex message whose turn/start acknowledgement outlasts the timeout is not reported as failed and then answered", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-admission-timeout-"));
+  // Codex accepted the turn, but its acknowledgement arrives after Paseo's 90 s deadline.
+  const lateAcknowledgement = deferred<Record<string, never>>();
+  const appServer = createFakeCodexAppServer({ "turn/start": () => lateAcknowledgement.promise });
+  class SlowAdmissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SlowAdmissionClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = drainAsyncGenerator(
+      manager.streamAgent(agent.id, "Run the migration", { clientMessageId: "migration" }),
+    );
+    void run.catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(true),
+    );
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    const startError = await run.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    // Codex then runs the message it accepted.
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+    appServer.says({ threadId: "thread-1", text: "Migration done" });
+    appServer.completeTurn();
+    lateAcknowledgement.resolve({});
+    await vi.advanceTimersByTimeAsync(0);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const timeline = manager.getTimeline(agent.id);
+    const reportedFailed = timeline.some(
+      (item) => item.type === "assistant_message" && item.text.startsWith("[System Error]"),
+    );
+    const codexReplied = timeline.some(
+      (item) => item.type === "assistant_message" && item.text === "Migration done",
+    );
+    // The sender is told the message failed, and Codex then answers it.
+    expect({ startError: String(startError), reportedFailed, codexReplied }).not.toEqual({
+      startError: "Error: Codex app-server request timed out for turn/start",
+      reportedFailed: true,
+      codexReplied: true,
+    });
+  } finally {
+    vi.useRealTimers();
+    lateAcknowledgement.resolve({});
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop on a Codex agent whose turn/start is still in flight settles the run", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-stop-pending-start-"));
+  const lateAcknowledgement = deferred<Record<string, never>>();
+  const appServer = createFakeCodexAppServer({
+    "turn/start": () => lateAcknowledgement.promise,
+    "turn/interrupt": () => ({}),
+  });
+  class SlowAdmissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SlowAdmissionClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = drainAsyncGenerator(
+      manager.streamAgent(agent.id, "Run the migration", { clientMessageId: "migration" }),
+    );
+    void run.catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(true),
+    );
+
+    const stop = manager.cancelAgentRun(agent.id);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await stop).toEqual({ status: "settled" });
+  } finally {
+    vi.useRealTimers();
+    lateAcknowledgement.resolve({});
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("Stop on a Codex agent is not held behind a steer that Codex has not acknowledged", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-stop-behind-steer-"));
+  const steerAcknowledgement = deferred<{ turnId: string }>();
+  const appServer = createFakeCodexAppServer({
+    "turn/steer": () => steerAcknowledgement.promise,
+    "turn/interrupt": () => ({}),
+  });
+  class SlowSteerClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SlowSteerClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = drainAsyncGenerator(manager.streamAgent(agent.id, "Run the migration"));
+    void run.catch(() => undefined);
+    await appServer.waitForRequest("turn/start");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "native-A" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+
+    const steer = manager.steerAgentRun(agent.id, "Also update the docs");
+    void steer.catch(() => undefined);
+    await appServer.waitForRequest("turn/steer");
+    let stopResult: unknown = "still waiting";
+    const stop = manager.cancelAgentRun(agent.id).then((result) => {
+      stopResult = result;
+      return result;
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(stopResult).toEqual({ status: "settled" });
+    steerAcknowledgement.resolve({ turnId: "native-A" });
+    await vi.advanceTimersByTimeAsync(0);
+    await stop;
+  } finally {
+    vi.useRealTimers();
+    steerAcknowledgement.resolve({ turnId: "native-A" });
+    manager.prepareForShutdown();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("stopping a Codex replacement of a stalled start clears replacement activity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-replacement-cancel-"));
   const firstLoaded = deferred<{ data: string[] }>();
