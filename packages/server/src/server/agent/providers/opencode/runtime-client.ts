@@ -19,6 +19,7 @@ import {
 } from "../../provider-launch-config.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
+import { OpenCode } from "@opencode/client";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
 import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
 import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
@@ -133,8 +134,24 @@ export class OpenCodeRuntimeClient implements AgentClient {
   }
   async getDiagnostic() {
     const selection = await this.selectService();
-    if (selection.kind !== "owned")
-      return { diagnostic: `OpenCode server: ${selection.server.url}` };
+    if (selection.kind !== "owned") {
+      const server = selection.server;
+      const authorization = server.password
+        ? `Basic ${Buffer.from(`opencode:${server.password}`).toString("base64")}`
+        : undefined;
+      const client = OpenCode.make({
+        baseUrl: server.url,
+        ...(authorization ? { headers: { Authorization: authorization } } : {}),
+      });
+      let version = "unknown";
+      try {
+        const info = await client.server.info({ signal: AbortSignal.timeout(5_000) });
+        if (/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(info.version)) version = info.version;
+      } catch {
+        // An unavailable server cannot report its version.
+      }
+      return { diagnostic: `OpenCode server: ${server.url}\n  Version: ${version}` };
+    }
     return this.legacy.getDiagnostic();
   }
   async createSession(

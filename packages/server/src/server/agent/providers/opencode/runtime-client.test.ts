@@ -1,6 +1,75 @@
 import { expect, test } from "vitest";
 import { openCodeMajorVersion } from "./runtime-client.js";
 
+test("reports the version of the selected OpenCode server", async () => {
+  const { createServer } = await import("node:http");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const server = createServer((request, response) => {
+    expect(request.url).toBe("/api/info");
+    expect(request.headers.authorization).toBe(
+      `Basic ${Buffer.from("opencode:secret").toString("base64")}`,
+    );
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ version: "2.2.6", pid: 1, urls: [], paths: { tmp: "/tmp" } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No server address");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    env: {
+      PASEO_OPENCODE_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      PASEO_OPENCODE_SERVER_PASSWORD: "secret",
+    },
+  });
+  try {
+    expect((await client.getDiagnostic()).diagnostic).toContain("  Version: 2.2.6");
+  } finally {
+    await client.shutdown();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }),
+    );
+  }
+});
+
+test("reports an unknown version when the OpenCode server is unreachable", async () => {
+  const { createServer } = await import("node:http");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const server = createServer((_, response) => {
+    response.statusCode = 503;
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No server address");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    env: {
+      PASEO_OPENCODE_SERVER_URL: `http://127.0.0.1:${address.port}`,
+    },
+  });
+  try {
+    expect((await client.getDiagnostic()).diagnostic).toContain("  Version: unknown");
+  } finally {
+    await client.shutdown();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      }),
+    );
+  }
+});
+
 test.each([
   ["1.14.46", 1],
   ["unexpected wrapper output", 1],
