@@ -28,8 +28,9 @@ function pluginSwitch(page: Page, name: string, action: "Disable" | "Enable") {
   });
 }
 
+/** A toast that times out stays in the page while it fades, so the next toast can share the screen with it. */
 export async function expectToast(page: Page, message: string): Promise<void> {
-  await expect(page.getByTestId("app-toast-message")).toContainText(message);
+  await expect(page.getByTestId("app-toast-message").filter({ hasText: message })).toBeVisible();
 }
 
 // Tabs and search
