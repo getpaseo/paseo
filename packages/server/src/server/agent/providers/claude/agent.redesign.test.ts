@@ -1479,15 +1479,40 @@ test("a background command that finishes between turns lands in the turn Claude 
   await session.close();
 });
 
-test("a background command the user stopped starts no turn and still shows", async () => {
+test("a background command the user stopped shows at once, even while a background helper keeps Claude running", async () => {
   const session = await createSession();
   const internal: SessionStateInternals = asInternals(session);
   const queryMock = createPendingQueryMock();
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
 
-  // Claude does not react to a command the user stopped. It reports idle again instead.
+  // Claude does not react to a command the user stopped, and a live background helper keeps the
+  // session "running", so no idle comes either.
+  await internal.routeSdkMessageFromPump(sessionState("running"), queryMock);
+  await internal.routeSdkMessageFromPump(helperTaskStarted, queryMock);
   await internal.routeSdkMessageFromPump(backgroundCommandNotification("stopped"), queryMock);
+  expect(events.filter(isTaskNotificationRow)).toHaveLength(1);
+
+  // The helper's wake-up turn is not the stopped command's turn.
+  await internal.routeSdkMessageFromPump(helperCompleted, queryMock);
+  await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+  await internal.routeSdkMessageFromPump(unboundTextDelta("the helper is done"), queryMock);
+  await internal.routeSdkMessageFromPump(successResult(), queryMock);
+  expect(events.filter(isTaskNotificationRow)).toEqual([
+    expect.not.objectContaining({ turnId: expect.anything() }),
+  ]);
+
+  await session.close();
+});
+
+test("a finished background command that no turn follows shows when Claude reports idle", async () => {
+  const session = await createSession();
+  const internal: SessionStateInternals = asInternals(session);
+  const queryMock = createPendingQueryMock();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  await internal.routeSdkMessageFromPump(backgroundCommandNotification("completed"), queryMock);
   await internal.routeSdkMessageFromPump(sessionState("idle"), queryMock);
 
   expect(internal.autonomousTurn).toBeNull();

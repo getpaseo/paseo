@@ -526,8 +526,16 @@ function isClaudeTurnInit(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
 
-function isClaudeTaskNotification(message: SDKMessage): boolean {
-  return message.type === "system" && message.subtype === "task_notification";
+/**
+ * A background task that ended on its own. Claude starts a turn to react to it. A stopped task
+ * starts none: the user stopped it, so there is nothing to react to.
+ */
+function isClaudeTaskEndingClaudeReactsTo(message: SDKMessage): boolean {
+  return (
+    message.type === "system" &&
+    message.subtype === "task_notification" &&
+    message.status !== "stopped"
+  );
 }
 
 function firstStringField(
@@ -2422,7 +2430,8 @@ class ClaudeAgentSession implements AgentSession {
    * Task notification rows that arrived between turns. A background command that finishes while
    * Claude is idle makes Claude start a turn of its own, and the notification comes before that
    * turn opens. The row waits here so it lands in the turn it starts: a row with no turn would
-   * join the turn before it to the one after. A notification no turn follows is released as is.
+   * join the turn before it to the one after. A stopped task starts no turn, so it is never held.
+   * A held notification no turn follows is released as is.
    */
   private taskNotificationsAwaitingTurn: AgentStreamEvent[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
@@ -4202,7 +4211,7 @@ class ClaudeAgentSession implements AgentSession {
     events: AgentStreamEvent[],
   ): AgentStreamEvent[] {
     const inTurn = Boolean(this.activeForegroundTurnId ?? this.autonomousTurn);
-    if (inTurn || !isClaudeTaskNotification(message)) return events;
+    if (inTurn || !isClaudeTaskEndingClaudeReactsTo(message)) return events;
     this.taskNotificationsAwaitingTurn.push(...events.filter((event) => event.type === "timeline"));
     return events.filter((event) => event.type !== "timeline");
   }
