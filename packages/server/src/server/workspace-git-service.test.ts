@@ -587,6 +587,29 @@ describe("WorkspaceGitServiceImpl", () => {
     await service.dispose();
   });
 
+  test("a client reconnecting within the release grace reuses the warm target", async () => {
+    const getCheckoutStatus = vi.fn(buildDefaultTestServiceDeps().getCheckoutStatus);
+    const service = createService({ getCheckoutStatus });
+    try {
+      const first = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      const snapshot = await service.getSnapshot(REPO_CWD);
+      await waitForObservationToSettle(service, 1);
+      first.unsubscribe();
+      expect(service.getMetrics().workspaceTargetCount).toBe(1);
+      const reads = getCheckoutStatus.mock.calls.length;
+
+      const second = service.registerWorkspace({ cwd: REPO_CWD }, () => {});
+      await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(snapshot);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(reads);
+      second.unsubscribe();
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(service.getMetrics().workspaceTargetCount).toBe(0);
+    } finally {
+      await service.dispose();
+    }
+  });
+
   test("onSnapshotUpdated delivers without workspace subscribers and can unsubscribe", async () => {
     const service = createService();
     const snapshots: WorkspaceGitRuntimeSnapshot[] = [];
@@ -623,6 +646,7 @@ describe("WorkspaceGitServiceImpl", () => {
     const service = new WorkspaceGitServiceImpl({
       logger: createLogger() as unknown as pino.Logger,
       paseoHome: "/tmp/paseo-test",
+      releaseGraceMs: 0,
       deps: {
         ...buildDefaultTestServiceDeps(),
         getPullRequestStatus: async () => {
