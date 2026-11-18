@@ -298,6 +298,21 @@ export function buildDocsNavTree(docs: Doc[]): DocsNavNode[] {
   return root;
 }
 
+function navHrefs(nodes: DocsNavNode[]): string[] {
+  return nodes.flatMap((node) => {
+    if (node.type === "page") return [node.href];
+    const own = node.type === "group" && node.href !== undefined ? [node.href] : [];
+    return [...own, ...navHrefs(node.children)];
+  });
+}
+
+/** Every doc in a language, in the order the sidebar lists them. */
+export function getDocsInSidebarOrder(locale: Locale): Doc[] {
+  const docs = getDocs(locale);
+  const byHref = new Map(docs.map((doc) => [doc.href, doc]));
+  return navHrefs(buildDocsNavTree(docs)).flatMap((href) => byHref.get(href) ?? []);
+}
+
 function findNodePath(
   nodes: DocsNavNode[],
   href: string,

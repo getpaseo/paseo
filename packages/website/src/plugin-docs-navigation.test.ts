@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect, parseHeadings } from "./docs";
+import { buildLlmsTxt } from "./llms";
 
 describe("provider documentation", () => {
   it.each(["en", "zh-CN"] as const)(
@@ -30,6 +31,26 @@ describe("provider documentation", () => {
           { type: "page", href: "/docs/custom-providers" },
         ],
       });
+    },
+  );
+
+  it.each([
+    ["en", "https://paseo.sh/docs"],
+    ["zh-CN", "https://paseo.sh/zh-CN/docs"],
+  ] as const)(
+    "lists each provider page in the %s llms.txt, in sidebar order",
+    (locale, docsUrl) => {
+      const llms = buildLlmsTxt(locale);
+      const positions = [
+        "supported-providers.md",
+        "supported-providers/antigravity.md",
+        "supported-providers/codex.md",
+        "supported-providers/pi.md",
+        "custom-providers.md",
+      ].map((page) => llms.indexOf(`(${docsUrl}/${page})`));
+
+      expect(positions).not.toContain(-1);
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
     },
   );
 
