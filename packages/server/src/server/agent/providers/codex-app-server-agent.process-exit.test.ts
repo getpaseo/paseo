@@ -6,6 +6,8 @@ import { expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "../agent-manager.js";
+import { toAgentPayload } from "../agent-projections.js";
+import { cancelAgentRunCommand } from "../lifecycle-command.js";
 import type {
   AgentClient,
   AgentLaunchContext,
@@ -1151,7 +1153,7 @@ test("retiring a later turn settles background tools under their original turn i
   }
 });
 
-test("manager Stop can retry a failed startup retirement after its run is cleared", async () => {
+test("the public Stop command can retry a failed startup retirement after its run is cleared", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-start-stop-recovery-"));
   const old = createFakeCodexAppServer({ "turn/start": () => new Promise(() => {}) });
   old.child.kill = () => true;
@@ -1170,9 +1172,19 @@ test("manager Stop can retry a failed startup retirement after its run is cleare
     await vi.advanceTimersByTimeAsync(94_000);
     await failed;
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(true);
+    const stopping = cancelAgentRunCommand({ agentManager: manager, logger }, agent.id);
+    const refused = expect(stopping).rejects.toThrow("Try Stop again");
+    await vi.advanceTimersByTimeAsync(4_000);
+    await refused;
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(true);
+
     old.child.exitCode = 0;
     old.child.emit("exit", 0, null);
-    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    await expect(
+      cancelAgentRunCommand({ agentManager: manager, logger }, agent.id),
+    ).resolves.toMatchObject({ cancelled: true });
+    expect(toAgentPayload(manager.getAgent(agent.id)!).interruptRecoveryPending).toBe(false);
   } finally {
     vi.useRealTimers();
     old.child.exitCode = 0;

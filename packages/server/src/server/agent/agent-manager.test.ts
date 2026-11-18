@@ -8430,8 +8430,11 @@ test("failed replacement cancellation preserves an autonomous running state", as
     await running;
 
     await expect(manager.replaceAgentRun(agent.id, "replacement prompt")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Your message was not sent. Try Stop, then retry your message.`,
     );
+    await expect(manager.replaceAgentRun(agent.id, "another replacement")).rejects.toMatchObject({
+      deliveryOutcome: "not_submitted",
+    });
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: null,

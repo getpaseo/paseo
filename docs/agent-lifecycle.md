@@ -124,7 +124,8 @@ outer budget; it cannot hold later interruption requests indefinitely.
 
 Codex retires its app-server when an interrupt or startup acknowledgement is lost, and when Stop
 cancels an in-flight startup. It confirms process exit before allowing another prompt; a failed
-termination retains ownership so Stop can retry. Stopping the runtime proves it cannot continue,
+termination retains ownership so Stop can retry. The snapshot reports pending interrupt recovery
+separately from turn activity so Stop stays available even after a failed startup has settled. Stopping the runtime proves it cannot continue,
 but does not prove a prompt was never delivered: a turn may have executed before its reply was
 lost. Startup acknowledgement loss therefore stays explicitly unknown and is never replayed
 automatically. Retirement settles tool rows and questions before publishing cancellation so

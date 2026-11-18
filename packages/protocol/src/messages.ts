@@ -922,6 +922,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   status: AgentStatusSchema,
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  interruptRecoveryPending: z.boolean().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),

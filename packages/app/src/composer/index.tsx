@@ -295,9 +295,11 @@ function buildRealtimeVoiceButtonStyle(pressed: boolean, voiceButtonDisabled: bo
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const session = state.sessions[serverId];
+    const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId) ?? null;
     return {
       status: agent?.status ?? null,
+      interruptRecoveryPending: agent?.interruptRecoveryPending === true,
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
@@ -1720,6 +1722,7 @@ function ComposerContentImpl({
     (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isCancelling,
   );
   const isAgentRunning = hasActiveTurn;
+  const canStopAgent = isAgentRunning || agentState.interruptRecoveryPending;
   // Queueing behind a permission prompt would strand the message: the turn is
   // parked until the request is answered.
   const hasPendingPermission = useSessionStore((state) => {
@@ -2012,7 +2015,7 @@ function ComposerContentImpl({
     const cancellation = cancelComposerAgent({
       client,
       agentId: targetAgentId,
-      isAgentRunning,
+      isAgentRunning: canStopAgent,
       isCancellingAgent,
       isConnected,
     });
@@ -2029,7 +2032,7 @@ function ComposerContentImpl({
         getHostRuntimeStore().settleAgentCancellation(serverId, targetAgentId, requestId);
       });
     messageInputRef.current?.focus();
-  }, [client, isAgentRunning, isCancellingAgent, isConnected, serverId]);
+  }, [client, canStopAgent, isCancellingAgent, isConnected, serverId]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {
     focusMessageInputWithPlatformStrategy(messageInputRef);
@@ -2510,7 +2513,9 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && isForgeResolving);
+    agentState.interruptRecoveryPending ||
+    isSubmitLoadingVisible ||
+    (waitForForgeAutoAttachOnSubmit && isForgeResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2545,7 +2550,7 @@ function ComposerContentImpl({
       <ComposerKeyboardRegistration
         handlerId={keyboardHandlerIdRef.current}
         messageInputRef={messageInputRef}
-        isAgentRunning={isAgentRunning}
+        isAgentRunning={canStopAgent}
         isCancellingAgent={isCancellingAgent}
         isConnected={isConnected}
         handleCancelAgent={handleCancelAgent}
@@ -2614,6 +2619,7 @@ function ComposerContentImpl({
                   beforeVoiceContent={beforeVoiceContent}
                   voiceModeContent={voiceModeContent}
                   activeActionContent={activeActionContent}
+                  interruptRecoveryPending={agentState.interruptRecoveryPending}
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
