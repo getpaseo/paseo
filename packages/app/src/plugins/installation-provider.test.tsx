@@ -1,5 +1,5 @@
 import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, useWorkspaces } from "@getpaseo/plugin/client";
 import { defineRpc } from "@getpaseo/plugin";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -86,6 +86,23 @@ it("gives every surface the installation's client and RPCs on its first frame", 
   expect(received.every((paseo) => paseo === plugin.paseo)).toBe(true);
   await expect(rpc!({})).resolves.toEqual({ state: "green" });
   expect(invoked).toEqual(["deploys.status"]);
+  plugin.lifetime.abort();
+  await plugin.paseo.dispose();
+});
+
+it("lets every surface read state through the plugin state hooks", async () => {
+  const plugin = installation([]);
+  function Surface() {
+    return <span>{useWorkspaces().length} workspaces</span>;
+  }
+
+  const markup = renderToStaticMarkup(
+    <PluginInstallationProvider plugin={plugin}>
+      <Surface />
+    </PluginInstallationProvider>,
+  );
+
+  expect(markup).toBe("<span>0 workspaces</span>");
   plugin.lifetime.abort();
   await plugin.paseo.dispose();
 });

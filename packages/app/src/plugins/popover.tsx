@@ -1,4 +1,3 @@
-import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -31,7 +30,7 @@ export function PluginEnvironmentProvider({
   return (
     <ToastApiProvider api={environment.toast}>
       <PluginInstallationProvider plugin={environment.installation}>
-        <PluginClientStateProvider source={environment.state}>{children}</PluginClientStateProvider>
+        {children}
       </PluginInstallationProvider>
     </ToastApiProvider>
   );

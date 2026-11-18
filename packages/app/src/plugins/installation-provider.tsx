@@ -2,15 +2,20 @@ import { getPluginClientApi } from "./client-state/api";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
   PaseoApiProvider,
+  PluginClientStateProvider,
   PluginComposersProvider,
   PluginRpcProvider,
   PluginTranslationProvider,
 } from "@getpaseo/plugin/client/host";
-import React, { type ReactNode } from "react";
+import React, { useMemo, type ReactNode } from "react";
+import { createPluginClientStateSource } from "./client-state/source";
 import { pluginComposersSource } from "./composer-items/source";
 import type { InstalledPlugin } from "./types";
 
-/** Every plugin surface renders under its installation: one query cache, one Paseo client, RPCs. */
+/**
+ * Every plugin surface renders under its installation: one query cache, one Paseo client, RPCs,
+ * and the state the plugin state hooks read.
+ */
 export function PluginInstallationProvider({
   plugin,
   children,
@@ -18,13 +23,14 @@ export function PluginInstallationProvider({
   plugin: InstalledPlugin;
   children: ReactNode;
 }) {
+  const state = useMemo(() => createPluginClientStateSource(plugin.serverId), [plugin.serverId]);
   return (
     <QueryClientProvider client={plugin.queryClient}>
       <PaseoApiProvider paseo={getPluginClientApi(plugin).paseo}>
         <PluginRpcProvider invoke={plugin.invoke} subscribe={plugin.subscribe}>
           <PluginTranslationProvider runtime={plugin.i18n}>
             <PluginComposersProvider source={pluginComposersSource(plugin)}>
-              {children}
+              <PluginClientStateProvider source={state}>{children}</PluginClientStateProvider>
             </PluginComposersProvider>
           </PluginTranslationProvider>
         </PluginRpcProvider>
