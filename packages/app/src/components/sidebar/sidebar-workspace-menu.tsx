@@ -276,7 +276,7 @@ function SidebarWorkspaceMenuItems({
           id={WORKSPACE_SECTION_PAGE_ID}
           testID={`sidebar-workspace-menu-sections-${workspaceKey}`}
         >
-          Move to section
+          {t("sidebar.workspace.sections.moveToSection")}
         </DropdownMenuSubTrigger>
       ) : null}
       {serverId && workspaceId ? (
@@ -317,6 +317,7 @@ function WorkspaceSectionPickerPage({
   projectViewKey: string;
   workspaceKey: string;
 }): ReactNode {
+  const { t } = useTranslation();
   const workspaceSections = useSidebarOrderStore(
     (state) => state.workspaceSectionsByProject[projectViewKey] ?? EMPTY_WORKSPACE_SECTIONS,
   );
@@ -329,6 +330,7 @@ function WorkspaceSectionPickerPage({
         projectViewKey={projectViewKey}
         workspaceKey={workspaceKey}
         sectionId={null}
+        name={t("sidebar.workspace.sections.unsectioned")}
         selected={currentSectionId === null}
       />
       {workspaceSections.map((section) => (
@@ -349,7 +351,7 @@ function WorkspaceSectionMenuItem({
   projectViewKey,
   workspaceKey,
   sectionId,
-  name = "Unsectioned",
+  name,
   selected,
 }: {
   projectViewKey: string;
@@ -379,18 +381,19 @@ function useWorkspaceSectionMenuPages(
   projectViewKey: string | undefined,
   workspaceKey: string,
 ): readonly MenuPageDefinition[] {
+  const { t } = useTranslation();
   return useMemo(() => {
     if (!projectViewKey) return [];
     return [
       {
         id: WORKSPACE_SECTION_PAGE_ID,
-        title: "Move to section",
+        title: t("sidebar.workspace.sections.moveToSection"),
         content: (
           <WorkspaceSectionPickerPage projectViewKey={projectViewKey} workspaceKey={workspaceKey} />
         ),
       },
     ];
-  }, [projectViewKey, workspaceKey]);
+  }, [projectViewKey, t, workspaceKey]);
 }
 
 export function SidebarWorkspaceMenu({

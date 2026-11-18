@@ -619,7 +619,7 @@ function ProjectMenuItems({
           testID={`sidebar-project-menu-new-section-${projectViewKey}`}
           onSelect={onCreateSection}
         >
-          New section
+          {t("sidebar.workspace.sections.newSection")}
         </ProjectMenuItem>
       ) : null}
       {settingsTarget ? (
@@ -1724,6 +1724,7 @@ function WorkspaceSectionBlock({
     expanded: workspacesExpanded,
     policy: visibilityPolicy,
   });
+  const { t } = useTranslation();
   const namedSection = section.id !== null;
   const Chevron = collapsed ? ThemedChevronRight : ThemedChevronDown;
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
@@ -1757,7 +1758,7 @@ function WorkspaceSectionBlock({
           testID={`sidebar-workspace-section-header-${section.id ?? "unsectioned"}-${projectViewKey}`}
         >
           <Text style={styles.workspaceSectionTitle} numberOfLines={1}>
-            {section.name ?? "Unsectioned"}
+            {section.name ?? t("sidebar.workspace.sections.unsectioned")}
           </Text>
           <Chevron size={12} uniProps={foregroundMutedColorMapping} />
         </Pressable>
@@ -1767,38 +1768,46 @@ function WorkspaceSectionBlock({
               hitSlop={8}
               style={styles.workspaceSectionMenuTrigger}
               accessibilityRole={platformIsWeb ? undefined : "button"}
-              accessibilityLabel={`Actions for ${section.name}`}
+              accessibilityLabel={t("sidebar.workspace.sections.menuLabel", {
+                name: section.name ?? "",
+              })}
               testID={`sidebar-workspace-section-menu-${section.id}-${projectViewKey}`}
             >
               {renderKebabTriggerIcon}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" width={200} sheetTitle={section.name ?? "Section"}>
+            <DropdownMenuContent
+              align="end"
+              width={200}
+              sheetTitle={section.name ?? t("sidebar.workspace.sections.fallbackName")}
+            >
               {!selectionMode ? (
-                <DropdownMenuItem onSelect={onStartSelection}>Select workspaces</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onStartSelection}>
+                  {t("sidebar.workspace.sections.selectWorkspaces")}
+                </DropdownMenuItem>
               ) : null}
               <DropdownMenuItem leading={pencilLeadingIcon} onSelect={handleRename}>
-                Rename
+                {t("sidebar.workspace.sections.rename")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 leading={arrowUpLeadingIcon}
                 disabled={!canMoveUp}
                 onSelect={handleMoveUp}
               >
-                Move up
+                {t("sidebar.workspace.sections.moveUp")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 leading={arrowDownLeadingIcon}
                 disabled={!canMoveDown}
                 onSelect={handleMoveDown}
               >
-                Move down
+                {t("sidebar.workspace.sections.moveDown")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 leading={trash2LeadingIcon}
                 onSelect={handleDelete}
                 testID={`sidebar-workspace-section-delete-${section.id}-${projectViewKey}`}
               >
-                Delete
+                {t("sidebar.workspace.sections.delete")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1849,14 +1858,21 @@ function WorkspaceSectionDialog({
   onSubmit: (name: string) => void;
   testID: string;
 }) {
+  const { t } = useTranslation();
   const creating = dialog.mode === "create";
   return (
     <AdaptiveRenameModal
       visible
-      title={creating ? "New section" : "Rename section"}
+      title={
+        creating
+          ? t("sidebar.workspace.sections.newSection")
+          : t("sidebar.workspace.sections.renameSection")
+      }
       initialValue={creating ? "" : (dialog.section.name ?? "")}
-      placeholder="Section name"
-      submitLabel={creating ? "Create" : "Rename"}
+      placeholder={t("sidebar.workspace.sections.namePlaceholder")}
+      submitLabel={
+        creating ? t("sidebar.workspace.sections.create") : t("sidebar.workspace.sections.rename")
+      }
       onClose={onClose}
       onSubmit={onSubmit}
       testID={testID}
@@ -1897,9 +1913,12 @@ function ProjectWorkspaceSelectionBar({
   onMove: (sectionId: string | null) => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <View style={styles.workspaceSelectionBar} testID="sidebar-workspace-selection-bar">
-      <Text style={styles.workspaceSelectionCount}>{selectedCount} selected</Text>
+      <Text style={styles.workspaceSelectionCount}>
+        {t("sidebar.workspace.sections.selectedCount", { selectedCount })}
+      </Text>
       <DropdownMenu compactMode="sheet">
         <DropdownMenuTrigger
           disabled={selectedCount === 0}
@@ -1907,17 +1926,27 @@ function ProjectWorkspaceSelectionBar({
           accessibilityRole={platformIsWeb ? undefined : "button"}
           testID="sidebar-workspace-selection-move"
         >
-          <Text style={styles.workspaceSelectionMoveText}>Move to section</Text>
+          <Text style={styles.workspaceSelectionMoveText}>
+            {t("sidebar.workspace.sections.moveToSection")}
+          </Text>
           <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" width={200} sheetTitle="Move to section">
-          <WorkspaceSectionMoveMenuItem sectionId={null} name="Unsectioned" onMove={onMove} />
+        <DropdownMenuContent
+          align="start"
+          width={200}
+          sheetTitle={t("sidebar.workspace.sections.moveToSection")}
+        >
+          <WorkspaceSectionMoveMenuItem
+            sectionId={null}
+            name={t("sidebar.workspace.sections.unsectioned")}
+            onMove={onMove}
+          />
           {sections.flatMap((section) =>
             section.id ? (
               <WorkspaceSectionMoveMenuItem
                 key={section.id}
                 sectionId={section.id}
-                name={section.name ?? "Section"}
+                name={section.name ?? t("sidebar.workspace.sections.fallbackName")}
                 onMove={onMove}
               />
             ) : (
@@ -1932,7 +1961,7 @@ function ProjectWorkspaceSelectionBar({
         accessibilityRole={platformIsWeb ? undefined : "button"}
         testID="sidebar-workspace-selection-cancel"
       >
-        <Text style={styles.workspaceSelectionCancelText}>Cancel</Text>
+        <Text style={styles.workspaceSelectionCancelText}>{t("common.actions.cancel")}</Text>
       </Pressable>
     </View>
   );
@@ -2249,17 +2278,19 @@ function ProjectBlock({
       const sectionId = section.id;
       if (!sectionId) return;
       void confirmDialog({
-        title: "Delete section?",
-        message: `Move the workspaces in ${section.name} to Unsectioned?`,
-        confirmLabel: "Delete",
-        cancelLabel: "Cancel",
+        title: t("sidebar.workspace.sections.deleteTitle"),
+        message: t("sidebar.workspace.sections.deleteMessage", {
+          sectionName: section.name ?? "",
+        }),
+        confirmLabel: t("sidebar.workspace.sections.delete"),
+        cancelLabel: t("common.actions.cancel"),
         destructive: true,
       }).then((confirmed) => {
         if (confirmed) deleteWorkspaceSection(project.viewKey, sectionId);
         return undefined;
       });
     },
-    [deleteWorkspaceSection, project.viewKey],
+    [deleteWorkspaceSection, project.viewKey, t],
   );
   const handleSectionWorkspaceReorder = useCallback(
     (section: SidebarProjectWorkspaceSection, reorderedWorkspaces: SidebarWorkspacePlacement[]) => {

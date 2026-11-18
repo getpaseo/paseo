@@ -136,9 +136,11 @@ function normalizeWorkspaceSectionsByProject(
 ): Record<string, SidebarWorkspaceSection[]> {
   const normalized: Record<string, SidebarWorkspaceSection[]> = {};
   for (const [projectViewKey, sections] of Object.entries(workspaceSectionsByProject ?? {})) {
-    const scope = projectViewKey.trim();
-    if (!scope) continue;
-    normalized[scope] = normalizeWorkspaceSections(sections);
+    // Section layouts share the order store's project view key, so they keep it
+    // exactly as persisted. Trimming a key whose path ends in a space loses the
+    // sections on the next lookup.
+    if (!projectViewKey.trim()) continue;
+    normalized[projectViewKey] = normalizeWorkspaceSections(sections);
   }
   return normalized;
 }
@@ -148,11 +150,10 @@ function withWorkspaceSections(
   projectViewKey: string,
   update: (sections: SidebarWorkspaceSection[]) => SidebarWorkspaceSection[],
 ): Record<string, SidebarWorkspaceSection[]> {
-  const scope = projectViewKey.trim();
-  if (!scope) return workspaceSectionsByProject;
-  const current = workspaceSectionsByProject[scope] ?? [];
+  if (!projectViewKey.trim()) return workspaceSectionsByProject;
+  const current = workspaceSectionsByProject[projectViewKey] ?? [];
   const next = normalizeWorkspaceSections(update(current));
-  return { ...workspaceSectionsByProject, [scope]: next };
+  return { ...workspaceSectionsByProject, [projectViewKey]: next };
 }
 
 function extractWorkspaceOrderScope(scopeKey: string): SidebarWorkspaceOrderScope | null {

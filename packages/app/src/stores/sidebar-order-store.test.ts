@@ -37,7 +37,7 @@ describe("migrateSidebarOrderState", () => {
   it("normalizes project-scoped section layouts without duplicate workspace placement", () => {
     const migrated = migrateSidebarOrderState({
       workspaceSectionsByProject: {
-        " project-a ": [
+        "project-a": [
           {
             id: " finance ",
             name: " Finance ",
@@ -60,6 +60,47 @@ describe("migrateSidebarOrderState", () => {
         ],
       },
     });
+  });
+});
+
+describe("sidebar section keys that end in whitespace", () => {
+  const PROJECT_KEY = "host:srv-1:/home/u/Reklamation ";
+
+  beforeEach(() => {
+    useSidebarOrderStore.setState({ workspaceSectionsByProject: {} });
+  });
+
+  it("stores a section under the project view key exactly as given", () => {
+    useSidebarOrderStore.getState().createWorkspaceSection(PROJECT_KEY, "Finance");
+
+    const sectionsByProject = useSidebarOrderStore.getState().workspaceSectionsByProject;
+    expect(Object.keys(sectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(sectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Finance" }]);
+  });
+
+  it("hydrates a persisted section under the project view key exactly as given", () => {
+    const migrated = migrateSidebarOrderState({
+      workspaceSectionsByProject: {
+        [PROJECT_KEY]: [{ id: "finance", name: "Finance", workspaceKeys: [] }],
+      },
+    });
+
+    expect(Object.keys(migrated.workspaceSectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(migrated.workspaceSectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Finance" }]);
+  });
+
+  it("keeps later section writes on the exact project view key", () => {
+    const store = useSidebarOrderStore.getState();
+    store.createWorkspaceSection(PROJECT_KEY, "Finance");
+    const sectionId =
+      useSidebarOrderStore.getState().workspaceSectionsByProject[PROJECT_KEY]?.[0]?.id;
+    expect(sectionId).toBeDefined();
+
+    useSidebarOrderStore.getState().renameWorkspaceSection(PROJECT_KEY, sectionId ?? "", "Renamed");
+
+    const sectionsByProject = useSidebarOrderStore.getState().workspaceSectionsByProject;
+    expect(Object.keys(sectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(sectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Renamed" }]);
   });
 });
 
