@@ -1108,7 +1108,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     (restoredComposerText: boolean) => {
       streamViewRef.current?.scrollToBottom("rewind");
       if (restoredComposerText) {
-        // Let the rewind menu close and the editor apply the restored draft before focusing.
+        // Defer focus so the editor can apply the restored draft and the menu can start closing.
         requestAnimationFrame(focusRestoredComposer);
       }
     },

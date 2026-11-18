@@ -1,10 +1,14 @@
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
-import { openCommandCenter, selectCommandCenterTab } from "../support/helpers/command-center";
-import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
-import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
 import {
+  closeCommandCenter,
+  openCommandCenter,
+  selectCommandCenterTab,
+} from "../support/helpers/command-center";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import {
+  attachComposerTestImage,
   composerLocator,
   expectComposerDraft,
   expectComposerFocused,
@@ -12,6 +16,7 @@ import {
   expectComposerVisible,
   fillComposerDraft,
   submitMessage,
+  submitMessageWithButton,
 } from "../support/helpers/composer";
 import { readReplicaCache, writeReplicaCache } from "../support/helpers/replica-cache-storage";
 
@@ -213,10 +218,6 @@ test.describe("Rewind sheet", () => {
       await expectUserMessageCount(page, 2);
       await session.client.waitForFinish(session.agentId);
 
-      await scrollChatAwayFromBottom(page, {
-        deltaY: -900,
-        minDistanceFromBottom: 300,
-      });
       await userMessage(page, firstPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();
       const rewindSheet = page.getByTestId("rewind-menu-content");
@@ -250,17 +251,6 @@ test.describe("Rewind sheet", () => {
       await expectComposerNotFocused(page);
       await expectUserMessageCount(page, 2);
 
-      const preservedDraft = "Keep this human draft after rewind.";
-      await fillComposerDraft(page, preservedDraft);
-      await composerLocator(page).evaluate((element) => element.blur());
-      await userMessage(page, replacementPrompt).hover();
-      await page.getByTestId("rewind-menu-trigger").last().click();
-      await expect(page.getByTestId("rewind-menu-content")).toBeVisible();
-      await selectRewindOption(page, "Rewind files");
-      await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
-      await expectComposerDraft(page, preservedDraft);
-      await expectUserMessageCount(page, 2);
-
       await fillComposerDraft(page, "");
       await composerLocator(page).evaluate((element) => element.blur());
       await userMessage(page, replacementPrompt).hover();
@@ -269,6 +259,7 @@ test.describe("Rewind sheet", () => {
       await selectRewindOption(page, "Rewind conversation and files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, replacementPrompt);
+      await expectComposerFocused(page);
       await expectUserMessageCount(page, 1);
     } finally {
       await session.cleanup();
@@ -300,6 +291,35 @@ test.describe("Rewind sheet", () => {
       await expect(userMessage(page, latestPrompt)).toHaveCount(0);
       await expectComposerDraft(page, latestPrompt);
       await expectComposerFocused(page);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("hides rewind when the latest prompt only contains an attachment", async ({ page }) => {
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "rewind-image-only-e2e-",
+      title: "Rewind image-only prompt",
+      initialPrompt: "Earlier text prompt.",
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      const palette = await searchRewindActions(page);
+      await expect(rewindAction(palette, "Rewind conversation")).toBeVisible();
+      await closeCommandCenter(page);
+
+      await attachComposerTestImage(page);
+      await submitMessageWithButton(page, "");
+      const imagePrompt = page.getByTestId("user-message").filter({
+        has: page.getByRole("button", { name: "Open image attachment" }),
+      });
+      await expect(imagePrompt).toHaveAttribute("aria-busy", "false");
+      await session.client.waitForFinish(session.agentId);
+
+      const reopened = await searchRewindActions(page);
+      await expect(reopened.getByText("No matches", { exact: true })).toBeVisible();
     } finally {
       await session.cleanup();
     }

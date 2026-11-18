@@ -10,7 +10,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useRewindAgentMutation } from "./use-rewind-agent-mutation";
-import { useRewindMenuItems } from "./use-rewind-capabilities";
+import { isRewindableMessage, useRewindMenuItems } from "./use-rewind-capabilities";
 
 export function RewindCommandCenterRegistration({
   serverId,
@@ -49,7 +49,7 @@ export function RewindCommandCenterRegistration({
   });
   const items = useRewindMenuItems(capabilities);
   const actions = useMemo<CommandCenterContribution[]>(() => {
-    if (!message?.messageId) return [];
+    if (!message || !isRewindableMessage(message.messageId, message.text)) return [];
     return items.map((item, rank) => ({
       id: `rewind:${item.mode}`,
       group: "rewind",

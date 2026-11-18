@@ -22,6 +22,10 @@ const DEFAULT_REWIND_MENU_LABELS: RewindMenuLabels = {
   both: "Rewind conversation and files",
 };
 
+export function isRewindableMessage(messageId: string | undefined, text: string): boolean {
+  return Boolean(messageId) && text.trim().length > 0;
+}
+
 export function resolveRewindMenuItems(
   capabilities:
     | Pick<
