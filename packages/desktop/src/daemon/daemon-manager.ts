@@ -342,8 +342,7 @@ export async function stopDesktopDaemon(
     ownedLaunch.home === home &&
     isSameDaemonInstance(instance, ownedLaunch.instance),
   );
-  const owned =
-    launchedThisSession || (replacesDaemon(reason) && instance?.desktopManaged === true);
+  const owned = launchedThisSession || (await replacesDesktopDaemon(reason, instance));
   const explicit =
     reason === "manual_ipc" &&
     confirmedInstance &&
@@ -367,14 +366,22 @@ export async function stopDesktopDaemon(
   return resolveDesktopDaemonStatus();
 }
 
-/**
- * An app update or a version mismatch replaces the daemon with the one this Desktop bundles.
- * That applies to every daemon Desktop launched, which `paseo.pid` records as `desktopManaged`,
- * including one an earlier Desktop session left running. Other automatic stops apply only to a
- * daemon this session launched.
- */
-function replacesDaemon(reason: DesktopDaemonStopReason): boolean {
+/** An app update or a version mismatch replaces the daemon with the one this Desktop bundles. */
+function isReplacement(reason: DesktopDaemonStopReason): boolean {
   return reason === "app_update" || reason === "version_mismatch";
+}
+
+/**
+ * While Desktop manages the built-in daemon, a replacement applies to every daemon Desktop
+ * launched, which `paseo.pid` records as `desktopManaged`. That includes one an earlier Desktop
+ * session left running. Other automatic stops apply only to a daemon this session launched.
+ */
+async function replacesDesktopDaemon(
+  reason: DesktopDaemonStopReason,
+  instance: DaemonInstance | null,
+): Promise<boolean> {
+  if (!isReplacement(reason) || instance?.desktopManaged !== true) return false;
+  return (await getDesktopSettingsStore().get()).daemon.manageBuiltInDaemon;
 }
 
 export interface StopCapturedDaemonInput {
@@ -440,7 +447,7 @@ export function keepsTerminalsOnStop(
   platform: NodeJS.Platform,
 ): boolean {
   if (platform === "win32") return false;
-  return replacesDaemon(reason);
+  return isReplacement(reason);
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {

@@ -155,6 +155,11 @@ try {
     await command("stop_desktop_daemon", { reason });
     process.kill(captured.pid, 0);
   }
+  // With management off, Desktop leaves the daemon running through an update.
+  await command("patch_desktop_settings", { daemon: { manageBuiltInDaemon: false } });
+  await command("stop_desktop_daemon", { reason: "app_update" });
+  process.kill(captured.pid, 0);
+  await command("patch_desktop_settings", { daemon: { manageBuiltInDaemon: true } });
   // Installing an update stops it, so the updated Desktop starts its own daemon.
   const beforeInstall = await command("stop_desktop_daemon", { reason: "app_update" });
   assert.equal(beforeInstall.status, "stopped", "app_update left Desktop's daemon running");
