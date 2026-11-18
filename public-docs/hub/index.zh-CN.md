@@ -17,7 +17,7 @@ daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上�
 
 目前它能为你提供：
 
-- 由 GitHub、Slack 和 Discord 中的活动自动启动的 Agent。
+- 由 GitHub、Slack、Discord 或 [Linear](/docs/hub/triggers/linear) 中的活动自动启动的 Agent。
 - 可以保存在仓库中、通过 CLI 部署的触发器。
 - 一份记录：收到了什么、匹配到了什么、运行了什么。
 - 一个让团队查看所有这些内容的地方。
@@ -47,7 +47,7 @@ daemon 在一台机器上为你运行 Agent。Paseo Hub 是位于 daemon 之上�
 7. [配置](/docs/hub/configuration)
 8. [安全](/docs/hub/security)
 
-如果某个 workflow 接受来自 GitHub、Slack、Discord 或 API 的请求，在让 Agent 访问工作目录或输出能力之前，请先阅读 [Hub 安全](/docs/hub/security)。
+如果某个 workflow 接受来自集成或 API 的请求，在让 Agent 访问工作目录或输出能力之前，请先阅读 [Hub 安全](/docs/hub/security)。
 
 ## 自己运行 Hub {#run-hub-yourself}
 

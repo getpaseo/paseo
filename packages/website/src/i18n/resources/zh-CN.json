@@ -568,8 +568,8 @@
     "reddit": "工作流与问答。"
   },
   "hub": {
-    "metaTitle": "Paseo Hub - GitHub、Slack 和 Discord 触发器",
-    "metaDescription": "自行运行 Paseo Hub，从 GitHub、Slack 和 Discord 在你自己的机器上启动 Agent。",
+    "metaTitle": "Paseo Hub - GitHub、Linear、Slack 和 Discord 触发器",
+    "metaDescription": "自托管 Paseo Hub，从 GitHub、Linear、Slack 和 Discord 在你的机器上启动 Agent。",
     "title": "Paseo Hub",
     "intro": "一个可选服务，位于你的 daemon 之上，为它们提供额外能力。",
     "runIt": "可以自行运行，也可以使用托管服务。",
@@ -597,8 +597,9 @@
     },
     "triggers": {
       "title": "触发器，运行在你的机器上",
-      "description": "在 GitHub、Slack 或 Discord 中提及机器人，就会在你的 daemon 上启动一个 Agent。",
+      "description": "从 GitHub、Slack 或 Discord 在你的 daemon 上启动 Agent。在自托管 Hub 中<linear>连接 Linear 应用</linear>，即可根据 issue 活动运行 workflow。",
       "github": "Issue、PR 和代码审查。",
+      "linear": "Issue 评论和分配。",
       "slack": "频道和讨论串。",
       "discord": "频道和讨论串。"
     },
@@ -637,7 +638,7 @@
     "faq": {
       "title": "常见问题",
       "whatQuestion": "Hub 是什么？",
-      "whatAnswer": "一个独立的服务，位于你的 Paseo daemon 之上。你把一个或多个 daemon 连接到它，它就为这些 daemon 提供 GitHub、Slack 和 Discord 触发器，协作功能也在计划中。没有它，Paseo 也能完整工作。",
+      "whatAnswer": "Hub 连接一个或多个 Paseo daemon，根据 GitHub、Slack 或 Discord 中的事件启动 Agent。自托管 Hub 也支持 Linear 应用。",
       "separateQuestion": "为什么它是独立服务，而不是 daemon 的一部分？",
       "separateAnswer1": "daemon 保持为单台机器上的一个精简可执行程序。Hub 通过与应用和 CLI 相同的 RPC 与 daemon 通信，所以任何人都可以基于 Paseo 构建自己的 hub。",
       "separateAnswer2": "它的职责也不同。Hub 需要暴露在互联网上、与团队共享，并以多租户方式运行。这些都不属于单机 daemon 的职责。",

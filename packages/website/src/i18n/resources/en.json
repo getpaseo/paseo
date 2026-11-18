@@ -568,8 +568,8 @@
     "reddit": "Workflows and questions."
   },
   "hub": {
-    "metaTitle": "Paseo Hub - GitHub, Slack, and Discord triggers",
-    "metaDescription": "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
+    "metaTitle": "Paseo Hub - GitHub, Linear, Slack, and Discord triggers",
+    "metaDescription": "Self-host Paseo Hub to start agents on your machines from GitHub, Linear, Slack, and Discord.",
     "title": "Paseo Hub",
     "intro": "An optional service that sits above your daemons and gives them extra capabilities.",
     "runIt": "Run it yourself or use the hosted service.",
@@ -597,8 +597,9 @@
     },
     "triggers": {
       "title": "Triggers, running on your machines",
-      "description": "Mention the bot in GitHub, Slack, or Discord and an agent starts on your daemon.",
+      "description": "Start agents on your daemon from GitHub, Slack, or Discord. On a self-hosted Hub, <linear>connect a Linear app</linear> to run workflows from issue activity.",
       "github": "Issues, PRs, and reviews.",
+      "linear": "Issue comments and assignments.",
       "slack": "Channels and threads.",
       "discord": "Channels and threads."
     },
@@ -637,7 +638,7 @@
     "faq": {
       "title": "FAQ",
       "whatQuestion": "What is the Hub?",
-      "whatAnswer": "A separate service that sits above your Paseo daemons. You connect one or more daemons to it and it gives them GitHub, Slack, and Discord triggers, with collaboration features planned. Paseo works fully without it.",
+      "whatAnswer": "Hub connects to one or more Paseo daemons and starts agents from events in GitHub, Slack, or Discord. Self-hosted Hub also supports Linear apps.",
       "separateQuestion": "Why is it a separate service instead of part of the daemon?",
       "separateAnswer1": "The daemon stays one lean executable on one machine. The Hub talks to daemons over the same RPCs the app and the CLI use, so anyone can build their own hub on top of Paseo.",
       "separateAnswer2": "It also has a different job. The Hub is meant to be exposed to the internet, shared with a team, and run multi-tenant. None of that belongs in a single machine daemon.",

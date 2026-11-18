@@ -32,7 +32,7 @@ PASEO_HUB_DATA_DIR=/path/to/paseo-hub-data npx @getpaseo/hub
 
 Hub 默认使用 `http://localhost:3000`。对于它的控制台、daemon、Slack Socket Mode 以及由 Hub 主动连接出去的 Provider，这已经足够。
 
-GitHub 事件触发器使用 webhook，需要一个公开的 HTTPS 地址。没有 webhook 时，仓库访问仍然可以工作。Slack 可选的 Webhooks 传输方式也需要公开 HTTPS；Socket Mode 则不需要。
+GitHub 和 Linear 触发器通过公开 HTTPS 地址接收 webhook。没有 webhook 时，GitHub 仓库访问仍然可用。使用 Slack 的 Webhooks 传输方式也需要公开 HTTPS。
 
 当 Hub 有一个稳定的公开地址时，请在启动前设置它：
 
@@ -57,7 +57,7 @@ DATABASE_URL=postgres://paseo:password@localhost:5432/paseo_hub \
 
 ## 应用配置 {#app-configuration}
 
-管理员在 **Apps** 下配置 GitHub、Slack 和 Discord。Hub 会先验证凭据，再保存到数据库中，并启动与通过环境变量配置的部署相同的 Provider 运行时。
+管理员在 **Apps** 下配置 GitHub、Slack、Discord 和 Linear。Hub 会先验证凭据，再保存到数据库中，并启动与通过环境变量配置的部署相同的 Provider 运行时。
 
 对于在 Hub 之外管理密钥的部署，环境变量仍然可用。完整的环境变量配置优先于已保存的应用，并在控制台中显示为 **Managed by environment**。
 
@@ -88,7 +88,7 @@ DISCORD_CLIENT_SECRET=
 DISCORD_BOT_TOKEN=
 ```
 
-各 Provider 的行为和连接步骤见 [GitHub](/docs/hub/self-hosting/github-app)、[Slack](/docs/hub/self-hosting/slack-app) 和 [Discord](/docs/hub/self-hosting/discord-app)。
+各 Provider 的行为和连接步骤见 [GitHub](/docs/hub/self-hosting/github-app)、[Slack](/docs/hub/self-hosting/slack-app)、[Discord](/docs/hub/self-hosting/discord-app) 和 [Linear](/docs/hub/self-hosting/linear-app)。
 
 ## 通过环境变量初始化 {#bootstrap-from-environment}
 

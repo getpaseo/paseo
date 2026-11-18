@@ -109,6 +109,38 @@ test("switches language on the same page, keeping the query and then every link"
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
 
+for (const { locale, prefix, setupLink, setupHeading, triggerHeading } of [
+  {
+    locale: "English",
+    prefix: "",
+    setupLink: "connect a Linear app",
+    setupHeading: "Linear for Hub",
+    triggerHeading: "Linear triggers",
+  },
+  {
+    locale: "Chinese",
+    prefix: "/zh-CN",
+    setupLink: "连接 Linear 应用",
+    setupHeading: "为 Hub 配置 Linear",
+    triggerHeading: "Linear 触发器",
+  },
+]) {
+  test(`finds Linear setup and triggers from the ${locale} Hub page`, async ({ page }) => {
+    await page.goto(`${prefix}/hub`);
+
+    const setup = page.getByRole("link", { name: setupLink, exact: true });
+    await expect(setup).toHaveAttribute("href", `${prefix}/docs/hub/self-hosting/linear-app`);
+    await setup.click();
+    await expect(page.getByRole("heading", { name: setupHeading, level: 1 })).toBeVisible();
+
+    const triggers = page.locator("main").getByRole("link", { name: triggerHeading, exact: true });
+    await expect(triggers).toHaveAttribute("href", `${prefix}/docs/hub/triggers/linear`);
+    await triggers.click();
+    await expect(page.getByRole("heading", { name: triggerHeading, level: 1 })).toBeVisible();
+    await expect(page.getByText("linear.comment_created", { exact: true }).first()).toBeVisible();
+  });
+}
+
 test("shows the language as an abbreviation and lists every language by name", async ({ page }) => {
   await page.goto("/docs/cli#running-agents");
   const button = languageButton(page);

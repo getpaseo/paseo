@@ -34,7 +34,7 @@ Embedded mode supports one Hub process per data directory. It is intended for a 
 
 Hub defaults to `http://localhost:3000`. That is enough for its dashboard, daemons, Slack Socket Mode, and providers that connect out from Hub.
 
-GitHub event triggers use webhooks and need a public HTTPS address. Repository access can still work without the webhook. Slack's optional Webhooks transport also needs public HTTPS; Socket Mode does not.
+GitHub and Linear triggers receive webhooks at a public HTTPS address. GitHub repository access can still work without the webhook. Slack also needs public HTTPS when using its Webhooks transport.
 
 When Hub is available at a stable public origin, set it before starting:
 
@@ -59,7 +59,7 @@ The database also stores Hub's generated authentication secret. Set `PASEO_HUB_A
 
 ## App configuration
 
-The operator configures GitHub, Slack, and Discord under **Apps**. Hub verifies the credentials before saving them in its database and starts the same provider runtime used by environment-configured deployments.
+The operator configures GitHub, Slack, Discord, and Linear under **Apps**. Hub verifies the credentials before saving them in its database and starts the same provider runtime used by environment-configured deployments.
 
 Environment variables remain available for deployments that manage secrets outside Hub. A complete environment configuration takes precedence over a saved application and appears as **Managed by environment** in the dashboard.
 
@@ -90,7 +90,7 @@ DISCORD_CLIENT_SECRET=
 DISCORD_BOT_TOKEN=
 ```
 
-See [GitHub](/docs/hub/self-hosting/github-app), [Slack](/docs/hub/self-hosting/slack-app), and [Discord](/docs/hub/self-hosting/discord-app) for provider behavior and connection steps.
+See [GitHub](/docs/hub/self-hosting/github-app), [Slack](/docs/hub/self-hosting/slack-app), [Discord](/docs/hub/self-hosting/discord-app), and [Linear](/docs/hub/self-hosting/linear-app) for provider behavior and connection steps.
 
 ## Bootstrap from environment
 

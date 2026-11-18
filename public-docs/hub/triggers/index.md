@@ -107,27 +107,28 @@ Each provider page documents its events and the data they expose:
 - [GitHub triggers](/docs/hub/triggers/github)
 - [Slack triggers](/docs/hub/triggers/slack)
 - [Discord triggers](/docs/hub/triggers/discord)
+- [Linear triggers](/docs/hub/triggers/linear)
 
 ## Filters
 
-`filters` is required, and `from_users` must be present and non-empty. A trigger without it is rejected at validation.
+For external triggers, set a non-empty `from_users` allowlist. The exception is [Linear issue scope entry](/docs/hub/triggers/linear), which can omit the allowlist and requires a project filter.
 
 The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
 
 An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
 
-| Filter       | Applies to                | Matches                                                              |
-| ------------ | ------------------------- | -------------------------------------------------------------------- |
-| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name      |
-| `repo`       | GitHub                    | `owner/name`                                                         |
-| `workspace`  | Slack                     | Team id, `T01234567`                                                 |
-| `guild`      | Discord                   | Guild id                                                             |
-| `channels`   | Slack, Discord            | Channel ids                                                          |
-| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                |
-| `pattern`    | all                       | Invocation prefix                                                    |
-| `connection` | all                       | A connection slug, when the organization has several                 |
-| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                 |
-| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively |
+| Filter       | Applies to                | Matches                                                                  |
+| ------------ | ------------------------- | ------------------------------------------------------------------------ |
+| `from_users` | all                       | GitHub login or Slack, Discord, and Linear user ID                       |
+| `repo`       | GitHub                    | `owner/name`                                                             |
+| `workspace`  | Slack                     | Team id, `T01234567`                                                     |
+| `guild`      | Discord                   | Guild id                                                                 |
+| `channels`   | Slack, Discord            | Channel ids                                                              |
+| `contains`   | all                       | GitHub and Linear comment substring, Slack and Discord invocation prefix |
+| `pattern`    | all                       | Invocation prefix                                                        |
+| `project`    | Linear                    | The Linear project UUID                                                  |
+| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                     |
+| `labels`     | GitHub, Linear            | Every listed label. GitHub uses case-insensitive names. Linear uses IDs. |
 
 All conditions must pass. There is no `any` mode.
 
@@ -135,12 +136,14 @@ All conditions must pass. There is no `any` mode.
 
 `repo`, `workspace`, and `guild` are resolved to immutable ids when the configuration activates, along with the connection that owns them. Naming a resource the organization has no connection for fails activation, so you find out on push rather than when someone comments.
 
-Omit the resource filter and the trigger listens to every connection of that provider in the organization. To pin it to one:
+With no resource filter or connection, the trigger listens to every connection of that provider in the organization. Set `connection` on the event to pin it to one connection.
 
 ```yaml
-filters:
-  connection: acme-github
-  from_users: [alice]
+on:
+  github.issue_comment_created:
+    connection: acme-github
+    filters:
+      from_users: [alice]
 ```
 
 See [How Hub works](/docs/hub/concepts) for what activation compiles.
@@ -151,11 +154,11 @@ Both run. Triggers are not ordered and do not shadow each other, in one configur
 
 ## Replying
 
-Put `allow_outputs` on the step that should reply. The reply capabilities are `slack.reply` and `discord.reply`.
+Set reply limits under `run.outputs` in a trigger file or `allow_outputs` on a workflow step. For example, use `slack.reply` for Slack, `discord.reply` for Discord, and `linear.reply` for Linear.
 
 - Set `max` when a step needs more than one update.
 - Set `required: true` when the step must emit at least one reply before it can finish. A required type must be registered and available for the execution context.
 
-GitHub has no reply capability; a step with a [`github` block](/docs/hub/github) comments through `gh` instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
+See the [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) for the full contract.
 
 The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).

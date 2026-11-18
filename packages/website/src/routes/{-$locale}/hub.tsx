@@ -11,7 +11,7 @@ import {
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
-import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
+import { DiscordIcon, GitHubIcon, LinearIcon, SlackIcon } from "~/components/brand-icons";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
@@ -261,28 +261,40 @@ function InfoTip({ text }: { text: string }) {
 }
 
 const TRIGGER_SURFACES = [
-  { name: "GitHub", icon: <GitHubIcon className="h-6 w-6" />, body: "github" },
-  { name: "Slack", icon: <SlackIcon className="h-6 w-6" />, body: "slack" },
-  { name: "Discord", icon: <DiscordIcon className="h-6 w-6" />, body: "discord" },
+  { name: "GitHub", Icon: GitHubIcon, body: "github" },
+  { name: "Linear", Icon: LinearIcon, body: "linear" },
+  { name: "Slack", Icon: SlackIcon, body: "slack" },
+  { name: "Discord", Icon: DiscordIcon, body: "discord" },
 ] as const;
 
 function Triggers() {
   const { t } = useTranslation();
+  const localize = useLocalizePath();
+  const links = React.useMemo(
+    () => ({
+      linear: <a href={localize("/docs/hub/self-hosting/linear-app")} className={LINK_CLASS} />,
+    }),
+    [localize],
+  );
   return (
     <section className="space-y-6">
       <h2 className="text-xl font-medium">{t("hub.triggers.title")}</h2>
-      <p className="text-white/70 leading-relaxed max-w-2xl">{t("hub.triggers.description")}</p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {TRIGGER_SURFACES.map((surface) => (
+      <p className="text-white/70 leading-relaxed max-w-2xl">
+        <Trans i18nKey="hub.triggers.description" components={links} />
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {TRIGGER_SURFACES.map(({ name, Icon, body }) => (
           <div
-            key={surface.name}
+            key={name}
             className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
           >
-            <span className="text-white/80">{surface.icon}</span>
+            <span className="text-white/80">
+              <Icon className="h-6 w-6" />
+            </span>
             <span className="min-w-0">
-              <span className="block font-medium">{surface.name}</span>
+              <span className="block font-medium">{name}</span>
               <span className="block text-xs text-muted-foreground">
-                {t(`hub.triggers.${surface.body}`)}
+                {t(`hub.triggers.${body}`)}
               </span>
             </span>
           </div>
@@ -438,11 +450,10 @@ function Agents() {
   );
 }
 
-const DIAGRAM_SURFACES = [
-  { name: "GitHub", icon: <GitHubIcon className="h-5 w-5" /> },
-  { name: "Slack", icon: <SlackIcon className="h-5 w-5" /> },
-  { name: "Discord", icon: <DiscordIcon className="h-5 w-5" /> },
-];
+const DIAGRAM_SURFACES = TRIGGER_SURFACES.map(({ name, Icon }) => ({
+  name,
+  icon: <Icon className="h-5 w-5" />,
+}));
 
 const CLAUDE_MARK = { name: "Claude Code", icon: <ClaudeCodeIcon className="h-4 w-4" /> };
 const CODEX_MARK = { name: "Codex", icon: <CodexIcon className="h-4 w-4" /> };
@@ -466,8 +477,8 @@ function Shape() {
       <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
         <div className="flex flex-col items-center">
           <DiagramRow label={t("hub.shape.triggersRow")}>
-            {DIAGRAM_SURFACES.map((surface) => (
-              <DiagramCard key={surface.name} icon={surface.icon} name={surface.name} />
+            {DIAGRAM_SURFACES.map(({ name, icon }) => (
+              <DiagramCard key={name} icon={icon} name={name} />
             ))}
             <DiagramCard name={t("hub.shape.yourTeam")} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-4 py-3 text-sm text-white/30">

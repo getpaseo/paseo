@@ -105,27 +105,28 @@ Hub 在每段提示词中都包含一个 `executionId`。使用持续的 Agent �
 - [GitHub 触发器](/docs/hub/triggers/github)
 - [Slack 触发器](/docs/hub/triggers/slack)
 - [Discord 触发器](/docs/hub/triggers/discord)
+- [Linear 触发器](/docs/hub/triggers/linear)
 
 ## 过滤条件 {#filters}
 
-`filters` 是必填的，而且 `from_users` 必须存在且非空。缺少它的触发器会在校验时被拒绝。
+外部触发器需要设置非空的 `from_users` 白名单。[Linear issue 进入范围](/docs/hub/triggers/linear)是例外，可以省略白名单，但必须设置项目过滤条件。
 
 这个白名单防止陌生人在公开 issue 上的一条评论就在你的机器上启动 Agent。它没有默认值，因为安全的默认值因仓库而异。
 
 白名单只是一层防御。它不能让一个被盗用的、已获准的账号变得可信，也不能让提示词注入变得无害。为外部触发器选择 daemon、工作目录、Provider 策略和输出之前，请先阅读 [Hub 安全](/docs/hub/security)。
 
-| 过滤条件     | 适用于              | 匹配内容                                                      |
-| ------------ | ------------------- | ------------------------------------------------------------- |
-| `from_users` | 全部                | GitHub：登录名。Slack 和 Discord：**用户 ID**，而不是显示名称 |
-| `repo`       | GitHub              | `owner/name`                                                  |
-| `workspace`  | Slack               | Team ID，`T01234567`                                          |
-| `guild`      | Discord             | 服务器 ID                                                     |
-| `channels`   | Slack、Discord      | 频道 ID                                                       |
-| `contains`   | 全部                | GitHub 子串；Slack 和 Discord 调用前缀                        |
-| `pattern`    | 全部                | 调用前缀                                                      |
-| `connection` | 全部                | 组织有多个连接时的连接 slug                                   |
-| `label`      | GitHub 添加标签事件 | 本次投递添加的标签，不区分大小写                              |
-| `labels`     | GitHub              | issue 或 Pull Request 当前带有的每个所列标签，不区分大小写    |
+| 过滤条件     | 适用于              | 匹配内容                                                        |
+| ------------ | ------------------- | --------------------------------------------------------------- |
+| `from_users` | 全部                | GitHub 登录名，或 Slack、Discord 和 Linear 用户 ID              |
+| `repo`       | GitHub              | `owner/name`                                                    |
+| `workspace`  | Slack               | Team ID，`T01234567`                                            |
+| `guild`      | Discord             | 服务器 ID                                                       |
+| `channels`   | Slack、Discord      | 频道 ID                                                         |
+| `contains`   | 全部                | GitHub 和 Linear 评论子串，Slack 和 Discord 调用前缀            |
+| `pattern`    | 全部                | 调用前缀                                                        |
+| `project`    | Linear              | Linear 项目的 UUID                                              |
+| `label`      | GitHub 添加标签事件 | 本次投递添加的标签，不区分大小写                                |
+| `labels`     | GitHub、Linear      | 所列的每个标签。GitHub 使用不区分大小写的名称，Linear 使用 ID。 |
 
 所有条件都必须通过。没有 `any` 模式。
 
@@ -133,12 +134,14 @@ Hub 在每段提示词中都包含一个 `executionId`。使用持续的 Agent �
 
 `repo`、`workspace` 和 `guild` 在配置激活时会被解析为不可变的 ID，并确定拥有它们的连接。如果指定的资源在组织中没有对应的连接，激活就会失败，因此你会在推送时发现问题，而不是等到有人评论时。
 
-省略资源过滤条件时，触发器会监听组织中该 Provider 的所有连接。要把它固定到某一个连接：
+如果没有设置资源过滤条件或连接，触发器会监听组织中该 Provider 的所有连接。在事件上设置 `connection` 可以限定为单个连接。
 
 ```yaml
-filters:
-  connection: acme-github
-  from_users: [alice]
+on:
+  github.issue_comment_created:
+    connection: acme-github
+    filters:
+      from_users: [alice]
 ```
 
 激活时编译了什么，见 [Hub 的工作原理](/docs/hub/concepts)。
@@ -149,11 +152,11 @@ filters:
 
 ## 回复 {#replying}
 
-在需要回复的 step 上设置 `allow_outputs`。回复能力是 `slack.reply` 和 `discord.reply`。
+在触发器文件的 `run.outputs` 或 workflow step 的 `allow_outputs` 中设置回复限制。Slack 使用 `slack.reply`，Discord 使用 `discord.reply`，Linear 使用 `linear.reply`。
 
 - 当 step 需要不止一次更新时，设置 `max`。
 - 当 step 必须至少发出一次回复才能完成时，设置 `required: true`。必需的类型必须已注册，并且在该执行上下文中可用。
 
-GitHub 没有回复能力；带有 [`github` 块](/docs/hub/github)的 step 会改为通过 `gh` 发表评论。契约见[输出能力参考](/docs/hub/configuration/hub-yml#output-capabilities)。
+参阅[输出能力参考](/docs/hub/configuration/hub-yml#output-capabilities)了解详情。
 
 这项声明授予 `hub.reply` 工具；提示词必须告诉 Agent 调用它。见[告诉 Agent 调用哪个工具](/docs/hub/workflows#tell-the-agent-which-tool-to-call)。
