@@ -193,6 +193,10 @@ export function prepareTerminalWorkerRuntime(input: {
   return entry;
 }
 
+// rm waits retryDelay × attempt between tries: up to 5.5s in total.
+const WINDOWS_RELEASE_RETRIES = 10;
+const WINDOWS_RELEASE_RETRY_MS = 100;
+
 export interface PruneTerminalWorkerRuntimesResult {
   removed: string[];
   /** Copies that could not be deleted (a worker that just exited can still hold files on Windows). */
@@ -236,7 +240,13 @@ export async function pruneTerminalWorkerRuntimes(
     )
       continue;
     try {
-      await rm(directory, { recursive: true, force: true });
+      // Windows keeps a just-exited worker's files open for a moment; retrying outlasts that.
+      await rm(directory, {
+        recursive: true,
+        force: true,
+        maxRetries: WINDOWS_RELEASE_RETRIES,
+        retryDelay: WINDOWS_RELEASE_RETRY_MS,
+      });
       result.removed.push(directory);
     } catch (error) {
       result.failed.push({
