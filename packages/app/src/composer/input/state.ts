@@ -3,6 +3,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload, TextReplacement } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import type { HardwareKeyboardSubmitChord } from "@/native/android-hardware-keyboard-submit.types";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
@@ -173,6 +174,39 @@ export function resolveMessageInputEnterAction(
   if (ctx.sendShortcut === "mod-enter") return hasModifier ? "default-send" : null;
   if (hasModifier && ctx.isAgentRunning && ctx.onQueue) return "alternate-send";
   return "default-send";
+}
+
+const HARDWARE_SUBMIT_CANDIDATES: ReadonlyArray<{
+  chord: HardwareKeyboardSubmitChord;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}> = [
+  { chord: "Enter", ctrlKey: false, metaKey: false },
+  { chord: "Control+Enter", ctrlKey: true, metaKey: false },
+  { chord: "Meta+Enter", ctrlKey: false, metaKey: true },
+];
+
+/**
+ * The hardware Return chords the Android key source takes from the composer's text control so
+ * they send instead of typing. A press it sees is never a touch keyboard's, so unlike the web
+ * text area this holds at any width. Derived from `resolveMessageInputEnterAction`, so the send
+ * policy stays in one place; Shift+Return never sends.
+ */
+export function resolveHardwareKeyboardSubmitChords(
+  sendShortcut: SendShortcut,
+): HardwareKeyboardSubmitChord[] {
+  return HARDWARE_SUBMIT_CANDIDATES.filter(
+    ({ ctrlKey, metaKey }) =>
+      resolveMessageInputEnterAction({
+        submitOnEnter: true,
+        sendShortcut,
+        shiftKey: false,
+        ctrlKey,
+        metaKey,
+        isAgentRunning: false,
+        onQueue: undefined,
+      }) !== null,
+  ).map(({ chord }) => chord);
 }
 
 export function runMessageInputKeyboardAction(

@@ -76,7 +76,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useAndroidHardwareKeyboardSubmit } from "@/hooks/use-android-hardware-keyboard-submit";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
+import type { HardwareKeyboardSubmitKeys } from "@/native/android-hardware-keyboard-submit.types";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -86,6 +88,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useComposerHeight } from "./height";
+import { HardwareKeyboardSubmitScope } from "./hardware-keyboard-submit-scope";
 import { ComposerInputPresentation } from "./presentation";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import { pasteLinkedClipboardText } from "@/composer/pasted-text";
@@ -112,6 +115,7 @@ import {
   resolveAlternateSendAction,
   resolveComposerSurfacePresentation,
   resolveComposerSurfaceText,
+  resolveHardwareKeyboardSubmitChords,
   resolveMessageInputEnterAction,
   resolveRetainedSelection,
   runAlternateSendAction,
@@ -457,7 +461,17 @@ function SendButtonContent({
   );
 }
 
-interface DesktopKeyPressContext {
+/** A key press in the composer, from the web text area or the Android hardware key source. */
+interface ComposerKeyDown {
+  key: string;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  preventDefault: () => void;
+}
+
+interface ComposerKeyDownContext {
   onKeyPressCallback: ((event: ComposerKeyPressEvent) => boolean) | undefined;
   input: ComposerKeyPressEvent["input"];
   submitOnEnter: boolean;
@@ -471,32 +485,40 @@ interface DesktopKeyPressContext {
   handleDefaultSendAction: () => void;
 }
 
-function handleDesktopKeyPressImpl(
-  event: WebTextInputKeyPressEvent,
-  ctx: DesktopKeyPressContext,
-): void {
-  if (isImeComposingKeyboardEvent(event.nativeEvent)) return;
+function webComposerKeyDown(event: WebTextInputKeyPressEvent): ComposerKeyDown | null {
+  if (isImeComposingKeyboardEvent(event.nativeEvent)) return null;
+  const { key, shiftKey, metaKey, ctrlKey, altKey } = event.nativeEvent;
+  return {
+    key,
+    shiftKey: shiftKey ?? false,
+    metaKey: metaKey ?? false,
+    ctrlKey: ctrlKey ?? false,
+    altKey: altKey ?? false,
+    preventDefault: () => event.preventDefault(),
+  };
+}
 
-  const { shiftKey, metaKey, ctrlKey, altKey } = event.nativeEvent;
+function handleComposerKeyDown(event: ComposerKeyDown, ctx: ComposerKeyDownContext): void {
+  const { shiftKey, metaKey, ctrlKey, altKey } = event;
 
   if (ctx.onKeyPressCallback) {
     const handled = ctx.onKeyPressCallback({
-      key: event.nativeEvent.key,
-      hasModifier: Boolean(shiftKey || metaKey || ctrlKey || altKey),
-      preventDefault: () => event.preventDefault(),
+      key: event.key,
+      hasModifier: shiftKey || metaKey || ctrlKey || altKey,
+      preventDefault: event.preventDefault,
       input: ctx.input,
     });
     if (handled) return;
   }
 
-  if (event.nativeEvent.key !== "Enter") return;
+  if (event.key !== "Enter") return;
 
   const action = resolveMessageInputEnterAction({
     submitOnEnter: ctx.submitOnEnter,
     sendShortcut: ctx.sendShortcut,
-    shiftKey: shiftKey ?? false,
-    metaKey: metaKey ?? false,
-    ctrlKey: ctrlKey ?? false,
+    shiftKey,
+    metaKey,
+    ctrlKey,
     isAgentRunning: ctx.isAgentRunning,
     onQueue: ctx.onQueue,
   });
@@ -763,7 +785,9 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
     );
   }
   return (
-    <View style={[styles.textInputScrollWrapper, props.fullscreen && styles.fullscreenTextSurface]}>
+    <HardwareKeyboardSubmitScope
+      style={[styles.textInputScrollWrapper, props.fullscreen && styles.fullscreenTextSurface]}
+    >
       {!isWeb && props.compact && !props.fullscreen ? (
         <Text
           accessible={false}
@@ -803,7 +827,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
           {focusHintLabel}
         </Text>
       ) : null}
-    </View>
+    </HardwareKeyboardSubmitScope>
   );
 }
 
@@ -1887,19 +1911,20 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     const shouldHandleWebKeyPress = isWeb;
+    // The web text area cannot tell a touch keyboard's Return from a hardware one, so it sends
+    // only in a wide layout. The Android key source takes hardware presses only, at any width.
     const shouldSubmitOnEnter = isWeb && !isCompact;
 
-    const handleDesktopKeyPress = useCallback(
-      (event: WebTextInputKeyPressEvent) => {
-        if (!shouldHandleWebKeyPress) return;
-        handleDesktopKeyPressImpl(event, {
+    const runComposerKeyDown = useCallback(
+      (event: ComposerKeyDown, submitOnEnter: boolean) => {
+        handleComposerKeyDown(event, {
           onKeyPressCallback,
           input: getComposerInputSnapshot(
             textInputRef.current,
             valueRef.current,
             selectionRef.current,
           ),
-          submitOnEnter: shouldSubmitOnEnter,
+          submitOnEnter,
           sendShortcut,
           isAgentRunning,
           onQueue,
@@ -1911,9 +1936,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         });
       },
       [
-        shouldHandleWebKeyPress,
         onKeyPressCallback,
-        shouldSubmitOnEnter,
         sendShortcut,
         isAgentRunning,
         onQueue,
@@ -1923,6 +1946,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         handleAlternateSendAction,
         handleDefaultSendAction,
       ],
+    );
+
+    const handleDesktopKeyPress = useCallback(
+      (event: WebTextInputKeyPressEvent) => {
+        if (!shouldHandleWebKeyPress) return;
+        const keyDown = webComposerKeyDown(event);
+        if (keyDown) runComposerKeyDown(keyDown, shouldSubmitOnEnter);
+      },
+      [shouldHandleWebKeyPress, shouldSubmitOnEnter, runComposerKeyDown],
+    );
+
+    // The Android key source has already taken this press from the text control.
+    const handleHardwareKeyboardSubmit = useCallback(
+      (keys: HardwareKeyboardSubmitKeys) => {
+        runComposerKeyDown({ key: "Enter", ...keys, preventDefault: () => {} }, true);
+      },
+      [runComposerKeyDown],
     );
 
     const primaryActionKind = resolvePrimaryActionKind({
@@ -1948,6 +1988,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     useIosHardwareKeyboardSubmit({
       isEnabled: isInputFocused && !isSendButtonDisabled,
       onSubmit: handleDefaultSendAction,
+    });
+    // Return confirms dictation and voice mode owns the composer, so neither takes a send chord.
+    const hardwareKeyboardSubmitChords = useMemo(
+      () =>
+        isInputFocused && !isSendButtonDisabled && !isDictating && !isRealtimeVoiceForCurrentAgent
+          ? resolveHardwareKeyboardSubmitChords(sendShortcut)
+          : [],
+      [
+        isInputFocused,
+        isSendButtonDisabled,
+        isDictating,
+        isRealtimeVoiceForCurrentAgent,
+        sendShortcut,
+      ],
+    );
+    useAndroidHardwareKeyboardSubmit({
+      chords: hardwareKeyboardSubmitChords,
+      onSubmit: handleHardwareKeyboardSubmit,
     });
     const submitAccessibilityLabel = resolveSubmitAccessibilityLabel({
       submitButtonAccessibilityLabel,

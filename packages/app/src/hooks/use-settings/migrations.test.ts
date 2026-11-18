@@ -25,6 +25,11 @@ function storedContentFontSize(storage: Storage): number | undefined {
   return raw === undefined ? undefined : JSON.parse(raw).contentFontSize;
 }
 
+function storedSendShortcut(storage: Storage): string | undefined {
+  const raw = storage.entries.get(APP_SETTINGS_KEY);
+  return raw === undefined ? undefined : JSON.parse(raw).sendShortcut;
+}
+
 /** An in-memory storage whose write to `failingKey` always throws, as a full disk would. */
 function createFailingWriteStorage(failingKey: string): Storage {
   const storage = createInMemoryKeyValueStorage();
@@ -125,6 +130,51 @@ describe("migrateAppSettings", () => {
     );
 
     expect(result.contentFontSize).toBe(15);
+  });
+
+  it("moves a stored Android Enter send shortcut to Ctrl+Enter once", async () => {
+    const storage = createInMemoryKeyValueStorage();
+    const settings: AppSettings = { ...settingsWith("steer"), sendShortcut: "enter" };
+
+    const result = await migrateAppSettings(settings, storage, undefined, {
+      native: true,
+      android: true,
+    });
+
+    expect(result.sendShortcut).toBe("mod-enter");
+    expect(storedSendShortcut(storage)).toBe("mod-enter");
+    expect(appliedIds(storage)).toEqual([
+      "steer-default",
+      "mobile-content-16",
+      "android-mod-enter-send",
+    ]);
+  });
+
+  it("keeps Enter for an Android user who chooses it after the migration ran", async () => {
+    const storage = createInMemoryKeyValueStorage();
+    const settings: AppSettings = { ...settingsWith("steer"), sendShortcut: "enter" };
+    await migrateAppSettings(settings, storage, undefined, { native: true, android: true });
+
+    const result = await migrateAppSettings(settings, storage, undefined, {
+      native: true,
+      android: true,
+    });
+
+    expect(result.sendShortcut).toBe("enter");
+  });
+
+  it("leaves the Enter send shortcut alone on iOS and web", async () => {
+    const settings: AppSettings = { ...settingsWith("steer"), sendShortcut: "enter" };
+    const ios = createInMemoryKeyValueStorage();
+    const web = createInMemoryKeyValueStorage();
+
+    const iosResult = await migrateAppSettings(settings, ios, undefined, { native: true });
+    const webResult = await migrateAppSettings(settings, web, undefined, { native: false });
+
+    expect(iosResult.sendShortcut).toBe("enter");
+    expect(webResult.sendShortcut).toBe("enter");
+    expect(appliedIds(ios)).not.toContain("android-mod-enter-send");
+    expect(appliedIds(web)).not.toContain("android-mod-enter-send");
   });
 
   it("stays unmarked when the settings write fails, so a later launch retries", async () => {
