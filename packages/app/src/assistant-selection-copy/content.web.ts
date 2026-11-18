@@ -684,6 +684,9 @@ function restoreMarkdownElements(container: HTMLElement): void {
   for (const element of presentational.toReversed()) {
     element.replaceWith(...element.childNodes);
   }
+  // Turndown escapes line-start Markdown per text node, so text split by an unwrapped
+  // element, such as `#` and ` for`, has to be one node to keep `# for` literal.
+  container.normalize();
 }
 
 /**

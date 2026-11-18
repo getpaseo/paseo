@@ -913,6 +913,21 @@ it("keeps literal angle brackets around a URL in text/html", () => {
   expect(content?.html).toContain("<p>Open &lt;http://localhost:3000&gt; before the call.</p>");
 });
 
+it("keeps a heading marker split across inline elements literal in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Use <strong>C#</strong> for the service layer.</p>";
+  const paragraph = fixtureElement(message, "p");
+  const range = document.createRange();
+  range.setStart(textNode(fixtureElement(message, "strong")), 1);
+  range.setEnd(paragraph.lastChild!, paragraph.lastChild!.textContent!.length);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const content = createAssistantSelectionClipboardContent(selection);
+  expect(content?.plainText).toBe("# for the service layer.");
+  expect(content?.html).toContain("<p># for the service layer.</p>");
+});
+
 it("keeps table cell pipes escaped in text/plain table syntax and literal in text/html", () => {
   const message = mountFixture();
   message.innerHTML =
