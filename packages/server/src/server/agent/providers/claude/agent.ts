@@ -2531,6 +2531,11 @@ class ClaudeAgentSession implements AgentSession {
       this.config.thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID
         ? { thinkingOptionId: "xhigh" }
         : {}),
+      ...(!this.independentUltracode &&
+      this.config.thinkingOptionId === "xhigh" &&
+      this.config.providerOptions.ultracode === true
+        ? { thinkingOptionId: CLAUDE_ULTRACODE_THINKING_OPTION_ID }
+        : {}),
       ...(this.lastRuntimeModel
         ? {
             extra: {

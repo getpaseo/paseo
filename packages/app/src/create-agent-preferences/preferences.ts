@@ -118,29 +118,10 @@ const LegacyFormPreferencesSchema = z
     };
   });
 
-export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z
-  .union([FormPreferencesSchema, LegacyFormPreferencesSchema])
-  .transform((preferences): FormPreferences => {
-    // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
-    const providers = preferences.providerPreferences;
-    const claude = providers?.claude;
-    if (!claude?.thinkingByModel) return preferences;
-    const thinking = Object.entries(claude.thinkingByModel);
-    if (!thinking.some(([, effort]) => effort === "ultracode")) return preferences;
-    return {
-      ...preferences,
-      providerPreferences: {
-        ...providers,
-        claude: {
-          ...claude,
-          thinkingByModel: Object.fromEntries(
-            thinking.map(([model, effort]) => [model, effort === "ultracode" ? "xhigh" : effort]),
-          ),
-          options: { ultracode: true, ...claude.options },
-        },
-      },
-    };
-  });
+export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
+  FormPreferencesSchema,
+  LegacyFormPreferencesSchema,
+]);
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
 

@@ -120,14 +120,7 @@ export class ScheduleStore {
     private readonly dir: string,
     private readonly logger: Logger,
     private readonly onChange?: (schedule: StoredSchedule, change: "write" | "delete") => void,
-    private readonly normalizeTarget: (target: ScheduleTarget) => ScheduleTarget = (target) =>
-      target,
   ) {}
-
-  private normalize(schedule: StoredSchedule): StoredSchedule {
-    const target = this.normalizeTarget(schedule.target);
-    return target === schedule.target ? schedule : { ...schedule, target };
-  }
 
   private filePath(id: string): string {
     return join(this.dir, `${id}.json`);
@@ -159,7 +152,7 @@ export class ScheduleStore {
       }
       const { filePath, parsed } = file;
       if (parsed.success) {
-        schedules.push(this.normalize(parsed.data));
+        schedules.push(parsed.data);
         continue;
       }
       invalidFiles.add(filePath);
@@ -174,15 +167,11 @@ export class ScheduleStore {
   async get(id: string): Promise<StoredSchedule | null> {
     await this.ensureDir();
     const content = await readScheduleFile(this.filePath(id));
-    return content === null
-      ? null
-      : this.normalize(StoredScheduleSchema.parse(JSON.parse(content)));
+    return content === null ? null : StoredScheduleSchema.parse(JSON.parse(content));
   }
 
   async create(schedule: Omit<StoredSchedule, "id">): Promise<StoredSchedule> {
-    const created = this.normalize(
-      StoredScheduleSchema.parse({ ...schedule, id: generateScheduleId() }),
-    );
+    const created = StoredScheduleSchema.parse({ ...schedule, id: generateScheduleId() });
     return this.serializeScheduleMutation(created.id, async () => {
       await this.write(created);
       return created;
@@ -202,7 +191,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = this.normalize(StoredScheduleSchema.parse(next));
+      const updated = StoredScheduleSchema.parse(next);
       await this.write(updated);
       return updated;
     });
@@ -210,10 +199,9 @@ export class ScheduleStore {
 
   async upsertByNameAndTarget(
     name: string,
-    requestedTarget: ScheduleTarget,
+    target: ScheduleTarget,
     options: ScheduleNameTargetUpsert,
   ): Promise<StoredSchedule> {
-    const target = this.normalizeTarget(requestedTarget);
     const identity = nameTargetIdentityKey(name, target);
     return this.serializeIdentityMutation(identity, async () => {
       while (true) {
@@ -221,12 +209,10 @@ export class ScheduleStore {
           matchesNameAndTarget(schedule, name, target),
         );
         if (!existing) {
-          const created = this.normalize(
-            StoredScheduleSchema.parse({
-              ...(await options.create()),
-              id: generateScheduleId(),
-            }),
-          );
+          const created = StoredScheduleSchema.parse({
+            ...(await options.create()),
+            id: generateScheduleId(),
+          });
           if (!matchesNameAndTarget(created, name, target)) {
             throw new Error("Created schedule does not match requested identity");
           }
@@ -257,7 +243,7 @@ export class ScheduleStore {
     await this.serializeScheduleMutation(id, async () => {
       const content = await readScheduleFile(this.filePath(id));
       const parsed = content === null ? null : parseStoredSchedule(content);
-      const schedule = parsed?.success ? this.normalize(parsed.data) : null;
+      const schedule = parsed?.success ? parsed.data : null;
       assertDeletable?.(schedule);
       await rm(this.filePath(id), { force: true });
       if (schedule) {
@@ -312,7 +298,7 @@ export class ScheduleStore {
       if (next.id !== id) {
         throw new Error(`Schedule update cannot change id: ${id}`);
       }
-      const updated = this.normalize(StoredScheduleSchema.parse(next));
+      const updated = StoredScheduleSchema.parse(next);
       if (!matchesNameAndTarget(updated, name, target)) {
         throw new Error("Updated schedule does not match requested identity");
       }

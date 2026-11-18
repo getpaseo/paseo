@@ -183,6 +183,14 @@ export function resolveThinkingOptionId(args: {
   ) {
     return normalizedThinkingOptionId;
   }
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+  if (
+    normalizedThinkingOptionId === "ultracode" &&
+    effectiveModel?.provider === "claude" &&
+    thinkingOptions.some((option) => option.id === "xhigh")
+  ) {
+    return normalizedThinkingOptionId;
+  }
 
   return effectiveModel?.defaultThinkingOptionId ?? thinkingOptions[0]?.id ?? "";
 }

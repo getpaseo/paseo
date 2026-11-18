@@ -163,6 +163,8 @@ describe("ComposerControls", () => {
 });
 
 const FAST_ON = { fast_mode: true };
+const ULTRACODE_ON = { ultracode: true };
+const ignoreOption = () => undefined;
 
 describe("provider option controls", () => {
   const fastMode: AgentOptionControl = {
@@ -179,7 +181,11 @@ describe("provider option controls", () => {
     onSetOption: (key: string, value: unknown) => void;
   }) {
     const optionControls = React.useMemo(
-      () => ({ controls: [fastMode], options, onSetOption }),
+      () => ({
+        controls: [fastMode, { key: "ultracode", label: "Ultracode", type: "toggle" as const }],
+        options,
+        onSetOption,
+      }),
       [onSetOption, options],
     );
     const items = useAgentControlItems({
@@ -202,5 +208,10 @@ describe("provider option controls", () => {
     render(<OptionControls options={FAST_ON} onSetOption={onSetOption} />);
     fireEvent.click(screen.getByTestId("agent-feature-fast_mode"));
     expect(writes).toEqual([["fast_mode", false]]);
+  });
+
+  it("announces the state of a provider toggle with no custom tooltip", () => {
+    render(<OptionControls options={ULTRACODE_ON} onSetOption={ignoreOption} />);
+    expect(screen.getByRole("button", { name: "Ultracode: On" })).toBeDefined();
   });
 });

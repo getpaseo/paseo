@@ -42,12 +42,23 @@ export function useDraftProviderOptions(input: {
   const [model] = useState(() =>
     openDraftOptions({ provider, seed: initialOptions, currentProvider: getProvider }),
   );
-  const state = useSyncExternalStore(model.subscribe, model.getState, model.getState);
+  const draftState = useSyncExternalStore(model.subscribe, model.getState, model.getState);
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
-  const persisted = preferences.providerPreferences?.[provider ?? ""]?.options;
+  const providerPreferences = preferences.providerPreferences?.[provider ?? ""];
+  const persisted = providerPreferences?.options;
+  const legacyUltracode =
+    provider === "claude" &&
+    draftState.provider === provider &&
+    providerPreferences?.thinkingByModel?.[modelId ?? ""] === "ultracode";
+  const ultracode = persisted?.ultracode !== false;
+  const state = useMemo(
+    () =>
+      legacyUltracode ? { ...draftState, seed: { ultracode, ...draftState.seed } } : draftState,
+    [draftState, legacyUltracode, ultracode],
+  );
 
   useEffect(() => model.observeProvider(provider), [model, provider]);
   useEffect(() => model.setRemembered(persisted ?? {}), [model, persisted]);

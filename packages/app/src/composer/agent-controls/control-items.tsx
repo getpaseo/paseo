@@ -46,7 +46,7 @@ function toFeatureItem(
     return {
       ...base,
       type: "toggle",
-      tooltip: getControlTooltip(control),
+      tooltip: control.tooltip,
       value: readToggleOption(control, options),
       onChange: (value) => onSetOption(control.key, value),
     };

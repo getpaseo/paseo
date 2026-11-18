@@ -571,11 +571,17 @@ function updateDerivedState(input: {
   providerEntries: readonly ProviderSnapshotEntry[];
 }): ScheduleFormState {
   const modeOptions = resolveModeOptions(input.providerEntries, input.state.selectedProvider);
-  const availableThinkingOptions = resolveThinkingOptions(
+  const thinkingOptions = resolveThinkingOptions(
     input.providerEntries,
     input.state.selectedProvider,
     input.state.selectedModel,
   );
+  const availableThinkingOptions =
+    input.state.selectedProvider === "claude" &&
+    input.state.selectedThinkingOptionId === "ultracode" &&
+    !thinkingOptions.some((option) => option.id === "ultracode")
+      ? [...thinkingOptions, { id: "ultracode", label: "Ultra Code" }]
+      : thinkingOptions;
   const canUseWorktreeIsolation = resolveCanUseWorktreeIsolation({
     state: input.state,
     hosts: input.hosts,

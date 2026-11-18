@@ -98,11 +98,7 @@ function applyNewAgentConfig(
     if (!trimmed) {
       throw new Error("provider cannot be empty");
     }
-    if (config.provider !== trimmed) {
-      delete config.providerOptions;
-      delete config.featureValues;
-      config.provider = trimmed;
-    }
+    config.provider = trimmed;
   }
   if (patch.cwd !== undefined) {
     const trimmed = patch.cwd.trim();
@@ -241,7 +237,6 @@ type ScheduleAgentManager = Pick<
   Pick<
     AgentManager,
     | "createAgentFromRecord"
-    | "convertLegacySessionConfig"
     | "getRegisteredProviderIds"
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
@@ -304,11 +299,6 @@ export class ScheduleService {
       join(options.paseoHome, "schedules"),
       this.logger,
       (schedule, change) => this.syncHeartbeat(schedule, change),
-      (target) => {
-        if (target.type !== "new-agent") return target;
-        const config = this.agentManager.convertLegacySessionConfig(target.config);
-        return config === target.config ? target : { ...target, config };
-      },
     );
     this.agentStorage = options.agentStorage;
     this.createAgent = options.createAgent;

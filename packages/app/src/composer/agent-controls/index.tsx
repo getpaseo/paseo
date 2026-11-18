@@ -1317,7 +1317,10 @@ export function DraftAgentControls({
   }, [thinkingOptions]);
 
   const effectiveSelectedThinkingOption =
-    selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
+    selectedThinkingOptionId === "ultracode" &&
+    !mappedThinkingOptions.some((option) => option.id === selectedThinkingOptionId)
+      ? "xhigh"
+      : selectedThinkingOptionId || mappedThinkingOptions[0]?.id || undefined;
 
   const modelOptions = useMemo<AgentControlOption[]>(
     () =>
