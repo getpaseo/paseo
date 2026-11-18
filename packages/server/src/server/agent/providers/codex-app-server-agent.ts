@@ -5386,6 +5386,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async canStopRuntime(): Promise<boolean> {
+    // Reconnection still owns startup even while client points at the dead transport.
+    if (this.connectionPromise) return false;
     // A history session released its app-server once it read the thread, so nothing runs.
     if (this.connectionState === "history-ready") return true;
     // A disconnected transport cannot answer inventory RPCs. Release the stale
