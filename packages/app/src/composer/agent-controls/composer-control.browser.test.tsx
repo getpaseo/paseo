@@ -94,6 +94,12 @@ describe("ComposerControls", () => {
     expect(screen.getByRole("button", { name: "Context" }).textContent).toContain("On");
   });
 
+  it("keeps the provider's tooltip for a toolbar toggle", () => {
+    const tooltip = "Fast is enabled but does not apply to this model.";
+    renderControls([{ ...base, type: "toggle", value: true, tooltip, onChange: () => undefined }]);
+    expect(screen.getByRole("button", { name: tooltip })).toBeDefined();
+  });
+
   it("gives a sheet row's value the row's width, so a short value is not truncated", () => {
     const toast = createToast();
     render(

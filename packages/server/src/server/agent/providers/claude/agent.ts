@@ -2498,7 +2498,8 @@ class ClaudeAgentSession implements AgentSession {
       this.config.providerOptions = { ...config.providerOptions, fast_mode: false };
       this.openOptionsPatch = { fast_mode: false };
     }
-    // COMPAT(claudeUltracodeThinkingOption): existing agents used a combined xhigh + Ultracode choice.
+    // COMPAT(claudeUltracodeThinkingOption): added in v0.17.0, remove after 2027-05-18.
+    // Direct adapter callers can still pass the combined choice.
     if (
       this.independentUltracode &&
       config.thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID &&
@@ -2919,6 +2920,15 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
     this.cachedRuntimeInfo = null;
+    if (
+      !this.independentUltracode &&
+      normalizedThinkingOptionId !== CLAUDE_ULTRACODE_THINKING_OPTION_ID &&
+      this.config.providerOptions.ultracode === true
+    ) {
+      this.config.providerOptions = { ...this.config.providerOptions, ultracode: false };
+      this.pushEvent({ type: "options_changed", provider: "claude", patch: { ultracode: false } });
+      this.queryRestartNeeded = true;
+    }
     if (!(await this.applyEffortToRunningQuery(previousThinkingOptionId))) {
       this.queryRestartNeeded = true;
     }
@@ -3983,7 +3993,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.independentUltracode) {
       return this.config.thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID
         ? true
-        : undefined;
+        : this.config.providerOptions.ultracode;
     }
     const ultracode = this.config.providerOptions.ultracode;
     if (ultracode === undefined) return undefined;

@@ -18,7 +18,6 @@ const CLAUDE_ULTRACODE_CONTROL: AgentOptionToggleControl = {
   key: "ultracode",
   label: "Ultracode",
   description: "Let Claude plan workflows for substantive tasks",
-  tooltip: "Toggle Ultracode",
   icon: "Workflow",
 };
 

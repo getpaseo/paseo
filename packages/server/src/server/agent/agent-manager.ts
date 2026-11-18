@@ -69,6 +69,7 @@ import {
   applyProviderOptionsPatch,
   exposeFeatureValuesToHook,
   convertLegacyOptions,
+  convertLegacyClaudeUltracode,
   MalformedLegacyOptionError,
   resolveAdapter,
   foldHookFeatureValues,
@@ -6194,7 +6195,15 @@ export class AgentManager {
 
   private withConvertedOptions(config: AgentSessionConfig): AgentSessionConfig {
     const providerOptions = this.convertLegacyOptions(config.provider, config.providerOptions);
-    return providerOptions === config.providerOptions ? config : { ...config, providerOptions };
+    return this.convertLegacySessionConfig(
+      providerOptions === config.providerOptions ? config : { ...config, providerOptions },
+    );
+  }
+
+  convertLegacySessionConfig<T extends Parameters<typeof convertLegacyClaudeUltracode>[0]>(
+    config: T,
+  ): T {
+    return convertLegacyClaudeUltracode(config, this.adapterOf(config.provider));
   }
 
   private async prepareSessionConfig(

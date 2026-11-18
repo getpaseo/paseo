@@ -3073,6 +3073,48 @@ describe("ScheduleService", () => {
     expect(clearModel.target.config.modeId).toBe("bypassPermissions");
   });
 
+  test("editing a legacy Claude Ultracode schedule preserves Ultracode and effort", async () => {
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: null, output: "ok" }),
+    });
+    const request = {
+      name: "Ultracode schedule",
+      prompt: "p",
+      cadence: { type: "every" as const, everyMs: 60_000 },
+      target: {
+        type: "new-agent" as const,
+        config: {
+          provider: "claude",
+          cwd: tempDir,
+          model: "claude-opus-4-8",
+          thinkingOptionId: "ultracode",
+        },
+      },
+    };
+    const created = await service.create(request);
+    await writeFile(
+      join(tempDir, "schedules", `${created.id}.json`),
+      JSON.stringify({ ...created, target: request.target }),
+    );
+    const [loaded] = await service.list();
+    expect(loaded.target).toMatchObject({
+      config: { thinkingOptionId: "xhigh", providerOptions: { ultracode: true } },
+    });
+    await service.update({
+      id: created.id,
+      prompt: "updated",
+      newAgentConfig: { thinkingOptionId: "xhigh" },
+    });
+    expect((await service.inspect(created.id)).target).toEqual(loaded.target);
+    expect((await service.createOrReplace(request)).id).toBe(created.id);
+  });
+
   test("update returns a schedule that round-trips through the store", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,

@@ -9,6 +9,23 @@ import {
 import { FakeCreateAgentPreferenceStorage } from "./test-utils/fake-preference-storage";
 
 describe("create agent preferences", () => {
+  it("converts a saved Claude Ultra Code effort to Extra high and Ultracode on", () => {
+    expect(
+      parseFormPreferences({
+        providerPreferences: {
+          claude: { model: "opus", thinkingByModel: { opus: "ultracode", sonnet: "medium" } },
+        },
+      }),
+    ).toEqual({
+      providerPreferences: {
+        claude: {
+          model: "opus",
+          thinkingByModel: { opus: "xhigh", sonnet: "medium" },
+          options: { ultracode: true },
+        },
+      },
+    });
+  });
   it("keeps the selected mode after saving model and thinking", async () => {
     const storage = new FakeCreateAgentPreferenceStorage();
     const preferences = new CreateAgentPreferencesService(storage);
