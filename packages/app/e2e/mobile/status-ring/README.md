@@ -1,8 +1,9 @@
 # Native retained status-ring regression
 
 This runs the production native ring and clock inside real retained panels with
-Reanimated on Android. A probe consumes the same public rotation hook and counts
-UI-runtime value changes. No Reanimated mocks or provider processes are used.
+Reanimated on Android. A probe consumes the shared widget clock, derives the ring
+rotation and counts UI-runtime value changes. No Reanimated mocks or provider
+processes are used.
 
 Use an Android development client compatible with the checkout's native dependencies.
 In a disposable checkout, temporarily replace `packages/app/index.ts` with:
