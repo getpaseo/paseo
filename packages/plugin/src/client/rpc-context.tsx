@@ -19,6 +19,7 @@ import {
   type PluginWireInput,
 } from "../rpc.js";
 import { shallowEqual } from "./shallow.js";
+import type { PluginFileTransfer } from "./file-transfer.js";
 
 export type PluginSubscribe = (
   method: string,
@@ -29,6 +30,7 @@ export type PluginSubscribe = (
 export interface PluginRpcContextValue {
   invoke(method: string, input: unknown): Promise<unknown>;
   subscribe: PluginSubscribe;
+  fileTransfer?: PluginFileTransfer;
 }
 
 const PluginRpcContext = createContext<PluginRpcContextValue | null>(null);
@@ -41,12 +43,17 @@ export function PluginRpcProvider({
   children,
   invoke,
   subscribe,
+  fileTransfer,
 }: {
   children: ReactNode;
   invoke(method: string, input: unknown): Promise<unknown>;
   subscribe: PluginSubscribe;
+  fileTransfer?: PluginFileTransfer;
 }) {
-  const value = useMemo(() => ({ invoke, subscribe }), [invoke, subscribe]);
+  const value = useMemo(
+    () => ({ invoke, subscribe, fileTransfer }),
+    [invoke, subscribe, fileTransfer],
+  );
   return <PluginRpcContext.Provider value={value}>{children}</PluginRpcContext.Provider>;
 }
 

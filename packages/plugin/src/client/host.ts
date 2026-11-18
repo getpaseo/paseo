@@ -33,6 +33,7 @@ export async function searchPluginAttachments(
 export { callPluginRpc, subscribePluginRpc, PaseoApiProvider, PluginRpcProvider };
 export type { PluginSubscriptionObserver };
 export type { PluginSubscribe } from "./rpc-context.js";
+export { PLUGIN_FILE_MAX_BYTES, PLUGIN_FILE_HEADER_MAX_BYTES } from "./file-transfer.js";
 
 export {
   PluginTranslationRuntime,
