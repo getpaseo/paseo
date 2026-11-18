@@ -345,7 +345,7 @@
     "metaTitle": "支持的 Agent – Paseo 可运行的所有编程 Agent",
     "metaDescription": "在手机上运行 Claude Code、Codex、OpenCode、Pi、OMP、Cursor、Muse Code、Antigravity 以及数十个其他编程 Agent。自托管，代码留在你的机器上。",
     "title": "支持的 Agent",
-    "intro": "Paseo 内置支持许多 Agent，还可以运行任何 <acp>ACP Agent</acp>，你也可以通过<plugins>插件</plugins>添加新的 Provider。"
+    "intro": "Paseo 原生支持许多 Agent，还可以运行任何 <acp>ACP Agent</acp>，你也可以通过<plugins>插件</plugins>添加新的 Provider。"
   },
   "landing": {
     "socialProof": {

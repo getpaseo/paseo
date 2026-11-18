@@ -1,6 +1,6 @@
 ---
 title: Supported providers
-description: Every coding agent Paseo can launch, the built-in providers and the agents that run through ACP.
+description: Every coding agent Paseo can launch, with native support or through ACP.
 nav: Supported providers
 order: 21
 category: Providers
@@ -10,7 +10,7 @@ category: Providers
 
 Paseo runs coding agents that you install and sign in to on your daemon host. For how Paseo manages providers, see [Providers](/docs/providers). To add an agent that is not listed here, see [Custom providers](/docs/custom-providers).
 
-## Built-in providers
+## Native support
 
 Paseo ships an integration for each of these agents.
 

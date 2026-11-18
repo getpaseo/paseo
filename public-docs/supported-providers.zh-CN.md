@@ -1,6 +1,6 @@
 ---
 title: 支持的 Provider
-description: Paseo 可以启动的所有编程 Agent，包括内置 Provider 和通过 ACP 运行的 Agent。
+description: Paseo 可以启动的所有编程 Agent，包括原生支持的 Provider 和通过 ACP 运行的 Agent。
 nav: 支持的 Provider
 ---
 
@@ -8,7 +8,7 @@ nav: 支持的 Provider
 
 Paseo 运行由你在 daemon 主机上安装并登录的编程 Agent。关于 Paseo 如何管理 Provider，请参见 [Provider](/docs/providers)。要添加这里未列出的 Agent，请参见[自定义 Provider](/docs/custom-providers)。
 
-## 内置 Provider {#built-in-providers}
+## 原生支持 {#native-support}
 
 Paseo 为以下每个 Agent 都提供了集成。
 

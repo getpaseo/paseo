@@ -345,7 +345,7 @@
     "metaTitle": "Supported agents – Every coding agent Paseo runs",
     "metaDescription": "Run Claude Code, Codex, OpenCode, Pi, OMP, Cursor, Muse Code, Antigravity, and dozens more coding agents from your phone. Self-hosted, your code stays on your machine.",
     "title": "Supported agents",
-    "intro": "Paseo has built-in support for many agents. It also runs any <acp>ACP agent</acp>, and you can add new providers with <plugins>plugins</plugins>."
+    "intro": "Paseo supports many agents natively. It also runs any <acp>ACP agent</acp>, and you can add new providers with <plugins>plugins</plugins>."
   },
   "landing": {
     "socialProof": {
