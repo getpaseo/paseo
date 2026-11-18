@@ -6,7 +6,7 @@ import type {
   PluginSidebarItemProps,
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
-import { router, useGlobalSearchParams, usePathname } from "expo-router";
+import { useGlobalSearchParams, usePathname } from "expo-router";
 import { useCallback, useMemo, useState, type ComponentType, type RefObject } from "react";
 import { type View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
@@ -26,7 +26,8 @@ import {
   PluginPopoverContent,
   type PluginEnvironment,
 } from "../popover";
-import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
+import { navigateToHostLeaf } from "@/navigation/workspace-route-navigation";
+import { buildPluginSurfaceLeaf, hostIdFromPathname } from "../routes";
 import {
   selectPluginSidebarTarget,
   type PluginSidebarGroup,
@@ -183,8 +184,8 @@ function SidebarItemContent({
       rememberPluginContributionHost(pluginScreensHostKey(plugin.id), plugin.serverId);
       showPopover(null);
       onBeforeNavigate?.();
-      router.push(
-        buildPluginSurfaceRoute(
+      navigateToHostLeaf(
+        buildPluginSurfaceLeaf(
           plugin.serverId,
           plugin.id,
           { kind: "surface", id: screenId },

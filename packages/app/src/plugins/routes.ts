@@ -1,4 +1,5 @@
 import type { PluginScreenParams } from "@getpaseo/plugin/client";
+import type { HostLeafTarget } from "@/navigation/workspace-route-navigation";
 import type { PluginSurfaceContributionIdentity } from "./surface-contribution";
 
 type PluginSurfaceRoute<Kind extends PluginSurfaceContributionIdentity["kind"]> =
@@ -25,6 +26,30 @@ export function buildPluginSurfaceRoute<Identity extends PluginSurfaceContributi
     )
     .join("&");
   return (query ? `${path}?${query}` : path) as PluginSurfaceRoute<Identity["kind"]>;
+}
+
+/** The same screen as `buildPluginSurfaceRoute`, named as the host stack registers it. */
+export function buildPluginSurfaceLeaf(
+  serverId: string,
+  pluginId: string,
+  identity: PluginSurfaceContributionIdentity,
+  params: PluginScreenParams = {},
+): HostLeafTarget {
+  const screenParams: Record<string, string> = {};
+  for (const [key, value] of Object.entries(params)) {
+    screenParams[SCREEN_PARAM_PREFIX + key] = value;
+  }
+  return {
+    route: buildPluginSurfaceRoute(serverId, pluginId, identity, params),
+    serverId,
+    screen: "plugin/[pluginId]/[contributionKind]/[contributionId]",
+    params: {
+      pluginId,
+      contributionKind: identity.kind,
+      contributionId: identity.id,
+      ...screenParams,
+    },
+  };
 }
 
 /** Checks params a plugin passed to `openScreen`: an object of string values. Throws otherwise. */

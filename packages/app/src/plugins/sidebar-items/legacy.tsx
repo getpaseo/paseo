@@ -1,9 +1,10 @@
-import { router, usePathname } from "expo-router";
-import { useCallback } from "react";
+import { usePathname } from "expo-router";
+import { navigateToHostLeaf } from "@/navigation/workspace-route-navigation";
+import { useCallback, useMemo } from "react";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { rememberPluginContributionHost } from "../contribution-host";
 import { pluginIconComponent } from "../icons";
-import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
+import { buildPluginSurfaceLeaf, buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { selectPluginSidebarTarget, type PluginSidebarGroup } from "../sidebar-groups";
 
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
@@ -21,16 +22,23 @@ export function LegacyPluginSidebarRow({
   const pathname = usePathname();
   const identity = { kind: "sidebar", id: group.contributionId } as const;
   const target = selectPluginSidebarTarget(group, hostIdFromPathname(pathname));
-  const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, identity);
   const isActive = group.targets.some(
     (candidate) =>
       pathname === buildPluginSurfaceRoute(candidate.plugin.serverId, group.pluginId, identity),
   );
+  const leaf = useMemo(
+    () =>
+      buildPluginSurfaceLeaf(target.plugin.serverId, group.pluginId, {
+        kind: "sidebar",
+        id: group.contributionId,
+      }),
+    [group.contributionId, group.pluginId, target.plugin.serverId],
+  );
   const navigate = useCallback(() => {
     rememberPluginContributionHost(group.key, target.plugin.serverId);
     onBeforeNavigate?.();
-    router.push(route);
-  }, [group.key, onBeforeNavigate, route, target.plugin.serverId]);
+    navigateToHostLeaf(leaf);
+  }, [group.key, leaf, onBeforeNavigate, target.plugin.serverId]);
   return (
     <SidebarHeaderRow
       icon={pluginIconComponent(group.icon)}
