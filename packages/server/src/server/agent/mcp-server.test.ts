@@ -1,3 +1,4 @@
+import { AgentRunState, ForegroundPromptStart } from "./agent-run-state.js";
 import {
   createFinishSubscriptions,
   createFinishObservation,
@@ -265,6 +266,7 @@ function buildAgentManagerSpies() {
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
+    getAgentBackgroundWorkSummary: vi.fn().mockReturnValue(undefined),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
@@ -279,8 +281,15 @@ function buildAgentManagerSpies() {
     steerOrReplaceActiveTurn: async () => ({ status: "inactive" as const }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
-    streamAgent: vi.fn(() => (async function* noop() {})()),
-    waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
+    streamAgent: vi.fn(
+      (agentId: string, _prompt: unknown, _options: unknown, start?: ForegroundPromptStart) => {
+        const runs = new AgentRunState();
+        const run = runs.createPendingRun(agentId);
+        runs.settleForegroundStart(run, { status: "started", turnId: `${agentId}-turn` });
+        start?.bind(run);
+        return (async function* noop() {})();
+      },
+    ),
     respondToPermission: vi.fn(),
     cancelAgentRun: vi.fn(),
     getPendingPermissions: vi.fn(),
@@ -6186,6 +6195,36 @@ describe("agent snapshot MCP serialization", () => {
     expect(structured.agents[0]).not.toHaveProperty("runtimeInfo");
     expect(structured.agents[0]).not.toHaveProperty("persistence");
     expect(structured.agents[0]).not.toHaveProperty("pendingPermissions");
+  });
+
+  it("reports an idle agent's background work from get_agent_status and list_agents", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const agent = createManagedAgent({ id: "agent-with-shell", cwd: REPO_CWD });
+    spies.agentManager.getAgent.mockReturnValue(agent);
+    spies.agentManager.listAgents.mockReturnValue([agent]);
+    spies.agentManager.getAgentBackgroundWorkSummary.mockReturnValue({ count: 1 });
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const status = await registeredTool(server, "get_agent_status").handler({
+      agentId: "agent-with-shell",
+    });
+    const list = await registeredTool(server, "list_agents").handler({});
+
+    expect(status.structuredContent).toEqual({
+      status: "idle",
+      snapshot: expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } }),
+    });
+    expect(list.structuredContent).toEqual({
+      agents: [expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } })],
+    });
+    expect(spies.agentManager.getAgentBackgroundWorkSummary).toHaveBeenCalledWith(
+      "agent-with-shell",
+    );
   });
 
   it("returns archived agent snapshots from storage for get_agent_status", async () => {
