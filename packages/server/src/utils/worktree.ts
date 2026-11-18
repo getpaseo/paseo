@@ -146,6 +146,13 @@ export class WorktreeSetupError extends Error {
 
 export type WorktreeTeardownCommandResult = WorktreeSetupCommandResult;
 
+// paseo.json can change this with worktree.teardownTimeoutMs. Archive waits for teardown before it
+// answers, and the app stops waiting for an archive answer after 60 seconds
+// (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). A teardown that runs to this limit, or to a longer
+// one, answers after the app has reported the archive as failed.
+const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 60_000;
+const MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM = 1024 * 1024;
+
 export class WorktreeTeardownError extends Error {
   readonly results: WorktreeTeardownCommandResult[];
 
@@ -279,6 +286,13 @@ export async function getWorktreeSetupCommands(repoRoot: string): Promise<string
 
 export async function getWorktreeTeardownCommands(repoRoot: string): Promise<string[]> {
   return (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardown ?? [];
+}
+
+export async function getWorktreeTeardownTimeoutMs(repoRoot: string): Promise<number> {
+  return (
+    (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardownTimeoutMs ??
+    DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS
+  );
 }
 
 export async function getWorktreeTerminalSpecs(
@@ -449,12 +463,14 @@ async function execSetupCommandStreamed(options: {
   index: number;
   total: number;
   signal?: AbortSignal;
+  maxOutputCharsPerStream?: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+    const outputChunks: Record<"stdout" | "stderr", string[]> = { stdout: [], stderr: [] };
+    const outputLimit = options.maxOutputCharsPerStream ?? Infinity;
+    const remainingOutputChars = { stdout: outputLimit, stderr: outputLimit };
     let settled = false;
     let termination: Promise<unknown> | null = null;
 
@@ -463,10 +479,10 @@ async function execSetupCommandStreamed(options: {
       if (!text) {
         return;
       }
-      if (stream === "stdout") {
-        stdoutChunks.push(text);
-      } else {
-        stderrChunks.push(text);
+      const retainedText = text.slice(0, remainingOutputChars[stream]);
+      if (retainedText) {
+        outputChunks[stream].push(retainedText);
+        remainingOutputChars[stream] -= retainedText.length;
       }
       options.onEvent?.({
         type: "output",
@@ -485,12 +501,17 @@ async function execSetupCommandStreamed(options: {
       }
       settled = true;
       options.signal?.removeEventListener("abort", abort);
-      await termination;
+      if (termination) {
+        await termination;
+        // A descendant can keep these pipes open after the shell exits.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
-        stdout: stdoutChunks.join(""),
-        stderr: stderrChunks.join(""),
+        stdout: outputChunks.stdout.join(""),
+        stderr: outputChunks.stderr.join(""),
         exitCode,
         durationMs: Date.now() - startedAt,
       };
@@ -529,6 +550,7 @@ async function execSetupCommandStreamed(options: {
         gracefulTimeoutMs: 1000,
         forceTimeoutMs: 1000,
       });
+      void finish(null);
     };
     if (options.signal?.aborted) {
       abort();
@@ -768,17 +790,26 @@ export async function runWorktreeTeardownCommands(options: {
     }),
   );
 
+  // One deadline covers every command. Reaching it counts as failure and keeps the worktree.
+  const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
+  const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
+  for (const [index, cmd] of teardownCommands.entries()) {
+    const result = await execSetupCommandStreamed({
+      command: cmd,
       cwd: teardownCwd,
       env: teardownEnv,
+      index: index + 1,
+      total: teardownCommands.length,
+      signal: deadline,
+      maxOutputCharsPerStream: MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM,
     });
     results.push(result);
 
     if (result.exitCode !== 0) {
+      const reason = deadline.aborted ? `Timed out after ${timeoutMs / 1000}s` : result.stderr;
       throw new WorktreeTeardownError(
-        `Worktree teardown command failed: ${cmd}\n${result.stderr}`.trim(),
+        `Worktree teardown command failed: ${cmd}\n${reason}`.trim(),
         results,
       );
     }

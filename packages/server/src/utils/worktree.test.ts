@@ -190,6 +190,30 @@ describe("paseo worktree manager", () => {
     });
   });
 
+  it("retains bounded diagnostic text per teardown output stream", async () => {
+    const limit = 1024 * 1024;
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: `node -e "process.stdout.write('x'.repeat(${2 * limit})); process.stderr.write('y'.repeat(${2 * limit}))"`,
+        },
+      }),
+    );
+
+    const [result] = await runWorktreeTeardownCommands({
+      worktreePath: repoDir,
+      repoRootPath: repoDir,
+      branchName: "main",
+    });
+
+    expect({
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    }).toEqual({ exitCode: 0, stdoutLength: limit, stderrLength: limit });
+  });
+
   it("rejects paths that are not under the paseo worktrees root", async () => {
     const outsidePath = join(tempDir, "outside-paseo-home");
     mkdirSync(outsidePath, { recursive: true });
