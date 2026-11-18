@@ -7,22 +7,37 @@ export interface WorkspaceVisit extends ActiveWorkspaceSelection {
   tabId: string | null;
 }
 
-interface PluginScreenVisit {
-  kind: "plugin";
+interface PluginScreenRoute {
   serverId: string;
   pluginId: string;
   identity: PluginSurfaceContributionIdentity;
+}
+
+interface PluginScreenVisit extends PluginScreenRoute {
+  kind: "plugin";
   href: ReturnType<typeof buildPluginSurfaceRoute>;
 }
 
 export type AppVisit = WorkspaceVisit | PluginScreenVisit;
 export type AppVisitDirection = -1 | 1;
-type ActiveVisitRoute = ActiveWorkspaceSelection | "plugin" | null;
+type ActiveVisitRoute = ActiveWorkspaceSelection | PluginScreenRoute | null;
 
 const MAX_VISITS = 100;
 
 function sameWorkspace(a: ActiveWorkspaceSelection | undefined, b: ActiveWorkspaceSelection) {
   return a?.serverId === b.serverId && a.workspaceId === b.workspaceId;
+}
+
+function visitMatchesActiveRoute(visit: AppVisit | undefined, route: ActiveVisitRoute): boolean {
+  if (!visit || !route) return false;
+  if (visit.kind === "workspace") return "workspaceId" in route && sameWorkspace(route, visit);
+  return (
+    "pluginId" in route &&
+    route.serverId === visit.serverId &&
+    route.pluginId === visit.pluginId &&
+    route.identity.kind === visit.identity.kind &&
+    route.identity.id === visit.identity.id
+  );
 }
 
 function sameVisitRoute(a: AppVisit | undefined, b: AppVisit) {
@@ -67,23 +82,23 @@ export function createAppVisitHistory() {
       const current = visits[cursor];
       if (!current) return null;
 
-      const returningFromDetour = direction === -1 && !activeRoute && !pendingVisits.length;
+      const onObservedRoute = visitMatchesActiveRoute(observed, activeRoute);
+      const returningFromDetour = direction === -1 && !onObservedRoute && !pendingVisits.length;
       const start = returningFromDetour ? cursor : cursor + direction;
       for (let index = start; index >= 0 && index < visits.length; index += direction) {
         const visit = visits[index];
         if ((!returningFromDetour && sameVisit(current, visit)) || !canRestore(visit)) continue;
 
         const routeInFlight = pendingVisits.length > 0 && !sameVisitRoute(current, visit);
-        if (activeRoute && sameVisit(observed, visit)) {
+        if (onObservedRoute && sameVisit(observed, visit)) {
           // A coalesced round trip can end on the already-observed visit without a new commit.
           pendingVisits.length = 0;
         } else if (!pendingVisits.some((pending) => sameVisit(pending, current))) {
           pendingVisits.push(current);
         }
         cursor = index;
-        const inWorkspace = activeRoute && activeRoute !== "plugin";
         const sameActiveWorkspace =
-          inWorkspace && visit.kind === "workspace" && sameWorkspace(activeRoute, visit);
+          visit.kind === "workspace" && visitMatchesActiveRoute(visit, activeRoute);
         return { visit, navigateRoute: routeInFlight || !sameActiveWorkspace };
       }
       return null;

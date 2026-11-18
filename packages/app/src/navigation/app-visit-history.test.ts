@@ -94,16 +94,39 @@ describe("app visit history", () => {
     expect(history.move(-1, second, available)).toEqual({ visit: first, navigateRoute: false });
   });
 
+  it.each([{ visits: [second] }, { visits: [first, second] }])(
+    "returns to the latest visit when the active workspace has not been recorded ($#)",
+    ({ visits }) => {
+      const history = historyFromVisits(...visits);
+
+      expect(history.move(-1, third, available)).toEqual({ visit: second, navigateRoute: true });
+    },
+  );
+
   it("retraces a plugin screen as a destination and skips it once unavailable", () => {
     const history = historyFromVisits(first, dashboard, second);
 
     expect(history.move(-1, second, available)).toEqual({ visit: dashboard, navigateRoute: true });
     history.record(dashboard);
-    expect(history.move(-1, "plugin", available)).toEqual({ visit: first, navigateRoute: true });
+    expect(history.move(-1, dashboard, available)).toEqual({ visit: first, navigateRoute: true });
     history.record(first);
     expect(history.move(1, first, (visit) => visit !== dashboard)).toEqual({
       visit: second,
       navigateRoute: false,
+    });
+  });
+
+  it("returns from an unrecorded plugin screen and keeps moving on rapid Back presses", () => {
+    const history = historyFromVisits(first, dashboard);
+    const unavailablePlugin = { ...dashboard, pluginId: "unavailable" };
+
+    expect(history.move(-1, unavailablePlugin, available)).toEqual({
+      visit: dashboard,
+      navigateRoute: true,
+    });
+    expect(history.move(-1, unavailablePlugin, available)).toEqual({
+      visit: first,
+      navigateRoute: true,
     });
   });
 });

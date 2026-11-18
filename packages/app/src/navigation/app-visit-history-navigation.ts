@@ -20,7 +20,7 @@ export function navigateAppVisitHistory(
 ): void {
   const sessions = useSessionStore.getState().sessions;
   const layout = useWorkspaceLayoutStore.getState();
-  const activeRoute = activeWorkspace ?? (parsePluginSurfaceRoute(pathname) ? "plugin" : null);
+  const activeRoute = activeWorkspace ?? parsePluginSurfaceRoute(pathname);
   const replay = appVisitHistory.move(direction, activeRoute, (candidate) => {
     if (candidate.kind === "plugin") {
       const plugin = pluginRegistry
