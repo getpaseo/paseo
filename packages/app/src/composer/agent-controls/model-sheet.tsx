@@ -32,11 +32,11 @@ import {
   type ToolbarGlyphs,
 } from "@/components/ui/control-geometry";
 import { getAgentControlHintKey, shortModelLabel } from "./utils";
-import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ControlTooltipHint } from "./composer-control";
+import { useModelPickerShortcut } from "./control-items";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -323,6 +323,7 @@ export function CompactModelSheet({
         glyphs={glyphs}
         iconOnly={!showLabels && hasSelectedProvider}
         isOpen={isOpen}
+        searchFocused={rootBrowser.isSearchFocused || modelBrowser.isSearchFocused}
         disabled={disabled}
         onPress={toggle}
         accessibilityLabel={t("modelSelector.selectedModel", {
@@ -425,6 +426,7 @@ interface ModelSheetTriggerProps {
   glyphs: ToolbarGlyphs;
   iconOnly: boolean;
   isOpen: boolean;
+  searchFocused: boolean;
   disabled: boolean;
   onPress: () => void;
   accessibilityLabel: string;
@@ -438,16 +440,21 @@ function ModelSheetTrigger({
   glyphs,
   iconOnly,
   isOpen,
+  searchFocused,
   disabled,
   onPress,
   accessibilityLabel,
   effortKeys,
 }: ModelSheetTriggerProps) {
   const { t } = useTranslation();
-  const { isActiveComposer } = useComposerKeyboardScope();
-  const toggleAction = isActiveComposer ? "message-input.model-toggle" : undefined;
-  const modelKeys = useShortcutKeys(toggleAction ? "toggle-model-picker" : null);
-  useKeyboardToggle({ action: toggleAction, disabled, open: isOpen, onToggle: onPress });
+  const { action: toggleAction, keys: modelKeys } = useModelPickerShortcut(disabled);
+  useKeyboardToggle({
+    action: toggleAction,
+    disabled,
+    open: isOpen,
+    searchFocused,
+    onToggle: onPress,
+  });
 
   const glyphRole = iconOnly ? "icon" : "label";
   const glyph = glyphs[glyphRole];

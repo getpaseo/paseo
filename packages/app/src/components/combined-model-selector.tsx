@@ -19,8 +19,7 @@ import {
   type ToolbarGlyph,
 } from "@/components/ui/control-geometry";
 
-import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
-import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardToggle, type KeyboardToggleAction } from "@/hooks/use-keyboard-toggle";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -50,7 +49,7 @@ interface CombinedModelSelectorProps {
     hovered: boolean;
     pressed: boolean;
   }) => React.ReactNode;
-  toggleAction?: KeyboardActionId;
+  toggleAction?: KeyboardToggleAction;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
@@ -156,6 +155,7 @@ export function CombinedModelSelector({
     action: toggleAction,
     disabled,
     open: isOpen,
+    searchFocused: browser.isSearchFocused,
     onToggle: handleTriggerPress,
   });
 

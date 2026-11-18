@@ -80,6 +80,7 @@ import {
 import {
   useAgentControlItems,
   useEffortCycleShortcut,
+  useModelPickerShortcut,
 } from "@/composer/agent-controls/control-items";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
 import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
@@ -794,8 +795,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleCloseSheet,
     modelSelectorServerId,
   } = props;
-  const { isActiveComposer } = useComposerKeyboardScope();
-  const modelKeys = useShortcutKeys(isActiveComposer ? "toggle-model-picker" : null);
+  const { action: toggleAction, keys: modelKeys } = useModelPickerShortcut(disabled);
   const modelToolbar = useMemo(
     () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
     [glyphs, presentation.showCarets],
@@ -824,7 +824,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 onEditProfile={onEditAgentProfile}
                 isLoading={isModelLoading}
                 disabled={disabled}
-                toggleAction={isActiveComposer ? "message-input.model-toggle" : undefined}
+                toggleAction={toggleAction}
                 onOpen={onModelSelectorOpen}
                 onClose={onDropdownClose}
                 onRetryProvider={onRetryModelProvider}

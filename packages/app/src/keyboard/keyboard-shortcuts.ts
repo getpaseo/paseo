@@ -1158,7 +1158,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     action: "message-input.action",
     combo: "Mod+/",
     repeat: false,
-    // The picker's search field takes focus when it opens.
+    // The handler checks that its composer or its own picker has focus.
     when: { commandCenter: false, focusScope: ["message-input", "editable", "other"] },
     payload: { type: "message-input", kind: "model-toggle" },
     help: {

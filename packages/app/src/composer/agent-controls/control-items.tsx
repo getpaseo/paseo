@@ -21,6 +21,7 @@ import { getAgentControlHintKey, getFeatureHighlightColor } from "@/composer/age
 
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useComposerInput } from "@/composer/session";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { resolveNextChoiceId } from "./mode";
 
@@ -76,16 +77,31 @@ interface ThinkingControl {
   displayLabel: string;
 }
 
+export function useModelPickerShortcut(disabled: boolean) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const input = useComposerInput();
+  const action =
+    isActiveComposer && !disabled && input
+      ? {
+          id: "message-input.model-toggle" as const,
+          canOpen: input.isFocused,
+        }
+      : undefined;
+  const keys = useShortcutKeys(action ? "toggle-model-picker" : null);
+  return { action, keys };
+}
+
 export function useEffortCycleShortcut(thinking: ThinkingControl | null, disabled: boolean) {
   const { isActiveComposer } = useComposerKeyboardScope();
+  const input = useComposerInput();
   const effortHandlerId = useId();
   const nextEffortId = resolveNextChoiceId(thinking?.options ?? [], thinking?.selectedId);
-  const canCycleEffort =
-    isActiveComposer && !disabled && nextEffortId !== null && Boolean(thinking);
+  const canCycleEffort = isActiveComposer && !disabled && nextEffortId !== null && input !== null;
   useKeyboardActionHandler({
     handlerId: effortHandlerId,
     actions: ["message-input.effort-cycle"],
     enabled: canCycleEffort,
+    isActive: input?.isFocused,
     priority: 200,
     handle: () => {
       if (!thinking || nextEffortId === null) return false;

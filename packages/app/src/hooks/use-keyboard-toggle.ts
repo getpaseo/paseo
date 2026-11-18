@@ -1,27 +1,35 @@
 import { useId } from "react";
-import { hasActiveOverlay } from "@/keyboard";
+import { hasFocusedTextInput } from "@/keyboard";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+
+export interface KeyboardToggleAction {
+  id: KeyboardActionId;
+  canOpen: () => boolean;
+}
 
 /** Lets a trigger share its toggle with a keyboard action. */
 export function useKeyboardToggle({
   action,
   disabled,
   open,
+  searchFocused,
   onToggle,
 }: {
-  action: KeyboardActionId | undefined;
+  action: KeyboardToggleAction | undefined;
   disabled: boolean;
   open: boolean;
+  searchFocused: boolean;
   onToggle: () => void;
 }) {
   const handlerId = useId();
   useKeyboardActionHandler({
     handlerId,
-    actions: action ? [action] : [],
+    actions: action ? [action.id] : [],
     enabled: action !== undefined && !disabled,
     priority: 200,
-    isActive: () => open || !hasActiveOverlay(),
+    isActive: () =>
+      action?.canOpen() === true || (open && (searchFocused || !hasFocusedTextInput())),
     handle: () => {
       onToggle();
       return true;
