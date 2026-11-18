@@ -18,6 +18,7 @@ function deferred<T>() {
 class ForegroundQuery {
   readonly work = deferred<void>();
   readonly closed = deferred<void>();
+  readonly flagSettings: Parameters<Query["applyFlagSettings"]>[0][] = [];
   private stopped = false;
   private readonly output: AsyncGenerator<SDKMessage>;
 
@@ -72,6 +73,9 @@ class ForegroundQuery {
   }
   async setPermissionMode() {}
   async setModel() {}
+  async applyFlagSettings(settings: Parameters<Query["applyFlagSettings"]>[0]) {
+    this.flagSettings.push(settings);
+  }
   async supportedCommands() {
     return [];
   }
@@ -156,3 +160,45 @@ test.each(["mode", "model", "commands"] as const)(
     }
   },
 );
+
+test("Ultracode toggles at Medium and stays enabled when effort changes live", async () => {
+  const queries: ForegroundQuery[] = [];
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.284",
+    queryFactory: (input) => {
+      const query = new ForegroundQuery(input);
+      queries.push(query);
+      launchOptions.push(input.options);
+      return query as unknown as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: "medium",
+    providerOptions: { ultracode: false },
+  });
+  try {
+    expect(session.controls).toContainEqual(
+      expect.objectContaining({ key: "ultracode", type: "toggle" }),
+    );
+    await session.startTurn("Start at Medium");
+    expect(launchOptions[0]).toMatchObject({ effort: "medium", settings: { ultracode: false } });
+    await session.applyOptions?.({ ultracode: true });
+    await session.setThinkingOption?.("high");
+    await session.applyOptions?.({ ultracode: false });
+    expect(queries).toHaveLength(1);
+    expect(queries[0].flagSettings).toEqual([
+      { fastMode: false, ultracode: false },
+      { ultracode: true },
+      { effortLevel: "high", ultracode: true },
+      { ultracode: false },
+    ]);
+  } finally {
+    await session.close();
+  }
+});
