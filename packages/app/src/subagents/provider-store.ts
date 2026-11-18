@@ -69,7 +69,7 @@ export function providerSubagentLifecycleStatus(
   return "idle";
 }
 
-type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
+export type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
 

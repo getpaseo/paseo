@@ -211,7 +211,7 @@ import {
   classifyBulkClosableTabs,
   closeBulkWorkspaceTabs,
 } from "@/screens/workspace/workspace-bulk-close";
-import { resolveCloseAgentTabPolicy } from "@/subagents";
+import { loadCloseAgentTabPolicy, resolveCloseAgentTabPolicy } from "@/subagents";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import {
   getPanelInstanceAttributes,
@@ -245,6 +245,12 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+
+type WorkspaceSession = ReturnType<typeof useSessionStore.getState>["sessions"][string];
+
+function providerSubagentListClient(session: WorkspaceSession | undefined) {
+  return session?.serverInfo?.features?.providerSubagents === true ? session.client : null;
+}
 
 function getWorkspaceSetupStatus(workspace: WorkspaceDescriptor | null | undefined) {
   return workspace?.setupStatus ?? null;
@@ -2001,12 +2007,12 @@ function WorkspaceScreenContent({
           return;
         }
 
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
-        let closePolicy = resolveCloseAgentTabPolicy(
+        const session = useSessionStore.getState().sessions[normalizedServerId];
+        const agent = session?.agents?.get(agentId) ?? null;
+        let closePolicy = await loadCloseAgentTabPolicy({
           agent,
-          useProviderSubagentStore.getState().descriptors,
-        );
+          providerSubagents: providerSubagentListClient(session),
+        });
 
         if (closePolicy.kind === "archive-on-close" && closePolicy.confirmArchive) {
           const confirmed = await confirmDialog({

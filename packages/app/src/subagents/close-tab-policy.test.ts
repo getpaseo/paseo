@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
-import { resolveCloseAgentTabPolicy } from "./close-tab-policy";
-import { providerSubagentKey } from "./provider-store";
+import { loadCloseAgentTabPolicy, resolveCloseAgentTabPolicy } from "./close-tab-policy";
+import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
 
 const SERVER_ID = "server-1";
 const AGENT_ID = "agent-1";
@@ -16,6 +16,44 @@ function rootAgent(overrides: Partial<Parameters<typeof resolveCloseAgentTabPoli
     ...overrides,
   };
 }
+
+function descriptor(
+  parentAgentId: string,
+  id: string,
+  status: ProviderSubagentDescriptorPayload["status"],
+): ProviderSubagentDescriptorPayload {
+  return {
+    id,
+    parentAgentId,
+    provider: "claude",
+    title: null,
+    description: "Run tool calls then wait",
+    status,
+    createdAt: "2026-11-18T00:00:00.000Z",
+    updatedAt: "2026-11-18T00:00:00.000Z",
+    toolCallId: "call-1",
+  };
+}
+
+function fakeDaemon(lists: Record<string, ProviderSubagentDescriptorPayload[]>) {
+  return {
+    listProviderSubagents: async (parentAgentId: string) => ({
+      requestId: "request-1",
+      parentAgentId,
+      subagents: lists[parentAgentId] ?? [],
+      error: null,
+    }),
+  };
+}
+
+afterEach(() => {
+  useProviderSubagentStore.setState({
+    descriptors: new Map(),
+    timelines: new Map(),
+    hiddenFromTrack: new Set(),
+    trackedParents: new Set(),
+  });
+});
 
 function providerSubagents(
   entries: Array<{
@@ -98,5 +136,41 @@ describe("resolveCloseAgentTabPolicy", () => {
       kind: "archive-on-close",
       confirmArchive: false,
     });
+  });
+});
+
+describe("loadCloseAgentTabPolicy", () => {
+  it("asks for a background subagent this client has not loaded yet, such as a tab restored after a reload", async () => {
+    const daemon = fakeDaemon({ [AGENT_ID]: [descriptor(AGENT_ID, "sub-1", "running")] });
+
+    await expect(
+      loadCloseAgentTabPolicy({ agent: rootAgent(), providerSubagents: daemon }),
+    ).resolves.toEqual({ kind: "archive-on-close", confirmArchive: true });
+  });
+
+  it("falls back to the subagents already loaded when the daemon cannot list them", async () => {
+    useProviderSubagentStore
+      .getState()
+      .applyUpdate(SERVER_ID, {
+        kind: "upsert",
+        subagent: descriptor(AGENT_ID, "sub-1", "running"),
+      });
+    const disconnected = {
+      listProviderSubagents: async () => {
+        throw new Error("Transport not connected");
+      },
+    };
+
+    await expect(
+      loadCloseAgentTabPolicy({ agent: rootAgent(), providerSubagents: disconnected }),
+    ).resolves.toEqual({ kind: "archive-on-close", confirmArchive: true });
+  });
+
+  it("archives without asking when the daemon lists no running subagent", async () => {
+    const daemon = fakeDaemon({ [AGENT_ID]: [descriptor(AGENT_ID, "sub-1", "completed")] });
+
+    await expect(
+      loadCloseAgentTabPolicy({ agent: rootAgent(), providerSubagents: daemon }),
+    ).resolves.toEqual({ kind: "archive-on-close", confirmArchive: false });
   });
 });
