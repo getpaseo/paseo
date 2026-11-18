@@ -267,6 +267,11 @@ export const ko: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      updateHost: "턴 중 변경 사항을 검토하려면 호스트를 업데이트하세요.",
+      viewChanges: "이번 턴 동안의 변경 사항",
+      backToConversation: "대화로 돌아가기",
+    },
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",

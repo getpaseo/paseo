@@ -1,7 +1,9 @@
+import { discardAgentTurnChanges } from "./turn-changes.js";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
+import { AgentTurnChangesSchema } from "@getpaseo/protocol/messages";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -55,6 +57,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   updatedAt: z.string(),
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
+  latestTurnChanges: AgentTurnChangesSchema.optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
@@ -354,6 +357,11 @@ export class AgentStorage {
     await this.load();
     this.beginDelete(agentId);
     await (this.pendingWrites.get(agentId) ?? Promise.resolve());
+    const record = this.cache.get(agentId);
+    if (record)
+      await discardAgentTurnChanges(record.cwd, agentId).catch((error) => {
+        this.logger.warn({ err: error, agentId }, "Could not release deleted agent snapshots");
+      });
     const paths = Array.from(this.pathsById.get(agentId) ?? []);
     await Promise.all(
       paths.map(async (filePath) => {

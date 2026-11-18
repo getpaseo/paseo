@@ -2045,6 +2045,7 @@ export class VoiceAssistantWebSocketServer {
         usageSetting: true,
         usageSources: true,
         ownedSubscriptions: true,
+        turnChanges: true,
         providerOptionControls: true,
         entityMetadata: true,
         diffSubscription: true,

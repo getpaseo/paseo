@@ -270,6 +270,11 @@ export const fr: TranslationResources = {
     },
   },
   agentPanel: {
+    turnChanges: {
+      updateHost: "Mettez à jour l’hôte pour examiner les modifications d’un tour.",
+      viewChanges: "Modifications pendant ce tour",
+      backToConversation: "Retour à la conversation",
+    },
     states: {
       notFound: "Agent introuvable",
       failedToLoad: "Impossible de charger l’agent",
