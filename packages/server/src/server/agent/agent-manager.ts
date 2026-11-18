@@ -923,6 +923,7 @@ export class AgentManager {
   >();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly sourceItemTurnIds = new WeakMap<object, string>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -5503,8 +5504,13 @@ export class AgentManager {
         ? (this.agentStreamCoalescer.pendingToolTurnId(agent.id, sourceItem.callId) ??
           (await this.timeline.itemTurnId({ agentId: agent.id }, sourceItem)))
         : undefined;
-    const turnId = originalTurnId ?? fallbackTurnId;
-    const liveEvent = { ...event, turnId };
+    const { sourceItem: identity, ...timelineEvent } = event;
+    const turnId =
+      (identity ? this.sourceItemTurnIds.get(identity) : undefined) ??
+      originalTurnId ??
+      fallbackTurnId;
+    if (identity) this.sourceItemTurnIds.set(identity, turnId);
+    const liveEvent = { ...timelineEvent, turnId };
     this.touchUpdatedAt(agent);
     if (this.agentStreamCoalescer.handle(agent.id, liveEvent)) {
       this.traceCoalescerBuffered(agent, liveEvent, turnId);

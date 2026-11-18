@@ -374,11 +374,18 @@ test.each(["agent", "workspace"] as const)(
           clientMessageId: agent.clientMessageId,
           messageId: agent.clientMessageId,
         },
-        { type: "assistant_message", text: `[System Error] ${rejection}` },
+        {
+          type: "assistant_message",
+          text: `[System Error] ${rejection}`,
+          messageId: expect.any(String),
+        },
       ];
-      expect(
-        (await client.fetchAgentTimeline(created.id)).entries.map((entry) => entry.item),
-      ).toEqual(expectedTimeline);
+      const entries = (await client.fetchAgentTimeline(created.id)).entries;
+      expect(entries.map((entry) => entry.item)).toEqual(expectedTimeline);
+      expect(entries.map((entry) => entry.turnId)).toEqual([
+        expect.any(String),
+        entries[0]?.turnId,
+      ]);
       expect(streamed).toEqual(expectedTimeline);
       expect((await submit()).id).toBe(created.id);
       expect(

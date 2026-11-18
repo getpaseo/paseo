@@ -1180,6 +1180,7 @@ class PluginAgentClient implements AgentClient {
 interface TimelineTextSnapshot {
   type: "assistant_message" | "reasoning" | "user_message";
   text: string;
+  identity: object;
 }
 
 function isTextSnapshotItem(
@@ -1605,6 +1606,10 @@ class PluginAgentSession implements AgentSession {
             type: "timeline",
             provider: this.provider,
             item,
+            sourceItem:
+              item.type === "assistant_message" || item.type === "reasoning"
+                ? this.timelineSnapshots.get(event.item.id)?.identity
+                : undefined,
             turnId: this.currentTurnId ?? undefined,
             timestamp: event.timestamp,
           },
@@ -2019,7 +2024,11 @@ function mapTimelineItem(
 ): AgentTimelineItem | null {
   const previous = snapshots.get(item.id);
   if (isTextSnapshotItem(item)) {
-    snapshots.set(item.id, { type: item.type, text: item.text });
+    snapshots.set(item.id, {
+      type: item.type,
+      text: item.text,
+      identity: previous?.type === item.type ? previous.identity : {},
+    });
   }
   const { id, revertToken: _revertToken, ...withoutIdentity } = item;
   rememberRevertToken(item, revertTokens);

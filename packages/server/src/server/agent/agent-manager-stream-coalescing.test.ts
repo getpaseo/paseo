@@ -438,7 +438,13 @@ describe("root live turn membership", () => {
       const provider = "omp";
       const logger = createTestLogger();
       const manager = new AgentManager({
-        clients: { omp: new OmpAgentClient({ runtime, logger }) },
+        clients: {
+          omp: new OmpAgentClient({
+            runtime,
+            logger,
+            runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+          }),
+        },
         logger,
       });
       const workdir = mkdtempSync(join(tmpdir(), "omp-live-turns-"));

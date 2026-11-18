@@ -450,6 +450,8 @@ export type AgentStreamEvent =
       type: "timeline";
       item: AgentTimelineItem;
       provider: AgentProvider;
+      /** The same reference for deltas of one provider item. Used only during live admission. */
+      sourceItem?: object;
       turnId?: string;
       timestamp?: string;
     }
