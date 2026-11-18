@@ -103,6 +103,7 @@ import { codexAppServerStartup } from "./codex/app-server-startup.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
   type CodexHistoryRow,
+  type CodexHistoryStatus,
   CodexThreadHistoryTooLargeError,
   readCodexThreadHistory,
 } from "./codex/thread-history.js";
@@ -554,12 +555,14 @@ interface CodexThreadHistory {
 
 interface PersistedSubAgentRoute {
   childThreadId: string;
-  toolCall: ToolCallTimelineItem;
+  entry: PersistedTimelineEntry;
+  legacyCollaboration: boolean;
 }
 
 interface CodexThreadHistoryProjection {
   timeline: PersistedTimelineEntry[];
   subAgentRoutes: PersistedSubAgentRoute[];
+  status: CodexHistoryStatus | null;
 }
 
 function mergeCodexConfiguredDefaults(
@@ -1986,6 +1989,7 @@ type CodexCollabAgentControl =
 interface HistoricalCodexSubAgent {
   timelineIndex: number;
   pendingFollowUp: boolean;
+  legacyCollaboration: boolean;
 }
 
 function readCodexCollabAgentControl(item: unknown): CodexCollabAgentControl | null {
@@ -2042,6 +2046,22 @@ function resolveCodexCollabAgentUpdate(
     return previous;
   }
   return update.status;
+}
+
+function restoreCollabAgentCallFromChildHistory(
+  state: CodexSubAgentCallState,
+  recorded: ToolCallTimelineItem,
+  status: CodexHistoryStatus | null,
+): void {
+  // A live event received during the read is newer than the history snapshot.
+  if (state.toolCall !== recorded || status === null) return;
+  // A stored child turn can predate a terminal parent outcome, such as a close.
+  // A currently active child is direct evidence that it is working again.
+  if (status !== "running" && isTerminalSubAgentStatus(recorded.status)) return;
+  state.toolCall =
+    status === "failed"
+      ? { ...recorded, status, error: { message: "Sub-agent failed" } }
+      : { ...recorded, status, error: null };
 }
 
 function shouldIgnoreMirroredLifecycleItem(source: "item" | "codex_event", item: unknown): boolean {
@@ -2285,11 +2305,23 @@ async function loadCodexThreadHistoryTimeline(params: {
   client: CodexAppServerClientLike;
   threadId: string;
   cwd: string | null;
+  readLatestTurn?: boolean;
 }): Promise<CodexThreadHistoryProjection> {
   const timeline: PersistedTimelineEntry[] = [];
   const subAgentsByThreadId = new Map<string, HistoricalCodexSubAgent>();
+  let status: CodexHistoryStatus | null = null;
   try {
-    await projectCodexThreadHistory(params, { timeline, subAgentsByThreadId });
+    const history = await readCodexThreadHistory(params.client, params.threadId, {
+      readLatestTurn: params.readLatestTurn,
+    });
+    status = history.status;
+    await projectCodexThreadHistory(
+      { cwd: params.cwd, rows: history.rows },
+      {
+        timeline,
+        subAgentsByThreadId,
+      },
+    );
   } catch (error) {
     if (!(error instanceof CodexThreadHistoryTooLargeError)) throw error;
     // The session stays usable; the row says why the history stops here.
@@ -2297,24 +2329,24 @@ async function loadCodexThreadHistoryTimeline(params: {
   }
   const subAgentRoutes = Array.from(subAgentsByThreadId.entries()).flatMap(
     ([childThreadId, child]): PersistedSubAgentRoute[] => {
-      const item = timeline[child.timelineIndex]?.item;
-      return item?.type === "tool_call" && item.detail.type === "sub_agent"
-        ? [{ childThreadId, toolCall: item }]
+      const entry = timeline[child.timelineIndex];
+      return entry?.item.type === "tool_call" && entry.item.detail.type === "sub_agent"
+        ? [{ childThreadId, entry, legacyCollaboration: child.legacyCollaboration }]
         : [];
     },
   );
-  return { timeline, subAgentRoutes };
+  return { timeline, subAgentRoutes, status };
 }
 
 async function projectCodexThreadHistory(
-  params: { client: CodexAppServerClientLike; threadId: string; cwd: string | null },
+  params: { rows: Iterable<CodexHistoryRow> | AsyncIterable<CodexHistoryRow>; cwd: string | null },
   projection: {
     timeline: PersistedTimelineEntry[];
     subAgentsByThreadId: Map<string, HistoricalCodexSubAgent>;
   },
 ): Promise<void> {
   const { timeline, subAgentsByThreadId } = projection;
-  for await (const row of readCodexThreadHistory(params.client, params.threadId)) {
+  for await (const row of params.rows) {
     const { item } = row;
     if (updateHistoricalCollabAgentCalls(timeline, subAgentsByThreadId, item)) {
       continue;
@@ -2357,6 +2389,7 @@ async function projectCodexThreadHistory(
         subAgentsByThreadId.set(childThreadId, {
           timelineIndex: timeline.length - 1,
           pendingFollowUp: false,
+          legacyCollaboration: historicalSubAgentActivity === null,
         });
       }
     }
@@ -4397,32 +4430,46 @@ export class CodexAppServerAgentSession implements AgentSession {
       parentSubagentId: null as string | null,
     }));
     const visitedThreadIds = new Set(this.currentThreadId ? [this.currentThreadId] : []);
+    const replayed: {
+      route: PersistedSubAgentRoute;
+      state: CodexSubAgentCallState;
+      timeline: readonly PersistedTimelineEntry[];
+    }[] = [];
     while (queue.length > 0 && visitedThreadIds.size < 100) {
       const next = queue.shift();
       if (!next || visitedThreadIds.has(next.route.childThreadId)) {
         continue;
       }
       visitedThreadIds.add(next.route.childThreadId);
+      const toolCall = next.route.entry.item;
+      if (toolCall.type !== "tool_call") continue;
       this.registerSubAgentToolCall({
-        timelineItem: next.route.toolCall,
+        timelineItem: toolCall,
         rawItem: { agentThreadId: next.route.childThreadId },
         childThreadIds: [next.route.childThreadId],
         parentCallId: next.parentCallId,
         parentSubagentId: next.parentSubagentId,
+        deferUpsert: true,
       });
+      const state = this.subAgentCallsByCallId.get(toolCall.callId);
+      if (!state?.childThreadIds.has(next.route.childThreadId)) continue;
+      let timeline: readonly PersistedTimelineEntry[] = [];
       try {
         const childHistory = await loadCodexThreadHistoryTimeline({
           client,
           threadId: next.route.childThreadId,
           cwd: this.config.cwd ?? null,
+          readLatestTurn:
+            next.route.legacyCollaboration && !isTerminalSubAgentStatus(toolCall.status),
         });
-        for (const entry of childHistory.timeline) {
-          this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
+        if (next.route.legacyCollaboration) {
+          restoreCollabAgentCallFromChildHistory(state, toolCall, childHistory.status);
         }
+        timeline = childHistory.timeline;
         for (const route of childHistory.subAgentRoutes) {
           queue.push({
             route,
-            parentCallId: next.route.toolCall.callId,
+            parentCallId: toolCall.callId,
             parentSubagentId: next.route.childThreadId,
           });
         }
@@ -4431,6 +4478,17 @@ export class CodexAppServerAgentSession implements AgentSession {
           { err: error, childThreadId: next.route.childThreadId },
           "Failed to load persisted Codex child history",
         );
+      }
+      replayed.push({ route: next.route, state, timeline });
+    }
+    // Settle nested cards before emitting the parent timelines that contain them.
+    for (const { route, state } of replayed) {
+      if (route.legacyCollaboration) route.entry.item = state.toolCall;
+    }
+    for (const { route, state, timeline } of replayed) {
+      this.emitProviderSubagentUpsert(route.childThreadId, state, state.toolCall.status);
+      for (const entry of timeline) {
+        this.emitProviderSubagentTimeline(route.childThreadId, entry.item, entry.timestamp);
       }
     }
   }
@@ -6336,6 +6394,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     childThreadIds: readonly string[];
     parentCallId: string | null;
     parentSubagentId: string | null;
+    deferUpsert?: boolean;
   }): string[] {
     const { timelineItem, rawItem, parentCallId, parentSubagentId } = params;
     if (timelineItem.detail.type !== "sub_agent") {
@@ -6375,7 +6434,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.subAgentCallIdByChildThreadId.set(receiverThreadId, timelineItem.callId);
       state.childThreadIds.add(receiverThreadId);
-      this.emitProviderSubagentUpsert(receiverThreadId, state, timelineItem.status);
+      if (!params.deferUpsert) {
+        this.emitProviderSubagentUpsert(receiverThreadId, state, timelineItem.status);
+      }
     }
     return childThreadIds;
   }

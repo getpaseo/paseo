@@ -17,17 +17,33 @@ function collab(tool: string, states: Record<string, string>, id = tool) {
   };
 }
 
-async function replay(items: unknown[]) {
+interface ChildHistory {
+  status?: { type: string };
+  turns: { status: string; items?: unknown[] }[];
+  historyMode?: "paginated";
+  turnProbe?: "supported" | "unsupported";
+}
+
+async function replay(items: unknown[], children: Record<string, ChildHistory> = {}) {
   const appServer = createFakeCodexAppServer({
-    "thread/read": (params) => ({
-      thread: {
-        turns: [
-          {
-            items: (params as { threadId: string }).threadId === "parent" ? items : [],
-          },
-        ],
-      },
-    }),
+    "thread/read": (params) => {
+      const { threadId, includeTurns } = params as { threadId: string; includeTurns: boolean };
+      const child = children[threadId];
+      const turns = threadId === "parent" ? [{ items }] : (child?.turns ?? []);
+      return {
+        thread: {
+          status: child?.status,
+          historyMode: child?.historyMode,
+          turns: includeTurns ? turns : [],
+        },
+      };
+    },
+    "thread/items/list": () => ({ data: [], nextCursor: null }),
+    "thread/turns/list": (params) => {
+      const child = children[(params as { threadId: string }).threadId];
+      if (child?.turnProbe !== "supported") throw new Error("method not supported");
+      return { data: child.turns.slice(-1) };
+    },
   });
   const session = new CodexAppServerAgentSession(
     { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
@@ -43,7 +59,33 @@ async function replay(items: unknown[]) {
   );
   try {
     await session.connect();
-    return await Array.fromAsync(session.streamHistory());
+    const history = await Array.fromAsync(session.streamHistory());
+    for (const [threadId, child] of Object.entries(children)) {
+      // Status is recovered from the history we already read for this child.
+      expect(
+        appServer
+          .requests()
+          .flatMap(({ method, params }) =>
+            method === "thread/read" && (params as { threadId: string }).threadId === threadId
+              ? [(params as { includeTurns: boolean }).includeTurns]
+              : [],
+          ),
+      ).toEqual(child.historyMode === "paginated" ? [false] : [false, true]);
+      expect(
+        appServer
+          .requests()
+          .filter(
+            ({ method, params }) =>
+              method === "thread/turns/list" &&
+              (params as { threadId: string }).threadId === threadId,
+          ),
+      ).toMatchObject(
+        child.turnProbe
+          ? [{ params: { threadId, limit: 1, itemsView: "notLoaded", sortDirection: "desc" } }]
+          : [],
+      );
+    }
+    return history;
   } finally {
     await session.close();
     appServer.assertNoErrors();
@@ -51,6 +93,193 @@ async function replay(items: unknown[]) {
 }
 
 describe("Codex collaboration history", () => {
+  test.each([
+    { turn: "completed", expected: "completed" },
+    { turn: "failed", expected: "failed" },
+    { turn: "interrupted", expected: "canceled" },
+  ])(
+    "recovers a $turn child even when the parent did not wait or close it",
+    async ({ turn, expected }) => {
+      const history = await replay(
+        [collab("spawnAgent", { first: "pendingInit" }, "spawn-first")],
+        {
+          first: {
+            status: { type: "notLoaded" },
+            turns: [{ status: "completed" }, { status: turn }],
+          },
+        },
+      );
+      expect(
+        history.flatMap((event) =>
+          event.type === "provider_subagent" && event.event.type === "upsert"
+            ? [event.event.status]
+            : [],
+        ),
+      ).toEqual([expected]);
+      expect(
+        history.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call" ? [event.item.status] : [],
+        ),
+      ).toEqual([expected]);
+    },
+  );
+
+  test("keeps a live child running when the rewound parent only has its earlier wait", async () => {
+    const history = await replay(
+      [
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        collab("wait", { first: "completed" }),
+      ],
+      { first: { status: { type: "active" }, turns: [{ status: "completed" }] } },
+    );
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [event.event.status]
+          : [],
+      ),
+    ).toEqual(["running"]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "tool_call" ? [event.item.status] : [],
+      ),
+    ).toEqual(["running"]);
+  });
+
+  test("keeps a live completion received while the child history is loading", async () => {
+    const reading = Promise.withResolvers<void>();
+    const childReply = Promise.withResolvers<unknown>();
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => {
+        const { threadId, includeTurns } = params as { threadId: string; includeTurns: boolean };
+        if (!includeTurns) return { thread: {} };
+        if (threadId === "parent") {
+          return {
+            thread: {
+              turns: [{ items: [collab("spawnAgent", { first: "pendingInit" }, "spawn-first")] }],
+            },
+          };
+        }
+        reading.resolve();
+        return childReply.promise;
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      { provider: "codex", cwd: process.cwd(), modeId: "full-access" },
+      { sessionId: "parent" },
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const completed = Promise.withResolvers<void>();
+    session.subscribe((event) => {
+      if (
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-first" &&
+        event.item.status === "completed"
+      ) {
+        completed.resolve();
+      }
+    });
+    try {
+      await session.connect();
+      const restoring = Array.fromAsync(session.streamHistory());
+      await reading.promise;
+      appServer.completeTurn({ threadId: "first" });
+      await completed.promise;
+      childReply.resolve({ thread: { status: { type: "active" }, turns: [] } });
+      const history = await restoring;
+      expect(
+        history
+          .flatMap((event) =>
+            event.type === "provider_subagent" && event.event.type === "upsert"
+              ? [event.event.status]
+              : [],
+          )
+          .at(-1),
+      ).toBe("completed");
+      expect(history.filter((event) => event.type === "timeline")).toMatchObject([
+        { item: { callId: "spawn-first", status: "completed" } },
+      ]);
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  });
+
+  test("does not let an older child turn override an explicit close", async () => {
+    const history = await replay(
+      [
+        collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
+        collab("closeAgent", { first: "running" }),
+      ],
+      { first: { status: { type: "notLoaded" }, turns: [{ status: "completed" }] } },
+    );
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [event.event.status]
+          : [],
+      ),
+    ).toEqual(["canceled"]);
+  });
+
+  test("reads one turn without items for an unresolved paginated child", async () => {
+    const history = await replay(
+      [
+        collab("spawnAgent", { migrated: "pendingInit" }, "spawn-migrated"),
+        collab("spawnAgent", { settled: "pendingInit" }, "spawn-settled"),
+        collab("wait", { settled: "completed" }),
+        collab("spawnAgent", { unsupported: "pendingInit" }, "spawn-unsupported"),
+      ],
+      {
+        migrated: {
+          historyMode: "paginated",
+          turns: [{ status: "failed" }],
+          turnProbe: "supported",
+        },
+        settled: { historyMode: "paginated", turns: [{ status: "completed" }] },
+        unsupported: { historyMode: "paginated", turns: [], turnProbe: "unsupported" },
+      },
+    );
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "upsert"
+          ? [[event.event.id, event.event.status]]
+          : [],
+      ),
+    ).toEqual([
+      ["migrated", "failed"],
+      ["settled", "completed"],
+      ["unsupported", "running"],
+    ]);
+  });
+
+  test("settles a nested child's own card and descriptor", async () => {
+    const history = await replay([collab("spawnAgent", { first: "pendingInit" }, "spawn-first")], {
+      first: {
+        turns: [
+          {
+            status: "completed",
+            items: [collab("spawnAgent", { nested: "pendingInit" }, "spawn-nested")],
+          },
+        ],
+      },
+      nested: { turns: [{ status: "interrupted" }] },
+    });
+    expect(history.filter((event) => event.type === "provider_subagent")).toMatchObject([
+      { event: { type: "upsert", id: "first", status: "completed" } },
+      {
+        event: {
+          type: "timeline",
+          id: "first",
+          item: { callId: "spawn-nested", status: "canceled" },
+        },
+      },
+      { event: { type: "upsert", id: "nested", parentSubagentId: "first", status: "canceled" } },
+    ]);
+  });
+
   test("restores completed children from nullable wait and close results", async () => {
     const history = await replay([
       collab("spawnAgent", { first: "pendingInit" }, "spawn-first"),
