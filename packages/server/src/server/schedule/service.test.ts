@@ -38,6 +38,7 @@ import {
   type ScheduleServiceOptions,
 } from "./service.js";
 import { ScheduleStore } from "./store.js";
+import { ForegroundPromptStart } from "../agent/agent-run-state.js";
 import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol/schedule/types";
 
 interface ScheduleServiceInternals {
@@ -648,6 +649,157 @@ describe("ScheduleService", () => {
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
   });
 
+  test("shows an active heartbeat and stops it through agent background work", async () => {
+    const logger = createTestLogger();
+    const manager = new AgentManager({
+      logger,
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger,
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const input = {
+      prompt: "Private heartbeat instruction",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agent.id },
+    } as const;
+    const created = await service.create(input);
+
+    const items = manager.listAgentBackgroundWork(agent.id);
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: "heartbeat",
+        description: null,
+        canStop: true,
+        startedAt: created.createdAt,
+      }),
+    ]);
+    expect(JSON.stringify(items)).not.toContain(created.prompt);
+    await service.update({ id: created.id, name: "Status check" });
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([
+      expect.objectContaining({ description: "Status check", startedAt: created.createdAt }),
+    ]);
+    const replacement = await service.createOrReplace({ ...input, name: "Status check" });
+    expect(replacement.id).toBe(created.id);
+    expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(1);
+    await service.pause(created.id);
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+    await service.resume(created.id);
+    const [firstResume] = manager.listAgentBackgroundWork(agent.id);
+    const pausing = service.pause(created.id);
+    const resuming = service.resume(created.id);
+    const staleStop = expect(
+      manager.stopAgentBackgroundWork({
+        agentId: agent.id,
+        itemId: firstResume.id,
+        stopToken: firstResume.stopToken!,
+        canManageAutomation: true,
+      }),
+    ).rejects.toThrow("Background work is no longer available to stop");
+    await Promise.all([pausing, resuming, staleStop]);
+    const [resumed] = manager.listAgentBackgroundWork(agent.id);
+    await manager.stopAgentBackgroundWork({
+      agentId: agent.id,
+      itemId: resumed.id,
+      stopToken: resumed.stopToken!,
+      canManageAutomation: true,
+    });
+    await expect(service.inspect(created.id)).rejects.toThrow(`Schedule not found: ${created.id}`);
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+
+    const deleted = await service.createOrReplace({ ...input, name: "Another check" });
+    expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(1);
+    await service.delete(deleted.id);
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+  });
+
+  test("removes heartbeats when they expire or finish their last run", async () => {
+    const logger = createTestLogger();
+    const manager = new AgentManager({ logger, clients: createTestAgentClients() });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger,
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async () => ({ agentId: agent.id, output: "done" }),
+    });
+    const input = {
+      prompt: "Check",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agent.id },
+    } as const;
+    const expiring = await service.create({
+      ...input,
+      expiresAt: "2026-01-01T00:00:30.000Z",
+      runOnCreate: false,
+    });
+    const finite = await service.create({ ...input, maxRuns: 1 });
+    expect(manager.listAgentBackgroundWork(agent.id)).toHaveLength(2);
+
+    now = new Date("2026-01-01T00:00:30.000Z");
+    await service.tick();
+
+    expect(await service.inspect(expiring.id)).toMatchObject({ status: "completed", runs: [] });
+    expect(await service.inspect(finite.id)).toMatchObject({
+      status: "completed",
+      runs: [{ status: "succeeded" }],
+    });
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+  });
+
+  test("lets an already launched heartbeat turn finish after Stop deletes its schedule", async () => {
+    const logger = createTestLogger();
+    const manager = new AgentManager({ logger, clients: createTestAgentClients() });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const runner = new OverlappingTickRunner();
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger,
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: (schedule) => runner.run(schedule),
+    });
+    const created = await service.create({
+      prompt: "block the first tick",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: { type: "agent", agentId: agent.id },
+    });
+    const tick = service.tick();
+    await runner.firstRunStarted;
+    try {
+      const [item] = manager.listAgentBackgroundWork(agent.id);
+      await manager.stopAgentBackgroundWork({
+        agentId: agent.id,
+        itemId: item.id,
+        stopToken: item.stopToken!,
+        canManageAutomation: true,
+      });
+    } finally {
+      runner.unblockFirstRun();
+      await tick;
+    }
+    await expect(service.inspect(created.id)).rejects.toThrow(`Schedule not found: ${created.id}`);
+    expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+  });
+
   test("completes schedules when max runs is reached", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -754,6 +906,7 @@ describe("ScheduleService", () => {
       agent.id,
       expect.stringContaining(`Schedule fired (id=${schedule.id}, run=`),
       undefined,
+      expect.any(ForegroundPromptStart),
     ]);
   });
 
@@ -3091,12 +3244,19 @@ describe("ScheduleService", () => {
       target: { type: "agent", agentId: liveAgentId },
     });
     await service1.pause(pausedLive.id);
+    const expired = await service1.create({
+      prompt: "Expired check",
+      cadence: { type: "every", everyMs: 60_000 },
+      expiresAt: "2026-01-01T00:01:00.000Z",
+      target: { type: "agent", agentId: liveAgentId },
+    });
 
     now = new Date("2026-01-01T00:10:00.000Z");
+    const replacementManager = new AgentManager({ logger: createTestLogger() });
     const service2 = createScheduleService({
       paseoHome: tempDir,
       logger: createTestLogger(),
-      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentManager: replacementManager,
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
@@ -3110,6 +3270,12 @@ describe("ScheduleService", () => {
     expect((await service2.inspect(archived.id)).status).toBe("completed");
     expect((await service2.inspect(live.id)).status).toBe("active");
     expect((await service2.inspect(newAgent.id)).status).toBe("active");
+    expect((await service2.inspect(expired.id)).status).toBe("completed");
+    expect(replacementManager.getAgentBackgroundWorkSummary(missingAgentId)).toBeUndefined();
+    expect(replacementManager.getAgentBackgroundWorkSummary(archivedAgentId)).toBeUndefined();
+    expect(replacementManager.listAgentBackgroundWork(liveAgentId)).toEqual([
+      expect.objectContaining({ id: `heartbeat:${live.id}`, startedAt: live.createdAt }),
+    ]);
     // Paused schedules are swept too when their agent is gone, but survive when it lives.
     expect((await service2.inspect(pausedMissing.id)).status).toBe("completed");
     expect((await service2.inspect(pausedLive.id)).status).toBe("paused");

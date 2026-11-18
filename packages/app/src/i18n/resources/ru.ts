@@ -110,14 +110,23 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Поиск команд, файлов, рабочих пространств и агентов...",
+      placeholder: "Поиск рабочих пространств, файлов и действий...",
+      placeholderWithoutFiles: "Поиск рабочих пространств и действий...",
       filePlaceholder: "Поиск файлов...",
+      workspacePlaceholder: "Поиск рабочих пространств...",
+      actionPlaceholder: "Поиск действий...",
       searchingFiles: "Поиск файлов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
       files: "Файлы",
       workspaces: "Рабочие пространства",
-      agents: "Агенты",
+      recentWorkspaces: "Недавние рабочие пространства",
+      tabs: {
+        all: "Все",
+        workspaces: "Рабочие пространства",
+        files: "Файлы",
+        actions: "Действия",
+      },
       newAgent: "Новый агент",
       open: "Открыть {{name}}",
       openInSidePane: "Открыть {{name}} в боковой панели",
@@ -408,6 +417,7 @@ export const ru: TranslationResources = {
       otherPlaceholder: "Другой ответ...",
     },
     backgroundWork: {
+      heartbeat: "Периодический сигнал",
       pillOne: "1 фоновая задача",
       pillMany: "Фоновые задачи: {{count}}",
       notRunning: "Больше не выполняется",
@@ -499,7 +509,7 @@ export const ru: TranslationResources = {
         restoreDescription:
           "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Worktree будет использовать ветку {{branch}}.",
         restoreWithoutBranchDescription:
-          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Новая ветка будет создана от сохранённой базовой или ветки репозитория по умолчанию.",
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам.",
         unarchiveDescription:
           "Рабочее пространство «{{workspaceName}}» находится в архиве. Разархивируйте его, чтобы снова открыть.",
         restoreAction: "Восстановить",
@@ -2061,6 +2071,7 @@ export const ru: TranslationResources = {
     hostUnavailable: "Хост загрузки недоступен.",
     cancelled: "Загрузка отменена.",
     failed: "Не удалось загрузить файл.",
+    httpFailed: "Не удалось загрузить файл (HTTP {{status}}).",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
   },
@@ -2255,6 +2266,7 @@ export const ru: TranslationResources = {
     turnOn: "Включить",
 
     options: "Настройки",
+    host: "Хост",
     refreshFailed: "Не удалось обновить использование",
     noHosts: "Нет подключённых хостов",
     agentError: "Не удалось загрузить использование: {{reason}}",
@@ -2271,6 +2283,8 @@ export const ru: TranslationResources = {
     loginExpired: "Срок входа истёк {{relativeTime}}. {{remedy}}",
     title: "Использование плана",
     refresh: "Обновить",
+    reorderCard: "Переместить {{source}}",
+    showCard: "Показывать {{source}}",
     refreshAll: "Обновить всё",
     refreshing: "Обновление...",
     loading: "Загрузка данных об использовании...",

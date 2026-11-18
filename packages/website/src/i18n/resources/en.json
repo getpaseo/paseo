@@ -124,6 +124,18 @@
       "metaTitle": "Antigravity Mobile and Desktop App, Open Source",
       "metaDescription": "Run your installed Antigravity CLI through Paseo. Watch agents work and review changes from your phone or desktop. Self-hosted, your code stays on your machine."
     },
+    "fx": {
+      "title": "Open source app for fx",
+      "subtitle": "Run Vercel Labs' fx on your machine and drive it from your phone or desktop.",
+      "metaTitle": "fx Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for fx, the coding agent from Vercel Labs. Run your installed fx CLI, watch agents work, and review changes from anywhere. Self-hosted."
+    },
+    "hoplite": {
+      "title": "Open source app for Hoplite",
+      "subtitle": "Drive Hoplite's cloud coding agent from your phone or desktop, next to your other agents.",
+      "metaTitle": "Hoplite Mobile and Desktop App, Open Source",
+      "metaDescription": "Open source mobile and desktop app for Hoplite. Start Hoplite's cloud coding agent through your installed Hoplite CLI, watch it work, and review changes from anywhere."
+    },
     "copilot": {
       "title": "Open source app for GitHub Copilot",
       "subtitle": "Drive GitHub Copilot from your phone or desktop. Same account, same machine, ship without sitting down at your desk.",
@@ -333,7 +345,7 @@
     "metaTitle": "Supported agents – Every coding agent Paseo runs",
     "metaDescription": "Run Claude Code, Codex, OpenCode, Pi, OMP, Cursor, Muse Code, Antigravity, and dozens more coding agents from your phone. Self-hosted, your code stays on your machine.",
     "title": "Supported agents",
-    "intro": "Paseo supports many agents natively, it can run any <acp>ACP agent</acp> and you can implement new providers via <plugins>plugins</plugins>."
+    "intro": "Paseo supports many agents natively. It also runs any <acp>ACP agent</acp>, and you can add new providers with <plugins>plugins</plugins>."
   },
   "landing": {
     "socialProof": {
@@ -446,7 +458,8 @@
     },
     "mockup": {
       "alt": "Paseo desktop app with coding agents, a conversation, and a code diff open side by side",
-      "build": "Parallel agents",
+      "orchestrate": "Orchestration",
+      "remote": "Remote",
       "review": "Code review",
       "ship": "Pull requests",
       "extend": "Plugins",
@@ -459,6 +472,15 @@
         "working": "Working",
         "done": "Done",
         "addProject": "Add project",
+        "addHost": "Add host",
+        "hosts": "Hosts",
+        "agentCount": "{{count}} agents",
+        "hostLinks": {
+          "local": "Local",
+          "relay": "Relay",
+          "tailscale": "Tailscale",
+          "ssh": "SSH"
+        },
         "files": "Files",
         "changes": "Changes",
         "uncommitted": "Uncommitted",
@@ -473,6 +495,11 @@
         "tasksProgress": "{{completed}}/{{total}} tasks",
         "composerPlaceholder": "Message the agent, tag @files, or use /commands and /skills",
         "mobileComposerPlaceholder": "Message, @files, /commands",
+        "reviewCommentPlaceholder": "Leave a comment",
+        "reviewCancel": "Cancel",
+        "reviewSave": "Comment",
+        "sendFeedback": "Send feedback ({{count}})",
+        "feedbackSent": "Feedback sent to {{recipient}}",
         "plugin": "plugin",
         "mergedWeek": "Merged · 7d",
         "inReview": "In review",
@@ -482,7 +509,8 @@
         "minutesAgo": "{{count}}m ago",
         "hoursAgo": "{{count}}h ago",
         "reviewing": "reviewing",
-        "subagents": "{{count}} subagents",
+        "subagents_one": "{{count}} subagent",
+        "subagents_other": "{{count}} subagents",
         "checksPassedShort": "passed"
       }
     }

@@ -1,5 +1,5 @@
 import { PluginTranslationRuntime } from "@getpaseo/plugin/client/host";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, useWorkspace, useWorkspaces } from "@getpaseo/plugin/client";
 import { defineRpc } from "@getpaseo/plugin";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -8,7 +8,11 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import type { PluginWorkspaceSnapshot } from "@getpaseo/plugin";
+import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
+import type { ToastApi } from "@/components/toast-host";
 import { PluginInstallationProvider } from "./installation-provider";
+import { PluginEnvironmentProvider } from "./popover";
 import type { InstalledPlugin } from "./types";
 
 const status = defineRpc({
@@ -86,6 +90,56 @@ it("gives every surface the installation's client and RPCs on its first frame", 
   expect(received.every((paseo) => paseo === plugin.paseo)).toBe(true);
   await expect(rpc!({})).resolves.toEqual({ state: "green" });
   expect(invoked).toEqual(["deploys.status"]);
+  plugin.lifetime.abort();
+  await plugin.paseo.dispose();
+});
+
+it("lets every surface read state through the plugin state hooks", async () => {
+  const plugin = installation([]);
+  function Surface() {
+    return <span>{useWorkspaces().length} workspaces</span>;
+  }
+
+  const markup = renderToStaticMarkup(
+    <PluginInstallationProvider plugin={plugin}>
+      <Surface />
+    </PluginInstallationProvider>,
+  );
+
+  expect(markup).toBe("<span>0 workspaces</span>");
+  plugin.lifetime.abort();
+  await plugin.paseo.dispose();
+});
+
+function pluginEnvironment(plugin: InstalledPlugin, state: PluginClientStateSource) {
+  return { installation: plugin, state, toast: {} as ToastApi };
+}
+
+it("lets a surface read the state source its host passes", async () => {
+  const plugin = installation([]);
+  // A sidebar view spans every connected host, so its source is not the installation's host.
+  const workspace = { id: "ws-on-another-host" } as PluginWorkspaceSnapshot;
+  const state: PluginClientStateSource = {
+    subscribe: () => () => undefined,
+    getWorkspace: () => workspace,
+    getAgent: () => null,
+    getProject: () => null,
+    getTerminal: () => null,
+    getSnapshot: () => ({ workspaces: [], agents: [], projects: [], terminals: [] }),
+  };
+  function Surface() {
+    return <span>{useWorkspace("ws-on-another-host")?.id}</span>;
+  }
+
+  const environment = pluginEnvironment(plugin, state);
+
+  const markup = renderToStaticMarkup(
+    <PluginEnvironmentProvider environment={environment}>
+      <Surface />
+    </PluginEnvironmentProvider>,
+  );
+
+  expect(markup).toBe("<span>ws-on-another-host</span>");
   plugin.lifetime.abort();
   await plugin.paseo.dispose();
 });

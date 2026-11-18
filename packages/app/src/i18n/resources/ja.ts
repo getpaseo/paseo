@@ -110,14 +110,23 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
-      placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",
+      placeholder: "ワークスペース、ファイル、アクションを検索...",
+      placeholderWithoutFiles: "ワークスペースとアクションを検索...",
       filePlaceholder: "ファイルを検索...",
+      workspacePlaceholder: "ワークスペースを検索...",
+      actionPlaceholder: "アクションを検索...",
       searchingFiles: "ファイルを検索中...",
       noMatches: "一致なし",
       actions: "アクション",
       files: "ファイル",
       workspaces: "ワークスペース",
-      agents: "エージェント",
+      recentWorkspaces: "最近のワークスペース",
+      tabs: {
+        all: "すべて",
+        workspaces: "ワークスペース",
+        files: "ファイル",
+        actions: "アクション",
+      },
       newAgent: "新しいエージェント",
       open: "{{name}}を開く",
       openInSidePane: "{{name}}をサイドパネルで開く",
@@ -409,6 +418,7 @@ export const ja: TranslationResources = {
       otherPlaceholder: "その他...",
     },
     backgroundWork: {
+      heartbeat: "ハートビート",
       pillOne: "バックグラウンドタスク1件",
       pillMany: "バックグラウンドタスク{{count}}件",
       notRunning: "実行は終了しました",
@@ -499,8 +509,7 @@ export const ja: TranslationResources = {
         archivedTitle: "ワークスペースはアーカイブ済みです",
         restoreDescription:
           "{{workspaceName}} を復元してエージェントに戻ります。worktree ではブランチ {{branch}} を使用します。",
-        restoreWithoutBranchDescription:
-          "{{workspaceName}} を復元してエージェントに戻ります。保存されたベース、またはリポジトリのデフォルトブランチから新しいブランチを作成します。",
+        restoreWithoutBranchDescription: "{{workspaceName}} を復元してエージェントに戻ります。",
         unarchiveDescription:
           "{{workspaceName}} はアーカイブされています。再度開くにはアーカイブを解除してください。",
         restoreAction: "復元",
@@ -2048,6 +2057,7 @@ export const ja: TranslationResources = {
     hostUnavailable: "ダウンロードホストが利用できません。",
     cancelled: "ダウンロードがキャンセルされました。",
     failed: "ファイルのダウンロードに失敗しました。",
+    httpFailed: "ファイルのダウンロードに失敗しました (HTTP {{status}}).",
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
   },
@@ -2243,6 +2253,7 @@ export const ja: TranslationResources = {
     turnOn: "オンにする",
 
     options: "設定",
+    host: "ホスト",
     refreshFailed: "使用状況を更新できません",
     noHosts: "接続中のホストがありません",
     agentError: "使用状況を読み込めません: {{reason}}",
@@ -2259,6 +2270,8 @@ export const ja: TranslationResources = {
     loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
     title: "プラン使用量",
     refresh: "更新",
+    reorderCard: "{{source}} を並べ替え",
+    showCard: "{{source}} を表示",
     refreshAll: "すべて更新",
     refreshing: "更新中...",
     loading: "使用状況を読み込み中...",

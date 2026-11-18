@@ -120,6 +120,19 @@ paseo workspace create \
 
 命令以 worktree 作为 `cwd` 运行。使用 `$PASEO_SOURCE_CHECKOUT_PATH` 访问原始检出中的文件（未跟踪的配置、本地缓存等）。
 
+teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修改它，单位为毫秒：
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+达到时限后，Paseo 会尝试停止命令及其子进程，并停止等待输出。如果 teardown 失败或达到时限，工作区仍会归档，worktree 会保留在磁盘上。`teardownTimeoutMs` 接受 1 到 2147483647 之间的整数。其他值使用默认时限。
+
 ## 脚本与服务 {#scripts-and-services}
 
 `scripts` 是可以在 worktree 中按需运行的具名命令。把其中一个标记为 _service_，Paseo 就会把它作为长时间运行的进程进行监管，为它分配端口，并通过 daemon 的反向代理把 HTTP 流量路由给它。

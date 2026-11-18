@@ -998,6 +998,43 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("carries the SDK decision reason onto the permission request description", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      canUseTool(
+        "Bash",
+        { command: "printf test" },
+        {
+          toolUseID: "tool-hook-ask",
+          decisionReason:
+            "\u001b[33mHeredoc input to python3 -- cannot statically verify safety\u001b[0m",
+        },
+      ).catch(() => undefined);
+
+      expect(events.find((event) => event.type === "permission_requested")).toMatchObject({
+        type: "permission_requested",
+        request: {
+          name: "Bash",
+          description: "Heredoc input to python3 -- cannot statically verify safety",
+        },
+      });
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({
@@ -1501,6 +1538,60 @@ describe("ClaudeAgentSession features", () => {
       await Promise.resolve();
       await Promise.resolve();
       expect(rewindReachedLiveInput).toBe(false);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("accepts a steer while Claude compacts, so the compaction is not interrupted", async () => {
+    const { queryFactory, push } = createStreamingQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    try {
+      const { turnId } = await session.startTurn("/compact");
+      const input = queryFactory.mock.calls[0]?.[0].prompt as AsyncIterable<SDKUserMessage>;
+      const iterator = input[Symbol.asyncIterator]();
+      await expect(iterator.next()).resolves.toMatchObject({ value: { type: "user" } });
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: expect.objectContaining({ type: "user_message" }),
+          }),
+        ),
+      );
+      push({
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        session_id: "session-1",
+      } as unknown as SDKMessage);
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "timeline",
+            item: { type: "compaction", status: "loading" },
+          }),
+        ),
+      );
+
+      const admission = await session.steerActiveTurn?.("message during compaction", {
+        expectedTurnId: turnId,
+      });
+
+      // Claude Code holds a `next` message until the compaction finishes. Refusing it makes the
+      // manager replace the turn, and the interrupt cancels the compaction.
+      expect(admission).toEqual({ status: "accepted", providerMessageId: expect.any(String) });
+      await expect(iterator.next()).resolves.toMatchObject({
+        value: { type: "user", priority: "next" },
+      });
     } finally {
       unsubscribe();
       await session.close();

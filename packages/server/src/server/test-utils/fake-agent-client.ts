@@ -547,6 +547,48 @@ class FakeAgentSession implements AgentSession {
     this.notifySubscribers(completed);
   }
 
+  private async emitEvent(event: AgentStreamEvent): Promise<void> {
+    await this.appendHistoryEvent(event);
+    this.notifySubscribers(event);
+  }
+
+  /**
+   * A background Task that outlives the turn's reply: the Task starts, the assistant replies,
+   * then the Task completes.
+   */
+  private async emitBackgroundWorkTurn(): Promise<void> {
+    const callId = randomUUID();
+    const task = (status: "running" | "completed", log: string): AgentStreamEvent => ({
+      type: "timeline",
+      provider: this.providerName,
+      item: {
+        type: "tool_call",
+        name: "Task",
+        callId,
+        status,
+        error: null,
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Explore",
+          description: "Audit the migrations",
+          log,
+        },
+      },
+    });
+    await this.emitEvent(task("running", ""));
+    await this.emitEvent({
+      type: "timeline",
+      provider: this.providerName,
+      item: { type: "assistant_message", text: "Audit started.", messageId: randomUUID() },
+    });
+    await this.emitEvent(task("completed", "Found 2 unsafe migrations."));
+    await this.emitEvent({
+      type: "turn_completed",
+      provider: this.providerName,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+  }
+
   private async emitStressTurn(stress: { count: number; coalesced: boolean }): Promise<void> {
     for (let index = 0; index < stress.count; index += 1) {
       const stressUpdate: AgentStreamEvent = {
@@ -788,6 +830,11 @@ class FakeAgentSession implements AgentSession {
         };
         await this.appendHistoryEvent(child);
         this.notifySubscribers(child);
+      }
+
+      if (textPrompt === "Start background work") {
+        await this.emitBackgroundWorkTurn();
+        return;
       }
 
       if (textPrompt.toLowerCase().includes("emit a turn failure")) {

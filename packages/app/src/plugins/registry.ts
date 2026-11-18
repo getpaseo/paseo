@@ -283,6 +283,12 @@ export function usePluginCatalogStatus(serverId: string): PluginCatalogStatus {
   );
 }
 
+/** Why the app could not run the plugin's client bundle, updated when the host's catalog changes. */
+export function usePluginEvaluationError(serverId: string, pluginId: string): string | undefined {
+  const read = () => pluginRegistry.getEvaluationError(serverId, pluginId);
+  return useSyncExternalStore(pluginRegistry.subscribe, read, read);
+}
+
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {
   const installed = useInstalledPlugins();
   return useMemo(() => installed.filter((plugin) => plugin.id === pluginId), [installed, pluginId]);

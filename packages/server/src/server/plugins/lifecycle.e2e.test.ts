@@ -527,13 +527,25 @@ test("agent creation hooks change the provider and environment before the sessio
   });
   server.addHook("agent.open.before", async ({ request }) => {
     console.log(JSON.stringify({ hook: "agent.open.before", request }));
-    return { ...request, env: { ...request.env, HOOK_OPEN: "opened" } };
+    return { ...request, appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Plugin instructions"], env: { ...request.env, HOOK_OPEN: "opened" } };
   });
   server.addHook("agent.create.after", async (event) => {
     console.log(JSON.stringify({ hook: "agent.create.after", event }));
   });`,
     reportOpen: true,
   });
+  const extraPlugin = path.join(directory, "extra-plugin");
+  await mkdir(extraPlugin);
+  await writeFile(
+    path.join(extraPlugin, "paseo-plugin.json"),
+    JSON.stringify({ id: "a-prompt", requirements: { paseo: ">=0.8.0" } }),
+  );
+  const writePrompt = (prompt: string) =>
+    writeFile(
+      path.join(extraPlugin, "index.server.ts"),
+      `export default function contribute(server) { server.addHook("agent.open.before", async ({ request }) => ({ ...request, appendSystemPrompt: [...(request.appendSystemPrompt ?? []), ${JSON.stringify(prompt)}] })); return () => {}; }`,
+    );
+  await writePrompt("First plugin");
   const daemon = await createTestPaseoDaemon();
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   try {
@@ -541,15 +553,17 @@ test("agent creation hooks change the provider and environment before the sessio
     await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(pluginDirectory);
+    await client.installDirectoryPlugin(extraPlugin);
     const agent = await client.createAgent({
       provider: "claude",
       cwd: directory,
       title: "Hook test",
+      systemPrompt: "Saved instructions",
     });
     expect(agent.provider).toBe(PROVIDER_ID);
     expect(await daemon.daemon.agentStorage.get(agent.id)).toMatchObject({
       provider: PROVIDER_ID,
-      config: { model: "shutdown-model" },
+      config: { model: "shutdown-model", systemPrompt: "Saved instructions" },
     });
     await expect
       .poll(async () => {
@@ -569,13 +583,32 @@ test("agent creation hooks change the provider and environment before the sessio
         },
         {
           hook: "provider.open",
-          config: { env: { HOOK_CREATE: "created", HOOK_OPEN: "opened" } },
+          config: {
+            env: { HOOK_CREATE: "created", HOOK_OPEN: "opened" },
+            systemPrompt: "Saved instructions\n\nFirst plugin\n\nPlugin instructions",
+          },
         },
         {
           hook: "agent.create.after",
           event: { agent: { id: agent.id, provider: PROVIDER_ID } },
         },
       ]);
+    await writePrompt("Changed plugin");
+    await client.reloadPlugin("a-prompt");
+    await daemon.daemon.agentManager.reloadAgentSession(agent.id);
+    await client.disablePlugin("a-prompt");
+    await daemon.daemon.agentManager.reloadAgentSession(agent.id);
+    const opens = (await client.getPluginLogs("shutdown-provider-plugin"))
+      .filter((entry) => entry.message.startsWith('{"hook":"provider.open"'))
+      .map((entry) => JSON.parse(entry.message).config.systemPrompt);
+    expect(opens).toEqual([
+      "Saved instructions\n\nFirst plugin\n\nPlugin instructions",
+      "Saved instructions\n\nChanged plugin\n\nPlugin instructions",
+      "Saved instructions\n\nPlugin instructions",
+    ]);
+    expect((await daemon.daemon.agentStorage.get(agent.id))?.config?.systemPrompt).toBe(
+      "Saved instructions",
+    );
     await client.archiveAgent(agent.id);
   } finally {
     await client.close();
