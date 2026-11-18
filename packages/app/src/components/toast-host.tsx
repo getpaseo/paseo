@@ -4,7 +4,14 @@ import {
 } from "@/components/floating-header";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Platform, StyleSheet as NativeStyleSheet, Text, ToastAndroid, View } from "react-native";
+import {
+  Platform,
+  StyleSheet as NativeStyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -57,8 +64,11 @@ type ToastViewportPlacement = "app-shell" | "panel" | "sidebar";
 const DEFAULT_DURATION_MS = 2200;
 const noopDismiss: DismissToast = () => {};
 const TOAST_MAX_WIDTH = 480;
-const toastEntering = FadeIn.duration(140);
-const toastExiting = FadeOut.duration(140);
+/** How long a toast takes to fade in or out. */
+export const TOAST_FADE_MS = 140;
+const SIDEBAR_TOAST_INSET = SPACING[2];
+const toastEntering = FadeIn.duration(TOAST_FADE_MS);
+const toastExiting = FadeOut.duration(TOAST_FADE_MS);
 const ThemedCheckCircle = withUnistyles(CheckCircle2);
 const ThemedInfo = withUnistyles(Info);
 const ThemedWarning = withUnistyles(AlertTriangle);
@@ -148,10 +158,13 @@ export function ToastViewport({
   toast,
   onDismiss,
   placement = "app-shell",
+  onBottomCoverageChange,
 }: {
   toast: ToastState | null;
   onDismiss: () => void;
   placement?: ToastViewportPlacement;
+  /** Sidebar placement: reports the distance from the region's bottom edge to the toast's top. */
+  onBottomCoverageChange?: (coverage: number) => void;
 }) {
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
@@ -206,6 +219,13 @@ export function ToastViewport({
     return clearTimer;
   }, [clearTimer, durationMs, scheduleDismiss, toastId]);
 
+  const handleSidebarLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onBottomCoverageChange?.(event.nativeEvent.layout.height + SIDEBAR_TOAST_INSET);
+    },
+    [onBottomCoverageChange],
+  );
+
   const panelClearance = useFloatingHeaderOverlayClearance();
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
@@ -227,6 +247,7 @@ export function ToastViewport({
       }
       pointerEvents="box-none"
       collapsable={false}
+      onLayout={placement === "sidebar" ? handleSidebarLayout : undefined}
     >
       <View
         style={placement === "sidebar" ? styles.sidebarWidthBoundary : styles.widthBoundary}
@@ -307,9 +328,9 @@ const animatedStyles = NativeStyleSheet.create({
   },
   sidebarContainer: {
     position: "absolute",
-    left: SPACING[2],
-    right: SPACING[2],
-    bottom: SPACING[2],
+    left: SIDEBAR_TOAST_INSET,
+    right: SIDEBAR_TOAST_INSET,
+    bottom: SIDEBAR_TOAST_INSET,
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
   },
