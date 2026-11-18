@@ -2614,6 +2614,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
       activeSubscription = subscription;
       target.subscription = subscription;
+      // The initial read may predate observation; the coverage refresh must re-resolve refs.
+      this.defaultBranchRefCache.delete(target.repoGitRoot);
       // See `advanceWatchRecoveryLadder`: do not reset `attemptCount` on
       // subscribe success alone, only record when this subscription was
       // established.
@@ -4023,7 +4025,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
 
     let result: WorkspaceGitFetchResult | null = null;
-    const eventsBeforeFetchSnapshot: FileChange[] = [];
+    const preservedMetadataEvents: FileChange[] = [];
     try {
       try {
         result = await this.deps.runGitFetch(
@@ -4031,8 +4033,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           {
             onRefSnapshot: (phase) => {
               const events = target.bufferedFetchMetadataEvents.splice(0);
-              if (phase === "before") {
-                eventsBeforeFetchSnapshot.push(...events);
+              for (const event of events) {
+                const effect = classifyGitMetadataPath(
+                  "common",
+                  target.paths.relative(event.path) ?? "",
+                );
+                // OID snapshots cannot classify symbolic-target or structural metadata changes.
+                if (
+                  phase === "before" ||
+                  effect.kind === "all" ||
+                  (effect.kind === "ref" && effect.ref.endsWith("/HEAD"))
+                ) {
+                  preservedMetadataEvents.push(event);
+                }
               }
             },
           },
@@ -4044,7 +4057,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Background git fetch failed",
         );
       }
-      this.applyRepoFetchResult(target, result, eventsBeforeFetchSnapshot);
+      this.applyRepoFetchResult(target, result, preservedMetadataEvents);
     } finally {
       target.fetchInFlight = false;
     }
@@ -4053,11 +4066,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private applyRepoFetchResult(
     target: RepoGitTarget,
     result: WorkspaceGitFetchResult | null,
-    eventsBeforeFetchSnapshot: FileChange[],
+    preservedMetadataEvents: FileChange[],
   ): void {
     // The fetch snapshot can consume ref watch events before they invalidate this cache.
     this.defaultBranchRefCache.delete(target.repoGitRoot);
-    this.flushFetchMetadataEvents(target, eventsBeforeFetchSnapshot);
+    this.flushFetchMetadataEvents(target, preservedMetadataEvents);
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();
       target.knownRemoteRefs = null;

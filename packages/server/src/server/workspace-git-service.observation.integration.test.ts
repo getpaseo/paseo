@@ -978,12 +978,16 @@ test("an edit made before the working-tree watcher starts still reaches the cach
     .toBe(true);
 }, 30_000);
 
-test("a branch switch made before the Git metadata watcher starts still reaches the cached snapshot", async () => {
+test("default branch ref follows a rename before the Git metadata watcher starts", async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-git-metadata-gap-")));
   const repo = path.join(root, "repo");
   mkdirSync(repo);
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], { cwd: repo, stdio: "pipe" });
+  function git(...args: string[]) {
+    return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+  }
   git("init", "-b", "main");
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "Test");
@@ -996,6 +1000,7 @@ test("a branch switch made before the Git metadata watcher starts still reaches 
     logger: pino({ enabled: false }),
     paseoHome: path.join(root, "home"),
     deps: {
+      now: () => new Date(0),
       subscribe: async (directory, callback, options) => {
         if (directory !== repo) await metadataWatchGate.promise;
         return observer.subscribe(directory, callback, options);
@@ -1012,15 +1017,19 @@ test("a branch switch made before the Git metadata watcher starts still reaches 
   });
 
   expect((await service.getSnapshot(repo, { includeForge: false })).git.currentBranch).toBe("main");
-  git("switch", "-c", "feature");
+  expect((await service.getSnapshot(repo, { includeForge: false })).git.defaultBranchRef).toBe(
+    "refs/heads/main",
+  );
+  git("branch", "-m", "trunk");
+  expect((await readCheckoutStatus(repo)).defaultBranchRef).toBe("refs/heads/trunk");
   metadataWatchGate.resolve();
 
   await expect
     .poll(
-      async () => (await service.getSnapshot(repo, { includeForge: false })).git.currentBranch,
+      async () => (await service.getSnapshot(repo, { includeForge: false })).git.defaultBranchRef,
       { timeout: 10_000 },
     )
-    .toBe("feature");
+    .toBe("refs/heads/trunk");
 }, 30_000);
 
 function createCheckoutWithOrigin(origin: string): string {
@@ -1913,6 +1922,115 @@ test("default branch ref cache invalidates when fetch snapshots consume prune ev
     )
     .toBe("refs/heads/main");
 }, 30_000);
+
+test.each([true, false])(
+  "default branch ref refreshes when fetch consumes remote HEAD retargets (same tip: %s)",
+  async (sameTip) => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-default-head-fetch-")));
+    const repo = path.join(root, "repo");
+    const remote = path.join(root, "remote.git");
+    const worktree = path.join(root, "worktree");
+    mkdirSync(repo);
+    function git(...args: string[]) {
+      return execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+        cwd: repo,
+        stdio: "pipe",
+      });
+    }
+    git("init", "-b", "main");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    git("commit", "--allow-empty", "-m", "base");
+    git("checkout", "-b", "develop");
+    if (!sameTip) git("commit", "--allow-empty", "-m", "develop");
+    git("checkout", "main");
+    git("init", "--bare", "-b", "main", remote);
+    git("remote", "add", "origin", remote);
+    git("push", "-u", "origin", "main", "develop");
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    git("worktree", "add", "-b", "feature/agent", worktree);
+    const observer = createFileObserver();
+    const enteredFetch = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<void>();
+    const observedHead = Promise.withResolvers<void>();
+    const fetched = Promise.withResolvers<WorkspaceGitFetchResult>();
+    const service = new WorkspaceGitServiceImpl({
+      logger: pino({ enabled: false }),
+      paseoHome: path.join(root, "home"),
+      fileObserver: observer,
+      deps: {
+        now: () => new Date(0),
+        subscribe: async (directory, callback, options) =>
+          observer.subscribe(
+            directory,
+            (error, events) => {
+              callback(error, events);
+              if (
+                events.some((event) =>
+                  event.path.replaceAll("\\", "/").endsWith("/refs/remotes/origin/HEAD"),
+                )
+              )
+                observedHead.resolve();
+            },
+            options,
+          ),
+        runGitFetch: async (cwd, fetchObserver, run) => {
+          const result = await fetchWorkspaceGitRemote(
+            cwd,
+            fetchObserver,
+            async (args, options) => {
+              if (args[0] === "fetch") {
+                enteredFetch.resolve();
+                await releaseFetch.promise;
+                git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop");
+                await observedHead.promise;
+              }
+              return run(args, options);
+            },
+          );
+          fetched.resolve(result);
+          return result;
+        },
+      },
+    });
+    const subscriptions = [repo, worktree].map((cwd) =>
+      service.registerWorkspace({ cwd }, () => {}),
+    );
+    cleanup.push(async () => {
+      releaseFetch.resolve();
+      observedHead.resolve();
+      for (const subscription of subscriptions) subscription.unsubscribe();
+      await service.dispose();
+      await observer.close();
+      rmSync(root, { recursive: true, force: true });
+    });
+    for (const cwd of [repo, worktree]) {
+      expect((await service.getSnapshot(cwd, { includeForge: false })).git.defaultBranchRef).toBe(
+        "refs/remotes/origin/main",
+      );
+    }
+    await enteredFetch.promise;
+    await expect.poll(() => service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+    await expect.poll(() => service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    releaseFetch.resolve();
+    const result = await fetched.promise;
+    expect(result.error).toBeNull();
+    expect(result.changes?.map((change) => change.kind)).toEqual(sameTip ? [] : ["moved"]);
+    expect((await readCheckoutStatus(repo)).defaultBranchRef).toBe("refs/remotes/origin/develop");
+    await expect
+      .poll(
+        async () => {
+          const snapshots = await Promise.all(
+            [repo, worktree].map((cwd) => service.getSnapshot(cwd, { includeForge: false })),
+          );
+          return snapshots.map((snapshot) => snapshot.git.defaultBranchRef);
+        },
+        { timeout: 10_000 },
+      )
+      .toEqual(["refs/remotes/origin/develop", "refs/remotes/origin/develop"]);
+  },
+  30_000,
+);
 
 test.each([
   { bare: false, differentOwner: false },
