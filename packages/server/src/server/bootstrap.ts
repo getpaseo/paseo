@@ -5,7 +5,7 @@ import {
   sendPreparedPromptToAgent,
   sendPromptToAgent,
   unarchiveAgentState,
-  waitForAgentRunStartWithTimeout,
+  waitForAgentRunStart,
 } from "./agent/agent-prompt.js";
 import { formatChangeRequestUpdate } from "./agent/agent-messages/index.js";
 import { createChangeRequestWatches } from "./agent/change-request-watches/index.js";
@@ -1499,19 +1499,11 @@ export async function createPaseoDaemon(
           idleOnly: true,
           unarchive: false,
           runOptions: { clientMessageId: digest.id },
-          beforeDispatch: async () => {
-            if (!digest.isPending())
-              throw new AgentTurnBusyError("Change request update was withdrawn");
-          },
+          canStart: digest.isPending,
           logger,
         });
         if (dispatch.disposition === "turn_started") {
-          await waitForAgentRunStartWithTimeout(
-            agentManager,
-            agentId,
-            dispatch.started,
-            digest.signal,
-          );
+          await waitForAgentRunStart(dispatch.started, digest.signal);
         }
         return true;
       } catch (error) {

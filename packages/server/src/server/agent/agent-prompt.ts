@@ -28,6 +28,8 @@ export class AgentTurnBusyError extends Error {}
 
 export interface StartAgentRunOptions {
   idleOnly?: boolean;
+  /** Recheck a queued prompt immediately before handoff to the provider. */
+  canStart?: () => boolean;
   /** Called after selecting the run, before consuming its events. */
   onDispatch?: (disposition: PromptDispatchDisposition) => void;
   replaceRunning?: boolean;
@@ -127,11 +129,16 @@ export async function startAgentRun(
   // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
   // in-flight turn — replaceAgentRun would interrupt the running turn. The
   // intercept lives at this layer so it covers every prompt entrypoint.
-  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+  const checkAdmission = options?.canStart
+    ? () => {
+        if (!options.canStart?.()) throw new Error("Prompt was withdrawn before dispatch");
+      }
+    : undefined;
+  if (await agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions, checkAdmission)) {
     options?.onDispatch?.("out_of_band");
     return { disposition: "out_of_band" };
   }
-  const promptStart = new ForegroundPromptStart(agentId);
+  const promptStart = new ForegroundPromptStart(agentId, options?.canStart);
   try {
     try {
       await agentManager.reloadStalePluginSession(agentId);
@@ -244,6 +251,7 @@ export async function unarchiveAgentState(
 
 export interface SendPromptToAgentParams {
   idleOnly?: boolean;
+  canStart?: StartAgentRunOptions["canStart"];
   /** Awaited after the agent is loaded and its mode is set, before the prompt is handed to a run. */
   beforeDispatch?: () => Promise<void>;
   onDispatch?: StartAgentRunOptions["onDispatch"];
@@ -312,18 +320,26 @@ export async function waitForAgentRunStartWithTimeout(
     AGENT_RUN_START_TIMEOUT_MS,
   );
 
-  const abortSignal = signal ? AbortSignal.any([startAbort.signal, signal]) : startAbort.signal;
-  let onAbort: (() => void) | null = null;
+  try {
+    const abortSignal = signal ? AbortSignal.any([startAbort.signal, signal]) : startAbort.signal;
+    await waitForAgentRunStart(started, abortSignal);
+  } finally {
+    clearTimeout(startTimeout);
+  }
+}
+
+/** Wait for provider acceptance or cancellation without starting a second attempt. */
+export async function waitForAgentRunStart(started: Promise<void>, signal: AbortSignal) {
+  let onAbort!: () => void;
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(createStartAbortError(abortSignal.reason));
-    if (abortSignal.aborted) onAbort();
-    else abortSignal.addEventListener("abort", onAbort, { once: true });
+    onAbort = () => reject(createStartAbortError(signal.reason));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
     await Promise.race([started, aborted]);
   } finally {
-    clearTimeout(startTimeout);
-    if (onAbort) abortSignal.removeEventListener("abort", onAbort);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -414,6 +430,7 @@ export async function sendPreparedPromptToAgent(
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
     replaceRunning: !params.idleOnly,
     idleOnly: params.idleOnly,
+    canStart: params.canStart,
     onDispatch: params.onDispatch,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,

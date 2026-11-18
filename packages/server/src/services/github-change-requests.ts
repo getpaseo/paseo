@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { ChangeRequestSnapshot } from "./change-request-source.js";
 
 const PAGE_SIZE = 100;
+// GitHub charges GraphQL points for requested nested connections, even on quiet PRs.
+const REVIEW_THREAD_PAGE_SIZE = 20;
 export const GITHUB_POLL_CHECK_CONTEXT_FIELDS = `
   __typename
   ... on CheckRun {
@@ -171,12 +173,13 @@ export async function readGitHubChangeRequests(
     fields: string,
     page: z.infer<typeof pageSchema>,
     consume: (nodes: unknown[]) => void,
+    size = PAGE_SIZE,
   ) {
     schedulePages(
       url,
       page,
       consume,
-      (cursor) => pullRequest(url, connection(name, fields, cursor)),
+      (cursor) => pullRequest(url, connection(name, fields, cursor, size)),
       (value) => z.record(z.string(), pageSchema).parse(pullRequestResult.parse(value))[name]!,
     );
   }
@@ -191,7 +194,7 @@ export async function readGitHubChangeRequests(
         statusCheckRollup { state ${connection("contexts", GITHUB_POLL_CHECK_CONTEXT_FIELDS)} }
         ${conversation()}
         ${connection("reviews", reviewFields)}
-        ${connection("reviewThreads", threadFields)}
+        ${connection("reviewThreads", threadFields, undefined, REVIEW_THREAD_PAGE_SIZE)}
       `,
       ),
       accept(result) {
@@ -255,27 +258,38 @@ export async function readGitHubChangeRequests(
               snapshot.activity.push({ id: item.id, url: item.url, kind: "review" });
           }
         });
-        schedulePullRequestPages(url, "reviewThreads", threadFields, pr.reviewThreads, (nodes) => {
-          for (const { id, comments } of z
-            .array(threadResult.extend({ id: z.string() }))
-            .parse(nodes)) {
-            const select = (cursor?: string) =>
-              thread(id, connection("comments", inlineFields, cursor));
-            const extract = (value: unknown) => threadResult.parse(value).comments;
-            schedulePages(
-              url,
-              comments,
-              (inlineNodes) => {
-                for (const item of z.array(inlineSchema).parse(inlineNodes)) {
-                  if (item.publishedAt)
-                    snapshot.activity.push({ id: item.id, url: item.url, kind: "inline comment" });
-                }
-              },
-              select,
-              extract,
-            );
-          }
-        });
+        schedulePullRequestPages(
+          url,
+          "reviewThreads",
+          threadFields,
+          pr.reviewThreads,
+          (nodes) => {
+            for (const { id, comments } of z
+              .array(threadResult.extend({ id: z.string() }))
+              .parse(nodes)) {
+              const select = (cursor?: string) =>
+                thread(id, connection("comments", inlineFields, cursor));
+              const extract = (value: unknown) => threadResult.parse(value).comments;
+              schedulePages(
+                url,
+                comments,
+                (inlineNodes) => {
+                  for (const item of z.array(inlineSchema).parse(inlineNodes)) {
+                    if (item.publishedAt)
+                      snapshot.activity.push({
+                        id: item.id,
+                        url: item.url,
+                        kind: "inline comment",
+                      });
+                  }
+                },
+                select,
+                extract,
+              );
+            }
+          },
+          REVIEW_THREAD_PAGE_SIZE,
+        );
       },
     });
   }

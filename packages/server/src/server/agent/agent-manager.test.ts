@@ -15590,7 +15590,7 @@ test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
   },
 );
 
-test("an idle-only prompt rejects a busy recipient before changing its mode", async () => {
+test("an idle-only prompt waits for idle and can be withdrawn before handoff", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-queued-mode-"));
   class ModeSession extends SteeringTestSession {
     mode = "plan";
@@ -15653,6 +15653,26 @@ test("an idle-only prompt rejects a busy recipient before changing its mode", as
     await providerStarted;
     session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
     await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(false));
+
+    let pending = true;
+    const dismissed = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "withdrawn follow-up",
+      idleOnly: true,
+      canStart: () => pending,
+      onDispatch: () => {
+        pending = false;
+      },
+      logger,
+    });
+    expect(dismissed.disposition).toBe("turn_started");
+    if (dismissed.disposition !== "turn_started") throw new Error("Expected a foreground start");
+    await expect(dismissed.started).rejects.toThrow("canceled before its turn started");
+    expect(session.startPrompts).toEqual(["other turn"]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+
     await sendPreparedPromptToAgent({
       agentManager: manager,
       agentStorage: storage,

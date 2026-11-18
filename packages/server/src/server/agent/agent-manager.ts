@@ -3331,6 +3331,10 @@ export class AgentManager {
     const streamForwarder = async function* streamForwarder(this: AgentManager) {
       let turnId: string | null;
       let turnStream: ReturnType<AgentRunState["createTurnStream"]> | null = null;
+      if (promptStart && !promptStart.canStart()) {
+        this.runs.settleForegroundRun(agentId, pendingRun.token);
+        return;
+      }
       turnId = await this.startPendingForegroundTurn({
         agent,
         agentId,

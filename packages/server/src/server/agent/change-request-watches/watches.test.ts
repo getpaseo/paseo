@@ -153,3 +153,38 @@ test("withdraws an unsent update without blocking another PR or stopping another
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("retains the current observation as the last subscriber leaves and a new one joins", async () => {
+  const home = await createTestHome();
+  let observer: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
+  const watches = createChangeRequestWatches({
+    source: {
+      resolve: (input) => input,
+      observe(_address, callbacks) {
+        observer = callbacks;
+        queueMicrotask(() => void callbacks.snapshot(initial));
+        return () => {
+          observer = undefined;
+        };
+      },
+    },
+    paseoHome: home,
+    isActive: async () => true,
+    deliver: async () => true,
+    logger: pino({ enabled: false }),
+  });
+  try {
+    await watches.start();
+    await watches.subscribe("first", url);
+    await observer!.snapshot({ ...initial, headSha: "new-head" });
+    const [, joined] = await Promise.all([
+      watches.unsubscribe("first", url),
+      watches.subscribe("second", url),
+    ]);
+    expect(joined).toMatchObject({ subscribed: true, headSha: "new-head" });
+    expect(observer).toBeDefined();
+  } finally {
+    await watches.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

@@ -128,12 +128,18 @@ export function createChangeRequestWatches(deps: Dependencies) {
 
   async function commit(group: WatchGroup): Promise<void> {
     const next = new Map(groups);
-    if (group.watchers.length) next.set(group.url, group);
-    else next.delete(group.url);
-    await writeJsonFileAtomic(file, [...next.values()]);
-    if (group.watchers.length) groups.set(group.url, group);
-    else groups.delete(group.url);
-    if (!group.watchers.length) stopObserving(group.url);
+    next.set(group.url, group);
+    await writeJsonFileAtomic(
+      file,
+      [...next.values()].filter(({ watchers }) => watchers.length),
+    );
+    // An in-flight subscription still needs the committed baseline and its observation.
+    if (group.watchers.length || registrations.has(group.url)) {
+      groups.set(group.url, group);
+    } else {
+      groups.delete(group.url);
+      stopObserving(group.url);
+    }
   }
 
   function observe(url: string): Observation {
@@ -257,7 +263,10 @@ export function createChangeRequestWatches(deps: Dependencies) {
         registrations.set(url, remaining);
       } else {
         registrations.delete(url);
-        if (!groups.has(url)) stopObserving(url);
+        if (!groups.get(url)?.watchers.length) {
+          groups.delete(url);
+          stopObserving(url);
+        }
       }
     }
   }
@@ -296,7 +305,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
           isPending,
         }));
       if (!delivered) {
-        retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
+        if (isPending()) retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
         return;
       }
       accepted.add(digest.id);
@@ -316,7 +325,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       accepted.delete(digest.id);
     })()
       .catch((err) => {
-        if (closed) return;
+        if (!isPending()) return;
         retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
         deps.logger.warn({ err, url, agentId }, "Could not deliver change request updates");
       })
