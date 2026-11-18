@@ -5694,6 +5694,7 @@ test("hydrateTimelineFromProvider restores and broadcasts provider children from
         id: "restored-child",
         parentAgentId: snapshot.id,
       }),
+      runningCountChanged: false,
     },
   });
 });
@@ -5738,6 +5739,7 @@ test("force provider hydration removes children absent from current history", as
       type: "remove",
       parentAgentId: snapshot.id,
       subagentId: "removed-by-rewind",
+      runningCountChanged: false,
     },
   });
 });

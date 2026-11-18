@@ -237,6 +237,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   lastUserMessageAt: IsoDateSchema.nullable(),
   status: AgentStatusSchema,
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  runningProviderSubagents: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: z
     .strictObject({
       turnId: z.string(),
@@ -693,6 +694,7 @@ function serializeAgent(agent: Agent): StoredAgent {
     ...(agent.background ? { background: true } : {}),
     requiresAttention: agent.requiresAttention ?? false,
     backgroundWork: agent.backgroundWork,
+    runningProviderSubagents: agent.runningProviderSubagents,
     attentionReason: agent.attentionReason ?? null,
     attentionTimestamp: agent.attentionTimestamp?.toISOString() ?? null,
     archivedAt: agent.archivedAt?.toISOString() ?? null,

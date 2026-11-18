@@ -86,6 +86,7 @@ interface FakeAgentSessionOptions {
   onInterrupt?: () => void;
   beforeSetMode?: (modeId: string) => Promise<void>;
   historyEvents?: readonly AgentStreamEvent[];
+  onSession?: TestAgentClientOptions["onSession"];
 }
 
 export interface TestAgentClientOptions {
@@ -99,6 +100,8 @@ export interface TestAgentClientOptions {
   beforeSetMode?: (modeId: string) => Promise<void>;
   supportsMcpServers?: boolean;
   historyEvents?: readonly AgentStreamEvent[];
+  /** Lets a test emit provider events between turns, such as a background child finishing. */
+  onSession?: (session: { emit: (event: AgentStreamEvent) => Promise<void> }) => void;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -399,6 +402,7 @@ class FakeAgentSession implements AgentSession {
       this.providerName,
       `${this.id}.jsonl`,
     );
+    options.onSession?.({ emit: (event) => this.emitEvent(event) });
   }
 
   get provider() {
@@ -1318,6 +1322,7 @@ class FakeAgentClient implements AgentClient {
       onInterrupt: this.options.onInterrupt,
       beforeSetMode: this.options.beforeSetMode,
       historyEvents: this.options.historyEvents,
+      onSession: this.options.onSession,
     });
   }
 
@@ -1349,6 +1354,7 @@ class FakeAgentClient implements AgentClient {
       onInterrupt: this.options.onInterrupt,
       beforeSetMode: this.options.beforeSetMode,
       historyEvents: this.options.historyEvents,
+      onSession: this.options.onSession,
     });
   }
 

@@ -2003,9 +2003,8 @@ function WorkspaceScreenContent({
         const agent =
           useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
         let closePolicy = resolveCloseAgentTabPolicy(agent);
-        const isRunning = agent?.status === "running";
 
-        if (isRunning && closePolicy.kind === "archive-on-close") {
+        if (closePolicy.kind === "archive-on-close" && closePolicy.confirmArchive) {
           const confirmed = await confirmDialog({
             title: t("workspace.tabs.confirmations.archiveRunningAgentTitle"),
             message: t("workspace.tabs.confirmations.archiveRunningAgentMessage"),
