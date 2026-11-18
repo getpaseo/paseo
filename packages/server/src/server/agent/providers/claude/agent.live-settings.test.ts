@@ -202,3 +202,33 @@ test("Ultracode toggles at Medium and stays enabled when effort changes live", a
     await session.close();
   }
 });
+
+test.each([
+  ["xhigh", true],
+  ["high", false],
+] as const)("older Claude Code launches %s with Ultracode set to %s", async (effort, enabled) => {
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.283",
+    queryFactory: (input) => {
+      launchOptions.push(input.options);
+      return new ForegroundQuery(input) as unknown as Query;
+    },
+  });
+  const session = await client.createSession({
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: effort,
+    providerOptions: { ultracode: true },
+  });
+  try {
+    expect(session.controls?.some((control) => control.key === "ultracode")).toBe(false);
+    await session.startTurn("Start the agent");
+    expect(launchOptions[0]).toMatchObject({ effort, settings: { ultracode: enabled } });
+  } finally {
+    await session.close();
+  }
+});

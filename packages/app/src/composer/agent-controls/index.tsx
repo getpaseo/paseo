@@ -1316,6 +1316,7 @@ export function DraftAgentControls({
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
 
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
   const effectiveSelectedThinkingOption =
     selectedThinkingOptionId === "ultracode" &&
     !mappedThinkingOptions.some((option) => option.id === selectedThinkingOptionId)

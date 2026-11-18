@@ -2522,6 +2522,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.cachedRuntimeInfo) {
       return { ...this.cachedRuntimeInfo };
     }
+    // COMPAT(claudeUltracodeThinkingOption): added in v0.17.0, remove after 2027-05-18.
     const info: AgentRuntimeInfo = {
       provider: "claude",
       sessionId: this.claudeSessionId,
@@ -3995,12 +3996,12 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private resolveUltracodeSetting(): boolean | undefined {
+    const ultracode = this.config.providerOptions.ultracode;
     if (!this.independentUltracode) {
       return this.config.thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID
         ? true
-        : this.config.providerOptions.ultracode;
+        : ultracode && this.config.thinkingOptionId === "xhigh";
     }
-    const ultracode = this.config.providerOptions.ultracode;
     if (ultracode === undefined) return undefined;
     if (this.config.thinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID) return ultracode;
     return ultracode && claudeManifestModelSupportsUltracode(this.config.model);

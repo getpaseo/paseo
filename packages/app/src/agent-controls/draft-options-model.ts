@@ -32,6 +32,8 @@ export interface ResolvedDraftOptions {
 export interface DraftOptionsState {
   provider: string | null;
   seed: ProviderOptions;
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+  seedsByModel: ReadonlyMap<string, ProviderOptions>;
   remembered: ProviderOptions;
   edits: ProviderOptions;
   resolved: ResolvedDraftOptions | null;
@@ -45,6 +47,7 @@ export interface DraftOptionsModel {
   /** The provider the draft's form now has. A different one than the model's is a manual choice. */
   observeProvider: (provider: string | null) => void;
   applyProfile: (profile: { provider: string; options: ProviderOptions }) => void;
+  seedModel: (modelId: string, options: ProviderOptions) => void;
   setRemembered: (remembered: ProviderOptions) => void;
   setOption: (key: string, value: unknown) => void;
   applyResolved: (resolved: ResolvedDraftOptions) => void;
@@ -62,6 +65,7 @@ export function openDraftOptions(input: {
   let state: DraftOptionsState = {
     provider: input.provider,
     seed: input.seed ?? {},
+    seedsByModel: new Map(),
     remembered: {},
     edits: {},
     resolved: null,
@@ -81,7 +85,15 @@ export function openDraftOptions(input: {
       if (provider === current.provider) return current;
       // The first provider a draft picks does not discard what it was opened with.
       if (current.provider === null) return { ...current, provider };
-      return { ...current, provider, seed: {}, edits: {}, resolved: null, drawn: new Set() };
+      return {
+        ...current,
+        provider,
+        seed: {},
+        seedsByModel: new Map(),
+        edits: {},
+        resolved: null,
+        drawn: new Set(),
+      };
     });
   }
 
@@ -99,10 +111,17 @@ export function openDraftOptions(input: {
         ...current,
         provider: profile.provider,
         seed: profile.options,
+        seedsByModel: new Map(),
         edits: {},
         resolved: current.provider === profile.provider ? current.resolved : null,
         drawn: current.provider === profile.provider ? current.drawn : new Set(),
       })),
+    seedModel: (modelId, options) =>
+      publish((current) =>
+        current.seedsByModel.has(modelId)
+          ? current
+          : { ...current, seedsByModel: new Map(current.seedsByModel).set(modelId, options) },
+      ),
     setRemembered: (remembered) => publish((current) => ({ ...current, remembered })),
     setOption: (key, value) => {
       if (input.currentProvider) observeProvider(input.currentProvider());
@@ -129,7 +148,10 @@ export function openDraftOptions(input: {
  * control for it returns. An edit of a key no answer has drawn is an option without a control
  * and always applies.
  */
-export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | undefined {
+export function ownDraftOptions(
+  state: DraftOptionsState,
+  modelId?: string | null,
+): ProviderOptions | undefined {
   const controlKeys = new Set((state.resolved?.controls ?? []).map((control) => control.key));
   const remembered = Object.fromEntries(
     Object.entries(state.remembered).filter(
@@ -137,7 +159,12 @@ export function ownDraftOptions(state: DraftOptionsState): ProviderOptions | und
     ),
   );
   const edits = withoutLostControls(state.edits, state.drawn, controlKeys);
-  const own = withoutRemovals({ ...state.seed, ...remembered, ...edits });
+  const own = withoutRemovals({
+    ...state.seedsByModel.get(modelId ?? ""),
+    ...state.seed,
+    ...remembered,
+    ...edits,
+  });
   return Object.keys(own).length > 0 ? own : undefined;
 }
 
@@ -170,7 +197,7 @@ export function draftControlsRequest(
   form: DraftControlsForm,
 ): DraftControlsRequest | null {
   if (!form.provider || !form.cwd || form.provider !== state.provider) return null;
-  const providerOptions = ownDraftOptions(state);
+  const providerOptions = ownDraftOptions(state, form.modelId);
   return {
     provider: form.provider,
     cwd: form.cwd,
@@ -211,7 +238,11 @@ const NO_OPTIONS: ProviderOptions = {};
  */
 export function shownDraftOptions(
   state: DraftOptionsState,
-  current: { provider: string | null; requestKey: string },
+  current: { provider: string | null; requestKey: string; modelId?: string | null },
 ): ProviderOptions {
-  return viewDraftOptions(state, current)?.options ?? ownDraftOptions(state) ?? NO_OPTIONS;
+  return (
+    viewDraftOptions(state, current)?.options ??
+    ownDraftOptions(state, current.modelId) ??
+    NO_OPTIONS
+  );
 }

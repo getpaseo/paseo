@@ -30,6 +30,23 @@ function answer(
 }
 
 describe("draft options model", () => {
+  it("keeps a legacy model option when a different effort is chosen", () => {
+    const model = openDraftOptions({ provider: "claude" });
+    model.seedModel("opus", { ultracode: true });
+    const form = { provider: "claude", cwd: "/repo", modelId: "opus" };
+    expect(
+      draftControlsRequest(model.getState(), { ...form, thinkingOptionId: "ultracode" }),
+    ).toMatchObject({ providerOptions: { ultracode: true } });
+    expect(
+      draftControlsRequest(model.getState(), { ...form, thinkingOptionId: "high" }),
+    ).toMatchObject({ providerOptions: { ultracode: true } });
+    expect(
+      draftControlsRequest(model.getState(), { ...form, modelId: "sonnet" })?.providerOptions,
+    ).toBeUndefined();
+    model.setOption("ultracode", false);
+    expect(ownDraftOptions(model.getState(), "opus")).toEqual({ ultracode: false });
+  });
+
   it("draws a legacy Fast profile as the Fast tier the daemon resolved", () => {
     const model = openDraftOptions({ provider: "codex", seed: { service_tier: "fast" } });
     model.applyResolved(answer("codex", "k1", { service_tier: "priority" }));

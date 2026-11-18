@@ -576,6 +576,7 @@ function updateDerivedState(input: {
     input.state.selectedProvider,
     input.state.selectedModel,
   );
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
   const availableThinkingOptions =
     input.state.selectedProvider === "claude" &&
     input.state.selectedThinkingOptionId === "ultracode" &&
