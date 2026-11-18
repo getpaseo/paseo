@@ -31,10 +31,13 @@ async function expectContextMenuAtPointer(
   menuTestID: string,
   anchor: ContextMenuAnchor,
 ): Promise<void> {
-  const bounds = await page.getByTestId(menuTestID).boundingBox();
-  if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
-  expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
-  expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  // The visible measuring surface is replaced when layout places the menu at its anchor.
+  await expect(async () => {
+    const bounds = await page.getByTestId(menuTestID).boundingBox();
+    if (!bounds) throw new Error(`Could not measure ${menuTestID}`);
+    expect(Math.abs(bounds.x - anchor.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(bounds.y - (anchor.y + 4))).toBeLessThanOrEqual(2);
+  }).toPass({ timeout: 10_000 });
 }
 
 export async function openWorkspaceContextMenu(page: Page, workspaceId: string): Promise<void> {
@@ -187,14 +190,25 @@ export async function selectWorkspaceInSidebar(page: Page, workspaceId: string):
   await row.click();
 }
 
-async function openWorkspaceSidebarKebab(page: Page, workspaceId: string) {
+/**
+ * Opens a workspace row's kebab menu the way a pointer does: enter the row, then press the kebab
+ * it reveals.
+ *
+ * The kebab only mounts while the row holds hover, and hover only arrives on pointerenter. A row
+ * that re-renders or shifts under a parked pointer drops that hover with no new pointerenter to
+ * restore it, so each attempt leaves the row and enters it again instead of waiting on a kebab
+ * that a still pointer cannot bring back.
+ */
+export async function openWorkspaceSidebarKebab(page: Page, workspaceId: string) {
   const serverId = getServerId();
   const row = page.getByTestId(`sidebar-workspace-row-${serverId}:${workspaceId}`);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.hover();
-
   const kebab = page.getByTestId(`sidebar-workspace-kebab-${serverId}:${workspaceId}`);
-  await expect(kebab).toBeVisible({ timeout: 10_000 });
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await row.hover();
+    await expect(kebab).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 15_000 });
   await kebab.click();
 
   return serverId;

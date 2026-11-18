@@ -162,7 +162,7 @@ describe.each(
     expect((await timeline.readRows(root("a"))).map((row) => row.seq)).toEqual([1, 2, 3]);
   });
 
-  it("reads the trailing run of assistant messages as the last assistant message", async () => {
+  it("reads only the newest assistant message and joins its chunks", async () => {
     const tool = (callId: string): AgentTimelineItem => ({
       type: "tool_call",
       callId,
@@ -181,8 +181,8 @@ describe.each(
       { item: { type: "user_message", text: "Next" } },
       { item: { type: "assistant_message", text: "Before the tool. " } },
       { item: tool("call-1") },
-      { item: { type: "assistant_message", text: "Hel", messageId: "m1" } },
-      { item: { type: "assistant_message", text: "lo", messageId: "m1" } },
+      { item: { type: "assistant_message", text: "Previous message", messageId: "m1" } },
+      { item: { type: "assistant_message", text: "Hello", messageId: "m2" } },
       { item: { type: "assistant_message", text: " world", messageId: "m2" } },
       { item: tool("call-2") },
     ]);

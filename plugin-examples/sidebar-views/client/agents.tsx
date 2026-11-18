@@ -4,13 +4,21 @@ import { useAgents, type PluginSidebarViewProps } from "@getpaseo/plugin/client"
 import { AgentRow, Heading } from "./rows";
 export function agentTask(agent: PluginAgentSnapshot) {
   if (agent.attentionReason === "permission") return "Respond";
-  if (agent.requiresAttention || agent.status === "error") return "Review";
-  if (agent.status === "running" || agent.status === "initializing") return "Wait";
+  if (agent.status === "error") return "Review";
+  // An agent whose turn ended still works while shells or monitors it started are live.
+  if (
+    agent.status === "running" ||
+    agent.status === "initializing" ||
+    agent.backgroundWork.count > 0
+  )
+    return "Wait";
+  if (agent.requiresAttention) return "Review";
   return "Start";
 }
 function Task({ title, view }: { title: string; view: PluginSidebarViewProps }) {
   const agents = useAgents({
-    where: (item) => agentTask(item) === title,
+    // Background agents are helpers the user never opens; leave them out like the sidebar does.
+    where: (item) => !item.background && agentTask(item) === title,
     orderBy: ["lastActivityAt", "desc"],
   });
   return (

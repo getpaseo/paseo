@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
+  ForgeWebSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
@@ -344,6 +345,7 @@ const StoredWorkspaceSchema = z.strictObject({
   gitRuntime: WorkspaceGitRuntimeSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const StoredProjectSchema = z.strictObject({
@@ -790,6 +792,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     gitRuntime: workspace.gitRuntime,
     githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
+    forgeWeb: workspace.forgeWeb,
   };
 }
 

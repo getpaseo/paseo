@@ -2,7 +2,7 @@
 title: Plugin hooks
 description: Register hooks to change requests or observe agent and workspace operations.
 nav: Hooks
-order: 48
+order: 49
 category: Plugins
 ---
 
@@ -31,7 +31,7 @@ Names follow `subject.operation.position`: the subject, the operation, then `bef
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -49,22 +49,22 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                   | Handler may change                             |
-| ------------------------- | ----- | ----------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                           |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                           |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`   |
-| `agent.create.after`      | no    | `{ agent }`                               |                                                |
-| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                               |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome, timeline }`    |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                      |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                |
+| Hook                      | Waits | Payload                                   | Handler may change                                             |
+| ------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                          |
+| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                |
+| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                |
+| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                               |
+| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
+| `agent.create.after`      | no    | `{ agent }`                               |                                                                |
+| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
+| `agent.close.after`       | no    | `{ agent }`                               |                                                                |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
+| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                |
 
 ## Shared payloads
 
@@ -76,6 +76,7 @@ interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  readonly background: boolean;
   metadata: Record<string, JsonValue>;
 }
 
@@ -96,6 +97,7 @@ type PluginTurnOutcome =
 
 | Field        | Shape / meaning                                                                        |
 | ------------ | -------------------------------------------------------------------------------------- |
+| `background` | `true` for a [background agent](#background-agents)                                    |
 | `turnId`     | Provider-reported `string` or `null`; unique across resumed sessions                   |
 | `timeline`   | Deprecated, always `[]`; fetch history with the SDK.                                   |
 | `request`    | SDK `AgentPermissionRequest`; `kind` is `tool`, `plan`, `question`, `mode`, or `other` |
@@ -281,7 +283,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before
 
-Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
 Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
 
@@ -303,6 +305,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
   "provider": "codex",
   "cwd": "/projects/shop",
   "title": "Workspace notes",
+  "background": false,
   "labels": { "notes/enabled": "true" },
   "metadata": { "linear.issue": { "id": "ENG-123" } },
   "tools": [],
@@ -317,6 +320,7 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | ------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `workspaceId` | String or `null`                                                                                                        |
 | `title`       | Read-only string or `null`; creation title on create, stored title on resume.                                           |
+| `background`  | Read-only `true` for a [background agent](#background-agents). Fixed at creation.                                       |
 | `labels`      | Read-only string map; creation labels on create, stored labels on resume.                                               |
 | `metadata`    | Read-only JSON map; the [metadata](#metadata) stored on the agent.                                                      |
 | `tools`       | Editable `AgentToolDefinition[]`, local to this plugin. See [Attach tools to agents](#attach-tools-to-agents).          |
@@ -324,6 +328,19 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
 | `purpose`     | `interactive`, `history`                                                                                                |
 | `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+
+### Append instructions on every session opening
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Follow the team engineering guide."],
+}));
+```
+
+Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. Internal agents also receive these instructions. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
+
+Codex instruction updates require Codex 0.121.0 or newer with a recognizable version reported by the app server. Source builds reporting `0.0.0` must use a versioned build. Paseo adds a current instruction snapshot to existing threads; earlier snapshots remain in the conversation. A crash during an update or rewinding a thread can repeat a snapshot.
 
 ### Inject environment variables on every session opening
 
@@ -350,7 +367,7 @@ the placeholder URL with your MCP endpoint:
 
 ```ts
 server.addHook("agent.open.before", async ({ request }) => {
-  if (request.provider !== "codex") return;
+  if (request.provider !== "codex" || request.background) return;
 
   return {
     ...request,
@@ -426,6 +443,7 @@ Select agents using any of the session-open request fields:
 | Provider         | `request.provider === "codex"`               |
 | Workspace        | `request.workspaceId === "workspace-456"`    |
 | Individual agent | `request.agentId === chosenAgentId`          |
+| Background agent | `request.background`                         |
 
 `request.tools` starts empty for each plugin. Each callback sees the tools returned by earlier
 callbacks in that plugin; replace the array to add or remove tools. Returning `undefined` preserves
@@ -520,7 +538,7 @@ server.addHook("agent.turn.before", async ({ agent, turnId }) => {
 
 ## agent.turn.after
 
-A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome, timeline }`. `outcome.kind` is `completed`, `failed`, or `canceled`. `timeline` is deprecated and always empty; fetch history through the SDK as below.
+A live turn completes, fails, or is canceled. Receives `{ agent, turnId, outcome }`. `outcome.kind` is `completed`, `failed`, or `canceled`. The payload carries no history. Read the turn from the agent's timeline: `refetch({ direction: "tail", limit: 1, wholeTurns: true })` returns the latest turn whole, as below. Keep the entries whose `turnId` equals `event.turnId`, because a turn that starts before your read, such as a follow-up another plugin sent, replaces this one as the latest. The filtered list is empty in that case, and when `event.turnId` is `null`. Plugins built against an older SDK that read `event.timeline` get an empty array.
 
 ### Send a follow-up when a turn ends
 
@@ -540,8 +558,9 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const agent = context.paseo.agents.ref(event.agent.id);
-    const page = await agent.timeline.refetch({ direction: "tail", limit: 20 });
-    const text = latestOutputText(page.entries.map(({ item }) => item));
+    const page = await agent.timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+    const turn = page.entries.filter((entry) => entry.turnId === event.turnId);
+    const text = latestOutputText(turn.map(({ item }) => item));
     if (/out of credits/i.test(text)) {
       await agent.send("Try again.");
     }
@@ -556,9 +575,6 @@ Turn ends: "out of credits"
   → plugin sends "Try again."
   → a new turn starts
 ```
-
-The handler fetches only the last 20 timeline items. Output before that page is not inspected.
-Use `cursor` and `direction` to page further when your plugin needs more history.
 
 This sends a new message with the existing SDK. Persistent matches keep sending follow-ups;
 add limits or delays in your plugin when needed. Attachments and tool effects are not replayed.
@@ -623,7 +639,20 @@ server.addHook("agent.permission.after", async ({ agent, requestId, resolution }
 });
 ```
 
+## Background agents
+
 Agent hooks exclude the daemon's private disposable helpers. Background agents and the agents in background workspaces use the same hooks.
+
+A [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent) is a helper hidden from tabs, lists and attention. Every hook's `agent.background` and the `agent.open.before` request's `background` are `true` for one, so you can skip it without a lookup:
+
+```ts
+server.addHook("agent.turn.after", async ({ agent }) => {
+  if (agent.background) return; // A helper reports to the agent that created it.
+  await notifyTeam(agent);
+});
+```
+
+`background` is fixed when the agent is created and a hook cannot change it. An agent created in a background workspace without `background: true` reads `false`. Hosts older than 0.16.0 omit the field, so it reads as `undefined`.
 
 ## Ordering and returned values
 

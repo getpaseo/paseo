@@ -590,6 +590,36 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test("follows the thinking level OMP switches to on its own", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "low" });
+    const runtime = omp.runtime();
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({ type: "thinking_level_changed", thinkingLevel: "high" }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("high");
+
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    runtime.emit(
+      OmpRuntimeEventSchema.parse({
+        type: "thinking_level_changed",
+        thinkingLevel: "medium",
+        configured: "auto",
+      }),
+    );
+    await waitForImmediate();
+    expect((await omp.requireSession().getRuntimeInfo()).thinkingOptionId).toBe("auto");
+    expect(omp.eventTypes().filter((type) => type === "thinking_option_changed")).toHaveLength(2);
+  });
+
   test("shows OMP's fallback model without persisting it as the selected model", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
@@ -1854,4 +1884,70 @@ test("closing OMP during image conversion rejects its pending start", async () =
   expect(runtime.latestSession().prompts).toHaveLength(0);
   await session.close();
   await rejected;
+});
+
+describe("OMP catalog model labels", () => {
+  test.each([
+    {
+      name: "keeps slashes and underscores inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "s-q3fn(p-t)",
+        name: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+      },
+      label: "Qwen3.8 Flash Next IQ3_S, prior + tail skip (fastest, ~60-70 tok/s on 0.2.10, 52/56)",
+    },
+    {
+      name: "keeps a free-text name that ends in a slash-separated word",
+      model: {
+        provider: "llama-swap",
+        id: "ds-strata-6",
+        name: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+      },
+      label: "DeepSeek V4.1 Flash 2.25bpw via Strata (full 6 experts, untested, ~5-6 tok/s)",
+    },
+    {
+      name: "keeps a colon inside a free-text model name",
+      model: {
+        provider: "llama-swap",
+        id: "qwen3-tail",
+        name: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+      },
+      label: "Qwen3 IQ3_S (tail skip: on, 52/56)",
+    },
+    {
+      name: "keeps an OMP catalog name as it is",
+      model: {
+        provider: "openrouter",
+        id: "anthropic/claude-opus-4.1:batch",
+        name: "Claude Opus 4.1 (batch)",
+      },
+      label: "Claude Opus 4.1 (batch)",
+    },
+    {
+      name: "drops the vendor prefix from an upstream model name",
+      model: { provider: "openrouter", id: "openai/gpt-5.5", name: "OpenAI: GPT-5.5" },
+      label: "GPT-5.5",
+    },
+    {
+      name: "falls back to the last segment of a path-like id",
+      model: { provider: "pioneer", id: "canada-quant/glm_5.2" },
+      label: "glm 5.2",
+    },
+  ])("$name", async ({ model, label }) => {
+    const runtime = new FakeOmp();
+    runtime.queueSessionSetup((session) => {
+      session.models = [model];
+    });
+    const client = new OmpAgentClient({ logger: createTestLogger(), runtime });
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.map((entry) => entry.label)).toEqual([label]);
+    expect(catalog.models[0]?.id).toBe(`${model.provider}/${model.id}`);
+  });
 });

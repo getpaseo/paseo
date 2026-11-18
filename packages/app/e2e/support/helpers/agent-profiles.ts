@@ -505,10 +505,14 @@ export async function expectCreateProfileFromModelRow(
   page: Page,
   input: { provider: string; modelId: string; modelLabel: string },
 ): Promise<void> {
+  const action = pickerViewport(page).getByTestId(
+    `model-create-profile-${input.provider}-${input.modelId}`,
+  );
+  // Until its row is hovered the plus is invisible, so a tap on its spot reaches the row.
+  await expect(action).toHaveCSS("pointer-events", "none");
   await modelRow(page, input).hover();
-  await pickerViewport(page)
-    .getByTestId(`model-create-profile-${input.provider}-${input.modelId}`)
-    .click();
+  await expect(action).toHaveCSS("pointer-events", "auto");
+  await action.click();
   const modal = editModal(page);
   await expect(modal).toBeVisible({ timeout: 30_000 });
   await expect(modal.getByRole("textbox", { name: "Name", exact: true })).toHaveValue(

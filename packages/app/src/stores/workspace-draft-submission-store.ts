@@ -1,4 +1,3 @@
-import type { CreateAgentRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import type { ComposerAttachment } from "@/attachments/types";
@@ -9,7 +8,6 @@ export interface PendingWorkspaceDraftSubmission {
   /** Already-running creation. Mounting the draft only observes its result. */
   agentCreation?: {
     result: Promise<AgentSnapshotPayload>;
-    retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
   };
   serverId: string;
   workspaceId: string;
@@ -35,7 +33,6 @@ export interface PendingWorkspaceDraftSetup {
 interface WorkspaceDraftSubmissionState {
   pendingByDraftId: Record<string, PendingWorkspaceDraftSubmission>;
   setupByDraftId: Record<string, PendingWorkspaceDraftSetup>;
-  creationByDraftId: Record<string, NonNullable<PendingWorkspaceDraftSubmission["agentCreation"]>>;
   setPending: (submission: PendingWorkspaceDraftSubmission) => void;
   setDraftSetup: (input: {
     draftId: string;
@@ -69,12 +66,8 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
   (set, get) => ({
     pendingByDraftId: {},
     setupByDraftId: {},
-    creationByDraftId: {},
     setPending: (submission) =>
       set((state) => ({
-        creationByDraftId: submission.agentCreation
-          ? { ...state.creationByDraftId, [submission.draftId]: submission.agentCreation }
-          : state.creationByDraftId,
         pendingByDraftId: {
           ...state.pendingByDraftId,
           [submission.draftId]: submission,
@@ -94,10 +87,8 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
       const normalizedDraftId = normalizeDraftId(draftId);
       if (!normalizedDraftId) return;
       set((state) => {
-        const creationByDraftId = { ...state.creationByDraftId };
-        delete creationByDraftId[normalizedDraftId];
         const { [normalizedDraftId]: _removed, ...setupByDraftId } = state.setupByDraftId;
-        return { setupByDraftId, creationByDraftId };
+        return { setupByDraftId };
       });
     },
     consumePending: (input) => {
