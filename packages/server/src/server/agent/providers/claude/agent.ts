@@ -2915,7 +2915,6 @@ class ClaudeAgentSession implements AgentSession {
       assertClaudeThinkingOptionSupported(this.config.model, normalizedThinkingOptionId);
       this.config.thinkingOptionId = normalizedThinkingOptionId;
       if (
-        this.independentUltracode &&
         normalizedThinkingOptionId === CLAUDE_ULTRACODE_THINKING_OPTION_ID &&
         this.config.providerOptions.ultracode !== true
       ) {

@@ -275,7 +275,8 @@ function resolveThinkingOptions(
 ): NonNullable<AgentModelDefinition["thinkingOptions"]> {
   const model = resolveEffectiveModel(resolveAvailableModels(entries, provider), modelId);
   const options = model?.thinkingOptions ?? [];
-  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18.
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18
+  // once schedules edit the Ultracode option independently.
   // Schedules still use a single effort field.
   return findThinkingOptionReplacement(options, "ultracode") &&
     !options.some((option) => option.id === "ultracode")

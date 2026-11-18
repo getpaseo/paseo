@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { convertLegacyClaudeUltracode } from "../../option-controls.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
 
@@ -230,5 +231,52 @@ test.each([
     expect(launchOptions[0]).toMatchObject({ effort, settings: { ultracode: enabled } });
   } finally {
     await session.close();
+  }
+});
+
+test("reopens an older Claude Code agent with Ultracode after choosing Ultra Code again", async () => {
+  const launchOptions: ClaudeQueryInput["options"][] = [];
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => "/test/claude",
+    resolveVersion: async () => "2.1.283",
+    queryFactory: (input) => {
+      launchOptions.push(input.options);
+      return new ForegroundQuery(input) as unknown as Query;
+    },
+  });
+  const config = {
+    provider: "claude",
+    cwd: process.cwd(),
+    model: "claude-opus-4-8",
+    thinkingOptionId: "xhigh",
+    providerOptions: { ultracode: true },
+  };
+  const session = await client.createSession(config);
+  let savedOptions = config.providerOptions;
+  session.subscribe((event) => {
+    if (event.type === "options_changed" && typeof event.patch.ultracode === "boolean") {
+      savedOptions = { ultracode: event.patch.ultracode };
+    }
+  });
+  try {
+    await session.setThinkingOption?.("high");
+    expect(savedOptions.ultracode).toBe(false);
+    await session.setThinkingOption?.("ultracode");
+  } finally {
+    await session.close();
+  }
+  const reopened = await client.createSession(
+    convertLegacyClaudeUltracode({
+      ...config,
+      thinkingOptionId: "ultracode",
+      providerOptions: savedOptions,
+    }),
+  );
+  try {
+    await reopened.startTurn("Start the agent");
+    expect(launchOptions[0]).toMatchObject({ effort: "xhigh", settings: { ultracode: true } });
+  } finally {
+    await reopened.close();
   }
 });
