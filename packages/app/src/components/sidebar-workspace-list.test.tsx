@@ -795,14 +795,20 @@ describe("sidebar section group", () => {
 
   it("pulls the open workspace above the limit only while the route can select a row", () => {
     const enabled = renderHook(() =>
-      useSidebarSectionGroup({ items, selection, selectionEnabled: true, policy }),
+      useSidebarSectionGroup({ items, selection, selectionEnabled: true, expanded: false, policy }),
     );
     expect(enabled.result.current.leadingItem).toBe(items[8]);
     expect(enabled.result.current.visibleItems).toEqual(items.slice(0, 7));
     expect(enabled.result.current.canToggle).toBe(true);
 
     const disabled = renderHook(() =>
-      useSidebarSectionGroup({ items, selection, selectionEnabled: false, policy }),
+      useSidebarSectionGroup({
+        items,
+        selection,
+        selectionEnabled: false,
+        expanded: false,
+        policy,
+      }),
     );
     expect(disabled.result.current.leadingItem).toBeNull();
     expect(disabled.result.current.visibleItems).toEqual(items.slice(0, 7));

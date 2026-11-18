@@ -1655,6 +1655,8 @@ function WorkspaceSectionBlock({
   section,
   collapsed,
   onToggleCollapsed,
+  workspacesExpanded,
+  toggleWorkspacesExpanded,
   onRenameSection,
   onMoveSection,
   canMoveUp,
@@ -1677,6 +1679,8 @@ function WorkspaceSectionBlock({
   section: SidebarProjectWorkspaceSection;
   collapsed: boolean;
   onToggleCollapsed: (workspaceSectionKey: string) => void;
+  workspacesExpanded: boolean;
+  toggleWorkspacesExpanded: (key: string) => void;
   onRenameSection: (section: SidebarProjectWorkspaceSection) => void;
   onMoveSection: (section: SidebarProjectWorkspaceSection, direction: -1 | 1) => void;
   canMoveUp: boolean;
@@ -1712,13 +1716,12 @@ function WorkspaceSectionBlock({
   const {
     leadingItem: leadingWorkspace,
     visibleItems: visibleWorkspaces,
-    expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
-    toggleExpanded: toggleWorkspacesExpanded,
   } = useSidebarSectionGroup({
     items: section.workspaces,
     selection: activeWorkspaceSelection,
     selectionEnabled,
+    expanded: workspacesExpanded,
     policy: visibilityPolicy,
   });
   const namedSection = section.id !== null;
@@ -1727,6 +1730,9 @@ function WorkspaceSectionBlock({
   const handleToggle = useCallback(() => {
     onToggleCollapsed(section.collapseKey);
   }, [onToggleCollapsed, section.collapseKey]);
+  const handleToggleWorkspacesExpanded = useCallback(() => {
+    toggleWorkspacesExpanded(section.collapseKey);
+  }, [toggleWorkspacesExpanded, section.collapseKey]);
   const handleRename = useCallback(() => onRenameSection(section), [onRenameSection, section]);
   const handleMoveUp = useCallback(() => onMoveSection(section, -1), [onMoveSection, section]);
   const handleMoveDown = useCallback(() => onMoveSection(section, 1), [onMoveSection, section]);
@@ -1818,7 +1824,7 @@ function WorkspaceSectionBlock({
           {canToggleWorkspaces ? (
             <SidebarGroupToggleRow
               expanded={workspacesExpanded}
-              onPress={toggleWorkspacesExpanded}
+              onPress={handleToggleWorkspacesExpanded}
               testID={`sidebar-workspace-section-show-more-${section.id ?? "unsectioned"}-${projectViewKey}`}
             />
           ) : null}
@@ -1946,6 +1952,7 @@ function ProjectBlock({
   onToggleCollapsed,
   workspacesExpanded,
   onToggleWorkspacesExpanded,
+  expandedProjectKeys,
   onToggleWorkspaceSectionCollapsed,
   onWorkspacePress,
   parentGestureRef,
@@ -1978,6 +1985,7 @@ function ProjectBlock({
   /** "Show more" on this project's workspaces, owned by the list so a drop's remount keeps it. */
   workspacesExpanded: boolean;
   onToggleWorkspacesExpanded: (projectViewKey: string) => void;
+  expandedProjectKeys: ReadonlySet<string>;
   onToggleWorkspaceSectionCollapsed: (workspaceSectionKey: string) => void;
   onWorkspacePress?: () => void;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
@@ -2303,6 +2311,8 @@ function ProjectBlock({
               section={section}
               collapsed={collapsedWorkspaceSectionKeys.has(section.collapseKey)}
               onToggleCollapsed={onToggleWorkspaceSectionCollapsed}
+              workspacesExpanded={expandedProjectKeys.has(section.collapseKey)}
+              toggleWorkspacesExpanded={onToggleWorkspacesExpanded}
               onRenameSection={handleRenameSection}
               onMoveSection={handleMoveSection}
               {...sectionMoveBounds(section, index, sections.length)}
@@ -2431,6 +2441,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.onToggleCollapsed === next.onToggleCollapsed &&
+    previous.expandedProjectKeys === next.expandedProjectKeys &&
     previous.workspacesExpanded === next.workspacesExpanded &&
     previous.onToggleWorkspacesExpanded === next.onToggleWorkspacesExpanded &&
     previous.onToggleWorkspaceSectionCollapsed === next.onToggleWorkspaceSectionCollapsed &&
@@ -2951,6 +2962,7 @@ function ProjectModeList({
           showShortcutBadges={showShortcutBadges}
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
           onToggleCollapsed={onToggleProjectCollapsed}
+          expandedProjectKeys={expandedProjectKeys}
           workspacesExpanded={expandedProjectKeys.has(item.viewKey)}
           onToggleWorkspacesExpanded={toggleProjectWorkspacesExpanded}
           onToggleWorkspaceSectionCollapsed={onToggleWorkspaceSectionCollapsed}

@@ -41,11 +41,13 @@ export function useSidebarSectionGroup<T extends SidebarGroupItem>({
   items,
   selection,
   selectionEnabled,
+  expanded,
   policy = PINNED_POLICY,
 }: LimitedSidebarGroupInput<T> & { selectionEnabled: boolean }) {
   return useLimitedSidebarGroup({
     items,
     selection: selectionEnabled ? selection : null,
+    expanded,
     policy,
   });
 }
