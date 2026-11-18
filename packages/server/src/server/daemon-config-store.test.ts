@@ -102,6 +102,65 @@ describe("applyMutableProviderConfigToOverrides", () => {
 });
 
 describe("DaemonConfigStore", () => {
+  test("patch persists title language without dropping metadata models", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          agents: {
+            metadataGeneration: {
+              providers: [{ provider: "claude", model: "haiku" }],
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: {
+          providers: [{ provider: "claude", model: "haiku" }],
+        },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    await store.patch({
+      metadataGeneration: { titleLanguage: "zh-CN" },
+    });
+
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      titleLanguage: "zh-CN",
+    });
+    expect(store.get().metadataGeneration).toEqual({
+      providers: [{ provider: "claude", model: "haiku" }],
+      titleLanguage: "zh-CN",
+    });
+
+    await store.patch({
+      metadataGeneration: { providers: [] },
+    });
+
+    expect(loadPersistedConfig(paseoHome).agents?.metadataGeneration).toEqual({
+      providers: [],
+      titleLanguage: "zh-CN",
+    });
+  });
+
   const tempDirs: string[] = [];
 
   afterEach(() => {

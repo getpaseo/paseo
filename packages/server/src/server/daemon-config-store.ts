@@ -33,7 +33,7 @@ interface SupportedMutableConfigPatch {
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
-  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  metadataGeneration?: Partial<MutableDaemonConfig["metadataGeneration"]>;
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   idleRuntimeCleanup?: boolean;
@@ -336,7 +336,21 @@ function pickRelayPatch(
   return Object.keys(picked).length > 0 ? { relay: picked } : {};
 }
 
+function pickMetadataGenerationPatch(
+  patch: MutableDaemonConfigPatch["metadataGeneration"],
+): SupportedMutableConfigPatch["metadataGeneration"] {
+  if (!patch) {
+    return undefined;
+  }
+  const metadataGeneration = {
+    ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
+    ...(patch.titleLanguage !== undefined ? { titleLanguage: patch.titleLanguage } : {}),
+  };
+  return Object.keys(metadataGeneration).length > 0 ? metadataGeneration : undefined;
+}
+
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
+  const metadataGeneration = pickMetadataGenerationPatch(patch.metadataGeneration);
   return {
     ...pickRelayPatch(patch.relay),
     usage: patch.usage,
@@ -348,9 +362,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
-    ...(patch.metadataGeneration?.providers !== undefined
-      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
-      : {}),
+    ...(metadataGeneration ? { metadataGeneration } : {}),
     ...(patch.autoArchiveAfterMerge !== undefined
       ? { autoArchiveAfterMerge: patch.autoArchiveAfterMerge }
       : {}),
@@ -814,8 +826,12 @@ function mergeMutableAgentPatch(
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];
 
-  if (patch.metadataGeneration?.providers !== undefined) {
-    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
+  const metadataGeneration = mergeMutableMetadataGeneration(
+    persistedAgents?.metadataGeneration,
+    patch.metadataGeneration,
+  );
+  if (metadataGeneration) {
+    next["metadataGeneration"] = metadataGeneration;
   } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
     const removed = new Set(removeProviders);
     next["metadataGeneration"] = {
@@ -835,6 +851,20 @@ function mergeMutableAgentPatch(
   }
 
   return Object.keys(next).length > 0 ? (next as PersistedConfig["agents"]) : undefined;
+}
+
+function mergeMutableMetadataGeneration(
+  persisted: NonNullable<PersistedConfig["agents"]>["metadataGeneration"],
+  patch: SupportedMutableConfigPatch["metadataGeneration"],
+): MutableDaemonConfig["metadataGeneration"] | undefined {
+  if (!patch) {
+    return undefined;
+  }
+  const titleLanguage = patch.titleLanguage ?? persisted?.titleLanguage;
+  return {
+    providers: patch.providers ?? persisted?.providers ?? [],
+    ...(titleLanguage ? { titleLanguage } : {}),
+  };
 }
 
 function mergeMutableDaemonPatch(

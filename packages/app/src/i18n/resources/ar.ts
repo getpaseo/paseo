@@ -2404,6 +2404,8 @@ export const ar: TranslationResources = {
       preferredHint: "اختر النموذج الذي يستخدمه Paseo",
       model: "النموذج",
       modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
+      titleLanguage: "لغة العنوان",
+      titleLanguageHint: "لغة عناوين مساحات العمل المنشأة. تبقى أسماء الفروع بالإنجليزية",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
     },

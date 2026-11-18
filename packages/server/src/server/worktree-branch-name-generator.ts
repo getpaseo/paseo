@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { FirstAgentContext } from "@getpaseo/protocol/messages";
+import type { FirstAgentContext, MetadataTitleLanguage } from "@getpaseo/protocol/messages";
 import type { AgentManager } from "./agent/agent-manager.js";
 import {
   StructuredAgentFallbackError,
@@ -21,6 +21,48 @@ interface BranchNameGeneratorLogger {
   error: (obj: object, msg?: string) => void;
 }
 
+const TITLE_LANGUAGE_NAMES = {
+  ar: "Arabic",
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  ja: "Japanese",
+  ko: "Korean",
+  "pt-BR": "Brazilian Portuguese",
+  ru: "Russian",
+  "zh-CN": "Simplified Chinese",
+} as const satisfies Record<MetadataTitleLanguage, string>;
+
+function buildTitleStyle(language: MetadataTitleLanguage): string {
+  if (language === "en") {
+    return [
+      "An actionable task label: requested operation + concrete target + strongest distinguishing anchor (sentence case, max 80 characters).",
+      "Preserve explicit identifiers such as PR or issue numbers, file paths, packages, components, commands, and quoted names when they distinguish the task.",
+      "Aim for about 4 words, but never drop a part needed to understand or distinguish the task.",
+      'Example: "Refactor PR #2638 Playwright specs".',
+    ].join("\n");
+  }
+  if (language === "zh-CN") {
+    return [
+      "使用简体中文生成简洁、可执行的任务标题：动作 + 具体对象 + 最能区分任务的标识（不超过 80 个字符）。",
+      "保留有助于区分任务的 PR 或 Issue 编号、文件路径、包名、组件名、命令和引用名称。",
+      "自然表达，避免逐词直译和“请”“帮我”等口语开头。",
+      "示例：“重构 PR #2638 的 Playwright 测试”。",
+    ].join("\n");
+  }
+  return [
+    "An actionable task label: requested operation + concrete target + strongest distinguishing anchor (max 80 characters).",
+    "Preserve explicit identifiers such as PR or issue numbers, file paths, packages, components, commands, and quoted names when they distinguish the task.",
+    `Write the title in ${TITLE_LANGUAGE_NAMES[language]}.`,
+  ].join("\n");
+}
+
+function resolveTitleLanguage(
+  options: Pick<GenerateBranchNameFromFirstAgentContextOptions, "daemonConfig" | "titleLanguage">,
+): MetadataTitleLanguage {
+  return options.titleLanguage ?? options.daemonConfig?.metadataGeneration?.titleLanguage ?? "en";
+}
+
 export interface GenerateBranchNameFromFirstAgentContextOptions {
   agentManager: AgentManager;
   cwd: string;
@@ -32,6 +74,7 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
     model?: string | null;
     thinkingOptionId?: string | null;
   };
+  titleLanguage?: MetadataTitleLanguage;
   firstAgentContext: FirstAgentContext | undefined;
   logger: BranchNameGeneratorLogger;
   deps?: {
@@ -49,6 +92,7 @@ async function buildPrompt(
   options: {
     cwd: string;
     workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+    titleLanguage?: MetadataTitleLanguage;
   },
 ): Promise<string> {
   return buildMetadataPrompt({
@@ -65,12 +109,7 @@ async function buildPrompt(
       {
         configKey: "title",
         label: "Title style",
-        default: [
-          "An actionable task label: requested operation + concrete target + strongest distinguishing anchor (sentence case, max 80 characters).",
-          "Preserve explicit identifiers such as PR or issue numbers, file paths, packages, components, commands, and quoted names when they distinguish the task.",
-          "Aim for about 4 words, but never drop a part needed to understand or distinguish the task.",
-          'Example: "Refactor PR #2638 Playwright specs".',
-        ].join("\n"),
+        default: buildTitleStyle(options.titleLanguage ?? "en"),
       },
       {
         configKey: "branchName",
@@ -100,6 +139,7 @@ export async function generateBranchNameFromFirstAgentContext(
   const generator =
     options.deps?.generateStructuredAgentResponseWithFallback ??
     generateStructuredAgentResponseWithFallback;
+  const titleLanguage = resolveTitleLanguage(options);
 
   try {
     const providers = options.providerSnapshotManager
@@ -116,6 +156,7 @@ export async function generateBranchNameFromFirstAgentContext(
       prompt: await buildPrompt(seed, {
         cwd: options.cwd,
         workspaceGitService: options.workspaceGitService,
+        titleLanguage,
       }),
       schema: BranchNameSchema,
       schemaName: "BranchName",

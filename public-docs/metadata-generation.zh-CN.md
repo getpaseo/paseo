@@ -40,6 +40,12 @@ Paseo 有两种模式。**自动** 是默认模式，无需任何配置。**手�
 
 打开 **设置 → 主机 → 元数据**，选择 **自动** 或 **手动**。在手动模式下，选择 Paseo 使用的模型。选择模型会替换 `agents.metadataGeneration.providers` 中的第一项，并保留列表的其余部分。切换回自动会清空该列表。
 
+## 选择标题语言 {#choose-the-title-language}
+
+在同一页的 **标题语言** 中选择生成工作区标题时使用的语言。默认仍为英语，现有主机保持原有行为。选择其他受支持的语言后，模型会使用该语言生成工作区标题，分支名仍保持为小写 git slug。
+
+该设置保存在 `~/.paseo/config.json` 的 `agents.metadataGeneration.titleLanguage`，适用于之后创建的工作区，Git 仓库和普通目录工作区都能使用。仓库根目录 `paseo.json` 中已有的 `metadataGeneration.title.instructions` 仍会替换该项目自己的标题风格，并在两者同时存在时优先生效。
+
 ## 配置自定义的回退顺序 {#configure-a-custom-fallback-order}
 
 如果要在手动模式下使用多个模型，请在 `~/.paseo/config.json` 的 `agents.metadataGeneration.providers` 中列出它们。Paseo 按顺序尝试你的条目，不会尝试其他模型。空列表表示自动。
