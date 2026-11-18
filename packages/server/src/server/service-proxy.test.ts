@@ -163,6 +163,38 @@ describe("service proxy subsystem shape", () => {
     }
   });
 
+  it("removes every route owned by one workspace", () => {
+    const serviceProxy = createServiceProxySubsystem({ logger });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "api",
+      port: 3000,
+    });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-a",
+      projectSlug: "repo",
+      branchName: "main",
+      scriptName: "web",
+      port: 3001,
+    });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-b",
+      projectSlug: "other",
+      branchName: "main",
+      scriptName: "api",
+      port: 4000,
+    });
+
+    serviceProxy.removeRoutesForWorkspace("workspace-a");
+
+    expect(serviceProxy.getWorkspaceHealthTargets("workspace-a")).toEqual([]);
+    expect(serviceProxy.getWorkspaceHealthTargets("workspace-b")).toMatchObject([
+      { workspaceId: "workspace-b", scriptName: "api", port: 4000 },
+    ]);
+  });
+
   it("uses the same hash-truncated service label for local and public hostnames", () => {
     const input = {
       projectSlug: "project-".repeat(10),

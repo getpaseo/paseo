@@ -1078,6 +1078,9 @@ export async function createPaseoDaemon(
   await workspaceLabelService.initialize();
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
+    serviceProxy.removeRoutesForWorkspace(workspaceId);
+    scriptHealthMonitor.removeWorkspace(workspaceId);
+    wsServer?.forgetWorkspaceSetupObservation(workspaceId);
     scriptRuntimeStore.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
   };
@@ -1901,6 +1904,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              (workspaceId) => scriptHealthMonitor.removeWorkspace(workspaceId),
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

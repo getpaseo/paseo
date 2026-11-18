@@ -65,6 +65,7 @@ function killIfRunning(pid: number | null | undefined): void {
 function spawnOwnerWithDescendant(options: {
   childPidPath: string;
   detachedDescendant: boolean;
+  detachedOwner?: boolean;
 }): ChildProcess {
   const descendantOptions = options.detachedDescendant
     ? '{ detached: true, stdio: "ignore" }'
@@ -91,7 +92,7 @@ function spawnOwnerWithDescendant(options: {
         setInterval(() => {}, 1000);
       `,
     ],
-    { stdio: "ignore" },
+    { stdio: "ignore", detached: options.detachedOwner === true },
   );
 }
 
@@ -179,6 +180,73 @@ describe("terminateWithTreeKill", () => {
       await expectOwnerAndDescendantStopped(
         "owner or separate-process-group descendant survived terminateWithTreeKill",
       );
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "terminates the child instead of crashing when ps cannot be started",
+    async () => {
+      ownerProcess = spawn("sleep", ["60"], { stdio: "ignore" });
+      const originalPath = process.env.PATH;
+      process.env.PATH = "";
+      try {
+        const result = await terminateWithTreeKill(ownerProcess, {
+          gracefulTimeoutMs: 2000,
+          forceTimeoutMs: 2000,
+        });
+        expect(result).toBe("terminated");
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "signals the process group when the process tree cannot be read",
+    async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "paseo-server-tree-kill-"));
+      const childPidPath = join(tempDir, "descendant.pid");
+      ownerProcess = spawnOwnerWithDescendant({
+        childPidPath,
+        detachedDescendant: false,
+        detachedOwner: true,
+      });
+      await waitForFixtureReady(childPidPath);
+      const treeReadFailures: unknown[] = [];
+      const originalPath = process.env.PATH;
+      process.env.PATH = "";
+      try {
+        await terminateWithTreeKill(ownerProcess, {
+          gracefulTimeoutMs: 100,
+          forceTimeoutMs: 2000,
+          onTreeReadFailed: (error) => treeReadFailures.push(error),
+        });
+      } finally {
+        process.env.PATH = originalPath;
+      }
+      expect(treeReadFailures.length).toBeGreaterThan(0);
+      await expectOwnerAndDescendantStopped("descendant survived without a readable process tree");
+    },
+  );
+
+  test.runIf(process.platform !== "win32")(
+    "still terminates the child when the tree-read observer throws",
+    async () => {
+      ownerProcess = spawn("sleep", ["60"], { stdio: "ignore" });
+      const originalPath = process.env.PATH;
+      process.env.PATH = "";
+      try {
+        const result = await terminateWithTreeKill(ownerProcess, {
+          gracefulTimeoutMs: 2000,
+          forceTimeoutMs: 2000,
+          onTreeReadFailed: () => {
+            throw new Error("logger failed");
+          },
+        });
+        expect(result).toBe("terminated");
+      } finally {
+        process.env.PATH = originalPath;
+      }
     },
   );
 });

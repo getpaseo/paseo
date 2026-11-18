@@ -179,6 +179,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly branchRequests: string[] = [];
   activeBranchEntryId?: string;
   closed = false;
+  exited = false;
   state: OmpSessionState;
 
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
@@ -296,6 +297,14 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.abortRequested = true;
     // OMP can stream a turn's teardown before it answers the abort request.
     this.onAbort?.();
+  }
+
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  hasExited(): boolean {
+    return this.exited;
   }
 
   async getState(): Promise<OmpSessionState> {

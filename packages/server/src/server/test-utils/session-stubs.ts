@@ -39,6 +39,8 @@ export function asAgentManager(stub: {
     getRetiredInternalAgent: () => null,
     effectiveOptionsFor: (_provider: string, own?: Record<string, unknown>) => own ?? {},
     getAgentBackgroundWorkSummary: () => undefined,
+    // Archive reads one active-record snapshot; tests without agent storage have none.
+    listActiveAgentRecords: async () => [],
     ...stub,
   });
 }
@@ -91,7 +93,10 @@ export function asCheckoutDiffManager(stub: {
 export function asDaemonConfigStore(stub: {
   [K in keyof SessionOptions["daemonConfigStore"]]?: unknown;
 }): SessionOptions["daemonConfigStore"] {
-  return createStub<SessionOptions["daemonConfigStore"]>(stub);
+  return createStub<SessionOptions["daemonConfigStore"]>({
+    onChange: () => () => {},
+    ...stub,
+  });
 }
 
 export function asTerminalManager(stub: {

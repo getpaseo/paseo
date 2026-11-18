@@ -38,6 +38,7 @@ export function createNoopWorkspaceGitService(
     onSnapshotUpdated: () => ({
       unsubscribe: () => {},
     }),
+    hasWorkspaceListener: () => false,
 
     getCheckout: async (cwd: string) => ({
       cwd,

@@ -46,12 +46,15 @@ Reload releases the old runtime before resuming its durable session: an idle pro
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
 replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
 
-Idle resumable runtimes are collected after one hour without activity, checked once a minute.
-Collection releases the process and preserves the agent record, conversation, relationships, and
-provider session. The next prompt resumes that session. Set `agents.idleRuntimeCleanup: false` in
-host config to disable automatic collection. The host setting applies immediately; config-file edits
-apply on reload. Disabling invalidates pending safety checks and close admission. A close already
-started finishes. Re-enabling keeps the existing idle timestamps.
+Idle and settled-`error` resumable runtimes are collected after one hour without activity, checked
+once a minute. Collection releases the process and preserves the agent record, conversation,
+relationships, and provider session. A collected failure keeps `error` as its status, in the stored
+record and in the update sent to subscribed clients, with its error message and attention, so the
+list still reports what happened; the next prompt resumes that session. Set
+`agents.idleRuntimeCleanup: false` in host config to disable automatic collection. The host setting
+applies immediately; config-file edits apply on reload. Disabling invalidates pending safety checks
+and close admission. A close already started finishes. Re-enabling keeps the existing idle
+timestamps.
 
 Foreground runs, permissions and responses, queued deliveries, lifecycle operations, and working
 managed or native descendants prevent collection. Outstanding local or remote finish subscriptions

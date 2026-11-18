@@ -83,6 +83,20 @@ test("a runtime without a provider check is collected at exactly one hour", asyn
   ]);
 });
 
+test("a provider is probed only once its runtime has been idle for the full period", async () => {
+  const s = scenario();
+  let probes = 0;
+  s.runtime.probe = async () => {
+    probes += 1;
+    return true;
+  };
+  await s.sweep(30);
+  await s.sweep(59);
+  expect(probes).toBe(0);
+  expect((await s.sweep(60)).collected).toHaveLength(1);
+  expect(probes).toBe(1);
+});
+
 test("activity restarts the single one-hour idle period", async () => {
   const s = scenario();
   await s.sweep(59);
@@ -123,11 +137,9 @@ test.each(["veto", "error"])(
     const blocked = await s.sweep(61);
     expect(blocked.collected).toEqual([]);
     expect(blocked.failures).toHaveLength(decision === "error" ? 1 : 0);
-    await s.sweep(119);
     s.runtime.probe = async () => true;
     expect((await s.sweep(120)).collected).toEqual([]);
-    expect((await s.sweep(179)).collected).toEqual([]);
-    expect((await s.sweep(180)).collected).toHaveLength(1);
+    expect((await s.sweep(121)).collected).toHaveLength(1);
   },
 );
 

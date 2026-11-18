@@ -1575,7 +1575,7 @@ function createToolCatalog(
       if (!options.listActiveWorkspaces) {
         throw new Error("Active workspace lister is required to archive workspaces");
       }
-      const workspace = await requireActiveWorkspaceForArchive(
+      const { workspace, activeWorkspaces } = await requireActiveWorkspaceForArchive(
         { listActiveWorkspaces: options.listActiveWorkspaces },
         workspaceId,
       );
@@ -1589,6 +1589,7 @@ function createToolCatalog(
         {
           requestId: "mcp:archive_workspace",
           scope: { kind: "workspace", workspaceId: workspace.workspaceId },
+          activeWorkspaces,
         },
       );
       return {

@@ -7,6 +7,7 @@ import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
+import { isRecoverableRejection } from "./recoverable-rejection.js";
 
 process.title = "Paseo Daemon";
 
@@ -376,6 +377,10 @@ async function main() {
   });
 
   process.on("unhandledRejection", (reason) => {
+    if (isRecoverableRejection(reason)) {
+      logger.error({ err: reason }, "Unhandled workspace watcher rejection — continuing");
+      return;
+    }
     logger.fatal({ err: reason }, "Unhandled promise rejection — daemon crashing");
     exitAfterPinoFlush();
   });

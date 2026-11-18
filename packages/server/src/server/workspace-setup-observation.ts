@@ -22,6 +22,11 @@ export class WorkspaceSetupObservation {
     this.snapshots.set(workspaceId, snapshot);
   }
 
+  forgetWorkspace(workspaceId: string): void {
+    this.snapshots.delete(workspaceId);
+    this.statuses.delete(workspaceId);
+  }
+
   publish(workspaceId: string, snapshot: WorkspaceSetupSnapshot): void {
     const status = this.summary(snapshot);
     const statusChanged = (this.statuses.get(workspaceId) ?? null) !== status;

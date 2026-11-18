@@ -19,7 +19,7 @@ import {
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
-  resolveWorkspaceIdAtPath,
+  resolveWorkspaceTargetAtPath,
   WorkspaceArchiveCanceledError,
 } from "./workspace-archive-service.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
@@ -1019,6 +1019,214 @@ describe("archiveByScope", () => {
     expect(result.removedDirectory).toBe(true);
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
+
+  test("the response resolves before the post-archive refresh and final fan-out settle", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "post-archive-stall");
+    const workspaceId = "ws-post-archive-stall";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const refresh = gate();
+    let refreshSettled = false;
+    deps.workspaceGitService.getSnapshot = vi.fn(async () => {
+      refresh.reach();
+      await refresh.wait;
+      refreshSettled = true;
+      return null;
+    });
+
+    const finalUpdate = gate();
+    let finalUpdateSettled = false;
+    const order: string[] = [];
+    deps.clearWorkspaceArchiving = vi.fn(() => {
+      order.push("clear-archiving");
+    });
+    let responseSettled = false;
+    let emitCount = 0;
+    deps.emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => {
+      emitCount += 1;
+      if (emitCount === 1) {
+        order.push("mark-archiving-update");
+        return;
+      }
+      order.push("final-update");
+      finalUpdate.reach();
+      await finalUpdate.wait;
+      finalUpdateSettled = true;
+    });
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-post-archive-stall",
+    }).finally(() => {
+      responseSettled = true;
+    });
+
+    await vi.waitFor(() => expect(responseSettled).toBe(true), { timeout: 5000 });
+    expect(deps.clearWorkspaceArchiving).toHaveBeenCalledWith([workspaceId]);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+    expect(refreshSettled).toBe(false);
+    expect(finalUpdateSettled).toBe(false);
+
+    refresh.open();
+    finalUpdate.open();
+    await expect(archive).resolves.toEqual(
+      expect.objectContaining({ removedDirectory: true, archivedWorkspaceIds: [workspaceId] }),
+    );
+    await vi.waitFor(() => {
+      expect(refreshSettled).toBe(true);
+      expect(finalUpdateSettled).toBe(true);
+    });
+    // The final update is sent after the marker clears, and only after the worktree is gone.
+    expect(order).toEqual(["mark-archiving-update", "clear-archiving", "final-update"]);
+  });
+
+  test("a completed archive starts the main-repo refresh", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "completed-refresh");
+    const workspaceId = "ws-completed-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-completed-refresh",
+    });
+
+    expect(result.removedDirectory).toBe(true);
+    await vi.waitFor(() => {
+      expect(deps.workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree",
+      });
+    });
+  });
+
+  test("a removal failure after the point of no return still refreshes the main repo", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-failure-refresh");
+    const workspaceId = "ws-removal-failure-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    // The last-reference read inside removal fails after the records are already archived.
+    deps.listActiveWorkspaces = vi.fn(async () => {
+      throw new Error("registry unavailable");
+    });
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "workspace", workspaceId },
+        requestId: "req-removal-failure-refresh",
+        activeWorkspaces: deps.activeWorkspaces,
+      }),
+    ).rejects.toThrow("registry unavailable");
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).not.toContain(
+      workspaceId,
+    );
+
+    await vi.waitFor(() => {
+      expect(deps.workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree",
+      });
+    });
+  });
+
+  test("reuses the caller's active-workspace snapshot and still reads fresh before deleting", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "snapshot-reuse");
+    const workspaceId = "ws-snapshot-reuse";
+    const snapshot: ActiveWorkspaceRef[] = [
+      { workspaceId, cwd: worktree.worktreePath, kind: "worktree" },
+    ];
+    const deps = createArchiveDeps({ paseoHome, activeWorkspaces: snapshot });
+    const listActiveWorkspaces = vi.fn(deps.listActiveWorkspaces);
+    deps.listActiveWorkspaces = listActiveWorkspaces;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-snapshot-reuse",
+      activeWorkspaces: snapshot,
+    });
+
+    assertArchiveResult(result, { archivedWorkspaceIds: [workspaceId], removedDirectory: true });
+    // Target resolution used the caller's snapshot; only the last-reference check read again.
+    expect(listActiveWorkspaces).toHaveBeenCalledTimes(1);
+  });
+
+  test("reads active agent records once and shares the snapshot with every archived agent", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const workspaceId = "ws-agent-snapshot";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    const activeRecords = [
+      { id: "agent-one", workspaceId },
+      { id: "agent-two", workspaceId },
+    ] as StoredAgentRecord[];
+    deps.agentStorage = {
+      listByWorkspace: async () => activeRecords,
+    } as Pick<AgentStorage, "listByWorkspace">;
+    const listActiveAgentRecords = vi.fn(async () => activeRecords);
+    const archiveAgent = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+    deps.agentManager = {
+      ...deps.agentManager,
+      listActiveAgentRecords,
+      getAgent: (agentId: string) => ({ id: agentId }) as ManagedAgent,
+      archiveAgent,
+    };
+
+    await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-agent-snapshot",
+    });
+
+    expect(listActiveAgentRecords).toHaveBeenCalledTimes(1);
+    expect(archiveAgent).toHaveBeenCalledTimes(2);
+    for (const call of archiveAgent.mock.calls) {
+      expect(call[2]).toEqual({ activeRecords });
+    }
+  });
 });
 
 function gate(): {
@@ -1162,13 +1370,52 @@ describe("archiveByScope cancellation", () => {
     expect(deps.markWorkspaceArchiving).not.toHaveBeenCalled();
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
+
+  test("a canceled archive does not start the main-repo refresh", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "cancel-refresh");
+    const workspaceId = "ws-cancel-refresh";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    const firstEmit = gate();
+    deps.emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => {
+      firstEmit.reach();
+      await firstEmit.wait;
+    });
+    const controller = new AbortController();
+
+    const archive = archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-cancel-refresh",
+      signal: controller.signal,
+    });
+    await firstEmit.reached;
+    controller.abort();
+    firstEmit.open();
+    await canceledArchive(archive);
+
+    // The refresh would already be in flight by now if the canceled archive had started it.
+    expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+  });
 });
 
-describe("resolveWorkspaceIdAtPath", () => {
+describe("resolveWorkspaceTargetAtPath", () => {
   test("prefers the worktree-kind record on an exact cwd tie", async () => {
     const targetPath = "/worktrees/repo/feature";
 
-    const result = await resolveWorkspaceIdAtPath(
+    const result = await resolveWorkspaceTargetAtPath(
       {
         listActiveWorkspaces: async () => [
           { workspaceId: "ws-local", cwd: targetPath, kind: "local_checkout" },
@@ -1179,13 +1426,13 @@ describe("resolveWorkspaceIdAtPath", () => {
       targetPath,
     );
 
-    expect(result).toBe("ws-worktree");
+    expect(result.workspaceId).toBe("ws-worktree");
   });
 
   test("falls back to the path resolver when there is no exact match", async () => {
     const targetPath = "/worktrees/repo/feature";
 
-    const result = await resolveWorkspaceIdAtPath(
+    const result = await resolveWorkspaceTargetAtPath(
       {
         listActiveWorkspaces: async () => [
           { workspaceId: "ws-nested", cwd: "/worktrees/repo", kind: "worktree" },
@@ -1195,7 +1442,7 @@ describe("resolveWorkspaceIdAtPath", () => {
       targetPath,
     );
 
-    expect(result).toBe("ws-nested");
+    expect(result.workspaceId).toBe("ws-nested");
   });
 });
 
