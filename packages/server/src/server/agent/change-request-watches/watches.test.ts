@@ -3,6 +3,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import { createChangeRequestWatches } from "./index.js";
+import { waitForAgentRunStart } from "../agent-prompt.js";
 import type {
   ChangeRequestSnapshot,
   ChangeRequestSource,
@@ -184,6 +185,59 @@ test("retains the current observation as the last subscriber leaves and a new on
     expect(joined).toMatchObject({ subscribed: true, headSha: "new-head" });
     expect(observer).toBeDefined();
   } finally {
+    await watches.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("records an admitted update acknowledged during provider shutdown", async () => {
+  const home = await createTestHome();
+  vi.useFakeTimers();
+  let observer: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
+  const starting = Promise.withResolvers<void>();
+  const accepted = Promise.withResolvers<void>();
+  const deliveries: string[] = [];
+  const create = () =>
+    createChangeRequestWatches({
+      source: {
+        resolve: (input) => input,
+        observe(_address, callbacks) {
+          observer = callbacks;
+          queueMicrotask(() => void callbacks.snapshot(initial));
+          return () => {
+            observer = undefined;
+          };
+        },
+      },
+      paseoHome: home,
+      isActive: async () => true,
+      async deliver(_agent, digest) {
+        starting.resolve();
+        await waitForAgentRunStart(accepted.promise, digest.signal);
+        deliveries.push(digest.id);
+        return true;
+      },
+      logger: pino({ enabled: false }),
+    });
+  let watches = create();
+  try {
+    await watches.start();
+    await watches.subscribe("first", url);
+    await observer!.snapshot({ ...initial, state: "merged" });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await starting.promise;
+
+    // The daemon freezes observation and new admission, then tears down providers.
+    watches.stop();
+    accepted.resolve();
+    await watches.close();
+
+    watches = create();
+    await watches.start();
+    await watches.flush();
+    expect(deliveries).toHaveLength(1);
+  } finally {
+    accepted.resolve();
     await watches.close();
     await rm(home, { recursive: true, force: true });
   }

@@ -126,7 +126,19 @@ interface PageRead {
   accept(value: unknown): void;
 }
 
-type ReadBatch = (query: string) => Promise<Record<string, unknown>>;
+interface ChangeRequestPageSelection {
+  url: string;
+  graphql: string;
+}
+
+interface ReadOptions {
+  read(selections: ChangeRequestPageSelection[]): Promise<Record<string, unknown>>;
+  batchSize: number;
+  firstBatchSize: number;
+  onChecks(url: string, headSha: string, contexts: unknown[]): void;
+  knownActivity(url: string): ReadonlySet<string> | undefined;
+  isObserved(url: string): boolean;
+}
 
 const pullRequestResult = z
   .object({ pullRequest: z.unknown() })
@@ -138,10 +150,7 @@ const threadFields = `id ${connection("comments", inlineFields, undefined, 10)}`
 
 export async function readGitHubChangeRequests(
   urls: string[],
-  read: ReadBatch,
-  maxBatchSize: number,
-  onChecks: (url: string, headSha: string, contexts: unknown[]) => void,
-  knownActivity: (url: string) => ReadonlySet<string> | undefined,
+  { read, batchSize, firstBatchSize, onChecks, knownActivity, isObserved }: ReadOptions,
 ): Promise<Map<string, ChangeRequestSnapshot | Error>> {
   const snapshots = new Map<string, ChangeRequestSnapshot>();
   const failed = new Map<string, Error>();
@@ -294,17 +303,21 @@ export async function readGitHubChangeRequests(
     });
   }
 
+  let pageSize = firstBatchSize;
   while (pending.length) {
-    const batch = pending.splice(0, maxBatchSize).filter(({ url }) => !failed.has(url));
+    const batch = pending
+      .splice(0, pageSize)
+      .filter(({ url }) => !failed.has(url) && isObserved(url));
+    pageSize = batchSize;
     if (!batch.length) continue;
     try {
-      const aliases = batch.map(({ selection }, index) => `request${index}: ${selection}`);
-      const data = await read(`query PaseoWatchedChangeRequests {
-        rateLimit { limit remaining resetAt }
-        ${aliases.join("\n")}
-      }`);
+      const selections = batch.map(({ url, selection }, index) => ({
+        url,
+        graphql: `request${index}: ${selection}`,
+      }));
+      const data = await read(selections);
       for (const [index, page] of batch.entries()) {
-        if (failed.has(page.url)) continue;
+        if (failed.has(page.url) || !isObserved(page.url)) continue;
         try {
           page.accept(data[`request${index}`]);
         } catch (cause) {
@@ -323,5 +336,7 @@ export async function readGitHubChangeRequests(
     }
   }
 
-  return new Map(urls.map((url) => [url, failed.get(url) ?? snapshots.get(url)!]));
+  return new Map(
+    urls.filter(isObserved).map((url) => [url, failed.get(url) ?? snapshots.get(url)!]),
+  );
 }

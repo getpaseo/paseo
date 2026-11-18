@@ -2056,7 +2056,7 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     unsubscribeChangeRequestDelivery();
-    await changeRequestWatches.close();
+    changeRequestWatches.stop();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
@@ -2071,6 +2071,7 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
+    await changeRequestWatches.close();
     await pluginRuntime.stopAllPlugins();
     try {
       if (keepTerminals) {

@@ -353,6 +353,12 @@ export function createChangeRequestWatches(deps: Dependencies) {
     return Promise.all(activeDeliveries.values()).then(() => undefined);
   }
 
+  function stop(): void {
+    closed = true;
+    clearTimeout(timer);
+    for (const url of observations.keys()) stopObserving(url);
+  }
+
   return {
     async start() {
       let restored: WatchGroup[];
@@ -407,11 +413,11 @@ export function createChangeRequestWatches(deps: Dependencies) {
       retries.delete(agentId);
       void flush();
     },
+    stop,
     async close() {
-      closed = true;
+      stop();
+      // Providers have stopped. Any start still without an acknowledgment stays queued.
       shutdown.abort();
-      clearTimeout(timer);
-      for (const url of observations.keys()) stopObserving(url);
       await Promise.all(activeDeliveries.values());
       await mutations;
     },

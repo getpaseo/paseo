@@ -792,7 +792,7 @@ function graphqlString(value: string): string {
   return JSON.stringify(value);
 }
 
-function buildBatchPullRequestStatusQuery(entries: GitHubBatchPollEntry[]): string {
+function buildBatchPullRequestStatusSelections(entries: GitHubBatchPollEntry[]): string[] {
   const aliases = entries.map(
     (entry, index) => `  ${batchAlias(index)}: repository(owner: ${graphqlString(
       entry.owner,
@@ -837,14 +837,32 @@ function buildBatchPullRequestStatusQuery(entries: GitHubBatchPollEntry[]): stri
   }`,
         ],
   );
-  return `query PaseoBatchPullRequestStatus {
-  rateLimit {
-    limit
-    remaining
-    resetAt
-  }
-${[...aliases, ...originAliases].join("\n")}
-}\n${BATCH_PR_STATUS_FRAGMENT}`;
+  return [...aliases, ...originAliases];
+}
+
+interface GitHubPollQuery {
+  name: string;
+  cwd: string;
+  targetCount: number;
+  selections(): string[];
+  fragments?: string;
+}
+
+interface GitHubPollResponse {
+  aliases: Record<string, unknown>;
+  stdout: string;
+  rateLimit: z.infer<typeof GitHubGraphqlRateLimitSchema> | null;
+  paused: boolean;
+}
+
+type GitHubPollReader = (query: GitHubPollQuery) => Promise<GitHubPollResponse>;
+
+function renderGitHubPollQuery(name: string, selections: string[], fragments = ""): string {
+  return `query ${name} {
+  rateLimit { limit remaining resetAt }
+${selections.join("\n")}
+}
+${fragments}`;
 }
 
 function buildBatchPullRequestChecksQuery(
@@ -1565,44 +1583,139 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       batchGroups.set(key, group);
     }
 
+    const hosts = new Set([...batchGroups.keys(), ...exactGroups.keys()]);
     await Promise.all([
       ...legacyTargets.map((target) => runGitHubPoll(target)),
-      ...[...batchGroups.values()].map((group) => runGitHubPollGroup(group, now)),
-      ...[...exactGroups].map(([host, urls]) => runWatchedChangeRequests(host, urls, now)),
+      ...[...hosts].map((host) =>
+        runGitHubPollWave(host, batchGroups.get(host) ?? [], exactGroups.get(host) ?? [], now),
+      ),
     ]);
+  }
+
+  async function runGitHubPollWave(
+    host: string,
+    entries: GitHubBatchPollEntry[],
+    urls: string[],
+    startedAt: number,
+  ): Promise<void> {
+    const read = createCoDueGitHubPollReader(host);
+    if (urls.length && host !== "github.com" && !authenticatedWatchHosts.has(host)) {
+      const authenticating = urls.map((url) => [url, watchedRequests.get(url)] as const);
+      try {
+        await run(
+          ["auth", "status", "--hostname", host],
+          { cwd: process.cwd(), envOverlay: watchAuthProbeEnv },
+          host,
+        );
+        authenticatedWatchHosts.add(host);
+        urls = authenticating.flatMap(([url, watch]) =>
+          watch && watchedRequests.get(url) === watch ? [url] : [],
+        );
+      } catch (error) {
+        for (const [url, watch] of authenticating) {
+          if (!watch || watchedRequests.get(url) !== watch) continue;
+          watch.callbacks.error(error);
+          watch.nextDueAt = alignGitHubPollTime(deps.now() + watchPollMs);
+        }
+        armGitHubPollTimer();
+        urls = [];
+      }
+    }
+    const workspaceSlots = Math.min(
+      entries.length,
+      GITHUB_POLL_BATCH_MAX - Math.min(urls.length, Math.floor(GITHUB_POLL_BATCH_MAX / 2)),
+    );
+    const exactSlots = GITHUB_POLL_BATCH_MAX - workspaceSlots;
+    await Promise.all([
+      runGitHubPollGroup(entries, startedAt, read, workspaceSlots),
+      runWatchedChangeRequests(host, urls, startedAt, read, exactSlots),
+    ]);
+  }
+
+  function createCoDueGitHubPollReader(host: string): GitHubPollReader {
+    interface PendingQuery {
+      query: GitHubPollQuery;
+      resolve(response: GitHubPollResponse): void;
+      reject(error: unknown): void;
+    }
+    let pending: PendingQuery[] = [];
+
+    function issue(batch: PendingQuery[]): void {
+      const cwd = batch.length === 1 ? batch[0]!.query.cwd : process.cwd();
+      const response = runPollGraphql(
+        host,
+        () => {
+          const current = batch.flatMap(({ query }) => {
+            const selections = query.selections();
+            return selections.length ? [{ query, selections }] : [];
+          });
+          if (!current.length) throw new Error("GitHub poll targets were released.");
+          const name = current.length === 1 ? current[0]!.query.name : "PaseoMixedPullRequestPoll";
+          const selections = current.flatMap((item) => item.selections);
+          const fragments = current.flatMap(({ query }) => query.fragments ?? []).join("\n");
+          const graphql = renderGitHubPollQuery(name, selections, fragments);
+          return run(["api", "graphql", "-f", `query=${graphql}`], { cwd }, host);
+        },
+        () => run(["api", "rate_limit"], { cwd }, host),
+      );
+      void response.then(
+        (result) => {
+          for (const task of batch) task.resolve(result);
+        },
+        (error) => {
+          for (const task of batch) task.reject(error);
+        },
+      );
+    }
+
+    return (query) =>
+      new Promise((resolve, reject) => {
+        if (!pending.length) {
+          queueMicrotask(() => {
+            const due = pending;
+            pending = [];
+            const targetCount = due.reduce((count, task) => count + task.query.targetCount, 0);
+            if (targetCount <= GITHUB_POLL_BATCH_MAX) issue(due);
+            else for (const task of due) issue([task]);
+          });
+        }
+        pending.push({ query, resolve, reject });
+      });
   }
 
   async function runWatchedChangeRequests(
     host: string,
     urls: string[],
     startedAt: number,
+    read: GitHubPollReader,
+    firstBatchSize: number,
   ): Promise<void> {
+    if (!urls.length) return;
     const checks = new Map<string, (result?: WatchedChecks) => void>();
-    const watching = urls.map((url) => {
-      const watch = watchedRequests.get(url)!;
-      const result = new Promise<WatchedChecks | undefined>((resolve) => checks.set(url, resolve));
-      watch.checks = { startedAt, result };
-      return { url, watch };
-    });
+    const watching = new Map(
+      urls.flatMap((url) => {
+        const watch = watchedRequests.get(url);
+        if (!watch) return [];
+        const result = new Promise<WatchedChecks | undefined>((resolve) =>
+          checks.set(url, resolve),
+        );
+        watch.checks = { startedAt, result };
+        return [[url, watch] as const];
+      }),
+    );
+    const isObserved = (url: string) =>
+      watching.has(url) && watchedRequests.get(url) === watching.get(url);
     const cwd = process.cwd();
     try {
-      if (host !== "github.com" && !authenticatedWatchHosts.has(host)) {
-        await run(
-          ["auth", "status", "--hostname", host],
-          { cwd, envOverlay: watchAuthProbeEnv },
-          host,
-        );
-        authenticatedWatchHosts.add(host);
-      }
-      const results = await readGitHubChangeRequests(
-        urls,
-        async (query) => {
-          const args = ["api", "graphql", "--hostname", host, "-f", `query=${query}`];
-          const response = await runPollGraphql(
-            host,
-            () => run(args, { cwd }, host),
-            () => run(["api", "rate_limit", "--hostname", host], { cwd }, host),
-          );
+      const results = await readGitHubChangeRequests(urls, {
+        async read(selections) {
+          const response = await read({
+            name: "PaseoWatchedChangeRequests",
+            cwd,
+            targetCount: selections.length,
+            selections: () =>
+              selections.filter(({ url }) => isObserved(url)).map(({ graphql }) => graphql),
+          });
           if (!response.rateLimit)
             throw new Error("GitHub returned no rate limit for the polling request.");
           const data = { ...response.aliases };
@@ -1618,14 +1731,16 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           }
           return data;
         },
-        GITHUB_POLL_BATCH_MAX,
-        (url, headSha, contexts) => checks.get(url)!({ headSha, contexts }),
-        (url) => watchedRequests.get(url)?.callbacks.knownActivity?.(),
-      );
+        batchSize: GITHUB_POLL_BATCH_MAX,
+        onChecks: (url, headSha, contexts) => checks.get(url)!({ headSha, contexts }),
+        knownActivity: (url) => watching.get(url)?.callbacks.knownActivity?.(),
+        firstBatchSize,
+        isObserved,
+      });
       for (const complete of checks.values()) complete();
       await Promise.all(
-        watching.map(async ({ url, watch }) => {
-          if (watchedRequests.get(url) !== watch) return;
+        [...watching].map(async ([url, watch]) => {
+          if (!isObserved(url)) return;
           const result = results.get(url)!;
           if (result instanceof Error) watch.callbacks.error(result);
           else await watch.callbacks.snapshot(result);
@@ -1633,12 +1748,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       );
     } catch (error) {
       if (error instanceof GitHubAuthenticationError) authenticatedWatchHosts.delete(host);
-      for (const { url, watch } of watching) {
-        if (watchedRequests.get(url) === watch) watch.callbacks.error(error);
+      for (const [url, watch] of watching) {
+        if (isObserved(url)) watch.callbacks.error(error);
       }
     } finally {
       for (const complete of checks.values()) complete();
-      for (const { watch } of watching)
+      for (const watch of watching.values())
         watch.nextDueAt = alignGitHubPollTime(deps.now() + watchPollMs);
       armGitHubPollTimer();
     }
@@ -1647,13 +1762,19 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   async function runGitHubPollGroup(
     entries: GitHubBatchPollEntry[],
     startedAt: number,
+    read: GitHubPollReader,
+    firstBatchSize: number,
   ): Promise<void> {
-    for (let start = 0; start < entries.length; start += GITHUB_POLL_BATCH_MAX) {
-      const chunk = entries.slice(start, start + GITHUB_POLL_BATCH_MAX);
+    let start = 0;
+    let size = firstBatchSize;
+    while (start < entries.length) {
+      const chunk = entries.slice(start, start + size);
+      start += size;
+      size = GITHUB_POLL_BATCH_MAX;
       if ((pollPausedUntilByHost.get(chunk[0]?.host ?? "") ?? 0) > deps.now()) {
         return;
       }
-      await runGitHubPollBatch(chunk, startedAt);
+      await runGitHubPollBatch(chunk, startedAt, read);
     }
   }
 
@@ -1774,15 +1895,28 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   async function runGitHubPollBatch(
     entries: GitHubBatchPollEntry[],
     startedAt: number,
+    read: GitHubPollReader,
   ): Promise<void> {
     const addressedEntries = entries.map(addressGitHubBatchEntry);
     const firstEntry = addressedEntries[0];
     if (!firstEntry) {
       return;
     }
-    const query = buildBatchPullRequestStatusQuery(addressedEntries);
-    const args = ["api", "graphql", "-f", `query=${query}`];
-    const response = await runWorkspacePollGraphql(firstEntry, args).catch((error) => {
+    const selections = buildBatchPullRequestStatusSelections(addressedEntries);
+    const document = {
+      name: "PaseoBatchPullRequestStatus",
+      cwd: firstEntry.target.cwd,
+      targetCount: addressedEntries.length,
+      selections: () => selections,
+      fragments: BATCH_PR_STATUS_FRAGMENT,
+    };
+    const args = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${renderGitHubPollQuery(document.name, selections, document.fragments)}`,
+    ];
+    const response = await read(document).catch((error) => {
       reportGitHubBatchError(addressedEntries, error);
       return undefined;
     });
@@ -1806,7 +1940,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
     await Promise.all(distribution.legacyFallback.map((target) => runGitHubPoll(target)));
     if (distribution.redirected.length > 0) {
-      await runGitHubPollBatch(distribution.redirected, startedAt);
+      await runGitHubPollBatch(distribution.redirected, startedAt, read);
     }
   }
 

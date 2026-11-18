@@ -5182,7 +5182,7 @@ describe("exact GitHub pull request observations", () => {
   });
 });
 
-it("reuses an exact watch's check rollup for a co-due workspace on the same head", async () => {
+it("batches co-due workspace discovery and exact PR reads with one check rollup", async () => {
   vi.useFakeTimers();
   let now = 0;
   const pageInfo = { hasNextPage: false, endCursor: null };
@@ -5202,8 +5202,6 @@ it("reuses an exact watch's check rollup for a co-due workspace on the same head
           state: "OPEN",
         }),
       ]),
-    }),
-    batchPollStatusJson({
       rateLimit: {
         limit: 5000,
         remaining: 4900,
@@ -5250,9 +5248,62 @@ it("reuses an exact watch's check rollup for a co-due workspace on the same head
     now = 25;
     await vi.advanceTimersByTimeAsync(25);
     expect(errors).toEqual([]);
-    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls).toHaveLength(1);
+    expect(runner.calls[0]?.args.at(-1)).toMatch(/query PaseoMixedPullRequestPoll/);
+    expect(runner.calls[0]?.args.at(-1)).toContain('pullRequests(headRefName: "feature"');
+    expect(runner.calls[0]?.args.at(-1)).toContain("pullRequest(number: 41)");
+    expect(runner.calls[0]?.args.at(-1)?.match(/statusCheckRollup/g)).toHaveLength(1);
     expect(snapshots).toEqual([expect.objectContaining({ headSha: "abc", checksState: "passed" })]);
     expect(statuses).toEqual([expect.objectContaining({ number: 41, checksStatus: "success" })]);
+  } finally {
+    service.dispose?.();
+    vi.useRealTimers();
+  }
+});
+
+it("skips pagination after the last exact observer releases its PR", async () => {
+  vi.useFakeTimers();
+  const runner = createDeferredRunner();
+  const service = createGitHubService({ runner: runner.runner, resolveGhPath: async () => "gh" });
+  const snapshots: unknown[] = [];
+  const errors: unknown[] = [];
+  try {
+    const release = service.changeRequests.observe("https://github.com/acme/widgets/pull/41", {
+      async snapshot(value) {
+        snapshots.push(value);
+      },
+      error(error) {
+        errors.push(error);
+      },
+    });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(runner.calls).toHaveLength(1);
+    const empty = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    release();
+    runner.resolveNext(
+      batchPollStatusJson({
+        rateLimit: {
+          limit: 5000,
+          remaining: 4900,
+          resetAt: new Date(Date.now() + 100_000).toISOString(),
+        },
+        request0: {
+          pullRequest: {
+            state: "OPEN",
+            headRefOid: "abc",
+            statusCheckRollup: null,
+            reviewDecision: null,
+            comments: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "more-comments" } },
+            reviews: empty,
+            reviewThreads: empty,
+          },
+        },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(runner.calls).toHaveLength(1);
+    expect(snapshots).toEqual([]);
+    expect(errors).toEqual([]);
   } finally {
     service.dispose?.();
     vi.useRealTimers();
