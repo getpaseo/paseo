@@ -177,7 +177,10 @@ describe("Hub relationship", () => {
     relationship.connectLatestSocket();
     const reason = "daemon session permissions do not match enrollment";
     relationship.closeLatestSocket(4403, reason);
-    expect(await relationship.status()).toMatchObject({ state: "reconnecting", lastError: reason });
+    expect(await relationship.status()).toMatchObject({
+      state: "reconnecting",
+      lastError: expect.stringContaining("Reapply"),
+    });
     await relationship.retry();
     await relationship.revokePermission("hub.execute");
     relationship.connectLatestSocket();

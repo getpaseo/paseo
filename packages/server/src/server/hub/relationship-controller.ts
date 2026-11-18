@@ -487,7 +487,6 @@ export class HubRelationshipController implements HubRelationshipManagement {
       socket.close();
       return;
     }
-    this.retryAttempt = 0;
     this.state = "connected";
     this.connectedAt = this.clock.now().toISOString();
     this.lastError = null;
@@ -521,8 +520,12 @@ export class HubRelationshipController implements HubRelationshipManagement {
   private socketClosed(generation: number, code: number, reason?: string): void {
     if (generation !== this.generation) return;
     if (code === 4403 && reason === "daemon session permissions do not match enrollment") {
-      this.lastError = reason;
-    } else if (code === 4403) {
+      this.lastError =
+        "Hub and daemon permissions differ. Reapply the intended Hub permissions on this daemon.";
+      this.scheduleSocket(true);
+      return;
+    }
+    if (code === 4403) {
       this.revoke("Hub revoked this relationship");
       return;
     }
@@ -535,7 +538,8 @@ export class HubRelationshipController implements HubRelationshipManagement {
     if (this.record?.state === "active") this.scheduleSocket();
   }
 
-  private scheduleSocket(): void {
+  private scheduleSocket(permissionMismatch = false): void {
+    if (this.state === "connected" && !permissionMismatch) this.retryAttempt = 0;
     this.state = "reconnecting";
     this.schedule(() => this.openSocket(true));
   }
