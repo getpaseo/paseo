@@ -52,28 +52,28 @@ Pick the contribution that matches the request. Each row names the registration,
 | Inject launch-only MCP servers and save Codex sandbox/approval options | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
 | Attach a tool to selected agents                                       | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 |
 
-## Edit the source, not the installation
+## Develop plugins in a local folder
 
-Develop a plugin only as a directory plugin: a folder you own, installed by path. Paseo runs it from
-that folder, `paseo plugin reload <id>` loads your edits, and `paseo plugin update` skips it.
+Develop a plugin in a local folder that you own, the same way you develop an npm package. Install
+that folder by path. Paseo runs the plugin from that folder, `paseo plugin reload <id>` loads your
+edits, and `paseo plugin update` does not change it.
 
-Never edit, build, or commit inside a Git or npm installation. Its folder is Paseo's managed copy
-under the daemon home's `plugins/` directory. `paseo plugin update` replaces it and
-`paseo plugin remove` deletes it, together with every edit and commit made there.
+Do not edit, build, or commit inside the installation of a Git or npm plugin. That folder is
+Paseo's managed storage in the `plugins/` directory of the daemon home. `paseo plugin update`
+replaces it, and `paseo plugin remove` deletes it. Both commands discard every edit and commit in
+that folder.
 
-Before editing an installed plugin, run `paseo plugin ls <id>`. A `git:` or `npm:` source, or a
-registry entry such as `<registry host>/owner/slug`, under SOURCE means a managed installation,
-even though DIRECTORY shows a path. To develop it, clone or unpack the source outside the daemon
-home, replace the managed installation with the clone, and edit the clone:
+Before you edit an installed plugin, run `paseo plugin ls <id>` and read the SOURCE column. A
+`git:` source, an `npm:` source, or a registry source such as `<registry host>/owner/slug` is a
+managed installation. Its DIRECTORY column shows the managed folder.
 
-```bash
-git clone <repository> /absolute/path/to/my-plugin
-paseo plugin remove my-plugin
-paseo plugin install /absolute/path/to/my-plugin
-```
+To develop a plugin that is installed from Git or npm:
 
-If a managed copy already holds work, move that work out first, for example by pushing its commits
-or copying the changed files into the clone. Do not run `update` or `remove` on it before then.
+1. Clone the source repository of the plugin into a folder outside the daemon home.
+2. If the managed folder holds edits or commits, move them into the new folder.
+3. Run `paseo plugin remove <id>` to remove the managed installation.
+4. Run `paseo plugin install /absolute/path/to/my-plugin` to install the new folder.
+5. Edit the new folder, and run `paseo plugin reload <id>` after each change.
 
 ## Create the project
 
