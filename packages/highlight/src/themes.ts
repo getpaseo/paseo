@@ -61,6 +61,13 @@ interface RolePalette {
   tag: string;
   attribute: string; // attributes, properties
   operator: string;
+  // Diff +/- is a semantic signal, not theme syntax coloration: each theme
+  // supplies its canonical green/red so the roles stay readable on the
+  // palette's own background. Paseo's app renders these roles with its own
+  // theme diff colors; these palette values keep the palettes complete and
+  // sensible for other consumers of the record (e.g. the web editor).
+  diffAddition?: string;
+  diffDeletion?: string;
 }
 
 function expandRolePalette(r: RolePalette): SyntaxColors {
@@ -85,6 +92,8 @@ function expandRolePalette(r: RolePalette): SyntaxColors {
     meta: r.comment,
     heading: r.function,
     link: r.string,
+    diffAddition: r.diffAddition ?? "#2ea043",
+    diffDeletion: r.diffDeletion ?? "#cf222e",
   };
 }
 
@@ -100,6 +109,8 @@ const catppuccinLatte: RolePalette = {
   tag: "#8839ef",
   attribute: "#df8e1d",
   operator: "#04a5e5",
+  diffAddition: "#40a02b",
+  diffDeletion: "#d20f39",
 };
 const catppuccinMocha: RolePalette = {
   base: "#cdd6f4",
@@ -112,6 +123,8 @@ const catppuccinMocha: RolePalette = {
   tag: "#cba6f7",
   attribute: "#f9e2af",
   operator: "#89dceb",
+  diffAddition: "#a6e3a1",
+  diffDeletion: "#e78284",
 };
 
 // --- Dracula (dark only) -------------------------------------------------
@@ -126,6 +139,8 @@ const dracula: RolePalette = {
   tag: "#ff79c6",
   attribute: "#50fa7b",
   operator: "#ff79c6",
+  diffAddition: "#50fa7b",
+  diffDeletion: "#ff5555",
 };
 
 // --- Tokyo Night (Day light / Night dark) --------------------------------
@@ -140,6 +155,8 @@ const tokyoDay: RolePalette = {
   tag: "#f52a65",
   attribute: "#8c6c3e",
   operator: "#006a83",
+  diffAddition: "#587539",
+  diffDeletion: "#f52a65",
 };
 const tokyoNight: RolePalette = {
   base: "#c0caf5",
@@ -152,6 +169,8 @@ const tokyoNight: RolePalette = {
   tag: "#f7768e",
   attribute: "#e0af68",
   operator: "#89ddff",
+  diffAddition: "#9ece6a",
+  diffDeletion: "#f7768e",
 };
 
 // --- One (One Light / One Dark) ------------------------------------------
@@ -166,6 +185,8 @@ const oneLight: RolePalette = {
   tag: "#e45649",
   attribute: "#986801",
   operator: "#0184bc",
+  diffAddition: "#50a14f",
+  diffDeletion: "#e45649",
 };
 const oneDark: RolePalette = {
   base: "#abb2bf",
@@ -178,6 +199,8 @@ const oneDark: RolePalette = {
   tag: "#e06c75",
   attribute: "#d19a66",
   operator: "#56b6c2",
+  diffAddition: "#98c379",
+  diffDeletion: "#e06c75",
 };
 
 // --- Nord (Snow Storm light / Polar Night dark) ---------------------------
@@ -192,6 +215,8 @@ const nordLight: RolePalette = {
   tag: "#5e81ac",
   attribute: "#8f5e91",
   operator: "#5e81ac",
+  diffAddition: "#4f6f3a",
+  diffDeletion: "#bf616a",
 };
 const nordDark: RolePalette = {
   base: "#d8dee9",
@@ -204,6 +229,8 @@ const nordDark: RolePalette = {
   tag: "#81a1c1",
   attribute: "#8fbcbb",
   operator: "#81a1c1",
+  diffAddition: "#a3be8c",
+  diffDeletion: "#bf616a",
 };
 
 // --- Gruvbox (Light / Dark) ----------------------------------------------
@@ -218,6 +245,8 @@ const gruvboxLight: RolePalette = {
   tag: "#076678",
   attribute: "#b57614",
   operator: "#af3a03",
+  diffAddition: "#79740e",
+  diffDeletion: "#9d0006",
 };
 const gruvboxDark: RolePalette = {
   base: "#ebdbb2",
@@ -230,6 +259,8 @@ const gruvboxDark: RolePalette = {
   tag: "#83a598",
   attribute: "#fabd2f",
   operator: "#fe8019",
+  diffAddition: "#b8bb26",
+  diffDeletion: "#fb4934",
 };
 
 // --- Solarized (Light / Dark — shared accents, different base/comment) ----
@@ -244,6 +275,8 @@ const solarizedLight: RolePalette = {
   tag: "#268bd2",
   attribute: "#b58900",
   operator: "#859900",
+  diffAddition: "#859900",
+  diffDeletion: "#dc322f",
 };
 const solarizedDark: RolePalette = {
   base: "#839496",
@@ -256,6 +289,8 @@ const solarizedDark: RolePalette = {
   tag: "#268bd2",
   attribute: "#b58900",
   operator: "#859900",
+  diffAddition: "#859900",
+  diffDeletion: "#dc322f",
 };
 
 export function isSyntaxThemeId(value: string): value is SyntaxThemeId {

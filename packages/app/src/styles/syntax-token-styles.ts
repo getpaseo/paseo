@@ -26,6 +26,11 @@ export const syntaxTokenStyles = StyleSheet.create((theme) => ({
   meta: { color: theme.colors.syntax.meta },
   heading: { color: theme.colors.syntax.heading },
   link: { color: theme.colors.syntax.link },
+  // Diff +/- in ```diff fences and .diff/.patch files is a semantic signal, so
+  // it uses the theme's diff colors (same as the diff viewer) instead of the
+  // quieter per-theme syntax palette.
+  diffAddition: { color: theme.colors.diffAddition },
+  diffDeletion: { color: theme.colors.diffDeletion },
 }));
 
 type SyntaxTokenStyleValue = (typeof syntaxTokenStyles)["base"];
