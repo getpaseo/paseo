@@ -86,6 +86,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
+import { SidebarToastClearance } from "@/components/sidebar/sidebar-toast-region";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -2551,6 +2552,7 @@ function ProjectModeList({
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
+      <SidebarToastClearance />
     </>
   );
 
@@ -2592,8 +2594,7 @@ const styles = StyleSheet.create((theme) => ({
     // Optical inset: aligns the visible Pinned/Workspaces glyph edge with the
     // Schedules icon across the divider; their layout boxes have different insets.
     paddingTop: 2,
-    // The sidebar toast floats over the list's end. Keep this padding the same whether or not
-    // a toast shows: changing it moves the rows when the toast leaves.
+    // Room for the sidebar toast comes from SidebarToastClearance at the end of the content.
     paddingBottom: theme.spacing[4],
   },
   projectListContainer: {
