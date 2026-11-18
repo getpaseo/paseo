@@ -896,6 +896,15 @@ it("copies a recognized web link as its text in text/plain and as a link in text
   expect(content?.html).toContain('<a href="https://github.com/o/r/issues/12">#12</a>');
 });
 
+it("copies a recognized Windows drive path as text in both clipboard flavors", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Open <a href="C:%5Crepo%5Csrc%5Cx.ts" data-paseo-markdown-recognized-link="true">C:\\repo\\src\\x.ts</a> now.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open C:\\repo\\src\\x.ts now.");
+  expect(content?.html).not.toContain("<a ");
+});
+
 it("keeps literal angle brackets around a URL in text/html", () => {
   const message = mountFixture();
   message.innerHTML = "<p>Open &lt;http://localhost:3000&gt; before the call.</p>";

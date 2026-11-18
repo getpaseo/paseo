@@ -80,7 +80,7 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
     filter: (node) =>
       node.nodeName === "A" &&
       node.hasAttribute(MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE) &&
-      (flavor === "plain" || !hasUrlScheme(node.getAttribute("href") ?? "")),
+      (flavor === "plain" || !isWebUrl(node.getAttribute("href") ?? "")),
     replacement: (content) => content,
   });
   if (flavor === "markdown") {
@@ -113,8 +113,8 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
   return turndown;
 }
 
-function hasUrlScheme(href: string): boolean {
-  return /^[a-z][a-z0-9+.-]*:/i.test(href);
+function isWebUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href);
 }
 
 const markdownTurndown = createTurndown("markdown");
