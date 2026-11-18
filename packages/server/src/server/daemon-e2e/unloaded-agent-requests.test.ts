@@ -152,6 +152,24 @@ test("a send to an unloaded agent answers before the slow load and is delivered 
   expect(turns).toHaveLength(1);
 });
 
+test("listing commands for an unloaded agent does not wait for its load", async () => {
+  const { paseoHomeRoot, cwd } = fixtureDirs();
+  const resume = gate();
+  const { daemon, client } = await startDaemon({ paseoHomeRoot, cwd, resume, turns: [] });
+  cleanups.push(async () => {
+    resume.open();
+    await client.close().catch(() => undefined);
+    await daemon.close().catch(() => undefined);
+  });
+  await seedUnloadedAgent(daemon, cwd);
+
+  // A send starts the slow load first, as when a message arrives right after a restart.
+  await client.sendAgentMessage(AGENT_ID, "start loading", { messageId: "message-2" });
+  const listed = await settlesWithin(client.listCommands(AGENT_ID), PROMPT_WINDOW_MS);
+  expect(listed.error).toBeNull();
+  expect(daemon.daemon.agentManager.getAgent(AGENT_ID)).toBeNull();
+});
+
 test("a failed background load reports the undelivered message on the agent", async () => {
   const { paseoHomeRoot, cwd } = fixtureDirs();
   const resume = gate();

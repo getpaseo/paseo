@@ -73,6 +73,7 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
   buildConfigOverrides,
+  buildSessionConfig,
   isStoredAgentProviderAvailable,
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
@@ -5559,6 +5560,18 @@ export class Session {
     try {
       const existing = this.agentManager.getAgent(agentId);
       const stored = existing ? null : await this.agentStorage.get(agentId);
+      // Commands come from the provider and the working directory, not the conversation. An
+      // agent that is not loaded answers from its stored config instead of being loaded, which
+      // replays its whole history and can take minutes.
+      const storedConfig = stored && !stored.archivedAt ? buildSessionConfig(stored) : null;
+      if (storedConfig?.model) {
+        const commands = await this.agentManager.listDraftCommands(storedConfig);
+        this.emit({
+          type: "list_commands_response",
+          payload: { agentId, commands, error: null, requestId },
+        });
+        return;
+      }
       const agent =
         existing || (stored && !stored.archivedAt)
           ? await ensureAgentLoaded(agentId, {
@@ -8689,10 +8702,12 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
+      // Subagents come from the replayed history; reading them needs no live session.
       await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         logger: this.sessionLogger,
+        purpose: "history",
       });
       this.emit({
         type: "agent.provider_subagents.list.response",
