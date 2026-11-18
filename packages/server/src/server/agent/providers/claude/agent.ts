@@ -2637,7 +2637,10 @@ class ClaudeAgentSession implements AgentSession {
       return { status: "unavailable" };
     }
     const activeTurnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id;
-    if (this.compacting || activeTurnId !== options.expectedTurnId) {
+    // A compacting turn still takes a steer: Claude Code holds a `next` message until the
+    // compaction finishes. Refusing it makes the manager replace the turn, and that interrupt
+    // cancels the compaction.
+    if (activeTurnId !== options.expectedTurnId) {
       return { status: "unavailable" };
     }
 
