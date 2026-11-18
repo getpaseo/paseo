@@ -732,11 +732,13 @@ export class PluginRuntime {
       tools: [],
       mcpServers: {},
     };
-    const failed = this.failedToolReplays.get(request.agentId);
+    // Detaching the agent drops this record, so a replay that fails after its agent closed records nothing.
+    const failed = this.failedToolReplays.get(request.agentId) ?? new Map<string, string>();
+    this.failedToolReplays.set(request.agentId, failed);
     const replayed: ReattachedAgentTools[] = [];
     for (const pluginId of pluginIds) {
       const loaded = this.plugins.get(pluginId);
-      if (!loaded || failed?.get(pluginId) === loaded.instanceId) continue;
+      if (!loaded || failed.get(pluginId) === loaded.instanceId) continue;
       if (!loaded.child || !loaded.hooks.includes("agent.open.before")) {
         replayed.push({ pluginId, tools: [] });
         continue;
@@ -754,9 +756,7 @@ export class PluginRuntime {
         replayed.push({ pluginId, tools });
       } catch (error) {
         // Left out like a stopped plugin. The next instance of this plugin is replayed again.
-        const record = this.failedToolReplays.get(request.agentId) ?? new Map<string, string>();
-        record.set(pluginId, loaded.instanceId);
-        this.failedToolReplays.set(request.agentId, record);
+        failed.set(pluginId, loaded.instanceId);
         this.logger.warn(
           { err: error, pluginId, agentId: request.agentId },
           "Plugin tool reattach failed",
