@@ -176,6 +176,69 @@ describe("ClaudeAgentSession appended history sync", () => {
     expect(await session.syncAppendedHistory!()).toEqual({ kind: "unchanged" });
   });
 
+  test("does not read back a steered prompt, journaled under an id of its own", async () => {
+    writeFileSync(
+      transcriptPath(),
+      lines([
+        { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+        { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "first reply" } },
+      ]),
+    );
+    const sent: string[] = [];
+    const session = await resume(replyFactory("live reply", "live-a", sent));
+    await history(session);
+    await collectSessionTurnEvents(session, "steered prompt");
+    const promptId = sent[0];
+    // Claude Code journals a prompt it took in mid-turn as a queued command, under a
+    // record id of its own; the prompt's id is its source.
+    appendFileSync(
+      transcriptPath(),
+      lines([
+        {
+          type: "attachment",
+          uuid: "queued-record",
+          parentUuid: "a1",
+          attachment: {
+            type: "queued_command",
+            commandMode: "prompt",
+            prompt: "steered prompt",
+            source_uuid: promptId,
+          },
+        },
+      ]),
+    );
+    expect(await session.syncAppendedHistory!()).toEqual({ kind: "unchanged" });
+  });
+
+  test("reads what two syncs at once find only once", async () => {
+    writeFileSync(
+      transcriptPath(),
+      lines([{ type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } }]),
+    );
+    const session = await resume();
+    await history(session);
+    appendFileSync(
+      transcriptPath(),
+      lines([{ type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "reply" } }]),
+    );
+    const [first, second] = await Promise.all([
+      session.syncAppendedHistory!(),
+      session.syncAppendedHistory!(),
+    ]);
+    expect(first).toEqual({
+      kind: "appended",
+      events: [
+        {
+          type: "timeline",
+          provider: "claude",
+          timestamp: undefined,
+          item: { type: "assistant_message", messageId: "a1", text: "reply" },
+        },
+      ],
+    });
+    expect(second).toEqual({ kind: "unchanged" });
+  });
+
   test("leaves a line still being written for the next sync", async () => {
     writeFileSync(
       transcriptPath(),
@@ -231,6 +294,15 @@ describe("ClaudeAgentSession appended history sync", () => {
       },
       {
         appended: {
+          type: "assistant",
+          uuid: "a8",
+          parentUuid: "a1",
+          message: { content: [{ type: "tool_use", id: "t2", name: "Workflow", input: {} }] },
+        },
+        reason: "a subagent call",
+      },
+      {
+        appended: {
           type: "user",
           uuid: "s9",
           parentUuid: "a1",
@@ -250,6 +322,23 @@ describe("ClaudeAgentSession appended history sync", () => {
       await history(session);
       appendFileSync(transcriptPath(), lines([appended]));
       expect(await session.syncAppendedHistory!()).toEqual({ kind: "reload", reason });
+    }
+
+    // Rewound to the first prompt, the conversation goes on in a new transcript: the old
+    // one is not read into it.
+    {
+      writeFileSync(transcriptPath(), start);
+      const session = await resume();
+      await history(session);
+      await session.revertConversation!({ messageId: "u1" });
+      appendFileSync(
+        transcriptPath(),
+        lines([{ type: "user", uuid: "u2", parentUuid: "a1", message: { content: "old" } }]),
+      );
+      expect(await session.syncAppendedHistory!()).toEqual({
+        kind: "reload",
+        reason: "no transcript was loaded",
+      });
     }
 
     writeFileSync(transcriptPath(), start);

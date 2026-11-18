@@ -2398,6 +2398,7 @@ class ClaudeAgentSession implements AgentSession {
   private readonly knownRecordUuids = new Set<string>();
   /** The replay facts the loaded history was read with, reused for what is appended. */
   private replayOwnership: ClaudeReplayOwnership | null = null;
+  private historySync: Promise<unknown> = Promise.resolve();
   private turnState: TurnState = "idle";
   private readonly turnNamespace = randomUUID();
   private nextTurnOrdinal = 1;
@@ -3442,6 +3443,10 @@ class ClaudeAgentSession implements AgentSession {
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
     this.taskState.reset();
+    // A new transcript: what was tracked addresses the abandoned one. Unset, a sync reloads.
+    this.transcriptCursor = null;
+    this.replayOwnership = null;
+    this.knownRecordUuids.clear();
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -5741,7 +5746,14 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  async syncAppendedHistory(): Promise<AgentHistorySyncResult> {
+  /** One sync at a time: a second one reads only after the first has taken what it read. */
+  syncAppendedHistory(): Promise<AgentHistorySyncResult> {
+    const run = this.historySync.then(() => this.syncAppendedHistoryNow());
+    this.historySync = run.catch(() => undefined);
+    return run;
+  }
+
+  private async syncAppendedHistoryNow(): Promise<AgentHistorySyncResult> {
     await this.ensureHistoryReady();
     const reload = (reason: string): AgentHistorySyncResult => ({ kind: "reload", reason });
     if (this.activeForegroundTurnId || this.autonomousTurn || this.replayingHistory) {
@@ -5752,9 +5764,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!cursor || !replay) return reload("no transcript was loaded");
     const read = await readAppendedTranscript(cursor);
     if (read.kind === "rewritten") return reload("the transcript was rewritten");
-    const appended = read.entries.filter(
-      (entry) => !(typeof entry.uuid === "string" && this.knownRecordUuids.has(entry.uuid)),
-    );
+    const appended = read.entries.filter((entry) => !this.holdsRecord(entry));
     // Each record's parent is held already, or came before it in this read.
     const held = new Set(this.knownRecordUuids);
     for (const entry of appended) {
@@ -5778,6 +5788,16 @@ class ClaudeAgentSession implements AgentSession {
         timestamp: entry.timestamp,
       })),
     };
+  }
+
+  /**
+   * Whether this session holds `entry` already. A steered prompt is journaled as a
+   * `queued_command` attachment under a record id of its own; the prompt is its `source_uuid`.
+   */
+  private holdsRecord(entry: ClaudeHistoryEntry): boolean {
+    if (typeof entry.uuid === "string" && this.knownRecordUuids.has(entry.uuid)) return true;
+    const source = toObjectRecord(entry.attachment)?.source_uuid;
+    return typeof source === "string" && this.knownRecordUuids.has(source);
   }
 
   /** Notes a parent transcript record this session now holds. */
@@ -6656,8 +6676,7 @@ function appendedEntryNeedsFullReplay(
         typeof block === "object" &&
         block !== null &&
         (block as { type?: unknown }).type === "tool_use" &&
-        ((block as { name?: unknown }).name === "Task" ||
-          (block as { name?: unknown }).name === "Agent"),
+        isClaudeSubagentToolName((block as { name?: unknown }).name as string | undefined),
     )
   ) {
     return "a subagent call";

@@ -4037,30 +4037,40 @@ export class AgentManager {
     if (!agent.session.syncAppendedHistory) {
       return { kind: "reload", reason: "its provider cannot sync history" };
     }
-    const result = await agent.session.syncAppendedHistory();
-    if (result.kind !== "appended") return result;
-    if (this.hasInFlightRun(agentId)) return { kind: "busy" };
-    let items = 0;
-    for (const rawEvent of result.events) {
-      const event = limitAgentStreamEventContent(rawEvent);
-      if (event.type !== "timeline") continue;
-      for (const item of projectAgentMessages(event.item)) {
-        const row = this.recordTimeline(
-          agent.id,
-          item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
-        this.dispatchStream(
-          agent.id,
-          { ...event, item },
-          { seq: row.seq, epoch: this.timelineStore.getEpoch(agent.id), timestamp: row.timestamp },
-        );
-        items++;
+    // Held from the read to the last row: a turn starting in between would put its prompt
+    // ahead of what was read, and what the session already took as read would be lost.
+    const lock = this.runs.createPendingRun(agentId);
+    try {
+      const result = await agent.session.syncAppendedHistory();
+      if (result.kind !== "appended") return result;
+      let items = 0;
+      for (const rawEvent of result.events) {
+        const event = limitAgentStreamEventContent(rawEvent);
+        if (event.type !== "timeline") continue;
+        for (const item of projectAgentMessages(event.item)) {
+          const row = this.recordTimeline(
+            agent.id,
+            item,
+            event.timestamp ? { timestamp: event.timestamp } : undefined,
+          );
+          this.dispatchStream(
+            agent.id,
+            { ...event, item },
+            {
+              seq: row.seq,
+              epoch: this.timelineStore.getEpoch(agent.id),
+              timestamp: row.timestamp,
+            },
+          );
+          items++;
+        }
       }
+      this.touchUpdatedAt(agent);
+      this.emitState(agent);
+      return { kind: "appended", items };
+    } finally {
+      this.runs.settleForegroundRun(agentId, lock.token);
     }
-    this.touchUpdatedAt(agent);
-    this.emitState(agent);
-    return { kind: "appended", items };
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
