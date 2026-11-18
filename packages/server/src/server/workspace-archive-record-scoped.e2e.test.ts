@@ -647,6 +647,52 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "a teardown that handles SIGTERM and exits zero still leaves the worktree",
+  async () => {
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("teardown-trap", {
+      teardown: `trap 'exit 0' TERM; sleep 5 & wait`,
+      teardownTimeoutMs: 2000,
+    });
+
+    const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+    expect({
+      error: archive.error,
+      workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+      worktreeOnDisk: existsSync(worktreePath),
+    }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: true });
+  },
+  15000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "the archive answers when an exited teardown shell's child holds its output open",
+  async () => {
+    const pidFile = path.join(makeTempDir("teardown-open-output-"), "sleep.pid");
+    const { workspaceId, worktreePath } = await createWorktreeWithTeardown("teardown-open-output", {
+      teardown: `sleep 12 & echo $! > ${JSON.stringify(pidFile)}`,
+      teardownTimeoutMs: 2000,
+    });
+
+    try {
+      const archive = await ctx.client.archiveWorkspace(workspaceId);
+
+      expect({
+        error: archive.error,
+        workspaceActive: (await activeWorkspaceIds()).has(workspaceId),
+        worktreeOnDisk: existsSync(worktreePath),
+      }).toEqual({ error: null, workspaceActive: false, worktreeOnDisk: true });
+    } finally {
+      if (existsSync(pidFile)) {
+        const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+        if (isProcessRunning(sleepPid)) process.kill(sleepPid, "SIGKILL");
+      }
+    }
+  },
+  10000,
+);
+
+test.skipIf(process.platform === "win32")(
   "repeating archive removes a residual worktree for an already-archived workspace",
   async () => {
     const repoDir = createGitRepo();

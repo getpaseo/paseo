@@ -131,7 +131,7 @@ teardown 的所有命令共用一分钟的时限。用 `teardownTimeoutMs` 修�
 }
 ```
 
-到时限仍在运行的命令会连同它的子进程一起被停止。如果某个 teardown 命令失败或被停止，工作区仍会归档，worktree 则保留在磁盘上。`teardownTimeoutMs` 接受 1 到 2147483647 之间的整数；其他值使用默认时限。
+达到时限后，Paseo 会尝试停止命令及其子进程，并停止等待输出。如果 teardown 失败或达到时限，工作区仍会归档，worktree 会保留在磁盘上。`teardownTimeoutMs` 接受 1 到 2147483647 之间的整数。其他值使用默认时限。
 
 ## 脚本与服务 {#scripts-and-services}
 

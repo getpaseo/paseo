@@ -497,7 +497,12 @@ async function execSetupCommandStreamed(options: {
       }
       settled = true;
       options.signal?.removeEventListener("abort", abort);
-      await termination;
+      if (termination) {
+        await termination;
+        // A descendant can keep these pipes open after the shell exits.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
@@ -541,6 +546,7 @@ async function execSetupCommandStreamed(options: {
         gracefulTimeoutMs: 1000,
         forceTimeoutMs: 1000,
       });
+      void finish(null);
     };
     if (options.signal?.aborted) {
       abort();

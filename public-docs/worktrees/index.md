@@ -133,7 +133,7 @@ Teardown commands share a one minute limit. Set `teardownTimeoutMs` to change it
 }
 ```
 
-A command still running at the limit is stopped, along with its child processes. When a teardown command fails or is stopped, the workspace is still archived and the worktree stays on disk. `teardownTimeoutMs` takes a whole number from 1 to 2147483647; any other value uses the default.
+At the limit, Paseo tries to stop the command and its child processes and stops waiting for output. If teardown fails or reaches the limit, the workspace still archives and the worktree stays on disk. `teardownTimeoutMs` accepts whole numbers from 1 to 2147483647. Other values use the default.
 
 ## Scripts and services
 
