@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import pino from "pino";
 import {
   type CheckoutDiffSubscriber,
@@ -115,6 +116,7 @@ function makeCheckoutSession(options?: {
   host?: Partial<CheckoutSessionHost>;
   gitMutation?: Partial<GitMutationFake>;
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
+  phaseLogger?: pino.Logger;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -177,6 +179,7 @@ function makeCheckoutSession(options?: {
     paseoHome: options?.paseoHome ?? "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
+    phaseLogger: options?.phaseLogger,
   });
   const delivery = new SessionDelivery((_source, message) => emitted.push(message));
   return {
@@ -275,6 +278,45 @@ describe("CheckoutSession", () => {
           }),
         },
       ]);
+    });
+
+    it("keeps raw checkout inputs and errors out of slow phase logs", async () => {
+      vi.useFakeTimers();
+      const phaseLogger = pino({ level: "silent" });
+      const info = vi.spyOn(phaseLogger, "info");
+      const { checkout, emitted } = makeCheckoutSession({
+        phaseLogger,
+        git: {
+          getSnapshot: async () => {
+            throw new Error("sentinel error");
+          },
+        },
+      });
+      try {
+        const task = checkout.handleStatusRequest({
+          type: "checkout_status_request",
+          cwd: "/tmp/sentinel-cwd",
+          requestId: "untrusted-request-id",
+        });
+        await vi.advanceTimersByTimeAsync(500);
+        await task;
+        const logged = JSON.stringify(info.mock.calls);
+        expect(logged).not.toContain("sentinel");
+        expect(logged).not.toContain("untrusted-request-id");
+        expect(emitted).toEqual([
+          expect.objectContaining({
+            type: "checkout_status_response",
+            payload: expect.objectContaining({
+              cwd: "/tmp/sentinel-cwd",
+              requestId: "untrusted-request-id",
+              error: { code: "UNKNOWN", message: "sentinel error" },
+            }),
+          }),
+        ]);
+      } finally {
+        vi.useRealTimers();
+        info.mockRestore();
+      }
     });
   });
 

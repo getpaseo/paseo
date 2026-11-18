@@ -353,15 +353,15 @@ Check `$PASEO_HOME/daemon.log` for daemon logs. The default level is `info`; set
 `PASEO_LOG_LEVEL=trace` before launching the daemon when you need full provider,
 session, and agent-manager traces for stuck-state debugging.
 
-Slow checkout status requests emit `checkout_phase` records after 500 ms. Supply a fresh UUID v4 as
-`requestId` and match that ID in the log; the response keeps the supplied ID. Records contain only
-fixed phase names, opaque IDs, timing, and numeric or boolean state. A `deadline` or `truncated`
-record marks incomplete evidence. Fast requests emit no phase records.
-
 The supervisor rotates `daemon.log`. Persisted `log.file.rotate` settings in
 `$PASEO_HOME/config.json` win first. Without persisted config, the optional
 `PASEO_LOG_ROTATE_SIZE` and `PASEO_LOG_ROTATE_COUNT` env vars override the
 defaults. The default rotation is `10m` x `3` files everywhere.
+
+Slow checkout status requests emit `checkout_phase` records after 500 ms. Supply a fresh UUID v4 as
+`requestId` and match that ID in the log; the response keeps the supplied ID. Records contain only
+fixed phase names, opaque IDs, timing, and numeric or boolean state. A `deadline` or `truncated`
+record marks incomplete evidence. Fast requests emit no phase records.
 
 ### Git process pressure
 

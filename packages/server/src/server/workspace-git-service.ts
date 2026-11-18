@@ -836,12 +836,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const request = this.normalizeRefreshRequest(options, "getSnapshot");
     const target = this.ensureWorkspaceTarget(cwd);
     if (!request.force && target.latestSnapshot) {
-      checkoutPhase("refresh", {
-        cacheHit: true,
-        snapshotPresent: true,
-        listenerCount: target.listeners.size,
-        force: request.force,
-        includeForge: request.includeForge,
+      checkoutPhase({
+        name: "refresh",
+        fields: {
+          cacheHit: true,
+          snapshotPresent: true,
+          listenerCount: target.listeners.size,
+          force: request.force,
+          includeForge: request.includeForge,
+        },
       })("ok");
       return target.latestSnapshot;
     }
@@ -1489,7 +1492,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     context: CheckoutContext,
   ): Promise<CheckoutSnapshotFacts> {
     if (target.factsPromise) {
-      checkoutPhase("facts", { alreadyActive: true })("joined");
+      checkoutPhase({ name: "facts", fields: { alreadyActive: true } })("joined");
       return target.factsPromise;
     }
 
@@ -3404,11 +3407,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         (request.emitUnchanged === true && active.emitUnchanged !== true) ||
         [...request.movedRemoteRefs].some((ref) => !active.movedRemoteRefs.has(ref));
       const refresh = this.checkoutPhaseRefreshes.get(target);
-      joinRefresh(refresh, true, {
-        addsWork,
-        queued: request.queueIfBusy || addsWork,
-        force: request.force,
-        includeForge: request.includeForge,
+      joinRefresh({
+        refresh,
+        alreadyActive: true,
+        fields: {
+          addsWork,
+          queued: request.queueIfBusy || addsWork,
+          force: request.force,
+          includeForge: request.includeForge,
+        },
       });
       if (request.queueIfBusy || addsWork) {
         target.refreshState.queued = this.mergeRefreshRequests(target.refreshState.queued, request);
@@ -3417,19 +3424,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     if (!request.force && !request.queueIfBusy && this.shouldThrottleNonForcedRefresh(target)) {
-      checkoutPhase("refresh", { cacheHit: true, snapshotPresent: true })("skipped");
+      checkoutPhase({ name: "refresh", fields: { cacheHit: true, snapshotPresent: true } })(
+        "skipped",
+      );
       return Promise.resolve(target.latestSnapshot);
     }
 
     const refresh = newRefresh();
     this.checkoutPhaseRefreshes.set(target, refresh);
-    joinRefresh(refresh, false);
+    joinRefresh({ refresh, alreadyActive: false });
     const promise = runRefresh(refresh, () =>
-      withPhase("refresh", () => this.runWorkspaceRefreshLoop(target, request), {
-        listenerCount: target.listeners.size,
-        snapshotPresent: !!target.latestSnapshot,
-        force: request.force,
-        includeForge: request.includeForge,
+      withPhase({
+        name: "refresh",
+        run: () => this.runWorkspaceRefreshLoop(target, request),
+        fields: {
+          listenerCount: target.listeners.size,
+          snapshotPresent: !!target.latestSnapshot,
+          force: request.force,
+          includeForge: request.includeForge,
+        },
       }),
     ).finally(() => {
       closeRefresh(refresh);
@@ -3564,11 +3577,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         const runRefreshGitCommand = createRunGitCommand(`workspace-refresh:${request.reason}`, {
           priority: request.origin === "observation" ? "background" : undefined,
         });
-        const endAdmission = checkoutPhase("admission", {
-          active: this.workspaceRefreshLimit.activeCount,
-          pending: this.workspaceRefreshLimit.pendingCount,
-          force: request.force,
-          includeForge: request.includeForge,
+        const endAdmission = checkoutPhase({
+          name: "admission",
+          fields: {
+            active: this.workspaceRefreshLimit.activeCount,
+            pending: this.workspaceRefreshLimit.pendingCount,
+            force: request.force,
+            includeForge: request.includeForge,
+          },
         });
         const admittedSnapshot = await this.workspaceRefreshLimit(
           bindCheckoutPhase(() => {
@@ -3636,14 +3652,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (facts?.isGit && target.latestGit?.isGit) {
         const currentFacts = facts;
         try {
-          await withPhase("ref_derived", () =>
-            this.refreshRefDerivedSnapshot(
-              target,
-              currentFacts,
-              request.movedRemoteRefs,
-              runRefreshGitCommand,
-            ),
-          );
+          await withPhase({
+            name: "ref_derived",
+            run: () =>
+              this.refreshRefDerivedSnapshot(
+                target,
+                currentFacts,
+                request.movedRemoteRefs,
+                runRefreshGitCommand,
+              ),
+          });
           return this.combineSnapshot(target);
         } catch (error) {
           this.logger.debug(
@@ -3771,15 +3789,19 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       logger: this.logger,
       runGitCommand: runRefreshGitCommand,
     };
-    const facts = await withPhase("facts", () => this.loadCheckoutFacts(target, baseContext));
+    const facts = await withPhase({
+      name: "facts",
+      run: () => this.loadCheckoutFacts(target, baseContext),
+    });
     if (facts.isGit && facts.resolvedBaseRef !== previousBaseRef) {
       this.invalidateCheckoutDiffCache(cwd, "base");
       this.invalidateCheckoutDiffCache(facts.worktreeRoot, "base");
     }
     const context: CheckoutContext = { ...baseContext, facts };
-    const checkoutStatus = await withPhase("status", () =>
-      this.deps.getCheckoutStatus(cwd, context),
-    );
+    const checkoutStatus = await withPhase({
+      name: "status",
+      run: () => this.deps.getCheckoutStatus(cwd, context),
+    });
     if (!checkoutStatus.isGit) {
       target.latestGit = buildNotGitSnapshot(cwd).git;
       const loadedAtMs = this.deps.now().getTime();
@@ -3792,13 +3814,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const refreshWorktree = request.refreshWorktree || target.latestGit === null;
     const diffStat = refreshWorktree
-      ? await withPhase("shortstat", () =>
-          this.deps
-            .getCheckoutShortstat(cwd, context, {
-              force: request.force || target.latestGit !== null,
-            })
-            .catch(() => null),
-        )
+      ? await withPhase({
+          name: "shortstat",
+          run: () =>
+            this.deps
+              .getCheckoutShortstat(cwd, context, {
+                force: request.force || target.latestGit !== null,
+              })
+              .catch(() => null),
+        })
       : (target.latestGit?.diffStat ?? null);
 
     target.latestGit = {
@@ -3849,9 +3873,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   ): Promise<void> {
     const remoteUrl = target.latestGit?.remoteUrl ?? null;
     target.forgeRefreshedForRemote = { remoteUrl };
-    const resolution = await withPhase("forge_resolve", () =>
-      this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl),
-    );
+    const resolution = await withPhase({
+      name: "forge_resolve",
+      run: () => this.forgeResolver.resolveFromRemoteUrlAsync(remoteUrl),
+    });
     // Every forge gates on the resolver alone: a cloud host matches synchronously
     // and a self-hosted/Enterprise host is recognized by the adapter probe (which
     // this async resolution populates), so GitHub Enterprise is no longer gated
@@ -3865,7 +3890,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const forgeService: ForgeService = resolution.service;
     const forceForge = request.force && request.includeForge;
     if (forceForge) {
-      const end = checkoutPhase("forge_invalidate");
+      const end = checkoutPhase({ name: "forge_invalidate" });
       try {
         forgeService.invalidate({ cwd: target.cwd });
         end();
@@ -3875,18 +3900,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       }
     }
 
-    const forgeSnapshot = await withPhase("forge", () =>
-      loadForgeSnapshot({
-        cwd: target.cwd,
-        forgeService,
-        now: this.deps.now(),
-        deps: this.deps,
-        force: forceForge,
-        reason: request.reason,
-        facts,
-        runGitCommand: runRefreshGitCommand,
-      }),
-    );
+    const forgeSnapshot = await withPhase({
+      name: "forge",
+      run: () =>
+        loadForgeSnapshot({
+          cwd: target.cwd,
+          forgeService,
+          now: this.deps.now(),
+          deps: this.deps,
+          force: forceForge,
+          reason: request.reason,
+          facts,
+          runGitCommand: runRefreshGitCommand,
+        }),
+    });
     // Carry the resolved forge (probe-aware) so the wire projection labels
     // self-managed GitLab hosts correctly instead of falling back to "github".
     target.latestForge = { ...forgeSnapshot, forge: resolution.forge };
@@ -4348,24 +4375,29 @@ async function loadForgeSnapshot(options: {
   // outcome and would just be a wasted CLI spawn on every refresh.
   if (forgeService.authProbeCanThrow) {
     try {
-      await withPhase("forge_auth", () => forgeService.isAuthenticated({ cwd: options.cwd }));
+      await withPhase({
+        name: "forge_auth",
+        run: () => forgeService.isAuthenticated({ cwd: options.cwd }),
+      });
     } catch (error) {
       return buildForgeSnapshot(forgeAuthStateFromError(error), null, null);
     }
   }
 
   try {
-    const result = await withPhase("forge_pr", () =>
-      options.deps.getPullRequestStatus(
-        options.cwd,
-        forgeService,
-        {
-          force: options.force,
-          reason: options.reason,
-        },
-        { facts: options.facts, runGitCommand: options.runGitCommand },
-      ),
-    );
+    const result = await withPhase({
+      name: "forge_pr",
+      run: () =>
+        options.deps.getPullRequestStatus(
+          options.cwd,
+          forgeService,
+          {
+            force: options.force,
+            reason: options.reason,
+          },
+          { facts: options.facts, runGitCommand: options.runGitCommand },
+        ),
+    });
     return buildForgeSnapshot(result.authState, result.status, null);
   } catch (error) {
     // The auth probe succeeded, so a failure here is a command error, not an

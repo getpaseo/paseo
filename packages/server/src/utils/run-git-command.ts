@@ -303,13 +303,16 @@ function executeGitCommand<Output>(
     pending: gitProcessScheduler.pendingCount,
   });
   const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
-  const endQueue = phase("git_queue", {
-    active: gitProcessScheduler.activeCount,
-    pending: gitProcessScheduler.pendingCount,
+  const endQueue = phase({
+    name: "git_queue",
+    fields: {
+      active: gitProcessScheduler.activeCount,
+      pending: gitProcessScheduler.pendingCount,
+    },
   });
   const startCommand = bindCheckoutPhase(() => {
     endQueue();
-    const endSpawn = phase("git_spawn");
+    const endSpawn = phase({ name: "git_spawn" });
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;

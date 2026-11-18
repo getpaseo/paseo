@@ -241,13 +241,13 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
     const resolvedCwd = expandTilde(cwd);
 
-    return traceCheckoutRequest(
-      requestId,
-      (row) => this.phaseLogger?.info(row, "checkout_phase"),
-      async () => {
+    return traceCheckoutRequest({
+      id: requestId,
+      sink: (row) => this.phaseLogger?.info(row, "checkout_phase"),
+      run: async () => {
         try {
           const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
-          const endResponse = phase("response");
+          const endResponse = phase({ name: "response" });
           try {
             this.host.emit({
               type: "checkout_status_response",
@@ -263,7 +263,7 @@ export class CheckoutSession {
             throw error;
           }
         } catch (error) {
-          const endResponse = phase("response");
+          const endResponse = phase({ name: "response" });
           try {
             this.host.emit({
               type: "checkout_status_response",
@@ -291,7 +291,7 @@ export class CheckoutSession {
           }
         }
       },
-    );
+    });
   }
 
   async handleCommitsListRequest(msg: CheckoutCommitsListRequest): Promise<void> {

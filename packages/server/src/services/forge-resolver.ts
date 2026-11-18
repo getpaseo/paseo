@@ -134,12 +134,16 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
   async function probeHostForge(host: string): Promise<string | null> {
     const cached = readFreshProbe(host);
     if (cached !== undefined) {
-      phase("forge_cache", { cacheHit: true })("ok");
+      phase({ name: "forge_cache", fields: { cacheHit: true } })("ok");
       return cached;
     }
     const existing = inFlightProbes.get(host);
     if (existing) {
-      return withPhase("forge_cache", () => existing, { alreadyActive: true });
+      return withPhase({
+        name: "forge_cache",
+        run: () => existing,
+        fields: { alreadyActive: true },
+      });
     }
     const pending = (async () => {
       try {

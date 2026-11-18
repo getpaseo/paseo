@@ -35,6 +35,17 @@ interface Fields {
   queued?: boolean;
   operation?: "facts" | "status" | "shortstat" | "ref-derived" | "other-read";
 }
+export interface CheckoutPhaseRow extends Fields {
+  v: 1;
+  requestId: string;
+  phase: Phase;
+  outcome: Outcome;
+  spanId: string;
+  refreshId?: string;
+  cycleId?: string;
+  elapsedMs: number;
+  durationMs?: number;
+}
 type Event = Fields & {
   phase: Phase;
   outcome: Outcome;
@@ -44,12 +55,12 @@ type Event = Fields & {
   at: number;
   durationMs?: number;
 };
-type Sink = (row: object) => void;
+type Sink = (row: CheckoutPhaseRow) => void;
 interface Request {
   id: string;
   start: number;
   sink: Sink;
-  rows: object[];
+  rows: CheckoutPhaseRow[];
   count: number;
   slow: boolean;
   closed: boolean;
@@ -78,7 +89,7 @@ function emit(request: Request, event: Event) {
   if (request.closed || request.count >= 256) return;
   const { at, ...safe } = event;
   const elapsedMs = Math.max(0, at - request.start);
-  const row = { v: 1, requestId: request.id, ...safe, elapsedMs };
+  const row: CheckoutPhaseRow = { v: 1, requestId: request.id, ...safe, elapsedMs };
   if (event.outcome === "start") request.observed.set(event.spanId, at);
   else if (row.durationMs !== undefined) {
     const observed = request.observed.get(event.spanId);
@@ -102,11 +113,14 @@ function emit(request: Request, event: Event) {
   } else request.rows.push(row);
 }
 
-export async function traceCheckoutRequest<T>(
-  id: string,
-  sink: Sink,
-  run: () => Promise<T>,
-): Promise<T> {
+export interface TraceCheckoutRequestOptions<T> {
+  id: string;
+  sink: Sink;
+  run: () => Promise<T>;
+}
+
+export async function traceCheckoutRequest<T>(options: TraceCheckoutRequestOptions<T>): Promise<T> {
+  const { id, sink, run } = options;
   const request: Request = {
     id: uuid.test(id) ? id : randomUUID(),
     start: now(),
@@ -144,7 +158,7 @@ export async function traceCheckoutRequest<T>(
     request.observed.clear();
   }
   return context.run({ request }, async () => {
-    const end = phase("request");
+    const end = phase({ name: "request" });
     try {
       const result = await run();
       end("ok");
@@ -159,16 +173,8 @@ export async function traceCheckoutRequest<T>(
 }
 
 export function newRefresh(): Refresh {
-  const refresh: Refresh = {
-    id: randomUUID(),
-    cycleId: randomUUID(),
-    subscribers: new Set(),
-    active: new Map(),
-    closed: false,
-    truncated: false,
-    timer: undefined as unknown as NodeJS.Timeout,
-  };
-  refresh.timer = setTimeout(() => {
+  let refresh: Refresh;
+  const timer = setTimeout(() => {
     for (const request of refresh.subscribers)
       emit(request, {
         phase: "limit",
@@ -180,14 +186,24 @@ export function newRefresh(): Refresh {
       });
     closeRefresh(refresh);
   }, 35_000);
+  refresh = {
+    id: randomUUID(),
+    cycleId: randomUUID(),
+    subscribers: new Set(),
+    active: new Map(),
+    closed: false,
+    truncated: false,
+    timer,
+  };
   refresh.timer.unref();
   return refresh;
 }
-export function joinRefresh(
-  refresh: Refresh | undefined,
-  alreadyActive: boolean,
-  fields: Fields = {},
-) {
+export function joinRefresh(options: {
+  refresh: Refresh | undefined;
+  alreadyActive: boolean;
+  fields?: Fields;
+}) {
+  const { refresh, alreadyActive, fields = {} } = options;
   if (!refresh) return;
   const request = context.getStore()?.request;
   if (!request || request.closed || refresh.closed || refresh.subscribers.has(request)) return;
@@ -228,7 +244,8 @@ export function closeRefresh(refresh: Refresh) {
   refresh.subscribers.clear();
   refresh.active.clear();
 }
-export function phase(name: Phase, fields: Fields = {}) {
+export function phase(options: { name: Phase; fields?: Fields }) {
+  const { name, fields = {} } = options;
   const store = context.getStore();
   const refresh = store?.refresh;
   const request = store?.request;
@@ -265,12 +282,13 @@ export function phase(name: Phase, fields: Fields = {}) {
     send({ ...event, outcome, at: end, durationMs: Math.max(0, end - start) });
   };
 }
-export async function withPhase<T>(
-  name: Phase,
-  run: () => Promise<T>,
-  fields?: Fields,
-): Promise<T> {
-  const end = phase(name, fields);
+export async function withPhase<T>(options: {
+  name: Phase;
+  run: () => Promise<T>;
+  fields?: Fields;
+}): Promise<T> {
+  const { name, run, fields } = options;
+  const end = phase({ name, fields });
   try {
     const store = context.getStore();
     let operation = store?.operation;

@@ -4450,13 +4450,13 @@ export async function getPullRequestStatus(
   if (!options?.force) {
     const cached = pullRequestStatusCache.get(cacheKey);
     if (cached) {
-      phase("forge_cache", { cacheHit: true })("ok");
+      phase({ name: "forge_cache", fields: { cacheHit: true } })("ok");
       return cached;
     }
 
     const existing = pullRequestStatusInFlight.get(cacheKey);
     if (existing) {
-      const end = phase("forge_cache", { alreadyActive: true });
+      const end = phase({ name: "forge_cache", fields: { alreadyActive: true } });
       return existing.then(
         (value) => {
           end("joined");

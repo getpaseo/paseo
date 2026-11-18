@@ -1357,7 +1357,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     try {
-      const result = await withPhase("forge_runner", () => deps.runner(args, effectiveOptions));
+      const result = await withPhase({
+        name: "forge_runner",
+        run: () => deps.runner(args, effectiveOptions),
+      });
       return result.stdout.trim();
     } catch (error) {
       throw githubCliRunner.normalizeError(error, {

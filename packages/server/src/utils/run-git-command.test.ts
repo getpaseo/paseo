@@ -229,9 +229,33 @@ describe("runGitCommand", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     fakeSpawnController.reset();
     vi.resetModules();
     vi.unstubAllEnvs();
+  });
+
+  it("carries checkout correlation through scheduler admission and spawn", async () => {
+    vi.useFakeTimers();
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const { traceCheckoutRequest } = await import("./checkout-phase.js");
+    enqueueSpawnBehaviors({ delayMs: 1_000 });
+    const rows: import("./checkout-phase.js").CheckoutPhaseRow[] = [];
+    const request = traceCheckoutRequest({
+      id: "not-a-uuid",
+      sink: (row) => rows.push(row),
+      run: () => runGitCommand(["status"], { cwd: process.cwd() }),
+    });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "git_queue", outcome: "start", operation: "other-read" }),
+        expect.objectContaining({ phase: "git_spawn", outcome: "start", operation: "other-read" }),
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(request).resolves.toMatchObject({ exitCode: 0 });
+    expect(rows.every((row) => row.requestId !== "not-a-uuid")).toBe(true);
   });
 
   it("throttles concurrent git commands to the configured limit", async () => {

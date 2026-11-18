@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { traceCheckoutRequest, type CheckoutPhaseRow } from "../utils/checkout-phase.js";
 
 import { createForgeService } from "./forge-registry.js";
 import { createForgeResolver, forgeForHost, parseRemoteHost } from "./forge-resolver.js";
@@ -42,6 +43,56 @@ describe("forgeForHost", () => {
 });
 
 describe("createForgeResolver", () => {
+  it("reports a joined host probe through each request context", async () => {
+    vi.useFakeTimers();
+    let releaseProbe!: (forge: string | null) => void;
+    let markProbeStarted!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      markProbeStarted = resolve;
+    });
+    const probeResult = new Promise<string | null>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const resolver = createForgeResolver({
+      resolveSshHostname: resolveSshHostnameAsLiteralHost,
+      probeForge: async () => {
+        markProbeStarted();
+        return probeResult;
+      },
+    });
+    const firstRows: CheckoutPhaseRow[] = [];
+    const secondRows: CheckoutPhaseRow[] = [];
+    try {
+      const first = traceCheckoutRequest({
+        id: "request-a",
+        sink: (row) => firstRows.push(row),
+        run: () => resolver.resolveFromRemoteUrlAsync("git@gitlab.example.test:group/repo.git"),
+      });
+      await probeStarted;
+      const second = traceCheckoutRequest({
+        id: "request-b",
+        sink: (row) => secondRows.push(row),
+        run: () => resolver.resolveFromRemoteUrlAsync("git@gitlab.example.test:group/repo.git"),
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      expect(secondRows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ phase: "forge_cache", outcome: "start", alreadyActive: true }),
+        ]),
+      );
+      releaseProbe("gitlab");
+      await expect(Promise.all([first, second])).resolves.toEqual([
+        expect.objectContaining({ forge: "gitlab" }),
+        expect.objectContaining({ forge: "gitlab" }),
+      ]);
+      expect(JSON.stringify([...firstRows, ...secondRows])).not.toContain("gitlab.example.test");
+      expect(firstRows[0]?.requestId).not.toBe(secondRows[0]?.requestId);
+    } finally {
+      releaseProbe(null);
+      vi.useRealTimers();
+    }
+  });
+
   it("resolves a github.com remote to the github forge", async () => {
     const resolver = createForgeResolver({
       resolveRemoteUrl: async () => "git@github.com:owner/repo.git",

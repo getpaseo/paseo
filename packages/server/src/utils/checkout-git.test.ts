@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFileSync, execSync, spawnSync } from "child_process";
 import {
   existsSync,
@@ -11,6 +11,7 @@ import {
   statSync,
 } from "fs";
 import { join } from "path";
+import { traceCheckoutRequest, type CheckoutPhaseRow } from "./checkout-phase.js";
 import { win32 } from "node:path";
 import { tmpdir } from "os";
 import pino from "pino";
@@ -3558,6 +3559,48 @@ const x = 1;
     expect(first).toEqual(second);
     expect(first.status?.url).toContain("/pull/123");
     expect(callCount).toBe(1);
+  });
+
+  it("reports the actual PR status cache hit", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    const github = createGitHubServiceForStatus(createPullRequestStatus());
+    await getPullRequestStatus(repoDir, github);
+    vi.useFakeTimers();
+    let release!: () => void;
+    let markLookupDone!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lookupDone = new Promise<void>((resolve) => {
+      markLookupDone = resolve;
+    });
+    const rows: CheckoutPhaseRow[] = [];
+    try {
+      const task = traceCheckoutRequest({
+        id: "cache-hit-request",
+        sink: (row) => rows.push(row),
+        run: async () => {
+          await getPullRequestStatus(repoDir, github);
+          markLookupDone();
+          await held;
+        },
+      });
+      await lookupDone;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ phase: "forge_cache", outcome: "ok", cacheHit: true }),
+        ]),
+      );
+      release();
+      await task;
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
   });
 
   it("does not reuse a PR status cache entry after HEAD changes on the same branch", async () => {

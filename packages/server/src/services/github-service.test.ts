@@ -17,6 +17,7 @@ import {
   type GitHubPullRequestStatusFacts,
 } from "./github-service.js";
 import { isPlatform } from "../test-utils/platform.js";
+import { traceCheckoutRequest, type CheckoutPhaseRow } from "../utils/checkout-phase.js";
 import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
@@ -589,6 +590,38 @@ describe("ForgeService", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("records the injected GitHub runner boundary with safe fields", async () => {
+    const runner = createDeferredRunner();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const service = createGitHubService({
+      runner: (args, options) => {
+        markStarted();
+        return runner.runner(args, options);
+      },
+      resolveGhPath: async () => "/tmp/private-gh-path",
+      now: () => 100,
+    });
+    const rows: CheckoutPhaseRow[] = [];
+    const task = traceCheckoutRequest({
+      id: "invalid-id",
+      sink: (row) => rows.push(row),
+      run: () => service.isAuthenticated({ cwd: "/tmp/private-cwd" }),
+    });
+    await started;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "forge_runner", outcome: "start" }),
+      ]),
+    );
+    expect(JSON.stringify(rows)).not.toContain("private");
+    runner.resolveNext("");
+    await expect(task).resolves.toBe(true);
   });
 
   it.each([
