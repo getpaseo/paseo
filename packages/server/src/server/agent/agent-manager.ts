@@ -923,7 +923,10 @@ export class AgentManager {
   >();
   private readonly collectingRuntimes = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
-  private readonly sourceItemTurnIds = new WeakMap<object, string>();
+  private readonly idleTextTurns = new WeakMap<
+    ActiveManagedAgent,
+    { turnId: string; messageId?: string }
+  >();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -974,7 +977,7 @@ export class AgentManager {
       onFlush: ({ agentId, item, provider, turnId }) => {
         this.trackTimelineWrite(
           agentId,
-          this.recordAndDispatchTimelineItem(agentId, item, provider, turnId, {
+          this.recordAndDispatchTimelineItem(agentId, item, provider, turnId ?? randomUUID(), {
             notifyWaiters: true,
           }),
         );
@@ -3240,9 +3243,7 @@ export class AgentManager {
     item = limitAgentTimelineItemContent(item);
     this.touchUpdatedAt(agent);
     const turnId = this.liveTurnId(agent);
-    const result = await this.recordAndDispatchTimelineItem(agentId, item, agent.provider, turnId, {
-      inheritItemTurn: item.type === "tool_call",
-    });
+    const result = await this.recordAndDispatchTimelineItem(agentId, item, agent.provider, turnId);
     if (result.kind === "dropped") {
       throw new Error("Timeline item belongs to a rewound turn");
     }
@@ -3596,6 +3597,7 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    this.idleTextTurns.delete(agent);
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -5496,42 +5498,30 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: Extract<AgentStreamEvent, { type: "timeline" }>,
   ): Promise<boolean> {
-    const sourceItem = event.item;
-    // Capture the open turn at admission, before an identity lookup can yield.
-    const fallbackTurnId = this.liveTurnId(agent, event.turnId);
-    const originalTurnId =
-      event.turnId === undefined && sourceItem.type === "tool_call"
-        ? (this.agentStreamCoalescer.pendingToolTurnId(agent.id, sourceItem.callId) ??
-          (await this.timeline.itemTurnId({ agentId: agent.id }, sourceItem)))
-        : undefined;
-    const { sourceItem: identity, ...timelineEvent } = event;
-    const turnId =
-      (identity ? this.sourceItemTurnIds.get(identity) : undefined) ??
-      originalTurnId ??
-      fallbackTurnId;
-    if (identity) this.sourceItemTurnIds.set(identity, turnId);
-    const liveEvent = { ...timelineEvent, turnId };
+    const turnId = this.assignLiveTurn(agent, event.turnId, event.item);
+    const liveEvent = { ...event, turnId };
     this.touchUpdatedAt(agent);
     if (this.agentStreamCoalescer.handle(agent.id, liveEvent)) {
-      this.traceCoalescerBuffered(agent, liveEvent, turnId);
+      this.traceCoalescerBuffered(agent, event, turnId ?? undefined);
       return false;
     }
     this.agentStreamCoalescer.flushFor(agent.id);
     await this.timeline.settled({ agentId: agent.id });
 
+    const resolvedTurnId = turnId ?? randomUUID();
     let notifyWaiters = false;
     for (const item of projectAgentMessages(event.item)) {
       if (
         item.type === "user_message" &&
         item.clientMessageId &&
-        (await this.reconcileSubmittedPromptEcho(agent, item, turnId))
+        (await this.reconcileSubmittedPromptEcho(agent, item, resolvedTurnId))
       )
         continue;
       const result = await this.recordAndDispatchTimelineItem(
         agent.id,
         item,
         event.provider,
-        turnId,
+        resolvedTurnId,
       );
       if (result.kind === "dropped") continue;
       if (item.type === "user_message") {
@@ -5741,7 +5731,31 @@ export class AgentManager {
   }
 
   private liveTurnId(agent: ActiveManagedAgent, turnId?: string): string {
-    return turnId ?? agent.activeForegroundTurnId ?? agent.activeTurnId ?? randomUUID();
+    return this.assignLiveTurn(agent, turnId) ?? randomUUID();
+  }
+
+  private assignLiveTurn(
+    agent: ActiveManagedAgent,
+    turnId?: string,
+    item?: AgentTimelineItem,
+  ): string | null {
+    const openTurnId = turnId ?? agent.activeForegroundTurnId ?? agent.activeTurnId;
+    if (openTurnId || (item?.type !== "assistant_message" && item?.type !== "reasoning")) {
+      this.idleTextTurns.delete(agent);
+      // Anonymous tool snapshots coalesce by call ID before ingest assigns their turn.
+      return openTurnId ?? (item?.type === "tool_call" ? null : randomUUID());
+    }
+
+    const previous = this.idleTextTurns.get(agent);
+    const messageId = item.type === "assistant_message" ? item.messageId : undefined;
+    const sameMessage =
+      previous && (!messageId || !previous.messageId || messageId === previous.messageId);
+    const textTurn = {
+      turnId: sameMessage ? previous.turnId : randomUUID(),
+      messageId: messageId ?? previous?.messageId,
+    };
+    this.idleTextTurns.set(agent, textTurn);
+    return textTurn.turnId;
   }
 
   private async recordAndDispatchTimelineItem(
@@ -5752,7 +5766,6 @@ export class AgentManager {
     options?: {
       providerMessageId?: string;
       notifyWaiters?: boolean;
-      inheritItemTurn?: boolean;
       onRecorded?: () => void;
     },
   ): Promise<TimelineIngestResult> {
@@ -5770,11 +5783,11 @@ export class AgentManager {
         ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
       },
       {
-        inheritItemTurn: item.type === "plugin" || options?.inheritItemTurn,
         publish: (commit) => {
           options?.onRecorded?.();
-          this.publishTimelineEvent(agentId, { ...event, turnId: commit.row.turnId }, commit);
-          if (options?.notifyWaiters) this.notifyForegroundTurnWaiters(agentId, event);
+          const committedEvent = { ...event, turnId: commit.row.turnId };
+          this.publishTimelineEvent(agentId, committedEvent, commit);
+          if (options?.notifyWaiters) this.notifyForegroundTurnWaiters(agentId, committedEvent);
           if (
             item.type === "tool_call" &&
             item.status === "completed" &&

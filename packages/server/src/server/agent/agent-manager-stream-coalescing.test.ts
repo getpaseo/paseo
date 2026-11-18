@@ -563,6 +563,41 @@ describe("root live turn membership", () => {
     }
   });
 
+  test("keeps adjacent idle text chunks together across coalescer windows", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    try {
+      const { agentId, session } = await createManagedSession(harness);
+      session.pushEvent(assistant("one "));
+      session.pushEvent(assistant("two "));
+      await waitForSessionEventQueue();
+      await vi.advanceTimersByTimeAsync(COALESCE_WINDOW_MS);
+      session.pushEvent(assistant("three"));
+      session.pushEvent(
+        timelineEvent({ type: "notification", level: "info", message: "Independent notice" }),
+      );
+      session.pushEvent(assistant("another reply"));
+      await waitForSessionEventQueue();
+      await harness.manager.flush();
+
+      const rows = (await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 0 }))
+        .rows;
+      expect(getTimelineItems(rows)).toEqual([
+        { type: "assistant_message", text: "one two three" },
+        { type: "notification", level: "info", message: "Independent notice" },
+        { type: "assistant_message", text: "another reply" },
+      ]);
+      expect(rows.map((row) => row.turnId)).toEqual([
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+      ]);
+      expect(new Set(rows.map((row) => row.turnId)).size).toBe(3);
+    } finally {
+      harness.cleanup();
+    }
+  });
+
   test("a late tool update keeps the turn where the tool started", async () => {
     const harness = createHarness();
     try {
@@ -571,7 +606,7 @@ describe("root live turn membership", () => {
       session.pushEvent(timelineEvent(toolCall()));
       session.pushEvent(terminalEvent("turn_completed", "first"));
       session.pushEvent({ type: "turn_started", provider: "codex", turnId: "second" });
-      session.pushEvent(timelineEvent(toolCall({ status: "completed" })));
+      session.pushEvent(timelineEvent(toolCall({ status: "completed" }), "codex", "second"));
       session.pushEvent(assistant("Second reply"));
       session.pushEvent(terminalEvent("turn_completed", "second"));
       await vi.waitFor(() => {
@@ -759,7 +794,6 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
-      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       for (let i = 0; i < 100; i++) {
         session.pushEvent(reasoning("r"));
@@ -1175,7 +1209,6 @@ describe("target coalesced behavior", () => {
     const harness = createHarness();
     try {
       const { agentId, session } = await createManagedSession(harness);
-      session.pushEvent({ type: "turn_started", provider: "codex", turnId: "streaming-turn" });
 
       session.pushEvent(assistant(""));
       session.pushEvent(assistant(" "));

@@ -427,7 +427,8 @@ export class TimelineProjection {
   itemTurnId(item: AgentTimelineItem): string | undefined {
     const identity = timelineItemIdentity(item);
     const index = identity === null ? undefined : this.identities.get(identity);
-    return index === undefined ? undefined : this.rows[index].turnId;
+    const row = index === undefined ? undefined : this.rows[index];
+    return row?.item.type === item.type ? row.turnId : undefined;
   }
 
   getRows(): ProjectedTimelineRow[] {

@@ -7,8 +7,8 @@ type CoalescableTextKind = "assistant_message" | "reasoning";
 type CoalescableTimelineKind = CoalescableTextKind | "tool_call";
 type CoalescableTextItem = Extract<AgentTimelineItem, { type: CoalescableTextKind }>;
 type CoalescableTimelineItem = Extract<AgentTimelineItem, { type: CoalescableTimelineKind }>;
-export type LiveTimelineEvent = Extract<AgentStreamEvent, { type: "timeline" }> & {
-  turnId: string;
+export type LiveTimelineEvent = Omit<Extract<AgentStreamEvent, { type: "timeline" }>, "turnId"> & {
+  turnId: string | null;
 };
 type CoalescerEvent = Exclude<AgentStreamEvent, { type: "timeline" }> | LiveTimelineEvent;
 type CoalescableTimelineEvent = LiveTimelineEvent & {
@@ -24,7 +24,7 @@ export interface AgentStreamCoalescerFlush {
   agentId: string;
   item: CoalescableTimelineItem;
   provider: AgentProvider;
-  turnId: string;
+  turnId: string | null;
 }
 
 export interface AgentStreamCoalescerOptions {
@@ -39,14 +39,14 @@ interface PendingTextEntry {
   item: CoalescableTextItem;
   text: string;
   provider: AgentProvider;
-  turnId: string;
+  turnId: string | null;
 }
 
 interface PendingToolCallEntry {
   kind: "tool_call";
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
-  turnId: string;
+  turnId: string | null;
 }
 
 type PendingAgentStreamEntry = PendingTextEntry | PendingToolCallEntry;
@@ -55,7 +55,6 @@ interface PendingAgentStreamBuffer {
   agentId: string;
   entries: PendingAgentStreamEntry[];
   toolCallEntryIndexes: Map<string, number>;
-  latestToolTurns: Map<string, string>;
   timer: ReturnType<typeof setTimeout> | null;
   flushing: boolean;
   lastFlushAt: number | null;
@@ -139,11 +138,6 @@ export class AgentStreamCoalescer {
     return true;
   }
 
-  pendingToolTurnId(agentId: string, callId: string): string | undefined {
-    const buffer = this.buffers.get(agentId);
-    return buffer?.latestToolTurns.get(callId);
-  }
-
   flushFor(agentId: string): void {
     this.flushBuffer(agentId);
   }
@@ -173,7 +167,6 @@ export class AgentStreamCoalescer {
       agentId,
       entries: [],
       toolCallEntryIndexes: new Map(),
-      latestToolTurns: new Map(),
       timer: null,
       flushing: false,
       lastFlushAt: null,
@@ -194,7 +187,6 @@ export class AgentStreamCoalescer {
       return;
     }
 
-    buffer.latestToolTurns.set(event.item.callId, event.turnId);
     const key = JSON.stringify([event.item.callId, event.turnId]);
     const existingIndex = buffer.toolCallEntryIndexes.get(key);
     const existing = existingIndex !== undefined ? buffer.entries[existingIndex] : undefined;
@@ -256,7 +248,6 @@ export class AgentStreamCoalescer {
     const entries = buffer.entries;
     buffer.entries = [];
     buffer.toolCallEntryIndexes.clear();
-    buffer.latestToolTurns.clear();
     buffer.flushing = true;
     buffer.lastFlushAt = this.now();
 
