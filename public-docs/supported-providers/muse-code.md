@@ -2,7 +2,7 @@
 title: Muse Code
 description: Install and configure Muse Code for Paseo.
 nav: Muse Code
-order: 25
+order: 29
 category: Providers
 ---
 
