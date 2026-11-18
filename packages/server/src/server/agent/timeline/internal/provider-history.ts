@@ -19,8 +19,7 @@ type ToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
  */
 type Segment =
   | { kind: "text" | "reasoning"; text: string }
-  | { kind: "tool_call"; item: ToolCallItem }
-  | { kind: "item"; item: AgentTimelineItem };
+  | { kind: "tool_call"; item: ToolCallItem };
 
 interface Turn {
   /** The provider's id for the prompt that opens the turn. */
@@ -50,10 +49,9 @@ interface ProviderTurn extends Turn {
  * further rows are appended as new rows. A segment that differs at all, including an answer Paseo
  * saw only part of or a tool call that finished since, is divergence, and nothing is written.
  *
- * Compared: assistant and reasoning text exactly, tool calls by `callId`, `name`, `status`,
- * `error` and `detail`, and every other item except the ones Paseo writes itself (errors,
- * notifications, plugin rows) or the provider marks as live-only. Tool call `metadata` is not
- * otherwise compared.
+ * Compare prompts, assistant and reasoning text, and tool calls by `callId`, `name`,
+ * `status`, `error` and `detail`. Status and presentation rows can differ between the live
+ * stream and history replay. They stay in the timeline without affecting this comparison.
  */
 export function planProviderHistory(input: {
   rows: readonly ProjectedTimelineRow[];
@@ -222,10 +220,9 @@ function addToSegments(segments: Segment[], item: AgentTimelineItem): number | n
     case "error":
     case "notification":
     case "plugin":
+    case "compaction":
+    case "todo":
       return null;
-    default:
-      segments.push({ kind: "item", item });
-      return segments.length - 1;
   }
 }
 
@@ -240,9 +237,6 @@ function sameSegment(a: Segment, b: Segment): boolean {
       b.kind === "tool_call" &&
       sameValue(toolCallContent(a.item), toolCallContent(b.item))
     );
-  }
-  if (a.kind === "item" || b.kind === "item") {
-    return a.kind === "item" && b.kind === "item" && sameValue(a.item, b.item);
   }
   return a.kind === b.kind && a.text === b.text;
 }

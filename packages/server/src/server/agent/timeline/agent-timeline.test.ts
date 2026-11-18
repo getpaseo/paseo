@@ -1301,6 +1301,35 @@ describe.each(TIMELINE_CONTRACT_BACKENDS)("provider history over a $name backend
     ]);
   });
 
+  it.each<{ name: string; live: TimelineEntry[]; replay: TimelineEntry[] }>([
+    {
+      name: "compaction",
+      live: [
+        { item: { type: "compaction", status: "loading", trigger: "auto" } },
+        { item: { type: "compaction", status: "completed", trigger: "auto", preTokens: 100 } },
+      ],
+      replay: [{ item: { type: "compaction", status: "completed" } }],
+    },
+    {
+      name: "to-do",
+      live: [{ item: { type: "todo", items: [{ text: "Check tests", completed: true }] } }],
+      replay: [],
+    },
+  ])("keeps $name status while reconciling later provider turns", async ({ live, replay }) => {
+    const initial = [prompt("a"), ...live, reply("A")];
+    const { timeline } = await owned(initial);
+    const provider = [prompt("a"), ...replay, reply("A")];
+    expect(await timeline.reconcileProviderHistory(scope, provider)).toEqual({ kind: "unchanged" });
+
+    const continuation = [prompt("b"), reply("B")];
+    expect(
+      await timeline.reconcileProviderHistory(scope, [...provider, ...continuation]),
+    ).toMatchObject({ kind: "appended" });
+    expect((await timeline.readRows(scope)).map((row) => row.item)).toEqual(
+      [...initial, ...continuation].map(({ item }) => item),
+    );
+  });
+
   it("appends the turns the provider has after the owned conversation", async () => {
     const { timeline } = await owned([prompt("a"), reply("A")]);
     const published: TimelineCommit[][] = [];
