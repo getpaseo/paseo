@@ -2761,6 +2761,8 @@ export const ru: TranslationResources = {
         toggleFocusMode: "Переключить режим фокусировки",
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
+        toggleModelPicker: "Открыть или закрыть выбор модели",
+        cycleEffort: "Переключить уровень усилий",
         cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать/остановить диктовку",

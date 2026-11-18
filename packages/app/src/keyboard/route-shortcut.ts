@@ -85,6 +85,8 @@ const MESSAGE_INPUT_DISPATCH: Record<
   "dictation-confirm": { id: "message-input.dictation-confirm", scope: "message-input" },
   "voice-toggle": { id: "message-input.voice-toggle", scope: "message-input" },
   "voice-mute-toggle": { id: "message-input.voice-mute-toggle", scope: "message-input" },
+  "model-toggle": { id: "message-input.model-toggle", scope: "message-input" },
+  "effort-cycle": { id: "message-input.effort-cycle", scope: "message-input" },
   "mode-cycle": { id: "message-input.mode-cycle", scope: "message-input" },
 };
 

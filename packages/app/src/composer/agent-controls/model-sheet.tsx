@@ -31,7 +31,12 @@ import {
   toolbarSlot,
   type ToolbarGlyphs,
 } from "@/components/ui/control-geometry";
-import { shortModelLabel } from "./utils";
+import { getAgentControlHintKey, shortModelLabel } from "./utils";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ControlTooltipHint } from "./composer-control";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -45,6 +50,7 @@ interface CompactModelSheetProps {
   selectedProvider: string;
   selectedModel: string;
   thinkingLabel: string | null;
+  effortKeys: ReturnType<typeof useShortcutKeys>;
   onSelect: (provider: string, modelId: string) => void;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
@@ -133,6 +139,7 @@ export function CompactModelSheet({
   selectedProvider,
   selectedModel,
   thinkingLabel,
+  effortKeys,
   onSelect,
   isLoading,
   profiles = null,
@@ -321,6 +328,7 @@ export function CompactModelSheet({
         accessibilityLabel={t("modelSelector.selectedModel", {
           model: rootBrowser.selectedModelLabel,
         })}
+        effortKeys={effortKeys}
       />
 
       <AdaptiveModalSheet
@@ -409,17 +417,7 @@ export function CompactModelSheet({
  * The folded model control in the toolbar: the provider glyph, then the model and thinking
  * labels for as long as they fit.
  */
-function ModelSheetTrigger({
-  ModelIcon,
-  modelLabel,
-  thinkingLabel,
-  glyphs,
-  iconOnly,
-  isOpen,
-  disabled,
-  onPress,
-  accessibilityLabel,
-}: {
+interface ModelSheetTriggerProps {
   /** The selected provider's glyph, or null before a provider is selected. */
   ModelIcon: ReturnType<typeof useProviderIcon> | null;
   modelLabel: string;
@@ -430,7 +428,27 @@ function ModelSheetTrigger({
   disabled: boolean;
   onPress: () => void;
   accessibilityLabel: string;
-}) {
+  effortKeys: ReturnType<typeof useShortcutKeys>;
+}
+
+function ModelSheetTrigger({
+  ModelIcon,
+  modelLabel,
+  thinkingLabel,
+  glyphs,
+  iconOnly,
+  isOpen,
+  disabled,
+  onPress,
+  accessibilityLabel,
+  effortKeys,
+}: ModelSheetTriggerProps) {
+  const { t } = useTranslation();
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const toggleAction = isActiveComposer ? "message-input.model-toggle" : undefined;
+  const modelKeys = useShortcutKeys(toggleAction ? "toggle-model-picker" : null);
+  useKeyboardToggle({ action: toggleAction, disabled, open: isOpen, onToggle: onPress });
+
   const glyphRole = iconOnly ? "icon" : "label";
   const glyph = glyphs[glyphRole];
   const triggerLabels = useModelTriggerLabels({
@@ -451,7 +469,7 @@ function ModelSheetTrigger({
     [disabled, iconOnly, isOpen],
   );
 
-  return (
+  const trigger = (
     <View style={styles.triggerFrame} onLayout={triggerLabels.onFrameLayout}>
       <ComboboxTrigger
         collapsable={false}
@@ -520,6 +538,23 @@ function ModelSheetTrigger({
         </View>
       ) : null}
     </View>
+  );
+
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        {trigger}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <ControlTooltipHint label={t(getAgentControlHintKey("model"))} shortcutKeys={modelKeys} />
+        {effortKeys ? (
+          <ControlTooltipHint
+            label={t("settings.shortcuts.help.cycleEffort")}
+            shortcutKeys={effortKeys}
+          />
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { DensityIcon } from "@/components/ui/density-icon";
@@ -18,6 +18,11 @@ import {
 } from "@/composer/agent-controls/composer-control";
 import type { ComposerControlPresentation } from "@/composer/agent-controls/layout";
 import { getAgentControlHintKey, getFeatureHighlightColor } from "@/composer/agent-controls/utils";
+
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
+import { resolveNextChoiceId } from "./mode";
 
 const SEARCH_THRESHOLD = 6;
 
@@ -69,6 +74,26 @@ interface ThinkingControl {
   onSelect: (id: string) => void;
   /** The select's displayed label, falling back like the compact model sheet. */
   displayLabel: string;
+}
+
+export function useEffortCycleShortcut(thinking: ThinkingControl | null, disabled: boolean) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const effortHandlerId = useId();
+  const nextEffortId = resolveNextChoiceId(thinking?.options ?? [], thinking?.selectedId);
+  const canCycleEffort =
+    isActiveComposer && !disabled && nextEffortId !== null && Boolean(thinking);
+  useKeyboardActionHandler({
+    handlerId: effortHandlerId,
+    actions: ["message-input.effort-cycle"],
+    enabled: canCycleEffort,
+    priority: 200,
+    handle: () => {
+      if (!thinking || nextEffortId === null) return false;
+      thinking.onSelect(nextEffortId);
+      return true;
+    },
+  });
+  return useShortcutKeys(canCycleEffort ? "cycle-effort" : null);
 }
 
 /** The thinking select and the option controls, as the data `ComposerControl` draws. */
