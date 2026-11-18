@@ -1,6 +1,14 @@
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
-import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
+import {
+  AgentTurnBusyError,
+  sendPreparedPromptToAgent,
+  sendPromptToAgent,
+  unarchiveAgentState,
+  waitForAgentRunStartWithTimeout,
+} from "./agent/agent-prompt.js";
+import { formatChangeRequestUpdate } from "./agent/agent-messages/index.js";
+import { createChangeRequestWatches } from "./agent/change-request-watches/index.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
 import {
   createFinishSubscriptions,
@@ -1469,7 +1477,63 @@ export async function createPaseoDaemon(
   });
   await scheduleService.start();
 
+  const changeRequestWatches = createChangeRequestWatches({
+    source: github.changeRequests,
+    paseoHome: config.paseoHome,
+    logger,
+    isActive: async (agentId) => {
+      const record = await agentStorage.get(agentId);
+      return record ? !record.archivedAt : Boolean(agentManager.getAgent(agentId));
+    },
+    deliver: async (agentId, digest) => {
+      await restartRecovery.waitForResume(agentId, digest.signal);
+      if (!digest.isPending()) return false;
+      if (agentManager.hasInFlightRun(agentId) || agentManager.hasPendingPermissions(agentId))
+        return false;
+      try {
+        const dispatch = await sendPreparedPromptToAgent({
+          agentId,
+          agentManager,
+          agentStorage,
+          prompt: formatChangeRequestUpdate(digest.id, digest.text),
+          idleOnly: true,
+          unarchive: false,
+          runOptions: { clientMessageId: digest.id },
+          beforeDispatch: async () => {
+            if (!digest.isPending())
+              throw new AgentTurnBusyError("Change request update was withdrawn");
+          },
+          logger,
+        });
+        if (dispatch.disposition === "turn_started") {
+          await waitForAgentRunStartWithTimeout(
+            agentManager,
+            agentId,
+            dispatch.started,
+            digest.signal,
+          );
+        }
+        return true;
+      } catch (error) {
+        if (error instanceof AgentTurnBusyError) return false;
+        throw error;
+      }
+    },
+  });
+  const unsubscribeChangeRequestDelivery = agentManager.subscribe(
+    (event) => {
+      if (event.type !== "agent_state" || agentManager.hasInFlightRun(event.agent.id)) return;
+      changeRequestWatches.agentIdle(event.agent.id);
+    },
+    { replayState: false },
+  );
+
   agentManager.setAgentArchivedCallback(async (agentId) => {
+    await changeRequestWatches
+      .archive(agentId)
+      .catch((err) =>
+        logger.warn({ err, agentId }, "Could not remove archived agent's change request watches"),
+      );
     try {
       await scheduleService.completeForAgent(agentId);
     } catch (error) {
@@ -1535,6 +1599,7 @@ export async function createPaseoDaemon(
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
+    changeRequestWatches,
     finishSubscriptions: () => finishSubscriptions,
     agentMessages: () => {
       if (!wsServer) throw new Error("Daemon is not accepting agent messages");
@@ -1907,6 +1972,7 @@ export async function createPaseoDaemon(
             providerSnapshotManager.settlePluginProviders();
             restartRecovery.resumePending();
             await finishSubscriptions.start();
+            await changeRequestWatches.start();
             wsServer.beginAcceptingConnections();
             const relaySecurityLogger = logger.child({ module: "relay-security" });
             relayRuntime = createRelayRuntime({
@@ -1997,6 +2063,8 @@ export async function createPaseoDaemon(
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
+    unsubscribeChangeRequestDelivery();
+    await changeRequestWatches.close();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();

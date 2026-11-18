@@ -287,6 +287,21 @@ export const PASEO_TOOL_CATALOG = {
     detail: { inputOrder: ["terminalId"] },
   },
 
+  subscribe_change_request: {
+    label: "Watch change request",
+    completedLabel: "Watching change request",
+    context: field("url"),
+  },
+  unsubscribe_change_request: {
+    label: "Stop watching change request",
+    completedLabel: "Stopped watching change request",
+    context: field("url"),
+  },
+  change_request_update: {
+    label: "Change request update",
+    completedLabel: "Change request update",
+  },
+
   // Schedules and heartbeats
   create_schedule: {
     label: "Create schedule",

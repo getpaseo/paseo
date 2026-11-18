@@ -175,9 +175,22 @@ function projectAgentMessage(item: AgentTimelineItem): AgentTimelineItem | null 
   if (item.type !== "user_message") return item;
   const message = parseAgentMessage(item.text);
   if (!message) {
-    // Schedule bodies include their run ID, keeping identity stable across acceptance
-    // and provider replay even when the provider assigns its own message ID.
+    const notification = CHANGE_REQUEST_ENVELOPE_PATTERN.exec(item.text);
+    if (notification) {
+      const [, id, body] = notification;
+      const text = unescapeXml(body);
+      if (text === null) return item;
+      return {
+        type: "tool_call",
+        callId: `paseo-change-request:${id}`,
+        name: "change_request_update",
+        status: "completed",
+        error: null,
+        detail: { type: "plain_text", text },
+      };
+    }
     if (!isSystemInjectedEnvelope(item.text)) return item;
+    // Schedule bodies include the run ID, keeping identity stable across replay.
     const text = item.text.slice("<paseo-system>\n".length, -"\n</paseo-system>".length);
     return {
       type: "tool_call",
@@ -225,6 +238,14 @@ export function formatSystemNotificationPrompt(reason: string): string {
 
 const SYSTEM_ENVELOPE_PATTERN = /^<paseo-system>\n[\s\S]*\n<\/paseo-system>$/;
 
+const CHANGE_REQUEST_ENVELOPE_PATTERN =
+  /^<paseo-system kind="change-request-update" message-id="([a-f0-9-]+)">\n([\s\S]*)\n<\/paseo-system>$/;
+
+export function formatChangeRequestUpdate(id: string, text: string): string {
+  const body = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return `<paseo-system kind="change-request-update" message-id="${id}">\n${body}\n</paseo-system>`;
+}
+
 export function isSystemInjectedEnvelope(text: string): boolean {
-  return SYSTEM_ENVELOPE_PATTERN.test(text);
+  return SYSTEM_ENVELOPE_PATTERN.test(text) || CHANGE_REQUEST_ENVELOPE_PATTERN.test(text);
 }
