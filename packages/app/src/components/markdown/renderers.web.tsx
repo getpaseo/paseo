@@ -7,7 +7,7 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
-import { MARKDOWN_COPY_UNWRAP_ATTRIBUTE } from "@/assistant-selection-copy/markup";
+import { MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE } from "@/assistant-selection-copy/markup";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -51,11 +51,13 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     }),
     [anchorProps.style, hovered],
   );
-  // Mark links classified as text or inline-code so selection copy keeps their contents
-  // without the anchor.
+  // Selection copy pastes a link Paseo recognized as the text the reply showed.
   const recognized = isRecognizedLink(link);
   const copyAnchorProps = useMemo(
-    () => (recognized ? { ...anchorProps, [MARKDOWN_COPY_UNWRAP_ATTRIBUTE]: "true" } : anchorProps),
+    () =>
+      recognized
+        ? { ...anchorProps, [MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE]: "true" }
+        : anchorProps,
     [anchorProps, recognized],
   );
   const anchor = (

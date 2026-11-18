@@ -15,6 +15,7 @@ import {
   MARKDOWN_COPY_LIST_START_ATTRIBUTE,
   MARKDOWN_COPY_SRC_ATTRIBUTE,
   MARKDOWN_COPY_TAG_ATTRIBUTE,
+  MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE,
   MARKDOWN_COPY_UNWRAP_ATTRIBUTE,
   TRAILING_CODE_LINE_BREAKS,
 } from "./markup";
@@ -64,19 +65,29 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
     strongDelimiter: "**",
   });
   turndown.use(gfm);
+  // text/plain still carries tables as GFM syntax, so a cell's pipe stays escaped there.
+  turndown.addRule("escapedGfmTableCell", {
+    filter: ["th", "td"],
+    replacement: (content, node) => {
+      const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
+      const prefix = index === 0 ? "| " : " ";
+      return `${prefix}${content.replace(/\|/g, "\\|")} |`;
+    },
+  });
+  // A link Paseo recognized pastes as the text the reply showed. Rich paste keeps it as a
+  // link when it points to a web page, such as a forge reference.
+  turndown.addRule("recognizedLink", {
+    filter: (node) =>
+      node.nodeName === "A" &&
+      node.hasAttribute(MARKDOWN_COPY_RECOGNIZED_LINK_ATTRIBUTE) &&
+      (flavor === "plain" || !hasUrlScheme(node.getAttribute("href") ?? "")),
+    replacement: (content) => content,
+  });
   if (flavor === "markdown") {
     // Turndown leaves `<` unescaped, so displayed text such as `<http://localhost>`
     // would render back into text/html as an autolink.
     const escapeMarkdown = turndown.escape.bind(turndown);
     turndown.escape = (text) => escapeMarkdown(text).replace(/</g, "\\<");
-    turndown.addRule("escapedGfmTableCell", {
-      filter: ["th", "td"],
-      replacement: (content, node) => {
-        const index = node.parentNode ? Array.from(node.parentNode.childNodes).indexOf(node) : 0;
-        const prefix = index === 0 ? "| " : " ";
-        return `${prefix}${content.replace(/\|/g, "\\|")} |`;
-      },
-    });
   } else {
     turndown.escape = (text) => text;
   }
@@ -100,6 +111,10 @@ function createTurndown(flavor: "markdown" | "plain"): TurndownService {
     },
   });
   return turndown;
+}
+
+function hasUrlScheme(href: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href);
 }
 
 const markdownTurndown = createTurndown("markdown");

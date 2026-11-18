@@ -872,7 +872,7 @@ it("copies literal paired underscores raw in text/plain and escaped in text/html
 it("copies a path the renderer recognized as text, and an authored link as a link", () => {
   const message = mountFixture();
   message.innerHTML =
-    '<p>See <a href="src/index.ts" data-paseo-markdown-unwrap="true">src/index.ts</a> and <a href="https://example.test/doc">the doc</a>.</p>';
+    '<p>See <a href="src/index.ts" data-paseo-markdown-recognized-link="true">src/index.ts</a> and <a href="https://example.test/doc">the doc</a>.</p>';
   const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
   expect(content?.plainText).toBe("See src/index.ts and [the doc](https://example.test/doc).");
   expect(content?.html).not.toContain('href="src/index.ts"');
@@ -881,28 +881,36 @@ it("copies a path the renderer recognized as text, and an authored link as a lin
 it("copies a recognized inline-code path without its link", () => {
   const message = mountFixture();
   message.innerHTML =
-    '<p>Edited <a href="src/app.tsx" data-paseo-markdown-unwrap="true"><code>src/app.tsx</code></a> today.</p>';
+    '<p>Edited <a href="src/app.tsx" data-paseo-markdown-recognized-link="true"><code>src/app.tsx</code></a> today.</p>';
   const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
   expect(content?.plainText).toBe("Edited `src/app.tsx` today.");
   expect(content?.html).not.toContain('href="src/app.tsx"');
 });
 
-it("keeps literal angle brackets around a recognized URL in both clipboard flavors", () => {
+it("copies a recognized web link as its text in text/plain and as a link in text/html", () => {
   const message = mountFixture();
   message.innerHTML =
-    '<p>Open &lt;<a href="http://localhost:3000" data-paseo-markdown-unwrap="true">http://localhost:3000</a>&gt; before the call.</p>';
+    '<p>Fixed in <a href="https://github.com/o/r/issues/12" data-paseo-markdown-recognized-link="true">#12</a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Fixed in #12 today.");
+  expect(content?.html).toContain('<a href="https://github.com/o/r/issues/12">#12</a>');
+});
+
+it("keeps literal angle brackets around a URL in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Open &lt;http://localhost:3000&gt; before the call.</p>";
   const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
   expect(content?.plainText).toBe("Open <http://localhost:3000> before the call.");
   expect(content?.html).toContain("<p>Open &lt;http://localhost:3000&gt; before the call.</p>");
 });
 
-it("copies literal table cell pipes in both clipboard flavors", () => {
+it("keeps table cell pipes escaped in text/plain table syntax and literal in text/html", () => {
   const message = mountFixture();
   message.innerHTML =
     "<table><thead><tr><th>Header | label</th></tr></thead><tbody><tr><td>Value | detail</td></tr></tbody></table>";
   const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
-  expect(content?.plainText).toContain("Header | label");
-  expect(content?.plainText).toContain("Value | detail");
+  expect(content?.plainText).toContain("Header \\| label");
+  expect(content?.plainText).toContain("Value \\| detail");
   expect(content?.html).toContain("<th>Header | label</th>");
   expect(content?.html).toContain("<td>Value | detail</td>");
 });

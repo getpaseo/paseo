@@ -72,13 +72,12 @@ const ASSISTANT_MARKDOWN = [
   "| Current \\| active | ~~obsolete~~ | ready |",
 ].join("\n");
 
-// text/plain carries the selection as displayed, so a literal cell pipe keeps no backslash
-// and an inline code span the renderer linked copies without its destination.
+// text/plain carries the selection as displayed, so an inline code span the renderer
+// linked copies without its destination.
 const EXPECTED_WHOLE_SELECTION_TEXT = ASSISTANT_MARKDOWN.replace(
   "www.example.com stays",
   "[www.example.com](http://www.example.com) stays",
 )
-  .replace("Current \\| active", "Current | active")
   .replace(`${CROSS_STRUCTURE_MARKDOWN}\n\n`, "")
   .replace(
     "<https://autolink.example.com>",
@@ -444,7 +443,9 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
     );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
-    expect(clipboard.html).not.toContain('<a href="https://example.com/generated">');
+    expect(clipboard.html).toContain(
+      '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
+    );
     expect(clipboard.html).toContain('<code class="language-typescript">');
     expect(clipboard.html).toContain(
       '<pre><code class="language-text">before\n```\nafter\n</code></pre>',
@@ -743,7 +744,10 @@ test("pasting an assistant selection preserves literal underscores and authored 
       "Keep _literal_ and https://example.com/generated beside the docs.",
     );
     await expect(richText.locator("code")).toHaveText("https://example.com/generated");
-    await expect(richText.getByRole("link")).toHaveCount(1);
+    await expect(richText.getByRole("link")).toHaveCount(2);
+    await expect(
+      richText.getByRole("link", { name: "https://example.com/generated" }),
+    ).toHaveAttribute("href", "https://example.com/generated");
     await expect(richText.getByRole("link", { name: "the docs" })).toHaveAttribute(
       "href",
       "https://example.com/docs",

@@ -49,13 +49,13 @@ function renderAnchor(link: { url: string; sourceType?: "markdown" | "text" | "i
   return anchor;
 }
 
-it("marks a link it recognized from a path so copy can unwrap it", () => {
+it("marks a link it recognized from a path for selection copy", () => {
   const anchor = renderAnchor({ url: LINK_TEXT, sourceType: "text" });
   expect(anchor.getAttribute("href")).toBe(LINK_TEXT);
-  expect(anchor.getAttribute("data-paseo-markdown-unwrap")).toBe("true");
+  expect(anchor.getAttribute("data-paseo-markdown-recognized-link")).toBe("true");
 });
 
 it("leaves an authored link wrapped", () => {
   const anchor = renderAnchor({ url: "https://example.test/doc", sourceType: "markdown" });
-  expect(anchor.hasAttribute("data-paseo-markdown-unwrap")).toBe(false);
+  expect(anchor.hasAttribute("data-paseo-markdown-recognized-link")).toBe(false);
 });
