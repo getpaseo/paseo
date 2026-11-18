@@ -193,7 +193,11 @@ export async function ownerIsAlive(unit, read = readFile) {
   const owner = OWNER_IDENTITY.exec(unit);
   if (!owner) return true; // Legacy scopes have no verifiable wrapper identity.
   try {
-    return processStartTicks(await read(`/proc/${owner[1]}/stat`, "utf8")) === owner[2];
+    const stat = await read(`/proc/${owner[1]}/stat`, "utf8");
+    const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+    // An unreaped zombie retains its stat file and matching birth time.
+    if (state === "Z" || state === "X") return false;
+    return processStartTicks(stat) === owner[2];
   } catch (error) {
     if (error.code === "ENOENT" || error.code === "ESRCH") return false;
     throw error;

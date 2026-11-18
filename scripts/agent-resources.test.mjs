@@ -173,6 +173,9 @@ test("orphan detection checks start time so PID reuse cannot retain abandoned sc
   const stat = `123 (name with ) spaces) S ${Array(18).fill("0").join(" ")} 456 0`;
   assert.equal(processStartTicks(stat), "456");
   assert.equal(await ownerIsAlive(owned, async () => stat), true);
+  for (const state of ["Z", "X"]) {
+    assert.equal(await ownerIsAlive(owned, async () => stat.replace(") S ", `) ${state} `)), false);
+  }
   assert.equal(await ownerIsAlive(owned, async () => stat.replace("456 0", "789 0")), false);
   assert.equal(
     await ownerIsAlive(owned, async () => {
@@ -195,6 +198,42 @@ test("orphan detection checks start time so PID reuse cannot retain abandoned sc
     /permission denied/,
   );
 });
+
+test(
+  "a real unreaped zombie cannot keep its workload scope alive",
+  { skip: process.platform !== "linux", timeout: 10_000 },
+  async () => {
+    const parent = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+    const { spawn } = require("node:child_process");
+    const { readSync, writeSync } = require("node:fs");
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+    writeSync(1, String(child.pid));
+    readSync(0, Buffer.alloc(1), 0, 1, null);
+  `,
+      ],
+      { stdio: ["pipe", "pipe", "inherit"] },
+    );
+    const closed = once(parent, "close");
+    try {
+      const [output] = await once(parent.stdout, "data");
+      const pid = Number(output.toString());
+      let stat;
+      await waitFor(async () => {
+        stat = await readFile(`/proc/${pid}/stat`, "utf8");
+        return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] === "Z";
+      }, "fixture child did not become a zombie");
+      const owned = `paseo-agent-zombie-${pid}-${processStartTicks(stat)}-12345678-1234-1234-1234-123456789abc.scope`;
+      assert.equal(await ownerIsAlive(owned), false);
+    } finally {
+      parent.stdin.end("\n");
+      await closed;
+    }
+  },
+);
 
 test("workloads refuse an aggregate slice with missing or unlimited budgets", () => {
   const finite = {
