@@ -958,6 +958,9 @@ export const ar: TranslationResources = {
           deletedLines: "الخطوط المحذوفة{{count}}",
           unpushedCommit: "التزام{{count}}غير المدفوعة",
           unpushedCommits: "التزامات{{count}}غير المدفوعة",
+          editedCopiedFiles: "ملفات منسوخة معدّلة: {{files}}",
+          editedCopiedFilesAndMore: "ملفات منسوخة معدّلة: {{files}} و{{count}} أخرى",
+          uncheckedCopiedFiles: "لم يتم فحص بعض الملفات المنسوخة",
         },
       },
       diff: {

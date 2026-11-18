@@ -965,6 +965,9 @@ export const ko: TranslationResources = {
           deletedLines: "삭제된 줄 {{count}}개",
           unpushedCommit: "푸시되지 않은 커밋 {{count}}개",
           unpushedCommits: "푸시되지 않은 커밋 {{count}}개",
+          editedCopiedFiles: "수정된 복사 파일: {{files}}",
+          editedCopiedFilesAndMore: "수정된 복사 파일: {{files}} 외 {{count}}개",
+          uncheckedCopiedFiles: "일부 복사 파일은 확인하지 않았습니다",
         },
       },
       diff: {

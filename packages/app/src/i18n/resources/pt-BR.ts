@@ -981,6 +981,9 @@ export const ptBR: TranslationResources = {
           deletedLines: "{{count}} linhas removidas",
           unpushedCommit: "{{count}} commit não enviado",
           unpushedCommits: "{{count}} commits não enviados",
+          editedCopiedFiles: "Arquivos copiados editados: {{files}}",
+          editedCopiedFilesAndMore: "Arquivos copiados editados: {{files}} e mais {{count}}",
+          uncheckedCopiedFiles: "Alguns arquivos copiados não foram verificados",
         },
       },
       diff: {

@@ -1,8 +1,8 @@
 // Derived from cprecioso/paseo-worktreeinclude (MIT); see ./LICENSE in the plugin root.
 // Copyright (c) 2026 Carlos Precioso.
 import { execFile } from "node:child_process";
-import { constants, existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { constants, existsSync, type Stats } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -44,9 +44,10 @@ const isDirectory = (entry: string) => entry.endsWith("/");
 // Copy files that match .worktreeinclude (gitignore syntax)
 // AND are gitignored, so tracked files are never touched.
 export async function copyWorktreeIncludes(worktree: string, source: string): Promise<CopyResult> {
-  if (!existsSync(join(source, INCLUDE_FILE))) return { kind: "no-include-file" };
+  const includeFile = join(source, INCLUDE_FILE);
+  if (!existsSync(includeFile)) return { kind: "no-include-file" };
 
-  const matches = await findIncludedFiles(source);
+  const matches = await findIncludedFiles(source, includeFile);
   if (matches.length === 0) return { kind: "copied", copied: [], skipped: [] };
 
   const ignored = await checkIgnore(source, [], matches);
@@ -67,11 +68,90 @@ export async function copyWorktreeIncludes(worktree: string, source: string): Pr
   return { kind: "copied", copied, skipped };
 }
 
+export interface EditedIncludes {
+  /** Included files whose content differs from the source's copy, or that the source lacks. */
+  paths: string[];
+  /** False when a bound skipped some included files. */
+  complete: boolean;
+}
+
+export interface EditedIncludesLimits {
+  /** Included files compared, shallowest first. */
+  maxFiles: number;
+  /** Bytes read to compare same-size files, both copies counted. */
+  maxBytes: number;
+}
+
+const EDITED_INCLUDES_LIMITS: EditedIncludesLimits = {
+  maxFiles: 1_000,
+  maxBytes: 32 * 1024 * 1024,
+};
+
+// Archiving a worktree deletes its include copies, and git status can't see them because Git
+// ignores them. Lists the ones that differ from the source's, using the source's patterns and the
+// same matching as the copy. Shallow paths go first, so a large included tree such as a
+// dependency folder spends the bound after the config files. Null without `.worktreeinclude`.
+export async function findEditedWorktreeIncludes(
+  worktree: string,
+  source: string,
+  limits: EditedIncludesLimits = EDITED_INCLUDES_LIMITS,
+): Promise<EditedIncludes | null> {
+  const includeFile = join(source, INCLUDE_FILE);
+  if (!existsSync(includeFile)) return null;
+
+  const matches = await findIncludedFiles(worktree, includeFile);
+  const included = matches.length === 0 ? [] : await checkIgnore(worktree, [], matches);
+
+  const paths: string[] = [];
+  let complete = true;
+  let bytesRead = 0;
+  for (const [index, file] of included.sort(byDepthThenPath).entries()) {
+    if (index >= limits.maxFiles) {
+      complete = false;
+      break;
+    }
+    const copy = await statOrNull(join(worktree, file), lstat);
+    if (!copy?.isFile()) continue;
+    const original = await statOrNull(join(source, file), stat);
+    if (!original?.isFile() || original.size !== copy.size) {
+      paths.push(file);
+      continue;
+    }
+    if (bytesRead + copy.size * 2 > limits.maxBytes) {
+      complete = false;
+      continue;
+    }
+    bytesRead += copy.size * 2;
+    const [copied, sourceCopy] = await Promise.all([
+      readFile(join(worktree, file)),
+      readFile(join(source, file)),
+    ]);
+    if (!copied.equals(sourceCopy)) paths.push(file);
+  }
+  return { paths, complete };
+}
+
+function byDepthThenPath(left: string, right: string): number {
+  const depth = left.split("/").length - right.split("/").length;
+  if (depth !== 0) return depth;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+async function statOrNull(file: string, read: typeof stat): Promise<Stats | null> {
+  try {
+    return await read(file);
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 // Git lists a directory it ignores as a whole, such as node_modules/, as one entry.
 // Only directories that a pattern matches or names a path inside are searched, and
 // only as deep as the pattern names, so creating a worktree does not walk every file
 // in large ignored trees.
-async function findIncludedFiles(source: string): Promise<string[]> {
+async function findIncludedFiles(source: string, includeFile: string): Promise<string[]> {
   const ignored = splitNul(
     await git(source, [
       "ls-files",
@@ -85,8 +165,8 @@ async function findIncludedFiles(source: string): Promise<string[]> {
   if (ignored.length === 0) return [];
 
   const ignoreCase = await sourceIgnoresCase(source);
-  const patterns = parsePatterns(await readFile(join(source, INCLUDE_FILE), "utf8"));
-  const matched = new Set(await matchIncludePatterns(source, ignored, ignoreCase));
+  const patterns = parsePatterns(await readFile(includeFile, "utf8"));
+  const matched = new Set(await matchIncludePatterns(includeFile, ignored, ignoreCase));
   const files = ignored.filter((entry) => !isDirectory(entry) && matched.has(entry));
   const searched = new Set<string>();
   // Git also lists an untracked folder that holds ignored entries, which are listed on
@@ -113,7 +193,7 @@ async function findIncludedFiles(source: string): Promise<string[]> {
       "ls-files",
       "--others",
       "--ignored",
-      `--exclude-from=${INCLUDE_FILE}`,
+      `--exclude-from=${includeFile}`,
       "-z",
       "--",
       ...batch,
@@ -148,7 +228,7 @@ function commandLineBatches(args: string[]): string[][] {
 // ignore rules apply. Directory entries keep their trailing slash, so directory
 // patterns match them without anything on disk.
 async function matchIncludePatterns(
-  source: string,
+  includeFile: string,
   entries: string[],
   ignoreCase: boolean,
 ): Promise<string[]> {
@@ -158,12 +238,7 @@ async function matchIncludePatterns(
     await git(scratch, ["init", "-q", "--template="]);
     return await checkIgnore(
       scratch,
-      [
-        "-c",
-        `core.excludesFile=${join(source, INCLUDE_FILE)}`,
-        "-c",
-        `core.ignoreCase=${ignoreCase}`,
-      ],
+      ["-c", `core.excludesFile=${includeFile}`, "-c", `core.ignoreCase=${ignoreCase}`],
       entries,
     );
   } finally {

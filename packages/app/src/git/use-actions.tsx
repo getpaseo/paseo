@@ -1137,5 +1137,13 @@ function getWorktreeArchiveWarningLabels(
           : "workspace.git.actions.archiveWarning.unpushedCommits",
         { count },
       ),
+    editedCopiedFiles: (files, more) =>
+      more > 0
+        ? t("workspace.git.actions.archiveWarning.editedCopiedFilesAndMore", {
+            files,
+            count: more,
+          })
+        : t("workspace.git.actions.archiveWarning.editedCopiedFiles", { files }),
+    uncheckedCopiedFiles: t("workspace.git.actions.archiveWarning.uncheckedCopiedFiles"),
   };
 }

@@ -976,6 +976,9 @@ export const ru: TranslationResources = {
           deletedLines: "Удалено строк: {{count}}",
           unpushedCommit: "Неотправленных коммитов: {{count}}",
           unpushedCommits: "Неотправленных коммитов: {{count}}",
+          editedCopiedFiles: "Изменённые скопированные файлы: {{files}}",
+          editedCopiedFilesAndMore: "Изменённые скопированные файлы: {{files}} и ещё {{count}}",
+          uncheckedCopiedFiles: "Некоторые скопированные файлы не проверены",
         },
       },
       diff: {

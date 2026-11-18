@@ -1,3 +1,4 @@
+import type { CheckoutEditedIncludes } from "@getpaseo/protocol/messages";
 import type { CheckoutStatusClient } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { i18n } from "@/i18n/i18next";
@@ -6,6 +7,7 @@ export interface WorktreeArchiveRisk {
   isDirty?: boolean | null;
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
+  editedIncludes?: CheckoutEditedIncludes | null;
 }
 
 export interface WorktreeArchiveRiskInput {
@@ -27,6 +29,9 @@ export interface WorktreeArchiveWarningLabels {
   addedLine: (count: number) => string;
   deletedLine: (count: number) => string;
   unpushedCommit: (count: number) => string;
+  /** `more` counts the edited copies beyond the ones in `files`. */
+  editedCopiedFiles: (files: string, more: number) => string;
+  uncheckedCopiedFiles: string;
 }
 
 export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabels = {
@@ -48,21 +53,36 @@ export const DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS: WorktreeArchiveWarningLabe
     count === 1
       ? i18n.t("workspace.git.actions.archiveWarning.unpushedCommit", { count })
       : i18n.t("workspace.git.actions.archiveWarning.unpushedCommits", { count }),
+  editedCopiedFiles: (files, more) =>
+    more > 0
+      ? i18n.t("workspace.git.actions.archiveWarning.editedCopiedFilesAndMore", {
+          files,
+          count: more,
+        })
+      : i18n.t("workspace.git.actions.archiveWarning.editedCopiedFiles", { files }),
+  uncheckedCopiedFiles: i18n.t("workspace.git.actions.archiveWarning.uncheckedCopiedFiles"),
 };
 
+const NAMED_EDITED_COPIES = 3;
+
 /**
- * Reads the worktree's uncommitted changes and unpushed commits from its host. A directory the
- * host no longer reads as a git checkout has neither. Rejects when the host can't read it.
+ * Reads the worktree's uncommitted changes, unpushed commits and edited `.worktreeinclude` copies
+ * from its host. A directory the host no longer reads as a git checkout has none. Rejects when the
+ * host can't read it.
  */
 export async function readWorktreeArchiveRisk(
   client: CheckoutStatusClient,
   workspaceDirectory: string,
-): Promise<Pick<WorktreeArchiveRisk, "isDirty" | "aheadOfOrigin">> {
+): Promise<Pick<WorktreeArchiveRisk, "isDirty" | "aheadOfOrigin" | "editedIncludes">> {
   const status = await client.getCheckoutStatus(workspaceDirectory);
   if (status.error) {
     throw new Error(status.error.message);
   }
-  return { isDirty: status.isDirty ?? false, aheadOfOrigin: status.aheadOfOrigin };
+  return {
+    isDirty: status.isDirty ?? false,
+    aheadOfOrigin: status.aheadOfOrigin,
+    editedIncludes: status.isPaseoOwnedWorktree ? status.editedIncludes : undefined,
+  };
 }
 
 export function toWorktreeArchiveRisk(input: WorktreeArchiveRiskInput): WorktreeArchiveRisk {
@@ -112,6 +132,20 @@ export function buildWorktreeArchiveRiskReasons(
   if ((input.aheadOfOrigin ?? 0) > 0) {
     const aheadOfOrigin = input.aheadOfOrigin ?? 0;
     reasons.push(labels.unpushedCommit(aheadOfOrigin));
+  }
+
+  // Git ignores these copies, so the dirty check above never counts them.
+  const editedCopies = input.editedIncludes?.paths ?? [];
+  if (editedCopies.length > 0) {
+    reasons.push(
+      labels.editedCopiedFiles(
+        editedCopies.slice(0, NAMED_EDITED_COPIES).join(", "),
+        Math.max(0, editedCopies.length - NAMED_EDITED_COPIES),
+      ),
+    );
+  }
+  if (input.editedIncludes?.complete === false) {
+    reasons.push(labels.uncheckedCopiedFiles);
   }
 
   return reasons;

@@ -1617,3 +1617,59 @@ test("worktree includes reach the first agent without copying tracked or unignor
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test("checkout status names the include copies a worktree changed, which git status can't see", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-include-"));
+  const repository = path.join(root, "repository");
+  execFileSync("git", ["init", "-b", "main", repository], { stdio: "pipe" });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repository, stdio: "pipe" });
+  await mkdir(path.join(repository, "config"));
+  await writeFile(path.join(repository, ".gitignore"), ".env*\nconfig/*.local.json\n");
+  await writeFile(path.join(repository, ".worktreeinclude"), ".env*\nconfig/*.local.json\n");
+  git("add", ".gitignore", ".worktreeinclude");
+  git(
+    "-c",
+    "user.name=Test",
+    "-c",
+    "user.email=test@example.com",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-m",
+    "initial",
+  );
+  await writeFile(path.join(repository, ".env"), "SECRET=source");
+  await writeFile(path.join(repository, "config/app.local.json"), "local config");
+  const daemon = await createTestPaseoDaemon({ builtinPlugins: new BuiltinPluginLoader() });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const createWorktree = async (slug: string) => {
+      const created = await client.createWorkspace({
+        source: { kind: "worktree", cwd: repository, branchName: slug, worktreeSlug: slug },
+      });
+      expect(created.error).toBeNull();
+      return created.workspace!.workspaceDirectory;
+    };
+    const edited = await createWorktree("edited");
+    const untouched = await createWorktree("untouched");
+
+    await writeFile(path.join(edited, ".env"), "SECRET=edited");
+    await writeFile(path.join(edited, ".env.local"), "LOCAL=1");
+
+    expect(await client.getCheckoutStatus(edited)).toMatchObject({
+      isPaseoOwnedWorktree: true,
+      isDirty: false,
+      editedIncludes: { paths: [".env", ".env.local"], complete: true },
+    });
+    expect(await client.getCheckoutStatus(untouched)).toMatchObject({
+      isDirty: false,
+      editedIncludes: { paths: [], complete: true },
+    });
+    expect(await client.getCheckoutStatus(repository)).not.toHaveProperty("editedIncludes");
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);

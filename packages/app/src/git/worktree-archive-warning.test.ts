@@ -65,6 +65,38 @@ describe("reading a worktree's archive risk from its host", () => {
     expect(host.asked).toEqual([WORKTREE]);
   });
 
+  it("reads the edited .worktreeinclude copies the host found in a clean worktree", async () => {
+    const host = hostAnswering({
+      cwd: WORKTREE,
+      requestId: "status",
+      isGit: true,
+      isPaseoOwnedWorktree: true,
+      repoRoot: WORKTREE,
+      mainRepoRoot: "/home/me/repo",
+      currentBranch: "feature",
+      isDirty: false,
+      baseRef: "main",
+      aheadBehind: { ahead: 0, behind: 0 },
+      aheadOfOrigin: 0,
+      behindOfOrigin: 0,
+      hasRemote: true,
+      remoteUrl: "git@example.com:me/repo.git",
+      editedIncludes: { paths: [".env"], complete: true },
+      error: null,
+    });
+
+    const risk = await readWorktreeArchiveRisk(host, WORKTREE);
+
+    expect(risk).toEqual({
+      isDirty: false,
+      aheadOfOrigin: 0,
+      editedIncludes: { paths: [".env"], complete: true },
+    });
+    expect(buildWorktreeArchiveConfirmationMessage({ workspaceName: "feature", ...risk })).toBe(
+      "Edited copied files: .env",
+    );
+  });
+
   it("finds nothing to lose in a directory that is no longer a git checkout", async () => {
     expect(await readWorktreeArchiveRisk(hostAnswering(NOT_GIT), WORKTREE)).toEqual({
       isDirty: false,
@@ -122,6 +154,26 @@ describe("workspace archive warning for worktree backing", () => {
         diffStat: null,
       }),
     ).toEqual(["2 unpushed commits"]);
+  });
+
+  it("names edited copied files, the first three and a count of the rest", () => {
+    expect(
+      buildWorktreeArchiveRiskReasons({
+        isDirty: false,
+        aheadOfOrigin: 0,
+        editedIncludes: { paths: [".env", ".env.local", "a/.env", "b/.env"], complete: true },
+      }),
+    ).toEqual(["Edited copied files: .env, .env.local, a/.env and 1 more"]);
+  });
+
+  it("says when the host stopped before checking every copied file", () => {
+    expect(
+      buildWorktreeArchiveRiskReasons({
+        isDirty: false,
+        aheadOfOrigin: 0,
+        editedIncludes: { paths: [], complete: false },
+      }),
+    ).toEqual(["Some copied files were not checked"]);
   });
 
   it("includes every archive risk in the confirmation copy", () => {

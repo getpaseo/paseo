@@ -991,6 +991,9 @@ export const es: TranslationResources = {
           deletedLines: "{{count}}líneas eliminadas",
           unpushedCommit: "Confirmación no enviada de{{count}}",
           unpushedCommits: "Confirmaciones no enviadas de{{count}}",
+          editedCopiedFiles: "Archivos copiados editados: {{files}}",
+          editedCopiedFilesAndMore: "Archivos copiados editados: {{files}} y {{count}} más",
+          uncheckedCopiedFiles: "Algunos archivos copiados no se revisaron",
         },
       },
       diff: {

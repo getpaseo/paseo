@@ -5767,6 +5767,14 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   remoteUrl: z.string().nullable(),
 });
 
+// Ignored files the main checkout's `.worktreeinclude` selects in a worktree, whose content differs
+// from the main checkout's copy or that it lacks. Git status can't see them and archive deletes them.
+// `complete` is false when the check stopped at its bound before comparing every file.
+export const CheckoutEditedIncludesSchema = z.object({
+  paths: z.array(z.string()),
+  complete: z.boolean(),
+});
+
 const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   isGit: z.literal(true),
   isPaseoOwnedWorktree: z.literal(true),
@@ -5780,6 +5788,9 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   behindOfOrigin: z.number().nullable(),
   hasRemote: z.boolean(),
   remoteUrl: z.string().nullable(),
+  // Only checkout_status_response carries it, from the worktree-include built-in plugin. Absent
+  // when the main checkout has no `.worktreeinclude` or the plugin can't answer.
+  editedIncludes: CheckoutEditedIncludesSchema.optional(),
 });
 
 export const CheckoutStatusResponseSchema = z.object({
@@ -7949,6 +7960,7 @@ export type AgentDetachRequestMessage = z.infer<typeof AgentDetachRequestMessage
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;
+export type CheckoutEditedIncludes = z.infer<typeof CheckoutEditedIncludesSchema>;
 export type CheckoutStatusUpdate = z.infer<typeof CheckoutStatusUpdateSchema>;
 export type SubscribeCheckoutDiffRequest = z.infer<typeof SubscribeCheckoutDiffRequestSchema>;
 export type UnsubscribeCheckoutDiffRequest = z.infer<typeof UnsubscribeCheckoutDiffRequestSchema>;

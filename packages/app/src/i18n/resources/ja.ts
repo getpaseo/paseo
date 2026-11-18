@@ -971,6 +971,9 @@ export const ja: TranslationResources = {
           deletedLines: "{{count}}行削除",
           unpushedCommit: "{{count}}件の未プッシュコミット",
           unpushedCommits: "{{count}}件の未プッシュコミット",
+          editedCopiedFiles: "編集されたコピー済みファイル: {{files}}",
+          editedCopiedFilesAndMore: "編集されたコピー済みファイル: {{files}} ほか{{count}}件",
+          uncheckedCopiedFiles: "一部のコピー済みファイルは確認されていません",
         },
       },
       diff: {

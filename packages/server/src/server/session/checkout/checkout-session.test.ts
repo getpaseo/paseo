@@ -30,6 +30,7 @@ import {
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
+import type { PluginRpcInvoker } from "../../plugins/builtin/worktree-include.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
   return msg.type === "checkout.forge.get_check_details.response";
@@ -115,6 +116,7 @@ function makeCheckoutSession(options?: {
   host?: Partial<CheckoutSessionHost>;
   gitMutation?: Partial<GitMutationFake>;
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
+  invokePluginRpc?: PluginRpcInvoker["invokePluginRpc"];
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -177,6 +179,7 @@ function makeCheckoutSession(options?: {
     paseoHome: options?.paseoHome ?? "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
+    pluginRuntime: options?.invokePluginRpc && { invokePluginRpc: options.invokePluginRpc },
   });
   const delivery = new SessionDelivery((_source, message) => emitted.push(message));
   return {
@@ -275,6 +278,75 @@ describe("CheckoutSession", () => {
           }),
         },
       ]);
+    });
+
+    async function readWorktreeStatus(input: {
+      includeFile: boolean;
+      invokePluginRpc: PluginRpcInvoker["invokePluginRpc"];
+    }) {
+      const mainCheckout = mkdtempSync(join(tmpdir(), "checkout-session-includes-"));
+      try {
+        if (input.includeFile) writeFileSync(join(mainCheckout, ".worktreeinclude"), ".env\n");
+        const snapshot = createGitSnapshot("/worktree", "feature");
+        const { checkout, emitted } = makeCheckoutSession({
+          git: {
+            getSnapshot: async () => ({
+              ...snapshot,
+              git: {
+                ...snapshot.git,
+                isPaseoOwnedWorktree: true,
+                mainRepoRoot: mainCheckout,
+                baseRef: "main",
+              },
+            }),
+          },
+          invokePluginRpc: input.invokePluginRpc,
+        });
+        await checkout.handleStatusRequest({
+          type: "checkout_status_request",
+          cwd: "/worktree",
+          requestId: "r3",
+        });
+        return { mainCheckout, emitted };
+      } finally {
+        rmSync(mainCheckout, { recursive: true, force: true });
+      }
+    }
+
+    it("answers a worktree's status without include copies when the plugin fails", async () => {
+      const calls: unknown[][] = [];
+      const { mainCheckout, emitted } = await readWorktreeStatus({
+        includeFile: true,
+        invokePluginRpc: async (...args) => {
+          calls.push(args);
+          throw new Error("Plugin is not available: worktree-include");
+        },
+      });
+
+      expect(calls).toEqual([
+        ["worktree-include", "edited-includes", { worktree: "/worktree", source: mainCheckout }],
+      ]);
+      expect(emitted).toEqual([
+        {
+          type: "checkout_status_response",
+          payload: expect.objectContaining({ isPaseoOwnedWorktree: true, error: null }),
+        },
+      ]);
+      expect(emitted[0]).not.toHaveProperty("payload.editedIncludes");
+    });
+
+    it("does not ask the plugin when the main checkout has no .worktreeinclude", async () => {
+      const calls: unknown[][] = [];
+      const { emitted } = await readWorktreeStatus({
+        includeFile: false,
+        invokePluginRpc: async (...args) => {
+          calls.push(args);
+          return { paths: [".env"], complete: true };
+        },
+      });
+
+      expect(calls).toEqual([]);
+      expect(emitted[0]).not.toHaveProperty("payload.editedIncludes");
     });
   });
 
