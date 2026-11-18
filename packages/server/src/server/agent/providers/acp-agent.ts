@@ -340,6 +340,7 @@ const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 // request when the provider never answers, so these calls must be bounded
 // or the provider process is never terminated.
 const ACP_CLOSE_REQUEST_TIMEOUT_MS = 2_000;
+const ACP_INTERRUPT_TIMEOUT_MS = 5_000;
 const ACP_DISCONNECT_EXIT_GRACE_MS = 1_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
 const ACP_IMPORT_HISTORY_BUDGET_MS = 60_000;
@@ -2778,14 +2779,35 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async interrupt(): Promise<void> {
-    if (!this.connection || !this.sessionId) {
-      return;
-    }
+    const turnId = this.activeForegroundTurnId;
+    const { connection, sessionId } = this;
+    if (!connection || !sessionId) return;
 
     this.cancelPendingPermissions();
+    if (!turnId) return;
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    // session/cancel is a notification. The prompt response confirms the turn ended.
+    let resolveEnded!: () => void;
+    const ended = new Promise<void>((resolve) => {
+      resolveEnded = resolve;
+    });
+    const unsubscribe = this.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_canceled" ||
+        event.type === "turn_failed"
+      ) {
+        if (event.turnId === turnId) resolveEnded();
+      }
+    });
+    try {
+      await withTimeout(
+        Promise.all([connection.cancel({ sessionId }), ended]),
+        ACP_INTERRUPT_TIMEOUT_MS,
+        "The ACP agent did not finish its turn after Stop",
+      );
+    } finally {
+      unsubscribe();
     }
   }
 
