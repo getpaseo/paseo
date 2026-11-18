@@ -796,6 +796,7 @@ export interface NotificationItem {
   timestamp: Date;
   level: NotificationLevel;
   message: string;
+  outsideTurn?: true;
 }
 
 export interface CompactionItem {
@@ -1592,6 +1593,7 @@ function reduceTimelineEvent(
         timestamp,
         level: item.level,
         message: item.message,
+        ...(item.outsideTurn ? { outsideTurn: true } : {}),
       };
       return appendNotification(state, notification);
     }

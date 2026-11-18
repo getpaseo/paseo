@@ -1591,6 +1591,7 @@ export class OmpAgentSession implements AgentSession {
               ? event.notifyType
               : "info",
           message,
+          ...(this.activeTurnId === null && !this.activeTurnStarted ? { outsideTurn: true } : {}),
         },
       });
       return;

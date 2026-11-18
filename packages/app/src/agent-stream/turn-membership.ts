@@ -7,7 +7,15 @@ import type { StreamItem } from "@/types/stream";
  */
 export function continuesTurn(previous: StreamItem | null, next: StreamItem | null): boolean {
   if (!previous || !next) return false;
-  return continuesTimelineTurn(previous.turnId, next.turnId, isTurnTrigger(next));
+  const includesOutsideTurnRow =
+    (previous.kind === "notification" && previous.outsideTurn === true) ||
+    (next.kind === "notification" && next.outsideTurn === true);
+  return continuesTimelineTurn(
+    previous.turnId,
+    next.turnId,
+    isTurnTrigger(next),
+    includesOutsideTurnRow,
+  );
 }
 
 /**

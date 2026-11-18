@@ -1333,6 +1333,7 @@ describe("OMP agent client and session", () => {
       notifyType: "warning",
     });
     omp.runtime().finishTurn();
+    await expect.poll(() => omp.completedTurnCount()).toBe(1);
     omp.emit({
       type: "extension_ui_request",
       id: "n2",
@@ -1342,7 +1343,7 @@ describe("OMP agent client and session", () => {
     });
     expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
       { type: "notification", level: "warning", message: "Working" },
-      { type: "notification", level: "info", message: "Done" },
+      { type: "notification", level: "info", message: "Done", outsideTurn: true },
     ]);
     expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([]);
   });

@@ -408,6 +408,7 @@ export type AgentTimelineItem =
       type: "notification";
       level: "info" | "warning" | "error";
       message: string;
+      outsideTurn?: true;
     }
   | CompactionTimelineItem
   | PluginTimelineItem;

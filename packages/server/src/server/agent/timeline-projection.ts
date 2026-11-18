@@ -712,7 +712,15 @@ function continuesProjectedTurn(
   previous: TimelineProjectionEntry,
   next: TimelineProjectionEntry,
 ): boolean {
-  return continuesTimelineTurn(previous.turnId, next.turnId, isTimelineTurnTrigger(next.item));
+  const includesOutsideTurnRow =
+    (previous.item.type === "notification" && previous.item.outsideTurn === true) ||
+    (next.item.type === "notification" && next.item.outsideTurn === true);
+  return continuesTimelineTurn(
+    previous.turnId,
+    next.turnId,
+    isTimelineTurnTrigger(next.item),
+    includesOutsideTurnRow,
+  );
 }
 
 /**
