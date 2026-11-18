@@ -451,7 +451,7 @@ describe("live notification turns", () => {
         notice("Running notice");
         await finishReply("Second reply");
 
-        const page = manager.fetchTimeline(id, { wholeTurns: true, limit: 0 });
+        const page = await manager.fetchTimeline(id, { wholeTurns: true, limit: 0 });
         const ids = page.rows.map((row) => row.turnId);
         expect(
           page.rows.map(({ item }) => {
@@ -477,7 +477,9 @@ describe("live notification turns", () => {
           ),
         ).toEqual(ids);
         expect(
-          manager.fetchTimeline(id, { wholeTurns: true, limit: 1 }).rows.map((row) => row.turnId),
+          (await manager.fetchTimeline(id, { wholeTurns: true, limit: 1 })).rows.map(
+            (row) => row.turnId,
+          ),
         ).toEqual([wake, wake, wake]);
       } finally {
         await manager.closeAgent(id);
@@ -507,7 +509,7 @@ describe("live notification turns", () => {
           event: { type: "turn_completed", turnId: "wake" },
         });
       });
-      const page = harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 0 });
+      const page = await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 0 });
       expect(page.rows.map((row) => row.turnId)).toEqual([
         "first",
         expect.any(String),
@@ -527,9 +529,9 @@ describe("live notification turns", () => {
         }),
       ]);
       expect(
-        harness.manager
-          .fetchTimeline(agentId, { wholeTurns: true, limit: 1 })
-          .rows.map((row) => row.item),
+        (await harness.manager.fetchTimeline(agentId, { wholeTurns: true, limit: 1 })).rows.map(
+          (row) => row.item,
+        ),
       ).toEqual([completion, { type: "assistant_message", text: "Second reply" }]);
     } finally {
       harness.cleanup();
@@ -570,7 +572,7 @@ describe("live notification turns", () => {
       session.finishTurn({ role: "assistant", content: [] });
       const item = { type: "notification", level: "info", message: "Working" };
       expect((await result).timeline).toContainEqual(item);
-      const rows = manager.fetchTimeline(agent.id, { wholeTurns: true, limit: 0 }).rows;
+      const rows = (await manager.fetchTimeline(agent.id, { wholeTurns: true, limit: 0 })).rows;
       expect(rows.find((row) => row.item.type === "notification")?.turnId).toEqual(
         expect.any(String),
       );
