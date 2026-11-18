@@ -25,8 +25,14 @@ const watchGroupSchema = z.object({
   watchers: z.array(z.object({ agentId: z.string(), digests: z.array(digestSchema) })),
 });
 type WatchGroup = z.infer<typeof watchGroupSchema>;
+type Digest = z.infer<typeof digestSchema>;
+interface DueUpdate {
+  url: string;
+  digest: Digest;
+}
 
 interface Observation {
+  stale: boolean;
   ready: Promise<ChangeRequestSnapshot>;
   release(): void;
 }
@@ -126,19 +132,21 @@ export function createChangeRequestWatches(deps: Dependencies) {
     }
   }
 
-  async function commit(group: WatchGroup): Promise<void> {
+  async function commit(...updates: WatchGroup[]): Promise<void> {
     const next = new Map(groups);
-    next.set(group.url, group);
+    for (const group of updates) next.set(group.url, group);
     await writeJsonFileAtomic(
       file,
       [...next.values()].filter(({ watchers }) => watchers.length),
     );
-    // An in-flight subscription still needs the committed baseline and its observation.
-    if (group.watchers.length || registrations.has(group.url)) {
-      groups.set(group.url, group);
-    } else {
-      groups.delete(group.url);
-      stopObserving(group.url);
+    for (const group of updates) {
+      // An in-flight subscription still needs the committed baseline and its observation.
+      if (group.watchers.length || registrations.has(group.url)) {
+        groups.set(group.url, group);
+      } else {
+        groups.delete(group.url);
+        stopObserving(group.url);
+      }
     }
   }
 
@@ -159,6 +167,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
           if (closed || observations.get(url) !== observation) return;
           const group = groups.get(url);
           if (!group) {
+            observation.stale = false;
             resolve(snapshot);
             return;
           }
@@ -168,6 +177,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
             if (JSON.stringify(status) !== JSON.stringify(group.snapshot)) {
               await commit({ ...group, snapshot: status });
             }
+            observation.stale = false;
             resolve(snapshot);
             return;
           }
@@ -194,6 +204,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
             }),
           };
           await commit(next);
+          observation.stale = false;
           resolve(snapshot);
           if (snapshot.state !== "open") stopObserving(url);
           armDelivery();
@@ -202,6 +213,10 @@ export function createChangeRequestWatches(deps: Dependencies) {
           throw error;
         }),
       error(error) {
+        if (!observation.stale) {
+          deps.logger.warn({ err: error, url }, "Change request observation became stale");
+        }
+        observation.stale = true;
         if (!groups.has(url)) {
           reject(error);
           stopObserving(url);
@@ -210,6 +225,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       },
     });
     const observation: Observation = {
+      stale: true,
       ready,
       release() {
         reject(new Error("Change request observation ended"));
@@ -228,10 +244,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
     registrations.set(url, (registrations.get(url) ?? 0) + 1);
     try {
       const existing = groups.get(url);
-      const initial =
-        existing && existing.snapshot.state !== "open"
-          ? { ...existing.snapshot, activity: [] }
-          : await observe(url).ready;
+      const initial = existing ? { ...existing.snapshot, activity: [] } : await observe(url).ready;
       return await serialize(async () => {
         if (closed || !(await deps.isActive(agentId))) throw new Error("Agent is no longer active");
         const group = groups.get(url);
@@ -255,6 +268,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
           checks: snapshot.checks,
           reviewDecision: snapshot.reviewDecision,
           subscribed,
+          stale: observations.get(url)?.stale ?? false,
         };
       });
     } finally {
@@ -278,56 +292,74 @@ export function createChangeRequestWatches(deps: Dependencies) {
     });
   }
 
-  function pendingDigest(url: string, agentId: string) {
-    return groups.get(url)?.watchers.find((watcher) => watcher.agentId === agentId)?.digests[0];
+  function isQueued(agentId: string, update: DueUpdate): boolean {
+    return (
+      groups
+        .get(update.url)
+        ?.watchers.some(
+          (watcher) =>
+            watcher.agentId === agentId &&
+            watcher.digests.some(({ id }) => id === update.digest.id),
+        ) ?? false
+    );
   }
 
-  function dispatch(
-    url: string,
-    agentId: string,
-    digest: z.infer<typeof digestSchema>,
-  ): Promise<void> {
-    const isPending = () => !closed && pendingDigest(url, agentId)?.id === digest.id;
+  function forgetDispatched(agentId: string, updates: DueUpdate[]): Promise<void> {
+    return serialize(async () => {
+      const dispatched = new Set(updates.map(({ digest }) => digest.id));
+      const changed: WatchGroup[] = [];
+      for (const url of new Set(updates.map((update) => update.url))) {
+        const group = groups.get(url);
+        const watcher = group?.watchers.find((entry) => entry.agentId === agentId);
+        if (!group || !watcher) continue;
+        const digests = watcher.digests.filter(({ id }) => !dispatched.has(id));
+        if (digests.length === watcher.digests.length) continue;
+        const watchers = group.watchers.slice();
+        const index = watchers.indexOf(watcher);
+        if (group.snapshot.state !== "open" && !digests.length) watchers.splice(index, 1);
+        else watchers[index] = { agentId, digests };
+        changed.push({ ...group, watchers });
+      }
+      if (changed.length) await commit(...changed);
+      for (const id of dispatched) accepted.delete(id);
+    });
+  }
+
+  function dispatch(agentId: string, updates: DueUpdate[]): Promise<void> {
+    const outstanding = updates.filter(({ digest }) => !accepted.has(digest.id));
+    const isPending = () => !closed && outstanding.every((update) => isQueued(agentId, update));
     return (async () => {
       if (!(await deps.isActive(agentId))) {
-        await serialize(async () => {
-          if (isPending()) await removeWatcher(groups.get(url)!, agentId);
-        });
+        await archive(agentId);
         return;
       }
       if (!isPending()) return;
-      const delivered =
-        accepted.has(digest.id) ||
-        (await deps.deliver(agentId, {
-          id: digest.id,
-          text: [`Paseo change request update for ${url}`, ...digest.events].join("\n"),
+      if (outstanding.length) {
+        const text: string[] = [];
+        let lastUrl: string | undefined;
+        for (const { url, digest } of outstanding) {
+          if (url !== lastUrl) text.push(`Paseo change request update for ${url}`);
+          text.push(...digest.events);
+          lastUrl = url;
+        }
+        const delivered = await deps.deliver(agentId, {
+          id: outstanding[0]!.digest.id,
+          text: text.join("\n"),
           signal: shutdown.signal,
           isPending,
-        }));
-      if (!delivered) {
-        if (isPending()) retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
-        return;
-      }
-      accepted.add(digest.id);
-      await serialize(async () => {
-        const group = groups.get(url);
-        const watcher = group?.watchers.find((entry) => entry.agentId === agentId);
-        if (!group || !watcher || watcher.digests[0]?.id !== digest.id) return;
-        const remaining = watcher.digests.slice(1);
-        if (group.snapshot.state !== "open" && !remaining.length) {
-          await removeWatcher(group, agentId);
-        } else {
-          const watchers = group.watchers.slice();
-          watchers[watchers.indexOf(watcher)] = { agentId, digests: remaining };
-          await commit({ ...group, watchers });
+        });
+        if (!delivered) {
+          if (isPending()) retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
+          return;
         }
-      });
-      accepted.delete(digest.id);
+        for (const { digest } of outstanding) accepted.add(digest.id);
+      }
+      await forgetDispatched(agentId, updates);
     })()
       .catch((err) => {
         if (!isPending()) return;
         retries.set(agentId, Date.now() + DELIVERY_RETRY_MS);
-        deps.logger.warn({ err, url, agentId }, "Could not deliver change request updates");
+        deps.logger.warn({ err, agentId }, "Could not deliver change request updates");
       })
       .finally(() => {
         activeDeliveries.delete(agentId);
@@ -338,19 +370,42 @@ export function createChangeRequestWatches(deps: Dependencies) {
   function flush(): Promise<void> {
     if (closed) return Promise.resolve();
     const now = Date.now();
+    const ready = new Map<string, DueUpdate[]>();
     for (const [url, group] of groups) {
-      for (const watcher of group.watchers) {
-        const { agentId } = watcher;
-        const digest = watcher.digests[0];
-        if (!digest || digest.dueAt > now || activeDeliveries.has(agentId)) continue;
+      for (const { agentId, digests } of group.watchers) {
+        if (!digests[0] || digests[0].dueAt > now || activeDeliveries.has(agentId)) continue;
         if ((retries.get(agentId) ?? 0) > now) continue;
-        retries.delete(agentId);
-        const task = dispatch(url, agentId, digest);
-        activeDeliveries.set(agentId, task);
+        const updates = ready.get(agentId) ?? [];
+        for (const digest of digests) {
+          if (digest.dueAt > now) break;
+          updates.push({ url, digest });
+        }
+        ready.set(agentId, updates);
       }
+    }
+    for (const [agentId, updates] of ready) {
+      updates.sort((left, right) => left.digest.dueAt - right.digest.dueAt);
+      retries.delete(agentId);
+      activeDeliveries.set(agentId, dispatch(agentId, updates));
     }
     armDelivery();
     return Promise.all(activeDeliveries.values()).then(() => undefined);
+  }
+
+  function archive(agentId: string): Promise<void> {
+    return serialize(async () => {
+      const updates = [...groups.values()]
+        .filter((group) => group.watchers.some((watcher) => watcher.agentId === agentId))
+        .map((group) => ({
+          url: group.url,
+          snapshot: group.snapshot,
+          seenActivity: group.seenActivity,
+          windowEnd: group.windowEnd,
+          watchers: group.watchers.filter((watcher) => watcher.agentId !== agentId),
+        }));
+      if (updates.length) await commit(...updates);
+      armDelivery();
+    });
   }
 
   function stop(): void {
@@ -397,16 +452,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
         return { url, removed };
       });
     },
-    archive(agentId: string) {
-      return serialize(async () => {
-        for (const group of groups.values()) {
-          if (group.watchers.some((watcher) => watcher.agentId === agentId)) {
-            await removeWatcher(group, agentId);
-          }
-        }
-        armDelivery();
-      });
-    },
+    archive,
     flush,
     agentIdle(agentId: string) {
       if (!nextDeliveryByAgent.has(agentId)) return;

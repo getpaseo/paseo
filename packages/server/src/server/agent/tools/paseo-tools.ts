@@ -2740,6 +2740,9 @@ function createToolCatalog(
           url: z.string(),
           ...changeRequestStatusSchema.shape,
           subscribed: z.boolean(),
+          stale: z
+            .boolean()
+            .describe("The last stored status is shown because a fresh read is pending or failed."),
         },
       },
       async ({ url }) => {

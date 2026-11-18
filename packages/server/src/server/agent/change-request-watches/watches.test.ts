@@ -242,3 +242,98 @@ test("records an admitted update acknowledged during provider shutdown", async (
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("returns the durable baseline while a restored observation is failing", async () => {
+  const home = await createTestHome();
+  let failing = false;
+  const create = () =>
+    createChangeRequestWatches({
+      source: {
+        resolve: (input) => input,
+        observe(_address, callbacks) {
+          queueMicrotask(() => {
+            if (failing) callbacks.error(new Error("GitHub unavailable"));
+            else void callbacks.snapshot(initial);
+          });
+          return () => {};
+        },
+      },
+      paseoHome: home,
+      isActive: async () => true,
+      deliver: async () => true,
+      logger: pino({ enabled: false }),
+    });
+  let watches = create();
+  try {
+    await watches.start();
+    await watches.subscribe("first", url);
+    await watches.close();
+    failing = true;
+    watches = create();
+    await watches.start();
+    const result = await Promise.race([
+      watches.subscribe("first", url),
+      new Promise((resolve) => setTimeout(() => resolve("subscribe still pending"), 100)),
+    ]);
+    expect(result).toMatchObject({ headSha: initial.headSha, subscribed: true, stale: true });
+  } finally {
+    await watches.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("sends all due digests in one turn when an agent becomes idle", async () => {
+  const home = await createTestHome();
+  vi.useFakeTimers();
+  const observers = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
+  let busy = true;
+  const deliveries: string[] = [];
+  const watches = createChangeRequestWatches({
+    source: {
+      resolve: (input) => input,
+      observe(address, callbacks) {
+        observers.set(address, callbacks);
+        queueMicrotask(() => void callbacks.snapshot(initial));
+        return () => observers.delete(address);
+      },
+    },
+    paseoHome: home,
+    isActive: async () => true,
+    async deliver(_agent, digest) {
+      if (busy) return false;
+      deliveries.push(digest.text);
+      return true;
+    },
+    logger: pino({ enabled: false }),
+  });
+  try {
+    const second = "https://github.com/owner/repo/pull/43";
+    await watches.start();
+    await watches.subscribe("first", url);
+    await watches.subscribe("first", second);
+    for (const [address, id] of [
+      [url, "1"],
+      [second, "2"],
+      [url, "3"],
+    ]) {
+      await observers.get(address)!.snapshot({
+        ...initial,
+        activity: [{ id, kind: "comment", url: address + "#issuecomment-" + id }],
+      });
+      await vi.advanceTimersByTimeAsync(31_000);
+    }
+    busy = false;
+    watches.agentIdle("first");
+    await watches.flush();
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toContain(url + "#issuecomment-1");
+    expect(deliveries[0]?.match(/issuecomment-\d/g)).toEqual([
+      "issuecomment-1",
+      "issuecomment-2",
+      "issuecomment-3",
+    ]);
+  } finally {
+    await watches.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
