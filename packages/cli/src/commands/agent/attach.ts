@@ -6,6 +6,9 @@ export function addAttachOptions(cmd: Command): Command {
     .argument("<id>", "Agent ID (or prefix)");
 }
 import { connectToDaemon } from "../../utils/client.js";
+import type { CommandOptions } from "../../output/index.js";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createFollowJsonWriter } from "./logs.js";
 import { waitForStop } from "../../utils/wait-for-stop.js";
 import {
   fetchProjectedTimelineItems,
@@ -14,11 +17,7 @@ import {
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 
-export interface AgentAttachOptions {
-  host?: string;
-  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
-  [key: string]: unknown;
-}
+export interface AgentAttachOptions extends CommandOptions {}
 
 /**
  * Format and print a timeline item to the terminal
@@ -124,6 +123,11 @@ export async function runAttachCommand(
     }
     const resolvedId = fetchResult.agent.id;
 
+    if (options.json === true || options.format?.trim().toLowerCase() === "json") {
+      await runJsonAttach(client, resolvedId);
+      return;
+    }
+
     // Print header
     console.log(`Fetching history for agent ${resolvedId.substring(0, 7)}...`);
     console.log(`(Press Ctrl+C to detach)\n`);
@@ -167,5 +171,49 @@ export async function runAttachCommand(
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Error: Failed to attach to agent: ${message}`);
     process.exit(1);
+  }
+}
+
+/** JSON attach owns shutdown before history can write to a closed reader. */
+async function runJsonAttach(client: DaemonClient, agentId: string): Promise<void> {
+  const controller = new AbortController();
+  const stopped = waitForStop(controller.signal);
+  const writer = createFollowJsonWriter();
+  let unsubscribe: (() => void) | undefined;
+  try {
+    console.error(`Fetching history for agent ${agentId.substring(0, 7)}...`);
+    console.error(`(Press Ctrl+C to detach)\n`);
+    try {
+      const history = await Promise.race([
+        fetchProjectedTimelineItems({ client, agentId, timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS }),
+        stopped,
+      ]);
+      if (!history) return;
+      for (const item of history) writer.push(item);
+    } catch (error) {
+      console.warn("Warning: failed to fetch existing timeline", error);
+    }
+    const subscription = client.subscribeAgentTimeline(agentId, (message) => {
+      if (message.type === "agent.timeline.replacement") {
+        console.error("\n[Timeline replaced; earlier output is no longer current]");
+      } else if (message.type === "agent.timeline.subscription_restored") {
+        console.error("\n[Reconnected; live output resumed. Events may have been missed.]");
+      } else if (message.type === "agent.timeline.error") {
+        console.error(`Timeline observation stopped: ${message.payload.error}`);
+      } else if (message.payload.event.type === "timeline") {
+        writer.push(message.payload.event.item);
+      }
+    });
+    unsubscribe = subscription;
+    const ready = await Promise.race([subscription.ready.then(() => true), stopped]);
+    if (!ready) return;
+    console.error(`Attached to agent ${agentId.substring(0, 7)}.`);
+    await stopped;
+    console.error("\n\nDetaching from agent...");
+  } finally {
+    controller.abort();
+    writer.end();
+    unsubscribe?.();
+    await client.close();
   }
 }
