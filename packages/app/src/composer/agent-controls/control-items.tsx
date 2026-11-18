@@ -33,6 +33,8 @@ function getFeatureHighlight(
 function toFeatureItem(
   control: AgentOptionControl,
   optionControls: ComposerOptionControls,
+  surface: ComposerControlSurface,
+  t: TFunction,
 ): ComposerControlItem {
   const { options, onSetOption } = optionControls;
   const base = {
@@ -43,11 +45,15 @@ function toFeatureItem(
     testID: `agent-feature-${control.key}`,
   };
   if (control.type === "toggle") {
+    const enabled = readToggleOption(control, options);
+    const stateLabel = enabled ? t("agentControls.features.on") : t("agentControls.features.off");
     return {
       ...base,
       type: "toggle",
-      tooltip: control.tooltip,
-      value: readToggleOption(control, options),
+      tooltip:
+        control.tooltip ??
+        (surface === "toolbar" ? `${control.label}: ${stateLabel}` : control.label),
+      value: enabled,
       onChange: (value) => onSetOption(control.key, value),
     };
   }
@@ -92,9 +98,11 @@ export function useAgentControlItems({
   const features = useMemo(
     () =>
       optionControls
-        ? optionControls.controls.map((control) => toFeatureItem(control, optionControls))
+        ? optionControls.controls.map((control) =>
+            toFeatureItem(control, optionControls, surface, t),
+          )
         : [],
-    [optionControls],
+    [optionControls, surface, t],
   );
   return { thinking: thinkingItem, features };
 }

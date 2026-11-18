@@ -82,10 +82,10 @@ describe("ComposerControls", () => {
     expect(trigger.textContent).not.toContain("Large");
   });
 
-  it("names the toggle state and flips it on press in the toolbar", () => {
+  it("keeps the toolbar toggle name and flips it on press", () => {
     const onChange = vi.fn();
     renderControls([{ ...base, type: "toggle", value: true, onChange }]);
-    fireEvent.click(screen.getByRole("button", { name: "Context: On" }));
+    fireEvent.click(screen.getByRole("button", { name: "Context", exact: true }));
     expect(onChange).toHaveBeenCalledWith(false);
   });
 

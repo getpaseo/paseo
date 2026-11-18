@@ -148,7 +148,7 @@ function describeControl(
       selectedId: String(item.value),
       value: label,
       iconOnly: true,
-      tooltip: item.tooltip ?? (isSheet ? item.title : `${item.title}: ${label}`),
+      tooltip: item.tooltip ?? item.title,
       opensList: isSheet,
     };
   }
