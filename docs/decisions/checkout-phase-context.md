@@ -7,5 +7,4 @@ identity, while each subscriber retains its own request ID and observation time.
 correlation local to one checkout operation without changing Git, cache, or refresh policy.
 
 The context is internal and best-effort. Rows carry fixed phase labels and allowlisted scalar fields,
-and sink failures cannot change the checkout result. The older worker-backed path has separate
-ownership and must carry this correlation across its worker message boundary when instrumented.
+and sink failures cannot change the checkout result.

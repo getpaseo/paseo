@@ -35,6 +35,18 @@ interface Fields {
   queued?: boolean;
   operation?: "facts" | "status" | "shortstat" | "ref-derived" | "other-read";
 }
+interface JoinRefreshOptions {
+  refresh: Refresh | undefined;
+  alreadyActive: boolean;
+  fields?: Fields;
+}
+interface PhaseOptions {
+  name: Phase;
+  fields?: Fields;
+}
+interface WithPhaseOptions<T> extends PhaseOptions {
+  run: () => Promise<T>;
+}
 export interface CheckoutPhaseRow extends Fields {
   v: 1;
   requestId: string;
@@ -198,11 +210,7 @@ export function newRefresh(): Refresh {
   refresh.timer.unref();
   return refresh;
 }
-export function joinRefresh(options: {
-  refresh: Refresh | undefined;
-  alreadyActive: boolean;
-  fields?: Fields;
-}) {
+export function joinRefresh(options: JoinRefreshOptions) {
   const { refresh, alreadyActive, fields = {} } = options;
   if (!refresh) return;
   const request = context.getStore()?.request;
@@ -244,7 +252,7 @@ export function closeRefresh(refresh: Refresh) {
   refresh.subscribers.clear();
   refresh.active.clear();
 }
-export function phase(options: { name: Phase; fields?: Fields }) {
+export function phase(options: PhaseOptions) {
   const { name, fields = {} } = options;
   const store = context.getStore();
   const refresh = store?.refresh;
@@ -282,11 +290,7 @@ export function phase(options: { name: Phase; fields?: Fields }) {
     send({ ...event, outcome, at: end, durationMs: Math.max(0, end - start) });
   };
 }
-export async function withPhase<T>(options: {
-  name: Phase;
-  run: () => Promise<T>;
-  fields?: Fields;
-}): Promise<T> {
+export async function withPhase<T>(options: WithPhaseOptions<T>): Promise<T> {
   const { name, run, fields } = options;
   const end = phase({ name, fields });
   try {

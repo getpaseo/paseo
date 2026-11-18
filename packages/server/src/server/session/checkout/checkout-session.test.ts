@@ -40,6 +40,22 @@ function isTimelineResponse(msg: SessionOutboundMessage): boolean {
   return msg.type === "pull_request_timeline_response";
 }
 
+function phaseRowsFromInfoCalls(calls: readonly unknown[][]): unknown[] {
+  return calls.map((args) => args[0]);
+}
+
+function haveSanitizedRequestIds(rows: readonly unknown[]): boolean {
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null || !("requestId" in row)) return false;
+    if (
+      typeof row.requestId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.requestId)
+    )
+      return false;
+  }
+  return true;
+}
+
 interface FakeDiffSubscription {
   cwd: string;
   compare: CheckoutDiffCompareInput;
@@ -280,44 +296,85 @@ describe("CheckoutSession", () => {
       ]);
     });
 
-    it("keeps raw checkout inputs and errors out of slow phase logs", async () => {
-      vi.useFakeTimers();
-      const phaseLogger = pino({ level: "silent" });
-      const info = vi.spyOn(phaseLogger, "info");
-      const { checkout, emitted } = makeCheckoutSession({
-        phaseLogger,
-        git: {
-          getSnapshot: async () => {
-            throw new Error("sentinel error");
-          },
-        },
-      });
-      try {
-        const task = checkout.handleStatusRequest({
-          type: "checkout_status_request",
-          cwd: "/tmp/sentinel-cwd",
-          requestId: "untrusted-request-id",
+    it.each(["success", "error"] as const)(
+      "keeps raw checkout inputs out of slow phase logs on %s",
+      async (outcome) => {
+        vi.useFakeTimers();
+        const phaseLogger = pino({ level: "info" });
+        const info = vi.spyOn(phaseLogger, "info");
+        let resolveSnapshot!: (snapshot: WorkspaceGitRuntimeSnapshot) => void;
+        let rejectSnapshot!: (error: Error) => void;
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
         });
-        await vi.advanceTimersByTimeAsync(500);
-        await task;
-        const logged = JSON.stringify(info.mock.calls);
-        expect(logged).not.toContain("sentinel");
-        expect(logged).not.toContain("untrusted-request-id");
-        expect(emitted).toEqual([
-          expect.objectContaining({
+        const snapshotGate = new Promise<WorkspaceGitRuntimeSnapshot>((resolve, reject) => {
+          resolveSnapshot = resolve;
+          rejectSnapshot = reject;
+        });
+        const sentinels = [
+          "/tmp/raw-cwd-sentinel",
+          "raw-error-sentinel",
+          "raw-argv-sentinel",
+          "credential-sentinel",
+          "untrusted-request-id",
+        ];
+        const { checkout, emitted } = makeCheckoutSession({
+          phaseLogger,
+          git: {
+            getSnapshot: async () => {
+              markStarted();
+              return snapshotGate;
+            },
+          },
+        });
+        const rawError = new Error(sentinels.slice(1, 4).join(" "));
+        try {
+          const task = checkout.handleStatusRequest({
+            type: "checkout_status_request",
+            cwd: sentinels[0]!,
+            requestId: sentinels[4]!,
+          });
+          await started;
+          await vi.advanceTimersByTimeAsync(500);
+          const requestRows = phaseRowsFromInfoCalls(info.mock.calls);
+          expect(requestRows).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ phase: "request", outcome: "start" }),
+            ]),
+          );
+          expect(haveSanitizedRequestIds(requestRows)).toBe(true);
+          if (outcome === "success") resolveSnapshot(createGitSnapshot(sentinels[0]!, "main"));
+          else rejectSnapshot(rawError);
+          await task;
+          const logged = JSON.stringify(info.mock.calls);
+          expect(phaseRowsFromInfoCalls(info.mock.calls)).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ phase: "response", outcome: "start" }),
+              expect.objectContaining({ phase: "request", outcome: "ok" }),
+            ]),
+          );
+          for (const sentinel of sentinels) expect(logged).not.toContain(sentinel);
+          expect(emitted).toHaveLength(1);
+          expect(emitted[0]).toMatchObject({
             type: "checkout_status_response",
-            payload: expect.objectContaining({
-              cwd: "/tmp/sentinel-cwd",
-              requestId: "untrusted-request-id",
-              error: { code: "UNKNOWN", message: "sentinel error" },
-            }),
-          }),
-        ]);
-      } finally {
-        vi.useRealTimers();
-        info.mockRestore();
-      }
-    });
+            payload:
+              outcome === "success"
+                ? { cwd: sentinels[0], requestId: sentinels[4], currentBranch: "main", isGit: true }
+                : {
+                    cwd: sentinels[0],
+                    requestId: sentinels[4],
+                    error: { code: "UNKNOWN", message: rawError.message },
+                  },
+          });
+        } finally {
+          resolveSnapshot(createGitSnapshot("/repo", "main"));
+          rejectSnapshot(rawError);
+          vi.useRealTimers();
+          info.mockRestore();
+        }
+      },
+    );
   });
 
   describe("validate branch", () => {
