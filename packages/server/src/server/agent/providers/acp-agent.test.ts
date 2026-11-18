@@ -4000,6 +4000,43 @@ describe("ACPAgentSession", () => {
     };
   }
 
+  test("ACP Stop waits for the prompt response and can retry when it never arrives", async () => {
+    const nativePrompt = Promise.withResolvers<Awaited<ReturnType<Agent["prompt"]>>>();
+    const firstCancel = Promise.withResolvers<void>();
+    const secondCancel = Promise.withResolvers<void>();
+    const nativeAgent = fakeACPAgent(() => nativePrompt.promise);
+    const cancel = vi
+      .fn()
+      .mockImplementationOnce(async () => firstCancel.resolve())
+      .mockImplementationOnce(async () => secondCancel.resolve());
+    nativeAgent.cancel = cancel;
+    const agent = await connectInMemoryACPAgent(nativeAgent);
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = agent.sessionId;
+    asInternals<ACPSessionInternals>(session).connection = agent.connection;
+    try {
+      await session.startTurn("long task");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const stopping = session.interrupt();
+      const refused = expect(stopping).rejects.toThrow("did not finish its turn after Stop");
+      await firstCancel.promise;
+      await vi.advanceTimersByTimeAsync(5_000);
+      await refused;
+      await expect(session.startTurn("replacement")).rejects.toThrow("already active");
+
+      const retry = session.interrupt();
+      await secondCancel.promise;
+      nativePrompt.resolve({ stopReason: "cancelled" });
+      await retry;
+      expect(cancel).toHaveBeenCalledTimes(2);
+      expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      nativePrompt.resolve({ stopReason: "cancelled" });
+      await agent.closeTransport();
+    }
+  });
+
   test("startTurn fails instead of hanging when the ACP connection has closed", async () => {
     const agent = await connectInMemoryACPAgent(
       fakeACPAgent(async () => ({ stopReason: "end_turn" })),
