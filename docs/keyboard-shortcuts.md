@@ -42,9 +42,10 @@ as a newline. While the composer can send, it publishes the chords from
 `resolveMessageInputEnterAction` the web composer uses.
 
 The chords are taken before the IME, not in the window callback. Some IMEs consume a
-physical Return and synthesize a soft one: on Xiaoyi (#6979's diagnostics) and Samsung
-Keyboard the window only ever sees Return with `FLAG_SOFT_KEYBOARD` from device -1, which
-is indistinguishable from an on-screen key, while Ctrl+Return passes through untouched.
+physical Return before the window sees it. #6979's diagnostics show Xiaoyi synthesizing a
+soft one (`FLAG_SOFT_KEYBOARD`, device -1), indistinguishable from an on-screen key. With
+Samsung Keyboard on a Galaxy Z Fold8 (One UI 9.0), the window callback never received a
+hardware Return either, while Ctrl+Return passed through untouched.
 The composer input's container is therefore `HardwareKeyboardSubmitView`, a
 `ReactViewGroup` that keeps React Native's layout and overrides `dispatchKeyEventPreIme`.
 As an ancestor of the focused input it sees each hardware press before the IME, and only

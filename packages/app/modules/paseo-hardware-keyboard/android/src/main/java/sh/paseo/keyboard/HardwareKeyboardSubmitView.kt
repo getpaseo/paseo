@@ -11,10 +11,10 @@ import com.facebook.react.views.view.ReactViewGroup
 /**
  * Wraps the composer's text input so its send chords are taken before the IME sees them.
  *
- * Some IMEs consume a physical Return and synthesize a soft one in its place (Xiaoyi in #6979's
- * device diagnostics, Samsung Keyboard on a Galaxy phone), so by the time the window callback
- * runs, the press is indistinguishable from an on-screen Return. An ancestor of the focused input
- * receives `dispatchKeyEventPreIme` before the IME does, and only for real hardware presses.
+ * Some IMEs consume a physical Return before the window callback runs: Xiaoyi synthesizes a soft
+ * one in its place (#6979's device diagnostics), and with Samsung Keyboard on a Galaxy Z Fold8 the
+ * window never receives a hardware Return at all. An ancestor of the focused input receives
+ * `dispatchKeyEventPreIme` before the IME does, and only for real hardware presses.
  * Extending ReactViewGroup leaves the layout to React Native, so this view can stand in for the
  * composer's existing container.
  */
