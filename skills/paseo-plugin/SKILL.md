@@ -69,11 +69,18 @@ managed installation. Its DIRECTORY column shows the managed folder.
 
 To develop a plugin that is installed from Git or npm:
 
-1. Clone the source repository of the plugin into a folder outside the daemon home.
-2. If the managed folder holds edits or commits, move them into the new folder.
-3. Run `paseo plugin remove <id>` to remove the managed installation.
-4. Run `paseo plugin install /absolute/path/to/my-plugin` to install the new folder.
-5. Edit the new folder, and run `paseo plugin reload <id>` after each change.
+1. Clone the source repository of the plugin into a folder outside the daemon home. For an npm
+   plugin, find the repository in its `package.json`.
+2. If SOURCE ends with `:<path>`, use that subfolder of the clone as the plugin folder.
+3. If the managed folder holds edits or commits, move them into the plugin folder.
+4. In the plugin folder, install the dependencies and run the `build` commands from
+   `paseo-plugin.json`. Paseo runs `build` only for managed installations.
+5. Ask the user before you remove the managed installation. `paseo plugin remove <id>` also
+   deletes the saved settings of the plugin.
+6. Run `paseo plugin remove <id>`.
+7. Run `paseo plugin install /absolute/path/to/plugin-folder --id <id>` to keep the runtime ID.
+8. Edit the plugin folder, and run `paseo plugin reload <id>` after each change. If a change needs
+   a `build` command, run that command before `reload`.
 
 ## Create the project
 
