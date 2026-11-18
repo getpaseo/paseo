@@ -1,3 +1,4 @@
+import { addResourceOptions } from "../../utils/resource-options.js";
 import { Command } from "commander";
 import { runModeCommand } from "./mode.js";
 import { addArchiveOptions, runArchiveCommand } from "./archive.js";
@@ -95,18 +96,21 @@ export function createAgentCommand(): Command {
   ).action(withOutput(runDetachCommand));
 
   addJsonAndDaemonHostOptions(
-    agent
-      .command("update")
-      .description("Update an agent's settings or metadata")
-      .argument("<id>", "Agent ID (or prefix)")
-      .option("--name <name>", "Update the agent's display name")
-      .option("--thinking <id>", "Update the agent's thinking option ID")
-      .option(
-        "--label <label>",
-        "Add/set label(s) on the agent (can be used multiple times or comma-separated)",
-        collectMultiple,
-        [],
-      ),
+    addResourceOptions(
+      agent
+        .command("update")
+        .description("Update an agent's settings or metadata")
+        .argument("<id>", "Agent ID (or prefix)")
+        .option("--name <name>", "Update the agent's display name")
+        .option("--thinking <id>", "Update the agent's thinking option ID")
+        .option(
+          "--label <label>",
+          "Add/set label(s) on the agent (can be used multiple times or comma-separated)",
+          collectMultiple,
+          [],
+        ),
+      { clearable: true },
+    ),
   ).action(withOutput(runUpdateCommand));
 
   return agent;

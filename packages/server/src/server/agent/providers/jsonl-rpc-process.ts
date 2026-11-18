@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../resources/launch.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
@@ -23,6 +24,7 @@ export interface JsonlRpcLaunch {
   args: string[];
   cwd: string;
   env?: Record<string, string>;
+  resources?: AgentResourceLaunch;
 }
 
 interface JsonlRpcResponse {
@@ -66,6 +68,7 @@ function spawnJsonlRpcProcess(launch: JsonlRpcLaunch): ChildProcessWithoutNullSt
   const child = spawnProcess(launch.command, launch.args, {
     cwd: launch.cwd,
     envOverlay: launch.env,
+    resources: launch.resources,
     stdio: ["pipe", "pipe", "pipe"],
   });
   assertChildWithPipes(child);

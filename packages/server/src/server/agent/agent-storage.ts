@@ -1,3 +1,4 @@
+import { AgentResourcePolicySchema } from "@getpaseo/protocol/agent-resources";
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -32,6 +33,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .optional(),
     systemPrompt: z.string().nullable().optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
+    resources: AgentResourcePolicySchema.nullable().optional(),
   })
   .nullable()
   .optional();
@@ -96,6 +98,7 @@ export type SerializableAgentConfig = Pick<
   | "toolPolicy"
   | "systemPrompt"
   | "mcpServers"
+  | "resources"
 >;
 
 type RawStoredAgentRecord = z.infer<typeof RAW_STORED_AGENT_SCHEMA>;

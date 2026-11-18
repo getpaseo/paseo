@@ -515,6 +515,7 @@ function wrapClientProvider(
     get capabilities() {
       return inner.capabilities;
     },
+    sharesProcessAcrossAgents: inner.sharesProcessAcrossAgents,
     shutdown: inner.shutdown?.bind(inner),
     createSession: async (config, launchContext, options) =>
       wrapSessionProvider(

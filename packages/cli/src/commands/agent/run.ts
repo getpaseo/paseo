@@ -1,3 +1,8 @@
+import {
+  addResourceOptions,
+  parseResourcePolicy,
+  type ResourceOptions,
+} from "../../utils/resource-options.js";
 import { Command, Option } from "commander";
 import {
   getStructuredAgentResponse,
@@ -23,7 +28,7 @@ import { buildWorkspaceSource } from "../workspace/create.js";
 export { resolveProviderAndModel } from "../../utils/provider-model.js";
 
 export function addRunOptions(cmd: Command): Command {
-  return (
+  return addResourceOptions(
     cmd
       .description("Create and start an agent with a task")
       .argument("<prompt>", "The task/prompt for the agent")
@@ -88,7 +93,7 @@ export function addRunOptions(cmd: Command): Command {
       .option(
         "--output-schema <schema>",
         "Output JSON matching the provided schema file path or inline JSON schema",
-      )
+      ),
   );
 }
 
@@ -113,7 +118,7 @@ export const agentRunSchema: OutputSchema<AgentRunResult> = {
   ],
 };
 
-export interface AgentRunOptions extends CommandOptions {
+export interface AgentRunOptions extends CommandOptions, ResourceOptions {
   wait?: boolean;
   background?: boolean;
   detach?: boolean;
@@ -598,6 +603,7 @@ export async function runRunCommand(
 
   validateRunOptions(prompt, options, outputSchema);
   const waitTimeoutMs = parseWaitTimeoutOption(options.waitTimeout);
+  const resources = parseResourcePolicy(options);
 
   const resolvedProviderModel = resolveProviderAndModel(options);
   const resolvedTitle = options.title ?? options.name;
@@ -643,6 +649,7 @@ export async function runRunCommand(
             modeId: options.mode,
             model: resolvedProviderModel.model,
             thinkingOptionId,
+            ...(resources ? { resources } : {}),
             initialPrompt: structuredPrompt,
             outputSchema,
             images,
@@ -714,6 +721,7 @@ export async function runRunCommand(
       modeId: options.mode,
       model: resolvedProviderModel.model,
       thinkingOptionId,
+      ...(resources ? { resources } : {}),
       initialPrompt: prompt,
       images,
       env: requestEnv,

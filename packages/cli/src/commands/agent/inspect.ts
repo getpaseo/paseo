@@ -1,3 +1,5 @@
+import type { AgentResourceStatus } from "@getpaseo/protocol/agent-resources";
+import { formatResourceStatus } from "../../utils/resource-options.js";
 import type { Command } from "commander";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
@@ -17,6 +19,8 @@ interface AgentInspect {
   Provider: string;
   Model: string;
   Thinking: string;
+  /** The stored policy, and per control whether the host has it in force. */
+  Resources: string;
   Status: string;
   Archived: boolean;
   ArchivedAt: string | null;
@@ -126,13 +130,17 @@ function buildCapabilities(snapshot: AgentSnapshotPayload): AgentInspect["Capabi
 }
 
 /** Convert agent snapshot to inspection data */
-function toInspectData(snapshot: AgentSnapshotPayload): AgentInspect {
+function toInspectData(
+  snapshot: AgentSnapshotPayload,
+  resourceStatus: AgentResourceStatus | null,
+): AgentInspect {
   return {
     Id: snapshot.id,
     Name: snapshot.title ?? "-",
     Provider: snapshot.provider,
     Model: resolveModel(snapshot) ?? "-",
     Thinking: snapshot.effectiveThinkingOptionId ?? "auto",
+    Resources: formatResourceStatus(snapshot.resources, resourceStatus),
     Status: snapshot.status,
     Archived: snapshot.archivedAt != null,
     ArchivedAt: snapshot.archivedAt ?? null,
@@ -162,6 +170,7 @@ function toInspectRows(agent: AgentInspect): InspectRow[] {
     { key: "Provider", value: agent.Provider },
     { key: "Model", value: agent.Model },
     { key: "Thinking", value: agent.Thinking },
+    { key: "Resources", value: agent.Resources },
     { key: "Status", value: agent.Status },
     { key: "Archived", value: String(agent.Archived) },
     { key: "ArchivedAt", value: agent.ArchivedAt ?? "null" },
@@ -240,9 +249,16 @@ export async function runInspectCommand(
       throw error;
     }
 
+    // COMPAT(agentResources): added in v0.17.0, remove gate after 2027-05-16.
+    // Fetched without a policy too: a limit whose removal failed is still in force.
+    const resourceStatus =
+      client.getLastServerInfoMessage()?.features?.agentResources === true
+        ? (await client.getAgentResources({ agentId: fetchResult.agent.id })).status
+        : null;
+
     await client.close();
 
-    const inspectData = toInspectData(fetchResult.agent);
+    const inspectData = toInspectData(fetchResult.agent, resourceStatus);
 
     return {
       type: "list",

@@ -1,3 +1,4 @@
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
 import type { DaemonTarget } from "../../utils/daemon-target.js";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
@@ -53,12 +54,18 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
 export async function requireNewAgentSchedule(
   client: ScheduleDaemonClient,
   id: string,
-): Promise<void> {
+): Promise<NewAgentScheduleRecord> {
   const payload = await client.scheduleInspect({ id });
-  if (payload.error || !payload.schedule || payload.schedule.target.type !== "new-agent") {
+  const schedule = payload.schedule;
+  if (payload.error || !schedule || schedule.target.type !== "new-agent") {
     throw new Error(payload.error ?? `Schedule not found: ${id}`);
   }
+  return { ...schedule, target: schedule.target };
 }
+
+export type NewAgentScheduleRecord = ScheduleRecord & {
+  target: Extract<ScheduleTarget, { type: "new-agent" }>;
+};
 
 export function formatCadence(cadence: ScheduleCadence): string {
   if (cadence.type === "cron") {
@@ -116,7 +123,8 @@ function resolveScheduleTarget(args: {
   if (hasExplicitNewAgentOption) {
     throw {
       code: "INVALID_TARGET",
-      message: "--provider/--mode/--thinking can only be used with a new-agent target",
+      message:
+        "--provider/--mode/--thinking and resource flags can only be used with a new-agent target",
       details: "Use --target new-agent or omit --target to create a new agent schedule",
     } satisfies CommandError;
   }
@@ -147,6 +155,7 @@ export function parseScheduleCreateInput(options: {
   provider?: string;
   mode?: string;
   thinking?: string;
+  resources?: AgentResourcePolicy;
   cwd?: string;
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
@@ -191,7 +200,10 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
   const hasExplicitNewAgentOption =
-    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
+    options.provider !== undefined ||
+    options.mode !== undefined ||
+    options.thinking !== undefined ||
+    options.resources !== undefined;
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -204,6 +216,7 @@ export function parseScheduleCreateInput(options: {
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
         ...(thinkingOptionId ? { thinkingOptionId } : {}),
+        ...(options.resources ? { resources: options.resources } : {}),
       },
     };
   };
@@ -240,6 +253,8 @@ function resolveRunOnCreate(
 
 export interface ScheduleUpdateOptionsInput {
   id: string;
+  /** Resource flags were given; the caller merges them into the stored policy. */
+  hasResourceChanges?: boolean;
   every?: string;
   cron?: string;
   timezone?: string;
@@ -277,7 +292,8 @@ export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): U
     cadence === undefined &&
     newAgentConfig === undefined &&
     maxRuns === undefined &&
-    expiresAt === undefined
+    expiresAt === undefined &&
+    !options.hasResourceChanges
   ) {
     throw {
       code: "NO_UPDATES",

@@ -4365,6 +4365,78 @@ test("metadata needs a host that advertises entityMetadata and sends nothing to 
   expect(mock.sent).toHaveLength(0);
 });
 
+test("resource policies need a host that advertises agentResources and send nothing to one that does not", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  const update = "This host does not support agent resource controls.";
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", resources: { nice: 10 } }),
+  ).rejects.toThrow(update);
+  await expect(
+    client.scheduleCreate({
+      prompt: "nightly",
+      cadence: { type: "cron", expression: "0 3 * * *" },
+      target: {
+        type: "new-agent",
+        config: { provider: "codex", cwd: "/tmp/project", resources: { nice: 10 } },
+      },
+    }),
+  ).rejects.toThrow(update);
+  await expect(
+    client.scheduleUpdate({ id: "schedule-1", newAgentConfig: { resources: null } }),
+  ).rejects.toThrow(update);
+  await expect(client.getAgentResources({ agentId: "agent-1" })).rejects.toThrow(update);
+  await expect(client.setAgentResources("agent-1", null)).rejects.toThrow(update);
+  expect(mock.sent).toHaveLength(0);
+
+  // Requests without a policy keep working against the same host.
+  void client.createAgent({ provider: "codex", cwd: "/tmp/project" }).catch(() => undefined);
+  expect(mock.sent.map((frame) => parseSentFrame(frame).type)).toEqual(["create_agent_request"]);
+});
+
+test("sends a resource policy to a host that advertises agentResources", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { agentResources: true } });
+  await connectPromise;
+
+  void client
+    .createAgent({ provider: "codex", cwd: "/tmp/project", resources: { memoryMaxMb: 2048 } })
+    .catch(() => undefined);
+  void client.setAgentResources("agent-1", { nice: 19 }).catch(() => undefined);
+
+  expect(mock.sent.map((frame) => parseSentFrame(frame))).toEqual([
+    expect.objectContaining({
+      type: "create_agent_request",
+      config: expect.objectContaining({ resources: { memoryMaxMb: 2048 } }),
+    }),
+    expect.objectContaining({
+      type: "agent.resources.set.request",
+      agentId: "agent-1",
+      resources: { nice: 19 },
+    }),
+  ]);
+});
+
 test("sends internal workspace creation and internal listings only to hosts that support them", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

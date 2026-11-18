@@ -469,6 +469,13 @@ function buildResumeConfig(
   };
 }
 
+/** What a Pi process takes from the launch context: its environment and resource boundary. */
+function piLaunchFields(
+  launchContext: AgentLaunchContext | undefined,
+): Pick<PiStartSessionInput, "env" | "resources"> {
+  return { env: launchContext?.env, resources: launchContext?.resources };
+}
+
 function buildResumeStartInput(input: {
   resumeConfig: PiResumeConfig;
   processCwd: string;
@@ -480,6 +487,7 @@ function buildResumeStartInput(input: {
   return {
     cwd: input.processCwd,
     env: input.launchContext?.env,
+    resources: input.launchContext?.resources,
     session: input.sessionFile,
     thinkingOptionId: normalizePiThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     mcpConfigPath: input.mcpConfigFile?.path,
@@ -2611,7 +2619,7 @@ export class PiRpcAgentClient implements AgentClient {
         model: config.model,
         thinkingOptionId: normalizePiThinkingOption(config.thinkingOptionId) ?? undefined,
         noSession: config.internal === true,
-        env: launchContext?.env,
+        ...piLaunchFields(launchContext),
         mcpConfigPath: mcpConfigFile?.path,
         extensionPaths: paseoExtension ? [paseoExtension.path] : undefined,
       });

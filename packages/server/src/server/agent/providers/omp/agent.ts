@@ -428,6 +428,7 @@ function buildResumeStartInput(input: {
     cwd: input.resumeConfig.cwd,
     protocolMode: "rpc-ui",
     env: input.launchContext?.env,
+    resources: input.launchContext?.resources,
     session: input.sessionFile,
     thinkingOptionId: normalizeOmpThinkingOption(input.resumeConfig.thinkingOptionId) ?? undefined,
     ...(input.launchMode.modeId ? { modeId: input.launchMode.modeId } : {}),
@@ -2369,6 +2370,7 @@ export class OmpAgentClient implements AgentClient {
         ...(config.pluginAppendSystemPrompt ?? []),
       ),
       env: launchContext?.env,
+      resources: launchContext?.resources,
     };
     const runtimeSession = await this.resolveRuntime(config.providerOptions).startSession(
       startInput,

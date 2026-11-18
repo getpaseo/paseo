@@ -1,3 +1,4 @@
+import { normalizeAgentResourcePolicy } from "../agent/resources/policy.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-messages/index.js";
 import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
@@ -131,6 +132,14 @@ function applyNewAgentConfig(
       delete config.thinkingOptionId;
     }
   }
+  if (patch.resources !== undefined) {
+    const resources = normalizeAgentResourcePolicy(patch.resources);
+    if (resources) {
+      config.resources = resources;
+    } else {
+      delete config.resources;
+    }
+  }
   if (patch.archiveOnFinish !== undefined) {
     config.archiveOnFinish = patch.archiveOnFinish;
   }
@@ -236,6 +245,7 @@ type ScheduleAgentManager = Pick<
 > &
   Pick<
     AgentManager,
+    | "assertResourcePolicyEnforceable"
     | "createAgentFromRecord"
     | "getRegisteredProviderIds"
     | "hydrateTimelineFromProvider"
@@ -339,9 +349,21 @@ export class ScheduleService {
     }
   }
 
+  /** A schedule whose runs the host would refuse is refused when it is saved. */
+  private async assertEnforceableResources(target: ScheduleTarget): Promise<void> {
+    if (target.type !== "new-agent") {
+      return;
+    }
+    await this.agentManager.assertResourcePolicyEnforceable({
+      policy: normalizeAgentResourcePolicy(target.config.resources),
+      provider: target.config.provider,
+    });
+  }
+
   async create(input: CreateScheduleInput): Promise<StoredSchedule> {
     const prompt = normalizePrompt(input.prompt);
     validateScheduleCadence(input.cadence);
+    await this.assertEnforceableResources(input.target);
     return this.createScheduleRecord(input, {
       name: trimOptionalName(input.name),
       prompt,
@@ -498,6 +520,7 @@ export class ScheduleService {
           throw new Error("new-agent config updates are only valid for new-agent target schedules");
         }
         const patchedTarget = applyNewAgentConfig(updated.target, input.newAgentConfig);
+        await this.assertEnforceableResources(patchedTarget);
         updated = {
           ...updated,
           target: patchedTarget,
@@ -1160,6 +1183,7 @@ function buildScheduleAgentConfig(
     providerOptions: foldFeatureValues(config).providerOptions,
     systemPrompt: config.systemPrompt,
     mcpServers: config.mcpServers as AgentSessionConfig["mcpServers"],
+    resources: config.resources,
   };
 }
 

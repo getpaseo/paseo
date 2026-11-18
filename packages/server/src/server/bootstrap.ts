@@ -1,3 +1,4 @@
+import { AgentResources } from "./agent/resources/index.js";
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
 import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
@@ -1019,7 +1020,11 @@ export async function createPaseoDaemon(
     if (git) configureGitProcessPolicy(git);
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
+  const agentResources = new AgentResources({ logger, namespace: config.paseoHome });
+  // A daemon that crashed leaves its agents' slices behind; nothing in them is ours any more.
+  await agentResources.start();
   const agentManager = new AgentManager({
+    resources: agentResources,
     pluginLifecycle: pluginRuntime,
     pluginAgentTools: pluginRuntime,
     clients: initialAgentManagerState.clients,
@@ -2002,6 +2007,7 @@ export async function createPaseoDaemon(
     agentManager.prepareForShutdown();
     await restartRecovery.captureRunningAgents();
     await closeAllAgents(logger, agentManager);
+    await agentResources.shutdown();
     await withTimeout({
       promise: pluginRuntime.drainEvents(),
       timeoutMs: AGENT_CLOSE_TIMEOUT_MS,

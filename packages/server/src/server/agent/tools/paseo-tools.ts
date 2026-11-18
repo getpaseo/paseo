@@ -1,3 +1,5 @@
+import { AGENT_RESOURCE_POLICY_DENIED } from "../resources/policy.js";
+import { AgentResourcePolicySchema } from "@getpaseo/protocol/agent-resources";
 import { registerPluginTools } from "./plugin-tools.js";
 import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
@@ -875,12 +877,27 @@ function createToolCatalog(
 
   const resolveInheritedProviderConfig = (
     selectedProvider: string,
-  ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
+  ): Pick<AgentSessionConfig, "providerOptions" | "resources"> | undefined => {
     const callerAgent = resolveCallerAgent();
-    if (callerAgent?.provider !== selectedProvider || !callerAgent.config?.providerOptions) {
+    const providerOptions =
+      callerAgent?.provider === selectedProvider ? callerAgent.config?.providerOptions : undefined;
+    // An agent's children get a copy of its resource policy, whatever the provider.
+    // A child whose provider cannot enforce it reports the controls as unsupported.
+    const resources = callerAgent?.config?.resources;
+    if (!providerOptions && !resources) {
       return undefined;
     }
-    return { providerOptions: callerAgent.config.providerOptions };
+    return {
+      ...(providerOptions ? { providerOptions } : {}),
+      ...(resources ? { resources } : {}),
+    };
+  };
+
+  /** Only the user sets a resource policy; an agent cannot set one on itself or another agent. */
+  const assertMayConfigureResources = (resources: unknown) => {
+    if (resources !== undefined && callerAgentId) {
+      throw new PaseoToolInputError(AGENT_RESOURCE_POLICY_DENIED);
+    }
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -954,6 +971,7 @@ function createToolCatalog(
         : {}),
       ...(callerAgent.config.systemPrompt ? { systemPrompt: callerAgent.config.systemPrompt } : {}),
       ...(callerAgent.config.mcpServers ? { mcpServers: callerAgent.config.mcpServers } : {}),
+      ...(callerAgent.config.resources ? { resources: callerAgent.config.resources } : {}),
     };
   };
 
@@ -1107,12 +1125,18 @@ function createToolCatalog(
         .record(z.string(), z.unknown())
         .optional()
         .describe("Provider-specific feature values, for example { fast_mode: true } for Codex."),
+      resources: AgentResourcePolicySchema.optional().describe(
+        "Linux resource policy for the agent's processes. Top-level callers only; created agents inherit their creator's policy.",
+      ),
     })
     .strict();
   const UpdateAgentSettingsInputSchema = z
     .object({
       modeId: z.string().optional().describe("Session mode ID."),
       model: z.string().nullable().optional().describe("Model ID. Pass null to clear."),
+      resources: AgentResourcePolicySchema.nullable()
+        .optional()
+        .describe("Replace the Linux resource policy; null clears it. Top-level callers only."),
       thinkingOptionId: z
         .string()
         .nullable()
@@ -1630,7 +1654,11 @@ function createToolCatalog(
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      assertMayConfigureResources(parsedArgs.settings?.resources);
+      const inheritedProviderConfig = resolveInheritedProviderConfig(selectedProvider);
+      const inheritedConfig = parsedArgs.settings?.resources
+        ? { ...inheritedProviderConfig, resources: parsedArgs.settings.resources }
+        : inheritedProviderConfig;
       const { snapshot, initialPromptStarted } = await createAgentCommand(
         {
           agentManager,
@@ -2309,6 +2337,10 @@ function createToolCatalog(
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      assertMayConfigureResources(settings?.resources);
+      if (settings?.resources !== undefined) {
+        await agentManager.setAgentResources(agentId, settings.resources);
+      }
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }

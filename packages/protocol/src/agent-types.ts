@@ -1,4 +1,5 @@
 import type { AgentMessage } from "./agent-message.js";
+import type { AgentResourcePolicy } from "./agent-resources.js";
 import type {
   AgentAttachment,
   AgentOptionChoiceSchema,
@@ -553,6 +554,8 @@ export interface AgentSessionConfig {
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Resource limits for the agent's process tree. See docs/agent-resources.md. */
+  resources?: AgentResourcePolicy;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.
    * They are used for ephemeral system tasks like commit/PR generation.

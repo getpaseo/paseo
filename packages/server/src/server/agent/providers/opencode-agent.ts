@@ -1406,6 +1406,8 @@ function createSdkOpenCodeClient(options: { baseUrl: string; directory: string }
 
 export class OpenCodeAgentClient implements AgentClient {
   readonly provider = "opencode" as const;
+  /** One OpenCode server can serve many agents, so it gets no per-agent resource boundary. */
+  readonly sharesProcessAcrossAgents = true;
   readonly capabilities: AgentCapabilityFlags;
   readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
   readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;

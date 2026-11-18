@@ -1,3 +1,14 @@
+import {
+  AGENT_RESOURCE_CONTROLS,
+  type AgentResourceCapabilities,
+  type AgentResourcePolicy,
+  type AgentResourceStatus,
+} from "@getpaseo/protocol/agent-resources";
+import type { AgentResourceLease, AgentResources } from "./resources/index.js";
+import {
+  normalizeAgentResourcePolicy,
+  UnenforceableAgentResourcePolicyError,
+} from "./resources/policy.js";
 import type { AttachedAgentTool, PluginAgentToolsRuntime } from "../plugins/agent-tools.js";
 import { ProviderOptionsValidationError } from "./provider-options.js";
 import type { AgentToolResult } from "@getpaseo/plugin/server";
@@ -60,6 +71,7 @@ import {
   type AgentRuntimeInfo,
   type ImportedTimelineEntry,
   type ImportableProviderSession,
+  type ImportedProviderSession,
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
@@ -372,6 +384,24 @@ export interface CreateAgentOptions {
   background?: boolean;
 }
 
+export interface ResourcePolicyTarget {
+  policy: AgentResourcePolicy | undefined;
+  /** The provider the policy would apply to; some cannot be bounded per agent. */
+  provider: AgentProvider;
+}
+
+export interface AgentResourcesDescription {
+  resources: AgentResourcePolicy | null;
+  status: AgentResourceStatus | null;
+}
+
+interface OpenSessionInput {
+  agentId: string;
+  client: AgentClient;
+  config: AgentSessionConfig;
+  launchContext: AgentLaunchContext;
+}
+
 export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   /** An internal workspace makes every agent created inside it internal. */
@@ -397,6 +427,8 @@ export interface AgentManagerOptions {
     agentId: string;
     expectedTurnId: string;
   }) => Promise<void>;
+  /** Enforces per-agent resource policies. Without it every policy is refused. */
+  resources?: AgentResources;
   logger: Logger;
 }
 
@@ -847,6 +879,8 @@ export class AgentManager {
     RetiredInternalAgent & { expiresAt: number }
   >();
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly resources?: AgentResources;
+  private readonly sessionResources = new WeakMap<AgentSession, AgentResourceLease>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -903,6 +937,7 @@ export class AgentManager {
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
+    this.resources = options.resources;
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
@@ -1584,6 +1619,12 @@ export class AgentManager {
       };
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
+    config = { ...config, resources: normalizeAgentResourcePolicy(config.resources) };
+    // Refused before any state is touched; opening the session checks again.
+    await this.assertResourcePolicyEnforceable({
+      policy: config.resources,
+      provider: config.provider,
+    });
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
@@ -1614,7 +1655,10 @@ export class AgentManager {
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
-    const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
+    const session = await this.openSession(
+      { agentId: resolvedAgentId, client, config: storedConfig, launchContext },
+      () => client.createSession(providerLaunchConfig, launchContext, createOptions),
+    );
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
       launchedOptions,
@@ -1712,6 +1756,11 @@ export class AgentManager {
     // settled before the config is prepared, because a history load reads an archived
     // agent whose working directory may be gone.
     const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    if (record) {
+      // The caller built its overrides before entering the lane; a policy change
+      // that ran ahead of this resume is only in the record.
+      mergedConfig.resources = record.config?.resources ?? undefined;
+    }
     const purpose = await resolveResumePurpose(record, resumeOptions?.purpose, mergedConfig.cwd);
     const currentResumeOptions = { purpose } satisfies AgentResumeSessionOptions;
 
@@ -1747,11 +1796,9 @@ export class AgentManager {
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
-    const session = await client.resumeSession(
-      handle,
-      providerLaunchConfig,
-      launchContext,
-      currentResumeOptions,
+    const session = await this.openSession(
+      { agentId: resolvedAgentId, client, config: storedConfig, launchContext },
+      () => client.resumeSession(handle, providerLaunchConfig, launchContext, currentResumeOptions),
     );
     if (purpose === "history") this.historySessions.add(session);
     await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
@@ -1821,12 +1868,14 @@ export class AgentManager {
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
-    const imported = await client.importSession(
-      {
-        providerHandleId: input.providerHandleId,
-        cwd: input.cwd,
-      },
-      { config: providerLaunchConfig, storedConfig, launchContext },
+    const importSession = client.importSession.bind(client);
+    const imported = await this.openSession(
+      { agentId: resolvedAgentId, client, config: storedConfig, launchContext },
+      () =>
+        importSession(
+          { providerHandleId: input.providerHandleId, cwd: input.cwd },
+          { config: providerLaunchConfig, storedConfig, launchContext },
+        ),
     );
     await this.requireExternalMcpSupport(imported.session, providerLaunchConfig, launchContext);
     let handedToRegistration = false;
@@ -1954,9 +2003,13 @@ export class AgentManager {
 
       this.paseoToolPolicies.set(agentId, paseoToolPolicy);
       const launchedOptions = this.launchOptionsFor({ client, own: storedConfig.providerOptions });
-      session = handle
-        ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-        : await client.createSession(providerLaunchConfig, launchContext);
+      session = await this.openSession(
+        { agentId, client, config: storedConfig, launchContext },
+        () =>
+          handle
+            ? client.resumeSession(handle, providerLaunchConfig, launchContext)
+            : client.createSession(providerLaunchConfig, launchContext),
+      );
       await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
       this.assertAcceptingAgentRegistrations();
 
@@ -2016,7 +2069,7 @@ export class AgentManager {
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
     let operation = this.reloadedSessionCloses.get(session);
     if (!operation) {
-      operation = session.close();
+      operation = this.closeProviderSession(session);
       this.reloadedSessionCloses.set(session, operation);
       // Keep pending closes across request timeouts; a retry must await the same release.
       void operation.catch(() => this.reloadedSessionCloses.delete(session));
@@ -2199,7 +2252,7 @@ export class AgentManager {
     if (canClose && !canClose()) return false;
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
-    await agent.session.close();
+    await this.closeProviderSession(agent.session);
     await this.drainSessionEvents(agentId);
     this.cancelRunningProviderSubagents(agentId);
     // close() drops the session's subscribers before the provider could report an empty list.
@@ -2970,6 +3023,94 @@ export class AgentManager {
     }
 
     await this.unarchiveSnapshot(matched.id);
+  }
+
+  /**
+   * Replaces an agent's resource policy. A policy the host or the agent's provider
+   * cannot enforce is refused. A running agent is adjusted in place. Runs in the
+   * lifecycle lane, so it never overlaps an open, reload or close of the same agent.
+   */
+  async setAgentResources(agentId: string, policy: AgentResourcePolicy | null): Promise<void> {
+    const resources = normalizeAgentResourcePolicy(policy);
+    await this.runLifecycleMutation(agentId, async () => {
+      const agent = this.agents.get(agentId);
+      if (agent) {
+        await this.assertResourcePolicyEnforceable({ policy: resources, provider: agent.provider });
+        agent.config = { ...agent.config, resources };
+        await this.resources?.update(agentId, resources);
+        this.touchUpdatedAt(agent);
+        await this.persistSnapshot(agent);
+        this.emitState(agent, { persist: false });
+        return;
+      }
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      await this.assertResourcePolicyEnforceable({ policy: resources, provider: record.provider });
+      const nextRecord = {
+        ...record,
+        config: { ...record.config, resources: resources ?? null },
+        updatedAt: this.nextStoredUpdatedAt(record),
+      };
+      await registry.upsert(nextRecord);
+      if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
+    });
+  }
+
+  /** Whether this host can enforce any resource control. */
+  get supportsResourcePolicies(): boolean {
+    return this.resources?.supported === true;
+  }
+
+  /** Rejects a policy this host or the given provider cannot enforce. */
+  async assertResourcePolicyEnforceable(input: ResourcePolicyTarget): Promise<void> {
+    const { policy } = input;
+    if (!policy) {
+      return;
+    }
+    if (!this.resources) {
+      throw new UnenforceableAgentResourcePolicyError(
+        AGENT_RESOURCE_CONTROLS.filter((control) => policy[control] !== undefined).map(
+          (control) => ({
+            control,
+            state: "unsupported",
+            message: "This daemon runs without resource controls",
+          }),
+        ),
+      );
+    }
+    await this.resources.assertEnforceable({
+      policy,
+      sharedProcess: this.sharesProcessAcrossAgents(input.provider),
+    });
+  }
+
+  /** What this host can apply; null when the daemon runs without resource controls. */
+  async getResourceCapabilities(): Promise<AgentResourceCapabilities | null> {
+    return (await this.resources?.capabilities()) ?? null;
+  }
+
+  /** The agent's stored policy and what the host currently enforces for it. */
+  async describeAgentResources(agentId: string): Promise<AgentResourcesDescription> {
+    const agent = this.agents.get(agentId);
+    const record = agent ? null : await this.registry?.get(agentId);
+    const provider = agent?.provider ?? record?.provider;
+    if (!provider) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    const policy = (agent ? agent.config.resources : record?.config?.resources) ?? undefined;
+    const status = await this.resources?.status({
+      agentId,
+      policy,
+      sharedProcess: this.sharesProcessAcrossAgents(provider),
+    });
+    return { resources: policy ?? null, status: status ?? null };
+  }
+
+  private sharesProcessAcrossAgents(provider: AgentProvider): boolean {
+    return this.clients.get(provider)?.sharesProcessAcrossAgents === true;
   }
 
   async updateAgentMetadata(
@@ -4504,10 +4645,48 @@ export class AgentManager {
 
   private async closeUnregisteredSession(session: AgentSession): Promise<void> {
     try {
-      await session.close();
+      await this.closeProviderSession(session);
     } catch (error) {
       this.logger.warn({ err: error }, "Failed to close unregistered agent session");
     }
+  }
+
+  /**
+   * Opens a provider session inside the agent's resource boundary, or refuses when
+   * its policy cannot be enforced. The boundary is held until `closeProviderSession`
+   * succeeds for the session.
+   */
+  private async openSession<Opened extends AgentSession | ImportedProviderSession>(
+    input: OpenSessionInput,
+    open: () => Promise<Opened>,
+  ): Promise<Opened> {
+    const { provider } = input.client;
+    await this.assertResourcePolicyEnforceable({ policy: input.config.resources, provider });
+    const lease = await this.resources?.open({
+      agentId: input.agentId,
+      policy: input.config.resources,
+      sharedProcess: input.client.sharesProcessAcrossAgents === true,
+    });
+    input.launchContext.resources = lease?.launch;
+    try {
+      const opened = await open();
+      if (lease) {
+        this.sessionResources.set("session" in opened ? opened.session : opened, lease);
+      }
+      return opened;
+    } catch (error) {
+      await lease?.release();
+      throw error;
+    }
+  }
+
+  /**
+   * A close that throws may still own its process, so the boundary stays until a
+   * later close succeeds or the daemon shuts down.
+   */
+  private async closeProviderSession(session: AgentSession): Promise<void> {
+    await session.close();
+    await this.sessionResources.get(session)?.release();
   }
 
   private async requireExternalMcpSupport(

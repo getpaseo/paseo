@@ -1,3 +1,4 @@
+import type { AgentResourceLaunch } from "../resources/launch.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
@@ -548,6 +549,7 @@ interface ACPAgentSessionOptions {
   configuredModelIds?: readonly string[];
   agentId?: string;
   launchEnv?: Record<string, string>;
+  resources?: AgentResourceLaunch;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -1150,6 +1152,7 @@ export class ACPAgentClient implements AgentClient {
         configuredModelIds: options?.configuredModelIds,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
+        resources: launchContext?.resources,
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -1210,6 +1213,7 @@ export class ACPAgentClient implements AgentClient {
       configuredModelIds: options?.configuredModelIds,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      resources: launchContext?.resources,
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -1862,6 +1866,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
+  private readonly resources?: AgentResourceLaunch;
   private readonly usageProvider?: string;
   private readonly usageSessionKey = randomUUID();
   private readonly harnessEnvironment: Record<string, string>;
@@ -1934,6 +1939,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
+    this.resources = options.resources;
     this.usageProvider = options.usageProvider;
     this.harnessEnvironment = createProviderEnv({
       runtimeSettings: options.runtimeSettings,
@@ -3035,6 +3041,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         overlays: commandEnvOverlays,
       }),
       shell: terminalCommand.shell,
+      resources: this.resources,
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -3138,6 +3145,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         runtimeSettings: this.runtimeSettings,
         overlays: [this.launchEnv],
       }),
+      resources: this.resources,
       stdio: ["pipe", "pipe", "pipe"],
     });
     assertChildWithPipes(child);

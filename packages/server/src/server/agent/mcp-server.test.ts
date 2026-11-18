@@ -3173,6 +3173,84 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("runs a child under its creator's resource policy whatever provider it uses", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const resources = { nice: 10, memoryMaxMb: 2048 };
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: null,
+      config: { resources },
+    } as ManagedAgent);
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    await registeredTool(server, "create_agent").handler({
+      ...subagentCurrentWorkspace(),
+      title: "Claude child",
+      provider: "claude/sonnet",
+      initialPrompt: "Do work",
+      settings: { modeId: "default" },
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenLastCalledWith(
+      expect.objectContaining({ provider: "claude", resources }),
+      undefined,
+      expect.any(Object),
+    );
+  });
+
+  it("does not let an agent set or change a resource policy", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: null,
+      config: { resources: { memoryMaxMb: 1024 } },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    await expect(
+      registeredTool(server, "create_agent").handler({
+        ...subagentCurrentWorkspace(),
+        title: "Unlimited child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Do work",
+        settings: { resources: { memoryMaxMb: 65536 } },
+      }),
+    ).rejects.toThrow("Agents cannot set resource policies; agents you create inherit your own");
+    await expect(
+      registeredTool(server, "update_agent").handler({
+        agentId: "parent-agent",
+        settings: { resources: null },
+      }),
+    ).rejects.toThrow("Agents cannot set resource policies; agents you create inherit your own");
+    expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
   it("inherits the parent's workspaceId when an MCP child is created in the parent's working tree", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-workspace-inherit-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);

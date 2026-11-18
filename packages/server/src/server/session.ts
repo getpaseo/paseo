@@ -1,3 +1,4 @@
+import type { AgentResourcePolicy } from "@getpaseo/protocol/agent-resources";
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
@@ -214,6 +215,7 @@ import {
 } from "./session/speech/speech-models-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
+import { AgentResourcesSession } from "./session/agent-resources/agent-resources-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import type { DaemonWebSocketRuntimeDiagnosticSnapshot } from "./session/daemon/diagnostics.js";
@@ -876,6 +878,7 @@ export class Session {
   private readonly speechModelsSession: SpeechModelsSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
+  private readonly agentResourcesSession: AgentResourcesSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
@@ -1143,6 +1146,17 @@ export class Session {
         setOptions: (agentId, patch) => agentManager.setAgentOptions(agentId, patch),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
+      },
+      logger: this.sessionLogger,
+    });
+    this.agentResourcesSession = new AgentResourcesSession({
+      host: {
+        emit: (msg) => this.emit(msg),
+      },
+      operations: {
+        capabilities: () => agentManager.getResourceCapabilities(),
+        describe: (agentId) => agentManager.describeAgentResources(agentId),
+        set: (agentId, resources) => agentManager.setAgentResources(agentId, resources),
       },
       logger: this.sessionLogger,
     });
@@ -3117,6 +3131,17 @@ export class Session {
     }
   }
 
+  private dispatchAgentResourcesMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.resources.get.request":
+        return this.agentResourcesSession.handleGetRequest(msg);
+      case "agent.resources.set.request":
+        return this.agentResourcesSession.handleSetRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
   private dispatchAgentRelationshipMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "agent.detach.request":
@@ -3307,7 +3332,7 @@ export class Session {
       case "write_project_config_request":
         return this.projectConfigSession.handleWriteProjectConfigRequest(msg);
       default:
-        return undefined;
+        return this.dispatchAgentResourcesMessage(msg);
     }
   }
 
@@ -4950,7 +4975,7 @@ export class Session {
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
-          config: resolvedIntent.config,
+          config: await this.inheritCallerResources(resolvedIntent.config, msg.callerAgentId),
           workspaceId: resolvedIntent.intent.workspaceId,
           background: resolvedIntent.background,
           initialPrompt,
@@ -7331,6 +7356,21 @@ export class Session {
         "Failed to register workspace for imported agent",
       );
     }
+  }
+
+  /** An agent's children run under its resource policy unless the request sets one. */
+  private async inheritCallerResources<T extends { resources?: AgentResourcePolicy }>(
+    config: T,
+    callerAgentId: string | undefined,
+  ): Promise<T> {
+    if (config.resources || !callerAgentId) {
+      return config;
+    }
+    const resources =
+      this.agentManager.getAgent(callerAgentId)?.config.resources ??
+      (await this.agentStorage.get(callerAgentId))?.config?.resources ??
+      undefined;
+    return resources ? { ...config, resources } : config;
   }
 
   private async resolveCreationCaller(

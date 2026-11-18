@@ -122,6 +122,7 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `extra`            | `Record<string, any>?`     | Provider-specific config     |
 | `systemPrompt`     | `string?`                  | Custom system prompt         |
 | `mcpServers`       | `Record<string, any>?`     | MCP server configurations    |
+| `resources`        | `AgentResourcePolicy?`     | Linux resource policy        |
 
 ### Nested: RuntimeInfo
 
@@ -415,7 +416,7 @@ One file per schedule. ID is 8 hex characters.
 ### Nested: ScheduleTarget (discriminated union on `type`)
 
 - `{ type: "agent", agentId: string }` — send to existing agent
-- `{ type: "new-agent", config: { provider, cwd, modeId?, model?, thinkingOptionId?, title?, providerOptions?, featureValues?, systemPrompt?, mcpServers? } }` — create a new agent
+- `{ type: "new-agent", config: { provider, cwd, modeId?, model?, thinkingOptionId?, title?, providerOptions?, featureValues?, systemPrompt?, mcpServers?, resources? } }` — create a new agent
 
 ### Nested: ScheduleRun
 
