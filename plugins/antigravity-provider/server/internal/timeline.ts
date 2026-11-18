@@ -4,6 +4,16 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import type { Step } from "./wire.js";
 
+const fileToolTypes: Readonly<Record<string, "read" | "write" | "edit">> = {
+  view_file: "read",
+  read_file: "read",
+  write_to_file: "write",
+  write_file: "write",
+  replace_file_content: "edit",
+  multi_replace_file_content: "edit",
+  edit_file: "edit",
+};
+
 export function toolItem(
   step: Step,
   id: string,
@@ -24,32 +34,42 @@ export function toolItem(
 }
 
 function toolDetail(step: Step): ProviderToolCallDetail {
-  if (step.subagent_info) {
-    const child = step.subagent_info.subagents[0];
-    if (child)
-      return {
-        type: "sub_agent",
-        subAgentType: child.type_name,
-        description: child.initial_prompt,
-        childSessionId: child.conversation_id === null ? undefined : child.conversation_id,
-        log: child.log_uri,
-      };
+  const child = step.subagent_info?.subagents[0];
+  if (child) {
+    return {
+      type: "sub_agent",
+      subAgentType: child.type_name,
+      description: child.initial_prompt,
+      childSessionId: child.conversation_id === null ? undefined : child.conversation_id,
+      log: child.log_uri,
+    };
   }
   const info = step.tool_info;
   if (!info) return { type: "plain_text", label: step.tool_name, text: "" };
-  const path = info.parameters.AbsolutePath || info.parameters.TargetFile;
   if (info.name === "run_command" && typeof info.parameters.CommandLine === "string") {
     return { type: "shell", command: info.parameters.CommandLine, output: info.output };
   }
-  if (info.name === "view_file" && typeof path === "string")
-    return { type: "read", filePath: path, content: info.output };
-  if (info.name === "write_to_file" && typeof path === "string")
-    return { type: "write", filePath: path };
-  if (
-    (info.name === "replace_file_content" || info.name === "multi_replace_file_content") &&
-    typeof path === "string"
-  )
-    return { type: "edit", filePath: path };
+  const fileDetail = resolveFileToolDetail(info);
+  if (fileDetail) return fileDetail;
+  if (info.name === "search_web" && typeof info.parameters.query === "string") {
+    return {
+      type: "search",
+      query: info.parameters.query,
+      toolName: "web_search",
+      content: info.output,
+    };
+  }
   // Native frames summarize writes; they do not carry the file contents or diff.
   return { type: "unknown", input: info.parameters, output: info.error || info.output };
+}
+
+function resolveFileToolDetail(
+  info: NonNullable<Step["tool_info"]>,
+): ProviderToolCallDetail | null {
+  const kind = fileToolTypes[info.name];
+  const filePath =
+    info.parameters.AbsolutePath || info.parameters.TargetFile || info.parameters.Path;
+  if (!kind || typeof filePath !== "string") return null;
+  if (kind === "read") return { type: "read", filePath, content: info.output };
+  return { type: kind, filePath };
 }

@@ -13,6 +13,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
+import { readTranscriptHistory } from "./history.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
@@ -40,6 +41,7 @@ interface SessionOptions {
   launch: ProviderLaunch;
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
+  history: "replay" | "skip";
   emit(event: ProviderEvent): void;
 }
 
@@ -72,7 +74,23 @@ export class Session {
       cwd: this.config.cwd,
       title: this.config.title,
     });
-    this.publishFullAccessNotice();
+    if (!this.options.persistence) {
+      this.publishFullAccessNotice();
+    } else if (this.options.history === "replay" && this.conversationId !== null) {
+      const entries = await readTranscriptHistory({
+        conversationId: this.conversationId,
+        launch: this.options.launch,
+        config: this.config,
+      });
+      for (const entry of entries) {
+        this.emit({
+          type: "timeline.item",
+          sessionId: this.options.id,
+          item: entry.item,
+          timestamp: entry.timestamp,
+        });
+      }
+    }
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
@@ -232,7 +250,11 @@ export class Session {
         });
     } catch (error) {
       this.state = { type: "dormant" };
-      await driver.stop("interrupt");
+      try {
+        await driver.stop("interrupt");
+      } catch (stopError) {
+        if (!isCleanupRaceError(stopError)) throw stopError;
+      }
       throw error;
     }
   }
@@ -394,4 +416,10 @@ function denialNoticeTitle(
 ): string {
   if (actions.length > 1) return `${actions.length} actions denied`;
   return actions[0].action === "command" ? "Shell command denied" : "Action denied";
+}
+
+function isCleanupRaceError(error: unknown): boolean {
+  return (
+    error instanceof Error && "code" in error && (error.code === "ESRCH" || error.code === "EPERM")
+  );
 }

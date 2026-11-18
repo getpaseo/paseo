@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,7 @@ async function harness(env: Record<string, string> = {}) {
   const launch: ProviderLaunch = {
     command: process.execPath,
     args: [fake, "--launch-prefix"],
-    env: { AGY_TEST_LOG: log, ...env },
+    env: { HOME: cwd, USERPROFILE: cwd, AGY_TEST_LOG: log, ...env },
   };
   const connection = await provider.connect({
     versions: [1],
@@ -78,13 +78,17 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence, sessionId = "s") {
+  async function open(
+    restored?: ProviderPersistence,
+    sessionId = "s",
+    history: "replay" | "skip" = "replay",
+  ) {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
       sessionId,
       persistence: restored,
-      history: "replay",
+      history,
       config: {
         cwd,
         env: { AGY_SESSION_VALUE: "session-overlay" },
@@ -430,7 +434,7 @@ it("rejects plan and keeps the full-access selection without respawning", async 
   ).toHaveLength(1);
 });
 
-it("emits one full-access warning per open, none on respawn, and one again on resume", async () => {
+it("emits one full-access warning on initial open and none on respawn or resume", async () => {
   const h = await harness();
   await h.open();
   const warning = {
@@ -467,7 +471,7 @@ it("emits one full-access warning per open, none on respawn, and one again on re
   const resumed = await harness();
   await resumed.open(persistence);
   await resumed.completed(await resumed.prompt("RESUME"));
-  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([warning]);
+  expect(resumed.events.filter((event) => event.type === "session.notice")).toEqual([]);
 });
 
 it("defers model and mode changes until the next prompt, then respawns with validated flags", async () => {
@@ -508,7 +512,7 @@ it("defers model and mode changes until the next prompt, then respawns with vali
   );
 });
 
-it("resumes after connection close without replay or another system prefix", async () => {
+it("resumes cleanly without another system prefix when no local transcript exists", async () => {
   const first = await harness();
   await first.open();
   await first.completed(await first.prompt("HELLO"));
@@ -523,6 +527,315 @@ it("resumes after connection close without replay or another system prefix", asy
       .filter((entry) => entry.input)
       .map((entry) => entry.input.message.content),
   ).toEqual(["RESUME"]);
+});
+
+it("replays user messages, tool calls, subagents, and assistant replies from transcript_full.jsonl before session.ready", async () => {
+  const first = await harness();
+  await first.open();
+  await first.completed(await first.prompt("HELLO"));
+  const persistence = first.persistence();
+  await first.connection.close();
+
+  const resumed = await harness();
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const logsDir = path.join(
+    resumed.cwd,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(logsDir, { recursive: true });
+  const transcriptLines = [
+    JSON.stringify({
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      status: "DONE",
+      created_at: "2026-11-16T15:32:23Z",
+      content:
+        "<USER_REQUEST>\nSYSTEM PREFIX\n\nInvestigate Baxi boilers\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-11-16T07:32:23-08:00.\n</ADDITIONAL_METADATA>",
+    }),
+    JSON.stringify({
+      step_index: 1,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-16T15:32:25Z",
+      thinking: "Checking files and searching web.",
+      tool_calls: [
+        { name: "read_file", args: { Path: "/repo/notes.md" } },
+        { name: "search_web", args: { query: "Baxi boiler review" } },
+        {
+          name: "invoke_subagent",
+          args: { TypeName: "research", Role: "Boiler Researcher", Prompt: "Check Baxi specs" },
+        },
+        { name: "run_command", args: { CommandLine: "false" } },
+      ],
+    }),
+    JSON.stringify({
+      step_index: 2,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-16T15:32:26Z",
+      content:
+        "Created At: 2026-11-16T07:32:26-08:00\nCompleted At: 2026-11-16T07:32:26-08:00\n1: Baxi notes",
+    }),
+    JSON.stringify({
+      step_index: 3,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-16T15:32:28Z",
+      content:
+        "Created At: 2026-11-16T07:32:26-08:00\nCompleted At: 2026-11-16T07:32:28-08:00\nSummary of Baxi boilers",
+    }),
+    JSON.stringify({
+      step_index: 4,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "DONE",
+      created_at: "2026-11-16T15:32:29Z",
+      content:
+        'Created At: 2026-11-16T07:32:28-08:00\nCompleted At: 2026-11-16T07:32:29-08:00\nCreated the following subagents:\n{\n  "conversationId": "33e71caf-826e-400f-b4a4-7f9897b01eb7",\n  "logAbsoluteUri": "file:///tmp/subagent.jsonl",\n  "workspaceUris": ["file:///repo"]\n}\nDone.',
+    }),
+    JSON.stringify({
+      step_index: 5,
+      source: "MODEL",
+      type: "GENERIC",
+      status: "ERROR",
+      created_at: "2026-11-16T15:32:30Z",
+      error: "command exited with code 1",
+      content: "Created At: 2026-11-16T07:32:30-08:00\nEncountered error",
+    }),
+    JSON.stringify({
+      step_index: 6,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-16T15:33:00Z",
+      content: "Here is the Baxi summary.",
+    }),
+    JSON.stringify({
+      step_index: 7,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      status: "DONE",
+      created_at: "2026-11-17T05:38:38Z",
+      content:
+        "<USER_REQUEST>\nIs this model enough?\nAttached image: /tmp/paseo-antigravity-images-abc/shot.png\n</USER_REQUEST>",
+    }),
+    JSON.stringify({
+      step_index: 8,
+      source: "MODEL",
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      created_at: "2026-11-17T05:38:40Z",
+      tool_calls: [{ name: "run_command", args: { CommandLine: "sleep 10" } }],
+    }),
+    '{"step_index": 9, "truncated_half_line',
+  ];
+  await writeFile(path.join(logsDir, "transcript_full.jsonl"), transcriptLines.join("\n"));
+
+  await resumed.open(persistence, "s", "replay");
+  const readyIndex = resumed.events.findIndex((event) => event.type === "session.ready");
+  const replayed = resumed.events
+    .slice(0, readyIndex)
+    .filter((event): event is Extract<ProviderEvent, { type: "timeline.item" }> => {
+      return event.type === "timeline.item";
+    });
+
+  expect(replayed).toEqual([
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:32:23Z",
+      item: {
+        type: "user_message",
+        id: "step:0",
+        messageId: "step:0",
+        text: "Investigate Baxi boilers",
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:32:26Z",
+      item: {
+        type: "tool_call",
+        id: "step:2",
+        callId: "step:2",
+        name: "read_file",
+        status: "completed",
+        error: null,
+        detail: { type: "read", filePath: "/repo/notes.md", content: "1: Baxi notes" },
+        metadata: undefined,
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:32:28Z",
+      item: {
+        type: "tool_call",
+        id: "step:3",
+        callId: "step:3",
+        name: "search_web",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "search",
+          query: "Baxi boiler review",
+          toolName: "web_search",
+          content: "Summary of Baxi boilers",
+        },
+        metadata: undefined,
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:32:29Z",
+      item: {
+        type: "tool_call",
+        id: "step:4",
+        callId: "step:4",
+        name: "invoke_subagent",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "sub_agent",
+          subAgentType: "research",
+          description: "Check Baxi specs",
+          childSessionId: "33e71caf-826e-400f-b4a4-7f9897b01eb7",
+          log: "file:///tmp/subagent.jsonl",
+        },
+        metadata: {
+          subagents: [
+            {
+              type_name: "research",
+              role: "Boiler Researcher",
+              initial_prompt: "Check Baxi specs",
+              conversation_id: "33e71caf-826e-400f-b4a4-7f9897b01eb7",
+              log_uri: "file:///tmp/subagent.jsonl",
+              workspace_uris: ["file:///repo"],
+            },
+          ],
+        },
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:32:30Z",
+      item: {
+        type: "tool_call",
+        id: "step:5",
+        callId: "step:5",
+        name: "run_command",
+        status: "failed",
+        error: "command exited with code 1",
+        detail: { type: "shell", command: "false", output: "Encountered error" },
+        metadata: undefined,
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-16T15:33:00Z",
+      item: {
+        type: "assistant_message",
+        id: "step:6:response",
+        messageId: "step:6:response",
+        text: "Here is the Baxi summary.",
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-17T05:38:38Z",
+      item: {
+        type: "user_message",
+        id: "step:7",
+        messageId: "step:7",
+        text: "Is this model enough?",
+      },
+    },
+    {
+      type: "timeline.item",
+      sessionId: "s",
+      timestamp: "2026-11-17T05:38:40Z",
+      item: {
+        type: "tool_call",
+        id: "step:8:tool:0",
+        callId: "step:8:tool:0",
+        name: "run_command",
+        status: "canceled",
+        error: null,
+        detail: { type: "shell", command: "sleep 10", output: "" },
+        metadata: undefined,
+      },
+    },
+  ]);
+
+  await resumed.request({ type: "session.close", requestId: "close-replay", sessionId: "s" });
+  const beforeSkip = resumed.events.length;
+  await resumed.open(persistence, "s-skip", "skip");
+  expect(
+    resumed.events.slice(beforeSkip).filter((event) => event.type === "timeline.item"),
+  ).toEqual([]);
+});
+
+it("falls back to transcript.jsonl when transcript_full.jsonl is absent", async () => {
+  const h = await harness();
+  const conversationId = "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda";
+  const logsDir = path.join(
+    h.cwd,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  await mkdir(logsDir, { recursive: true });
+  await writeFile(
+    path.join(logsDir, "transcript.jsonl"),
+    [
+      JSON.stringify({
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        status: "DONE",
+        content: "<USER_REQUEST>\nHello compact\n</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        step_index: 1,
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        status: "DONE",
+        content: "Compact reply",
+      }),
+    ].join("\n"),
+  );
+  await h.open({ version: 1, data: { conversationId } });
+  const items = h.events
+    .filter((event): event is Extract<ProviderEvent, { type: "timeline.item" }> => {
+      return event.type === "timeline.item";
+    })
+    .map((event) => event.item);
+  expect(items).toEqual([
+    { type: "user_message", id: "step:0", messageId: "step:0", text: "Hello compact" },
+    {
+      type: "assistant_message",
+      id: "step:1:response",
+      messageId: "step:1:response",
+      text: "Compact reply",
+    },
+  ]);
 });
 
 it.each(["auth", "exit", "stderr"])(
