@@ -789,6 +789,7 @@ describe("workspace git watch targets", () => {
 
   test("checkout_pr_status_request reads pull request status from the workspace git service snapshot", async () => {
     const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
+    workspaceGitService.hasWorkspaceListener = vi.fn(() => true);
 
     workspaceGitService.getSnapshot.mockResolvedValue(
       createWorkspaceRuntimeSnapshot(REPO_CWD, {
@@ -842,8 +843,9 @@ describe("workspace git watch targets", () => {
     });
   });
 
-  test("checkout_pr_status_request reads cached snapshot without forcing a refresh", async () => {
+  test("checkout_pr_status_request uses the cached snapshot for a watched workspace", async () => {
     const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
+    workspaceGitService.hasWorkspaceListener = vi.fn(() => true);
 
     await session.handleMessage({
       type: "checkout_pr_status_request",
@@ -854,6 +856,45 @@ describe("workspace git watch targets", () => {
     expect(workspaceGitService.refresh).not.toHaveBeenCalled();
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(REPO_CWD);
     expect(emitted.find((message) => message.type === "checkout_pr_status_response")).toBeDefined();
+  });
+
+  test("checkout_pr_status_request forces a read when no workspace listener holds the snapshot", async () => {
+    const { session, emitted, workspaceGitService } = createSessionForWorkspaceGitWatchTests();
+    workspaceGitService.hasWorkspaceListener = vi.fn(() => false);
+    let pullRequest: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"] = null;
+    workspaceGitService.getSnapshot.mockImplementation(
+      async (cwd: string, options?: { force?: boolean }) => {
+        if (options?.force) {
+          pullRequest = {
+            url: "https://github.com/acme/repo/pull/789",
+            title: "Open after the warm-up read",
+            state: "open",
+            baseRefName: "main",
+            headRefName: "quiet-workspace",
+            isMerged: false,
+          };
+        }
+        return createWorkspaceRuntimeSnapshot(cwd, { forge: { pullRequest } });
+      },
+    );
+
+    await session.handleMessage({
+      type: "checkout_pr_status_request",
+      cwd: REPO_CWD,
+      requestId: "req-pr-quiet",
+    });
+
+    expect(workspaceGitService.getSnapshot).toHaveBeenLastCalledWith(REPO_CWD, {
+      force: true,
+      reason: "checkout-pr-status-request",
+    });
+    expect(
+      emitted.find((message) => message.type === "checkout_pr_status_response")?.payload,
+    ).toMatchObject({
+      cwd: REPO_CWD,
+      status: { url: "https://github.com/acme/repo/pull/789", state: "open" },
+      requestId: "req-pr-quiet",
+    });
   });
 });
 
@@ -973,10 +1014,12 @@ describe("live workspace observation", () => {
     };
   }
 
-  function reconcileObservers(session: Session): Promise<void> {
-    return asInternals<{ reconcileWorkspaceGitObservers: () => Promise<void> }>(
-      session,
-    ).reconcileWorkspaceGitObservers();
+  function subscribeToCheckoutStatus(session: Session, requestId: string): Promise<void> {
+    return session.handleMessage({
+      type: "session.events.set_subscription.request",
+      requestId,
+      events: ["checkout_status_update"],
+    });
   }
 
   test("an unfiltered workspace list subscribes to nothing and checkout status watches only live workspaces", async () => {
@@ -1217,10 +1260,10 @@ describe("live workspace observation", () => {
     // that snapshot until after the second reconcile has made the workspace live.
     const lookupsBeforeRace = slowTerminals.lookupCount();
     slowTerminals.delayNextLookup(50);
-    const staleReconcile = reconcileObservers(session);
+    const staleReconcile = subscribeToCheckoutStatus(session, "events-2");
     await vi.waitFor(() => expect(slowTerminals.lookupCount()).toBe(lookupsBeforeRace + 1));
     slowTerminals.addTerminal("ws-race");
-    const freshReconcile = reconcileObservers(session);
+    const freshReconcile = subscribeToCheckoutStatus(session, "events-3");
     await Promise.all([staleReconcile, freshReconcile]);
 
     expect(watchedCwds(workspaceGitService)).toEqual([terminalCwd]);
@@ -1261,6 +1304,9 @@ describe("live workspace observation", () => {
 
     // The idle clock collects the runtime. The tab stays open, and its label survives on the
     // stored record, so the workspace is still live without a loaded agent.
+    const observer = asInternals<SessionInternals>(session).workspaceGitObserver;
+    const reconcile = vi.spyOn(observer, "reconcileObservers");
+    reconcile.mockClear();
     agents.length = 0;
     for (const listener of agentEventListeners) {
       listener({
@@ -1268,7 +1314,7 @@ describe("live workspace observation", () => {
         agent: { id: "agent-tab", workspaceId: "ws-tab", lifecycle: "closed", labels: tabLabels },
       });
     }
-    await reconcileObservers(session);
+    await vi.waitFor(() => expect(reconcile).toHaveBeenCalled());
 
     expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
     expect(watchedCwds(workspaceGitService)).toEqual([tabCwd]);
@@ -1302,7 +1348,7 @@ describe("live workspace observation", () => {
     slowTerminals.addTerminal("ws-cleanup");
     const lookupsBefore = slowTerminals.lookupCount();
     slowTerminals.delayNextLookup(50);
-    const pendingReconcile = reconcileObservers(session);
+    const pendingReconcile = subscribeToCheckoutStatus(session, "events-2");
     await vi.waitFor(() => expect(slowTerminals.lookupCount()).toBe(lookupsBefore + 1));
     await session.cleanup();
     await pendingReconcile;
@@ -1339,11 +1385,11 @@ describe("live workspace observation", () => {
       expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
 
       // An unrelated reconcile inside the window counts the touch as activity.
-      await reconcileObservers(session);
+      await subscribeToCheckoutStatus(session, "events-2");
       expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
 
       vi.setSystemTime(Date.now() + WORKSPACE_LIVENESS_WINDOW_MS + 60_000);
-      await reconcileObservers(session);
+      await subscribeToCheckoutStatus(session, "events-3");
       expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(0);
 
       await session.cleanup();
@@ -1442,7 +1488,7 @@ describe("live workspace observation", () => {
       requestId: "workspace-list",
       subscribe: { subscriptionId: "workspace-list" },
     });
-    await reconcileObservers(session);
+    await subscribeToCheckoutStatus(session, "events-2");
 
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
     await session.cleanup();
@@ -1526,11 +1572,11 @@ describe("live workspace observation", () => {
       });
       await vi.waitFor(() => expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1));
 
-      await reconcileObservers(session);
+      await subscribeToCheckoutStatus(session, "events-2");
       expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
 
       vi.setSystemTime(Date.now() + WORKSPACE_GIT_WARM_UP_FAILURE_TTL_MS + 1_000);
-      await reconcileObservers(session);
+      await subscribeToCheckoutStatus(session, "events-3");
       expect(workspaceGitService.getSnapshot).toHaveBeenCalledTimes(2);
 
       await session.cleanup();

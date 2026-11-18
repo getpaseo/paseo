@@ -1192,9 +1192,11 @@ export class OmpAgentSession implements AgentSession {
       this.pendingNoTurnCompletionAbort
     )
       return false;
-    // A closed transport can answer nothing, so the probe would reject on every sweep and
-    // the agent would never be released. Nothing is left running to protect.
-    if (this.runtimeSession.isClosed?.()) return true;
+    // Only an observed process exit proves nothing is left running: close() disposes the
+    // transport before termination finishes, and a child can outlive SIGKILL. A closed
+    // transport can answer nothing, so treat it as a veto rather than a release.
+    if (this.runtimeSession.hasExited?.()) return true;
+    if (this.runtimeSession.isClosed?.()) return false;
     const state = await this.runtimeSession.getState();
     return (
       state.isSettled === true &&

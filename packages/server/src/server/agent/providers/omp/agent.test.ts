@@ -1718,7 +1718,22 @@ test("omp runtime safety lets a runtime whose process is gone be released", asyn
   const native = runtime.latestSession();
   native.getStateError = new Error("OMP RPC process is closed");
   native.closed = true;
+  native.exited = true;
   expect(await session.canStopRuntime!()).toBe(true);
+});
+
+test("omp runtime safety retains a runtime whose transport closed before its process exited", async () => {
+  const runtime = new FakeOmp();
+  const session = await new OmpAgentClient({ logger: createTestLogger(), runtime }).createSession({
+    provider: "omp",
+    cwd: process.cwd(),
+  });
+  onTestFinished(() => session.close());
+  const native = runtime.latestSession();
+  native.closed = true;
+  const stateRequestsBefore = native.getStateRequestCount;
+  expect(await session.canStopRuntime!()).toBe(false);
+  expect(native.getStateRequestCount).toBe(stateRequestsBefore);
 });
 
 test("OMP runtime safety retains async work after the foreground turn finishes", async () => {

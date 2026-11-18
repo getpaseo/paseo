@@ -1152,7 +1152,15 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+      // A directory no listener watches keeps only the snapshot of its last read, which the
+      // workspace warm-up may have taken at daemon start. Force the read there so the panel
+      // never shows that cached read as current; a watched target already refreshes itself.
+      const snapshot = this.workspaceGitService.hasWorkspaceListener(cwd)
+        ? await this.workspaceGitService.getSnapshot(cwd)
+        : await this.workspaceGitService.getSnapshot(cwd, {
+            force: true,
+            reason: "checkout-pr-status-request",
+          });
       this.host.emit({
         type: "checkout_pr_status_response",
         payload: buildCheckoutPrStatusPayloadFromSnapshot({

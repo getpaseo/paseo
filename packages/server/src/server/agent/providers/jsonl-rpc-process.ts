@@ -148,6 +148,11 @@ export class JsonlRpcProcess {
     return this.disposed;
   }
 
+  /** True only after the child process emitted `exit`; disposal alone does not prove it. */
+  get hasExited(): boolean {
+    return this.exited;
+  }
+
   onExit(callback: (exit: JsonlRpcExit) => void): () => void {
     this.exitSubscribers.add(callback);
     return () => {

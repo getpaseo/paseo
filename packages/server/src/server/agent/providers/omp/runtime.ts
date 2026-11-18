@@ -60,6 +60,8 @@ export interface OmpRuntimeSession {
   getState(): Promise<OmpSessionState>;
   /** The transport is closed, so no request can reach the process any more. */
   isClosed?(): boolean;
+  /** The process emitted exit, so nothing is left running. */
+  hasExited?(): boolean;
   setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
