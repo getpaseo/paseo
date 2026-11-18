@@ -31,12 +31,14 @@ function pluginSwitch(page: Page, name: string, action: "Disable" | "Enable") {
 
 /**
  * A toast that times out stays in the page while it fades, so the next toast can share the screen
- * with it. The pattern matches case, so "Installed x" does not match "Uninstalled x".
+ * with it, even when both have the same text. The pattern matches case, so "Installed x" does not
+ * match "Uninstalled x".
  */
 export async function expectToast(page: Page, message: string): Promise<void> {
   const toast = page
     .getByTestId("app-toast-message")
-    .filter({ hasText: new RegExp(escapeRegex(message)) });
+    .filter({ hasText: new RegExp(escapeRegex(message)) })
+    .first();
   await expect(toast).toBeVisible();
 }
 
