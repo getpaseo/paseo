@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { createTempGithubRepoName } from "../../test-utils/temp-github-repo.js";
 
 const execute = promisify(execFile);
+const RETRY_BUDGET_MS = 5 * 60_000;
+const MAX_RATE_LIMIT_RETRIES = 3;
 
 interface PullRequest {
   number: number;
@@ -13,14 +15,76 @@ interface PullRequest {
   head: { sha: string; ref: string };
 }
 
+function parseHttpResponse(output: string) {
+  const separator = /\r?\n\r?\n/.exec(output);
+  if (!separator) return undefined;
+  const [statusLine, ...headerLines] = output.slice(0, separator.index).split(/\r?\n/);
+  const status = Number(/^HTTP\/\S+ (\d{3})/.exec(statusLine)?.[1]);
+  if (!Number.isInteger(status)) return undefined;
+
+  const headers = new Headers();
+  for (const line of headerLines) {
+    const colon = line.indexOf(":");
+    if (colon > 0) headers.append(line.slice(0, colon), line.slice(colon + 1).trim());
+  }
+  return { status, headers, body: output.slice(separator.index + separator[0].length) };
+}
+
+function rateLimitDelay(
+  response: NonNullable<ReturnType<typeof parseHttpResponse>>,
+  attempt: number,
+  now: number,
+): number | undefined {
+  const { status, headers, body } = response;
+  const exhausted = headers.get("x-ratelimit-remaining") === "0";
+  const secondary = /secondary rate limit|abuse detection/i.test(body);
+  if (status !== 429 && !(status === 403 && (exhausted || secondary))) return undefined;
+
+  const after = headers.get("retry-after") ?? "";
+  const retryAfterMs = /^\d+$/.test(after) ? Number(after) * 1_000 : Date.parse(after) - now;
+  const reset = headers.get("x-ratelimit-reset");
+  const resetMs = exhausted && reset ? Number(reset) * 1_000 - now + 1_000 : 0;
+  const deadlineMs = Math.max(retryAfterMs || 0, resetMs || 0);
+  return deadlineMs > 0 ? deadlineMs : 60_000 * 2 ** attempt;
+}
+
 export async function githubWatchFixture(root: string) {
   const env = { ...process.env, GH_PROMPT_DISABLED: "1" };
+  let remainingRetryMs = RETRY_BUDGET_MS;
   const gh = async (...args: string[]) => {
     const result = await execute("gh", args, { env, timeout: 30_000 });
     return result.stdout;
   };
   async function api<T>(endpoint: string, ...args: string[]): Promise<T> {
-    return JSON.parse(await gh("api", "--hostname", "github.com", endpoint, ...args)) as T;
+    for (let attempt = 0; ; attempt++) {
+      let output: string;
+      try {
+        output = await gh("api", "--hostname", "github.com", "--include", endpoint, ...args);
+      } catch (error) {
+        if (!(error instanceof Error) || !("stdout" in error) || typeof error.stdout !== "string") {
+          throw error;
+        }
+        const response = parseHttpResponse(error.stdout);
+        if (!response) throw error;
+        error.stdout = response.body;
+        const retryMs = rateLimitDelay(response, attempt, Date.now());
+        if (retryMs === undefined) throw error;
+        if (attempt >= MAX_RATE_LIMIT_RETRIES || retryMs > remainingRetryMs) {
+          throw new Error(`GitHub fixture rate-limit retry budget exhausted for ${endpoint}.`, {
+            cause: error,
+          });
+        }
+        remainingRetryMs -= retryMs;
+        console.info(
+          `GitHub rate limited ${endpoint}. Retrying in ${Math.ceil(retryMs / 1_000)}s.`,
+        );
+        await delay(retryMs);
+        continue;
+      }
+      const response = parseHttpResponse(output);
+      if (!response) throw new Error(`GitHub fixture returned no HTTP response for ${endpoint}.`);
+      return JSON.parse(response.body) as T;
+    }
   }
 
   const repoName = createTempGithubRepoName("change-request-watch");
@@ -118,11 +182,11 @@ export async function githubWatchFixture(root: string) {
       return { ...pr, head: { ...pr.head, sha } };
     }
 
-    async function checkConclusion(pr: PullRequest) {
-      const checks = await api<{ check_runs: { name: string; conclusion: string | null }[] }>(
-        `${repo}/commits/${pr.head.sha}/check-runs`,
-      );
-      return checks.check_runs.find((check) => check.name === "qa-check")?.conclusion;
+    async function checkRun(pr: PullRequest) {
+      const checks = await api<{
+        check_runs: { name: string; conclusion: string | null; details_url: string }[];
+      }>(`${repo}/commits/${pr.head.sha}/check-runs`);
+      return checks.check_runs.find((check) => check.name === "qa-check");
     }
 
     async function comment(pr: PullRequest, body: string) {
@@ -204,7 +268,7 @@ export async function githubWatchFixture(root: string) {
     return {
       createPullRequests,
       updateCheck,
-      checkConclusion,
+      checkRun,
       comment,
       seedComments,
       review,

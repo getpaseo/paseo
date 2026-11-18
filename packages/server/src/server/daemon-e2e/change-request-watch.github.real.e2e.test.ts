@@ -136,7 +136,9 @@ test("GitHub PR watches share updates, survive restart, and wake only their subs
   console.info(`Tracking ${quiet.length + 1} private GitHub PRs`);
   await fixture.checkout(idleDir, primary.head.ref);
   const baselineComments = await fixture.seedComments(primary, 100);
-  await expect.poll(() => fixture.checkConclusion(primary), waitForGitHub).toBe("success");
+  await expect
+    .poll(async () => (await fixture.checkRun(primary))?.conclusion, waitForGitHub)
+    .toBe("success");
 
   const workspace = await client.createWorkspace({ source: { kind: "directory", path: idleDir } });
   expect(workspace.workspace).toMatchObject({ workspaceDirectory: idleDir });
@@ -191,12 +193,24 @@ test("GitHub PR watches share updates, survive restart, and wake only their subs
   await client.sendMessage(busy.id, "Hold this QA turn");
   await client.waitForAgentUpsert(busy.id, (agent) => agent.status === "running");
   const failed = await fixture.updateCheck(primary, "red");
-  await expect.poll(() => fixture.checkConclusion(failed), waitForGitHub).toBe("failure");
+  await expect
+    .poll(async () => (await fixture.checkRun(failed))?.conclusion, waitForGitHub)
+    .toBe("failure");
+  const failedCheck = await fixture.checkRun(failed);
+  if (!failedCheck) throw new Error("GitHub did not return the failing check");
+  expect(failedCheck.details_url).toMatch(/\/actions\/runs\/\d+\/job\/\d+$/);
   await expect
     .poll(() => call(mcp, subscribe, url), waitForGitHub)
     .toMatchObject({
       headSha: failed.head.sha,
       checksState: "failed",
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "qa-check",
+          state: "failed",
+          url: failedCheck.details_url,
+        }),
+      ]),
     });
   const firstObservationSeen = Date.now();
 
@@ -225,6 +239,7 @@ test("GitHub PR watches share updates, survive restart, and wake only their subs
     .toContain(review.inline);
   const idleFailure = updates(idleDir).find(({ text }) => text.includes("Check failed"));
   expect(idleFailure?.text).toContain(`Check failed on ${failed.head.sha}: "qa-check"`);
+  expect(idleFailure?.text).toContain(failedCheck.details_url);
   expect(idleFailure?.text).toContain(url);
   // The subscribe response observes the committed snapshot. The digest must not extend
   // its first window after the later writes, regardless of their GitHub propagation time.
@@ -290,7 +305,9 @@ test("GitHub PR watches share updates, survive restart, and wake only their subs
   context = undefined;
 
   const green = await fixture.updateCheck(failed, "green");
-  await expect.poll(() => fixture.checkConclusion(green), waitForGitHub).toBe("success");
+  await expect
+    .poll(async () => (await fixture.checkRun(green))?.conclusion, waitForGitHub)
+    .toBe("success");
   context = await startDaemon();
   await expect
     .poll(() => turns.slice(deliveredBeforeRestart).map(({ text }) => text), waitForGitHub)
