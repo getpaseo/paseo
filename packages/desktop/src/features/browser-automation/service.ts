@@ -36,6 +36,7 @@ export interface TabContents {
   goForward(): void;
   reload(): void;
   captureFrame(signal: AbortSignal): Promise<TabImage>;
+  decodePng(png: Uint8Array): TabImage;
   invalidate(): void;
   withFrameProduction<T>(capture: () => Promise<T>): Promise<T>;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
@@ -52,6 +53,22 @@ export interface TabContents {
 export interface TabImage {
   toPNG(): Uint8Array;
   getSize(): { width: number; height: number };
+  // Raw 32-bit pixels. Alpha is the fourth byte of each pixel in BGRA and RGBA order alike.
+  toBitmap(): Uint8Array;
+}
+
+// Electron guest pages have a transparent base background, so a page that has
+// painted nothing yet (for example a dev server hiding body until its JS boots)
+// yields a frame where every pixel is transparent. That frame is not a
+// screenshot of the page.
+export function hasPaintedPixels(image: TabImage): boolean {
+  const bitmap = image.toBitmap();
+  for (let alpha = 3; alpha < bitmap.length; alpha += 4) {
+    if (bitmap[alpha] !== 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface BrowserRegistry {
@@ -1348,11 +1365,18 @@ async function executeFullPageScreenshot(
         const metrics = await getCdpLayoutMetrics(target.contents);
         width = metrics.contentWidth;
         height = metrics.contentHeight;
-        return (await sendDebugCommand("Page.captureScreenshot", {
+        const result = (await sendDebugCommand("Page.captureScreenshot", {
           format: "png",
           captureBeyondViewport: true,
           clip: { x: 0, y: 0, width, height, scale: 1 },
         })) as CdpCaptureScreenshotResult;
+        if (
+          result.data &&
+          !hasPaintedPixels(target.contents.decodePng(Buffer.from(result.data, "base64")))
+        ) {
+          throw new Error("Page.captureScreenshot returned no painted frame");
+        }
+        return result;
       });
     } catch (error) {
       if (isScreenshotNoFrameError(error)) {
