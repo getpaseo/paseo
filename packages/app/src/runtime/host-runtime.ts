@@ -1816,10 +1816,11 @@ export class HostRuntimeStore {
           shouldPersistHosts = true;
         }
       }
-      this.hosts = profiles;
-      this.replicaCache.setHosts(profiles.map((profile) => profile.serverId));
       projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
       await projectIconCache.restore();
+      // Publish the hosts in the same step that creates their runtimes, so anything that reads
+      // a host can already acquire its directory.
+      this.hosts = profiles;
       this.syncHosts(profiles);
       for (const profile of profiles) {
         void this.directorySyncByServer
