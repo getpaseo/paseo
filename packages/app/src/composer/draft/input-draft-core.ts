@@ -29,6 +29,7 @@ export function buildDraftAgentControls(input: {
   context: NonNullable<DraftAgentControlsProps["context"]>;
   metadata: Record<string, JsonValue>;
   onSetMetadata: (patch: Record<string, JsonValue>) => void;
+  teamControl?: DraftAgentControlsProps["teamControl"];
 }): DraftAgentControlsProps {
   const {
     formState,
@@ -40,6 +41,7 @@ export function buildDraftAgentControls(input: {
     context,
     metadata,
     onSetMetadata,
+    teamControl,
   } = input;
   return {
     providerDefinitions: formState.providerDefinitions,
@@ -69,6 +71,7 @@ export function buildDraftAgentControls(input: {
     context,
     metadata,
     onSetMetadata,
+    teamControl: teamControl ?? null,
   };
 }
 

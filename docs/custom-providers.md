@@ -318,7 +318,7 @@ requires_openai_auth = false
 
 You can create multiple entries that extend the same built-in provider. Each gets its own entry in the provider list with independent credentials, models, and environment.
 
-"Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
+"Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word. Agent profiles can also back the roles of a team; see [agent-teams.md](agent-teams.md).
 
 Example: two different Anthropic accounts as separate profiles:
 

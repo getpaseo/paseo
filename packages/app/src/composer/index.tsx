@@ -940,7 +940,7 @@ interface ComposerProps {
   workspaceId?: string | null;
   isPaneFocused: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
-  onClientSlashCommand?: (command: ClientSlashCommand) => Promise<void>;
+  onClientSlashCommand?: (command: ClientSlashCommand, args: string) => Promise<void>;
   /** When true, the submit button is enabled even without text or images (e.g. external attachment selected). */
   hasExternalContent?: boolean;
   /** When true, the composer can submit even with no text or attachments. */
@@ -1536,7 +1536,7 @@ function ComposerContentImpl({
   );
 
   const runClientSlashCommand = useCallback(
-    (command: ClientSlashCommand): boolean => {
+    (command: ClientSlashCommand, args = ""): boolean => {
       if (command.execution !== "immediate" || !onClientSlashCommand) {
         return false;
       }
@@ -1550,7 +1550,7 @@ function ComposerContentImpl({
       resetSuppression();
       setSendError(null);
       setIsProcessing(true);
-      void onClientSlashCommand(command)
+      void onClientSlashCommand(command, args)
         .catch((error) => {
           console.error("[Composer] Failed to run client slash command:", error);
           setSendError(error instanceof Error ? error.message : String(error));
@@ -1835,7 +1835,10 @@ function ComposerContentImpl({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
       });
-      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
+      if (
+        clientSlashCommand &&
+        runClientSlashCommand(clientSlashCommand.command, clientSlashCommand.args)
+      ) {
         return;
       }
       const pluginSlashCommand = resolvePluginClientSlashCommand({
@@ -2088,7 +2091,10 @@ function ComposerContentImpl({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
       });
-      if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
+      if (
+        clientSlashCommand &&
+        runClientSlashCommand(clientSlashCommand.command, clientSlashCommand.args)
+      ) {
         return;
       }
       const pluginSlashCommand = resolvePluginClientSlashCommand({

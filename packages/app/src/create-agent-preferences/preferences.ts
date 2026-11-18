@@ -19,6 +19,8 @@ export interface FormPreferences {
   favoriteModels?: Array<{ provider: string; modelId: string }>;
   isolation?: "local" | "worktree";
   launchTarget?: LaunchTarget;
+  /** The last team chosen for a new chat, per host. */
+  teamByServer?: Record<string, string>;
 }
 
 // COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01. Preferences written
@@ -83,6 +85,7 @@ export const FormPreferencesSchema = z.strictObject({
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
   launchTarget: launchTargetSchema.optional(),
+  teamByServer: z.record(z.string(), z.string()).optional(),
 }) satisfies z.ZodType<FormPreferences>;
 
 const LegacyProviderPreferencesSchema = z.strictObject({

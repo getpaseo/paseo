@@ -102,6 +102,15 @@ import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-uti
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import { applyRecordPatch } from "./record-patch.js";
+import {
+  AGENT_TEAM_LABEL,
+  applyAgentTeamModelOverrides,
+  listResolvedAgentTeams,
+  readAgentTeamsConfig,
+  resolveAgentTeam,
+} from "./agent/agent-teams.js";
+import { buildAgentTeamRosterPrompt } from "./agent/agent-team-roster.js";
+import { composeSystemPromptParts } from "./agent/system-prompt.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -206,6 +215,8 @@ import {
   createGitMetadataGenerator,
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
+import { GoalSession } from "./session/goal/goal-session.js";
+import type { GoalService } from "./goal/goal-service.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { UsageSession } from "./session/usage/usage-session.js";
 import {
@@ -513,6 +524,7 @@ export interface SessionOptions {
   workspaceBaseBranch?: WorkspaceBaseBranchService;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  goalService?: GoalService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -871,6 +883,7 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly diffSession: DiffSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly goalSession: GoalSession | null;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly usageSession: UsageSession;
   private readonly speechModelsSession: SpeechModelsSession;
@@ -910,6 +923,7 @@ export class Session {
       workspaceRegistry,
       directorySync,
       workspaceLabelService,
+      goalService,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -1079,6 +1093,24 @@ export class Session {
     this.scheduleSession = new ScheduleSession({
       host: { emit: (msg) => this.emit(msg) },
       scheduleService,
+      logger: this.sessionLogger,
+    });
+    this.goalSession = GoalSession.forService({
+      host: {
+        emit: (msg) => this.emit(msg),
+        supportsGoalControlEvents: () => this.supports(CLIENT_CAPS.goalControlEvents),
+        supportsGoalAcknowledgeEvents: () => this.supports(CLIENT_CAPS.goalAcknowledgeEvents),
+        supportsGoalManagementEvents: () => this.supports(CLIENT_CAPS.goalManagementEvents),
+        supportsGoalConfigEdit: () => this.supports(CLIENT_CAPS.goalConfigEdit),
+        supportsGoalUsageBreakdown: () => this.supports(CLIENT_CAPS.goalUsageBreakdown),
+        supportsGoalIntegrationRetry: () => this.supports(CLIENT_CAPS.goalIntegrationRetry),
+        supportsGoalPlanRevision: () => this.supports(CLIENT_CAPS.goalPlanRevision),
+        supportsGoalLeadInterventions: () => this.supports(CLIENT_CAPS.goalLeadInterventions),
+        supportsGoalRecovery: () => this.supports(CLIENT_CAPS.goalRecovery),
+        supportsGoalAccept: () => this.supports(CLIENT_CAPS.goalAccept),
+        supportsGoalUserWait: () => this.supports(CLIENT_CAPS.goalUserWait),
+      },
+      goalService,
       logger: this.sessionLogger,
     });
     this.providerCatalogSession = new ProviderCatalogSession({
@@ -3527,6 +3559,8 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.usageSession.handleLegacyList(msg);
+      case "agent.teams.list.request":
+        return this.handleAgentTeamsListRequest(msg);
       case "usage.list_reports.request":
         return this.usageSession.handleListReports(msg);
       default:
@@ -3570,7 +3604,7 @@ export class Session {
       case "schedule/update":
         return this.scheduleSession.handleScheduleUpdateRequest(msg);
       default:
-        return undefined;
+        return this.goalSession?.dispatch(msg);
     }
   }
 
@@ -4809,6 +4843,65 @@ export class Session {
     }
   }
 
+  private async handleAgentTeamsListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.teams.list.request" }>,
+  ): Promise<void> {
+    const { teams, error } = listResolvedAgentTeams({
+      teams: readAgentTeamsConfig(this.daemonConfigStore.get()),
+      agentProfiles: this.daemonConfigStore.get().agentProfiles,
+    });
+    this.emit({
+      type: "agent.teams.list.response",
+      payload: {
+        requestId: msg.requestId,
+        teams: teams.map((team) => ({
+          name: team.name,
+          description: team.description,
+          roles: team.roles.map((role) => ({
+            name: role.name,
+            description: role.description,
+            provider: role.provider,
+            model: role.model,
+            profile: role.profile,
+          })),
+        })),
+        error,
+      },
+    });
+  }
+
+  /**
+   * Gives a team chat its roster through the creation-only system prompt, which
+   * is persisted and restored on resume, and labels it with the team name. The
+   * roster is frozen at creation, with the request's per-role model overrides applied; helpers it
+   * creates do not inherit it.
+   */
+  private applyRequestedAgentTeam(msg: CreateAgentRequestMessage): CreateAgentRequestMessage {
+    if (msg.team === undefined) {
+      if (msg.teamModelOverrides !== undefined) {
+        throw new Error("teamModelOverrides requires team");
+      }
+      return msg;
+    }
+    const team = applyAgentTeamModelOverrides(
+      resolveAgentTeam({
+        teams: readAgentTeamsConfig(this.daemonConfigStore.get()),
+        agentProfiles: this.daemonConfigStore.get().agentProfiles,
+        name: msg.team,
+      }),
+      msg.teamModelOverrides,
+    );
+    const systemPrompt = composeSystemPromptParts(
+      msg.config.systemPrompt,
+      buildAgentTeamRosterPrompt(team),
+    );
+    return {
+      ...msg,
+      config: { ...msg.config, ...(systemPrompt ? { systemPrompt } : {}) },
+      labels: { ...msg.labels, [AGENT_TEAM_LABEL]: team.name },
+    };
+  }
+
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
     try {
       let agent: AgentSnapshotPayload;
@@ -4874,10 +4967,11 @@ export class Session {
   }
 
   private async createSessionAgent(
-    msg: CreateAgentRequestMessage,
+    requested: CreateAgentRequestMessage,
     agentId?: string,
     onAgentReady?: (agent: AgentSnapshotPayload) => Promise<void>,
   ): Promise<CreatedAgent> {
+    const msg = this.applyRequestedAgentTeam(requested);
     const {
       config,
       worktreeName,
@@ -9500,6 +9594,21 @@ function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/u.test(value);
 }
 
+function statusEventCategory(status: string): SessionEventSubscription | null {
+  switch (status) {
+    case "server_info":
+      return "status.server_info";
+    case "daemon_config_changed":
+      return "status.daemon_config_changed";
+    case "plugin_catalog_changed":
+      return "status.plugin_catalog_changed";
+    case "plugin_settings_changed":
+      return "status.plugin_settings_changed";
+    default:
+      return null;
+  }
+}
+
 function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubscription | null {
   switch (message.type) {
     case "project.update":
@@ -9516,20 +9625,10 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "activity_log":
     case "hub.execution.agent.update":
     case "hub.execution.agent.stream":
+    case "goal.update":
       return message.type;
     case "status":
-      switch (message.payload.status) {
-        case "server_info":
-          return "status.server_info";
-        case "daemon_config_changed":
-          return "status.daemon_config_changed";
-        case "plugin_catalog_changed":
-          return "status.plugin_catalog_changed";
-        case "plugin_settings_changed":
-          return "status.plugin_settings_changed";
-        default:
-          return null;
-      }
+      return statusEventCategory(message.payload.status);
     default:
       return null;
   }
@@ -9552,6 +9651,10 @@ function legacyWantsEvent(
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     // Old apps parse outbound messages strictly and do not know this type.
     case "agent.background_work.update":
+      return false;
+    // COMPAT(goalUpdates): added in v0.13.0. Delivered only to explicit subscribers, so a
+    // client that never asked for it is never sent a type it may not parse.
+    case "goal.update":
       return false;
     default:
       return true;

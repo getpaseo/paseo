@@ -30,6 +30,10 @@ import {
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
+import {
+  AgentTeamControl,
+  type AgentTeamControlValue,
+} from "@/composer/agent-controls/team-control";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -131,6 +135,7 @@ interface ControlledAgentControlsProps {
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider?: boolean;
   modeControl?: AgentModeControlValue | null;
+  teamControl?: AgentTeamControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
 }
@@ -170,6 +175,7 @@ export interface DraftAgentControlsProps {
   /** What plugins set on the agent this draft creates. */
   metadata: Record<string, JsonValue>;
   onSetMetadata: (patch: Record<string, JsonValue>) => void;
+  teamControl?: AgentTeamControlValue | null;
 }
 
 interface AgentControlsProps {
@@ -443,6 +449,7 @@ function ControlledAgentControls({
   isRetryingModelProvider = false,
   modeControl,
   modelSelectorServerId = null,
+  teamControl,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
   const { t } = useTranslation();
@@ -664,6 +671,7 @@ function ControlledAgentControls({
             handleToolbarOpenChange={handleToolbarOpenChange}
             handleSheetOpenChange={setOpenSelector}
             modeControl={modeControl}
+            teamControl={teamControl}
             presentation={presentation}
             hasPluginItems={pluginItemsWidth > 0}
             glyphs={layoutContextValue.glyphs}
@@ -698,6 +706,7 @@ function ControlledAgentControls({
             modeControl={modeControl}
             glyphs={layoutContextValue.glyphs}
             showLabels={presentation.showModelLabel}
+            teamControl={teamControl}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
           />
@@ -736,6 +745,7 @@ interface AgentControlsContentProps {
   openSelector: string | null;
   handleSheetOpenChange: (id: string | null) => void;
   modeControl?: AgentModeControlValue | null;
+  teamControl?: AgentTeamControlValue | null;
   glyphs: ToolbarGlyphs;
   modelSelectorServerId: string | null;
 }
@@ -777,6 +787,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleToolbarOpenChange,
     handleSheetOpenChange,
     modeControl,
+    teamControl,
     presentation,
     hasPluginItems,
     glyphs,
@@ -840,6 +851,8 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
 
       {modeControl ? <AgentModeControl {...modeControl} onClose={onDropdownClose} /> : null}
 
+      {teamControl ? <AgentTeamControl {...teamControl} onClose={onDropdownClose} /> : null}
+
       {presentation.aggregateFeatures && hasFeatures ? (
         <>
           <Pressable
@@ -893,6 +906,7 @@ interface SheetAgentControlsContentProps extends AgentControlsContentProps {
   showLabels: boolean;
   displayThinking: string | null;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
+  teamControl?: AgentTeamControlValue | null;
   canSwitchProvider: boolean;
 }
 
@@ -923,6 +937,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     modeControl,
     glyphs,
     showLabels,
+    teamControl,
     modelSelectorServerId,
     canSwitchProvider,
   } = props;
@@ -938,6 +953,8 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       />
 
       {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
+
+      {teamControl ? <AgentTeamControl {...teamControl} surface="sheet" /> : null}
 
       <ComposerControls
         items={featureItems}
@@ -1307,6 +1324,7 @@ export function DraftAgentControls({
   isRetryingModelProvider = false,
   disabled = false,
   modelSelectorServerId = null,
+  teamControl = null,
   isCompactLayout,
   context = "draft",
   metadata,
@@ -1447,6 +1465,7 @@ export function DraftAgentControls({
           isRetryingModelProvider={isRetryingModelProvider}
           disabled={disabled}
           modeControl={modeControl}
+          teamControl={teamControl}
           modelSelectorServerId={modelSelectorServerId}
           isCompactLayout={isCompactLayout}
         />

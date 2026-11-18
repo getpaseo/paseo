@@ -74,6 +74,19 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("goal management needs automation.manage, like every other goal mutation", () => {
+    const allowed = new SessionAuthorization(["automation.manage"]);
+    const denied = new SessionAuthorization(["hub.execute", "workspace.write"]);
+    for (const name of ["rename", "set_priority", "archive", "unarchive", "delete"] as const) {
+      const request = inboundMessage(`goal.${name}.request`);
+      const response = outboundMessage(`goal.${name}.response`);
+      expect(allowed.allowsInbound(request)).toBe(true);
+      expect(allowed.allowsOutbound(response)).toBe(true);
+      expect(denied.allowsInbound(request)).toBe(false);
+      expect(denied.allowsOutbound(response)).toBe(false);
+    }
+  });
+
   test("Hub can operate ordinary agents and recover workspaces without daemon administration", () => {
     const authorization = new SessionAuthorization(["hub.execute"]);
     for (const type of [

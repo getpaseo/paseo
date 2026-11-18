@@ -87,6 +87,63 @@ describe("buildWorkspaceTabMenuEntries", () => {
     ]);
   });
 
+  it("offers Start goal on an agent tab only when the host can run goals", () => {
+    const onStartGoal = vi.fn();
+    const input = {
+      surface: "desktop" as const,
+      index: 0,
+      tabCount: 1,
+      menuTestIDBase: "workspace-tab-context-agent_123",
+      onCopyResumeCommand: vi.fn(),
+      onCopyAgentId: vi.fn(),
+      onCopyTerminalId: vi.fn(),
+      onCopyFilePath: vi.fn(),
+      onReloadAgent: vi.fn(),
+      onRenameTab: vi.fn(),
+      onCloseTab: vi.fn(),
+      onCloseTabsBefore: vi.fn(),
+      onCloseTabsAfter: vi.fn(),
+      onCloseOtherTabs: vi.fn(),
+    };
+    const itemKeys = (entries: ReturnType<typeof buildWorkspaceTabMenuEntries>) =>
+      entries.filter((entry) => entry.kind === "item").map((entry) => entry.key);
+
+    const entries = buildWorkspaceTabMenuEntries({ ...input, tab: createAgentTab(), onStartGoal });
+    expect(itemKeys(entries).slice(0, 4)).toEqual([
+      "copy-resume-command",
+      "copy-agent-id",
+      "start-goal",
+      "rename",
+    ]);
+    const startGoal = entries.find((entry) => entry.key === "start-goal");
+    expect(startGoal).toMatchObject({
+      label: "Start goal from this chat",
+      testID: "workspace-tab-context-agent_123-start-goal",
+    });
+    if (startGoal?.kind === "item") {
+      startGoal.onSelect();
+    }
+    expect(onStartGoal).toHaveBeenCalledWith("agent-123");
+
+    expect(
+      itemKeys(buildWorkspaceTabMenuEntries({ ...input, tab: createAgentTab() })),
+    ).not.toContain("start-goal");
+    expect(
+      itemKeys(
+        buildWorkspaceTabMenuEntries({
+          ...input,
+          tab: {
+            key: "terminal_1",
+            tabId: "terminal_1",
+            kind: "terminal",
+            target: { kind: "terminal", terminalId: "term-1" },
+          },
+          onStartGoal,
+        }),
+      ),
+    ).not.toContain("start-goal");
+  });
+
   it("omits agent copy actions and rename for draft tabs", () => {
     const entries = buildWorkspaceTabMenuEntries({
       surface: "mobile",

@@ -56,6 +56,8 @@ import { SidebarModelProvider } from "@/components/sidebar/sidebar-model";
 import { WorkspacePinShortcutHandler } from "@/components/workspace-pin-shortcut-handler";
 import { WorkspaceRenameHost } from "@/components/workspace-rename-host";
 import { WorkspaceArchiveUndoShortcutHost } from "@/workspace/archive-undo";
+import { GoalAttentionWatcher } from "@/components/goals/goal-attention-watcher";
+import { GoalLaunchHost } from "@/components/goals/goal-launch-host";
 import { WorkspaceExplorerOpenGesture } from "@/mobile-panels/explorer-open-gesture";
 import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
@@ -575,6 +577,8 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <HostChooserModal />
         <HostConfirmationSheet />
         <ProviderSettingsHost />
+        <GoalLaunchHost />
+        <GoalAttentionWatcher />
         <WorkspaceSetupDialog />
         <KeyboardShortcutsDialog />
         <AppDiagnosticHost />
@@ -892,6 +896,7 @@ function AppWithSidebar({ children }: { children: ReactNode }) {
       pathname === "/new" ||
       pathname === "/sessions" ||
       pathname === "/schedules" ||
+      pathname === "/goals" ||
       routeHasKnownHost);
 
   return <AppContainer chromeEnabled={shouldShowAppChrome}>{children}</AppContainer>;
@@ -927,6 +932,7 @@ function RootStack() {
         <Stack.Screen name="open-project" />
         <Stack.Screen name="sessions" />
         <Stack.Screen name="schedules" />
+        <Stack.Screen name="goals" />
       </Stack.Protected>
       <Stack.Screen name="h/[serverId]" />
       <Stack.Screen name="settings/hosts/[serverId]/index" />

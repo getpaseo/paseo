@@ -37,6 +37,23 @@ describe("buildAgentFactsLine", () => {
     );
   });
 
+  it("leads with the team role a team chat set on the helper", () => {
+    expect(buildAgentFactsLine({ ...base, teamRole: " reviewer " })).toBe(
+      "reviewer · Fable 5.1 · High · Bypass permissions · 56k / 200k tokens (28%)",
+    );
+  });
+
+  it("shows the team role alone before the agent reports a model", () => {
+    expect(
+      buildAgentFactsLine({
+        ...base,
+        runtimeModelId: null,
+        configuredModelId: null,
+        teamRole: "reviewer",
+      }),
+    ).toBe("reviewer");
+  });
+
   it("shows the raw model id before the catalog has loaded", () => {
     expect(
       buildAgentFactsLine({

@@ -70,6 +70,7 @@ describe("Pi usage poller", () => {
         totalCostUsd: 0.01,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 130,
+        sessionTotals: { inputTokens: 100, cachedInputTokens: 10, outputTokens: 20, costUsd: 0.01 },
       },
       {
         inputTokens: 100,
@@ -78,6 +79,7 @@ describe("Pi usage poller", () => {
         totalCostUsd: 0.01,
         contextWindowMaxTokens: 200_000,
         contextWindowUsedTokens: 150,
+        sessionTotals: { inputTokens: 100, cachedInputTokens: 10, outputTokens: 20, costUsd: 0.01 },
       },
     ]);
     expect(scheduler.activePollCount()).toBe(1);
@@ -96,6 +98,7 @@ describe("Pi usage poller", () => {
       totalCostUsd: 0,
       contextWindowMaxTokens: 200_000,
       contextWindowUsedTokens: 150,
+      sessionTotals: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costUsd: 0 },
     };
     const updates: Array<{ usage: AgentUsage; turnId?: string }> = [];
     let readCount = 0;

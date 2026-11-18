@@ -92,6 +92,7 @@ describe("OpenCode v2 context usage", () => {
         totalCostUsd: 0.5,
         contextWindowUsedTokens: 1_335,
         contextWindowMaxTokens: 200_000,
+        sessionTotals: { inputTokens: 900, cachedInputTokens: 40, outputTokens: 90, costUsd: 0.5 },
       });
     } finally {
       await session.close();

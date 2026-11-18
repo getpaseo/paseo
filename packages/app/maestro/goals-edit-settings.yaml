@@ -1,0 +1,49 @@
+appId: sh.paseo.debug
+---
+# Opens Edit settings from the detail menu of ${GOAL_ID}, changes Max parallel, and saves.
+# GOAL_ID must be a managed goal that is not ended. Read packages/app/maestro/README.md#goals.
+- runFlow: flows/goals-open-detail.yaml
+- tapOn:
+    id: "goal-detail-menu"
+- extendedWaitUntil:
+    visible:
+      id: "goal-detail-menu-edit-settings"
+    timeout: 10000
+- tapOn:
+    id: "goal-detail-menu-edit-settings"
+- extendedWaitUntil:
+    visible:
+      id: "goal-settings-hint"
+    timeout: 10000
+
+- scrollUntilVisible:
+    element:
+      id: "goal-setting-maxParallel-input"
+    direction: DOWN
+- tapOn:
+    id: "goal-setting-maxParallel-input"
+- eraseText
+- inputText: "3"
+- tapOn:
+    id: "goal-settings-hint"
+- assertVisible:
+    id: "goal-setting-maxParallel-input"
+    text: "3"
+- swipe:
+    from:
+      id: "goal-setting-maxParallel-handle"
+    direction: LEFT
+    duration: 800
+- assertVisible:
+    id: "goal-settings-hint"
+
+- tapOn:
+    id: "goal-settings-save"
+- extendedWaitUntil:
+    visible:
+      id: "goal-settings-saved-toast"
+    timeout: 15000
+- assertNotVisible:
+    id: "goal-settings-hint"
+- assertVisible:
+    id: "goal-detail-title"
