@@ -2036,6 +2036,33 @@ describe("createGiteaService", () => {
     ]);
   });
 
+  it("hides a historical PR on the repository's default branch", async () => {
+    const historical = currentPullRequestApi({
+      number: 8,
+      state: "closed",
+      headRef: "trunk",
+      headSha: "8888888888888888888888888888888888888888",
+    });
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([historical]));
+      }
+      if (args[0] === "api" && args[1] === "repos/example-user/sample-repo") {
+        return ok(
+          JSON.stringify({
+            full_name: "example-user/sample-repo",
+            default_branch: "trunk",
+          }),
+        );
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "trunk" }),
+    ).resolves.toBeNull();
+  });
+
   it("falls back to the recent all-state PR window for a recently closed current branch PR", async () => {
     const headSha = "8888888888888888888888888888888888888888";
     const closedPr = currentPullRequestApi({
