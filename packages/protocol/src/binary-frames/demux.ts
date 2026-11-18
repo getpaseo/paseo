@@ -25,6 +25,10 @@ export function decodeBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
   if (Object.values(DiffOpcode).some((opcode) => opcode === bytes[0])) {
     return { kind: "diff", frame: decodeDiffFrame(bytes) };
   }
+  if (Object.values(TunnelOpcode).some((opcode) => opcode === bytes[0])) {
+    const frame = decodeTunnelFrame(bytes);
+    return frame ? { kind: "tunnel", frame } : null;
+  }
   return decodeExistingBinaryFrame(bytes);
 }
 
@@ -56,14 +60,6 @@ function decodeExistingBinaryFrame(bytes: Uint8Array): BinaryFrame | null {
     case PluginFrameOpcode.Input: {
       const frame = decodePluginFrame(bytes);
       return frame ? { kind: "plugin", frame } : null;
-    }
-    case TunnelOpcode.Open:
-    case TunnelOpcode.Connected:
-    case TunnelOpcode.Data:
-    case TunnelOpcode.Close:
-    case TunnelOpcode.WindowUpdate: {
-      const frame = decodeTunnelFrame(bytes);
-      return frame ? { kind: "tunnel", frame } : null;
     }
     default:
       return null;

@@ -51,6 +51,7 @@ function bridge(socket: Socket, tunnel: NetworkTunnel, targetPort: number): void
           connected = true;
           credit = tunnel.limits.initialWindowBytes;
           socket.on("data", (chunk: Buffer) => {
+            if (closed) return;
             try {
               queued.push(chunk);
               queuedBytes += chunk.length;
@@ -83,6 +84,10 @@ function bridge(socket: Socket, tunnel: NetworkTunnel, targetPort: number): void
             return;
           }
           closed = true;
+          queued.length = 0;
+          queuedBytes = 0;
+          // Discard an unfinished upload so the peer EOF can release the socket.
+          socket.resume();
           // Queue FIN after data already written to the local socket.
           socket.end();
         },

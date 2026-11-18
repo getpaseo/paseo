@@ -1,5 +1,5 @@
-import { createConnection, createServer } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { createConnection, createServer, Socket } from "node:net";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   NetworkTunnel,
   NetworkTunnelStreamHandlers,
@@ -88,6 +88,51 @@ describe("workspace TCP forwarding", () => {
     });
     expect(Buffer.concat(fake.writes).toString()).toBe("abcdef");
     expect(fake.closed).toBe(1);
+  });
+
+  it("releases the local socket when an early response closes an upload waiting for credit", async () => {
+    const pauses = vi.spyOn(Socket.prototype, "pause");
+    const fake = echoTunnel();
+    fake.tunnel.openStream = (_target, handlers) => {
+      queueMicrotask(() => handlers.onConnected());
+      let responded = false;
+      return {
+        streamId: "early-response",
+        write() {
+          if (responded) return;
+          responded = true;
+          setImmediate(() => {
+            handlers.onData(Buffer.from("413"));
+            handlers.onClose(0);
+          });
+        },
+        consume() {},
+        close() {},
+      };
+    };
+    const forward = await startTcpForward(fake.tunnel, 4173, 0);
+    forwards.push(forward);
+    const socket = createConnection({ host: "127.0.0.1", port: forward.port });
+    let response = "";
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("error", reject);
+        socket.once("connect", () => socket.end(Buffer.alloc(256 * 1024)));
+        socket.on("data", (data) => {
+          response += data.toString();
+        });
+        socket.once("close", () => resolve());
+      });
+      expect(response).toBe("413");
+      const accepted = pauses.mock.contexts.find(
+        (peer) => peer !== socket && peer.localPort === forward.port,
+      );
+      expect(accepted).toBeDefined();
+      await vi.waitFor(() => expect(accepted?.destroyed).toBe(true));
+    } finally {
+      socket.destroy();
+      pauses.mockRestore();
+    }
   });
 
   it("uses a free loopback port when the default port is occupied", async () => {

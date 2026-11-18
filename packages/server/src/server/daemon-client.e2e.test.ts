@@ -1685,12 +1685,6 @@ test("handles permission flow", async () => {
     title: "Permission Test",
   });
 
-  const permissionEvents = ctx.client.observeEvents([
-    "agent_permission_request",
-    "agent_permission_resolved",
-  ]);
-  await permissionEvents.ready;
-
   const permissionRequestPromise = waitForSignal(60000, (resolve) => {
     const unsubscribe = permissionEvents.subscribe({
       snapshot: () => {},
