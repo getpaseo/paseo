@@ -54,10 +54,59 @@ describe("ProviderSubagentStore", () => {
     ]);
     expect(subagents.list("parent-b")[0]).toMatchObject({ provider: "claude", title: "Review" });
     expect(subagents.deleteParent("parent-a")).toEqual([
-      { type: "remove", parentAgentId: "parent-a", subagentId: "child-1" },
+      {
+        type: "remove",
+        parentAgentId: "parent-a",
+        subagentId: "child-1",
+        runningCountChanged: false,
+      },
     ]);
     expect(subagents.list("parent-a")).toEqual([]);
     expect(subagents.list("parent-b")).toHaveLength(1);
+  });
+
+  test("marks the changes that start or stop one of the parent's running children", () => {
+    const subagents = new ProviderSubagentStore();
+    const runningCountChanged = (event: ReturnType<ProviderSubagentStore["apply"]>) =>
+      event.type === "timeline" ? null : event.runningCountChanged;
+
+    const started = subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      status: "running",
+    });
+    const progressed = subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      subtitle: "Reading files",
+    });
+    const finished = subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-1",
+      status: "completed",
+    });
+    const finishedRemoved = subagents.apply("parent-a", "claude", {
+      type: "remove",
+      id: "child-1",
+    });
+    subagents.apply("parent-a", "claude", { type: "upsert", id: "child-2", status: "running" });
+    const runningRemoved = subagents.apply("parent-a", "claude", { type: "remove", id: "child-2" });
+    const recorded = subagents.apply("parent-a", "claude", {
+      type: "upsert",
+      id: "child-3",
+      status: "completed",
+    });
+    subagents.apply("parent-a", "claude", { type: "upsert", id: "child-4", status: "running" });
+
+    expect(
+      [started, progressed, finished, finishedRemoved, runningRemoved, recorded].map(
+        runningCountChanged,
+      ),
+    ).toEqual([true, false, true, false, true, false]);
+    expect(subagents.deleteParent("parent-a")).toEqual([
+      expect.objectContaining({ subagentId: "child-3", runningCountChanged: false }),
+      expect.objectContaining({ subagentId: "child-4", runningCountChanged: true }),
+    ]);
   });
 
   test("limits oversized provider child tool output before storage", () => {

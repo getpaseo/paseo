@@ -578,6 +578,30 @@ describe("ReplicaCache", () => {
     expect(restored.agents.get("visible")?.background).toBe(false);
   });
 
+  it("keeps an agent's background work and running provider subagents across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const parent = {
+      ...agent("parent"),
+      backgroundWork: { count: 2 },
+      runningProviderSubagents: { count: 1 },
+    };
+    const quiet = agent("quiet");
+    writer.commitDirectoryMutations(SERVER_ID, [
+      { kind: "agent", type: "upsert", id: parent.id, value: parent },
+      { kind: "agent", type: "upsert", id: quiet.id, value: quiet },
+    ]);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.agents.get("parent")).toMatchObject({
+      backgroundWork: { count: 2 },
+      runningProviderSubagents: { count: 1 },
+    });
+    expect(restored.agents.get("quiet")?.runningProviderSubagents).toBeUndefined();
+  });
+
   it("round-trips identified and anonymous open turns without changing protocol status", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

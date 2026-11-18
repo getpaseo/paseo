@@ -8766,7 +8766,10 @@ test("overlapping workspace rebuilds publish the newest provider subagent status
     subtitle: null,
   };
   providerSubagents.push(runningSubagent);
-  listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: runningSubagent } });
+  listener?.({
+    type: "provider_subagent",
+    event: { type: "upsert", subagent: runningSubagent, runningCountChanged: true },
+  });
   await firstBuildStarted.promise;
 
   const completedSubagent = {
@@ -8775,7 +8778,10 @@ test("overlapping workspace rebuilds publish the newest provider subagent status
     updatedAt: "2026-08-01T10:02:00.000Z",
   };
   providerSubagents[0] = completedSubagent;
-  listener?.({ type: "provider_subagent", event: { type: "upsert", subagent: completedSubagent } });
+  listener?.({
+    type: "provider_subagent",
+    event: { type: "upsert", subagent: completedSubagent, runningCountChanged: true },
+  });
   await waitForImmediate();
   releaseFirstBuild.resolve();
   await vi.waitFor(() => expect(buildCount).toBe(2));
@@ -8785,6 +8791,92 @@ test("overlapping workspace rebuilds publish the newest provider subagent status
     message.payload.kind === "upsert" ? [message.payload.workspace.status] : [],
   );
   expect(statuses).toEqual(["running", "done"]);
+});
+
+test("a provider subagent update re-sends its parent's snapshot only when the running count changes", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const parent = makeManagedAgent({
+    id: "provider-parent",
+    cwd: REPO_CWD,
+    workspaceId: "ws-repo-running",
+    lifecycle: "idle",
+    updatedAt: "2026-08-01T10:00:00.000Z",
+  }) as unknown as ManagedAgent;
+  let listener: ((event: AgentManagerEvent) => void) | null = null;
+  const session = asTestSession(
+    createSessionForWorkspaceTests({
+      onMessage: (message) => emitted.push(message),
+      agentStorage: { listAll: async () => [] },
+      agentManager: {
+        subscribe: (nextListener: (event: AgentManagerEvent) => void) => {
+          listener = nextListener;
+          return () => {};
+        },
+        listAgents: () => [parent],
+        listProviderSubagentActivity: () => [],
+        getAgent: (agentId: string) => (agentId === parent.id ? parent : null),
+      },
+    }),
+  );
+  const project = createPersistedProjectRecord({
+    projectId: "proj-1",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-repo-running",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  session.projectRegistry.get = async (id: string) => (id === project.projectId ? project : null);
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => [
+    workspace,
+  ];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+  await activateAgentUpdatesSubscription(session, "provider-subagent-agents", {});
+  const subagent: ProviderSubagentDescriptor = {
+    id: "native-child",
+    parentAgentId: parent.id,
+    provider: "claude",
+    title: "Native child",
+    description: null,
+    status: "running",
+    createdAt: "2026-08-01T10:01:00.000Z",
+    updatedAt: "2026-08-01T10:01:00.000Z",
+    toolCallId: null,
+    cwd: REPO_CWD,
+    subtitle: "Reading files",
+  };
+  const parentUpdates = () =>
+    filterByType(emitted, "agent_update").filter(
+      (message) => message.payload.kind === "upsert" && message.payload.agent.id === parent.id,
+    );
+  emitted.length = 0;
+
+  listener?.({
+    type: "provider_subagent",
+    event: { type: "upsert", subagent, runningCountChanged: false },
+  });
+  listener?.({
+    type: "provider_subagent",
+    event: {
+      type: "upsert",
+      subagent: { ...subagent, status: "completed" },
+      runningCountChanged: true,
+    },
+  });
+  await vi.waitFor(() => expect(parentUpdates()).not.toHaveLength(0));
+  await waitForImmediate();
+  // Only the completion changed the count, so it is the only re-sent parent snapshot.
+  expect(parentUpdates()).toHaveLength(1);
 });
 
 test("title-only terminal change does not build workspace descriptors or emit workspace_update", async () => {

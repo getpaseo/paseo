@@ -2260,10 +2260,24 @@ export class Session {
       event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
     const parent = this.agentManager.getAgent(parentAgentId);
     if (parent?.internal) return;
-    // The parent's snapshot carries its running subagent count, and forwarding it also
-    // refreshes the parent's workspace.
-    if (event.type !== "timeline" && parent) void this.agentUpdates.forwardLiveAgent(parent);
+    if (event.type !== "timeline" && parent) {
+      // The parent's snapshot carries its running subagent count, and forwarding it also
+      // refreshes the parent's workspace.
+      if (event.runningCountChanged) void this.agentUpdates.forwardLiveAgent(parent);
+      else this.emitProviderSubagentWorkspaceUpdate(parent);
+    }
     this.forwardProviderSubagentUpdate(event);
+  }
+
+  private emitProviderSubagentWorkspaceUpdate(parent: ManagedAgent): void {
+    const workspaceId = parent.workspaceId;
+    if (!workspaceId) return;
+    void this.emitWorkspaceUpdateForWorkspaceId(workspaceId).catch((error) => {
+      this.sessionLogger.error(
+        { err: error, parentAgentId: parent.id, workspaceId },
+        "Failed to emit provider subagent workspace update",
+      );
+    });
   }
 
   private forwardBackgroundWork(

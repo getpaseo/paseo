@@ -50,8 +50,12 @@ export type ProviderSubagentInputEvent =
     }
   | { type: "remove"; id: string };
 
+/**
+ * `runningCountChanged` says whether the change started or stopped one of the parent's running
+ * children, which is what the parent agent's snapshot reports.
+ */
 export type ProviderSubagentStoreEvent =
-  | { type: "upsert"; subagent: ProviderSubagentDescriptor }
+  | { type: "upsert"; subagent: ProviderSubagentDescriptor; runningCountChanged: boolean }
   | {
       type: "timeline";
       parentAgentId: string;
@@ -60,7 +64,7 @@ export type ProviderSubagentStoreEvent =
       row: AgentTimelineRow;
       epoch: string;
     }
-  | { type: "remove"; parentAgentId: string; subagentId: string };
+  | { type: "remove"; parentAgentId: string; subagentId: string; runningCountChanged: boolean };
 
 function storeKey(parentAgentId: string, subagentId: string): string {
   return `${parentAgentId}\0${subagentId}`;
@@ -86,9 +90,15 @@ export class ProviderSubagentStore {
   ): ProviderSubagentStoreEvent {
     const key = storeKey(parentAgentId, event.id);
     if (event.type === "remove") {
+      const removed = this.descriptors.get(key);
       this.descriptors.delete(key);
       this.timelines.delete(key);
-      return { type: "remove", parentAgentId, subagentId: event.id };
+      return {
+        type: "remove",
+        parentAgentId,
+        subagentId: event.id,
+        runningCountChanged: removed?.status === "running",
+      };
     }
 
     if (event.type === "timeline") {
@@ -128,7 +138,11 @@ export class ProviderSubagentStore {
       parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
     };
     this.descriptors.set(key, subagent);
-    return { type: "upsert", subagent };
+    return {
+      type: "upsert",
+      subagent,
+      runningCountChanged: (previous?.status === "running") !== (subagent.status === "running"),
+    };
   }
 
   list(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -167,7 +181,12 @@ export class ProviderSubagentStore {
       const key = storeKey(parentAgentId, subagent.id);
       this.descriptors.delete(key);
       this.timelines.delete(key);
-      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
+      events.push({
+        type: "remove",
+        parentAgentId,
+        subagentId: subagent.id,
+        runningCountChanged: subagent.status === "running",
+      });
     }
     return events;
   }
