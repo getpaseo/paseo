@@ -4817,6 +4817,17 @@ export class AgentManager {
       this.publishBackgroundWork(agent.id, items);
       return;
     }
+    // An unassociated notice with no open run is a display turn of its own.
+    if (
+      event.type === "timeline" &&
+      event.item.type === "notification" &&
+      event.turnId === undefined
+    ) {
+      event = {
+        ...event,
+        turnId: agent.activeForegroundTurnId ?? agent.activeTurnId ?? randomUUID(),
+      };
+    }
     const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.runs.getMatchingWaiters(agent, turnId);
     this.logger.trace(
