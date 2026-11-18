@@ -720,9 +720,9 @@ export class HubRelationshipHarness {
     this.rejectLatestSocket(code);
   }
 
-  closeLatestSocket(code: number): void {
+  closeLatestSocket(code: number, reason?: string): void {
     const socket = this.latestSocket();
-    socket.events.closed(code);
+    socket.events.closed(code, reason);
     socket.socket.close(code);
   }
 
