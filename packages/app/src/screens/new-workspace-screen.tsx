@@ -1455,12 +1455,6 @@ export function NewWorkspaceScreen({
       await updateFormPreferences({ launchTarget });
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
-      const clearConsumedDraft = captureWorkspaceDraftCleanup({
-        draftId,
-        draftKey,
-        clearDraft: chatDraft.clear,
-        draftContextScopeKey,
-      });
       await runCreateTerminalWorkspace({
         cwd: selectedSourceDirectory ?? "",
         prompt: terminalPromptText,
@@ -1506,7 +1500,7 @@ export function NewWorkspaceScreen({
           navigateToWorkspace({ serverId: targetServerId, workspaceId, target });
         },
       });
-      clearConsumedDraft();
+      useDraftStore.getState().clearDraftCreationId({ draftKey });
       await flushDraftPersistStorage();
       setCreationResult({ workspace: null });
       setCreationIdentity({ worktreeSlug: createNameId() });
@@ -1520,9 +1514,6 @@ export function NewWorkspaceScreen({
       toast.error(message);
     }
   }, [
-    chatDraft.clear,
-    draftContextScopeKey,
-    draftId,
     draftKey,
     ensureWorkspace,
     isStillOnCreateScreen,

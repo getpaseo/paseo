@@ -359,9 +359,10 @@ that a provider accepted its initial prompt. Interrupted side effects with no co
 receipt return an unknown outcome instead of being repeated.
 
 The app durably saves the draft's ID, metadata, and last creation identity before sending it.
-Only a confirmed failure without an unknown outcome permits an edited request or a
-workspace-to-agent retry to use a
-different identity. A timeout or app restart cannot authorize another creation in the same draft.
+Once a request may have started an agent, only a confirmed failure without an unknown outcome
+permits a changed agent request. A confirmed workspace-only request can admit its first agent;
+it cannot duplicate an agent it never requested. A timeout or app restart cannot authorize a
+second agent in the same draft.
 Generated worktree slugs are part of that identity and must survive remounts. A confirmed
 workspace milestone survives an initial-agent failure: unchanged retries replay its receipt,
 while edited retries create the agent in that workspace. Client preflight and frame-size

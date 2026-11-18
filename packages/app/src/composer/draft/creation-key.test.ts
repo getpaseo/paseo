@@ -73,6 +73,68 @@ function failure(options: {
 const scope = { serverId: "host", draftId: "draft-1" };
 
 describe("draft creation retry admission", () => {
+  it.each([
+    { initialAgent: false, phase: "workspace_ready" },
+    { initialAgent: false, phase: "completed" },
+    { initialAgent: true, phase: "workspace_ready" },
+    { initialAgent: true, phase: "completed" },
+  ] as const)(
+    "admits only a first agent after workspace-only creation ($phase, initial agent: $initialAgent)",
+    async ({ initialAgent, phase }) => {
+      const disk = storage();
+      const workspace = WorkspaceDescriptorPayloadSchema.parse({
+        id: "workspace-1",
+        projectId: "project",
+        projectDisplayName: "Project",
+        projectRootPath: "/repo",
+        workspaceDirectory: "/repo",
+        projectKind: "git",
+        workspaceKind: "local_checkout",
+        name: "Ready workspace",
+        status: "running",
+        statusEnteredAt: null,
+        activityAt: null,
+        archivingAt: null,
+        scripts: [],
+      });
+      const source = { kind: "directory", path: "/repo", projectId: "project" };
+      await creationsFor(disk).submit({
+        ...scope,
+        kind: "workspace",
+        request: { source, ...(initialAgent ? { agent: request } : {}) },
+        send: async ({ idempotencyKey, onEvent }) => {
+          onEvent({
+            ...failure({ kind: "workspace", idempotencyKey, unknown: false }),
+            phase,
+            error: null,
+            workspace,
+          });
+        },
+      });
+      const restored = creationsFor(disk);
+      expect(
+        await restored.workspaceRetry({ ...scope, request: { source, agent: request } }),
+      ).toEqual(initialAgent ? { kind: "replay" } : { kind: "reuse", workspace });
+      let dispatched = 0;
+      const attempt = restored.submit({
+        ...scope,
+        kind: "agent",
+        request,
+        send: async () => {
+          dispatched++;
+          return "first-chat-agent";
+        },
+      });
+      const result = await attempt.then(
+        (value) => value,
+        (error) =>
+          error instanceof DraftCreationOutcomeUnknownError ? "blocked" : Promise.reject(error),
+      );
+      expect(result).toBe(initialAgent ? "blocked" : "first-chat-agent");
+      expect(dispatched).toBe(initialAgent ? 0 : 1);
+    },
+  );
+
   it("retains a background-ready workspace across reload and retries only its agent after definite failure", async () => {
     const disk = storage();
     const workspace = WorkspaceDescriptorPayloadSchema.parse({

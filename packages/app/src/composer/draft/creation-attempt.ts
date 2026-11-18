@@ -17,6 +17,7 @@ const AttemptSchema = z.object({
   outcome: z.enum(["pending", "failed", "unknown", "completed"]),
   revision: z.number().int().nonnegative(),
   error: z.string().nullable(),
+  agentRequested: z.boolean().optional(),
 });
 type Attempt = z.infer<typeof AttemptSchema>;
 const RecordSchema = z.object({
@@ -67,6 +68,24 @@ interface Submission<Result> extends Identity {
   request: object;
   onEvent?: (snapshot: CreationSnapshot) => void;
   send: (options: CreationOptions) => Promise<Result>;
+}
+
+function requestsAgent(input: Pick<Submission<unknown>, "kind" | "request">): boolean {
+  return input.kind === "agent" || ("agent" in input.request && input.request.agent != null);
+}
+
+function canStartFirstAgent(
+  previous: Record,
+  input: Pick<Submission<unknown>, "kind" | "request">,
+): boolean {
+  return (
+    previous.attempt?.kind === "workspace" &&
+    previous.attempt.agentRequested === false &&
+    input.kind === "agent" &&
+    previous.workspace !== undefined &&
+    "workspaceId" in input.request &&
+    input.request.workspaceId === previous.workspace.id
+  );
 }
 
 export class DraftCreationOutcomeUnknownError extends Error {
@@ -157,11 +176,19 @@ export function createDraftCreations(deps: Dependencies) {
       const key = draftCreationKey(input.draftId, input.request);
       const prior = previous.attempt;
       const sameRequest = prior?.key === key && prior.kind === input.kind;
-      if (prior && prior.outcome !== "failed" && !sameRequest) {
+      const firstAgentInReadyWorkspace = canStartFirstAgent(previous, input);
+      if (prior && prior.outcome !== "failed" && !sameRequest && !firstAgentInReadyWorkspace) {
         throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
       }
       const revision = sameRequest ? prior.revision : 0;
-      const attempt: Attempt = { kind: input.kind, key, outcome: "pending", revision, error: null };
+      const attempt: Attempt = {
+        kind: input.kind,
+        key,
+        outcome: "pending",
+        revision,
+        error: null,
+        agentRequested: requestsAgent(input),
+      };
       const pending = {
         ...previous,
         attempt,
@@ -201,6 +228,7 @@ export function createDraftCreations(deps: Dependencies) {
             outcome,
             revision: snapshot.revision,
             error: snapshot.error,
+            agentRequested: current.agentRequested,
           },
         });
         input.onEvent?.(snapshot);
