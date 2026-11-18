@@ -7,13 +7,17 @@ import {
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import {
+  BOTS_PLUGIN_ID,
+  headerRow,
+  installSidebarPlugins,
+} from "../support/helpers/plugin-sidebar-items";
 
-test("replays visited tabs and workspaces in both directions and branches on a new visit", async ({
-  page,
-}) => {
+test("replays tabs, workspaces and plugin screens in both directions", async ({ page }) => {
   test.setTimeout(120_000);
   const first = await seedWorkspace({ repoPrefix: "visit-history-first-" });
   const second = await seedWorkspace({ repoPrefix: "visit-history-second-" });
+  const plugins = await installSidebarPlugins();
   const tab = (agent: ArchiveTabAgent) =>
     page.getByTestId(`workspace-tab-agent_${agent.id}`).filter({ visible: true });
   const expectSelected = (agent: ArchiveTabAgent) =>
@@ -64,7 +68,51 @@ test("replays visited tabs and workspaces in both directions and branches on a n
     await expectSelected(beta);
     await page.keyboard.press("Alt+[");
     await expectSelected(alpha);
+
+    await test.step("restore full-page plugin screens and their parameters", async () => {
+      const openSettings = async () => {
+        await page.getByTestId("sidebar-settings").filter({ visible: true }).first().click();
+        await expect(page).toHaveURL(/\/settings/);
+      };
+      const expectBot = (id: string) =>
+        expect(
+          page.getByText(`Bot screen: ${id}`, { exact: true }).filter({ visible: true }),
+        ).toBeVisible();
+      await headerRow(page, BOTS_PLUGIN_ID, "bots-bot-1").click();
+      await expectBot("bot-1");
+      await headerRow(page, BOTS_PLUGIN_ID, "bots-bot-2").click();
+      await expectBot("bot-2");
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: first.workspaceId,
+      });
+      await expectSelected(alpha);
+
+      await page.keyboard.press("Alt+[");
+      await expectBot("bot-2");
+      await page.keyboard.press("Alt+[");
+      await expectBot("bot-1");
+      await page.keyboard.press("Alt+]");
+      await expectBot("bot-2");
+      await page.keyboard.press("Alt+]");
+      await expectSelected(alpha);
+
+      await openSettings();
+      await page.keyboard.press("Alt+[");
+      await expectSelected(alpha);
+      await page.keyboard.press("Alt+]");
+      await expectSelected(alpha);
+      await page.keyboard.press("Alt+[");
+      await expectBot("bot-2");
+      await openSettings();
+      await page.keyboard.press("Alt+[");
+      await expectBot("bot-2");
+      await page.keyboard.press("Alt+]");
+      await expectSelected(alpha);
+    });
   } finally {
+    await plugins.cleanup();
     await second.cleanup();
     await first.cleanup();
   }

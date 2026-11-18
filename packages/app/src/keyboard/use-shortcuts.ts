@@ -25,12 +25,12 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { navigateAppVisitHistory } from "@/navigation/app-visit-history-navigation";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   navigateToWorkspace,
-  navigateWorkspaceVisitHistory,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 
@@ -135,7 +135,7 @@ export function useKeyboardShortcuts({
         router.replace(buildOpenProjectRoute());
         return true;
       case "navigate-workspace-history":
-        navigateWorkspaceVisitHistory(action.direction, activeWorkspaceSelection);
+        navigateAppVisitHistory(action.direction, pathname, activeWorkspaceSelection);
         return true;
       case "router-replace":
         router.replace(action.route as Parameters<typeof router.replace>[0]);

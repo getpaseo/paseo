@@ -1,0 +1,97 @@
+import { describe, expect, it } from "vitest";
+import { createAppVisitHistory, type AppVisit } from "./app-visit-history";
+
+const first = {
+  kind: "workspace",
+  serverId: "local",
+  workspaceId: "project",
+  tabId: "chat",
+} as const;
+const second = { ...first, tabId: "editor" };
+const third = {
+  kind: "workspace",
+  serverId: "remote",
+  workspaceId: "project",
+  tabId: "terminal",
+} as const;
+const fourth = { ...first, tabId: "changes" };
+const dashboard = {
+  kind: "plugin",
+  serverId: "local",
+  pluginId: "review",
+  identity: { kind: "surface", id: "dashboard" },
+  href: "/h/local/plugin/review/surface/dashboard?param.filter=mine",
+} as const;
+const available = () => true;
+
+function historyFromVisits(...visits: AppVisit[]) {
+  const history = createAppVisitHistory();
+  for (const visit of visits) history.record(visit);
+  return history;
+}
+
+describe("app visit history", () => {
+  it("replays across tabs and hosts, including when route commits lag behind rapid shortcuts", () => {
+    const history = historyFromVisits(first, second, third);
+
+    expect(history.move(-1, third, available)).toEqual({ visit: second, navigateRoute: true });
+    expect(history.move(-1, third, available)).toEqual({ visit: first, navigateRoute: true });
+    history.record(second);
+    history.record(first);
+    expect(history.move(-1, first, available)).toBeNull();
+    expect(history.move(1, first, available)).toEqual({ visit: second, navigateRoute: false });
+    history.record(second);
+    expect(history.move(1, second, available)).toEqual({ visit: third, navigateRoute: true });
+    history.record(third);
+    expect(history.move(1, third, available)).toBeNull();
+  });
+
+  it("supersedes a pending workspace change when reversing direction", () => {
+    const history = historyFromVisits(second, third);
+    expect(history.move(-1, third, available)).toEqual({
+      visit: second,
+      navigateRoute: true,
+    });
+    expect(history.move(1, third, available)).toEqual({
+      visit: third,
+      navigateRoute: true,
+    });
+    history.record(second);
+    history.record(third);
+    expect(history.move(1, third, available)).toBeNull();
+  });
+
+  it("skips closed visits and drops forward history after a new visit", () => {
+    const history = historyFromVisits(first, second, third);
+
+    expect(history.move(-1, third, (visit) => visit !== second)).toEqual({
+      visit: first,
+      navigateRoute: true,
+    });
+    history.record(first);
+    history.record(fourth);
+    expect(history.move(1, fourth, available)).toBeNull();
+    expect(history.move(-1, fourth, available)).toEqual({ visit: first, navigateRoute: false });
+  });
+
+  it("returns to the last workspace visit from outside a workspace", () => {
+    const history = historyFromVisits(first, second);
+
+    expect(history.move(-1, null, available)).toEqual({ visit: second, navigateRoute: true });
+    history.record(second);
+    expect(history.move(-1, second, available)).toEqual({ visit: first, navigateRoute: false });
+  });
+
+  it("retraces a plugin screen as a destination and skips it once unavailable", () => {
+    const history = historyFromVisits(first, dashboard, second);
+
+    expect(history.move(-1, second, available)).toEqual({ visit: dashboard, navigateRoute: true });
+    history.record(dashboard);
+    expect(history.move(-1, "plugin", available)).toEqual({ visit: first, navigateRoute: true });
+    history.record(first);
+    expect(history.move(1, first, (visit) => visit !== dashboard)).toEqual({
+      visit: second,
+      navigateRoute: false,
+    });
+  });
+});

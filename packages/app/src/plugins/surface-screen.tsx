@@ -1,8 +1,9 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { useIsFocused } from "expo-router/react-navigation";
 import type { PluginIcon, PluginScreenParams, PluginScreenProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { X } from "lucide-react-native";
-import { useCallback, useMemo, type ComponentType } from "react";
+import { useCallback, useLayoutEffect, useMemo, type ComponentType } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
@@ -14,6 +15,7 @@ import { HostFilter } from "@/components/hosts/host-filter";
 import type { HostPickerHost } from "@/components/hosts/host-picker";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { appVisitHistory } from "@/navigation/app-visit-history";
 import {
   useHostRuntimeClient,
   useHostRuntimeConnectionStatus,
@@ -174,6 +176,19 @@ export function PluginSurfaceScreen() {
     () => resolvePluginSurfaceContribution(plugin, identity),
     [identity, plugin],
   );
+  const focused = useIsFocused();
+  const available = Boolean(surface && client);
+  useLayoutEffect(() => {
+    if (focused && available && identity) {
+      appVisitHistory.record({
+        kind: "plugin",
+        serverId,
+        pluginId,
+        identity,
+        href: buildPluginSurfaceRoute(serverId, pluginId, identity, params),
+      });
+    }
+  }, [focused, available, identity, params, pluginId, serverId]);
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   // The hosts this contribution is installed on; the filter shows when there is a choice.
   const filterHosts = useMemo(() => {

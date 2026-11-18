@@ -20,13 +20,7 @@ import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit } from "@/utils/host-route-browser";
 import { navigateToHostWorkspaceRoute } from "@/navigation/workspace-route-navigation";
-import {
-  workspaceVisitHistory,
-  type WorkspaceVisit,
-  type WorkspaceVisitDirection,
-} from "@/navigation/workspace-visit-history";
-import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
-import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { appVisitHistory, type WorkspaceVisit } from "@/navigation/app-visit-history";
 
 export type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 export type { NavigateToWorkspaceInput } from "./navigation";
@@ -85,37 +79,6 @@ export function navigateToLastWorkspace(): boolean {
   });
 }
 
-export function navigateWorkspaceVisitHistory(
-  direction: WorkspaceVisitDirection,
-  activeWorkspace: ActiveWorkspaceSelection | null,
-): void {
-  const sessions = useSessionStore.getState().sessions;
-  const layout = useWorkspaceLayoutStore.getState();
-  const replay = workspaceVisitHistory.move(direction, activeWorkspace, (candidate) => {
-    if (
-      !resolveWorkspaceMapKeyByIdentity({
-        workspaces: sessions[candidate.serverId]?.workspaces,
-        workspaceId: candidate.workspaceId,
-      })
-    ) {
-      return false;
-    }
-    const key = buildWorkspaceTabPersistenceKey(candidate);
-    if (!key) return false;
-    return candidate.tabId
-      ? layout.getTabDestination(key, candidate.tabId)?.kind === "pane"
-      : layout.getWorkspaceTabs(key).length === 0;
-  });
-  if (!replay) return;
-
-  const { visit, navigateWorkspace } = replay;
-  if (navigateWorkspace) {
-    navigateToWorkspace({ serverId: visit.serverId, workspaceId: visit.workspaceId });
-  }
-  const key = buildWorkspaceTabPersistenceKey(visit);
-  if (key) revealWorkspaceTab(key, visit.tabId);
-}
-
 export function useRecordWorkspaceVisit({
   serverId,
   workspaceId,
@@ -124,7 +87,7 @@ export function useRecordWorkspaceVisit({
   workspaceExists,
   layoutHydrated,
   hasPendingOpen,
-}: WorkspaceVisit & {
+}: Omit<WorkspaceVisit, "kind"> & {
   routeFocused: boolean;
   workspaceExists: boolean;
   layoutHydrated: boolean;
@@ -132,7 +95,7 @@ export function useRecordWorkspaceVisit({
 }): void {
   useLayoutEffect(() => {
     if (routeFocused && workspaceExists && layoutHydrated && !hasPendingOpen) {
-      workspaceVisitHistory.record({ serverId, workspaceId, tabId });
+      appVisitHistory.record({ kind: "workspace", serverId, workspaceId, tabId });
     }
   }, [routeFocused, workspaceExists, layoutHydrated, hasPendingOpen, serverId, workspaceId, tabId]);
 }
