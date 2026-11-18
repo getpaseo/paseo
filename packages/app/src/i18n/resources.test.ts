@@ -255,6 +255,29 @@ describe("translation resources", () => {
     expect(ko.desktop.daemon.status.notRunning).toBe("실행 중이 아님");
   });
 
+  it("keeps Korean workflow and daemon warning text localized", () => {
+    const english = flattenStrings(en);
+    const korean = flattenStrings(ko);
+    const keys = [
+      "newWorkspace.tooltips.project",
+      "newWorkspace.launch.commandPlaceholder",
+      "desktop.daemon.lifecycle.stopTitle",
+      "desktop.daemon.lifecycle.stopMessage",
+      "settings.layout.openInSidePane.sources.chatFiles.description",
+      "settings.plugins.logs.errorTitle",
+      "settings.host.skills.unsupported",
+      "importSession.chooseHostTitle",
+      "composer.input.terminalAccessibilityLabel",
+    ];
+    for (const key of keys) {
+      expect(korean[key], key).toBeDefined();
+      expect(korean[key], key).not.toBe(english[key]);
+      expect(korean[key], key).toMatch(/[가-힣]/);
+    }
+    expect(ko.desktop.daemon.lifecycle.stopMessage).toContain("에이전트 작업이 중단");
+    expect(ko.desktop.daemon.lifecycle.stopMessage.split("\n")).toHaveLength(4);
+  });
+
   it("uses the French navigation and Git meanings for reported labels", () => {
     expect(fr.common.back).toBe("Retour");
     expect(fr.common.actions.back).toBe("Retour");
