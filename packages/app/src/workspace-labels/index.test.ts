@@ -6,6 +6,7 @@ import {
   hasAuthoritativeWorkspaceLabelCatalog,
   mergeWorkspaceLabelCatalogs,
   projectWorkspaceLabels,
+  resolveWorkspaceLabelsToAssign,
   selectWorkspaceLabelDefinitions,
   type WorkspaceLabelHostSnapshot,
 } from "./index";
@@ -68,6 +69,37 @@ describe("workspace label projection", () => {
 
     expect(projection.labels).toEqual([{ name: "Urgent", color: "red" }]);
     expect(projection.targetHost?.status).toBe("offline");
+  });
+
+  test("resolves labels for a new workspace across hosts, preferring the target's color", () => {
+    const hostsById: Record<string, WorkspaceLabelHostSnapshot> = {
+      target: {
+        serverId: "target",
+        status: "online",
+        error: null,
+        labels: [{ name: "Backend", color: "sky" }],
+      },
+      other: {
+        serverId: "other",
+        status: "online",
+        error: null,
+        labels: [
+          { name: "backend", color: "red" },
+          { name: "Urgent", color: "orange" },
+        ],
+      },
+    };
+
+    expect(
+      resolveWorkspaceLabelsToAssign({
+        hostsById,
+        serverId: "target",
+        names: ["BACKEND", "Urgent", "backend", "Unknown"],
+      }),
+    ).toEqual([
+      { name: "Backend", color: "sky" },
+      { name: "Urgent", color: "orange" },
+    ]);
   });
 
   test("draws a shared label name in the workspace's own host color", () => {

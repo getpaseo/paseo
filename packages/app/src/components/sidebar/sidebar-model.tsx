@@ -65,7 +65,7 @@ export function SidebarModelProvider({
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
-  const { hosts: labelHosts } = useWorkspaceLabelProjection();
+  const { hosts: labelHosts, labels: labelCatalog } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -160,6 +160,7 @@ export function SidebarModelProvider({
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       projectNamesByViewKey: list.projectNamesByViewKey,
       groupMode,
+      labelCatalog,
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
@@ -169,6 +170,7 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
+      labelCatalog,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,

@@ -63,6 +63,7 @@ export function buildSidebarShortcutSections(input: {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
+  const seenWorkspaceKeys = new Set<string>();
 
   for (const section of input.sections) {
     if (section.collapsed) {
@@ -70,6 +71,10 @@ export function buildSidebarShortcutSections(input: {
     }
 
     for (const workspace of section.workspaces) {
+      // Label grouping lists a workspace under each of its labels. It is still one place to jump
+      // to, so it takes one target and one number, which every row of it shows.
+      if (seenWorkspaceKeys.has(workspace.workspaceKey)) continue;
+      seenWorkspaceKeys.add(workspace.workspaceKey);
       shortcutTargets.push(createShortcutTarget(workspace));
       if (shortcutTargets.length <= maxShortcuts) {
         shortcutIndexByWorkspaceKey.set(workspace.workspaceKey, shortcutTargets.length);
