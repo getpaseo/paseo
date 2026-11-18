@@ -179,7 +179,7 @@ describe("Hub relationship", () => {
     relationship.closeLatestSocket(4403, reason);
     expect(await relationship.status()).toMatchObject({
       state: "reconnecting",
-      lastError: expect.stringContaining("Reapply"),
+      lastError: expect.stringContaining("paseo hub permissions"),
     });
     await relationship.retry();
     await relationship.revokePermission("hub.execute");

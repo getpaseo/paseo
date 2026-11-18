@@ -521,7 +521,7 @@ export class HubRelationshipController implements HubRelationshipManagement {
     if (generation !== this.generation) return;
     if (code === 4403 && reason === "daemon session permissions do not match enrollment") {
       this.lastError =
-        "Hub and daemon permissions differ. Reapply the intended Hub permissions on this daemon.";
+        "Hub and daemon permissions differ. Run `paseo hub permissions grant <permission>` or `paseo hub permissions revoke <permission>` on this daemon to reapply your intended permissions.";
       this.scheduleSocket(true);
       return;
     }
