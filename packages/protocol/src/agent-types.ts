@@ -420,6 +420,7 @@ export type AgentTimelineItem =
       type: "notification";
       level: "info" | "warning" | "error";
       message: string;
+      modelChange?: { model: string | null };
     }
   | CompactionTimelineItem
   | PluginTimelineItem;

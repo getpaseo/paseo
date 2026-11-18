@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
+import { modelSwitchRecordSchema, type ModelSwitchRecord } from "./model-switch-history.js";
 import {
   AgentFeatureSchema,
   AgentMetricSchema,
@@ -60,6 +61,7 @@ const RAW_STORED_AGENT_SCHEMA = z.object({
   updatedAt: z.string(),
   lastActivityAt: z.string().optional(),
   lastUserMessageAt: z.string().nullable().optional(),
+  modelSwitches: z.array(modelSwitchRecordSchema).optional(),
   title: z.string().nullable().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   metadata: z.record(z.string(), z.custom<JsonValue>()).default({}),
@@ -126,6 +128,14 @@ const STORED_AGENT_SCHEMA = RAW_STORED_AGENT_SCHEMA.transform(foldLegacyRecordFi
 
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
+}
+
+function appendModelSwitch(
+  existing: ModelSwitchRecord[] | undefined,
+  next: ModelSwitchRecord | undefined,
+) {
+  if (!next) return existing;
+  return [...(existing ?? []), next];
 }
 
 export class AgentStorage {
@@ -401,7 +411,7 @@ export class AgentStorage {
 
   async applySnapshot(
     agent: ManagedAgent,
-    options?: { title?: string | null; internal?: boolean },
+    options?: { title?: string | null; internal?: boolean; modelSwitch?: ModelSwitchRecord },
   ): Promise<void> {
     await this.load();
     const hasTitleOverride =
@@ -423,6 +433,7 @@ export class AgentStorage {
       }
       // Background is fixed at creation; a runtime opened without it cannot clear it.
       if (existing?.background) record.background = true;
+      record.modelSwitches = appendModelSwitch(existing?.modelSwitches, options?.modelSwitch);
       record.resumeOnStartup =
         existing?.resumeOnStartup && agent.lifecycle !== "idle" && agent.lifecycle !== "error";
       return record;

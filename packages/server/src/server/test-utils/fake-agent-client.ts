@@ -946,6 +946,10 @@ class FakeAgentSession implements AgentSession {
     this.config.modeId = modeId;
   }
 
+  async setModel(modelId: string | null): Promise<void> {
+    this.config.model = modelId ?? undefined;
+  }
+
   async applyOptions(options: ProviderOptions): Promise<void> {
     this.config.providerOptions = { ...this.config.providerOptions, ...options };
   }

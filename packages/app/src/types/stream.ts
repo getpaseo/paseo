@@ -811,6 +811,7 @@ export interface NotificationItem {
   timestamp: Date;
   level: NotificationLevel;
   message: string;
+  modelChange?: { model: string | null };
 }
 
 export interface CompactionItem {
@@ -1609,6 +1610,7 @@ function reduceTimelineEvent(
         timestamp,
         level: item.level,
         message: item.message,
+        ...(item.modelChange ? { modelChange: item.modelChange } : {}),
       };
       return appendNotification(state, notification);
     }

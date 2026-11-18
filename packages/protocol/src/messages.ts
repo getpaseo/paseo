@@ -803,6 +803,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     type: z.literal("notification"),
     level: z.enum(["info", "warning", "error"]),
     message: z.string(),
+    modelChange: z.object({ model: z.string().nullable() }).optional(),
   }),
   z.object({
     type: z.literal("compaction"),

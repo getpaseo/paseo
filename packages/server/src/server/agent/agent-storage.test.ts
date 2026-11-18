@@ -352,6 +352,28 @@ describe("AgentStorage", () => {
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
 
+  test("model switch records survive later snapshot updates and reload", async () => {
+    const agent = createManagedAgent({ id: "agent-model-switch" });
+    const first = {
+      model: "a",
+      timestamp: "2026-11-18T00:00:00.000Z",
+      anchor: { kind: "start" as const },
+    };
+    const second = {
+      model: "b",
+      timestamp: "2026-11-18T00:00:01.000Z",
+      anchor: { kind: "unresolved" as const },
+    };
+    await storage.applySnapshot(agent);
+    await Promise.all([
+      storage.applySnapshot(agent, { modelSwitch: first }),
+      storage.applySnapshot(agent),
+      storage.applySnapshot(agent, { modelSwitch: second }),
+    ]);
+    const reloaded = new AgentStorage(storagePath, createTestLogger());
+    expect((await reloaded.get(agent.id))?.modelSwitches).toEqual([first, second]);
+  });
+
   test("applySnapshot stores and reloads composer values as providerOptions", async () => {
     await storage.applySnapshot(
       createManagedAgent({
