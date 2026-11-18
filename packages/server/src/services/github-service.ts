@@ -1640,32 +1640,30 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
     let pending: PendingQuery[] = [];
 
-    function issue(batch: PendingQuery[]): void {
+    async function issue(batch: PendingQuery[]): Promise<void> {
       const cwd = batch.length === 1 ? batch[0]!.query.cwd : process.cwd();
-      const response = runPollGraphql(
-        host,
-        () => {
-          const current = batch.flatMap(({ query }) => {
-            const selections = query.selections();
-            return selections.length ? [{ query, selections }] : [];
-          });
-          if (!current.length) throw new Error("GitHub poll targets were released.");
-          const name = current.length === 1 ? current[0]!.query.name : "PaseoMixedPullRequestPoll";
-          const selections = current.flatMap((item) => item.selections);
-          const fragments = current.flatMap(({ query }) => query.fragments ?? []).join("\n");
-          const graphql = renderGitHubPollQuery(name, selections, fragments);
-          return run(["api", "graphql", "-f", `query=${graphql}`], { cwd }, host);
-        },
-        () => run(["api", "rate_limit"], { cwd }, host),
-      );
-      void response.then(
-        (result) => {
-          for (const task of batch) task.resolve(result);
-        },
-        (error) => {
-          for (const task of batch) task.reject(error);
-        },
-      );
+      try {
+        const response = await runPollGraphql(
+          host,
+          () => {
+            const current = batch.flatMap(({ query }) => {
+              const selections = query.selections();
+              return selections.length ? [{ query, selections }] : [];
+            });
+            if (!current.length) throw new Error("GitHub poll targets were released.");
+            const name =
+              current.length === 1 ? current[0]!.query.name : "PaseoMixedPullRequestPoll";
+            const selections = current.flatMap((item) => item.selections);
+            const fragments = current.flatMap(({ query }) => query.fragments ?? []).join("\n");
+            const graphql = renderGitHubPollQuery(name, selections, fragments);
+            return run(["api", "graphql", "-f", `query=${graphql}`], { cwd }, host);
+          },
+          () => run(["api", "rate_limit"], { cwd }, host),
+        );
+        for (const task of batch) task.resolve(response);
+      } catch (error) {
+        for (const task of batch) task.reject(error);
+      }
     }
 
     return (query) =>
