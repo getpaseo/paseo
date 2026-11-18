@@ -3030,6 +3030,8 @@ export const zhCN: TranslationResources = {
         retrying: "正在重试...",
         noSearchMatches: "没有匹配搜索的 Model",
         noneDetected: "未检测到 Model",
+        toggleDiscovered: "切换已发现模型",
+        showInConversation: "在对话中显示{{model}}",
         discovered: "已发现",
         custom: "自定义 Models",
         updated: "已更新 {{time}}",

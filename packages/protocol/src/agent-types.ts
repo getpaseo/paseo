@@ -84,6 +84,8 @@ export interface AgentModelDefinition {
   id: string;
   aliases?: string[];
   isSelectable?: boolean;
+  /** Set when the user turned this model off in the conversation picker. */
+  pickerHidden?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;

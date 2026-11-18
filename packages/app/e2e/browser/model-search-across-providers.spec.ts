@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { test, expect, type Page } from "../support/fixtures";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
@@ -20,6 +21,9 @@ import {
 import { expectComposerVisible } from "../support/helpers/composer";
 import { clickNewChat, clickNewTerminal, gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { gotoAppShell, openSettings } from "../support/helpers/app";
+import { getServerId } from "../support/helpers/server-id";
+import { openSettingsHost, openSettingsHostSection } from "../support/helpers/settings";
 
 const MOCK_PROVIDER_LABEL = "Mock Load Test";
 
@@ -52,6 +56,109 @@ const LARGE_CATALOG = {
     description: `Bulk search result ${index}`,
   })),
 };
+
+test("model visibility bulk actions preserve the catalog without rediscovery", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const provider = "visibility-bulk";
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: provider });
+  const models = LARGE_CATALOG.models;
+  const discoveryScript = pathToFileURL(path.resolve("e2e/fixtures/fake-pi-rpc.mjs")).href;
+  const refreshRequests: string[] = [];
+  const configRequests: string[] = [];
+  page.on("websocket", (socket) =>
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      if (payload.includes('"refresh_providers_snapshot_request"')) refreshRequests.push(payload);
+      if (payload.includes('"set_daemon_config_request"')) configRequests.push(payload);
+    }),
+  );
+  try {
+    await client.patchDaemonConfig({
+      providers: {
+        [provider]: {
+          extends: "pi",
+          label: "Visibility bulk",
+          command: [
+            process.execPath,
+            "-e",
+            `setTimeout(() => import(${JSON.stringify(discoveryScript)}), 1000)`,
+            "--",
+          ],
+          additionalModels: models,
+        },
+      },
+    });
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHost(page, getServerId());
+    await openSettingsHostSection(page, getServerId(), "providers");
+    await page
+      .getByRole("button", { name: "Visibility bulk provider details", exact: true })
+      .click();
+    const sheet = page.getByTestId("provider-settings-sheet");
+    const toggle = sheet.getByTestId("provider-models-toggle-all");
+    const checks = sheet.locator('[data-testid^="provider-model-shown-"]');
+    const total = models.length + 1;
+    await expect(checks).toHaveCount(total);
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    const refreshBefore = refreshRequests.length;
+    const timings: Record<string, number> = {};
+
+    for (const [action, checked] of [
+      ["deselect", false],
+      ["select", true],
+    ] as const) {
+      const start = performance.now();
+      await toggle.click();
+      await expect(checks.locator(`xpath=self::*[@aria-checked="${checked}"]`)).toHaveCount(total);
+      await expect(toggle).toBeEnabled();
+      timings[action] = Math.round(performance.now() - start);
+      expect(
+        (await client.getDaemonConfig()).config.providers[provider].hiddenModelIds ?? [],
+      ).toHaveLength(checked ? 0 : total);
+    }
+    await testInfo.attach("bulk-action-timings", {
+      body: JSON.stringify(timings),
+      contentType: "application/json",
+    });
+    console.log("Model visibility bulk timings (ms):", timings);
+    expect(refreshRequests.length).toBe(refreshBefore);
+    expect(configRequests).toHaveLength(2);
+    await page.screenshot({ path: testInfo.outputPath("all-models-selected.png") });
+
+    await sheet.getByTestId("provider-model-shown-bulk-0").click();
+    await expect(toggle).toHaveAttribute("aria-checked", "mixed");
+    await expect(toggle).toBeEnabled();
+    await sheet.getByTestId("provider-settings-search").fill("Bulk model 199");
+    await expect(checks).toHaveCount(1);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "false");
+    await expect(toggle).toBeEnabled();
+    expect((await client.getDaemonConfig()).config.providers[provider].hiddenModelIds).toEqual([
+      "bulk-0",
+      "bulk-199",
+    ]);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+    await expect(toggle).toBeEnabled();
+    expect((await client.getDaemonConfig()).config.providers[provider].hiddenModelIds).toEqual([
+      "bulk-0",
+    ]);
+    await page.screenshot({ path: testInfo.outputPath("filtered-model-visibility.png") });
+    expect(refreshRequests.length).toBe(refreshBefore);
+
+    await sheet.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect.poll(() => refreshRequests.length).toBe(refreshBefore + 1);
+    await expect(sheet.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+    await expect(checks).toHaveCount(1);
+    await expect(toggle).toHaveAttribute("aria-checked", "true");
+  } finally {
+    await client.patchDaemonConfig({ removeProviders: [provider] });
+    await client.close();
+  }
+});
 
 test.describe("Cross-provider model search", () => {
   test("one query over the picker root reaches every provider and names each result's provider", async ({

@@ -212,6 +212,11 @@ interface ProviderCatalog {
   load?: Promise<void>;
 }
 
+interface ModelVisibilityProjection {
+  hiddenModelIds: readonly string[];
+  record: ProviderSnapshotRecord;
+}
+
 interface RegistryGeneration {
   definitions: Record<AgentProvider, ProviderDefinition>;
   order: readonly AgentProvider[];
@@ -235,6 +240,10 @@ interface ProviderSnapshotTarget {
 
 export class ProviderSnapshotManager {
   private readonly catalogs = new Map<string, Map<AgentProvider, ProviderCatalog>>();
+  private readonly modelVisibility = new WeakMap<
+    ProviderSnapshotRecord,
+    ModelVisibilityProjection
+  >();
   private readonly targets = new Map<string, Target>();
   private readonly events = new EventEmitter();
   private destroyed = false;
@@ -708,9 +717,18 @@ export class ProviderSnapshotManager {
     runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
     providerOverrides: Record<string, ProviderOverride> | undefined,
   ): Record<AgentProvider, ProviderDefinition> {
+    // Visibility is projected at publication; it must not invalidate discovery or recreate clients.
+    let catalogOverrides: Record<string, ProviderOverride> | undefined;
+    if (providerOverrides) {
+      catalogOverrides = {};
+      for (const [provider, override] of Object.entries(providerOverrides)) {
+        const { hiddenModelIds: _hiddenModelIds, ...catalogOverride } = override;
+        catalogOverrides[provider] = catalogOverride;
+      }
+    }
     const registry = buildProviderRegistry(this.logger, {
       runtimeSettings,
-      providerOverrides,
+      providerOverrides: catalogOverrides,
       pluginProviders: this.pluginProviders.definitions(),
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
@@ -1086,7 +1104,9 @@ export class ProviderSnapshotManager {
         const result = binding?.key
           ? this.catalogs.get(binding.key)?.get(provider)?.result
           : undefined;
-        return binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial;
+        const record =
+          binding?.failure ?? result ?? this.generation.providerStates.get(provider)!.initial;
+        return this.projectModelVisibility(record);
       });
       const previous = target.snapshot;
       if (sameSnapshotRecords(previous.records, records)) continue;
@@ -1106,6 +1126,27 @@ export class ProviderSnapshotManager {
         }
       }
     }
+  }
+
+  private projectModelVisibility(record: ProviderSnapshotRecord): ProviderSnapshotRecord {
+    const hiddenModelIds = this.providerOverrides?.[record.entry.provider]?.hiddenModelIds;
+    const models = record.entry.models;
+    if (!hiddenModelIds?.length || !models?.length) return record;
+    const cached = this.modelVisibility.get(record);
+    if (cached?.hiddenModelIds === hiddenModelIds) return cached.record;
+
+    const hidden = new Set(hiddenModelIds);
+    let changed = false;
+    const projectedModels = models.map((model) => {
+      if (model.pickerHidden === true || !hidden.has(model.id)) return model;
+      changed = true;
+      return Object.assign({}, model, { pickerHidden: true });
+    });
+    const projected = changed
+      ? identifyEntry({ ...record.entry, models: projectedModels })
+      : record;
+    this.modelVisibility.set(record, { hiddenModelIds, record: projected });
+    return projected;
   }
 
   private getOrCreateTarget(cwd: string): Target {

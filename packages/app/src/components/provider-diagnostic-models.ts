@@ -1,5 +1,5 @@
 import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterListedModels } from "@/provider-selection/model-catalog";
 
 export interface ProviderDiscoveredModelsCache {
   serverId: string;
@@ -27,7 +27,7 @@ export function resolveProviderDiscoveredModels({
   providerSnapshotRefreshing,
   previousCache,
 }: ResolveProviderDiscoveredModelsInput): ResolveProviderDiscoveredModelsResult {
-  const selectableModels = filterSelectableModels(currentModels ?? null) ?? [];
+  const selectableModels = filterListedModels(currentModels ?? null) ?? [];
   if (selectableModels.length > 0) {
     const cache = { serverId, provider, models: selectableModels };
     return { models: selectableModels, cache };

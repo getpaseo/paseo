@@ -11,12 +11,15 @@ import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
-import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
+import {
+  filterListedModels,
+  findModelByReference,
+  resolveDefaultModelId,
+} from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
-  resolveDefaultModelId,
   resolveFormStateFromProviderModels,
   resolveThinkingOptionId,
   type FormInitialValues,
@@ -222,7 +225,7 @@ function resolveProjectDisplay(input: {
 function buildProviderModelsByProvider(entries: ProviderSnapshotEntry[]): ProviderModelsByProvider {
   const map: ProviderModelsByProvider = new Map();
   for (const entry of entries) {
-    map.set(entry.provider, filterSelectableModels(entry.models ?? null));
+    map.set(entry.provider, filterListedModels(entry.models ?? null));
   }
   return map;
 }
@@ -248,7 +251,7 @@ function resolveAvailableModels(
   entries: readonly ProviderSnapshotEntry[],
   provider: AgentProvider | null,
 ): AgentModelDefinition[] | null {
-  return filterSelectableModels(resolveSelectedEntry(entries, provider)?.models ?? null);
+  return filterListedModels(resolveSelectedEntry(entries, provider)?.models ?? null);
 }
 
 function resolveEffectiveModel(
@@ -318,22 +321,25 @@ function resolveThinkingDisplay(input: {
 }
 
 function isSelectedModelValidForProviders(input: {
-  providers: readonly ProviderSelectorProvider[];
+  entries: readonly ProviderSnapshotEntry[];
   selectedProvider: AgentProvider | null;
   selectedModel: string;
 }): boolean {
   if (!input.selectedProvider) {
     return false;
   }
-  const provider = input.providers.find((entry) => entry.id === input.selectedProvider);
-  if (!provider || provider.modelSelection.kind !== "models") {
+  const provider = resolveSelectedEntry(input.entries, input.selectedProvider);
+  if (!provider?.enabled) {
     return false;
   }
+  const hasModels = (provider.models?.length ?? 0) > 0;
+  if (!hasModels && provider.status !== "ready") return false;
   const selectedModel = input.selectedModel.trim();
   if (!selectedModel) {
     return true;
   }
-  return provider.modelSelection.rows.some((row) => row.modelId === selectedModel);
+  const models = filterListedModels(provider.models ?? null);
+  return findModelByReference(models, selectedModel) !== null;
 }
 
 function normalizeInitialValues(input: {
@@ -542,7 +548,10 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   };
 }
 
-function resolveCanSubmit(state: ScheduleFormState): boolean {
+function resolveCanSubmit(
+  state: ScheduleFormState,
+  providerEntries: readonly ProviderSnapshotEntry[],
+): boolean {
   if (state.targetKind === "agent") {
     return state.submitCadence !== undefined;
   }
@@ -558,7 +567,7 @@ function resolveCanSubmit(state: ScheduleFormState): boolean {
     return false;
   }
   return isSelectedModelValidForProviders({
-    providers: state.modelSelectorProviders,
+    entries: providerEntries,
     selectedProvider: state.selectedProvider,
     selectedModel: state.selectedModel,
   });
@@ -626,7 +635,8 @@ function updateDerivedState(input: {
     submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
   };
   const disclosure = resolveDisclosure(nextState);
-  return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
+  const canSubmit = resolveCanSubmit(nextState, input.providerEntries);
+  return { ...nextState, disclosure, canSubmit };
 }
 
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
@@ -810,7 +820,7 @@ function canonicalizeThinkingDrafts(
   entries: readonly ProviderSnapshotEntry[],
 ): void {
   for (const entry of entries) {
-    const models = filterSelectableModels(entry.models ?? null);
+    const models = filterListedModels(entry.models ?? null);
     if (!models) {
       continue;
     }

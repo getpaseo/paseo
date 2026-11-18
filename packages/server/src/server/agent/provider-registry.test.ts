@@ -1824,3 +1824,152 @@ describe("fetchCatalog", () => {
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
   });
 });
+
+describe("hiddenModelIds", () => {
+  const keptThinking = {
+    thinkingOptions: [{ id: "high", label: "High", isDefault: true as const }],
+    defaultThinkingOptionId: "high",
+  } satisfies Partial<AgentModelDefinition>;
+
+  function catalogModels(provider: string): AgentModelDefinition[] {
+    return [
+      { provider, id: "kept-model", label: "Kept", ...keptThinking },
+      { provider, id: "dropped-model", label: "Dropped" },
+    ];
+  }
+
+  const catalogOptions = {
+    scope: "workspace" as const,
+    cwd: "/tmp/catalog",
+    force: false,
+  };
+
+  test("leaves every model selectable when nothing is hidden", async () => {
+    mockState.runtimeModels.set("codex", catalogModels("codex"));
+    const registry = buildProviderRegistry(logger);
+
+    const catalog = await registry.codex.fetchCatalog(catalogOptions);
+
+    expect(catalog.models.map((model) => model.id)).toEqual(["kept-model", "dropped-model"]);
+    expect(catalog.models.every((model) => model.pickerHidden !== true)).toBe(true);
+  });
+
+  test("marks a hidden model without removing it or its thinking options", async () => {
+    mockState.runtimeModels.set("codex", catalogModels("codex"));
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: { hiddenModelIds: ["dropped-model"] },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(catalogOptions);
+
+    expect(catalog.models.find((model) => model.id === "kept-model")).toMatchObject(keptThinking);
+    expect(catalog.models.find((model) => model.id === "kept-model")?.pickerHidden).toBeUndefined();
+    expect(catalog.models.find((model) => model.id === "dropped-model")).toMatchObject({
+      pickerHidden: true,
+      label: "Dropped",
+    });
+    await expect(
+      registry.codex.createClient(logger).fetchCatalog(catalogOptions),
+    ).resolves.toMatchObject({
+      models: catalog.models,
+    });
+  });
+
+  test("marks a hidden id inside a replacement model list", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        codex: {
+          models: [
+            { id: "profile-model", label: "Profile Model" },
+            { id: "other-model", label: "Other Model" },
+          ],
+          hiddenModelIds: ["other-model"],
+        },
+      },
+    });
+
+    const catalog = await registry.codex.fetchCatalog(catalogOptions);
+
+    expect(catalog.models.map((model) => [model.id, model.pickerHidden === true])).toEqual([
+      ["profile-model", false],
+      ["other-model", true],
+    ]);
+  });
+
+  test("an extends provider can hide an inherited model", async () => {
+    mockState.runtimeModels.set("claude", catalogModels("claude"));
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        zai: {
+          extends: "claude",
+          label: "ZAI",
+          hiddenModelIds: ["dropped-model"],
+        },
+      },
+    });
+
+    const catalog = await registry.zai.fetchCatalog(catalogOptions);
+
+    expect(
+      catalog.models.map((model) => [model.id, model.provider, model.pickerHidden === true]),
+    ).toEqual([
+      ["kept-model", "zai", false],
+      ["dropped-model", "zai", true],
+    ]);
+  });
+
+  test("an ACP provider can hide an advertised model", async () => {
+    mockState.runtimeModels.set("acp", catalogModels("acp"));
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        gemini: {
+          extends: "acp",
+          label: "Gemini",
+          command: ["gemini", "--acp"],
+          hiddenModelIds: ["dropped-model"],
+        },
+      },
+    });
+
+    const catalog = await registry.gemini.fetchCatalog(catalogOptions);
+
+    expect(catalog.models.find((model) => model.id === "dropped-model")).toMatchObject({
+      provider: "gemini",
+      pickerHidden: true,
+      label: "Dropped",
+    });
+    expect(catalog.models.find((model) => model.id === "kept-model")?.pickerHidden).toBeUndefined();
+  });
+
+  test("a plugin provider can hide a catalog model", async () => {
+    const registry = buildProviderRegistry(logger, {
+      pluginProviders: {
+        muse: {
+          id: "muse",
+          label: "Muse",
+          description: "Muse",
+          defaultModeId: null,
+          modes: [],
+          supportsExactMcpPreapproval: false,
+          createClient: () =>
+            ({
+              provider: "muse",
+              capabilities: {},
+              fetchCatalog: async () => ({ models: catalogModels("muse"), modes: [] }),
+              isAvailable: async () => true,
+            }) as AgentClient,
+        },
+      },
+      providerOverrides: {
+        muse: { hiddenModelIds: ["dropped-model"] },
+      },
+    });
+
+    const catalog = await registry.muse.fetchCatalog(catalogOptions);
+
+    expect(catalog.models.find((model) => model.id === "dropped-model")?.pickerHidden).toBe(true);
+    expect(catalog.models.find((model) => model.id === "kept-model")).toMatchObject(keptThinking);
+  });
+});

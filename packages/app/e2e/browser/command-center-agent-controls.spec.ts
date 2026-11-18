@@ -1,4 +1,6 @@
 import { expect, test } from "../support/fixtures";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
 import {
@@ -42,6 +44,45 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
 
 test.describe("Command Center agent controls", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("keeps thinking controls for an existing hidden model", async ({ page }, testInfo) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "hidden-model-thinking-",
+      title: "Hidden model thinking",
+      model: "max-only-thinking-stream",
+      thinkingOptionId: "max",
+    });
+    const client = await connectDaemonClient<DaemonClient>({
+      clientIdPrefix: "hidden-model-thinking",
+    });
+    const previous = (await client.getDaemonConfig()).config.providers.mock?.hiddenModelIds ?? [];
+    try {
+      await client.patchDaemonConfig({
+        providers: { mock: { hiddenModelIds: ["max-only-thinking-stream"] } },
+      });
+      await client.refreshProvidersSnapshot({ cwd: workspace.cwd, providers: ["mock"] });
+      const snapshot = await client.getProvidersSnapshot({ cwd: workspace.cwd });
+      const provider = snapshot.entries.find((entry) => entry.provider === "mock");
+      expect(
+        provider?.models?.find((model) => model.id === "max-only-thinking-stream"),
+      ).toMatchObject({ pickerHidden: true, thinkingOptions: [{ id: "max" }] });
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: workspace.agentId,
+      });
+      await expect(
+        page.getByTestId("agent-thinking-selector").filter({ visible: true }),
+      ).toHaveAccessibleName("Select thinking option (Max)");
+      await page.screenshot({ path: testInfo.outputPath("hidden-model-thinking.png") });
+    } finally {
+      try {
+        await client.patchDaemonConfig({ providers: { mock: { hiddenModelIds: previous } } });
+      } finally {
+        await client.close();
+        await workspace.cleanup();
+      }
+    }
+  });
 
   test("changes a running agent setting and preserves its selected row", async ({ page }) => {
     const workspace = await seedMockAgentWorkspace({

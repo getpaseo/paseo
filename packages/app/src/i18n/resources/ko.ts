@@ -3084,6 +3084,8 @@ export const ko: TranslationResources = {
         retrying: "다시 시도 중...",
         noSearchMatches: "검색과 일치하는 모델이 없습니다",
         noneDetected: "감지된 모델이 없습니다",
+        toggleDiscovered: "발견된 모델 전환",
+        showInConversation: "대화에 {{model}} 표시",
         discovered: "발견됨",
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",

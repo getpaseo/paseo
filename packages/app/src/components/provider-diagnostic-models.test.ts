@@ -42,6 +42,17 @@ describe("resolveProviderDiscoveredModels", () => {
     expect(refreshing.models).toEqual([grokModel]);
   });
 
+  it("keeps a model hidden from the conversation on the settings list", () => {
+    const hidden: AgentModelDefinition = { ...grokModel, pickerHidden: true };
+
+    const result = resolveModels({
+      provider: "grok",
+      currentModels: [hidden, piModel],
+    });
+
+    expect(result.models).toEqual([hidden, piModel]);
+  });
+
   it("excludes compatibility-only models from display and cache", () => {
     const compatibilityModel: AgentModelDefinition = {
       ...piModel,

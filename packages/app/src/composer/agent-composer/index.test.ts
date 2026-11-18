@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { resolveAgentModelSelection } from "@/composer/agent-controls/utils";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterListedModels } from "@/provider-selection/model-catalog";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useDraftStore } from "@/stores/draft-store";
 import { useSessionStore, type Agent } from "@/stores/session-store";
@@ -457,6 +457,27 @@ describe("agent composer", () => {
     await expect(composer().setModel("nope")).rejects.toThrow("The provider refused model 'nope'");
   });
 
+  it("keeps the active hidden model's default thinking level after a catalog update", async () => {
+    openSession(agent({ runtimeInfo: runtimeModel("opus") }));
+    const model = composer();
+    const stop = model.subscribe(() => {});
+    try {
+      await until(() => model.getState().thinking, "high");
+      const provider = entries[0]!;
+      const activeModel = provider.models![0]!;
+      hostCatalog.entries = [
+        {
+          ...provider,
+          models: [{ ...activeModel, pickerHidden: true }, provider.models![1]!],
+        },
+      ];
+      await queryClient.invalidateQueries({ queryKey: providersSnapshotQueryRoot(serverId) });
+      expect(model.getState()).toMatchObject({ model: "opus", thinking: "high" });
+    } finally {
+      stop();
+    }
+  });
+
   it("takes the catalog the host changed while the picker was not open, once the host reconnects", async () => {
     openSession(agent({ runtimeInfo: runtimeModel("opus") }));
     const model = composer();
@@ -515,7 +536,7 @@ describe("agent composer", () => {
 
   function pickerShows(running: Agent, catalog: ProviderSnapshotEntry[] | null) {
     const picker = resolveAgentModelSelection({
-      models: filterSelectableModels(catalog?.[0]?.models ?? null),
+      models: filterListedModels(catalog?.[0]?.models ?? null),
       runtimeModelId: running.runtimeInfo?.model ?? null,
       configuredModelId: running.model,
       runtimeThinkingOptionId: running.runtimeInfo?.thinkingOptionId ?? null,

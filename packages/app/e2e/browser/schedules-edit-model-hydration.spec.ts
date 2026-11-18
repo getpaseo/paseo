@@ -1,4 +1,6 @@
 import { expect, test } from "../support/fixtures";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { gotoAppShell } from "../support/helpers/app";
 import {
   addScheduleHostAndReload,
@@ -77,6 +79,40 @@ test.describe("Schedules", () => {
       await cleanup();
     }
     cleanupTasks.length = 0;
+  });
+
+  test("saves an existing schedule whose model is hidden from the picker", async ({
+    page,
+  }, testInfo) => {
+    const workspace = await seedWorkspace({ repoPrefix: "hidden-model-schedule-" });
+    cleanupTasks.push(() => workspace.cleanup());
+    const client = await connectDaemonClient<DaemonClient>({
+      clientIdPrefix: "hidden-model-schedule",
+    });
+    cleanupTasks.push(() => client.close());
+    const previous = (await client.getDaemonConfig()).config.providers.mock?.hiddenModelIds ?? [];
+    cleanupTasks.push(async () => {
+      await client.patchDaemonConfig({ providers: { mock: { hiddenModelIds: previous } } });
+    });
+    const scheduleId = await seedMockSchedule(workspace, "Hidden model schedule");
+    cleanupTasks.push(() => deleteSeededSchedule(workspace, scheduleId));
+    await client.patchDaemonConfig({
+      providers: { mock: { hiddenModelIds: ["ten-second-stream"] } },
+    });
+
+    await page.goto(buildSchedulesRoute());
+    const row = page.getByTestId(`schedule-row-${scheduleId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+    const sheet = page.getByTestId("schedule-form-sheet");
+    await expect(sheet).toBeVisible();
+    await expect(page.getByTestId("schedule-model-trigger")).toContainText("Ten second stream");
+    await expect(page.getByTestId("schedule-thinking-trigger")).toContainText("Low");
+    await page.getByTestId("schedule-name-input").fill("Renamed hidden model schedule");
+    await page.screenshot({ path: testInfo.outputPath("hidden-model-schedule.png") });
+    await sheet.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(row).toContainText("Renamed hidden model schedule");
   });
 
   test("hydrates schedule editing and opens a pristine creation form afterward", async ({

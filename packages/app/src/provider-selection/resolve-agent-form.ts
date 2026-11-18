@@ -9,7 +9,7 @@ import {
   type FormPreferences,
   type ProviderPreferences,
 } from "@/hooks/use-form-preferences";
-import { findModelByReference } from "./model-catalog";
+import { findModelByReference, resolveDefaultModelId } from "./model-catalog";
 
 export interface FormInitialValues {
   provider?: AgentProvider;
@@ -122,17 +122,6 @@ type ApplyProfileAction = Extract<AgentFormAction, { type: "APPLY_PROFILE_FROM_U
 
 export function normalizeSelectedModelId(modelId: string | null | undefined): string {
   return typeof modelId === "string" ? modelId.trim() : "";
-}
-
-export function resolveDefaultModel(
-  availableModels: AgentModelDefinition[] | null,
-): AgentModelDefinition | null {
-  if (!availableModels || availableModels.length === 0) return null;
-  return availableModels.find((model) => model.isDefault) ?? availableModels[0] ?? null;
-}
-
-export function resolveDefaultModelId(availableModels: AgentModelDefinition[] | null): string {
-  return resolveDefaultModel(availableModels)?.id ?? "";
 }
 
 function resolveCanonicalModelId(

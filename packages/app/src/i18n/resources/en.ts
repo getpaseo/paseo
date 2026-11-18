@@ -3200,6 +3200,8 @@ export const en = {
         retrying: "Retrying...",
         noSearchMatches: "No models match your search",
         noneDetected: "No models detected",
+        toggleDiscovered: "Toggle discovered models",
+        showInConversation: "Show {{model}} in the conversation",
         discovered: "Discovered",
         custom: "Custom models",
         updated: "Updated {{time}}",

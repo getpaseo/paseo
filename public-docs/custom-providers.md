@@ -179,7 +179,7 @@ Any agent that speaks [ACP](https://agentclientprotocol.com) over stdio can be a
 
 ## Adding or relabeling models
 
-`models` replaces the model list entirely. `additionalModels` merges with runtime-discovered models (ACP) or with `models`, use it to add an extra entry or relabel a discovered one without redeclaring the full list. An entry with the same `id` as a discovered model updates it in place.
+`models` replaces the model list entirely. `additionalModels` merges with runtime-discovered models (ACP) or with `models`, use it to add an extra entry or relabel a discovered one without redeclaring the full list. An entry with the same `id` as a discovered model updates it in place. `hiddenModelIds` lists model ids to leave out of the conversation picker. Every other model stays selected. The provider model sheet has a checkbox on each discovered model.
 
 ```json
 {

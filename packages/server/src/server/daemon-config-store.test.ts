@@ -77,6 +77,7 @@ describe("applyMutableProviderConfigToOverrides", () => {
                 label: "claude-custom",
               },
             ],
+            hiddenModelIds: ["claude-opus-4-6"],
           },
         },
       ),
@@ -96,6 +97,7 @@ describe("applyMutableProviderConfigToOverrides", () => {
             label: "claude-custom",
           },
         ],
+        hiddenModelIds: ["claude-opus-4-6"],
       },
     });
   });
@@ -1086,6 +1088,7 @@ describe("DaemonConfigStore", () => {
               label: "claude-custom",
             },
           ],
+          hiddenModelIds: ["claude-opus-4-6"],
         },
       },
     });
@@ -1098,6 +1101,7 @@ describe("DaemonConfigStore", () => {
           label: "claude-custom",
         },
       ],
+      hiddenModelIds: ["claude-opus-4-6"],
     });
   });
 

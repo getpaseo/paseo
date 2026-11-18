@@ -74,6 +74,40 @@ describe("resolveEffectiveComposerModelId", () => {
       }),
     ).toBe("gpt-5.4");
   });
+
+  it.each([
+    { selected: "", hidden: ["default"], expected: "visible" },
+    { selected: "default", hidden: ["default"], expected: "default" },
+    { selected: "", hidden: ["default", "visible"], expected: "" },
+  ])(
+    "keeps saved models but uses visible defaults: $selected / $hidden",
+    ({ selected, hidden, expected }) => {
+      expect(
+        resolveEffectiveComposerModelId({
+          provider: "codex",
+          modelId: selected,
+          modeId: "",
+          thinkingOptionId: "",
+          modeOptions: [],
+          availableModels: [
+            {
+              provider: "codex",
+              id: "default",
+              label: "Default",
+              isDefault: true,
+              pickerHidden: hidden.includes("default"),
+            },
+            {
+              provider: "codex",
+              id: "visible",
+              label: "Visible",
+              pickerHidden: hidden.includes("visible"),
+            },
+          ],
+        }),
+      ).toBe(expected);
+    },
+  );
 });
 
 describe("resolveEffectiveComposerThinkingOptionId", () => {

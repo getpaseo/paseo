@@ -178,6 +178,8 @@ const MutableDaemonProviderConfigSchema = z
     paseoTools: ProviderPaseoToolsPolicySchema.optional(),
     enabled: z.boolean().optional(),
     additionalModels: z.array(MutableDaemonProviderModelSchema).optional(),
+    // COMPAT(hiddenModelIds): added in v0.16.0, keep optional while old daemons are supported.
+    hiddenModelIds: z.array(z.string().min(1)).optional(),
   })
   .passthrough();
 
@@ -408,6 +410,8 @@ const AgentModelDefinitionSchema = z.object({
   id: z.string(),
   aliases: z.array(z.string()).optional(),
   isSelectable: z.boolean().optional(),
+  // COMPAT(pickerHidden): added in v0.16.0, keep optional while old clients are supported.
+  pickerHidden: z.boolean().optional(),
   label: z.string(),
   description: z.string().optional(),
   isDefault: z.boolean().optional(),
@@ -3931,6 +3935,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
+        // COMPAT(hiddenModelIds): added in v0.16.0, remove gate after 2027-05-17.
+        hiddenModelIds: z.boolean().optional(),
         connectedHosts: z.boolean().optional(),
         hostMultiplexing: z.boolean().optional(),
         // COMPAT(usageSetting): added in v0.14, remove after 2027-05-01.

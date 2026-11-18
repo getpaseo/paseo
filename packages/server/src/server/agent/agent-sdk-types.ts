@@ -92,6 +92,7 @@ export interface AgentModelDefinition {
   id: string;
   aliases?: string[];
   isSelectable?: boolean;
+  pickerHidden?: boolean;
   label: string;
   description?: string;
   isDefault?: boolean;

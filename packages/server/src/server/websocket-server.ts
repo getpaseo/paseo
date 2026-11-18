@@ -2068,6 +2068,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceSortTimes: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
+        // COMPAT(hiddenModelIds): added in v0.16.0, remove gate after 2027-05-17.
+        hiddenModelIds: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: true,
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
