@@ -74,15 +74,16 @@ function materializeInlineMcpConfig(
 
   const dir = mkdtempSync(join(tmpdir(), "paseo-claude-mcp-"));
   const configPath = join(dir, "mcp.json");
-  let cleanupStarted = false;
+  let cleaned = false;
   // Removal can fail while another process still holds the file open (Windows).
   // These listeners run in the daemon's child-process callbacks, so a throw here
-  // reaches the fatal handler and takes the daemon down with it.
+  // reaches the fatal handler and takes the daemon down with it. Leave the file
+  // marked as pending so a later child event can retry the removal.
   const cleanup = () => {
-    if (cleanupStarted) return;
-    cleanupStarted = true;
+    if (cleaned) return;
     try {
       rmSync(dir, { recursive: true, force: true });
+      cleaned = true;
     } catch (error) {
       logger?.warn({ err: error, dir }, "failed to remove Claude MCP config");
     }

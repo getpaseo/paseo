@@ -94,7 +94,11 @@ function spawnOptions(signal = new AbortController().signal): ClaudeSpawnOptions
 
 function removeConfigDirectories(paths: string[]): void {
   for (const path of paths) {
-    rmSync(dirname(path), { recursive: true, force: true });
+    const directory = dirname(path);
+    if (existsSync(directory)) {
+      chmodSync(directory, 0o755);
+    }
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
@@ -195,7 +199,7 @@ describe("Claude spawn override", () => {
 
   // chmod does not block removal on Windows, and root ignores directory modes.
   test.skipIf(isPlatform("win32") || process.getuid?.() === 0)(
-    "does not throw from the exit or error listener when MCP config removal fails",
+    "logs a failed MCP config removal and retries on the next child event",
     () => {
       const records: Record<string, unknown>[] = [];
       const logger = pino(
@@ -223,13 +227,12 @@ describe("Claude spawn override", () => {
           }),
         );
         expect(detachAbortListener).toHaveBeenCalledWith("abort", expect.any(Function));
-        // A second event must not retry the removal once permissions are back.
+        // Restoring write permission lets the next child event retry the removal.
         chmodSync(configDir, 0o755);
         expect(() => child.emit("error", new Error("synthetic child error"))).not.toThrow();
-        expect(existsSync(mcpConfigPath)).toBe(true);
+        expect(existsSync(mcpConfigPath)).toBe(false);
       } finally {
-        chmodSync(configDir, 0o755);
-        rmSync(configDir, { recursive: true, force: true });
+        removeConfigDirectories([mcpConfigPath]);
       }
     },
   );
