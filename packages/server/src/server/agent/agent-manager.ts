@@ -4745,6 +4745,17 @@ export class AgentManager {
     agent.unsubscribeSession = unsubscribe;
   }
 
+  // Child activity, runtime inventory, and updates to existing rows survive a failed start.
+  private isIndependentOfPendingStart(agentId: string, event: AgentStreamEvent): boolean {
+    if (event.type === "provider_subagent" || event.type === "background_work") return true;
+    const turnId = getAgentStreamEventTurnId(event);
+    return (
+      event.type === "timeline" &&
+      turnId != null &&
+      this.timelineStore.hasItemInTurn(agentId, event.item, turnId)
+    );
+  }
+
   private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
     this.logger.trace(
       {
@@ -4762,7 +4773,10 @@ export class AgentManager {
       return;
     }
     const pendingRun = this.runs.getPendingRun(agentId);
-    if (pendingRun?.start.status === "pending") {
+    if (
+      pendingRun?.start.status === "pending" &&
+      !this.isIndependentOfPendingStart(agentId, event)
+    ) {
       pendingRun.stagedEvents.push(event);
       return;
     }

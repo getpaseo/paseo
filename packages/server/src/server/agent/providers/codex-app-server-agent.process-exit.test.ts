@@ -1196,12 +1196,15 @@ test("the public Stop command can retry a failed startup retirement after its ru
 test("retiring a pre-submission startup leaves its cancellation event to the manager", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "codex-unsubmitted-cancel-"));
   const old = createFakeCodexAppServer({ "thread/loaded/list": () => new Promise(() => {}) });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: workdir },
-    null,
-    logger,
-    async () => old.child,
-  );
+  const replacement = createFakeCodexAppServer({
+    "thread/resume": () => {
+      throw new Error("No saved rollout for this thread");
+    },
+  });
+  const session = await new ProcessExitCodexClient([old, replacement]).createSession({
+    provider: "codex",
+    cwd: workdir,
+  });
   await session.getRuntimeInfo();
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
@@ -1213,8 +1216,77 @@ test("retiring a pre-submission startup leaves its cancellation event to the man
     await canceled;
     expect(old.requests().filter((request) => request.method === "turn/start")).toHaveLength(0);
     expect(events.filter((event) => event.type === "turn_canceled")).toEqual([]);
+    await session.startTurn("try again on the new process");
+    expect(replacement.requests().map((r) => r.method)).toContain("thread/start");
+    expect(replacement.requests().map((r) => r.method)).not.toContain("thread/resume");
   } finally {
     await session.close();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a lost second startup reply settles the first turn's child and tool rows", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "codex-child-startup-retirement-"));
+  const nextStart = Promise.withResolvers<void>();
+  let starts = 0;
+  const server = createFakeCodexAppServer({
+    "turn/start": () => {
+      if (++starts === 1) return {};
+      nextStart.resolve();
+      return new Promise(() => {});
+    },
+  });
+  const manager = new AgentManager({
+    clients: { codex: new ProcessExitCodexClient([server]) },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const rows = async () =>
+    (await manager.getTimelineRows(agent.id)).flatMap((row) =>
+      row.item.type === "tool_call" && ["spawn-child", "background-shell"].includes(row.item.callId)
+        ? [{ id: row.item.callId, status: row.item.status, turnId: row.turnId }]
+        : [],
+    );
+  try {
+    const first = manager.runAgent(agent.id, "launch background work");
+    await server.waitForTurnStart();
+    server.startsTurn({ threadId: "thread-1", turnId: "first" });
+    server.startsSubAgent({
+      callId: "spawn-child",
+      threadId: "child",
+      agentPath: "/root/child",
+      parentThreadId: "thread-1",
+    });
+    server.startsTerminalCommand({
+      threadId: "thread-1",
+      turnId: "first",
+      itemId: "background-shell",
+      command: "sleep 90",
+    });
+    await expect.poll(rows).toHaveLength(2);
+    const initial = await rows();
+    expect(initial.every((row) => row.status === "running" && row.turnId)).toBe(true);
+    server.completeTurn();
+    await first;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const failed = expect(manager.runAgent(agent.id, "next prompt")).rejects.toMatchObject({
+      deliveryOutcome: "unknown",
+    });
+    await nextStart.promise;
+    await vi.advanceTimersByTimeAsync(91_000);
+    await failed;
+    vi.useRealTimers();
+    await expect
+      .poll(rows)
+      .toEqual(initial.map(({ id, turnId }) => ({ id, turnId, status: "canceled" })));
+    expect(manager.listProviderSubagents(agent.id)).toContainEqual(
+      expect.objectContaining({ status: "canceled" }),
+    );
+  } finally {
+    vi.useRealTimers();
+    await manager.closeAgent(agent.id);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

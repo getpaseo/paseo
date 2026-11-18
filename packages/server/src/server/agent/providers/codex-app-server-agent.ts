@@ -3651,7 +3651,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   } | null = null;
   private pendingForegroundStart: PendingCodexForegroundStart | null = null;
   private client: CodexAppServerClient | null = null;
-  private interruptRecoveryClient: CodexAppServerClient | null = null;
+  private interruptRecovery: { client: CodexAppServerClient; beforeSubmission: boolean } | null =
+    null;
   private readonly background = new CodexBackgroundInventory((event) => this.emitEvent(event));
   private threadRollbackAvailable = true;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -4676,7 +4677,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         label: "previous Codex startup cleanup",
       });
     }
-    if (this.interruptRecoveryClient)
+    if (this.interruptRecovery)
       throw new CodexMessageDeliveryError({
         message:
           "The previous Codex runtime has not stopped. Retry Stop before sending another message.",
@@ -4781,7 +4782,6 @@ export class CodexAppServerAgentSession implements AgentSession {
       error.method === "turn/start" &&
       submittedClient
     ) {
-      this.interruptRecoveryClient = submittedClient;
       try {
         await this.retireInterruptedClient(submittedClient);
       } catch (cause) {
@@ -5422,8 +5422,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<void> {
-    if (this.interruptRecoveryClient) {
-      await this.retireInterruptedClient(this.interruptRecoveryClient);
+    if (this.interruptRecovery) {
+      await this.retireInterruptedClient(this.interruptRecovery.client);
       return;
     }
     const pendingStart = this.pendingForegroundStart;
@@ -5474,8 +5474,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       });
     }
     if (this.client) {
-      this.interruptRecoveryClient = this.client;
-      await this.retireInterruptedClient(this.client);
+      await this.retireInterruptedClient(this.client, !pendingStart.submitted);
     }
   }
 
@@ -5511,7 +5510,6 @@ export class CodexAppServerAgentSession implements AgentSession {
           foregroundTurnId === null || this.activeForegroundTurnId !== foregroundTurnId;
         const capturedTurnEnded = this.currentTurnId !== turnId && capturedForegroundEnded;
         if (capturedTurnEnded) return;
-        this.interruptRecoveryClient = client;
         await this.retireInterruptedClient(client);
         return;
       }
@@ -5527,12 +5525,15 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   hasPendingInterruptRecovery(): boolean {
-    return this.interruptRecoveryClient !== null;
+    return this.interruptRecovery !== null;
   }
 
-  private async retireInterruptedClient(client: CodexAppServerClient): Promise<void> {
+  private async retireInterruptedClient(
+    client: CodexAppServerClient,
+    beforeSubmission = false,
+  ): Promise<void> {
     // Before native submission, the manager owns the canceled startup outcome.
-    const canceledBeforeSubmission = this.pendingForegroundStart?.submitted === false;
+    const recovery = (this.interruptRecovery ??= { client, beforeSubmission });
     this.logger.warn(
       this.traceContext(),
       "Retiring the Codex app-server before allowing another foreground turn",
@@ -5541,6 +5542,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     // Retain the client and turn on failure so another Stop can retry termination.
     await client.dispose();
     await this.pendingNotifications;
+    if (this.interruptRecovery !== recovery) return;
+    if (recovery.beforeSubmission && !this.savedCurrentThreadId()) {
+      this.currentThreadId = null;
+      this.cachedRuntimeInfo = null;
+    }
     this.background.stop();
     this.clearPendingPermissions();
     this.dismissInterruptedAsyncQuestions();
@@ -5554,7 +5560,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.terminalProcessIdsByTurnId.clear();
     this.settleStreamRetry({ status: "canceled" });
-    if (!canceledBeforeSubmission)
+    if (!recovery.beforeSubmission)
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
@@ -5562,7 +5568,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     this.client = null;
-    this.interruptRecoveryClient = null;
+    this.interruptRecovery = null;
     this.connectionState = "disconnected";
   }
 
@@ -6665,7 +6671,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!cardChanged || (state.parentCallId && state.parentCallId !== callId)) {
       return;
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall });
+    const turnId = this.runningToolRows.get(JSON.stringify([null, callId]))?.turnId;
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall, turnId });
   }
 
   private emitProviderSubagentUpsert(
