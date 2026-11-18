@@ -10,6 +10,8 @@ import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
+import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { FakePi } from "./providers/pi/test-utils/fake-pi.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import type {
   AgentCapabilityFlags,
@@ -538,7 +540,7 @@ describe("live notification turns", () => {
     }
   });
 
-  test("the manager assigns a foreground OMP notice and delivers it to the run caller", async () => {
+  test("an OMP runtime notice during a foreground turn reaches the run caller", async () => {
     const runtime = new FakeOmp();
     const logger = createTestLogger();
     const manager = new AgentManager({
@@ -555,17 +557,14 @@ describe("live notification turns", () => {
     const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
-    const adapterEvents: AgentStreamEvent[] = [];
-    const unsubscribe = agent.session!.subscribe((event) => adapterEvents.push(event));
     const session = runtime.latestSession();
     try {
       const result = manager.runAgent(agent.id, "Work");
       await vi.waitFor(() => expect(session.prompts).toHaveLength(1));
       session.beginTurn();
       session.emit({
-        type: "extension_ui_request",
-        id: "notice",
-        method: "notify",
+        type: "notice",
+        level: "info",
         message: "Working",
       });
       session.streamAssistantText("Done");
@@ -579,14 +578,50 @@ describe("live notification turns", () => {
       expect(rows.find((row) => row.item.type === "notification")?.turnId).toEqual(
         rows.find((row) => row.item.type === "assistant_message")?.turnId,
       );
-      expect(
-        adapterEvents.filter(
-          (event) => event.type === "timeline" && event.item.type === "notification",
-        ),
-      ).toEqual([{ type: "timeline", provider: "omp", item }]);
     } finally {
-      unsubscribe();
       await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("an idle Pi UI notice gets its own turn without starting a run", async () => {
+    const runtime = new FakePi();
+    const logger = createTestLogger();
+    const manager = new AgentManager({
+      clients: {
+        pi: new PiRpcAgentClient({
+          runtime,
+          logger,
+          runtimeSettings: { command: { mode: "replace", argv: [process.execPath] } },
+        }),
+      },
+      logger,
+    });
+    const workdir = mkdtempSync(join(tmpdir(), "pi-idle-notice-"));
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { replayState: false });
+    const { id } = await manager.createAgent({ provider: "pi", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      runtime.latestSession().emit({
+        type: "extension_ui_request",
+        id: "notice",
+        method: "notify",
+        message: "Idle",
+      });
+      await vi.waitFor(() => expect(getTimelineStreamEvents(events, id)).toHaveLength(1));
+      const { rows } = await manager.fetchTimeline(id, { wholeTurns: true, limit: 1 });
+      const item = { type: "notification", level: "info", message: "Idle" };
+      expect(rows).toEqual([expect.objectContaining({ item, turnId: expect.any(String) })]);
+      expect(getStreamEvents(events, id)).toEqual([
+        expect.objectContaining({
+          event: { type: "timeline", provider: "pi", item, turnId: rows[0]?.turnId },
+        }),
+      ]);
+      expect(manager.getAgent(id)?.lifecycle).toBe("idle");
+    } finally {
+      await manager.closeAgent(id);
       rmSync(workdir, { recursive: true, force: true });
     }
   });
