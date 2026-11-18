@@ -4,9 +4,11 @@ import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { VolumeMeter } from "./volume-meter";
 import { FOOTER_HEIGHT } from "@/constants/layout";
 import type { DictationStatus } from "@/hooks/use-dictation";
+import type { DictationEmptyReason } from "@/dictation/empty-transcript-reason";
 
 interface DictationControlsProps {
   volume: number;
@@ -22,6 +24,31 @@ interface DictationControlsProps {
   onRetry?: () => void;
   onDiscard?: () => void;
   disabled?: boolean;
+}
+
+const EMPTY_REASON_MESSAGE_KEYS = {
+  "no-audio": "message.dictation.empty.noAudio",
+  "silent-audio": "message.dictation.empty.silentAudio",
+  "no-speech": "message.dictation.empty.noSpeech",
+} as const satisfies Record<DictationEmptyReason, string>;
+
+// The line under the meter once an attempt has finished without text.
+function resolveResultText(input: {
+  t: TFunction;
+  status: DictationStatus;
+  errorText?: string;
+  emptyReason?: DictationEmptyReason | null;
+}): string | null {
+  const { t, status, errorText, emptyReason } = input;
+  if (status === "empty") {
+    return t(EMPTY_REASON_MESSAGE_KEYS[emptyReason ?? "no-speech"]);
+  }
+  if (status !== "failed") {
+    return null;
+  }
+  return errorText
+    ? t("message.dictation.failed", { error: errorText })
+    : t("message.dictation.failedRetry");
 }
 
 function formatDuration(seconds: number): string {
@@ -147,18 +174,26 @@ export function DictationOverlay({
   isProcessing,
   status,
   errorText,
+  emptyReason,
   onCancel,
   onAccept,
   onAcceptAndSend,
   onRetry,
   onDiscard,
-}: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & { errorText?: string }) {
+}: Omit<DictationControlsProps, "onStart" | "disabled" | "transcript"> & {
+  errorText?: string;
+  emptyReason?: DictationEmptyReason | null;
+}) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const isFailed = status === "failed";
+  const isEmpty = status === "empty";
+  // An empty result is a finished attempt the user has to acknowledge, like a failure.
+  const isFailed = status === "failed" || isEmpty;
+  const canRetry = !isEmpty || emptyReason !== "no-audio";
   const showActiveState = isRecording || isProcessing || isFailed;
   const actionsDisabled = isProcessing;
   const handleCancel = isFailed && onDiscard ? onDiscard : onCancel;
+  const resultText = resolveResultText({ t, status, errorText, emptyReason });
 
   const containerStyle = useMemo(
     () => [overlayStyles.container, { backgroundColor: theme.colors.accent }],
@@ -217,11 +252,9 @@ export function DictationOverlay({
             {t("message.dictation.paused")}
           </Text>
         ) : null}
-        {isFailed ? (
+        {resultText ? (
           <Text numberOfLines={2} style={overlayTranscriptTextStyle}>
-            {errorText
-              ? t("message.dictation.failed", { error: errorText })
-              : t("message.dictation.failedRetry")}
+            {resultText}
           </Text>
         ) : null}
       </View>
@@ -232,7 +265,7 @@ export function DictationOverlay({
             <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
-        {!actionsDisabled && isFailed ? (
+        {!actionsDisabled && isFailed && canRetry ? (
           <Pressable
             onPress={onRetry}
             accessibilityRole="button"
