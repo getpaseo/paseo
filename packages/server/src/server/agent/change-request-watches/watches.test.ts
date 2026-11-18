@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
@@ -71,7 +71,14 @@ test("shares one observation and restores a busy recipient's unsent digest", asy
     const failing = {
       ...initial,
       checksState: "failed" as const,
-      checks: [{ id: "1", name: "build", state: "failed" as const }],
+      checks: [
+        {
+          id: "1",
+          name: "build",
+          state: "failed" as const,
+          url: "https://github.com/owner/repo/actions/runs/1",
+        },
+      ],
     };
     await listener!.snapshot(failing);
     await vi.advanceTimersByTimeAsync(15_000);
@@ -87,6 +94,7 @@ test("shares one observation and restores a busy recipient's unsent digest", asy
     await watches.flush();
     expect(delivered).toEqual([["first", expect.stringContaining("build")]]);
     expect(delivered[0]?.[1]).toContain("#issuecomment-101");
+    expect(delivered[0]?.[1]).toContain(failing.checks[0]!.url);
 
     await watches.close();
     watches = create();
@@ -332,6 +340,47 @@ test("sends all due digests in one turn when an agent becomes idle", async () =>
       "issuecomment-2",
       "issuecomment-3",
     ]);
+  } finally {
+    await watches.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("recovers active watches even when pruning archived watchers cannot be written", async () => {
+  const home = await createTestHome();
+  const file = join(home, "change-request-watches.json");
+  const backup = join(home, "saved-watches.json");
+  const create = (isActive: (id: string) => Promise<boolean>) =>
+    createChangeRequestWatches({
+      source: {
+        resolve: (input) => input,
+        observe(_address, callbacks) {
+          queueMicrotask(() => void callbacks.snapshot(initial));
+          return () => {};
+        },
+      },
+      paseoHome: home,
+      isActive,
+      deliver: async () => true,
+      logger: pino({ enabled: false }),
+    });
+  let watches = create(async () => true);
+  try {
+    await watches.start();
+    await watches.subscribe("archived", url);
+    await watches.subscribe("active", url);
+    await watches.close();
+    const stored = await readFile(file, "utf8");
+    watches = create(async (id) => {
+      if (id !== "archived") return true;
+      await rename(file, backup);
+      await mkdir(file);
+      return false;
+    });
+    await watches.start();
+    await expect(watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
+    await expect(watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
+    expect(await readFile(backup, "utf8")).toBe(stored);
   } finally {
     await watches.close();
     await rm(home, { recursive: true, force: true });

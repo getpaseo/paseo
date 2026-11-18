@@ -50,6 +50,7 @@ const failedStates = new Set([
   "ACTION_REQUIRED",
   "STARTUP_FAILURE",
 ]);
+const checkUrlSchema = z.url({ protocol: /^https?$/ });
 const checkSchema = z
   .discriminatedUnion("__typename", [
     z.object({
@@ -58,20 +59,32 @@ const checkSchema = z
       name: z.string(),
       status: z.string(),
       conclusion: z.string().nullable(),
+      detailsUrl: z.string().nullish(),
     }),
     z.object({
       __typename: z.literal("StatusContext"),
       id: z.string(),
       context: z.string(),
+      targetUrl: z.string().nullish(),
       state: z.string(),
     }),
   ])
   .transform((check): ChangeRequestSnapshot["checks"][number] => {
     if (check.__typename === "CheckRun") {
       const status = check.status === "COMPLETED" ? check.conclusion : "PENDING";
-      return { id: check.id, name: check.name, state: checkState(status) };
+      return {
+        id: check.id,
+        name: check.name,
+        state: checkState(status),
+        url: checkUrlSchema.safeParse(check.detailsUrl).data,
+      };
     }
-    return { id: check.id, name: check.context, state: checkState(check.state) };
+    return {
+      id: check.id,
+      name: check.context,
+      state: checkState(check.state),
+      url: checkUrlSchema.safeParse(check.targetUrl).data,
+    };
   });
 
 function checkState(status: string | null): ChangeRequestSnapshot["checksState"] {

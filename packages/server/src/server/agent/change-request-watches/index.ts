@@ -64,7 +64,10 @@ function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
       (check) =>
         check.state === "failed" && (next.headSha !== previous.headSha || !failed.has(check.id)),
     )
-    .map((check) => `Check failed on ${next.headSha}: ${JSON.stringify(check.name)}`);
+    .map(
+      (check) =>
+        `Check failed on ${next.headSha}: ${JSON.stringify(check.name)}${check.url ? ` (${check.url})` : ""}`,
+    );
   if (
     next.checksState === "passed" &&
     (previous.checksState !== "passed" || previous.headSha !== next.headSha)
@@ -416,26 +419,35 @@ export function createChangeRequestWatches(deps: Dependencies) {
 
   return {
     async start() {
-      let restored: WatchGroup[];
+      const active: WatchGroup[] = [];
+      let pruned = false;
       try {
         const stored = await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return "[]";
           throw error;
         });
-        restored = z.array(watchGroupSchema).parse(JSON.parse(stored));
+        const restored = z.array(watchGroupSchema).parse(JSON.parse(stored));
+        for (const group of restored) {
+          const watchers = [];
+          for (const watcher of group.watchers) {
+            if (await deps.isActive(watcher.agentId)) watchers.push(watcher);
+          }
+          pruned ||= watchers.length !== group.watchers.length;
+          if (watchers.length) active.push({ ...group, watchers });
+        }
       } catch (error) {
         recoveryError = error;
         deps.logger.error({ err: error, file }, "Could not recover change request watches");
         return;
       }
-      for (const group of restored) groups.set(group.url, group);
-      for (const group of restored) {
-        const watchers = [];
-        for (const watcher of group.watchers) {
-          if (await deps.isActive(watcher.agentId)) watchers.push(watcher);
+      if (pruned) {
+        try {
+          await writeJsonFileAtomic(file, active);
+        } catch (error) {
+          deps.logger.warn({ err: error, file }, "Could not prune archived change request watches");
         }
-        if (watchers.length !== group.watchers.length) await commit({ ...group, watchers });
       }
+      for (const group of active) groups.set(group.url, group);
       for (const group of groups.values()) {
         if (group.snapshot.state === "open") observe(group.url);
       }

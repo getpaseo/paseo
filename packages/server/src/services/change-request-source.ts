@@ -3,6 +3,7 @@ import { z } from "zod";
 const changeRequestCheckSchema = z.object({
   id: z.string(),
   name: z.string(),
+  url: z.url({ protocol: /^https?$/ }).optional(),
   state: z.enum(["pending", "failed", "passed", "neutral"]),
 });
 export const changeRequestStatusSchema = z.object({

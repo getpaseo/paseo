@@ -5192,6 +5192,16 @@ it("batches co-due workspace discovery and exact PR reads with one check rollup"
     context: "ci",
     state: "SUCCESS",
   };
+  const checkUrl = "https://github.com/acme/widgets/actions/runs/7";
+  const check = {
+    __typename: "CheckRun",
+    id: "run",
+    name: "build",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    detailsUrl: checkUrl,
+  };
+  const targetUrl = "https://example.com/ci";
   const runner = createRunner([
     batchPollStatusJson({
       t0: batchPollRepositoryJson([
@@ -5211,7 +5221,10 @@ it("batches co-due workspace discovery and exact PR reads with one check rollup"
         pullRequest: {
           state: "OPEN",
           headRefOid: "abc",
-          statusCheckRollup: { state: "SUCCESS", contexts: { nodes: [rollup], pageInfo } },
+          statusCheckRollup: {
+            state: "SUCCESS",
+            contexts: { nodes: [{ ...rollup, targetUrl }, check], pageInfo },
+          },
           reviewDecision: null,
           comments: { nodes: [], pageInfo },
           reviews: { nodes: [], pageInfo },
@@ -5253,7 +5266,16 @@ it("batches co-due workspace discovery and exact PR reads with one check rollup"
     expect(runner.calls[0]?.args.at(-1)).toContain('pullRequests(headRefName: "feature"');
     expect(runner.calls[0]?.args.at(-1)).toContain("pullRequest(number: 41)");
     expect(runner.calls[0]?.args.at(-1)?.match(/statusCheckRollup/g)).toHaveLength(1);
-    expect(snapshots).toEqual([expect.objectContaining({ headSha: "abc", checksState: "passed" })]);
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        headSha: "abc",
+        checksState: "passed",
+        checks: [
+          expect.objectContaining({ id: "context", url: targetUrl }),
+          expect.objectContaining({ id: "run", url: checkUrl }),
+        ],
+      }),
+    ]);
     expect(statuses).toEqual([expect.objectContaining({ number: 41, checksStatus: "success" })]);
   } finally {
     service.dispose?.();
