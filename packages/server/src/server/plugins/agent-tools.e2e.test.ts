@@ -840,12 +840,13 @@ const nameClashSource = (name: string) =>
   );
 
 test.each([
-  ["another plugin's tool", "other_opens"],
-  ["a Paseo tool", "list_agents"],
+  ["another plugin's tool", "other_opens", undefined],
+  ["a Paseo tool", "list_agents", undefined],
+  ["a Paseo tool the agent's provider disables", "list_agents", { disabledTools: ["list_agents"] }],
 ])(
   "a restarted plugin whose tools clash with %s leaves the agent's other tools working",
-  async (_label, name) => {
-    const h = await setup();
+  async (_label, name, policy) => {
+    const h = await setup(false, pluginSource, policy);
     try {
       await h.install("other-hook", openCounterSource);
       const a = await h.create({ x: "y" });
@@ -854,7 +855,8 @@ test.each([
       const mcp = await h.mcp(a.id);
       const names = await listedToolNames(mcp);
       expect(names).toContain("other_opens");
-      expect(names).toContain("list_agents");
+      expect(names.includes("list_agents")).toBe(policy === undefined);
+      expect(names).toContain("get_agent_status");
       expect(names).not.toContain("plugin_echo");
       expect(await mcp.callTool({ name: "other_opens", arguments: {} })).toMatchObject({
         content: [{ type: "text", text: "1" }],

@@ -1146,8 +1146,12 @@ export class AgentManager {
   private async takenAgentToolNames(agentId: string): Promise<Set<string>> {
     const names = new Set(this.getPluginTools(agentId).map((tool) => tool.name));
     if (this.paseoToolCatalogFactory) {
-      // No policy, so tools a provider disables are still reserved, as at open.
-      const catalog = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
+      // An all-enabled policy, so the catalog lists every Paseo tool the plugin check reserves, including the ones
+      // the agent's provider disables. Without a policy the factory falls back to the agent's own.
+      const catalog = await this.paseoToolCatalogFactory({
+        callerAgentId: agentId,
+        paseoToolPolicy: {},
+      });
       for (const name of catalog.tools.keys()) names.add(name);
     }
     return names;
