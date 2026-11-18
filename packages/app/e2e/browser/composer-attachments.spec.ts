@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -76,19 +77,37 @@ test.describe("Composer attachments", () => {
     page,
   }, info) => {
     info.setTimeout(120_000);
-    const workspace = await seedWorkspace({ repoPrefix: "cross-host-attachment-" });
-    const sourceHost = await startIsolatedHostDaemon("cross-host-attachment-source");
-    const sourceClient = await connectNewWorkspaceDaemonClient({
-      port: sourceHost.port,
-      ownProjects: false,
-    });
-    const destinationClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
-    const plugin = await copyPluginFixture("attachment-source");
-    const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
-    let previousDestinationPluginsEnabled: boolean | null = null;
+    const cleanup: Array<() => Promise<unknown>> = [];
+    let journeyFailed = false;
+    let journeyError: unknown;
     try {
+      const workspace = await seedWorkspace({ repoPrefix: "cross-host-attachment-" });
+      cleanup.push(() => workspace.cleanup());
+      const sourceHost = await startIsolatedHostDaemon("cross-host-attachment-source");
+      cleanup.push(() => sourceHost.close());
+      const sourceClient = await connectNewWorkspaceDaemonClient({
+        port: sourceHost.port,
+        ownProjects: false,
+      });
+      cleanup.push(() => sourceClient.close());
+      const destinationClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+      cleanup.push(() => destinationClient.close());
+      const plugin = await copyPluginFixture("attachment-source");
+      cleanup.push(() => plugin.cleanup());
+      const traffic = await observeCrossHostAttachmentTraffic(page, sourceHost.port);
       const previousDestinationConfig = await destinationClient.getDaemonConfig();
-      previousDestinationPluginsEnabled = previousDestinationConfig.config.pluginsEnabled ?? false;
+      cleanup.push(() =>
+        destinationClient.patchDaemonConfig({
+          pluginsEnabled: previousDestinationConfig.config.pluginsEnabled ?? false,
+        }),
+      );
+      cleanup.push(async () => {
+        const installed = (await destinationClient.getDaemonConfig()).config.plugins?.[
+          "test-attachment-source"
+        ];
+        if (installed?.path === plugin.directory)
+          await destinationClient.removePlugin("test-attachment-source");
+      });
       await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
       await sourceClient.installDirectoryPlugin(plugin.directory);
       await destinationClient.patchDaemonConfig({ pluginsEnabled: true });
@@ -141,38 +160,45 @@ test.describe("Composer attachments", () => {
       );
       await submitMessage(page, "Use the attached conversation.");
       await traffic.expectSnapshotSubmittedToDestination();
-    } finally {
+    } catch (error) {
+      journeyFailed = true;
+      journeyError = error;
+    }
+    const errors: unknown[] = [];
+    for (const release of cleanup.toReversed()) {
       try {
-        const installed = (await destinationClient.getDaemonConfig()).config.plugins?.[
-          "test-attachment-source"
-        ];
-        if (installed?.path === plugin.directory) {
-          await destinationClient.removePlugin("test-attachment-source");
-        }
-      } finally {
-        try {
-          if (previousDestinationPluginsEnabled !== null) {
-            await destinationClient.patchDaemonConfig({
-              pluginsEnabled: previousDestinationPluginsEnabled,
-            });
-          }
-        } finally {
-          await destinationClient.close();
-          await sourceClient.close();
-          await sourceHost.close();
-          await plugin.cleanup();
-          await workspace.cleanup();
-        }
+        await release();
+      } catch (error) {
+        errors.push(error);
       }
     }
+    if (journeyFailed) {
+      if (errors.length)
+        console.error(new AggregateError(errors, "Cross-host attachment cleanup failed"));
+      throw journeyError;
+    }
+    if (errors.length) throw new AggregateError(errors, "Cross-host attachment cleanup failed");
   });
 
   test("failed attachment source setup releases its workspace", async ({ page }, info) => {
-    await expect(
-      withAttachmentSourceFixture(page, info, async () => {}, {
-        fixtureName: "missing-attachment-source",
-      }),
-    ).rejects.toThrow();
+    const observer = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+    let seeded: { workspaceId: string; repoPath: string } | undefined;
+    try {
+      await expect(
+        withAttachmentSourceFixture(page, info, async () => {}, {
+          fixtureName: "missing-attachment-source",
+          onWorkspaceCreated(workspace) {
+            seeded = workspace;
+          },
+        }),
+      ).rejects.toThrow();
+      expect(seeded).toBeDefined();
+      expect(existsSync(seeded!.repoPath)).toBe(false);
+      const remaining = await observer.fetchWorkspaces();
+      expect(remaining.entries.some((entry) => entry.id === seeded!.workspaceId)).toBe(false);
+    } finally {
+      await observer.close();
+    }
   });
 
   test("failed attachment source startup removes its configured plugin", async ({ page }, info) => {

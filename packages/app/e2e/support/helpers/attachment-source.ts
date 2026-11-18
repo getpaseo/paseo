@@ -95,7 +95,10 @@ export async function withAttachmentSourceFixture(
   page: Page,
   info: TestInfo,
   run: (actions: AttachmentSourceActions) => Promise<void>,
-  options?: { fixtureName?: string },
+  options?: {
+    fixtureName?: string;
+    onWorkspaceCreated?: (workspace: { workspaceId: string; repoPath: string }) => void;
+  },
 ): Promise<void> {
   info.setTimeout(120_000);
   const workspace = await seedWorkspace({ repoPrefix: "attachment-source-" });
@@ -104,6 +107,7 @@ export async function withAttachmentSourceFixture(
   let journeyError: unknown;
 
   try {
+    options?.onWorkspaceCreated?.(workspace);
     const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     cleanupSteps.unshift(() => pluginClient.close());
     const previousConfig = await pluginClient.getDaemonConfig();
