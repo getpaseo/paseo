@@ -526,6 +526,10 @@ function isClaudeTurnInit(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
 
+function isClaudeTaskNotification(message: SDKMessage): boolean {
+  return message.type === "system" && message.subtype === "task_notification";
+}
+
 function firstStringField(
   input: Record<string, unknown>,
   primaryKey: string,
@@ -2414,6 +2418,13 @@ class ClaudeAgentSession implements AgentSession {
    * failed turn shows the same text as its error, so showing both would repeat it.
    */
   private withheldErrorReply: AgentTimelineItem[] = [];
+  /**
+   * Task notification rows that arrived between turns. A background command that finishes while
+   * Claude is idle makes Claude start a turn of its own, and the notification comes before that
+   * turn opens. The row waits here so it lands in the turn it starts: a row with no turn would
+   * join the turn before it to the one after. A notification no turn follows is released as is.
+   */
+  private taskNotificationsAwaitingTurn: AgentStreamEvent[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
@@ -2539,6 +2550,8 @@ class ClaudeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    // They arrived before this message, so they are not part of its turn.
+    this.releaseTaskNotificationsAwaitingTurn();
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
@@ -3122,6 +3135,7 @@ class ClaudeAgentSession implements AgentSession {
     // AgentManager settles the run after runtime release. Preserve cleanup records
     // without reporting this closure as an explicit turn cancellation.
     this.flushPendingToolCalls();
+    this.releaseTaskNotificationsAwaitingTurn();
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
@@ -4179,6 +4193,26 @@ class ClaudeAgentSession implements AgentSession {
     this.contextUsage.beginTurn();
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
     this.syncTurnState("autonomous turn started");
+    this.releaseTaskNotificationsAwaitingTurn();
+  }
+
+  /** Keeps back the row of a task notification that arrived between turns. Returns the rest. */
+  private holdTaskNotificationUntilTurn(
+    message: SDKMessage,
+    events: AgentStreamEvent[],
+  ): AgentStreamEvent[] {
+    const inTurn = Boolean(this.activeForegroundTurnId ?? this.autonomousTurn);
+    if (inTurn || !isClaudeTaskNotification(message)) return events;
+    this.taskNotificationsAwaitingTurn.push(...events.filter((event) => event.type === "timeline"));
+    return events.filter((event) => event.type !== "timeline");
+  }
+
+  /** Emits the waiting rows into the turn that is active now, or into none. */
+  private releaseTaskNotificationsAwaitingTurn(): void {
+    const rows = this.taskNotificationsAwaitingTurn;
+    if (rows.length === 0) return;
+    this.taskNotificationsAwaitingTurn = [];
+    this.dispatchEvents(rows);
   }
 
   private completeAutonomousTurn(): void {
@@ -4420,6 +4454,8 @@ class ClaudeAgentSession implements AgentSession {
     if (message.state === "idle") {
       this.mainTurnInFlight = false;
       this.completeAutonomousTurn();
+      // Nothing is running, so no turn is coming for them.
+      this.releaseTaskNotificationsAwaitingTurn();
     }
     return true;
   }
@@ -4521,7 +4557,7 @@ class ClaudeAgentSession implements AgentSession {
       this.foregroundHasVisibleActivity = true;
     }
 
-    this.dispatchEvents(events);
+    this.dispatchEvents(this.holdTaskNotificationUntilTurn(message, events));
   }
 
   private async buildPumpedMessageEvents(
