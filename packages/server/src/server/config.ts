@@ -1,5 +1,6 @@
 import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
+import { compareSync } from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePaseoNodeEnv } from "./paseo-env.js";
@@ -21,6 +22,7 @@ import type {
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
+import { resolveReadyFleetCommitmentLedgerPath } from "./fleet-commitment-control.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import { readSpeechSettings } from "./speech/speech-settings.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
@@ -494,14 +496,41 @@ function resolveListenAddress(
 function resolveAuthConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
+  deckCredential?: string,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  if (password && deckCredential && compareSync(deckCredential, password)) {
+    throw new Error("Owner and Deck credentials must differ");
   }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
+  if (!password && !deckCredential) return undefined;
+  return {
+    ...(password ? { password } : {}),
+    ...(deckCredential ? { firstmateDeckCredential: hashDaemonPassword(deckCredential) } : {}),
+  };
+}
+
+function resolveFleetCommitmentControls(
+  ledgerPath: string | undefined,
+  credential: string | undefined,
+): PaseoDaemonConfig["fleetCommitmentControls"] {
+  if (Boolean(ledgerPath) !== Boolean(credential)) {
+    throw new Error("Fleet controls require both ledger path and Deck credential");
+  }
+  return ledgerPath
+    ? { ledgerPath: resolveReadyFleetCommitmentLedgerPath(path.resolve(expandTilde(ledgerPath))) }
     : undefined;
+}
+
+function consumeFleetEnvironment(env: NodeJS.ProcessEnv): {
+  credential: string | undefined;
+  ledgerPath: string | undefined;
+} {
+  const credential = env.PASEO_FIRSTMATE_DECK_CREDENTIAL?.trim() || undefined;
+  const ledgerPath = env.PASEO_FLEET_COMMITMENT_LEDGER_PATH?.trim() || undefined;
+  delete env.PASEO_FIRSTMATE_DECK_CREDENTIAL;
+  delete env.PASEO_FLEET_COMMITMENT_LEDGER_PATH;
+  return { credential, ledgerPath };
 }
 
 function resolveWorktreesRoot(
@@ -608,7 +637,9 @@ export function resolveConfigFromPersisted(
   persisted: PersistedConfig,
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
-  const env = configurationEnvironment(options?.env ?? process.env);
+  const sourceEnv = options?.env ?? process.env;
+  const fleetEnvironment = consumeFleetEnvironment(sourceEnv);
+  const env = configurationEnvironment(sourceEnv);
   const cli = options?.cli;
   const relayEnabledFallback =
     options?.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;
@@ -622,6 +653,10 @@ export function resolveConfigFromPersisted(
   });
   const { openai, speech } = resolveSpeechConfig({ paseoHome, env, persisted });
   const voiceLlm = resolveVoiceLlmConfig(env, persisted);
+  const fleetCommitmentControls = resolveFleetCommitmentControls(
+    fleetEnvironment.ledgerPath,
+    fleetEnvironment.credential,
+  );
   return {
     ...settings,
     listen: resolveListenAddress(env, cli, persisted),
@@ -642,7 +677,8 @@ export function resolveConfigFromPersisted(
     relayPublicUseTls: relay.publicUseTls,
     serviceProxy: resolveServiceProxyConfig(env, persisted),
     webUi: resolveWebUiConfig(paseoHome, env, cli, persisted),
-    auth: resolveAuthConfig(env, persisted),
+    auth: resolveAuthConfig(env, persisted, fleetEnvironment.credential),
+    fleetCommitmentControls,
     openai,
     speech,
     voiceLlmProvider: voiceLlm.provider,
