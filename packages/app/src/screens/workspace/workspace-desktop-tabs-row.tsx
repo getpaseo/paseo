@@ -38,6 +38,7 @@ import type {
   DraggableRenderItemInfo,
 } from "@/components/draggable-list.types";
 import { isNative, isWeb } from "@/constants/platform";
+import { useSidebarResizeGate } from "@/components/sidebar-resize-activity";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -1145,12 +1146,15 @@ function ResolvedWorkspaceDesktopTabsRow({
   }, [measurementCache, labelMeasurements]);
   const [trackSnapshot, setTrackSnapshot] = useState<WorkspaceTabTrackSnapshot | null>(null);
 
+  // A sidebar drag changes this width on every frame, and each publish is a React commit that
+  // stalls the drag's UI-thread updates. Keep measuring, and publish once the drag ends.
+  const offerTabsContainerWidth = useSidebarResizeGate<void>(publishTabsContainerWidth);
   const handleTabsContainerLayout = useCallback(
     (event: LayoutChangeEvent) => {
       tabsWidthRef.current.measured = Math.round(event.nativeEvent.layout.width);
-      publishTabsContainerWidth();
+      offerTabsContainerWidth();
     },
-    [publishTabsContainerWidth],
+    [offerTabsContainerWidth],
   );
 
   const handleExitFocusModeLayout = useCallback((event: LayoutChangeEvent) => {

@@ -9,6 +9,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { HEADER_TOP_PADDING_MOBILE } from "@/constants/layout";
 import { SidebarResizeHandle } from "@/components/sidebar-resize-handle";
+import { beginSidebarResize, endSidebarResize } from "@/components/sidebar-resize-activity";
 import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
@@ -54,6 +55,7 @@ export function useExplorerGeometry({
         .activeOffsetX([-SIDEBAR_RESIZE_ACTIVATION_OFFSET, SIDEBAR_RESIZE_ACTIVATION_OFFSET])
         .failOffsetY([-SIDEBAR_RESIZE_FAIL_OFFSET, SIDEBAR_RESIZE_FAIL_OFFSET])
         .onStart((event) => {
+          runOnJS(beginSidebarResize)();
           const currentWidth = resolveExplorerSidebarFrameWidth({
             width,
             containerWidth,
@@ -79,6 +81,7 @@ export function useExplorerGeometry({
           });
         })
         .onEnd((_event, success) => {
+          runOnJS(endSidebarResize)();
           {
             resize.value = finishExplorerSidebarResize(resize.value, resizeWidth.value, success);
             if (!success || !resize.value) return;

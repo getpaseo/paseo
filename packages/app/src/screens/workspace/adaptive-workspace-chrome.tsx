@@ -1,5 +1,6 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
+import { useSidebarResizeGate } from "@/components/sidebar-resize-activity";
 import { shouldUseCompactWorkspaceHeader } from "./workspace-tab-layout";
 import { WorkspaceTabMeasurementScope } from "./workspace-desktop-tabs-row";
 import type { WorkspaceTabDescriptor } from "./workspace-tabs-types";
@@ -16,10 +17,16 @@ export function AdaptiveWorkspaceChrome({
   children: ReactNode;
 }) {
   const [compact, setCompact] = useState(false);
-  const measure = useCallback((event: LayoutChangeEvent) => {
-    const measured = event.nativeEvent.layout.width;
-    if (measured > 0) setCompact(shouldUseCompactWorkspaceHeader(measured));
-  }, []);
+  // Switching between the full and compact header swaps the whole chrome. A sidebar drag across
+  // the threshold switches it once, where the drag ends.
+  const offerCompact = useSidebarResizeGate(setCompact);
+  const measure = useCallback(
+    (event: LayoutChangeEvent) => {
+      const measured = event.nativeEvent.layout.width;
+      if (measured > 0) offerCompact(shouldUseCompactWorkspaceHeader(measured));
+    },
+    [offerCompact],
+  );
   return (
     <WorkspaceTabMeasurementScope>
       <View onLayout={measure}>{compactHeader !== null && compact ? compactHeader : children}</View>
