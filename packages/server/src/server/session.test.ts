@@ -412,6 +412,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       listAgents: vi.fn(() => []),
       listProviderSubagentActivity: vi.fn(() => []),
       getAgentBackgroundWorkSummary: () => undefined,
+      getRunningProviderSubagentSummary: () => undefined,
       subscribe: vi.fn(() => () => {}),
       ...options.agentManager,
     }),

@@ -589,6 +589,27 @@ class FakeAgentSession implements AgentSession {
     });
   }
 
+  /**
+   * A provider child that keeps running after the turn completes, then finishes on its own a
+   * moment later, the way a Claude background subagent does.
+   */
+  private async emitProviderChildOutlivingTurn(): Promise<void> {
+    const child = (status: "running" | "completed"): AgentStreamEvent => ({
+      type: "provider_subagent",
+      provider: this.providerName,
+      event: { type: "upsert", id: "outliving-child", title: "Outliving child", status },
+    });
+    await this.emitEvent(child("running"));
+    await this.emitEvent({
+      type: "turn_completed",
+      provider: this.providerName,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    setTimeout(() => {
+      this.emitEvent(child("completed")).catch(() => undefined);
+    }, 500);
+  }
+
   private async emitStressTurn(stress: { count: number; coalesced: boolean }): Promise<void> {
     for (let index = 0; index < stress.count; index += 1) {
       const stressUpdate: AgentStreamEvent = {
@@ -830,6 +851,11 @@ class FakeAgentSession implements AgentSession {
         };
         await this.appendHistoryEvent(child);
         this.notifySubscribers(child);
+      }
+
+      if (textPrompt === "Emit a provider child that outlives the turn") {
+        await this.emitProviderChildOutlivingTurn();
+        return;
       }
 
       if (textPrompt === "Start background work") {

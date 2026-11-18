@@ -2258,8 +2258,11 @@ export class Session {
   private forwardProviderSubagent(event: ProviderSubagentManagerEvent): void {
     const parentAgentId =
       event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
-    if (this.agentManager.getAgent(parentAgentId)?.internal) return;
-    this.emitProviderSubagentWorkspaceUpdate(event);
+    const parent = this.agentManager.getAgent(parentAgentId);
+    if (parent?.internal) return;
+    // The parent's snapshot carries its running subagent count, and forwarding it also
+    // refreshes the parent's workspace.
+    if (event.type !== "timeline" && parent) void this.agentUpdates.forwardLiveAgent(parent);
     this.forwardProviderSubagentUpdate(event);
   }
 
@@ -2273,24 +2276,6 @@ export class Session {
       payload: { agentId: event.agentId, items: event.items },
     });
     if (agent) void this.agentUpdates.forwardLiveAgent(agent);
-  }
-
-  private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {
-    if (event.type === "timeline") {
-      return;
-    }
-    const parentAgentId =
-      event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
-    const parent = this.agentManager.getAgent(parentAgentId);
-    if (!parent?.workspaceId) {
-      return;
-    }
-    void this.emitWorkspaceUpdateForWorkspaceId(parent.workspaceId).catch((error) => {
-      this.sessionLogger.error(
-        { err: error, parentAgentId, workspaceId: parent.workspaceId },
-        "Failed to emit provider subagent workspace update",
-      );
-    });
   }
 
   private buildAgentStreamPayload(
@@ -2308,6 +2293,9 @@ export class Session {
 
   private async enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload> {
     payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
+    payload.runningProviderSubagents = this.agentManager.getRunningProviderSubagentSummary(
+      payload.id,
+    );
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;

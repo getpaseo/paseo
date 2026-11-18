@@ -137,6 +137,14 @@ export class ProviderSubagentStore {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
+  countRunning(parentAgentId: string): number {
+    let count = 0;
+    for (const subagent of this.descriptors.values()) {
+      if (subagent.parentAgentId === parentAgentId && subagent.status === "running") count += 1;
+    }
+    return count;
+  }
+
   listAll(): ProviderSubagentDescriptor[] {
     return [...this.descriptors.values()];
   }

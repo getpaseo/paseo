@@ -69,7 +69,7 @@ export function providerSubagentLifecycleStatus(
   return "idle";
 }
 
-export type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
+type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
 
@@ -99,18 +99,6 @@ export function refreshProviderSubagents(
     });
   clientRequests.set(requestKey, request);
   return request;
-}
-
-export function hasRunningProviderSubagents(
-  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
-  serverId: string,
-  parentAgentId: string,
-): boolean {
-  const prefix = parentPrefix(serverId, parentAgentId);
-  for (const [key, subagent] of descriptors) {
-    if (key.startsWith(prefix) && subagent.status === "running") return true;
-  }
-  return false;
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {

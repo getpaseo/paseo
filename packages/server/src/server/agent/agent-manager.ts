@@ -1456,6 +1456,12 @@ export class AgentManager {
     return this.backgroundWork.summary(agentId);
   }
 
+  /** Undefined when none of the agent's provider subagents is running. */
+  getRunningProviderSubagentSummary(agentId: string): { count: number } | undefined {
+    const count = this.providerSubagents.countRunning(agentId);
+    return count > 0 ? { count } : undefined;
+  }
+
   private clearBackgroundWork(agentId: string): void {
     const items = this.backgroundWork.clear(agentId);
     if (items) this.dispatch({ type: "background_work", agentId, items });
@@ -2132,7 +2138,7 @@ export class AgentManager {
       !this.foregroundMutationTails.has(agent.id) &&
       !this.replacementMutationTails.has(agent.id) &&
       !this.sessionEventTails.has(agent.id) &&
-      !this.providerSubagents.list(agent.id).some((child) => child.status === "running")
+      this.providerSubagents.countRunning(agent.id) === 0
     );
   }
 

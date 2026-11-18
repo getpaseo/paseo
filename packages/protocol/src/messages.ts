@@ -921,6 +921,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  /** Provider subagents of this agent still running. Absent when none run or on older daemons. */
+  runningProviderSubagents: z.object({ count: z.number().int().nonnegative() }).optional(),
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
