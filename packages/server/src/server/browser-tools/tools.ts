@@ -1039,14 +1039,6 @@ function summarizeBrowserError(
   switch (error.code) {
     case "browser_disabled":
       return "Browser tools are disabled. Enable browser tools on the host, then try again.";
-    case "browser_no_host":
-      return error.message;
-    case "browser_timeout":
-      return "The browser did not respond before the timeout. Try again or check the browser host.";
-    case "screenshot_no_frame":
-      return error.message;
-    case "browser_unsupported":
-      return error.message;
     case "browser_stale_ref":
       return "That browser element reference is stale. Take a new browser snapshot and try again.";
     default:

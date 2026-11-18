@@ -800,7 +800,8 @@ describe("BrowserToolsBroker", () => {
       ok: false,
       error: {
         code: "browser_timeout",
-        message: "Browser automation timed out after 50ms.",
+        message:
+          "The browser host did not respond within 50ms. Try again or check the browser host.",
         retryable: true,
       },
     });
