@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
+  shouldSuppressCompletionAlerts,
   type ClientPresenceState,
   PRESENCE_THRESHOLD_MS,
 } from "./agent-attention-policy.js";
@@ -230,5 +231,17 @@ describe("isPushEligibleAttentionReason", () => {
     expect(isPushEligibleAttentionReason("finished")).toBe(true);
     expect(isPushEligibleAttentionReason("permission")).toBe(true);
     expect(isPushEligibleAttentionReason("error")).toBe(false);
+  });
+});
+
+describe("shouldSuppressCompletionAlerts", () => {
+  it("uses the background workspace default when the agent has no explicit mute state", () => {
+    expect(shouldSuppressCompletionAlerts({ explicitMute: null, background: true })).toBe(true);
+    expect(shouldSuppressCompletionAlerts({ explicitMute: null, background: false })).toBe(false);
+  });
+
+  it("lets explicit mute and unmute override the workspace default", () => {
+    expect(shouldSuppressCompletionAlerts({ explicitMute: true, background: false })).toBe(true);
+    expect(shouldSuppressCompletionAlerts({ explicitMute: false, background: true })).toBe(false);
   });
 });

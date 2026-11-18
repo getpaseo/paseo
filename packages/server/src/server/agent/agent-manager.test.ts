@@ -9509,7 +9509,7 @@ test("onAgentAttention is not called for internal agents", async () => {
   expect(attentionCalls).toHaveLength(0);
 });
 
-test("onAgentAttention is not called for delegated child agents", async () => {
+test("onAgentAttention is not called for delegated child agents in background workspaces", async () => {
   const childAgentId = "00000000-0000-4000-8000-000000000112";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
@@ -9534,7 +9534,10 @@ test("onAgentAttention is not called for delegated child agents", async () => {
       title: "Delegated Child Agent",
     },
     undefined,
-    { labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" }, workspaceId: undefined },
+    {
+      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+      workspaceId: "background-workspace",
+    },
   );
 
   await manager.runAgent(agent.id, "hello");
