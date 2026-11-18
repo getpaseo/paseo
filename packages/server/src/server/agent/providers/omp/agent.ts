@@ -115,6 +115,7 @@ import {
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
+import { isOmpPlaceholderNarration } from "./narration.js";
 
 const OMP_PROVIDER = "omp";
 const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
@@ -676,6 +677,9 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingClientMessages: Array<{ clientMessageId: string | null; text: string }> =
     [];
   private activeAssistantMessageId: string | null = null;
+  // Assistant text accumulated per message so placeholder-only narration never
+  // reaches the timeline.
+  private readonly assistantTextByMessage = new Map<string, string>();
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
   private outOfBandTurnStartAnnounced = false;
@@ -1226,6 +1230,7 @@ export class OmpAgentSession implements AgentSession {
   private clearOmpTurnState(): void {
     this.hostTools?.clear();
     this.subagentCardTracker.clear();
+    this.assistantTextByMessage.clear();
   }
 
   private terminalizeActiveWork(): void {
@@ -1986,14 +1991,23 @@ export class OmpAgentSession implements AgentSession {
     if (event.assistantMessageEvent.type === "text_delta") {
       // Omp-compatible runtimes may emit updates without a preceding message_start.
       this.activeAssistantMessageId ??= event.message.responseId || randomUUID();
+      const messageId = this.activeAssistantMessageId;
+      const delta = event.assistantMessageEvent.delta ?? "";
+      const accumulated = `${this.assistantTextByMessage.get(messageId) ?? ""}${delta}`;
+      this.assistantTextByMessage.set(messageId, accumulated);
+      // Models answer the tool-description slot with "." when they have nothing
+      // to say; hold the bubble back until the message carries real text.
+      if (isOmpPlaceholderNarration(accumulated)) {
+        return;
+      }
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId,
         item: {
           type: "assistant_message",
-          text: event.assistantMessageEvent.delta ?? "",
-          messageId: this.activeAssistantMessageId,
+          text: delta,
+          messageId,
         },
       });
       return;
@@ -2024,6 +2038,10 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
   ): void {
     if (event.message.role === "assistant") {
+      const finishedMessageId = event.message.responseId ?? this.activeAssistantMessageId;
+      if (finishedMessageId) {
+        this.assistantTextByMessage.delete(finishedMessageId);
+      }
       this.activeAssistantMessageId = null;
       this.questionUi.observeMessage(event.message);
       if (turnId) {
