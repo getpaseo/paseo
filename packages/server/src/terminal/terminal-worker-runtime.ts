@@ -202,6 +202,21 @@ const TRANSIENT_REMOVE_ERRORS = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"
 const TRANSIENT_REMOVE_WINDOW_MS = 3_000;
 const TRANSIENT_REMOVE_PAUSE_MS = 100;
 
+/**
+ * Only Windows clears these codes on its own. On Linux and macOS, EACCES and EPERM mean the daemon
+ * user cannot delete there (a copy left by a daemon that ran under sudo), so a retry only delays
+ * daemon start and stop by the whole window and then fails the same way.
+ */
+export function shouldRetryRemove(input: RemoveFailure): boolean {
+  const { code, platform = process.platform } = input;
+  return platform === "win32" && code !== undefined && TRANSIENT_REMOVE_ERRORS.has(code);
+}
+
+export interface RemoveFailure {
+  code: string | undefined;
+  platform?: NodeJS.Platform;
+}
+
 async function removeCopy(directory: string): Promise<void> {
   const deadline = Date.now() + TRANSIENT_REMOVE_WINDOW_MS;
   for (;;) {
@@ -210,7 +225,7 @@ async function removeCopy(directory: string): Promise<void> {
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (!code || !TRANSIENT_REMOVE_ERRORS.has(code) || Date.now() >= deadline) throw error;
+      if (!shouldRetryRemove({ code }) || Date.now() >= deadline) throw error;
       await delay(TRANSIENT_REMOVE_PAUSE_MS);
     }
   }
