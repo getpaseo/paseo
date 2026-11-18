@@ -421,7 +421,10 @@ describe("AgentManager conversation rewind", () => {
     expect(await childTexts("child-of-B")).toEqual(["working on B"]);
 
     // The provider's history still holds the rewound child; importing it must not bring it back.
-    session.history.push({ type: "assistant_message", text: "continued outside Paseo" });
+    session.history.push(
+      { type: "user_message", text: "C", messageId: "C" },
+      { type: "assistant_message", text: "continued outside Paseo" },
+    );
     session.historySubagentEvents = [
       {
         type: "provider_subagent",
@@ -439,6 +442,10 @@ describe("AgentManager conversation rewind", () => {
       },
     ];
     expect(await reloadAgent(restarted, agentId)).toEqual({ kind: "appended" });
+    expect((await restarted.getTimeline(agentId)).slice(-2)).toMatchObject([
+      { type: "user_message", text: "C" },
+      { type: "assistant_message", text: "continued outside Paseo" },
+    ]);
 
     expect(await listed()).toEqual(["child-of-A"]);
     expect(await childTexts("child-of-B")).toEqual(["working on B"]);
