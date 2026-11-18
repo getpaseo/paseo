@@ -44,6 +44,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "mistral-vibe",
   "nova",
   "poolside",
+  "prime-agent",
   "qoder",
   "qwen-code",
   "sigit",
