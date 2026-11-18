@@ -101,6 +101,18 @@ export function refreshProviderSubagents(
   return request;
 }
 
+export function hasRunningProviderSubagents(
+  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  serverId: string,
+  parentAgentId: string,
+): boolean {
+  const prefix = parentPrefix(serverId, parentAgentId);
+  for (const [key, subagent] of descriptors) {
+    if (key.startsWith(prefix) && subagent.status === "running") return true;
+  }
+  return false;
+}
+
 function parentPrefix(serverId: string, parentAgentId: string): string {
   return `${serverId}\0${parentAgentId}\0`;
 }
