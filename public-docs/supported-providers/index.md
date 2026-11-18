@@ -14,16 +14,16 @@ Paseo runs coding agents that you install and sign in to on your daemon host. Fo
 
 Paseo ships an integration for each of these agents.
 
-- [Antigravity](/docs/antigravity), runs through your installed `agy` CLI.
-- [Claude Code](/docs/claude-code), Anthropic's coding agent.
-- [Codex](/docs/codex), OpenAI's workspace agent.
-- [fx](/docs/fx), Vercel Labs' coding agent.
-- [GitHub Copilot](https://github.com/features/copilot/cli/), GitHub's AI pair programmer.
-- [Hoplite](/docs/hoplite), cloud coding agent.
-- [Muse Code](/docs/muse-code), Meta's terminal coding agent.
-- [Oh My Pi](https://github.com/can1357/oh-my-pi), multi-provider coding agent. It is off by default, so turn it on in **Settings → Hosts → your host → Providers**.
-- [OpenCode](https://opencode.ai/), open-source coding assistant.
-- [Pi](https://pi.dev), minimal terminal coding agent.
+- [Antigravity](/docs/supported-providers/antigravity), runs through your installed `agy` CLI.
+- [Claude Code](/docs/supported-providers/claude-code), Anthropic's coding agent.
+- [Codex](/docs/supported-providers/codex), OpenAI's workspace agent.
+- [fx](/docs/supported-providers/fx), Vercel Labs' coding agent.
+- [GitHub Copilot](/docs/supported-providers/github-copilot), GitHub's AI pair programmer.
+- [Hoplite](/docs/supported-providers/hoplite), cloud coding agent.
+- [Muse Code](/docs/supported-providers/muse-code), Meta's terminal coding agent.
+- [Oh My Pi](/docs/supported-providers/omp), multi-provider coding agent.
+- [OpenCode](/docs/supported-providers/opencode), open-source coding assistant.
+- [Pi](/docs/supported-providers/pi), minimal terminal coding agent.
 
 ## More agents through ACP
 

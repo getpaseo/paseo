@@ -12,16 +12,16 @@ Paseo 运行由你在 daemon 主机上安装并登录的编程 Agent。关于 Pa
 
 Paseo 为以下每个 Agent 都提供了集成。
 
-- [Antigravity](/docs/antigravity)：通过你已安装的 `agy` CLI 运行。
-- [Claude Code](/docs/claude-code)：Anthropic 的编程 Agent。
-- [Codex](/docs/codex)：OpenAI 的工作区 Agent。
-- [fx](/docs/fx)：Vercel Labs 的编程 Agent。
-- [GitHub Copilot](https://github.com/features/copilot/cli/)：GitHub 的 AI 结对编程助手。
-- [Hoplite](/docs/hoplite)：云端编程 Agent。
-- [Muse Code](/docs/muse-code)：Meta 的终端编程 Agent。
-- [Oh My Pi](https://github.com/can1357/oh-my-pi)：支持多家 Provider 的编程 Agent。默认关闭，请在 **设置 → Hosts → 你的主机 → Providers** 中启用。
-- [OpenCode](https://opencode.ai/)：开源编程助手。
-- [Pi](https://pi.dev)：极简的终端编程 Agent。
+- [Antigravity](/docs/supported-providers/antigravity)：通过你已安装的 `agy` CLI 运行。
+- [Claude Code](/docs/supported-providers/claude-code)：Anthropic 的编程 Agent。
+- [Codex](/docs/supported-providers/codex)：OpenAI 的工作区 Agent。
+- [fx](/docs/supported-providers/fx)：Vercel Labs 的编程 Agent。
+- [GitHub Copilot](/docs/supported-providers/github-copilot)：GitHub 的 AI 结对编程助手。
+- [Hoplite](/docs/supported-providers/hoplite)：云端编程 Agent。
+- [Muse Code](/docs/supported-providers/muse-code)：Meta 的终端编程 Agent。
+- [Oh My Pi](/docs/supported-providers/omp)：支持多家 Provider 的编程 Agent。
+- [OpenCode](/docs/supported-providers/opencode)：开源编程助手。
+- [Pi](/docs/supported-providers/pi)：极简的终端编程 Agent。
 
 ## 通过 ACP 运行的更多 Agent {#more-agents-through-acp}
 

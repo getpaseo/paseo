@@ -1,6 +1,52 @@
 import { describe, expect, it } from "vitest";
 import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect, parseHeadings } from "./docs";
 
+describe("provider documentation", () => {
+  it.each(["en", "zh-CN"] as const)(
+    "nests each provider page under Supported providers in %s",
+    (locale) => {
+      const providers = buildDocsNavTree(getDocs(locale)).find(
+        (node) => node.type === "category" && node.label === "Providers",
+      );
+      expect(providers).toMatchObject({
+        children: [
+          { type: "page", href: "/docs/providers" },
+          {
+            type: "group",
+            href: "/docs/supported-providers",
+            children: [
+              { href: "/docs/supported-providers/antigravity" },
+              { href: "/docs/supported-providers/claude-code" },
+              { href: "/docs/supported-providers/codex" },
+              { href: "/docs/supported-providers/fx" },
+              { href: "/docs/supported-providers/github-copilot" },
+              { href: "/docs/supported-providers/hoplite" },
+              { href: "/docs/supported-providers/muse-code" },
+              { href: "/docs/supported-providers/omp" },
+              { href: "/docs/supported-providers/opencode" },
+              { href: "/docs/supported-providers/pi" },
+            ],
+          },
+          { type: "page", href: "/docs/custom-providers" },
+        ],
+      });
+    },
+  );
+
+  it.each(["claude-code", "codex", "muse-code"])(
+    "redirects the old top-level %s link to the page under Supported providers",
+    (slug) => {
+      const target = `/docs/supported-providers/${slug}`;
+      expect(getDoc(target.slice("/docs/".length), "en")).toBeDefined();
+      for (const extension of ["", ".md"]) {
+        expect(getLegacyDocsRedirect(`/docs/${slug}${extension}`)).toBe(`${target}${extension}`);
+        expect(getLegacyDocsRedirect(`/docs/${slug}${extension}/`)).toBe(`${target}${extension}`);
+        expect(getLegacyDocsRedirect(`${target}${extension}`)).toBeUndefined();
+      }
+    },
+  );
+});
+
 describe("plugin documentation", () => {
   it.each(["en", "zh-CN"] as const)(
     "nests local file copying under Git worktrees in %s",

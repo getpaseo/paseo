@@ -16,7 +16,7 @@ Provider 是 Paseo 与某个外部 Agent CLI 之间的约定：如何启动它�
 
 ## 原生支持与 ACP Agent {#native-support-and-acp-agents}
 
-- **原生支持**：Paseo 为以下每个 Agent 都提供了集成：[Antigravity](/docs/antigravity)、[Claude Code](/docs/claude-code)、[Codex](/docs/codex)、[fx](/docs/fx)、GitHub Copilot、[Hoplite](/docs/hoplite)、[Muse Code](/docs/muse-code)、Oh My Pi、OpenCode 和 Pi。其中大多数在安装 CLI 后就会出现在 Paseo 中，并在适用时提供模式元数据和语音支持。
+- **原生支持**：Paseo 为以下每个 Agent 都提供了集成：[Antigravity](/docs/supported-providers/antigravity)、[Claude Code](/docs/supported-providers/claude-code)、[Codex](/docs/supported-providers/codex)、[fx](/docs/supported-providers/fx)、[GitHub Copilot](/docs/supported-providers/github-copilot)、[Hoplite](/docs/supported-providers/hoplite)、[Muse Code](/docs/supported-providers/muse-code)、[Oh My Pi](/docs/supported-providers/omp)、[OpenCode](/docs/supported-providers/opencode) 和 [Pi](/docs/supported-providers/pi)。其中大多数在安装 CLI 后就会出现在 Paseo 中，并在适用时提供模式元数据和语音支持。
 - **ACP Agent**：任何使用 [Agent Client Protocol](https://agentclientprotocol.com) 的 Agent 都可以通过通用适配器运行。应用内目录列出了 Cursor、Gemini CLI、Hermes、Kimi、Qwen Code 等 30 多个 Agent，你也可以自行添加任何其他 ACP Agent。
 
 无论哪种方式，**底层 CLI 都由你安装**，Paseo 负责运行它。

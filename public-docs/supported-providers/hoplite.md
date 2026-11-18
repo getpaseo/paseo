@@ -2,7 +2,7 @@
 title: Hoplite
 description: Install and configure Hoplite for Paseo.
 nav: Hoplite
-order: 27
+order: 28
 category: Providers
 ---
 

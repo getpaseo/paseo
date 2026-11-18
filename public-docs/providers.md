@@ -18,7 +18,7 @@ A provider is the contract between Paseo and one external agent CLI: how to laun
 
 ## Native support and ACP agents
 
-- **Native support.** Paseo ships an integration for each of these agents: [Antigravity](/docs/antigravity), [Claude Code](/docs/claude-code), [Codex](/docs/codex), [fx](/docs/fx), GitHub Copilot, [Hoplite](/docs/hoplite), [Muse Code](/docs/muse-code), Oh My Pi, OpenCode, and Pi. Most of them appear in Paseo when the CLI is installed, with mode metadata and voice support where applicable.
+- **Native support.** Paseo ships an integration for each of these agents: [Antigravity](/docs/supported-providers/antigravity), [Claude Code](/docs/supported-providers/claude-code), [Codex](/docs/supported-providers/codex), [fx](/docs/supported-providers/fx), [GitHub Copilot](/docs/supported-providers/github-copilot), [Hoplite](/docs/supported-providers/hoplite), [Muse Code](/docs/supported-providers/muse-code), [Oh My Pi](/docs/supported-providers/omp), [OpenCode](/docs/supported-providers/opencode), and [Pi](/docs/supported-providers/pi). Most of them appear in Paseo when the CLI is installed, with mode metadata and voice support where applicable.
 - **ACP agents.** Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) through a generic adapter. The in-app catalog lists Cursor, Gemini CLI, Hermes, Kimi, Qwen Code, and 30+ more, and you can add any other ACP agent yourself.
 
 Either way, **you install the underlying CLI**. Paseo runs it.
