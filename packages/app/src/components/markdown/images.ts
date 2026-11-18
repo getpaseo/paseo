@@ -81,7 +81,10 @@ export function useMarkdownSource(
   const results = useFetchQueries(
     acquisitions.map((acquisition, index) => ({
       queryKey: ["markdownImage", acquisition?.key ?? sources[index]],
-      enabled: acquisition !== null,
+      // A host that hasn't connected yet has no client. Its images stay pending until it does: the
+      // key doesn't change when the client arrives, so a read that already failed would not run
+      // again. Markdown with no host has no client to wait for and falls back to its alt text.
+      enabled: acquisition !== null && (context.client != null || !context.serverId),
       immutableWhen: () => true,
       dataShape: "value",
       gcTime: 0,
