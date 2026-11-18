@@ -92,7 +92,11 @@ const pinnedTheme = {
 const testTheme = {
   ...lightTheme,
   ...pinnedTheme,
-  colors: { ...lightTheme.colors, ...pinnedTheme.colors },
+  colors: {
+    ...lightTheme.colors,
+    ...pinnedTheme.colors,
+    palette: { ...lightTheme.colors.palette, ...pinnedTheme.colors.palette },
+  },
 };
 
 type StyleFactory<T> = (theme: typeof testTheme) => T;
