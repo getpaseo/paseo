@@ -104,6 +104,12 @@ Required fields for custom providers:
 - `extends` — which built-in provider to inherit from (or `"acp"`)
 - `label` — display name in the UI
 
+**Copy resume command** resolves inherited native providers using the host's current
+configuration. On POSIX hosts, it includes the configured command prefix and environment
+values in the copied command, including any configured credentials. If you changed a
+provider's session directory or account, the native CLI may no longer find older sessions.
+Custom launch settings on Windows and ACP/plugin persistence remain unsupported.
+
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
 
 ---
