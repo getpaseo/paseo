@@ -4404,8 +4404,10 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private consumeStopResult(message: SDKMessage): boolean {
+    // Until the replacement opens a native turn, an abort can still belong to its predecessor.
     const stop = this.nativeStop;
     if (
+      !this.pendingInterruptAbort &&
       stop &&
       stop.query === this.query &&
       stop.turnId !== undefined &&

@@ -1705,6 +1705,33 @@ test("a terminal abort confirms Stop even if its control reply is lost", async (
   }
 });
 
+test("a prior abort cannot acknowledge Stop for a replacement awaiting its native start", async () => {
+  const queryMock = createInterruptibleQueryMock();
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const internal: InterruptInternals = asInternals(session);
+  const abort = { ...abortedResult(), errors: ["Request was aborted."] };
+  try {
+    await session.startTurn("first");
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+    await session.interrupt();
+
+    const { turnId } = await session.startTurn("replacement");
+    queryMock.cancelAsyncMessage.mockResolvedValueOnce(false);
+    queryMock.interrupt.mockReturnValueOnce(new Promise<void>(() => {}));
+    const stopping = session.interrupt();
+    await vi.waitFor(() => expect(queryMock.interrupt).toHaveBeenCalledTimes(2));
+    await internal.routeSdkMessageFromPump(abort, queryMock);
+    expect(internal.activeForegroundTurnId).toBe(turnId);
+    await internal.routeSdkMessageFromPump(claudeTurnInit(), queryMock);
+    await internal.routeSdkMessageFromPump(abort, queryMock);
+    await stopping;
+    expect(internal.activeForegroundTurnId).toBeNull();
+  } finally {
+    await session.close();
+  }
+});
+
 test("a rejected Claude interrupt leaves the turn active and Stop can retry", async () => {
   const queryMock = createInterruptibleQueryMock();
   queryMock.interrupt.mockRejectedValueOnce(new Error("Native interrupt rejected"));
