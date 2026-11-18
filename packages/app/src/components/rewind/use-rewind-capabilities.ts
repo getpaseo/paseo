@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 
 export type RewindMode = "conversation" | "files" | "both";
@@ -60,9 +61,17 @@ export function resolveRewindMenuItems(
   return items;
 }
 
-export function useRewindCapabilities(
+export function useRewindMenuItems(
   capabilities: Parameters<typeof resolveRewindMenuItems>[0],
-  labels?: Partial<RewindMenuLabels>,
 ): RewindMenuItem[] {
-  return useMemo(() => resolveRewindMenuItems(capabilities, labels), [capabilities, labels]);
+  const { t } = useTranslation();
+  return useMemo(
+    () =>
+      resolveRewindMenuItems(capabilities, {
+        conversation: t("rewind.actions.conversation"),
+        files: t("rewind.actions.files"),
+        both: t("rewind.actions.both"),
+      }),
+    [capabilities, t],
+  );
 }

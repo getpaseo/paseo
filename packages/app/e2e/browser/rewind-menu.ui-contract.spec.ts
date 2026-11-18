@@ -1,11 +1,14 @@
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { openCommandCenter, selectCommandCenterTab } from "../support/helpers/command-center";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { scrollChatAwayFromBottom } from "../support/helpers/agent-bottom-anchor";
 import {
   composerLocator,
   expectComposerDraft,
+  expectComposerFocused,
+  expectComposerNotFocused,
   expectComposerVisible,
   fillComposerDraft,
   submitMessage,
@@ -31,6 +34,17 @@ async function selectRewindOption(page: Page, name: string): Promise<void> {
   // Menus mount offscreen while their anchor and content are measured.
   await expect(option).toBeInViewport({ ratio: 1 });
   await option.click();
+}
+
+async function searchRewindActions(page: Page): Promise<Locator> {
+  const palette = await openCommandCenter(page);
+  await selectCommandCenterTab(palette, "Actions");
+  await palette.getByRole("textbox").fill("rewind last turn");
+  return palette;
+}
+
+function rewindAction(palette: Locator, name: string): Locator {
+  return palette.getByRole("button", { name: `${name} This action cannot be undone`, exact: true });
 }
 
 async function rewriteCachedMessageAsLegacyRow(
@@ -217,6 +231,7 @@ test.describe("Rewind sheet", () => {
       await expect(page.getByText("Cycle 1", { exact: true })).toHaveCount(0);
       await expectUserMessageCount(page, 1);
       await expectComposerDraft(page, firstPrompt);
+      await expectComposerFocused(page);
 
       await submitMessage(page, replacementPrompt);
       await expectUserMessageVisible(page, replacementPrompt);
@@ -232,6 +247,7 @@ test.describe("Rewind sheet", () => {
       await selectRewindOption(page, "Rewind files");
       await expect(page.getByTestId("rewind-menu-content")).toHaveCount(0);
       await expectComposerDraft(page, "");
+      await expectComposerNotFocused(page);
       await expectUserMessageCount(page, 2);
 
       const preservedDraft = "Keep this human draft after rewind.";
@@ -259,6 +275,36 @@ test.describe("Rewind sheet", () => {
     }
   });
 
+  test("rewinds the latest turn from the Command Center", async ({ page }) => {
+    const firstPrompt = "Keep this earlier turn.";
+    const latestPrompt = "Edit this latest turn.";
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "rewind-command-center-e2e-",
+      title: "Command Center rewind",
+      initialPrompt: firstPrompt,
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectComposerVisible(page);
+      await submitMessage(page, latestPrompt);
+      await expectUserMessageVisible(page, latestPrompt);
+      await session.client.waitForFinish(session.agentId);
+
+      const palette = await searchRewindActions(page);
+      await expect(rewindAction(palette, "Rewind files")).toBeVisible();
+      await expect(rewindAction(palette, "Rewind conversation and files")).toBeVisible();
+      await rewindAction(palette, "Rewind conversation").click();
+
+      await expectUserMessageVisible(page, firstPrompt);
+      await expect(userMessage(page, latestPrompt)).toHaveCount(0);
+      await expectComposerDraft(page, latestPrompt);
+      await expectComposerFocused(page);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("surfaces rewind failures without crashing the page", async ({ page }) => {
     const firstPrompt = "emit 1 coalesced agent stream updates for failed rewind turn.";
     const rewindError = "No file checkpoint found for message rewind-failure-e2e.";
@@ -276,6 +322,10 @@ test.describe("Rewind sheet", () => {
       await expectComposerVisible(page);
 
       await expectUserMessageVisible(page, firstPrompt);
+
+      const palette = await searchRewindActions(page);
+      await rewindAction(palette, "Rewind conversation").click();
+      await expect(page.getByTestId("app-toast-message")).toHaveText(rewindError);
 
       await userMessage(page, firstPrompt).hover();
       await page.getByTestId("rewind-menu-trigger").first().click();

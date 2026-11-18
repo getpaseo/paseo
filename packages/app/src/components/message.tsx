@@ -11,8 +11,7 @@ import {
 } from "@/components/attachment-pill";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
-import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
+import { RewindMenu, useRewindAgentMutation, type RewindMode } from "@/components/rewind";
 import { TaskListRow } from "@/components/task-list-row";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useIsCompactFormFactor } from "@/constants/layout";
