@@ -773,7 +773,12 @@ export class PluginRuntime {
             const { subscriptionId } = message;
             void send(child, { type: "unsubscribe", subscriptionId }).catch(() => {});
           }
-          reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
+          // RPCs name their method; other requests (hooks, tools, providers) their message type.
+          const operation =
+            message.type === "invoke" || message.type === "subscribe"
+              ? message.method
+              : message.type;
+          reject(new Error(`Plugin RPC timed out: ${pluginId}.${operation}`));
         },
         message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
       );

@@ -916,6 +916,49 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("names the plugin and method on slow plugin RPCs", async () => {
+    const logger = createLogger();
+    const server = createServer({ logger });
+    const socket = new MockSocket();
+
+    await server.attachExternalSocket(socket, {
+      transport: "relay",
+      relayConnectionId: "relay-conn-1",
+    });
+    socket.emit("message", JSON.stringify(createHelloMessage("cid-slow-plugin-rpc")));
+    await vi.waitFor(() => expect(sentServerInfoEnvelopes(socket)).toHaveLength(1));
+    const rpc = holdNextSessionMessage(sessionMock.instances[0]);
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: {
+          type: "plugin.rpc.invoke.request",
+          requestId: "rpc-1",
+          pluginId: "slow-plugin",
+          method: "overview",
+          input: {},
+        },
+      }),
+    );
+    // Past the 500 ms slow-request threshold.
+    await vi.advanceTimersByTimeAsync(550);
+    rpc.finish();
+
+    await vi.waitFor(() =>
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestType: "plugin.rpc.invoke.request",
+          pluginId: "slow-plugin",
+          method: "overview",
+        }),
+        "ws_slow_request",
+      ),
+    );
+
+    await server.close();
+  });
+
   test("responds to top-level ping while provider diagnostic is still running", async () => {
     const server = createServer();
     const socket = new MockSocket();
