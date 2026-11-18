@@ -10,11 +10,9 @@ import type { OmpRuntimeEvent } from "./rpc-types.js";
 const OMP_PROVIDER = "omp";
 const OMP_RPC_UI_TOOL_APPROVAL_METADATA = "omp_rpc_ui_tool_approval";
 const TOOL_APPROVAL_APPROVE_VALUE = "Approve";
-// OMP labels the approve-this-call choice "Approve Once" when it also offers grants that remember more.
-const TOOL_APPROVAL_ONCE_VALUES: ReadonlySet<string> = new Set([
-  TOOL_APPROVAL_APPROVE_VALUE,
-  "Approve Once",
-]);
+// OMP labels the approve-this-call choice "Approve Once" when it also offers grants that remember
+// more. A grant can then be labeled "Approve", so "Approve" is the one-call choice only without it.
+const TOOL_APPROVAL_ONCE_VALUE = "Approve Once";
 const TOOL_APPROVAL_DENY_VALUE = "Deny";
 // Session and grant choices OMP offers beside the one-call approval, e.g. "Approve write for this session".
 const TOOL_APPROVAL_EXTRA_CHOICE = /^(?:Always )?Approve\b/;
@@ -242,7 +240,9 @@ function readToolApprovalChoices(options: unknown): ToolApprovalChoices | null {
   ) {
     return null;
   }
-  const approveValue = labels.find((label) => TOOL_APPROVAL_ONCE_VALUES.has(label));
+  const approveValue = [TOOL_APPROVAL_ONCE_VALUE, TOOL_APPROVAL_APPROVE_VALUE].find((value) =>
+    labels.includes(value),
+  );
   if (!approveValue) {
     return null;
   }

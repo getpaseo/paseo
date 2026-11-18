@@ -187,6 +187,22 @@ describe("OMP rpc-ui permission mapper", () => {
     ).toEqual({ value: "Always Approve File" });
   });
 
+  test("allows one call when a grant is labeled Approve beside Approve Once", () => {
+    // OMP names the one-call choice "Approve Once" whenever it offers grants. A grant for a
+    // target that is not a file is then labeled "Approve", which remembers more than one call.
+    const grants = classifyOmpRpcUiPermissionRequest({
+      type: "extension_ui_request",
+      id: "grant-target",
+      method: "select",
+      title: "Allow tool: edit\nFile: src/a.ts",
+      options: ["Approve", "Always Approve", "Approve Once", "Deny"],
+    });
+    if (grants.kind !== "tool") throw new Error("Expected grant approval to map as a tool");
+    expect(buildOmpRpcUiPermissionResponse(grants.request, { behavior: "allow" })).toEqual({
+      value: "Approve Once",
+    });
+  });
+
   test("passes through selects whose extra choices are not approvals", () => {
     expect(
       classifyOmpRpcUiPermissionRequest({
