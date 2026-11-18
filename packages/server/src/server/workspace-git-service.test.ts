@@ -1,3 +1,5 @@
+import { CheckoutSession } from "./session/checkout/checkout-session.js";
+import { traceCheckoutRequest, phase } from "../utils/checkout-phase.js";
 import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { existsSync } from "node:fs";
@@ -526,6 +528,159 @@ function createStallingWatchSetup(watchPath: string) {
     },
   };
 }
+
+describe("checkout phase diagnostics", () => {
+  test("links overlapping slow requests to held shared work without leaking inputs", async () => {
+    vi.useFakeTimers();
+    const gate = createDeferred<CheckoutSnapshotFacts>();
+    const started = createDeferred<void>();
+    const service = createService({
+      getCheckoutSnapshotFacts: async () => {
+        started.resolve();
+        return gate.promise;
+      },
+    });
+    const rows: unknown[] = [];
+    const sink = (row: unknown) => rows.push(row);
+    const first = traceCheckoutRequest("secret-request", sink, () =>
+      service.getSnapshot("/tmp/secret-path"),
+    );
+    await started.promise;
+    const second = traceCheckoutRequest("other-secret", sink, () =>
+      service.getSnapshot("/tmp/secret-path"),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "facts", outcome: "start" }),
+        expect.objectContaining({ phase: "refresh_join", outcome: "joined" }),
+      ]),
+    );
+    const requestIds = new Set(rows.map((row) => (row as { requestId: string }).requestId));
+    expect(requestIds.size).toBe(2);
+    expect(JSON.stringify(rows)).not.toContain("secret");
+    gate.resolve(createCheckoutSnapshotFacts(REPO_CWD));
+    await Promise.all([first, second]);
+    await service.dispose();
+    vi.useRealTimers();
+  });
+  test("links a request joining background work without inventing its start", async () => {
+    vi.useFakeTimers();
+    const gate = createDeferred<CheckoutSnapshotFacts>();
+    const started = createDeferred<void>();
+    const service = createService({
+      getCheckoutSnapshotFacts: async () => {
+        started.resolve();
+        return gate.promise;
+      },
+    });
+    const background = service.getSnapshot(REPO_CWD);
+    await started.promise;
+    const rows: Array<{ phase: string; outcome: string; alreadyActive?: boolean }> = [];
+    const request = traceCheckoutRequest(
+      "private",
+      (row) => rows.push(row as (typeof rows)[number]),
+      () => service.getSnapshot(REPO_CWD),
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ phase: "facts", outcome: "start", alreadyActive: true }),
+      ]),
+    );
+    gate.resolve(createCheckoutSnapshotFacts(REPO_CWD));
+    await Promise.all([background, request]);
+    await service.dispose();
+    vi.useRealTimers();
+  });
+
+  test("preserves checkout response while logging a slow held request", async () => {
+    vi.useFakeTimers();
+    const gate = createDeferred<CheckoutSnapshotFacts>();
+    const started = createDeferred<void>();
+    const service = createService({
+      getCheckoutSnapshotFacts: async () => {
+        started.resolve();
+        return gate.promise;
+      },
+    });
+    const emit = vi.fn();
+    const logger = createLogger();
+    const checkout = new CheckoutSession({
+      host: { emit },
+      workspaceGitService: service,
+      phaseLogger: logger,
+    } as unknown as ConstructorParameters<typeof CheckoutSession>[0]);
+    const requestId = "c061b587-4f24-4cc4-815c-67c9e76603ae";
+    const task = checkout.handleStatusRequest({
+      type: "checkout_status_request",
+      cwd: REPO_CWD,
+      requestId,
+    });
+    await started.promise;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId, phase: "facts", outcome: "start" }),
+      "checkout_phase",
+    );
+    gate.resolve(createCheckoutSnapshotFacts(REPO_CWD));
+    await task;
+    expect(emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "checkout_status_response",
+        payload: expect.objectContaining({ requestId, cwd: REPO_CWD, isGit: true }),
+      }),
+    );
+    await service.dispose();
+    vi.useRealTimers();
+  });
+
+  test("bounds slow traces and isolates a failing sink", async () => {
+    vi.useFakeTimers();
+    const rows: Array<{ phase: string; outcome: string }> = [];
+    const gate = createDeferred<void>();
+    const task = traceCheckoutRequest(
+      "private",
+      (row) => {
+        rows.push(row as (typeof rows)[number]);
+        throw new Error("private");
+      },
+      async () => {
+        for (let i = 0; i < 300; i++) phase("facts")();
+        await gate.promise;
+        return 42;
+      },
+    );
+    expect(rows).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rows).toHaveLength(256);
+    expect(rows[255]).toMatchObject({ phase: "limit", outcome: "truncated" });
+    gate.resolve();
+    expect(await task).toBe(42);
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(rows).toHaveLength(256);
+    vi.useRealTimers();
+  });
+
+  test("reports the deadline for unfinished work and keeps fast requests silent", async () => {
+    vi.useFakeTimers();
+    const rows: Array<{ phase: string; outcome: string }> = [];
+    const sink = (row: object) => rows.push(row as (typeof rows)[number]);
+    expect(await traceCheckoutRequest("private", sink, async () => 1)).toBe(1);
+    expect(rows).toHaveLength(0);
+    const gate = createDeferred<void>();
+    const task = traceCheckoutRequest("private", sink, () => gate.promise);
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(rows).toEqual(
+      expect.arrayContaining([expect.objectContaining({ phase: "limit", outcome: "deadline" })]),
+    );
+    const count = rows.length;
+    gate.resolve();
+    await task;
+    expect(rows).toHaveLength(count);
+    vi.useRealTimers();
+  });
+});
 
 describe("WorkspaceGitServiceImpl", () => {
   beforeEach(() => {

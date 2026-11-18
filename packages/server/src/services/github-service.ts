@@ -1,3 +1,4 @@
+import { withPhase } from "../utils/checkout-phase.js";
 import { z } from "zod";
 import {
   isGitHubHost,
@@ -1356,7 +1357,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       ? { ...runOptions, envOverlay: { ...runOptions.envOverlay, GH_HOST: host } }
       : runOptions;
     try {
-      const result = await deps.runner(args, effectiveOptions);
+      const result = await withPhase("forge_runner", () => deps.runner(args, effectiveOptions));
       return result.stdout.trim();
     } catch (error) {
       throw githubCliRunner.normalizeError(error, {
