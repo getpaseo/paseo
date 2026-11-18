@@ -399,6 +399,7 @@ export const ja: TranslationResources = {
       otherPlaceholder: "その他...",
     },
     backgroundWork: {
+      heartbeat: "ハートビート",
       pillOne: "バックグラウンドタスク1件",
       pillMany: "バックグラウンドタスク{{count}}件",
       notRunning: "実行は終了しました",

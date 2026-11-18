@@ -705,7 +705,7 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
   });
   const schedules = agent.client as unknown as Pick<
     DaemonClient,
-    "scheduleCreate" | "scheduleRunOnce" | "scheduleDelete"
+    "scheduleCreate" | "scheduleRunOnce" | "scheduleDelete" | "scheduleList"
   >;
   let scheduleId: string | undefined;
   try {
@@ -743,7 +743,18 @@ test("a scheduled heartbeat opens a separate turn without reopening the previous
     await expect(summaries).toHaveCount(2);
     await expect.poll(() => rowsBetweenLatestSummaryAndReply(page)).toBe(0);
     await expect(page.getByRole("button", { name: /^Worked for/ })).toHaveCount(2);
-    await page.screenshot({ path: "/tmp/heartbeat-turn-footer.png" });
+    const tasks = page.getByRole("button", { name: "1 background task", exact: true });
+    await expect(page.getByTestId("workspace-status-indicator-running").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toHaveCount(0);
+    await tasks.click();
+    const panel = page.getByTestId("background-work-panel");
+    await expect(panel).toContainText("Heartbeat");
+    await panel.getByRole("button", { name: "Stop Check the completed work" }).click();
+    await expect(tasks).toHaveCount(0);
+    await expect(page.getByTestId("workspace-status-indicator-running")).toHaveCount(0);
+    const remaining = await schedules.scheduleList();
+    expect(remaining.error).toBeNull();
+    expect(remaining.schedules.map((schedule) => schedule.id)).not.toContain(scheduleId);
   } finally {
     if (scheduleId) await schedules.scheduleDelete({ id: scheduleId });
     await agent.cleanup();

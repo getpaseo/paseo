@@ -398,6 +398,7 @@ export const ru: TranslationResources = {
       otherPlaceholder: "Другой ответ...",
     },
     backgroundWork: {
+      heartbeat: "Периодический сигнал",
       pillOne: "1 фоновая задача",
       pillMany: "Фоновые задачи: {{count}}",
       notRunning: "Больше не выполняется",
