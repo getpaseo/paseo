@@ -1280,11 +1280,17 @@ describe("live workspace observation", () => {
       lifecycle: "initializing" | "idle" | "running" | "error" | "closed";
       labels: Record<string, string>;
     }> = [{ workspaceId: "ws-tab", lifecycle: "running", labels: tabLabels }];
-    const { session, projects, workspaces, workspaceGitService, agentEventListeners } =
-      createSessionForWorkspaceGitWatchTests({
-        agents,
-        storedAgents: [{ id: "agent-tab", workspaceId: "ws-tab", labels: tabLabels }],
-      });
+    const {
+      session,
+      projects,
+      workspaces,
+      workspaceGitService,
+      agentEventListeners,
+      livenessReads,
+    } = createSessionForWorkspaceGitWatchTests({
+      agents,
+      storedAgents: [{ id: "agent-tab", workspaceId: "ws-tab", labels: tabLabels }],
+    });
     seedGitWorkspace({
       projects,
       workspaces,
@@ -1304,9 +1310,7 @@ describe("live workspace observation", () => {
 
     // The idle clock collects the runtime. The tab stays open, and its label survives on the
     // stored record, so the workspace is still live without a loaded agent.
-    const observer = asInternals<SessionInternals>(session).workspaceGitObserver;
-    const reconcile = vi.spyOn(observer, "reconcileObservers");
-    reconcile.mockClear();
+    const activeRecordReads = livenessReads.listActiveAgentRecords.mock.calls.length;
     agents.length = 0;
     for (const listener of agentEventListeners) {
       listener({
@@ -1314,7 +1318,9 @@ describe("live workspace observation", () => {
         agent: { id: "agent-tab", workspaceId: "ws-tab", lifecycle: "closed", labels: tabLabels },
       });
     }
-    await vi.waitFor(() => expect(reconcile).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(livenessReads.listActiveAgentRecords).toHaveBeenCalledTimes(activeRecordReads + 1),
+    );
 
     expect(session.getRuntimeMetrics().workspaceGitSubscriptionCount).toBe(1);
     expect(watchedCwds(workspaceGitService)).toEqual([tabCwd]);
