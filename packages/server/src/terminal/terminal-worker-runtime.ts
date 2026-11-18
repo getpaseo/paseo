@@ -13,6 +13,7 @@ import {
 import { createRequire } from "node:module";
 import { access, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ensurePrivateDirectory } from "../server/private-files.js";
 import { listTerminalWorkerRecords, terminalWorkerDirectory } from "./terminal-worker-record.js";
@@ -193,9 +194,27 @@ export function prepareTerminalWorkerRuntime(input: {
   return entry;
 }
 
-// rm waits retryDelay × attempt between tries: up to 5.5s in total.
-const WINDOWS_RELEASE_RETRIES = 10;
-const WINDOWS_RELEASE_RETRY_MS = 100;
+// Windows keeps a just-exited worker's files open for a moment, so a delete that fails with one
+// of these codes is retried for a short window. Each attempt is a single rm: rm's own maxRetries
+// repeats at every directory level, so a file that stays locked deep in node-pty would hold
+// daemon start and stop far past any window.
+const TRANSIENT_REMOVE_ERRORS = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+const TRANSIENT_REMOVE_WINDOW_MS = 3_000;
+const TRANSIENT_REMOVE_PAUSE_MS = 100;
+
+async function removeCopy(directory: string): Promise<void> {
+  const deadline = Date.now() + TRANSIENT_REMOVE_WINDOW_MS;
+  for (;;) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !TRANSIENT_REMOVE_ERRORS.has(code) || Date.now() >= deadline) throw error;
+      await delay(TRANSIENT_REMOVE_PAUSE_MS);
+    }
+  }
+}
 
 export interface PruneTerminalWorkerRuntimesResult {
   removed: string[];
@@ -240,13 +259,7 @@ export async function pruneTerminalWorkerRuntimes(
     )
       continue;
     try {
-      // Windows keeps a just-exited worker's files open for a moment; retrying outlasts that.
-      await rm(directory, {
-        recursive: true,
-        force: true,
-        maxRetries: WINDOWS_RELEASE_RETRIES,
-        retryDelay: WINDOWS_RELEASE_RETRY_MS,
-      });
+      await removeCopy(directory);
       result.removed.push(directory);
     } catch (error) {
       result.failed.push({
