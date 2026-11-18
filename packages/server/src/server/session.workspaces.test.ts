@@ -8768,7 +8768,9 @@ test("overlapping workspace rebuilds publish the newest provider subagent status
   providerSubagents.push(runningSubagent);
   listener?.({
     type: "provider_subagent",
-    event: { type: "upsert", subagent: runningSubagent, runningCountChanged: true },
+    // A progress update: it goes straight to the workspace update, so the completion's rebuild
+    // below overlaps it.
+    event: { type: "upsert", subagent: runningSubagent, runningCountChanged: false },
   });
   await firstBuildStarted.promise;
 
