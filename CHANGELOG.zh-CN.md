@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.2 - 2026-11-18
+
+### 修复
+
+- 修复启用“折叠轮次”时，Claude 回复后续后台任务通知导致上一条已完成的回复被折叠的问题 ([#10092](https://github.com/getpaseo/paseo/pull/10092))
+- 修复归档工作区时丢失分离 HEAD 的 worktree 提交的问题 ([#10009](https://github.com/getpaseo/paseo/pull/10009)，贡献者：[@ragokan](https://github.com/ragokan))
+- 修复 Desktop 更新后，由上一次 Desktop 会话启动的旧版 daemon 仍在运行的问题 ([#10067](https://github.com/getpaseo/paseo/pull/10067))
+- 修复更改执行权限后 daemon 与 Hub 断开连接的问题 ([#10113](https://github.com/getpaseo/paseo/pull/10113))
+- 修复一条已保存的主机记录无法读取时，其他主机也消失的问题 ([#9847](https://github.com/getpaseo/paseo/pull/9847)，贡献者：[@ragokan](https://github.com/ragokan))
+- 修复创建 worktree 时，扫描 `.worktreeinclude` 未指定的大型忽略目录导致超时的问题 ([#10020](https://github.com/getpaseo/paseo/pull/10020)，贡献者：[@mgranderath](https://github.com/mgranderath))
+- 修复发送引导消息时取消 Claude 正在进行的上下文压缩的问题 ([#10028](https://github.com/getpaseo/paseo/pull/10028)，贡献者：[@NightMachinery](https://github.com/NightMachinery))
+- 修复 Provider 重用已取消的轮次 ID 时，再次停止导致 Agent 卡住的问题 ([#9774](https://github.com/getpaseo/paseo/pull/9774)，贡献者：[@DAnaeto](https://github.com/DAnaeto))
+- 修复 Desktop 渲染进程意外退出后窗口一直空白的问题 ([#10035](https://github.com/getpaseo/paseo/pull/10035))
+- 修复 Web 和 Desktop 上文件下载失败时，错误页面占据应用窗口的问题 ([#9937](https://github.com/getpaseo/paseo/pull/9937)，贡献者：[@panta82](https://github.com/panta82))
+- 修复在“导入会话”中选择“加载更多”时丢失滚动位置的问题 ([#9974](https://github.com/getpaseo/paseo/pull/9974))
+- 修复主目录所在的文件系统拒绝 Unix 套接字时无法打开终端的问题，例如 AFS ([#9214](https://github.com/getpaseo/paseo/pull/9214)，贡献者：[@bendavid](https://github.com/bendavid))
+- 修复 Git 监视器设置超时后反复扫描大型仓库的问题 ([#9828](https://github.com/getpaseo/paseo/pull/9828)，贡献者：[@Spshulem](https://github.com/Spshulem))
+- 修复 `paseo workspace create --path .` 使用本地 daemon 的目录而非命令所在目录的问题 ([#10010](https://github.com/getpaseo/paseo/pull/10010))
+- 修复针对空闲 Agent 查询 MCP 状态或列表时漏报后台任务的问题 ([#10022](https://github.com/getpaseo/paseo/pull/10022)，贡献者：[@ortschun](https://github.com/ortschun))
+- 修复 OMP 更改思考级别后，选择器仍显示旧级别的问题 ([#9841](https://github.com/getpaseo/paseo/pull/9841)，贡献者：[@dsingal0](https://github.com/dsingal0))
+
 ## 0.16.1 - 2026-11-17
 
 ### 修复
