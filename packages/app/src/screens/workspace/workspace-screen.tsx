@@ -156,6 +156,10 @@ import {
   useWorkspaceNewTabKeyboardAction,
   type WorkspaceDesktopTabRowItem,
 } from "@/screens/workspace/workspace-desktop-tabs-row";
+import {
+  WorkspaceTabRailLayout,
+  WorkspaceTopTabRail,
+} from "@/screens/workspace/workspace-tab-rail-layout";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import {
@@ -1383,6 +1387,7 @@ function WorkspaceScreenContent({
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
+  const tabRailPlacement = useSettings((settings) => settings.tabRailPlacement);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
   const sheets = useWorkspaceLayoutStore((state) =>
@@ -3649,6 +3654,36 @@ function WorkspaceScreenContent({
     composerFullscreen: useComposerTabFullscreen(workspacePanelKey, activeTabId),
   });
 
+  const desktopPaneFallbackTabs = shouldRenderDesktopPaneFallback ? (
+    <NewTabLauncherProvider value={newTabLauncher}>
+      <WorkspaceDesktopTabsRow
+        placement={tabRailPlacement}
+        paneId={focusedPaneIdOrUndefined}
+        ownsKeyboardShortcuts={false}
+        isFocused={isRouteFocused}
+        tabs={desktopTabRowItems}
+        normalizedServerId={normalizedServerId}
+        normalizedWorkspaceId={normalizedWorkspaceId}
+        setHoveredCloseTabKey={setHoveredCloseTabKey}
+        onNavigateTab={navigateToTabId}
+        onCloseTab={handleCloseTabById}
+        onCopyResumeCommand={handleCopyResumeCommand}
+        onCopyAgentId={handleCopyAgentId}
+        onCopyTerminalId={handleCopyTerminalId}
+        onCopyFilePath={handleCopyFilePath}
+        onReloadAgent={handleReloadAgent}
+        onRenameTab={handleRenameTab}
+        onCloseTabsToLeft={handleCloseTabsToLeft}
+        onCloseTabsToRight={handleCloseTabsToRight}
+        onCloseOtherTabs={handleCloseOtherTabs}
+        onCreateNewTab={handleCreateNewTab}
+        onReorderTabs={handleReorderTabsInFocusedPane}
+        focusModeEnabled={desktopFocusModeEnabled}
+        onExitFocusMode={toggleFocusMode}
+      />
+    </NewTabLauncherProvider>
+  ) : null;
+
   // Compact sheets escape to the app overlay host, above both sidebars.
   const workspaceCenterColumn = isMobile ? (
     <View style={styles.centerColumn}>
@@ -3674,38 +3709,16 @@ function WorkspaceScreenContent({
           {fullWorkspaceActions}
           {renderWorkspaceScreenHeader()}
 
-          {shouldRenderDesktopPaneFallback ? (
-            <NewTabLauncherProvider value={newTabLauncher}>
-              <WorkspaceDesktopTabsRow
-                paneId={focusedPaneIdOrUndefined}
-                ownsKeyboardShortcuts={false}
-                isFocused={isRouteFocused}
-                tabs={desktopTabRowItems}
-                normalizedServerId={normalizedServerId}
-                normalizedWorkspaceId={normalizedWorkspaceId}
-                setHoveredCloseTabKey={setHoveredCloseTabKey}
-                onNavigateTab={navigateToTabId}
-                onCloseTab={handleCloseTabById}
-                onCopyResumeCommand={handleCopyResumeCommand}
-                onCopyAgentId={handleCopyAgentId}
-                onCopyTerminalId={handleCopyTerminalId}
-                onCopyFilePath={handleCopyFilePath}
-                onReloadAgent={handleReloadAgent}
-                onRenameTab={handleRenameTab}
-                onCloseTabsToLeft={handleCloseTabsToLeft}
-                onCloseTabsToRight={handleCloseTabsToRight}
-                onCloseOtherTabs={handleCloseOtherTabs}
-                onCreateNewTab={handleCreateNewTab}
-                onReorderTabs={handleReorderTabsInFocusedPane}
-                focusModeEnabled={desktopFocusModeEnabled}
-                onExitFocusMode={toggleFocusMode}
-              />
-            </NewTabLauncherProvider>
-          ) : null}
+          <WorkspaceTopTabRail placement={tabRailPlacement}>
+            {desktopPaneFallbackTabs}
+          </WorkspaceTopTabRail>
         </AdaptiveWorkspaceChrome>
       )}
       <View style={styles.centerContent}>
-        <View style={styles.content}>{desktopContent}</View>
+        <WorkspaceTabRailLayout placement={tabRailPlacement} yieldsToCompactHeader>
+          {desktopPaneFallbackTabs}
+          <View style={styles.content}>{desktopContent}</View>
+        </WorkspaceTabRailLayout>
       </View>
     </DesktopCenterColumnChrome>
   );

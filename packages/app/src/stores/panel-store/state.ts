@@ -22,6 +22,10 @@ export const DEFAULT_TREE_RAIL_WIDTH = 260;
 export const MIN_TREE_RAIL_WIDTH = 180;
 export const MAX_TREE_RAIL_WIDTH = 600;
 
+export const DEFAULT_TAB_RAIL_WIDTH = 220;
+export const MIN_TAB_RAIL_WIDTH = 140;
+export const MAX_TAB_RAIL_WIDTH = 480;
+
 export interface PanelLayoutInput {
   isCompact: boolean;
 }
@@ -52,6 +56,10 @@ export function clampSidebarWidth(width: number): number {
 
 export function clampTreeRailWidth(width: number): number {
   return clampNumber(width, MIN_TREE_RAIL_WIDTH, MAX_TREE_RAIL_WIDTH);
+}
+
+export function clampTabRailWidth(width: number): number {
+  return clampNumber(width, MIN_TAB_RAIL_WIDTH, MAX_TAB_RAIL_WIDTH);
 }
 
 export function selectIsAgentListOpen(state: PanelCoreState, input: PanelLayoutInput): boolean {
@@ -142,6 +150,7 @@ export const PanelPersistedStateSchema = z.strictObject({
   explorerShowHiddenFiles: z.boolean().optional(),
   explorerFilesSplitRatio: z.number().optional(),
   treeRailWidth: z.number().optional(),
+  tabRailWidth: z.number().optional(),
   fileTreeVisible: z.boolean().optional(),
 });
 

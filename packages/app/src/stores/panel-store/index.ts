@@ -2,13 +2,17 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
+  clampTabRailWidth,
   clampTreeRailWidth,
   clampSidebarWidth,
+  DEFAULT_TAB_RAIL_WIDTH,
   DEFAULT_TREE_RAIL_WIDTH,
   dropOverlayAgentList,
   DEFAULT_SIDEBAR_WIDTH,
+  MAX_TAB_RAIL_WIDTH,
   MAX_TREE_RAIL_WIDTH,
   MAX_SIDEBAR_WIDTH,
+  MIN_TAB_RAIL_WIDTH,
   MIN_TREE_RAIL_WIDTH,
   MIN_SIDEBAR_WIDTH,
   migratePanelState,
@@ -38,8 +42,10 @@ export type {
 export {
   DEFAULT_TREE_RAIL_WIDTH,
   DEFAULT_SIDEBAR_WIDTH,
+  MAX_TAB_RAIL_WIDTH,
   MAX_TREE_RAIL_WIDTH,
   MAX_SIDEBAR_WIDTH,
+  MIN_TAB_RAIL_WIDTH,
   MIN_TREE_RAIL_WIDTH,
   MIN_SIDEBAR_WIDTH,
   clampTreeRailWidth,
@@ -69,6 +75,8 @@ export interface PanelState {
   explorerSortOption: SortOption;
   explorerShowHiddenFiles: boolean;
   treeRailWidth: number;
+  /** Width of a pane's tab rail when it is placed on the left; one value for every pane. */
+  tabRailWidth: number;
   // File panel's tree rail. The changes panel keeps its own flag in
   // `useChangesPreferences`; the two rails open and close independently.
   fileTreeVisible: boolean;
@@ -96,6 +104,7 @@ export interface PanelState {
   setExplorerSortOption: (option: SortOption) => void;
   toggleExplorerShowHiddenFiles: () => void;
   setTreeRailWidth: (width: number) => void;
+  setTabRailWidth: (width: number) => void;
   toggleFileTreeVisible: () => void;
 }
 
@@ -137,6 +146,7 @@ export const usePanelStore = create<PanelState>()(
       explorerSortOption: "name",
       explorerShowHiddenFiles: true,
       treeRailWidth: DEFAULT_TREE_RAIL_WIDTH,
+      tabRailWidth: DEFAULT_TAB_RAIL_WIDTH,
       fileTreeVisible: true,
 
       toggleFocusMode: () =>
@@ -255,6 +265,7 @@ export const usePanelStore = create<PanelState>()(
       toggleExplorerShowHiddenFiles: () =>
         set((state) => ({ explorerShowHiddenFiles: !state.explorerShowHiddenFiles })),
       setTreeRailWidth: (width) => set({ treeRailWidth: clampTreeRailWidth(width) }),
+      setTabRailWidth: (width) => set({ tabRailWidth: clampTabRailWidth(width) }),
       toggleFileTreeVisible: () => set((state) => ({ fileTreeVisible: !state.fileTreeVisible })),
     }),
     {
@@ -271,6 +282,7 @@ export const usePanelStore = create<PanelState>()(
         explorerSortOption: state.explorerSortOption,
         explorerShowHiddenFiles: state.explorerShowHiddenFiles,
         treeRailWidth: state.treeRailWidth,
+        tabRailWidth: state.tabRailWidth,
         fileTreeVisible: state.fileTreeVisible,
       }),
     },
