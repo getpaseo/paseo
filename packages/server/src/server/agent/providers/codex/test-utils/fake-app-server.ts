@@ -109,6 +109,9 @@ export interface FakeCodexAppServer {
   completesSilentCommand(params: FakeSilentCommand): void;
   completesSilentLegacyCommand(params: FakeSilentCommand): void;
   startsTerminalCommand(params: FakeTerminalCommand): void;
+  /** Codex settles a command or file change the user denied as `declined`. */
+  declinesCommand(params: FakeTerminalCommand): void;
+  declinesFileChange(params: FakeFileChange): void;
   typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
@@ -580,6 +583,34 @@ export function createFakeCodexAppServer(
           status: "inProgress",
           command: params.command,
           processId: params.processId,
+        },
+      });
+    },
+    declinesCommand(params) {
+      writeNotification("item/completed", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        item: {
+          type: "commandExecution",
+          id: params.itemId,
+          status: "declined",
+          command: params.command,
+          aggregatedOutput: null,
+          exitCode: null,
+        },
+      });
+    },
+    declinesFileChange(params) {
+      writeNotification("item/completed", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        item: {
+          type: "fileChange",
+          id: params.callId,
+          status: "declined",
+          changes: [
+            { path: params.path, kind: { type: "update", move_path: null }, diff: params.diff },
+          ],
         },
       });
     },
