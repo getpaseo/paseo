@@ -4453,10 +4453,14 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  /** Tracks notificationTurnId from the starts Claude announces between turns. */
+  /**
+   * Tracks notificationTurnId from the starts Claude announces between turns. A task a subagent
+   * started reports to that subagent, so its notification starts no main-session turn.
+   */
   private observeNotificationTurn(message: SDKMessage): void {
     if (this.activeForegroundTurnId || this.autonomousTurn) return;
     if (message.type === "system" && message.subtype === "task_notification") {
+      if (this.taskProtocolSource.resolveTaskOwner(message.task_id, message.tool_use_id)) return;
       this.notificationTurnId = this.createTurnId("autonomous");
     } else if (readClaudeCommandLifecycle(message)?.state === "started") {
       this.notificationTurnId = null;

@@ -2244,3 +2244,38 @@ test("a notification during a turn belongs to that turn", async () => {
 
   await session.close();
 });
+
+test("a background subagent's own job notification does not start a main-session turn", async () => {
+  const { session, events, route } = await createObservedSession();
+
+  // The helper runs a background Bash of its own; its notification reports to the helper.
+  await route(helperTaskStarted, {
+    type: "assistant",
+    parent_tool_use_id: "toolu_helper",
+    session_id: "sess-1",
+    message: {
+      id: "msg-helper-bash",
+      role: "assistant",
+      model: "opus",
+      content: [{ type: "tool_use", id: "toolu_subagent_bash", name: "Bash", input: {} }],
+    },
+  });
+
+  await route(backgroundCommandNotification("sleep-40", "completed"), backgroundTasksChanged);
+  const [notificationTurnId] = notificationRowTurnIds(events);
+  await route(subagentOwnedTaskNotification);
+  expect(
+    events.some(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call" &&
+        event.event.item.name === "task_notification",
+    ),
+  ).toBe(true);
+
+  await route(claudeTurnInit());
+  expect(startedTurnIds(events)).toEqual([notificationTurnId]);
+
+  await session.close();
+});
