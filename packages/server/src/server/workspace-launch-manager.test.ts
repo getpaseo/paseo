@@ -1886,77 +1886,93 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("keeps a running peer service reservation while allocating a launch block", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "paseo-launch-running-peer-service-"));
-    tempDirs.push(directory);
-    const workspaceId = "workspace-launch-running-peer-service";
-    writeFileSync(
-      join(directory, "paseo.json"),
-      JSON.stringify({
-        worktree: { servicePorts: { range: "43000-43007", blockSize: 4 } },
-        scripts: {
-          dev: { type: "service", command: "./bin/dev", port: 43_000 },
-          full: { type: "service", command: "./bin/full", port: 43_001 },
-        },
-        launches: {
-          dev: { command: "./bin/dev" },
-          full: { command: "./bin/full" },
-        },
-      }),
-    );
-    await ensureWorkspaceServicePortPlan({
-      workspaceId,
-      services: [
-        { scriptName: "dev", port: 43_000 },
-        { scriptName: "full", port: 43_001 },
-      ],
-      allocatePort: async () => {
-        throw new Error("Configured service ports must not request dynamic allocation");
-      },
-    });
-    const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
-    scriptRuntimeStore.set({
-      workspaceId,
-      scriptName: "full",
-      type: "service",
-      lifecycle: "running",
-      terminalId: "terminal-full-service",
-      exitCode: null,
-    });
-    const manager = new WorkspaceLaunchManager({
-      terminalManager: createTerminalManager().manager,
-      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
-      scriptRuntimeStore,
-      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
-        random: () => 0,
-        checkPortAvailable: async () => true,
-      }),
-      assertAutomationAllowed: async () => {},
-      getDaemonTcpPort: () => 6767,
-      serviceProxyPublicBaseUrl: null,
-      resolveScriptHealth: null,
-      endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
-      logger: pino({ level: "silent" }),
-    });
-    const context = {
-      workspaceId,
-      workspaceDirectory: directory,
-      projectSlug: "example-project",
-      branchName: "feature/launch",
-    };
-
-    try {
-      await expect(manager.start(context, "dev")).resolves.toMatchObject({
-        portBase: 43_002,
-        portEnd: 43_005,
-        portCount: 4,
+  it.each(["runtime store", "surviving worker"] as const)(
+    "protects a peer service port tracked by the %s",
+    async (owner) => {
+      const directory = mkdtempSync(join(tmpdir(), "paseo-launch-running-peer-service-"));
+      tempDirs.push(directory);
+      const workspaceId = "workspace-launch-running-peer-service";
+      writeFileSync(
+        join(directory, "paseo.json"),
+        JSON.stringify({
+          worktree: { servicePorts: { range: "43000-43007", blockSize: 4 } },
+          scripts: {
+            dev: { type: "service", command: "./bin/dev", port: 43_000 },
+            full: { type: "service", command: "./bin/full", port: 43_001 },
+          },
+          launches: {
+            dev: { command: "./bin/dev" },
+            full: { command: "./bin/full" },
+          },
+        }),
+      );
+      const terminalManager = createTerminalManager();
+      const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
+      if (owner === "surviving worker") {
+        await terminalManager.manager.createTerminal({
+          cwd: join(directory, "previous-checkout"),
+          workspaceId,
+          name: "renamed-service-terminal",
+          workspaceScriptName: "full",
+        });
+      } else {
+        await ensureWorkspaceServicePortPlan({
+          workspaceId,
+          services: [
+            { scriptName: "dev", port: 43_000 },
+            { scriptName: "full", port: 43_001 },
+          ],
+          allocatePort: async () => {
+            throw new Error("Configured service ports must not request dynamic allocation");
+          },
+        });
+        scriptRuntimeStore.set({
+          workspaceId,
+          scriptName: "full",
+          type: "service",
+          lifecycle: "running",
+          terminalId: "terminal-full-service",
+          exitCode: null,
+        });
+      }
+      const manager = new WorkspaceLaunchManager({
+        terminalManager: terminalManager.manager,
+        serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+        scriptRuntimeStore,
+        workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+          random: () => 0,
+          checkPortAvailable: async () => true,
+        }),
+        assertAutomationAllowed: async () => {},
+        getDaemonTcpPort: () => 6767,
+        serviceProxyPublicBaseUrl: null,
+        resolveScriptHealth: null,
+        endpointProbe: { probeTcp: async () => false, probeHttp: async () => false },
+        logger: pino({ level: "silent" }),
       });
-      expect(getAllReservedWorkspaceServicePorts()).toEqual(new Set([43_001]));
-    } finally {
-      await manager.disposeWorkspace(workspaceId);
-      releaseWorkspaceServicePortPlan(workspaceId);
-    }
-  });
+      const context = {
+        workspaceId,
+        workspaceDirectory: directory,
+        projectSlug: "example-project",
+        branchName: "feature/launch",
+      };
+
+      try {
+        await expect(manager.start(context, "dev")).resolves.toMatchObject({
+          portBase: 43_002,
+          portEnd: 43_005,
+          portCount: 4,
+        });
+        expect(getAllReservedWorkspaceServicePorts()).toEqual(
+          new Set(owner === "runtime store" ? [43_001] : []),
+        );
+        expect(terminalManager.killed).toEqual([]);
+      } finally {
+        await manager.disposeWorkspace(workspaceId);
+        releaseWorkspaceServicePortPlan(workspaceId);
+      }
+    },
+  );
 
   it("reserves service ports shadowed only by a worktree-local launch", async () => {
     const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-launch-project-service-"));

@@ -253,17 +253,21 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (activeLaunchName === launchName && activeRuntime?.lifecycle === "running") {
       return this.toPayload(context, launchName);
     }
+    // Worker ownership survives daemon restarts, including for services that
+    // have not bound their port yet and have no script runtime record.
+    const workspaceTerminals = await this.getWorkspaceTerminals(context.workspaceId);
     const suppressedServiceNames = this.getSuppressedServiceNames(
       context,
       configResult.config,
       launchName,
+      workspaceTerminals,
     );
     const configuredServicePorts = await this.getConfiguredServicePorts(
       context,
       configResult.config,
       suppressedServiceNames,
     );
-    await this.stopSupersededScript(context, launchName);
+    await this.stopSupersededScript(context, launchName, workspaceTerminals);
     await releaseWorkspaceServicePorts(context.workspaceId, Array.from(suppressedServiceNames));
     const environment =
       this.deps.workspaceRuntimeEnvironment.get(context.workspaceId) ??
@@ -827,15 +831,22 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     context: WorkspaceLaunchContext,
     projectConfig: PaseoConfig | null,
     activeLaunchName: string,
+    workspaceTerminals: readonly TerminalSession[],
   ): Set<string> {
     const launchNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
+    const workerOwnedScriptNames = new Set(
+      workspaceTerminals.map((terminal) => terminal.workspaceScriptName),
+    );
 
     return new Set(
       Array.from(launchNames).filter(
         (name) =>
           name === activeLaunchName ||
-          this.deps.scriptRuntimeStore?.get({ workspaceId: context.workspaceId, scriptName: name })
-            ?.lifecycle !== "running",
+          (!workerOwnedScriptNames.has(name) &&
+            this.deps.scriptRuntimeStore?.get({
+              workspaceId: context.workspaceId,
+              scriptName: name,
+            })?.lifecycle !== "running"),
       ),
     );
   }
@@ -843,6 +854,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
   private async stopSupersededScript(
     context: WorkspaceLaunchContext,
     launchName: string,
+    workspaceTerminals: readonly TerminalSession[],
   ): Promise<void> {
     const runtimeStore = this.deps.scriptRuntimeStore;
     const runtime = runtimeStore?.get({ workspaceId: context.workspaceId, scriptName: launchName });
@@ -852,9 +864,7 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
       if (runtime?.lifecycle === "running" && terminalManager.getTerminal(runtime.terminalId)) {
         terminalIds.add(runtime.terminalId);
       }
-      // The daemon's runtime store is empty after restart. Recover script ownership
-      // from the worker, never from a user terminal's name or its current directory.
-      for (const terminal of await this.getWorkspaceTerminals(context.workspaceId)) {
+      for (const terminal of workspaceTerminals) {
         if (terminal.workspaceScriptName === launchName) {
           terminalIds.add(terminal.id);
         }
