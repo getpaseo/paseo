@@ -22,7 +22,7 @@ interface AgentTimelineState {
   minSeq: number;
   nextSeq: number;
 }
-const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
+export const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 function cloneRow<T extends AgentTimelineRow>(row: T): T {
   return { ...row };
 }
