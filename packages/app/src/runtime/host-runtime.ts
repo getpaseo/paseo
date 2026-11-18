@@ -1818,10 +1818,7 @@ export class HostRuntimeStore {
       }
       projectIconCache.setHosts(profiles.map((profile) => profile.serverId));
       await projectIconCache.restore();
-      // Publish the hosts in the same step that creates their runtimes, so anything that reads
-      // a host can already acquire its directory.
-      this.hosts = profiles;
-      this.syncHosts(profiles);
+      this.setHostsAndSync(profiles);
       for (const profile of profiles) {
         void this.directorySyncByServer
           .get(profile.serverId)

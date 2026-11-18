@@ -2909,7 +2909,8 @@ describe("HostRuntimeStore", () => {
       await registryLoaded;
 
       expect(store.isHostRegistryLoaded()).toBe(true);
-      expect(hostListNotifications).toBe(2);
+      // Publishing the restored hosts, the registry turning ready, and the registry loading.
+      expect(hostListNotifications).toBe(3);
     } finally {
       if (previousOverride === undefined) {
         delete process.env.EXPO_PUBLIC_LOCAL_DAEMON;
