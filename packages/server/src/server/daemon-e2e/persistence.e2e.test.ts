@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { createDaemonTestContext, type DaemonTestContext } from "../test-utils/index.js";
+import { AgentStorage } from "../agent/agent-storage.js";
+import { captureModelSwitchAnchor } from "../agent/model-switch-history.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { SessionOutboundMessage } from "../messages.js";
 
 function tmpCwd(): string {
@@ -103,6 +106,27 @@ describe("daemon E2E - persistence", () => {
       const afterMessage = await ctx.client.waitForFinish(agentId, 5_000);
       expect(afterMessage.status).toBe("idle");
       expect(afterMessage.final?.persistence).toBeTruthy();
+      await ctx.client.setAgentModel(agentId, "model-after-restart");
+      await ctx.daemon.daemon.agentManager.flush();
+      const storedBefore = await new AgentStorage(
+        path.join(ctx.daemon.paseoHome, "agents"),
+        createTestLogger(),
+      ).get(agentId);
+      expect(storedBefore?.modelSwitches).toHaveLength(1);
+      const before = await ctx.client.fetchAgentTimeline(agentId, {
+        direction: "tail",
+        limit: 100,
+        projection: "canonical",
+      });
+      expect(storedBefore?.modelSwitches?.[0]?.anchor).toEqual(
+        captureModelSwitchAnchor(before.entries.map((entry) => entry.item)),
+      );
+      expect(before.entries.map((entry) => entry.item)).toContainEqual({
+        type: "notification",
+        level: "info",
+        message: "Switched to model-after-restart",
+        modelChange: { model: "model-after-restart" },
+      });
 
       await ctx.cleanup();
       ctx = await createDaemonTestContext({ paseoHomeRoot, cleanup: false });
@@ -112,12 +136,38 @@ describe("daemon E2E - persistence", () => {
         messages.push(message);
       });
 
+      const storedAfter = await new AgentStorage(
+        path.join(ctx.daemon.paseoHome, "agents"),
+        createTestLogger(),
+      ).get(agentId);
+      expect(storedAfter?.modelSwitches).toHaveLength(1);
       const timeline = await ctx.client.fetchAgentTimeline(agentId, {
         direction: "tail",
-        limit: 0,
+        limit: 100,
+        projection: "canonical",
+      });
+      expect(ctx.daemon.daemon.agentManager.getTimeline(agentId)).toContainEqual({
+        type: "notification",
+        level: "info",
+        message: "Switched to model-after-restart",
+        modelChange: { model: "model-after-restart" },
       });
       const timelineItems = timeline.entries.map((entry) => entry.item);
-      expect(timelineItems.length).toBeGreaterThan(0);
+      expect(storedAfter?.modelSwitches?.[0]?.anchor).toEqual(
+        captureModelSwitchAnchor(timelineItems),
+      );
+      expect(timelineItems).toContainEqual({
+        type: "notification",
+        level: "info",
+        message: "Switched to model-after-restart",
+        modelChange: { model: "model-after-restart" },
+      });
+      expect(timelineItems.map((item) => item.type)).toEqual(["assistant_message", "notification"]);
+      const reread = await ctx.client.fetchAgentTimeline(agentId, {
+        direction: "tail",
+        limit: 100,
+      });
+      expect(reread.entries.map((entry) => entry.item)).toEqual(timelineItems);
       const assistantMessages = timelineItems.filter(
         (item): item is Extract<(typeof timelineItems)[number], { type: "assistant_message" }> =>
           item.type === "assistant_message",
