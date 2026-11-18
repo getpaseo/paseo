@@ -151,6 +151,7 @@ export type WorktreeTeardownCommandResult = WorktreeSetupCommandResult;
 // (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). A teardown that runs to this limit, or to a longer
 // one, answers after the app has reported the archive as failed.
 const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 60_000;
+const MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM = 1024 * 1024;
 
 export class WorktreeTeardownError extends Error {
   readonly results: WorktreeTeardownCommandResult[];
@@ -461,12 +462,14 @@ async function execSetupCommandStreamed(options: {
   index: number;
   total: number;
   signal?: AbortSignal;
+  maxOutputCharsPerStream?: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+    const outputChunks: Record<"stdout" | "stderr", string[]> = { stdout: [], stderr: [] };
+    const outputLimit = options.maxOutputCharsPerStream ?? Infinity;
+    const remainingOutputChars = { stdout: outputLimit, stderr: outputLimit };
     let settled = false;
     let termination: Promise<unknown> | null = null;
 
@@ -475,10 +478,10 @@ async function execSetupCommandStreamed(options: {
       if (!text) {
         return;
       }
-      if (stream === "stdout") {
-        stdoutChunks.push(text);
-      } else {
-        stderrChunks.push(text);
+      const retainedText = text.slice(0, remainingOutputChars[stream]);
+      if (retainedText) {
+        outputChunks[stream].push(retainedText);
+        remainingOutputChars[stream] -= retainedText.length;
       }
       options.onEvent?.({
         type: "output",
@@ -506,8 +509,8 @@ async function execSetupCommandStreamed(options: {
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
-        stdout: stdoutChunks.join(""),
-        stderr: stderrChunks.join(""),
+        stdout: outputChunks.stdout.join(""),
+        stderr: outputChunks.stderr.join(""),
         exitCode,
         durationMs: Date.now() - startedAt,
       };
@@ -786,9 +789,7 @@ export async function runWorktreeTeardownCommands(options: {
     }),
   );
 
-  // One deadline covers every command. A command still running then is stopped with its process
-  // tree and counts as failed, which keeps the worktree. Output streams instead of filling a
-  // buffer, so a command that prints a lot still succeeds.
+  // One deadline covers every command. Reaching it counts as failure and keeps the worktree.
   const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
   const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
@@ -800,6 +801,7 @@ export async function runWorktreeTeardownCommands(options: {
       index: index + 1,
       total: teardownCommands.length,
       signal: deadline,
+      maxOutputCharsPerStream: MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM,
     });
     results.push(result);
 
