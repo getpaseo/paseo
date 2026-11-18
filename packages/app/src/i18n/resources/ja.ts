@@ -2713,6 +2713,8 @@ export const ja: TranslationResources = {
         closeCurrentTab: "現在のタブを閉じる",
         jumpToWorkspace: "ワークスペースにジャンプ",
         jumpToTab: "タブにジャンプ",
+        goBack: "戻る",
+        goForward: "進む",
         previousWorkspace: "前のワークスペース",
         nextWorkspace: "次のワークスペース",
         previousTab: "前のタブ",

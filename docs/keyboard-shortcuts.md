@@ -14,6 +14,11 @@ Keyboard navigation needs the sidebar's filtered workspace model even when its v
 panel is hidden. Retain that model while keyboard navigation is active; gating it on
 panel visibility leaves number shortcuts with no targets after a compact startup.
 
+Back and Forward use the app window's history of focused workspace tabs. Tab selection lives
+in the workspace layout, so router history alone cannot restore it. Record visible visits after
+the workspace and its tab selection commit, and replay them through the existing workspace and
+tab navigation helpers.
+
 Composer send-key customization remains a separate capability. Native retains its
 existing Return submission path; advertising its web-only customization would expose
 settings the native composer does not implement.

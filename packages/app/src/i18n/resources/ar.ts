@@ -2724,6 +2724,8 @@ export const ar: TranslationResources = {
         closeCurrentTab: "إغلاق علامة التبويب الحالية",
         jumpToWorkspace: "انتقل إلى مساحة العمل",
         jumpToTab: "انتقل إلى علامة التبويب",
+        goBack: "رجوع",
+        goForward: "تقدّم",
         previousWorkspace: "مساحة العمل السابقة",
         nextWorkspace: "مساحة العمل التالية",
         previousTab: "علامة التبويب السابقة",

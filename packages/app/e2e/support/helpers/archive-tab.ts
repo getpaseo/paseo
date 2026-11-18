@@ -177,7 +177,7 @@ export async function resetSeededPageState(page: Page): Promise<void> {
 
 export async function openWorkspaceWithAgents(
   page: Page,
-  agents: [ArchiveTabAgent, ArchiveTabAgent],
+  agents: readonly ArchiveTabAgent[],
 ): Promise<void> {
   const serverId = getServerId();
   for (const agent of agents) {

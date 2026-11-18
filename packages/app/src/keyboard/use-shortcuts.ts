@@ -8,7 +8,6 @@ import { hasActiveOverlay } from "./internal/overlay-dispatch";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   type ChordState,
@@ -30,6 +29,8 @@ import { buildOpenProjectRoute } from "@/utils/host-routes";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
+  navigateToWorkspace,
+  navigateWorkspaceVisitHistory,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
 
@@ -132,6 +133,9 @@ export function useKeyboardShortcuts({
           return true;
         }
         router.replace(buildOpenProjectRoute());
+        return true;
+      case "navigate-workspace-history":
+        navigateWorkspaceVisitHistory(action.direction, activeWorkspaceSelection);
         return true;
       case "router-replace":
         router.replace(action.route as Parameters<typeof router.replace>[0]);

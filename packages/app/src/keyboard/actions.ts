@@ -40,6 +40,8 @@ export type KeyboardActionId =
   | "workspace.pane.close"
   | "workspace.navigate.index"
   | "workspace.navigate.relative"
+  | "workspace.history.back"
+  | "workspace.history.forward"
   | "sidebar.toggle.left"
   | "sidebar.toggle.right"
   | "sidebar.toggle.both"
