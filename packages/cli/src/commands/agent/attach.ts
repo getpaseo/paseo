@@ -124,7 +124,19 @@ export async function runAttachCommand(
     const resolvedId = fetchResult.agent.id;
 
     if (options.json === true || options.format?.trim().toLowerCase() === "json") {
-      await runJsonAttach(client, resolvedId);
+      await runJsonAttach(
+        {
+          history: () =>
+            fetchProjectedTimelineItems({
+              client,
+              agentId: resolvedId,
+              timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS,
+            }),
+          subscribe: (handler) => client.subscribeAgentTimeline(resolvedId, handler),
+          close: () => client.close(),
+        },
+        resolvedId,
+      );
       return;
     }
 
@@ -175,31 +187,40 @@ export async function runAttachCommand(
 }
 
 /** JSON attach owns shutdown before history can write to a closed reader. */
-async function runJsonAttach(client: DaemonClient, agentId: string): Promise<void> {
+export interface JsonAttachPort {
+  history(): Promise<AgentTimelineItem[]>;
+  subscribe: (
+    handler: Parameters<DaemonClient["subscribeAgentTimeline"]>[1],
+  ) => ReturnType<DaemonClient["subscribeAgentTimeline"]>;
+  close(): Promise<void>;
+  write?: (chunk: string) => void;
+  notice?: (message: string, error?: unknown) => void;
+  wait?: (signal: AbortSignal) => Promise<void>;
+}
+
+export async function runJsonAttach(port: JsonAttachPort, agentId: string): Promise<void> {
   const controller = new AbortController();
-  const stopped = waitForStop(controller.signal);
-  const writer = createFollowJsonWriter();
+  const stopped = (port.wait ?? waitForStop)(controller.signal);
+  const writer = createFollowJsonWriter(undefined, port.write);
+  const notice = port.notice ?? console.error;
   let unsubscribe: (() => void) | undefined;
   try {
-    console.error(`Fetching history for agent ${agentId.substring(0, 7)}...`);
-    console.error(`(Press Ctrl+C to detach)\n`);
+    notice(`Fetching history for agent ${agentId.substring(0, 7)}...`);
+    notice(`(Press Ctrl+C to detach)\n`);
     try {
-      const history = await Promise.race([
-        fetchProjectedTimelineItems({ client, agentId, timeoutMs: LIVE_HISTORY_FETCH_TIMEOUT_MS }),
-        stopped,
-      ]);
+      const history = await Promise.race([port.history(), stopped]);
       if (!history) return;
       for (const item of history) writer.push(item);
     } catch (error) {
-      console.warn("Warning: failed to fetch existing timeline", error);
+      notice("Warning: failed to fetch existing timeline", error);
     }
-    const subscription = client.subscribeAgentTimeline(agentId, (message) => {
+    const subscription = port.subscribe((message) => {
       if (message.type === "agent.timeline.replacement") {
-        console.error("\n[Timeline replaced; earlier output is no longer current]");
+        notice("\n[Timeline replaced; earlier output is no longer current]");
       } else if (message.type === "agent.timeline.subscription_restored") {
-        console.error("\n[Reconnected; live output resumed. Events may have been missed.]");
+        notice("\n[Reconnected; live output resumed. Events may have been missed.]");
       } else if (message.type === "agent.timeline.error") {
-        console.error(`Timeline observation stopped: ${message.payload.error}`);
+        notice(`Timeline observation stopped: ${message.payload.error}`);
       } else if (message.payload.event.type === "timeline") {
         writer.push(message.payload.event.item);
       }
@@ -207,13 +228,13 @@ async function runJsonAttach(client: DaemonClient, agentId: string): Promise<voi
     unsubscribe = subscription;
     const ready = await Promise.race([subscription.ready.then(() => true), stopped]);
     if (!ready) return;
-    console.error(`Attached to agent ${agentId.substring(0, 7)}.`);
+    notice(`Attached to agent ${agentId.substring(0, 7)}.`);
     await stopped;
-    console.error("\n\nDetaching from agent...");
+    notice("\n\nDetaching from agent...");
   } finally {
     controller.abort();
     writer.end();
     unsubscribe?.();
-    await client.close();
+    await port.close();
   }
 }
