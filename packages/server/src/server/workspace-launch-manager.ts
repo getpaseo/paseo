@@ -253,19 +253,18 @@ export class WorkspaceLaunchManager implements WorkspaceLaunchService {
     if (activeLaunchName === launchName && activeRuntime?.lifecycle === "running") {
       return this.toPayload(context, launchName);
     }
-    await this.stopSupersededScript(context, launchName);
-
-    const suppressedServiceNames = await this.getSuppressedServiceNames(
+    const suppressedServiceNames = this.getSuppressedServiceNames(
       context,
       configResult.config,
       launchName,
     );
-    await releaseWorkspaceServicePorts(context.workspaceId, Array.from(suppressedServiceNames));
     const configuredServicePorts = await this.getConfiguredServicePorts(
       context,
       configResult.config,
       suppressedServiceNames,
     );
+    await this.stopSupersededScript(context, launchName);
+    await releaseWorkspaceServicePorts(context.workspaceId, Array.from(suppressedServiceNames));
     const environment =
       this.deps.workspaceRuntimeEnvironment.get(context.workspaceId) ??
       (await this.deps.workspaceRuntimeEnvironment.ensure({

@@ -1187,12 +1187,11 @@ describe("WorkspaceLaunchManager", () => {
         launches: { dev: { command: "./bin/project-dev" } },
       }),
     );
-    writeFileSync(
-      join(workspaceDirectory, "paseo.json"),
-      JSON.stringify({
-        scripts: { dev: { type: "service", command: "./bin/legacy-dev" } },
-      }),
-    );
+    const workspaceConfigPath = join(workspaceDirectory, "paseo.json");
+    const workspaceConfig = JSON.stringify({
+      scripts: { dev: { type: "service", command: "./bin/legacy-dev" } },
+    });
+    writeFileSync(workspaceConfigPath, workspaceConfig);
 
     const terminalManager = createTerminalManager();
     const runtimeStore = new WorkspaceScriptRuntimeStore();
@@ -1238,6 +1237,14 @@ describe("WorkspaceLaunchManager", () => {
         expect.objectContaining({ launchName: "dev", lifecycle: "stopped" }),
       ]);
 
+      writeFileSync(workspaceConfigPath, "{");
+      await expect(manager.start(context, "dev")).rejects.toThrow("paseo.json");
+      expect(terminalManager.killed).toEqual([]);
+      expect(
+        runtimeStore.get({ workspaceId: context.workspaceId, scriptName: "dev" }),
+      ).toMatchObject({ lifecycle: "running", terminalId: legacyTerminal.id });
+
+      writeFileSync(workspaceConfigPath, workspaceConfig);
       await manager.start(context, "dev");
 
       expect(terminalManager.killed).toEqual([legacyTerminal.id]);

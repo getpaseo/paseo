@@ -279,6 +279,24 @@ paseo launch start dev
 paseo launch stop dev
 ```
 
+To try switching in a scratch project with Node.js, set `launches` in `paseo.json` to:
+
+```json
+{
+  "launches": {
+    "dev": {
+      "command": "node -e \"require('node:http').createServer((req, res) => res.end('dev')).listen(Number(process.env.PASEO_PORT_BASE), '127.0.0.1')\""
+    },
+    "full": {
+      "command": "node -e \"require('node:http').createServer((req, res) => res.end('full')).listen(Number(process.env.PASEO_PORT_BASE), '127.0.0.1')\""
+    }
+  }
+}
+```
+
+Start `dev` from **Run** and open its discovered HTTP link. Switch to `full` and open its link.
+The response changes from `dev` to `full` while the port block stays the same.
+
 ### Reverse proxy
 
 Every service is reachable through the daemon at a deterministic hostname:
