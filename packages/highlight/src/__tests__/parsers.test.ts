@@ -26,6 +26,10 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("prod.tfvars")).toBe(true);
     expect(isLanguageSupported("terragrunt.hcl")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
+    expect(isLanguageSupported("app/models/user.rb")).toBe(true);
+    expect(isLanguageSupported("lib/tasks/db.rake")).toBe(true);
+    expect(isLanguageSupported("paseo.gemspec")).toBe(true);
+    expect(isLanguageSupported("config.ru")).toBe(true);
     expect(isLanguageSupported("Counter.svelte")).toBe(true);
     expect(isLanguageSupported("Page.astro")).toBe(true);
     expect(isLanguageSupported("App.vue")).toBe(true);
@@ -71,6 +75,7 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("tf");
     expect(extensions).toContain("tfvars");
     expect(extensions).toContain("hcl");
+    expect(extensions).toContain("rb");
     expect(extensions).toContain("json");
     expect(extensions).toContain("svelte");
     expect(extensions).toContain("astro");

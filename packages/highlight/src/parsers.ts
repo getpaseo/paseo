@@ -1,5 +1,6 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { ruby } from "@codemirror/legacy-modes/mode/ruby";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -27,6 +28,8 @@ import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
 }
+
+const rubyLanguage = StreamLanguage.define(ruby);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -87,6 +90,11 @@ const languagesByExtension: Record<string, Language> = {
   tf: hclLanguage,
   tfvars: hclLanguage,
   hcl: hclLanguage,
+  // Ruby
+  rb: rubyLanguage,
+  rake: rubyLanguage,
+  gemspec: rubyLanguage,
+  ru: rubyLanguage,
   // Elixir
   ex: language(elixirParser),
   exs: language(elixirParser),
