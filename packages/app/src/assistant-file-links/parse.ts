@@ -171,7 +171,9 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
     return null;
   }
 
-  const normalizedPath = normalizeFileUrlPath(parsedUrl.pathname);
+  // Strip syntax before decoding so an escaped colon remains part of the filename.
+  const inlineTarget = parseInlinePathToken(parsedUrl.pathname);
+  const normalizedPath = normalizeFileUrlPath(inlineTarget?.path ?? parsedUrl.pathname);
   if (!normalizedPath) {
     return null;
   }
@@ -184,7 +186,8 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   return {
     raw: value,
     path: normalizedPath,
-    ...lines,
+    lineStart: lines.lineStart ?? inlineTarget?.lineStart,
+    lineEnd: lines.lineStart === undefined ? inlineTarget?.lineEnd : lines.lineEnd,
   };
 }
 

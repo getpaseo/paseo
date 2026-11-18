@@ -7,6 +7,7 @@ import type {
 } from "react-native-enriched-markdown";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useFileLink } from "@/assistant-file-links";
+import { FileLinkContextMenu } from "@/assistant-file-links/context-menu.web";
 import { useForgeShorthand } from "@/git/forge-shorthand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
@@ -35,9 +36,10 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const forgeShorthand = useForgeShorthand();
   // A forge reference like `#12` carries its web URL so hover, copy and new-tab opens work.
   const forgeUrl = link.sourceType === "text" ? forgeShorthand?.resolve(link.url) : null;
-  const { tooltipPath, onHoverIn } = useFileLink(
-    forgeUrl ? markdownLinkSource(forgeUrl) : markdownLinkSource(link.url, link.sourceType),
-  );
+  const source = forgeUrl
+    ? markdownLinkSource(forgeUrl)
+    : markdownLinkSource(link.url, link.sourceType);
+  const { tooltipPath, onHoverIn, canResolveFile } = useFileLink(source);
   const tooltip = forgeUrl ?? tooltipPath;
   const [hovered, setHovered] = useState(false);
   const handleMouseEnter = useCallback(() => setHovered(true), []);
@@ -45,6 +47,7 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const anchorStyle = useMemo(
     () => ({
       ...anchorProps.style,
+      display: "inline",
       overflowWrap: "anywhere" as const,
       ...(hovered ? LINK_HOVER_STYLE : null),
     }),
@@ -62,18 +65,24 @@ function WebLink({ link, anchorProps, children }: LinkRendererProps) {
     </a>
   );
   return (
-    <Tooltip delayDuration={400}>
-      <TooltipTrigger asChild onHoverIn={onHoverIn}>
-        <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
-      </TooltipTrigger>
-      {tooltip ? (
-        <TooltipContent side="top" align="start" maxWidth={520}>
-          <Text selectable={false} style={styles.tooltipPath}>
-            {tooltip}
-          </Text>
-        </TooltipContent>
-      ) : null}
-    </Tooltip>
+    <FileLinkContextMenu
+      source={source}
+      enabled={canResolveFile}
+      key={`${source.sourceType}:${source.href}`}
+    >
+      <Tooltip delayDuration={400}>
+        <TooltipTrigger asChild onHoverIn={onHoverIn}>
+          <InlineLinkTrigger>{anchor}</InlineLinkTrigger>
+        </TooltipTrigger>
+        {tooltip ? (
+          <TooltipContent side="top" align="start" maxWidth={520}>
+            <Text selectable={false} style={styles.tooltipPath}>
+              {tooltip}
+            </Text>
+          </TooltipContent>
+        ) : null}
+      </Tooltip>
+    </FileLinkContextMenu>
   );
 }
 // TooltipTrigger also supplies native Pressable handlers; forward only DOM events.
