@@ -201,6 +201,48 @@ describe("checkout-git-actions-store", () => {
     expect(store.getStatus({ serverId, cwd, actionId: "create-pr" })).toBe("success");
   });
 
+  it("shares the PR workflow lock across entry points through generation and approval", async () => {
+    const generation = createDeferred<unknown>();
+    const checkoutPrCreate = vi.fn(() => generation.promise);
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client: { checkoutPrCreate } } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+    const toolbar = useCheckoutGitActionsStore.getState();
+    const release = toolbar.acquirePrWorkflow({ serverId, cwd });
+    expect(typeof release).toBe("function");
+    if (!release) throw new Error("Expected toolbar to acquire the workflow");
+    const preview = toolbar.preparePr({ serverId, cwd });
+    const commandCenter = useCheckoutGitActionsStore.getState();
+    expect(commandCenter.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    expect(commandCenter.acquirePrWorkflow({ serverId, cwd })).toBeNull();
+    generation.resolve({ error: null, proposal: { id: "preview" } });
+    await preview;
+    // Generation is done, but the approval dialog still owns the workflow.
+    expect(commandCenter.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    expect(commandCenter.acquirePrWorkflow({ serverId, cwd })).toBeNull();
+    expect(checkoutPrCreate).toHaveBeenCalledTimes(1);
+    release();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(false);
+    const nextRelease = commandCenter.acquirePrWorkflow({ serverId, cwd });
+    expect(typeof nextRelease).toBe("function");
+    release();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(true);
+    nextRelease?.();
+    expect(toolbar.isPrWorkflowPending({ serverId, cwd })).toBe(false);
+  });
+
+  it("does not lock another checkout or host during PR approval", () => {
+    const store = useCheckoutGitActionsStore.getState();
+    const release = store.acquirePrWorkflow({ serverId, cwd });
+    expect(store.isPrWorkflowPending({ serverId, cwd: "/other" })).toBe(false);
+    expect(store.isPrWorkflowPending({ serverId: "other-host", cwd })).toBe(false);
+    release?.();
+  });
+
   it("surfaces a refresh error and returns to idle", async () => {
     const client = {
       checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),

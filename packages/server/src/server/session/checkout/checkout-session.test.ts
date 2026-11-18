@@ -2065,6 +2065,9 @@ it("previews related issues and creates only explicitly approved issue links", a
       approved.headSha,
     );
     expect(git(created.worktreePath, "rev-parse", "HEAD")).not.toBe(approved.headSha);
+    expect(git(created.worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(
+      `origin/${created.branchName}`,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

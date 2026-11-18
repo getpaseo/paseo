@@ -4430,6 +4430,9 @@ export async function createPullRequest(
     ? ["push", "origin", `${options.approvedHeadSha}:refs/heads/${head}`]
     : ["push", "-u", "origin", head];
   await runGitCommand(pushArgs, { cwd, timeout: 120_000 });
+  if (options.approvedHeadSha) {
+    await runGitCommand(["branch", `--set-upstream-to=origin/${head}`, "--", head], { cwd });
+  }
 
   const result = await forgeService.createPullRequest({
     cwd,

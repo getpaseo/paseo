@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
 import { Info } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -333,8 +333,8 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const [postShipArchiveSuggested, setPostShipArchiveSuggested] = useState(false);
   const [shipDefault, setShipDefault] = useState<"merge" | "pr">("pr");
-  const [isPreparingPr, setIsPreparingPr] = useState(false);
-  const preparingPrRef = useRef(false);
+  const isPreparingPr = useCheckoutGitActionsStore((s) => s.isPrWorkflowPending({ serverId, cwd }));
+  const acquirePrWorkflow = useCheckoutGitActionsStore((s) => s.acquirePrWorkflow);
 
   const { status, isLoading: isStatusLoading } = useCheckoutStatusQuery({ serverId, cwd });
   const gitStatus = status && status.isGit ? status : null;
@@ -541,10 +541,9 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
   }, [cwd, runPullAndPush, serverId, t, toastActionError, toastActionSuccess]);
 
   const handleCreatePr = useCallback(() => {
-    if (preparingPrRef.current) return;
-    preparingPrRef.current = true;
+    const release = acquirePrWorkflow({ serverId, cwd });
+    if (!release) return;
     void persistShipDefault("pr");
-    setIsPreparingPr(true);
     void (async () => {
       try {
         // COMPAT(checkoutPrPreview): added in v0.16.0, remove after 2027-05-13
@@ -594,14 +593,14 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
       } catch (err) {
         toastActionError(err, t("workspace.git.actions.toasts.failedCreatePr"));
       } finally {
-        preparingPrRef.current = false;
-        setIsPreparingPr(false);
+        release();
       }
     })();
   }, [
     cwd,
     forge,
     persistShipDefault,
+    acquirePrWorkflow,
     preparePr,
     prPreviewSupported,
     runCreatePr,

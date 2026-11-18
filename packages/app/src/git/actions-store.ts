@@ -95,6 +95,9 @@ function inFlightKey(key: CheckoutKey, actionId: CheckoutGitAsyncActionId): stri
 
 interface CheckoutGitActionsStoreState {
   statusByCheckout: Record<CheckoutKey, StatusMap>;
+  prWorkflowByCheckout: Record<CheckoutKey, boolean>;
+  isPrWorkflowPending: (params: { serverId: string; cwd: string }) => boolean;
+  acquirePrWorkflow: (params: { serverId: string; cwd: string }) => (() => void) | null;
 
   getStatus: (params: {
     serverId: string;
@@ -185,6 +188,20 @@ async function runCheckoutAction({
 
 export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()((set, get) => ({
   statusByCheckout: {},
+  prWorkflowByCheckout: {},
+  isPrWorkflowPending: ({ serverId, cwd }) =>
+    get().prWorkflowByCheckout[checkoutKey(serverId, cwd)] === true,
+  acquirePrWorkflow: ({ serverId, cwd }) => {
+    const key = checkoutKey(serverId, cwd);
+    if (get().prWorkflowByCheckout[key]) return null;
+    set((state) => ({ prWorkflowByCheckout: { ...state.prWorkflowByCheckout, [key]: true } }));
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      set((state) => ({ prWorkflowByCheckout: { ...state.prWorkflowByCheckout, [key]: false } }));
+    };
+  },
 
   getStatus: ({ serverId, cwd, actionId }) => {
     const key = checkoutKey(serverId, cwd);
@@ -413,5 +430,5 @@ export function __resetCheckoutGitActionsStoreForTests() {
   }
   successTimers.clear();
   inFlight.clear();
-  useCheckoutGitActionsStore.setState({ statusByCheckout: {} });
+  useCheckoutGitActionsStore.setState({ statusByCheckout: {}, prWorkflowByCheckout: {} });
 }
