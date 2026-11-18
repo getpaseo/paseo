@@ -126,6 +126,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import type { AgentBackgroundWorkInput } from "../background-work/index.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
 import { resolveResumeProcessCwd } from "./resume-process-cwd.js";
 import {
@@ -1905,6 +1906,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
+  // How many items the agent's last _paseo/background_work listed (applyBackgroundWork)
+  private backgroundWorkCount = 0;
   private historyPending = false;
   private historyRuntimeReleased = false;
   private replayingHistory = false;
@@ -2790,10 +2793,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async canStopRuntime(): Promise<boolean> {
+    // Work the agent reported (applyBackgroundWork) keeps its runtime, as a native provider's does
     return (
       this.activeForegroundTurnId === null &&
       this.pendingPermissions.size === 0 &&
       this.pendingUserMessage === null &&
+      this.backgroundWorkCount === 0 &&
       !Array.from(this.terminalEntries.values()).some((terminal) => terminal.running)
     );
   }
@@ -2960,12 +2965,56 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.extension_notification",
     );
 
+    if (method === "_paseo/background_work") {
+      this.applyBackgroundWork(params);
+      return;
+    }
+
     const parsedCommands = this.extensionCommandsParser?.(method, params);
     if (parsedCommands) {
       this.applyResolvedCommands(parsedCommands, {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+  }
+
+  /**
+   * Background work for an ACP agent that has some. ACP has no notification for work that goes
+   * on after a turn ends (a background shell, a helper agent), so an agent that has such work
+   * sends the extension notification `_paseo/background_work` ({ sessionId, items }) with its
+   * whole list each time the list changes, `items: []` when nothing runs. Each item is
+   * { id, kind, description, command? }. It feeds the same inventory as a native provider's
+   * background work, and while it lists any, Paseo's idle runtime cleanup keeps the agent's
+   * runtime. No item can be stopped from Paseo, as an ACP session has no stopBackgroundWork.
+   * An agent that never sends it sees no change.
+   */
+  private applyBackgroundWork(params: Record<string, unknown>): void {
+    if (typeof params.sessionId !== "string" || params.sessionId !== this.sessionId) {
+      return;
+    }
+    if (!Array.isArray(params.items)) {
+      this.logger.warn(
+        { agentId: this.agentId, provider: this.provider },
+        "ACP _paseo/background_work without a list of items; ignored",
+      );
+      return;
+    }
+    const items = params.items.flatMap((entry: unknown): AgentBackgroundWorkInput[] => {
+      const item = entry as Record<string, unknown> | null;
+      if (!item || typeof item.id !== "string" || item.id.length === 0) return [];
+      return [
+        {
+          id: item.id,
+          kind: typeof item.kind === "string" && item.kind.length > 0 ? item.kind : "other",
+          description: typeof item.description === "string" ? item.description : null,
+          ...(typeof item.command === "string" && item.command.length > 0
+            ? { command: item.command }
+            : {}),
+        },
+      ];
+    });
+    this.backgroundWorkCount = items.length;
+    this.pushEvent({ type: "background_work", provider: this.provider, items });
   }
 
   // Cache an asynchronously-delivered slash-command batch from a provider that
