@@ -287,7 +287,10 @@ test("ordinary Hub requests survive daemon restart and restore an archived works
       requestId: "after-restore-send",
     }),
   ).toMatchObject({ payload: { agentId, accepted: true } });
-  expect(hub.providerPromptTexts().filter((text) => text === "follow up")).toHaveLength(1);
+  // The restored agent is not loaded yet: the send is answered first and delivered after the load.
+  await expect
+    .poll(() => hub.providerPromptTexts().filter((text) => text === "follow up"))
+    .toHaveLength(1);
 });
 
 test("Hub completes the standard hello before rejecting a second hello", async () => {

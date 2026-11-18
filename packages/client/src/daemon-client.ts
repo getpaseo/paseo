@@ -4243,7 +4243,7 @@ export class DaemonClient {
     agentId: string,
     text: string,
     options: SendMessageOptions = {},
-  ): Promise<{ deliveryStatus?: "queued" }> {
+  ): Promise<{ deliveryStatus?: "queued"; revived?: boolean }> {
     if (
       options.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
@@ -4288,14 +4288,17 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
-    return payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {};
+    return {
+      ...(payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {}),
+      ...(payload.revived ? { revived: true } : {}),
+    };
   }
 
   async sendMessage(
     agentId: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<{ deliveryStatus?: "queued" }> {
+  ): Promise<{ deliveryStatus?: "queued"; revived?: boolean }> {
     return this.sendAgentMessage(agentId, text, options);
   }
 

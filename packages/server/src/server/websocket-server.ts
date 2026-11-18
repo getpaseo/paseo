@@ -22,7 +22,12 @@ import {
 } from "./session/workspace-base-branch/service.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
-import { MessageReceipts } from "./message-receipts/index.js";
+import { isReceiptOutcomeError, MessageReceipts } from "./message-receipts/index.js";
+import {
+  deliverUserMessage,
+  describeUndeliveredMessage,
+  UserMessageSchema,
+} from "./agent/user-message-delivery.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
@@ -1164,6 +1169,61 @@ export class VoiceAssistantWebSocketServer {
 
   public prepareForShutdown(): void {
     this.connectionLifecycle = "stopping";
+  }
+
+  /**
+   * Delivers messages that an earlier run answered before their agent had loaded and then
+   * stopped before dispatching. Their senders hold a receipt, so each is delivered once, or its
+   * failure is reported on the agent.
+   */
+  public async deliverAcceptedMessages(): Promise<void> {
+    const deps = {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.logger,
+    };
+    for (const accepted of await this.messageReceipts.listAccepted()) {
+      const parsed = UserMessageSchema.safeParse(accepted.delivery);
+      if (!parsed.success) {
+        this.logger.warn(
+          { agentId: accepted.agentId, messageId: accepted.messageId },
+          "Skipping an accepted message saved in an unknown shape",
+        );
+        continue;
+      }
+      const message = parsed.data;
+      let dispatched = false;
+      const delivered = this.messageReceipts.send({
+        agentId: accepted.agentId,
+        messageId: accepted.messageId,
+        request: accepted.request,
+        keepAcceptedAfter: () => this.agentManager.isShuttingDown(),
+        send: (beforeDispatch) =>
+          deliverUserMessage(deps, message, {
+            beforeDispatch: async () => {
+              await beforeDispatch();
+              dispatched = true;
+            },
+            setProvisionalTitle: true,
+          }),
+      });
+      void delivered.catch((error: unknown) => {
+        this.logger.error(
+          { err: error, agentId: accepted.agentId, messageId: accepted.messageId },
+          "Failed to deliver an accepted message",
+        );
+        // A receipt from an earlier dispatch means the provider may already have it.
+        if (dispatched || isReceiptOutcomeError(error) || this.agentManager.isShuttingDown()) {
+          return;
+        }
+        void this.agentManager
+          .reportUndeliveredMessage(
+            accepted.agentId,
+            describeUndeliveredMessage(message.text, error),
+          )
+          .catch(() => undefined);
+      });
+    }
   }
 
   public beginAcceptingConnections(): void {

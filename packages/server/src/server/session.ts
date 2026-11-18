@@ -88,6 +88,11 @@ import {
   resolveFirstAgentPromptTitle,
 } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
+import {
+  deliverUserMessage,
+  describeUndeliveredMessage,
+  type UserMessage,
+} from "./agent/user-message-delivery.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
@@ -505,7 +510,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  messageReceipts: Pick<MessageReceipts, "send">;
+  messageReceipts: Pick<MessageReceipts, "send" | "waitForAccepted">;
   agentMessages: AgentMessageDelivery;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
@@ -880,7 +885,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly messageReceipts: Pick<MessageReceipts, "send">;
+  private readonly messageReceipts: Pick<MessageReceipts, "send" | "waitForAccepted">;
   private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
@@ -8943,17 +8948,28 @@ export class Session {
     }
   }
 
-  private async prepareAgentMessage(agentId: string, text: string): Promise<void> {
-    await ensureAgentLoaded(agentId, {
-      agentManager: this.agentManager,
-      agentStorage: this.agentStorage,
-      logger: this.sessionLogger,
-    });
-    const stored = await this.agentStorage.get(agentId);
-    if (stored && !stored.title && !stored.lastUserMessageAt) {
-      const { provisionalTitle } = resolveCreateAgentTitles({ initialPrompt: text });
-      if (provisionalTitle) await this.agentManager.setTitle(agentId, provisionalTitle);
-    }
+  /**
+   * A message accepted before its agent loaded failed in the background. The sender already has
+   * its receipt, so the failure goes to the agent, where the user will look for the message.
+   */
+  private reportBackgroundSendFailure(
+    agentId: string,
+    text: string,
+    error: unknown,
+    dispatched: boolean,
+  ): void {
+    this.handleAgentRunError(agentId, error, "Failed to deliver message");
+    // After dispatch the provider has the message; the run reports its own failures. A daemon
+    // that is stopping keeps the message and delivers it on its next start.
+    if (dispatched || this.agentManager.isShuttingDown()) return;
+    void this.agentManager
+      .reportUndeliveredMessage(agentId, describeUndeliveredMessage(text, error))
+      .catch((reportError: unknown) =>
+        this.sessionLogger.error(
+          { err: reportError, agentId },
+          "Failed to report an undelivered message",
+        ),
+      );
   }
 
   private async handleSendAgentMessageRequest(
@@ -8991,6 +9007,19 @@ export class Session {
         queued = acceptAdmission;
       });
       let deliveryStatus: "queued" | undefined;
+      // An agent that is not loaded may take minutes to load. Its sender gets the receipt once
+      // the message is saved, and the daemon loads the agent and delivers it afterwards.
+      const deferred =
+        !msg.sourceAgentId && msg.messageId !== undefined && !this.agentManager.getAgent(agentId);
+      let dispatched = false;
+      const userMessage: UserMessage = {
+        agentId,
+        text: msg.text,
+        prompt,
+        messageId: msg.messageId,
+        activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+        sessionMode: msg.sessionMode,
+      };
       const send = async (beforeDispatch: () => Promise<void>) => {
         if (msg.sourceAgentId) {
           await beforeDispatch();
@@ -9048,14 +9077,47 @@ export class Session {
               activeTurnBehavior:
                 msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
             },
+            ...(deferred
+              ? {
+                  accept: {
+                    delivery: userMessage,
+                    onAccepted: () => {
+                      deliveryStatus = "queued";
+                      queued();
+                    },
+                  },
+                  keepAcceptedAfter: () => this.agentManager.isShuttingDown(),
+                }
+              : {}),
             send: async (beforeDispatch) => {
-              if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
-              await send(beforeDispatch);
+              if (msg.sourceAgentId) {
+                await send(beforeDispatch);
+                return;
+              }
+              await deliverUserMessage(
+                {
+                  agentManager: this.agentManager,
+                  agentStorage: this.agentStorage,
+                  logger: this.sessionLogger,
+                },
+                userMessage,
+                {
+                  beforeDispatch: async () => {
+                    await beforeDispatch();
+                    dispatched = true;
+                  },
+                  // The sender has its receipt; leaving must not abandon the delivery.
+                  signal: deferred ? undefined : this.delivery.requestSignal,
+                  setProvisionalTitle: true,
+                },
+              );
             },
           })
         : send(async () => {});
       void sent.catch((error) => {
-        if (deliveryStatus === "queued") {
+        if (deferred && deliveryStatus === "queued") {
+          this.reportBackgroundSendFailure(agentId, msg.text, error, dispatched);
+        } else if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
         }
       });
@@ -9068,6 +9130,7 @@ export class Session {
           agentId,
           accepted: true,
           ...(deliveryStatus ? { deliveryStatus } : {}),
+          ...(deferred && deliveryStatus === "queued" ? { revived: true } : {}),
           error: null,
         },
       });
@@ -9119,6 +9182,11 @@ export class Session {
 
     try {
       await this.agentMessages.waitForDispatch(
+        agentId,
+        AbortSignal.any([abortController.signal, sourceSignal]),
+      );
+      // A message answered before its agent loaded has not started a turn yet.
+      await this.messageReceipts.waitForAccepted(
         agentId,
         AbortSignal.any([abortController.signal, sourceSignal]),
       );

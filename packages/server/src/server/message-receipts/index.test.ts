@@ -76,3 +76,126 @@ test("a send that fails before beforeDispatch can be retried with the same messa
   await requests.send(input);
   expect(sends).toBe(1);
 });
+
+test("a message answered before delivery is saved until its dispatch", async () => {
+  const { requests, directory } = await fixture();
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let accepted = false;
+  const delivered = requests.send({
+    agentId: "agent",
+    messageId: "early",
+    request: { text: "hello" },
+    accept: {
+      delivery: { text: "hello" },
+      onAccepted: () => {
+        accepted = true;
+      },
+    },
+    send: async (beforeDispatch) => {
+      await released;
+      await beforeDispatch();
+    },
+  });
+  await expect.poll(() => accepted).toBe(true);
+  expect(await new MessageReceipts(directory).listAccepted()).toEqual([
+    {
+      agentId: "agent",
+      messageId: "early",
+      request: { text: "hello" },
+      delivery: { text: "hello" },
+    },
+  ]);
+  release();
+  await delivered;
+  expect(await new MessageReceipts(directory).listAccepted()).toEqual([]);
+});
+
+test("a saved message is delivered once by the next daemon", async () => {
+  const { requests, directory } = await fixture();
+  const input = {
+    agentId: "agent",
+    messageId: "saved",
+    request: { text: "hello" },
+  };
+  await expect(
+    requests.send({
+      ...input,
+      accept: { delivery: null, onAccepted: () => {} },
+      keepAcceptedAfter: () => true,
+      send: async () => {
+        throw new Error("daemon stopping");
+      },
+    }),
+  ).rejects.toThrow("daemon stopping");
+
+  const next = new MessageReceipts(directory);
+  const [saved] = await next.listAccepted();
+  let deliveries = 0;
+  const deliver = {
+    ...input,
+    request: saved!.request,
+    send: async (beforeDispatch: () => Promise<void>) => {
+      await beforeDispatch();
+      deliveries++;
+    },
+  };
+  await Promise.all([next.send(deliver), next.send(deliver)]);
+  expect(deliveries).toBe(1);
+  expect(await next.listAccepted()).toEqual([]);
+});
+
+test("a reported delivery failure drops the saved message", async () => {
+  const { requests } = await fixture();
+  await expect(
+    requests.send({
+      agentId: "agent",
+      messageId: "failed",
+      request: {},
+      accept: { delivery: null, onAccepted: () => {} },
+      send: async () => {
+        throw new Error("load failed");
+      },
+    }),
+  ).rejects.toThrow("load failed");
+  expect(await requests.listAccepted()).toEqual([]);
+});
+
+test("waiting for accepted messages ends when their delivery settles", async () => {
+  const { requests } = await fixture();
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let accepted = false;
+  const delivered = requests.send({
+    agentId: "agent",
+    messageId: "waited",
+    request: {},
+    accept: {
+      delivery: null,
+      onAccepted: () => {
+        accepted = true;
+      },
+    },
+    send: async (beforeDispatch) => {
+      await released;
+      await beforeDispatch();
+    },
+  });
+  // The sender waits after its answer, as `paseo send` does.
+  await expect.poll(() => accepted).toBe(true);
+  let waited = false;
+  const waiting = (async () => {
+    await requests.waitForAccepted("agent", new AbortController().signal);
+    waited = true;
+  })();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(waited).toBe(false);
+  release();
+  await delivered;
+  await waiting;
+  expect(waited).toBe(true);
+});

@@ -170,6 +170,14 @@ function buildSendResult(agentIdArg: string, state: SendWaitState): AgentSendRes
   return { agentId, status: "completed", message: "Agent completed processing the message" };
 }
 
+function describeReceipt(receipt: { deliveryStatus?: "queued"; revived?: boolean }): string {
+  if (receipt.revived)
+    return "Message saved; the agent is loading and receives it once loaded, not waiting for completion";
+  if (receipt.deliveryStatus === "queued")
+    return "Message queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested";
+  return "Message sent, not waiting for completion";
+}
+
 export async function runSendCommand(
   agentIdArg: string,
   prompt: string | undefined,
@@ -216,10 +224,7 @@ export async function runSendCommand(
         data: {
           agentId: agentIdArg,
           status: receipt.deliveryStatus ?? "sent",
-          message:
-            receipt.deliveryStatus === "queued"
-              ? "Message queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested"
-              : "Message sent, not waiting for completion",
+          message: describeReceipt(receipt),
         },
         schema: agentSendSchema,
       };

@@ -5465,6 +5465,8 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     deliveryStatus: z.literal("queued").optional(),
+    /** The agent was not loaded: the daemon saved the message, answered, and loads and delivers after. */
+    revived: z.boolean().optional(),
     error: z.string().nullable(),
   }),
 });

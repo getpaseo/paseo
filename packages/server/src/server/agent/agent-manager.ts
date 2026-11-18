@@ -996,6 +996,10 @@ export class AgentManager {
     this.acceptingAgentRegistrations = false;
   }
 
+  isShuttingDown(): boolean {
+    return !this.acceptingAgentRegistrations;
+  }
+
   setPaseoToolsEnabled(enabled: boolean): void {
     this.paseoToolsEnabled = enabled;
   }
@@ -2870,6 +2874,40 @@ export class AgentManager {
     };
     await registry.upsert(nextRecord);
     this.dispatchStoredAgentState(nextRecord);
+  }
+
+  /**
+   * A message the daemon accepted for the agent never reached its provider. Records the failure
+   * as the agent's error with error attention, and in its timeline when it is loaded, so the
+   * user learns of it wherever they look at the agent.
+   */
+  async reportUndeliveredMessage(agentId: string, error: string): Promise<void> {
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = this.agents.get(agentId);
+      if (agent) {
+        agent.lastError = error;
+        await this.appendSystemErrorTimelineMessage(agent, agent.provider, error);
+        this.raiseErrorAttention(agent);
+        await this.persistSnapshot(agent);
+        this.emitState(agent, { persist: false });
+        return;
+      }
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record || record.internal) return;
+      const updatedAt = this.nextStoredUpdatedAt(record);
+      const nextRecord: StoredAgentRecord = {
+        ...record,
+        updatedAt,
+        lastStatus: "error",
+        lastError: error,
+        ...(raisesAttention({ internal: record.internal, background: record.background })
+          ? { requiresAttention: true, attentionReason: "error", attentionTimestamp: updatedAt }
+          : {}),
+      };
+      await registry.upsert(nextRecord);
+      this.dispatchStoredAgentState(nextRecord);
+    });
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
