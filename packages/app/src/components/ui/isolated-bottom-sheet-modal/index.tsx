@@ -107,6 +107,8 @@ export const IsolatedBottomSheetModal = forwardRef<
     contextBridge,
     backdropOpacity,
     enableDismissOnClose = true,
+    waitFor,
+    simultaneousHandlers,
     ...bottomSheetProps
   } = props;
   // Gorhom portals the sheet to its host, away from the call site's React tree; re-open the
@@ -120,6 +122,19 @@ export const IsolatedBottomSheetModal = forwardRef<
     setContentDragGesture(gesture);
     return () => setContentDragGesture((current) => (current === gesture ? undefined : current));
   }, []);
+  // RNGH Android's shouldBeCancelledByActiveHandler treats a waiting ancestor's raw ACTIVE
+  // state as ownership and cancels its child at activation. Simultaneity lets the child activate;
+  // waitFor still keeps the sheet stationary until the child fails.
+  const contentDragHandlers = useMemo(() => {
+    if (!contentDragGesture) return { waitFor, simultaneousHandlers };
+    return {
+      waitFor: [...(waitFor ? [waitFor].flat() : []), contentDragGesture],
+      simultaneousHandlers: [
+        ...(simultaneousHandlers ? [simultaneousHandlers].flat() : []),
+        contentDragGesture,
+      ],
+    };
+  }, [contentDragGesture, waitFor, simultaneousHandlers]);
   const renderBackdrop = useCallback(
     (backdropProps: BottomSheetBackdropProps) => (
       <SheetBackdrop
@@ -137,7 +152,8 @@ export const IsolatedBottomSheetModal = forwardRef<
       enableDismissOnClose={enableDismissOnClose}
       stackBehavior={presentation}
       backdropComponent={backdropOpacity === undefined ? undefined : renderBackdrop}
-      waitFor={contentDragGesture}
+      waitFor={contentDragHandlers.waitFor}
+      simultaneousHandlers={contentDragHandlers.simultaneousHandlers}
     >
       <BottomSheetScope attachContentDrag={attachContentDrag}>
         <FocusOwnerScope owner={focusOwner} style={styles.content}>

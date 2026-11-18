@@ -8,6 +8,7 @@ import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { openSettingsSection } from "../support/helpers/settings";
+import { gate } from "../support/helpers/context-window";
 import { getServerId } from "../support/helpers/server-id";
 import { seedSidebarFooterPreferences } from "../support/helpers/sidebar-nav-settings";
 import {
@@ -33,7 +34,10 @@ import {
   pinRow,
   openUsageOptions,
   closeUsageOptions,
+  pickUsageHost,
+  usageModalHost,
   dragUsageCardAbove,
+  recordUsageCardPositionsAfterRelease,
   expectUsageCardOrder,
   expectUsageOptionsFitContent,
   setUsageCardOn,
@@ -96,10 +100,6 @@ async function qaScreenshot(page: Page, name: string, target: "page" | "summary"
   await page.screenshot({ path: file });
 }
 
-function hostFilter(page: Page) {
-  return page.locator('[data-testid="usage-host-filter-trigger"]:visible');
-}
-
 function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
   return {
     id: `${sourceId}:a`,
@@ -154,7 +154,7 @@ async function refreshUsageAndWaitForReports(page: Page, usage: UsageReportsFixt
 }
 
 test.describe("usage modal", () => {
-  test("opens from the sidebar on the host's reports, with no host filter for one host", async ({
+  test("opens from the sidebar on the host's reports, with no host named for one host", async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -194,7 +194,7 @@ test.describe("usage modal", () => {
 
     const group = page.getByTestId(`usage-host-${serverId}`);
     await expect(group.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(hostFilter(page)).toHaveCount(0);
+    await expect(page.getByTestId("usage-modal-host")).toHaveCount(0);
     await qaScreenshot(page, "usage-modal-one-host");
     await expect(group.getByText("31% used")).toBeVisible();
     await expect(group.getByText("Beta plan", { exact: true })).toBeVisible();
@@ -255,9 +255,15 @@ test.describe("usage modal", () => {
     await expect(work.getByText("work", { exact: true })).toBeVisible();
     await expectPinnedUsage(page, ["31% Weekly", "20% Weekly"]);
 
+    const stopRecording = await recordUsageCardPositionsAfterRelease(page);
     await dragUsageCardAbove(page, "beta:home", "alpha:a");
     await expectUsageCardOrder(page, ["beta:home", "alpha:a", "beta:work"]);
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
+    // The cards are in their new slots from the first frame after the drop.
+    const framesAfterDrop = await stopRecording();
+    const settled = framesAfterDrop.at(-1);
+    expect(settled).toBeDefined();
+    expect(framesAfterDrop.filter((frame) => frame !== settled)).toEqual([]);
 
     await page.reload();
     await expectPinnedUsage(page, ["20% Weekly", "31% Weekly"]);
@@ -377,9 +383,11 @@ test.describe("usage modal", () => {
     );
     try {
       await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      // The second host's reports wait until the test lets them through, like a slow host.
+      const secondaryReports = gate();
       await installUsageReportsFixture(page, {
         port: secondary.port,
-        lists: [[weeklyReport("beta", 12)]],
+        lists: [{ stream: [secondaryReports.promise, weeklyReport("beta", 12)] }],
       });
       await gotoAppShell(page);
       await addConnectedHostAndReload(page, {
@@ -393,12 +401,15 @@ test.describe("usage modal", () => {
       await openUsageFromItem(page);
       await expect(page.getByTestId(`usage-host-${primaryServerId}`)).toBeVisible();
 
-      await hostFilter(page).click();
-      await page.getByTestId(`usage-host-filter-item-${secondary.serverId}`).click();
-      await expect(
-        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
-      ).toBeVisible({ timeout: 30_000 });
-      await expect(hostFilter(page)).toContainText("Secondary box");
+      await expect(usageModalHost(page)).toHaveText("localhost");
+      await pickUsageHost(page, secondary.serverId);
+      // Until its reports arrive, the picked host loads; it never shows the first host's cards.
+      const secondaryBody = page.getByTestId(`usage-host-${secondary.serverId}`);
+      await expect(secondaryBody.getByText("Loading usage...")).toBeVisible();
+      await expect(page.getByTestId("usage-modal-body").getByText("31% used")).toHaveCount(0);
+      await expect(usageModalHost(page)).toHaveText("Secondary box");
+      secondaryReports.open();
+      await expect(secondaryBody.getByText("12% used")).toBeVisible({ timeout: 30_000 });
       await qaScreenshot(page, "usage-modal-picked-host");
       await expectPinnedUsage(page, ["12% Weekly"]);
 
@@ -413,6 +424,51 @@ test.describe("usage modal", () => {
       await expect(
         page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
       ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await secondary.close().catch(() => undefined);
+    }
+  });
+
+  test("on a phone, picking a host in Settings keeps Usage open on that host", async ({ page }) => {
+    test.setTimeout(420_000);
+    const longName = "build-box-eu-west-gpu-runner-02.internal";
+    const secondary = await startIsolatedHostDaemon(
+      `srv_usage_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+    );
+    try {
+      await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      await installUsageReportsFixture(page, {
+        port: secondary.port,
+        lists: [[weeklyReport("beta", 12)]],
+      });
+      await page.setViewportSize({ width: 375, height: 812 });
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: longName,
+        port: secondary.port,
+      });
+      await openCompactSidebar(page);
+      await openUsageFromItem(page);
+
+      await pickUsageHost(page, secondary.serverId);
+
+      // The sheet stays up once Settings has closed over it, showing the picked host's cards.
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12% used"),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(usageModalHost(page)).toHaveText(longName);
+      // The long name truncates under the title; the title itself reads in full.
+      const title = page.locator('[data-testid="usage-modal-title"]:visible');
+      await expect(title).toHaveText("Usage");
+      expect(await title.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true,
+      );
+      const host = usageModalHost(page);
+      expect(await host.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true,
+      );
+      await qaScreenshot(page, "usage-phone-picked-long-host");
     } finally {
       await secondary.close().catch(() => undefined);
     }

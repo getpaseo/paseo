@@ -488,8 +488,7 @@ export const ptBR: TranslationResources = {
         archivedTitle: "Workspace arquivado",
         restoreDescription:
           "Restaure {{workspaceName}} para voltar aos seus agentes. A worktree usará a branch {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restaure {{workspaceName}} para voltar aos seus agentes. Uma nova branch partirá da base salva ou da branch padrão do repositório.",
+        restoreWithoutBranchDescription: "Restaure {{workspaceName}} para voltar aos seus agentes.",
         unarchiveDescription:
           "{{workspaceName}} está arquivado. Desarquive-o para abri-lo novamente.",
         restoreAction: "Restaurar",
@@ -2051,6 +2050,7 @@ export const ptBR: TranslationResources = {
     hostUnavailable: "Host de download indisponível.",
     cancelled: "Download cancelado.",
     failed: "Falha ao baixar arquivo.",
+    httpFailed: "Falha ao baixar arquivo (HTTP {{status}}).",
     shareFile: "Compartilhar arquivo",
     shareFileNamed: "Compartilhar {{fileName}}",
   },
@@ -2244,6 +2244,7 @@ export const ptBR: TranslationResources = {
     turnOn: "Ativar",
 
     options: "Configurações",
+    host: "Host",
     refreshFailed: "Não foi possível atualizar o uso",
     noHosts: "Nenhum host conectado",
     agentError: "Não foi possível carregar o uso: {{reason}}",

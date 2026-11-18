@@ -489,7 +489,7 @@ export const ru: TranslationResources = {
         restoreDescription:
           "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Worktree будет использовать ветку {{branch}}.",
         restoreWithoutBranchDescription:
-          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам. Новая ветка будет создана от сохранённой базовой или ветки репозитория по умолчанию.",
+          "Восстановите «{{workspaceName}}», чтобы вернуться к его агентам.",
         unarchiveDescription:
           "Рабочее пространство «{{workspaceName}}» находится в архиве. Разархивируйте его, чтобы снова открыть.",
         restoreAction: "Восстановить",
@@ -2051,6 +2051,7 @@ export const ru: TranslationResources = {
     hostUnavailable: "Хост загрузки недоступен.",
     cancelled: "Загрузка отменена.",
     failed: "Не удалось загрузить файл.",
+    httpFailed: "Не удалось загрузить файл (HTTP {{status}}).",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
   },
@@ -2245,6 +2246,7 @@ export const ru: TranslationResources = {
     turnOn: "Включить",
 
     options: "Настройки",
+    host: "Хост",
     refreshFailed: "Не удалось обновить использование",
     noHosts: "Нет подключённых хостов",
     agentError: "Не удалось загрузить использование: {{reason}}",

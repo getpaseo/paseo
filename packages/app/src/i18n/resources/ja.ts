@@ -489,8 +489,7 @@ export const ja: TranslationResources = {
         archivedTitle: "ワークスペースはアーカイブ済みです",
         restoreDescription:
           "{{workspaceName}} を復元してエージェントに戻ります。worktree ではブランチ {{branch}} を使用します。",
-        restoreWithoutBranchDescription:
-          "{{workspaceName}} を復元してエージェントに戻ります。保存されたベース、またはリポジトリのデフォルトブランチから新しいブランチを作成します。",
+        restoreWithoutBranchDescription: "{{workspaceName}} を復元してエージェントに戻ります。",
         unarchiveDescription:
           "{{workspaceName}} はアーカイブされています。再度開くにはアーカイブを解除してください。",
         restoreAction: "復元",
@@ -2038,6 +2037,7 @@ export const ja: TranslationResources = {
     hostUnavailable: "ダウンロードホストが利用できません。",
     cancelled: "ダウンロードがキャンセルされました。",
     failed: "ファイルのダウンロードに失敗しました。",
+    httpFailed: "ファイルのダウンロードに失敗しました (HTTP {{status}}).",
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
   },
@@ -2233,6 +2233,7 @@ export const ja: TranslationResources = {
     turnOn: "オンにする",
 
     options: "設定",
+    host: "ホスト",
     refreshFailed: "使用状況を更新できません",
     noHosts: "接続中のホストがありません",
     agentError: "使用状況を読み込めません: {{reason}}",

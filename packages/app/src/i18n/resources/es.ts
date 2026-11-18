@@ -489,8 +489,7 @@ export const es: TranslationResources = {
         archivedTitle: "Espacio de trabajo archivado",
         restoreDescription:
           "Restaura {{workspaceName}} para volver a sus agentes. Su worktree usará la rama {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restaura {{workspaceName}} para volver a sus agentes. Se creará una rama nueva desde la base guardada o la rama predeterminada del repositorio.",
+        restoreWithoutBranchDescription: "Restaura {{workspaceName}} para volver a sus agentes.",
         unarchiveDescription:
           "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
         restoreAction: "Restaurar",
@@ -2066,6 +2065,7 @@ export const es: TranslationResources = {
     hostUnavailable: "El host de descarga no está disponible.",
     cancelled: "La descarga fue cancelada.",
     failed: "No se pudo descargar el archivo.",
+    httpFailed: "No se pudo descargar el archivo (HTTP {{status}}).",
     shareFile: "compartir archivo",
     shareFileNamed: "Compartir{{fileName}}",
   },
@@ -2259,6 +2259,7 @@ export const es: TranslationResources = {
     turnOn: "Activar",
 
     options: "Configuración",
+    host: "Host",
     refreshFailed: "No se pudo actualizar el uso",
     noHosts: "No hay hosts conectados",
     agentError: "No se pudo cargar el uso: {{reason}}",

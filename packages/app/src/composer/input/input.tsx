@@ -205,7 +205,7 @@ export interface MessageInputProps {
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
   onKeyPress?: (event: ComposerKeyPressEvent) => boolean;
-  /** Reports cursor selection updates from the underlying input. */
+  /** Reports selection updates from user input and programmatic replacements. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
@@ -1469,11 +1469,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         if (nextText === "") {
           textInputRef.current?.reset();
         } else {
-          textInputRef.current?.replaceText(nextText, selection);
+          textInputRef.current?.replaceText(nextText, selectionRef.current);
         }
         onChangeText(nextText);
+        // iOS does not emit a selection event for a programmatic text replacement.
+        onSelectionChangeCallback?.(selectionRef.current);
       },
-      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
+      [
+        onChangeText,
+        onSelectionChangeCallback,
+        updateComposerHeightForText,
+        updateLiveTextPresence,
+      ],
     );
 
     useLayoutEffect(
@@ -2340,7 +2347,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <ComposerInputPresentation
           fullscreen={isFullscreen}
           controlSizing={controlSizing}
-          sendIconSize={toolbarGlyph.size}
           surface={textSurface}
           toolbar={toolbar}
           send={sendButton}

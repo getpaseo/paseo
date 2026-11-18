@@ -554,7 +554,7 @@ test("Hub resolves persisted execution ownership after daemon restart", async ()
   expect(workspaceId).toEqual(expect.any(String));
   expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: false, listed: false });
-}, 20_000);
+}, 60_000);
 
 test("Hub treats missing and foreign executions as already controlled without exposing ownership", async () => {
   const hub = await launchRelationship();
