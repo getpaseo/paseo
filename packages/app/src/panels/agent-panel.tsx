@@ -1280,6 +1280,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           serverId={serverId}
           agentId={agentId}
           capabilities={agentState.capabilities}
+          timelineSync={timelineSync}
           enabled={isPaneFocused}
         />
       ) : null}

@@ -19,6 +19,11 @@ import {
   submitMessageWithButton,
 } from "../support/helpers/composer";
 import { readReplicaCache, writeReplicaCache } from "../support/helpers/replica-cache-storage";
+import {
+  disconnectViewedTimeline,
+  releaseHeldCatchUp,
+  restoreViewedTimelineHoldingCatchUp,
+} from "../support/helpers/timeline-resume";
 
 // UI plumbing contract against the dev mock provider. Real-provider behavior is tested in `daemon-e2e/*-rewind.real.e2e.test.ts`.
 
@@ -292,6 +297,43 @@ test.describe("Rewind sheet", () => {
       await expectComposerDraft(page, latestPrompt);
       await expectComposerFocused(page);
     } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("waits for the latest prompt before offering Command Center rewind after reconnect", async ({
+    page,
+  }) => {
+    const cachedPrompt = "Keep the prompt that was visible before reconnect.";
+    const latestPrompt = "Rewind the prompt sent while the app was disconnected.";
+    const gate = await installDaemonWebSocketGate(page);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "rewind-reconnect-e2e-",
+      title: "Rewind after reconnect",
+      initialPrompt: cachedPrompt,
+    });
+
+    try {
+      await openAgentRoute(page, session);
+      await expectUserMessageVisible(page, cachedPrompt);
+      const initialPalette = await searchRewindActions(page);
+      await expect(rewindAction(initialPalette, "Rewind conversation")).toBeVisible();
+      await closeCommandCenter(page);
+
+      await disconnectViewedTimeline(page, gate);
+      await session.client.sendAgentMessage(session.agentId, latestPrompt);
+      await session.client.waitForFinish(session.agentId);
+      await restoreViewedTimelineHoldingCatchUp(page, gate);
+
+      const palette = await searchRewindActions(page);
+      await expect(palette.getByText("No matches", { exact: true })).toBeVisible();
+      await releaseHeldCatchUp(page, gate);
+      await rewindAction(palette, "Rewind conversation").click();
+
+      await expectUserMessageVisible(page, cachedPrompt);
+      await expectComposerDraft(page, latestPrompt);
+    } finally {
+      gate.restore();
       await session.cleanup();
     }
   });

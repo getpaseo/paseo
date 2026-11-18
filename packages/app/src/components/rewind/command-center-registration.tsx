@@ -7,8 +7,8 @@ import { getCommandCenterIcon } from "@/command-center/icon";
 import { useCommandCenterActions } from "@/command-center/provider";
 import { hasActiveMessageSubmission } from "@/composer/submission/model";
 import { useToast } from "@/contexts/toast-context";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import type { AgentScreenReadySyncState } from "@/hooks/use-agent-screen-state-machine";
+import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import { useRewindAgentMutation } from "./use-rewind-agent-mutation";
 import { isRewindableMessage, useRewindMenuItems } from "./use-rewind-capabilities";
 
@@ -16,29 +16,35 @@ export function RewindCommandCenterRegistration({
   serverId,
   agentId,
   capabilities,
+  timelineSync,
   enabled,
 }: {
   serverId: string;
   agentId: string;
   capabilities: AgentCapabilityFlags | null | undefined;
+  timelineSync: AgentScreenReadySyncState | null;
   enabled: boolean;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const connected = useHostRuntimeIsConnected(serverId);
+  const canSelectLatestMessage = enabled && timelineSync?.status === "idle";
   const client = useSessionStore((state) => state.sessions[serverId]?.client);
   const message = useSessionStore((state) => {
     const session = state.sessions[serverId];
     if (
-      !enabled ||
+      !canSelectLatestMessage ||
       !session ||
       hasActiveMessageSubmission(session.messageSubmissions.get(agentId))
     ) {
       return undefined;
     }
+    const timeline = selectAgentTimelineState(session, agentId);
+    if (timeline.status !== "synced" || timeline.newer === "available") {
+      return undefined;
+    }
     return (
       session.agentStreamHead.get(agentId)?.findLast((item) => item.kind === "user_message") ??
-      session.agentStreamTail.get(agentId)?.findLast((item) => item.kind === "user_message")
+      timeline.items.findLast((item) => item.kind === "user_message")
     );
   });
   const { rewindAgent, isPending } = useRewindAgentMutation({
@@ -78,7 +84,7 @@ export function RewindCommandCenterRegistration({
 
   useCommandCenterActions({
     sourceId: `rewind:${serverId}:${agentId}`,
-    enabled: enabled && connected && Boolean(client) && !isPending,
+    enabled: canSelectLatestMessage && Boolean(client) && !isPending,
     actions,
   });
   return null;
