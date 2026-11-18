@@ -106,6 +106,8 @@ import {
   type ProviderCatalog,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -2155,6 +2157,53 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       .finally(() => connection.signal.removeEventListener("abort", failOnDisconnect));
 
     return { turnId };
+  }
+
+  /**
+   * Steering for an ACP agent that offers it. ACP has no steer of its own, so without this every
+   * message into a running ACP turn replaces the run: the turn is canceled, its running tool calls
+   * are marked canceled, and a new run starts on the message, although the agent may well take the
+   * message into the turn it is running. An agent that can says so in `initialize`, with
+   * `agentCapabilities._meta["paseo/steer"] === true`, and answers the extension request
+   * `_paseo/steer` ({ sessionId, messageId, prompt }) with `{ accepted: true }` once the message is
+   * in its running turn. The open `session/prompt` stays that turn's one run and ends when the turn
+   * does. Any other answer, or an error, keeps today's replacement.
+   */
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const meta = this.agentCapabilities?._meta as Record<string, unknown> | null | undefined;
+    if (meta?.["paseo/steer"] !== true) {
+      return { status: "unavailable" };
+    }
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    if (!connection || !sessionId || connection.signal.aborted || this.closed) {
+      return { status: "unavailable" };
+    }
+    if (this.activeForegroundTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    if (options.clearPendingPermissions) {
+      this.cancelPendingPermissions();
+    }
+    const messageId = options.clientMessageId ?? randomUUID();
+    let response: Record<string, unknown> | undefined;
+    try {
+      response = await connection.extMethod("_paseo/steer", {
+        sessionId,
+        messageId,
+        prompt: toACPContentBlocks(prompt),
+      });
+    } catch (error) {
+      this.logger.warn({ err: error }, "ACP _paseo/steer failed; the run is replaced instead");
+      return { status: "unavailable" };
+    }
+    // Accepted is final: the agent holds the message now, so a replacement would send it twice.
+    return response?.accepted === true
+      ? { status: "accepted", providerMessageId: messageId }
+      : { status: "unavailable" };
   }
 
   // The SDK aborts the connection without rejecting the pending prompt, and before the child's
