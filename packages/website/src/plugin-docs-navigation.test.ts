@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { buildDocsNavTree, getDoc, getDocs, getLegacyDocsRedirect, parseHeadings } from "./docs";
 import { buildLlmsTxt } from "./llms";
 
+describe("docs frontmatter", () => {
+  it.each(["en", "zh-CN"] as const)("gives every %s page a title and a description", (locale) => {
+    const incomplete = getDocs(locale)
+      .filter((doc) => !doc.frontmatter.title || !doc.frontmatter.description)
+      .map((doc) => doc.sourcePath);
+    expect(incomplete).toEqual([]);
+  });
+
+  it("puts every page in a sidebar category", () => {
+    const uncategorized = getDocs("en")
+      .filter((doc) => !doc.frontmatter.category)
+      .map((doc) => doc.sourcePath);
+    expect(uncategorized).toEqual([]);
+  });
+});
+
 describe("provider documentation", () => {
   it.each(["en", "zh-CN"] as const)(
     "nests each provider page under Supported providers in %s",
@@ -99,6 +115,7 @@ describe("plugin documentation", () => {
         { type: "page", label: "Quickstart", href: "/docs/plugins" },
         { type: "page", label: "Publishing", href: "/docs/plugins/publishing" },
         { type: "page", label: "Provider plugins", href: "/docs/plugins/providers" },
+        { type: "page", label: "Sidebar views", href: "/docs/plugins/sidebar-views" },
         { type: "page", label: "Migration", href: "/docs/plugins/migration" },
         { type: "page", label: "Hooks", href: "/docs/plugins/hooks" },
         { type: "page", label: "Reference", href: "/docs/plugins/reference" },

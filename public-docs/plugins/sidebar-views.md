@@ -1,3 +1,11 @@
+---
+title: Build a sidebar view
+description: Replace the content of Paseo's sidebar with your own React Native view.
+nav: Sidebar views
+order: 47
+category: Plugins
+---
+
 # Build a sidebar view
 
 A sidebar view replaces the content between Paseo's header and footer. You receive theme tokens,
