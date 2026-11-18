@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { expect, test as base } from "../support/fixtures";
 import { awaitAssistantMessage } from "../support/helpers/agent-stream";
 import {
@@ -18,8 +19,16 @@ import {
   type MockAgentWorkspace,
 } from "../support/helpers/mock-agent";
 import { getServerId } from "../support/helpers/server-id";
+import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
-import { submitNewWorkspaceEmpty } from "../support/helpers/new-workspace";
+import {
+  expectPickerSelected,
+  openStartingRefPicker,
+  startingRefRow,
+  selectWorkspaceIsolation,
+  submitNewWorkspaceEmpty,
+} from "../support/helpers/new-workspace";
+import { commitLocalOnly, readWorktreeBranchInfo } from "../support/helpers/workspace";
 
 const test = base.extend<{
   seedForkWorkspace: (options: MockAgentOptions) => Promise<MockAgentWorkspace>;
@@ -195,6 +204,55 @@ test.describe("Assistant fork menu", () => {
     await expectChatHistoryAttachment(page);
   });
 
+  test("requires an explicit starting ref when forking a detached source", async ({
+    page,
+    seedForkWorkspace,
+  }) => {
+    const session = await seedForkWorkspace({
+      repoPrefix: "assistant-fork-detached-",
+      repo: { withRemote: true },
+      title: "Assistant fork submit",
+      initialPrompt: "emit 1 coalesced agent stream updates for assistant fork submit.",
+      model: "ten-second-stream",
+    });
+
+    await openAgentRoute(page, session);
+    await expectComposerVisible(page);
+    await awaitAssistantMessage(page);
+    await session.client.waitForFinish(session.agentId, 45_000);
+
+    const before = await session.client.fetchWorkspaces();
+    const localHead = commitLocalOnly(session.cwd, "fork-source-only");
+    execFileSync("git", ["checkout", "--detach", "refs/remotes/origin/main"], { cwd: session.cwd });
+    await session.client.checkoutRefresh(session.cwd);
+    await forkMostRecentAssistantTurnToNewWorkspace(page);
+    await expectChatHistoryAttachment(page);
+    await selectWorkspaceIsolation(page, "worktree");
+    await expectPickerSelected(page, "Choose where to start from");
+    await submitNewWorkspaceEmpty(page);
+    await expect(page.getByTestId("new-workspace-error")).toContainText(
+      "Choose where to start from",
+    );
+    expect(
+      (await session.client.fetchWorkspaces()).entries.map((entry) => entry.id).sort(),
+    ).toEqual(before.entries.map((entry) => entry.id).sort());
+    await openStartingRefPicker(page);
+    await startingRefRow(page, "main, origin branch").click();
+
+    await submitNewWorkspaceEmpty(page);
+
+    await expect(page).toHaveURL(/\/workspace\//, { timeout: 30_000 });
+    const { entries } = await session.client.fetchWorkspaces();
+    const created = entries.find((entry) =>
+      page.url().includes(buildHostWorkspaceRoute(getServerId(), entry.id)),
+    );
+    expect(created).toBeDefined();
+    if (!created) throw new Error("Fork workspace was not created");
+    const branchInfo = await readWorktreeBranchInfo({ worktreePath: created.workspaceDirectory });
+    expect(branchInfo.hasAncestor(localHead)).toBe(false);
+    await session.client.archiveWorkspace(created.id);
+  });
+
   test("keeps the fork attachment after the new agent receives its user message", async ({
     page,
     seedForkWorkspace,
@@ -211,13 +269,27 @@ test.describe("Assistant fork menu", () => {
     await awaitAssistantMessage(page);
     await session.client.waitForFinish(session.agentId, 45_000);
 
+    execFileSync("git", ["checkout", "-b", "feature/fork-source"], { cwd: session.cwd });
+    const localHead = commitLocalOnly(session.cwd, "fork-source-only");
+    await session.client.checkoutRefresh(session.cwd);
     await forkMostRecentAssistantTurnToNewWorkspace(page);
     await expectChatHistoryAttachment(page);
+    await selectWorkspaceIsolation(page, "worktree");
+    await expectPickerSelected(page, "feature/fork-source");
 
     await submitNewWorkspaceEmpty(page);
 
     const userMessage = page.getByTestId("user-message").filter({ hasText: "Chat history" }).last();
     await expect(userMessage).toBeVisible({ timeout: 30_000 });
     await expect(userMessage).not.toContainText("Source agent:");
+    const { entries } = await session.client.fetchWorkspaces();
+    const created = entries.find((entry) =>
+      page.url().includes(buildHostWorkspaceRoute(getServerId(), entry.id)),
+    );
+    expect(created).toBeDefined();
+    if (!created) throw new Error("Fork workspace was not created");
+    const branchInfo = await readWorktreeBranchInfo({ worktreePath: created.workspaceDirectory });
+    expect(branchInfo.hasAncestor(localHead)).toBe(true);
+    await session.client.archiveWorkspace(created.id);
   });
 });

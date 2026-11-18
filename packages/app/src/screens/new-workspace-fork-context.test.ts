@@ -3,7 +3,38 @@ import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
+  resolveNewWorkspaceBaseContext,
 } from "./new-workspace-fork-context";
+
+describe("resolveNewWorkspaceBaseContext", () => {
+  const source = {
+    forkSetup: { sourceDirectory: "/worktrees/agent" },
+    sourceServerId: "host-a",
+    selectedServerId: "host-a",
+    selectedProject: { viewKey: "project-a" },
+    sourceProject: { viewKey: "project-a" },
+    sourceDirectory: "/repo",
+  };
+
+  it("reads the agent checkout for a fork instead of the project's main checkout", () => {
+    expect(resolveNewWorkspaceBaseContext(source)).toEqual({
+      checkoutSourceDirectory: "/worktrees/agent",
+      forkFromCurrentBranch: true,
+    });
+  });
+
+  it.each([
+    { forkSetup: null },
+    { selectedServerId: "host-b" },
+    { selectedProject: { viewKey: "project-b" } },
+    { selectedProject: null },
+  ])("uses the project default outside the original fork target: %j", (change) => {
+    expect(resolveNewWorkspaceBaseContext({ ...source, ...change })).toEqual({
+      checkoutSourceDirectory: "/repo",
+      forkFromCurrentBranch: false,
+    });
+  });
+});
 
 describe("remapDraftCwdToWorkspace", () => {
   it("preserves a Windows subdirectory when source path casing differs", () => {

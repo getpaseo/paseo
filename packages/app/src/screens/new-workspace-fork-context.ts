@@ -1,4 +1,29 @@
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import type { HostProjectListItem } from "@/projects/host-projects";
+import type { PendingWorkspaceDraftSetup } from "@/stores/workspace-draft-submission-store";
+
+interface NewWorkspaceBaseContextInput {
+  forkSetup: Pick<PendingWorkspaceDraftSetup, "sourceDirectory"> | null;
+  selectedServerId: string;
+  sourceServerId: string;
+  selectedProject: Pick<HostProjectListItem, "viewKey"> | null;
+  sourceProject: Pick<HostProjectListItem, "viewKey"> | null;
+  sourceDirectory: string | null;
+}
+
+export function resolveNewWorkspaceBaseContext(input: NewWorkspaceBaseContextInput) {
+  const forkSetup = input.forkSetup;
+  const matchesSource =
+    forkSetup !== null &&
+    input.selectedProject !== null &&
+    input.selectedServerId === input.sourceServerId &&
+    input.selectedProject.viewKey === input.sourceProject?.viewKey;
+  const forkDirectory = matchesSource ? forkSetup.sourceDirectory : null;
+  return {
+    checkoutSourceDirectory: forkDirectory ?? input.sourceDirectory,
+    forkFromCurrentBranch: Boolean(forkDirectory),
+  };
+}
 
 function isLikelyWindowsPath(path: string): boolean {
   return /^[a-zA-Z]:\//.test(path);
