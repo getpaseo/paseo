@@ -2327,7 +2327,45 @@ export const zhCN: TranslationResources = {
       diagnostics: "诊断",
       about: "关于",
     },
-    layout: en.settings.layout,
+    layout: {
+      openInSidePane: {
+        title: "打开位置",
+        destinations: {
+          main: "主面板",
+          side: "侧边分栏",
+          explorer: "资源管理器侧边栏",
+        },
+        sources: {
+          explorerFiles: {
+            label: "在资源管理器侧边栏中点击文件",
+            description: "在工作区旁打开从资源管理器侧边栏中选择的文件",
+          },
+          diffs: {
+            label: "在资源管理器侧边栏或聊天中点击变更",
+            description: "在工作区旁打开来自资源管理器和 Agent 对话的差异对比",
+          },
+          chatFiles: {
+            label: "在 Agent 聊天中点击文件",
+            description: "在对话旁打开文件链接和工具调用中的文件",
+          },
+          diffFiles: {
+            label: "在差异对比中点击文件",
+            description: "在差异对比旁打开从中选择的源文件",
+          },
+          subagents: {
+            label: "在 Agent 聊天中点击子代理",
+            description: "在父代理旁打开子代理",
+          },
+          pullRequests: {
+            label: "在资源管理器侧边栏中点击拉取请求",
+            description: "在变更旁打开拉取请求详情",
+          },
+          serviceUrls: {
+            label: "点击脚本的服务 URL",
+          },
+        },
+      },
+    },
     editor: {
       title: "编辑器",
       vimKeybindings: "Vim 键位",
