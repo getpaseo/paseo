@@ -535,7 +535,7 @@ describe("MockLoadTestAgentClient", () => {
       await vi.advanceTimersByTimeAsync(10_000);
       await resultPromise;
 
-      const timeline = manager.getTimeline(agent.id);
+      const timeline = await manager.getTimeline(agent.id);
       const assistantMessages = timeline.filter((item) => item.type === "assistant_message");
       const toolCalls = timeline.filter((item) => item.type === "tool_call");
 

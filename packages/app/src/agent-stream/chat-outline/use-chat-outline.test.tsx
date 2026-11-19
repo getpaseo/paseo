@@ -139,7 +139,7 @@ describe("useChatOutline", () => {
       kind: "user_message",
       text: "live prompt",
       timestamp: new Date(seq),
-      timelineCursor: { epoch: "epoch-1", seq },
+      timelineCursor: { epoch: "epoch-1", seq, anchorSeq: seq },
     });
     rerender({ tail: [loadedPrompt(2)] });
     await waitFor(() => expect(runtime.listAgentTimelinePrompts).toHaveBeenCalledTimes(2));
@@ -198,7 +198,7 @@ describe("useChatOutline", () => {
           kind: "assistant_message",
           text: "chunk",
           timestamp: new Date(),
-          timelineCursor: { epoch: "epoch-1", seq: 2 },
+          timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
         },
       ],
       timelineEpoch: "epoch-1",
@@ -219,7 +219,7 @@ describe("useChatOutline", () => {
           kind: "user_message",
           text: "Replaced conversation",
           timestamp: new Date(2),
-          timelineCursor: { epoch: "epoch-2", seq: 1 },
+          timelineCursor: { epoch: "epoch-2", seq: 1, anchorSeq: 1 },
         },
       ],
       timelineEpoch: "epoch-2",
@@ -275,7 +275,7 @@ describe("useChatOutline", () => {
         kind: "user_message" as const,
         text: "prompt",
         timestamp: new Date(1),
-        timelineCursor: { epoch: "epoch-1", seq: 1 },
+        timelineCursor: { epoch: "epoch-1", seq: 1, anchorSeq: 1 },
       },
     ];
     const { result, rerender } = renderHook(
@@ -326,7 +326,7 @@ describe("useChatOutline", () => {
       kind: "user_message" as const,
       text: "prompt",
       timestamp: new Date(1),
-      timelineCursor: { epoch: "epoch-1", seq: 1 },
+      timelineCursor: { epoch: "epoch-1", seq: 1, anchorSeq: 1 },
     };
     const { result, rerender } = renderHook(
       ({ tail, mountedHistoryMessageIds }) =>
@@ -381,7 +381,7 @@ describe("useChatOutline", () => {
       kind: "user_message" as const,
       text: "prompt",
       timestamp: new Date(2),
-      timelineCursor: { epoch: "epoch-1", seq: 2 },
+      timelineCursor: { epoch: "epoch-1", seq: 2, anchorSeq: 2 },
     };
     const revealLoadedMessage = vi.fn();
     revealLoadedMessage.mockReturnValue(false);

@@ -1,11 +1,10 @@
 import type { AgentProvider, AgentTimelineItem } from "../agent-sdk-types.js";
-import { limitAgentTimelineItemContent } from "../agent-timeline-content.js";
-import { InMemoryAgentTimelineStore } from "../agent-timeline-store.js";
 import type {
   AgentTimelineFetchOptions,
   AgentTimelineFetchResult,
   AgentTimelineRow,
 } from "../agent-timeline-store-types.js";
+import type { AgentTimeline, TimelineScope } from "../timeline/index.js";
 
 export type ProviderSubagentStatus = "running" | "completed" | "failed" | "canceled";
 
@@ -62,8 +61,8 @@ export type ProviderSubagentStoreEvent =
     }
   | { type: "remove"; parentAgentId: string; subagentId: string };
 
-function storeKey(parentAgentId: string, subagentId: string): string {
-  return `${parentAgentId}\0${subagentId}`;
+function childScope(parentAgentId: string, subagentId: string): TimelineScope {
+  return { agentId: parentAgentId, subagentId };
 }
 
 /**
@@ -75,92 +74,104 @@ function stickyField<T>(next: T | undefined, previous: T | null | undefined): T 
   return next === undefined ? (previous ?? null) : next;
 }
 
+/**
+ * Applies provider child events to the parent's timeline, which stores each child's descriptor,
+ * history and retirement next to the parent's own history.
+ */
 export class ProviderSubagentStore {
-  private readonly descriptors = new Map<string, ProviderSubagentDescriptor>();
-  private readonly timelines = new InMemoryAgentTimelineStore();
+  constructor(private readonly timeline: AgentTimeline) {}
 
-  apply(
+  /** Resolves null when the event belongs to a retired child; nothing is recorded. */
+  async apply(
     parentAgentId: string,
     provider: AgentProvider,
     event: ProviderSubagentInputEvent,
-  ): ProviderSubagentStoreEvent {
-    const key = storeKey(parentAgentId, event.id);
+  ): Promise<ProviderSubagentStoreEvent | null> {
+    const scope = childScope(parentAgentId, event.id);
     if (event.type === "remove") {
-      this.descriptors.delete(key);
-      this.timelines.delete(key);
+      if (!(await this.timeline.removeChild(scope))) return null;
       return { type: "remove", parentAgentId, subagentId: event.id };
     }
 
     if (event.type === "timeline") {
-      if (!this.timelines.has(key)) {
-        this.timelines.initialize(key);
-      }
-      const row = this.timelines.append(key, limitAgentTimelineItemContent(event.item), {
-        timestamp: event.timestamp,
-      });
+      const commits = await this.timeline.recordChildEntries(scope, [
+        { item: event.item, timestamp: event.timestamp },
+      ]);
+      if (!commits) return null;
+      const [{ row, epoch }] = commits;
       return {
         type: "timeline",
         parentAgentId,
         subagentId: event.id,
         provider,
         row,
-        epoch: this.timelines.getEpoch(key),
+        epoch,
       };
     }
 
-    const previous = this.descriptors.get(key);
-    if (!this.timelines.has(key)) {
-      this.timelines.initialize(key);
-    }
-    const timestamp = event.timestamp ?? new Date().toISOString();
-    const subagent: ProviderSubagentDescriptor = {
-      id: event.id,
-      parentAgentId,
-      provider,
-      title: stickyField(event.title, previous?.title),
-      description: stickyField(event.description, previous?.description),
-      status: event.status ?? previous?.status ?? "running",
-      createdAt: previous?.createdAt ?? timestamp,
-      updatedAt: timestamp,
-      toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
-      cwd: stickyField(event.cwd, previous?.cwd),
-      subtitle: stickyField(event.subtitle, previous?.subtitle),
-      parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
-    };
-    this.descriptors.set(key, subagent);
-    return { type: "upsert", subagent };
+    const subagent = await this.timeline.recordChild(scope, (previous) => {
+      const timestamp = event.timestamp ?? new Date().toISOString();
+      return {
+        id: event.id,
+        parentAgentId,
+        provider,
+        title: stickyField(event.title, previous?.title),
+        description: stickyField(event.description, previous?.description),
+        status: event.status ?? previous?.status ?? "running",
+        createdAt: previous?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+        toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
+        cwd: stickyField(event.cwd, previous?.cwd),
+        subtitle: stickyField(event.subtitle, previous?.subtitle),
+        parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
+      };
+    });
+    return subagent ? { type: "upsert", subagent } : null;
   }
 
-  list(parentAgentId: string): ProviderSubagentDescriptor[] {
-    return [...this.descriptors.values()]
-      .filter((subagent) => subagent.parentAgentId === parentAgentId)
+  /**
+   * Applies the child events of a provider history read. Children the parent already holds,
+   * listed or retired, are skipped: like the parent's, their owned history is never changed.
+   */
+  async applyHistory(
+    parentAgentId: string,
+    events: readonly { provider: AgentProvider; event: ProviderSubagentInputEvent }[],
+  ): Promise<ProviderSubagentStoreEvent[]> {
+    const held = new Set(
+      (await this.timeline.listChildren(parentAgentId)).map((child) => child.subagentId),
+    );
+    const updates: ProviderSubagentStoreEvent[] = [];
+    for (const { provider, event } of events) {
+      if (held.has(event.id)) continue;
+      const update = await this.apply(parentAgentId, provider, event);
+      if (update) updates.push(update);
+    }
+    return updates;
+  }
+
+  /** The parent's listed children, oldest first. Retired children are not listed. */
+  async list(parentAgentId: string): Promise<ProviderSubagentDescriptor[]> {
+    return (await this.timeline.listChildren(parentAgentId))
+      .flatMap((child) => (!child.retired && child.descriptor ? [child.descriptor] : []))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  listAll(): ProviderSubagentDescriptor[] {
-    return [...this.descriptors.values()];
-  }
-
-  get(parentAgentId: string, subagentId: string): ProviderSubagentDescriptor | null {
-    return this.descriptors.get(storeKey(parentAgentId, subagentId)) ?? null;
+  async get(parentAgentId: string, subagentId: string): Promise<ProviderSubagentDescriptor | null> {
+    return (await this.list(parentAgentId)).find((child) => child.id === subagentId) ?? null;
   }
 
   fetchTimeline(
     parentAgentId: string,
     subagentId: string,
     options?: AgentTimelineFetchOptions,
-  ): AgentTimelineFetchResult {
-    return this.timelines.fetch(storeKey(parentAgentId, subagentId), options);
+  ): Promise<AgentTimelineFetchResult> {
+    return this.timeline.fetch(childScope(parentAgentId, subagentId), options);
   }
 
-  deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {
-    const events: ProviderSubagentStoreEvent[] = [];
-    for (const subagent of this.list(parentAgentId)) {
-      const key = storeKey(parentAgentId, subagent.id);
-      this.descriptors.delete(key);
-      this.timelines.delete(key);
-      events.push({ type: "remove", parentAgentId, subagentId: subagent.id });
-    }
-    return events;
+  /** Deletes the parent's history and every child's, retired children included. */
+  async deleteParent(parentAgentId: string): Promise<ProviderSubagentStoreEvent[]> {
+    const listed = await this.list(parentAgentId);
+    await this.timeline.delete({ agentId: parentAgentId });
+    return listed.map((child) => ({ type: "remove", parentAgentId, subagentId: child.id }));
   }
 }

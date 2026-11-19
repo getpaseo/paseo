@@ -140,6 +140,7 @@ export const DEFAULT_CLIENT_CAPABILITIES = {
   [CLIENT_CAPS.compactProviderSnapshots]: true,
   [CLIENT_CAPS.providerSnapshotReferences]: true,
   [CLIENT_CAPS.timelineReplacementInvalidation]: true,
+  [CLIENT_CAPS.timelineRewindOperations]: true,
   [CLIENT_CAPS.timelineNotifications]: true,
   [CLIENT_CAPS.pluginTimelineItems]: true,
   [CLIENT_CAPS.workspaceSetupBlocked]: true,

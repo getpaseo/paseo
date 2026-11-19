@@ -408,7 +408,6 @@ async function runFollowMode({
     } catch (error) {
       console.warn("Warning: failed to fetch existing timeline", error);
     }
-
     // Apply filter to existing items
     if (options.filter) {
       existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
@@ -437,6 +436,11 @@ async function runFollowMode({
       if (message.type === "agent.timeline.replacement") {
         writer.end();
         notice("\n[Timeline replaced; earlier output is no longer current]");
+        return;
+      }
+      if (message.type === "agent.timeline.rewind") {
+        writer.end();
+        notice("\n[Conversation rewound; output since the rewound message is no longer current]");
         return;
       }
 

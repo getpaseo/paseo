@@ -1046,15 +1046,15 @@ export class HubRelationshipHarness {
     );
   }
 
-  ownedAgentDiagnostic(agentId: string): {
+  async ownedAgentDiagnostic(agentId: string): Promise<{
     lifecycle: string;
     lastError?: string;
     assistantText?: string;
     timelineTypes: string[];
-  } {
+  }> {
     const agent = this.daemon!.agentManager.getAgent(agentId);
     if (!agent) throw new Error(`Owned agent ${agentId} does not exist`);
-    const timeline = this.daemon!.agentManager.getTimeline(agentId);
+    const timeline = await this.daemon!.agentManager.getTimeline(agentId);
     const assistantText = timeline
       .flatMap((item) => (item.type === "assistant_message" ? [item.text] : []))
       .join("");

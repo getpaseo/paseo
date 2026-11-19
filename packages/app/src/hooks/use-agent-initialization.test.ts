@@ -166,7 +166,7 @@ describe("ensureAgentIsInitialized", () => {
           kind: "assistant_message",
           id: "canonical-item",
           text: "Canonical before restart",
-          timelineCursor: { epoch: "epoch-1", seq: 12 },
+          timelineCursor: { epoch: "epoch-1", seq: 12, anchorSeq: 12 },
           timestamp: new Date("2026-07-27T10:00:00.000Z"),
         },
       ],

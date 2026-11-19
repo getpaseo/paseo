@@ -180,6 +180,14 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 ---
 
+## Runtime-only Agent Timelines
+
+Agent timelines are not written to `$PASEO_HOME`. `AgentTimeline` owns each agent's history behind
+a backend, and the only backend is in memory, so a daemon restart loses it and the next resume
+imports provider history. See [owned history](timeline-sync.md#owned-history).
+
+---
+
 ## 2. Daemon Configuration
 
 **Path:** `$PASEO_HOME/config.json`

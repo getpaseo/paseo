@@ -30,7 +30,9 @@ import type {
   SteerResult,
   ToolCallDetail,
   ToolCallTimelineItem,
+  ConversationRewindCut,
 } from "../agent-sdk-types.js";
+import { RewindNotAppliedError } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
@@ -1131,10 +1133,11 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.listeners.clear();
   }
 
-  async revertConversation(input: { messageId: string }): Promise<void> {
+  async revertConversation(input: { messageId: string }): Promise<ConversationRewindCut> {
     this.failConfiguredRewind();
     this.validateRewindTarget(input.messageId);
-    this.keepFirstUserMessageHistory();
+    this.keepHistoryBefore(input.messageId);
+    return { kind: "at_target" };
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
@@ -1142,10 +1145,11 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.validateRewindTarget(input.messageId);
   }
 
-  async revertBoth(input: { messageId: string }): Promise<void> {
+  async revertBoth(input: { messageId: string }): Promise<ConversationRewindCut> {
     this.failConfiguredRewind();
     this.validateRewindTarget(input.messageId);
-    this.keepFirstUserMessageHistory();
+    this.keepHistoryBefore(input.messageId);
+    return { kind: "at_target" };
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -1173,7 +1177,7 @@ export class MockLoadTestAgentSession implements AgentSession {
 
   private failConfiguredRewind(): void {
     if (this.rewindError) {
-      throw new Error(this.rewindError);
+      throw new RewindNotAppliedError(this.rewindError);
     }
   }
 
@@ -1185,7 +1189,9 @@ export class MockLoadTestAgentSession implements AgentSession {
         event.item.messageId === messageId,
     );
     if (!isKnownUserMessage) {
-      throw new Error(`Mock rewind target ${messageId} was not found in session history`);
+      throw new RewindNotAppliedError(
+        `Mock rewind target ${messageId} was not found in session history`,
+      );
     }
   }
 
@@ -1721,16 +1727,14 @@ export class MockLoadTestAgentSession implements AgentSession {
     this.history.push(event);
   }
 
-  private keepFirstUserMessageHistory(): void {
-    const nextHistory: AgentStreamEvent[] = [];
-    for (const event of this.history) {
-      if (event.type === "timeline" && event.item.type === "user_message") {
-        nextHistory.push(event);
-        break;
-      }
-    }
-    this.history.length = 0;
-    this.history.push(...nextHistory);
+  private keepHistoryBefore(messageId: string): void {
+    const targetIndex = this.history.findIndex(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        event.item.messageId === messageId,
+    );
+    this.history.length = targetIndex;
   }
 
   private clearTurnTimer(turn: ActiveTurn): void {

@@ -1,4 +1,4 @@
-import type { ProjectedTimelineRow } from "./timeline-projection.js";
+import type { ProjectedTimelineRow, TimelineRetirement } from "./timeline-projection.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
 export interface AgentTimelineRow {
@@ -12,6 +12,11 @@ export interface AgentTimelineRow {
 export interface AgentTimelineCursor {
   epoch: string;
   seq: number;
+  /**
+   * For a reader that cannot apply retirements: the retirement count its view reflects. The
+   * cursor is stale once another retirement has happened.
+   */
+  retirementCount?: number;
 }
 
 export type AgentTimelineFetchDirection = "tail" | "before" | "after";
@@ -46,23 +51,8 @@ export interface AgentTimelineFetchResult {
   startSeq: number | null;
   endSeq: number | null;
   rows: ProjectedTimelineRow[];
-}
-
-export interface AgentTimelineStore {
-  appendCommitted(
-    agentId: string,
-    item: AgentTimelineItem,
-    options?: { timestamp?: string; turnId?: string },
-  ): Promise<AgentTimelineRow>;
-  fetchCommitted(
-    agentId: string,
-    options?: AgentTimelineFetchOptions,
-  ): Promise<AgentTimelineFetchResult>;
-  getLatestCommittedSeq(agentId: string): Promise<number>;
-  getCommittedRows(agentId: string): Promise<AgentTimelineRow[]>;
-  getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
-  getLastAssistantMessage(agentId: string): Promise<string | null>;
-  deleteAgent(agentId: string): Promise<void>;
-  bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
-  updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
+  /** Retirements whose seq lies in the page's span. A client applies them before the rows. */
+  retirements: TimelineRetirement[];
+  /** Retirements of this history so far. */
+  retirementCount: number;
 }

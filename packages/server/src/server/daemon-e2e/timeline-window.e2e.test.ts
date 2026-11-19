@@ -333,10 +333,12 @@ describe("daemon E2E - timeline window", () => {
           text: `row ${seq}`,
         });
       }
-      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
-        direction: "tail",
-        limit: 1,
-      }).epoch;
+      const epoch = (
+        await ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
+          direction: "tail",
+          limit: 1,
+        })
+      ).epoch;
 
       const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "after",
@@ -374,10 +376,12 @@ describe("daemon E2E - timeline window", () => {
           text: `message ${seq - 200}`,
         });
       }
-      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
-        direction: "tail",
-        limit: 1,
-      }).epoch;
+      const epoch = (
+        await ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
+          direction: "tail",
+          limit: 1,
+        })
+      ).epoch;
 
       const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "after",
@@ -476,10 +480,12 @@ describe("daemon E2E - timeline window", () => {
           text: `row ${seq}`,
         });
       }
-      const epoch = ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
-        direction: "tail",
-        limit: 1,
-      }).epoch;
+      const epoch = (
+        await ctx.daemon.daemon.agentManager.fetchTimeline(agent.id, {
+          direction: "tail",
+          limit: 1,
+        })
+      ).epoch;
 
       const timeline = await ctx.client.fetchAgentTimeline(agent.id, {
         direction: "before",

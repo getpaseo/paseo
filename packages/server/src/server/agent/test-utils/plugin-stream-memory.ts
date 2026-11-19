@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import pino from "pino";
 import { PluginAgentClientRegistry } from "../plugin-provider.js";
-import { InMemoryAgentTimelineStore } from "../agent-timeline-store.js";
+import { AgentTimeline } from "../timeline/index.js";
 import { AgentManager } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import { buildProviderRegistry } from "../provider-registry.js";
@@ -67,12 +67,12 @@ const registrations: ProviderRegistration[] = Array.from({ length: 3 }, (_, inde
   },
 }));
 plugins.replace(registrations);
-const store = new InMemoryAgentTimelineStore();
+const timeline = new AgentTimeline();
 const manager = new AgentManager({
   clients: plugins.clients(),
   providerDefinitions: buildProviderRegistry(logger, { pluginProviders: plugins.definitions() }),
   registry: new AgentStorage(root, logger),
-  timelineStore: store,
+  timeline,
   logger,
 });
 const agents = await Promise.all(
@@ -143,13 +143,13 @@ global.gc();
 const retained = process.memoryUsage().heapUsed - before;
 assert(retained < 24 * 1024 * 1024, `Retained heap exceeded 24 MiB: ${retained} bytes`);
 for (let index = 0; index < sessions.length; index++) {
-  const items = store.getItems(agents[index]!.id);
+  const items = (await timeline.readRows({ agentId: agents[index]!.id })).map((row) => row.item);
   assert.equal(items.length, steps * 2);
   for (let step = 0; step < steps; step++) {
     const item = items[step * 2]!;
     assert.equal(item.type === "reasoning" && item.text, expected.get(`${index}:${step}`));
   }
-  const children = manager.listProviderSubagents(agents[index]!.id);
+  const children = await manager.listProviderSubagents(agents[index]!.id);
   assert.equal(children.length, 1);
   let rootItems = 0;
   let childItems = 0;
@@ -160,17 +160,32 @@ for (let index = 0; index < sessions.length; index++) {
   assert.equal(rootItems, steps * 2);
   assert.equal(childItems, steps * 2);
   await manager.archiveAgent(agents[index]!.id);
-  assert.equal(store.has(agents[index]!.id), false);
   assert.equal(
     manager.listAgents().some((agent) => agent.id === agents[index]!.id),
     false,
   );
+  // An archived chat reads its history and provider children without its provider.
+  assert.equal((await timeline.readRows({ agentId: agents[index]!.id })).length, steps * 2);
+  assert.equal((await timeline.listChildren(agents[index]!.id)).length, 1);
+}
+global.gc();
+const archived = process.memoryUsage().heapUsed - before;
+for (const agent of agents) {
+  const stored = await timeline.listChildren(agent.id);
+  await manager.deleteAgentState(agent.id);
+  assert.equal(await timeline.describe({ agentId: agent.id }), null);
+  for (const child of stored) {
+    assert.equal(
+      await timeline.describe({ agentId: agent.id, subagentId: child.subagentId }),
+      null,
+    );
+  }
 }
 await plugins.shutdown();
 await manager.flushForShutdown();
 await rm(root, { recursive: true, force: true });
 global.gc();
 const closed = process.memoryUsage().heapUsed - before;
-// Keep closed session references alive, as callers can retain them after archive.
+// Keep closed session references alive, as callers can retain them after deletion.
 assert.equal(sessions.length, 3);
-process.stdout.write(JSON.stringify({ retained, closed }));
+process.stdout.write(JSON.stringify({ retained, archived, closed }));

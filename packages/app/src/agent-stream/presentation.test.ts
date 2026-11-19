@@ -320,7 +320,7 @@ describe("stream presentation through installed plugins", () => {
     const source = harness.source();
     const live = source.head[0];
     if (live?.kind !== "assistant_message") throw new Error("Expected a live assistant message");
-    const canonical = { ...live, timelineCursor: { epoch: "epoch-1", seq: 42 } };
+    const canonical = { ...live, timelineCursor: { epoch: "epoch-1", seq: 42, anchorSeq: 42 } };
     const present = createStreamPresentation();
     present({ ...presentationOptions, tail: [], head: [live], transform: undefined });
     const repointed = rows(
@@ -330,7 +330,7 @@ describe("stream presentation through installed plugins", () => {
       {
         id: streamed[0]!.id,
         text: "Streamed answer",
-        timelineCursor: { epoch: "epoch-1", seq: 42 },
+        timelineCursor: { epoch: "epoch-1", seq: 42, anchorSeq: 42 },
       },
     ]);
   });
@@ -517,7 +517,7 @@ describe("timeline presentation", () => {
         messageId: "provider-message",
         clientMessageId: "client-message",
         turnId: "turn-1",
-        timelineCursor: { epoch: "epoch", seq: 12 },
+        timelineCursor: { epoch: "epoch", seq: 12, anchorSeq: 12 },
       });
       const presentMessage = () =>
         present({
