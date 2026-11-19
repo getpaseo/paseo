@@ -38,6 +38,12 @@ export function githubChangeRequestHost(url: string): string {
   return identity(url).host;
 }
 
+export function describeGitHubChangeRequest(url: string): string {
+  const { host, owner, repo, number } = identity(url);
+  const project = host === "github.com" ? `${owner}/${repo}` : `${host}/${owner}/${repo}`;
+  return `${project} #${number}`;
+}
+
 const pageSchema = z.object({
   nodes: z.array(z.unknown()),
   pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),

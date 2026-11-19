@@ -1472,6 +1472,7 @@ export async function createPaseoDaemon(
 
   const changeRequestWatches = createChangeRequestWatches({
     source: github.changeRequests,
+    backgroundWork: agentManager,
     paseoHome: config.paseoHome,
     logger,
     isActive: async (agentId) => {

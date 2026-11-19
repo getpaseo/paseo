@@ -1,6 +1,7 @@
 import type { ChangeRequestSource } from "./change-request-source.js";
 import {
   GITHUB_POLL_CHECK_CONTEXT_FIELDS,
+  describeGitHubChangeRequest,
   githubChangeRequestHost,
   readGitHubChangeRequests,
   resolveGitHubChangeRequest,
@@ -2949,6 +2950,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
 
     changeRequests: {
       resolve: resolveGitHubChangeRequest,
+      describe: describeGitHubChangeRequest,
       observe(url, callbacks) {
         const host = githubChangeRequestHost(url);
         const watch = { host, callbacks, nextDueAt: deps.now() + 25 };

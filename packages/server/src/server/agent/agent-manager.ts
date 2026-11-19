@@ -115,9 +115,10 @@ import {
 } from "./provider-subagents/store.js";
 import {
   AgentBackgroundWorkStore,
-  isHeartbeatBackgroundWorkItem,
+  isDaemonBackgroundWorkItem,
   type AgentBackgroundWorkItem,
-  type HeartbeatBackgroundWorkInput,
+  type DaemonBackgroundWorkInput,
+  type DaemonBackgroundWorkKey,
 } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
@@ -1443,12 +1444,12 @@ export class AgentManager {
     return this.backgroundWork.list(agentId);
   }
 
-  setHeartbeatBackgroundWork(input: HeartbeatBackgroundWorkInput): void {
-    this.publishBackgroundWork(input.agentId, this.backgroundWork.setHeartbeat(input));
+  setDaemonBackgroundWork(input: DaemonBackgroundWorkInput): void {
+    this.publishBackgroundWork(input.agentId, this.backgroundWork.setDaemonBackgroundWork(input));
   }
 
-  removeHeartbeatBackgroundWork(agentId: string, scheduleId: string): void {
-    this.publishBackgroundWork(agentId, this.backgroundWork.removeHeartbeat(agentId, scheduleId));
+  removeDaemonBackgroundWork(key: DaemonBackgroundWorkKey): void {
+    this.publishBackgroundWork(key.agentId, this.backgroundWork.removeDaemonBackgroundWork(key));
   }
 
   async stopAgentBackgroundWork({
@@ -1457,11 +1458,11 @@ export class AgentManager {
     stopToken,
     canManageAutomation,
   }: StopAgentBackgroundWorkOptions): Promise<void> {
-    if (isHeartbeatBackgroundWorkItem({ id: itemId })) {
+    if (isDaemonBackgroundWorkItem({ id: itemId })) {
       if (this.agents.get(agentId)?.internal) throw new Error(`Unknown agent '${agentId}'`);
       if (!canManageAutomation)
-        throw new Error("Managing automation is required to stop a heartbeat");
-      await this.backgroundWork.stopHeartbeat(agentId, itemId, stopToken);
+        throw new Error("Managing automation is required to stop daemon background work");
+      await this.backgroundWork.stopDaemon(agentId, itemId, stopToken);
       return;
     }
     this.requirePublicAgent(agentId);

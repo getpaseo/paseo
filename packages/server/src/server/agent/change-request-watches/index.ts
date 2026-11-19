@@ -8,16 +8,21 @@ import {
   type ChangeRequestSource,
 } from "../../../services/change-request-source.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
+import type {
+  DaemonBackgroundWorkInput,
+  DaemonBackgroundWorkKey,
+} from "../background-work/index.js";
 import { writeJsonFileAtomic } from "../../atomic-file.js";
 
 const DIGEST_WINDOW_MS = 30_000;
 const watchGroupSchema = z.object({
-  url: z.string(),
+  url: z.url(),
   snapshot: changeRequestStatusSchema,
   seenActivity: z.array(z.string()),
-  watchers: z.array(z.object({ agentId: z.string() })),
+  watchers: z.array(z.object({ agentId: z.string(), startedAt: z.string().optional() })),
 });
 type WatchGroup = z.infer<typeof watchGroupSchema>;
+type Watcher = WatchGroup["watchers"][number];
 interface DigestWindow {
   dueAt: number;
   timer: NodeJS.Timeout;
@@ -35,6 +40,14 @@ interface Dependencies {
   logger: Logger;
   isActive(agentId: string): Promise<boolean>;
   messages(): AgentMessageDelivery;
+  backgroundWork: {
+    setDaemonBackgroundWork(input: DaemonBackgroundWorkInput): void;
+    removeDaemonBackgroundWork(key: DaemonBackgroundWorkKey): void;
+  };
+}
+
+function backgroundWorkKey(agentId: string, url: string): DaemonBackgroundWorkKey {
+  return { agentId, namespace: "change-request-watch", id: url };
 }
 
 function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
@@ -170,6 +183,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       [...next.values()].filter(({ watchers }) => watchers.length),
     );
     for (const group of updates) {
+      const previous = groups.get(group.url);
       // An in-flight subscription still needs the committed baseline and its observation.
       if (group.watchers.length || registrations.has(group.url)) {
         groups.set(group.url, group);
@@ -177,6 +191,30 @@ export function createChangeRequestWatches(deps: Dependencies) {
         groups.delete(group.url);
         stopObserving(group.url);
       }
+      syncBackgroundWork(group, previous?.watchers);
+    }
+  }
+
+  function syncBackgroundWork({ url, watchers }: WatchGroup, previous: Watcher[] = []): void {
+    if (previous === watchers) return;
+    const current = new Set(watchers);
+    for (const watcher of previous) {
+      if (!current.has(watcher)) {
+        deps.backgroundWork.removeDaemonBackgroundWork(backgroundWorkKey(watcher.agentId, url));
+      }
+    }
+    const existing = new Set(previous);
+    for (const watcher of watchers) {
+      if (existing.has(watcher)) continue;
+      deps.backgroundWork.setDaemonBackgroundWork({
+        ...backgroundWorkKey(watcher.agentId, url),
+        kind: "monitor",
+        description: deps.source.describe(url),
+        startedAt: watcher.startedAt ?? new Date().toISOString(),
+        stop: async () => {
+          await unsubscribe(watcher.agentId, url, watcher);
+        },
+      });
     }
   }
 
@@ -270,7 +308,10 @@ export function createChangeRequestWatches(deps: Dependencies) {
             url,
             snapshot,
             seenActivity: group?.seenActivity ?? activity.map(({ id }) => id),
-            watchers: [...(group?.watchers ?? []), { agentId }],
+            watchers: [
+              ...(group?.watchers ?? []),
+              { agentId, startedAt: new Date().toISOString() },
+            ],
           });
         }
         return {
@@ -302,6 +343,20 @@ export function createChangeRequestWatches(deps: Dependencies) {
     return commit({
       ...group,
       watchers: group.watchers.filter((watcher) => watcher.agentId !== agentId),
+    });
+  }
+
+  function unsubscribe(agentId: string, url: string, expected?: Watcher) {
+    return serialize(async () => {
+      const group = groups.get(url);
+      const watcher = group?.watchers.find((entry) => entry.agentId === agentId);
+      // Stop can wait behind an unsubscribe and a new subscription for the same PR.
+      if (expected && watcher !== expected) {
+        throw new Error("Background work is no longer available to stop");
+      }
+      if (group && watcher) await removeWatcher(group, agentId);
+      const withdrawn = withdraw(agentId, url);
+      return { url, removed: Boolean(watcher) || withdrawn };
     });
   }
 
@@ -352,21 +407,15 @@ export function createChangeRequestWatches(deps: Dependencies) {
           deps.logger.warn({ err: error, file }, "Could not prune archived change request watches");
         }
       }
-      for (const group of active) groups.set(group.url, group);
-      for (const group of groups.values()) {
-        if (group.snapshot.state === "open") observe(group.url);
+      for (const group of active) {
+        groups.set(group.url, group);
+        syncBackgroundWork(group);
+        observe(group.url);
       }
     },
     subscribe,
     unsubscribe(agentId: string, input: string) {
-      return serialize(async () => {
-        const url = deps.source.resolve(input);
-        const group = groups.get(url);
-        const removed = group?.watchers.some((watcher) => watcher.agentId === agentId) ?? false;
-        if (group && removed) await removeWatcher(group, agentId);
-        const withdrawn = withdraw(agentId, url);
-        return { url, removed: removed || withdrawn };
-      });
+      return unsubscribe(agentId, deps.source.resolve(input));
     },
     archive,
     async close() {

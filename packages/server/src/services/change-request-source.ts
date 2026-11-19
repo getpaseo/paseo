@@ -28,6 +28,8 @@ export type ChangeRequestSnapshot = z.infer<typeof changeRequestSnapshotSchema>;
 export interface ChangeRequestSource {
   /** Resolve the URL to the forge's canonical change request address. */
   resolve(url: string): string;
+  /** Human-readable identity for a canonical change request address. */
+  describe(url: string): string;
   observe(
     url: string,
     callbacks: {

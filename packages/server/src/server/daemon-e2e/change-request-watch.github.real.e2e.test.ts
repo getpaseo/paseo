@@ -27,6 +27,10 @@ function promptText(prompt: AgentPromptInput) {
     : prompt.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
 }
 
+function description({ html_url, number }: { html_url: string; number: number }) {
+  return `${new URL(html_url).pathname.split("/").slice(1, 3).join("/")} #${number}`;
+}
+
 test("GitHub PR watches batch with child messages and survive restart", async ({
   onTestFinished,
 }) => {
@@ -106,6 +110,15 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     });
     expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
     return result.structuredContent;
+  }
+
+  async function backgroundWorkCount(
+    client: Awaited<ReturnType<typeof startDaemon>>["client"],
+    agentId: string,
+  ) {
+    const result = await client.fetchAgent({ agentId });
+    expect(result?.agent.id).toBe(agentId);
+    return result?.agent.backgroundWork?.count ?? 0;
   }
 
   onTestFinished(async () => {
@@ -193,6 +206,42 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     JSON.stringify([before, afterFirst, afterShared]),
   );
   expect(turns).toEqual([]);
+  await verifyBackgroundWork(native);
+
+  async function verifyBackgroundWork(nativeTools: PaseoToolCatalog) {
+    const idleWork = await client.listAgentBackgroundWork(idle.id);
+    const busyWork = await client.listAgentBackgroundWork(busy.id);
+    const descriptions = all.map(description).sort();
+    expect(idleWork.map((row) => row.description).sort()).toEqual(descriptions);
+    expect(busyWork.map((row) => row.description).sort()).toEqual(descriptions);
+    expect((await client.fetchAgent({ agentId: idle.id }))?.agent.status).toBe("idle");
+    expect(await backgroundWorkCount(client, idle.id)).toBe(all.length);
+    expect(await backgroundWorkCount(client, busy.id)).toBe(all.length);
+
+    await call(mcp, subscribe, primary.html_url);
+    expect(await client.listAgentBackgroundWork(idle.id)).toEqual(idleWork);
+    const quietPr = quiet[0]!;
+    const stopped = busyWork.find((row) => row.description === description(quietPr));
+    if (!stopped) throw new Error("The quiet PR has no background work row");
+    expect(stopped).toMatchObject({
+      kind: "monitor",
+      canStop: true,
+      stopToken: expect.any(String),
+    });
+    await client.stopAgentBackgroundWork(busy.id, stopped);
+    expect(
+      (await nativeTools.executeTool(unsubscribe, { url: quietPr.html_url })).structuredContent,
+    ).toMatchObject({ removed: false });
+    expect(await backgroundWorkCount(client, busy.id)).toBe(all.length - 1);
+    expect(await client.listAgentBackgroundWork(idle.id)).toEqual(idleWork);
+    expect(
+      (await nativeTools.executeTool(subscribe, { url: quietPr.html_url })).structuredContent,
+    ).toMatchObject({ subscribed: true });
+    await expect(client.stopAgentBackgroundWork(busy.id, stopped)).rejects.toThrow(
+      "Background work is no longer available to stop",
+    );
+    expect(await backgroundWorkCount(client, busy.id)).toBe(all.length);
+  }
 
   const childWorkspace = await client.createWorkspace({
     source: { kind: "directory", path: childDir },
@@ -334,6 +383,10 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   await sendFromChild(retainedChildReport);
   const nativeRemoval = await native.executeTool(unsubscribe, { url });
   expect(nativeRemoval.structuredContent).toMatchObject({ url, removed: true });
+  expect(await backgroundWorkCount(client, busy.id)).toBe(all.length - 1);
+  expect(
+    (await client.listAgentBackgroundWork(busy.id)).map((row) => row.description),
+  ).not.toContain(description(primary));
   const beforeSecondRelease = turns.length;
   holdForUnsubscribe.resolve();
   await expect
@@ -344,10 +397,14 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
   expect((await client.waitForFinish(busy.id)).status).toBe("idle");
   await client.archiveAgent(busy.id);
   await client.archiveAgent(late.id);
+  await expect(client.listAgentBackgroundWork(late.id)).rejects.toThrow("Agent is archived");
 
   for (const { html_url } of quiet) {
     expect(await call(mcp, unsubscribe, html_url)).toMatchObject({ removed: true });
   }
+  const [beforeRestart] = await client.listAgentBackgroundWork(idle.id);
+  expect(beforeRestart).toMatchObject({ kind: "monitor", description: description(primary) });
+  expect(await backgroundWorkCount(client, idle.id)).toBe(1);
   const deliveredBeforeRestart = turns.length;
   await Promise.all(Array.from(connections, (connection) => connection.close()));
   connections.clear();
@@ -359,6 +416,13 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     .poll(async () => (await fixture.checkRun(green))?.conclusion, waitForGitHub)
     .toBe("success");
   context = await startDaemon();
+  expect(await context.client.listAgentBackgroundWork(idle.id)).toEqual([
+    {
+      ...beforeRestart,
+      stopToken: expect.any(String),
+    },
+  ]);
+  expect(await backgroundWorkCount(context.client, idle.id)).toBe(1);
   await expect
     .poll(() => turns.slice(deliveredBeforeRestart).map(({ text }) => text), waitForGitHub)
     .toEqual([expect.stringContaining(`Checks passed on ${green.head.sha}.`)]);
@@ -372,6 +436,7 @@ test("GitHub PR watches batch with child messages and survive restart", async ({
     .poll(() => updates(idleDir).at(-1)?.text, waitForGitHub)
     .toContain("Change request closed.");
   expect(updates(idleDir).at(-1)?.text).toContain(url);
+  expect(await backgroundWorkCount(context.client, idle.id)).toBe(0);
   expect(await call(restored, unsubscribe, url)).toMatchObject({ url, removed: false });
   expect(await call(restored, subscribe, url)).toMatchObject({
     url,

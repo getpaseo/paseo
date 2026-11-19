@@ -3,6 +3,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import { createChangeRequestWatches } from "./index.js";
+import { AgentBackgroundWorkStore } from "../background-work/index.js";
 import { createAgentMessageDelivery, parseAgentMessages } from "../agent-messages/index.js";
 import type {
   ChangeRequestSnapshot,
@@ -33,6 +34,7 @@ function createHarness(
   { isActive = async (_id: string) => true, observationFails = false } = {},
 ) {
   const observations = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
+  const backgroundWork = new AgentBackgroundWorkStore();
   const busy = new Set<string>();
   const turns: { recipientId: string; prompt: string }[] = [];
   const listeners = new Set<(id: string) => void>();
@@ -53,6 +55,7 @@ function createHarness(
   const watches = createChangeRequestWatches({
     source: {
       resolve: (input) => input,
+      describe: () => "owner/repo #42",
       observe(address, callbacks) {
         observations.set(address, callbacks);
         queueMicrotask(() => {
@@ -66,6 +69,7 @@ function createHarness(
     logger: pino({ enabled: false }),
     isActive,
     messages: () => messages,
+    backgroundWork,
   });
   return {
     observations,
@@ -73,6 +77,7 @@ function createHarness(
     busy,
     messages,
     watches,
+    backgroundWork,
     idle(id: string) {
       busy.delete(id);
       for (const listener of listeners) listener(id);
@@ -83,6 +88,54 @@ function createHarness(
     },
   };
 }
+
+test("lists and stops each agent's subscription through the background work registry", async () => {
+  const home = await createTestHome();
+  const h = createHarness(home);
+  try {
+    await h.watches.start();
+    await h.watches.subscribe("first", url);
+    await h.watches.subscribe("second", url);
+    const [first] = h.backgroundWork.list("first");
+    const [second] = h.backgroundWork.list("second");
+    expect(first).toMatchObject({
+      description: "owner/repo #42",
+      kind: "monitor",
+      canStop: true,
+    });
+    expect(second).toMatchObject({ id: first.id, description: first.description });
+    expect(h.backgroundWork.summary("first")).toEqual({ count: 1 });
+    expect(h.backgroundWork.summary("second")).toEqual({ count: 1 });
+
+    await h.watches.subscribe("first", url);
+    await h.observations.get(url)!.snapshot(initial);
+    expect(h.backgroundWork.list("first")).toEqual([first]);
+    expect(h.observations.size).toBe(1);
+
+    // Stop passes registry authorization before the watch mutation lane catches up.
+    const unsubscribe = h.watches.unsubscribe("first", url);
+    const resubscribe = h.watches.subscribe("first", url);
+    const staleStop = h.backgroundWork.stopDaemon("first", first.id, first.stopToken!);
+    await expect(staleStop).rejects.toThrow("Background work is no longer available to stop");
+    await expect(unsubscribe).resolves.toMatchObject({ removed: true });
+    await expect(resubscribe).resolves.toMatchObject({ subscribed: true });
+    const [replacement] = h.backgroundWork.list("first");
+    expect(replacement.stopToken).not.toBe(first.stopToken);
+    await h.backgroundWork.stopDaemon("first", replacement.id, replacement.stopToken!);
+    expect(h.backgroundWork.summary("first")).toBeUndefined();
+    expect(h.backgroundWork.list("second")).toEqual([second]);
+    expect(h.observations.size).toBe(1);
+    await h.watches.unsubscribe("second", url);
+    expect(h.backgroundWork.summary("second")).toBeUndefined();
+    expect(h.observations.size).toBe(0);
+    await h.watches.subscribe("first", url);
+    await h.watches.archive("first");
+    expect(h.backgroundWork.list("first")).toEqual([]);
+  } finally {
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test.each([false, true])(
   "shares the next turn with a child report when unsubscribe is %s",
@@ -187,6 +240,8 @@ test("can withdraw a terminal digest after its observation has stopped", async (
     h.busy.add("first");
     await h.observations.get(url)!.snapshot({ ...initial, state: "merged" });
     expect(h.observations.has(url)).toBe(false);
+    expect(h.backgroundWork.list("first")).toEqual([]);
+    expect(h.backgroundWork.list("second")).toEqual([]);
     await vi.advanceTimersByTimeAsync(32_000);
     await expect(h.watches.unsubscribe("first", url)).resolves.toMatchObject({ removed: true });
     h.idle("first");
@@ -227,6 +282,7 @@ test("keeps a durable baseline across restart and drops undelivered digests", as
   try {
     await h.watches.start();
     await h.watches.subscribe("first", url);
+    const [beforeRestart] = h.backgroundWork.list("first");
     h.busy.add("first");
     await h.observations
       .get(url)!
@@ -238,6 +294,9 @@ test("keeps a durable baseline across restart and drops undelivered digests", as
 
     h = createHarness(home, { observationFails: true });
     await h.watches.start();
+    expect(h.backgroundWork.list("first")).toEqual([
+      { ...beforeRestart, stopToken: expect.any(String) },
+    ]);
     const result = await Promise.race([
       h.watches.subscribe("first", url),
       Promise.resolve().then(async () => {
@@ -274,6 +333,8 @@ test("recovers active watches even when pruning archived watchers cannot be writ
       },
     });
     await h.watches.start();
+    expect(h.backgroundWork.list("archived")).toEqual([]);
+    expect(h.backgroundWork.summary("active")).toEqual({ count: 1 });
     await expect(h.watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
     await expect(h.watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
     expect(await readFile(backup, "utf8")).toBe(stored);
