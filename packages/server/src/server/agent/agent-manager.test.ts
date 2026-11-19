@@ -15315,6 +15315,7 @@ test("lists and stops heartbeat background work across provider session closure"
   const heartbeat = {
     ...heartbeatKey,
     kind: "heartbeat",
+    countsAsRunning: false,
     description: "Check build",
     startedAt: "2026-10-06T10:00:00.000Z",
     stop: async () => {
@@ -15341,7 +15342,10 @@ test("lists and stops heartbeat background work across provider session closure"
       items: [{ id: item.id, kind: "shell", description: null, canStop: true }],
     });
     await vi.waitFor(() =>
-      expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 2 }),
+      expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({
+        count: 2,
+        runningCount: 1,
+      }),
     );
     const providerItem = manager
       .listAgentBackgroundWork(agent.id)
@@ -15363,7 +15367,7 @@ test("lists and stops heartbeat background work across provider session closure"
     await manager.closeAgent(agent.id);
     expect(manager.getAgent(agent.id)).toBeNull();
     expect(manager.listAgentBackgroundWork(agent.id)).toEqual([renamed]);
-    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1 });
+    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1, runningCount: 0 });
     expect(events.slice(eventsBeforeClose)).toContainEqual({
       type: "background_work",
       agentId: agent.id,
