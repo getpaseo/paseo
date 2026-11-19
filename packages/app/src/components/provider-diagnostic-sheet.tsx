@@ -1,5 +1,14 @@
 import * as Clipboard from "expo-clipboard";
-import { AlertTriangle, Copy, FileText, Plus, RotateCw, Trash2 } from "lucide-react-native";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FileText,
+  Plus,
+  RotateCw,
+  Trash2,
+} from "lucide-react-native";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +37,7 @@ import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/t
 import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import {
+  buildProviderDiscoveredModelLayout,
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
 } from "./provider-diagnostic-models";
@@ -70,6 +80,65 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function ModelGroupHeader({
+  title,
+  count,
+  showBorder,
+}: {
+  title: string;
+  count: number;
+  showBorder: boolean;
+}) {
+  return (
+    <View style={[sheetStyles.modelGroupHeader, showBorder && sheetStyles.modelGroupHeaderBorder]}>
+      <Text style={sheetStyles.modelGroupTitle}>{title}</Text>
+      <Text style={sheetStyles.modelGroupCount}>{count}</Text>
+    </View>
+  );
+}
+
+function ModelListDisclosure({
+  expanded,
+  hiddenCount,
+  onPress,
+}: {
+  expanded: boolean;
+  hiddenCount: number;
+  onPress: () => void;
+}) {
+  const { t } = useTranslation();
+  const { theme } = useUnistyles();
+  const pressableStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      sheetStyles.modelDisclosure,
+      (Boolean(hovered) || pressed) && sheetStyles.modelDisclosureHovered,
+    ],
+    [],
+  );
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  return (
+    <Pressable
+      onPress={onPress}
+      style={pressableStyle}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      testID="provider-models-show-more"
+      aria-expanded={isWeb ? expanded : undefined}
+    >
+      <Text style={sheetStyles.modelDisclosureLabel}>
+        {expanded
+          ? t("settings.providers.models.showLess")
+          : t("settings.providers.models.showMore", { count: hiddenCount })}
+      </Text>
+      {expanded ? (
+        <ChevronUp size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      ) : (
+        <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+      )}
+    </Pressable>
   );
 }
 
@@ -364,6 +433,8 @@ interface ProviderModalBodyProps {
   filteredDiscovered: AgentModelDefinition[];
   filteredCustom: ProviderProfileModel[];
   deletingModelId: string | null;
+  discoveredExpanded: boolean;
+  onToggleDiscoveredExpanded: () => void;
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
@@ -455,10 +526,23 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     filteredDiscovered,
     filteredCustom,
     deletingModelId,
+    discoveredExpanded,
+    onToggleDiscoveredExpanded,
     onRefresh,
     onDeleteCustom,
     theme,
   } = props;
+  const discoveredLayout = useMemo(
+    () =>
+      buildProviderDiscoveredModelLayout(filteredDiscovered, {
+        expanded: searchActive || discoveredExpanded,
+      }),
+    [discoveredExpanded, filteredDiscovered, searchActive],
+  );
+  const collapsedDiscoveredLayout = useMemo(
+    () => buildProviderDiscoveredModelLayout(filteredDiscovered),
+    [filteredDiscovered],
+  );
 
   if (discoveredCount === 0 && additionalCount === 0 && providerSnapshotRefreshing) {
     return (
@@ -504,9 +588,27 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
             count={filteredDiscovered.length}
           />
           <View style={settingsStyles.card}>
-            {filteredDiscovered.map((model) => (
-              <DiscoveredModelRow key={model.id} model={model} />
+            {discoveredLayout.sections.map((section, index) => (
+              <View key={section.key}>
+                {section.title || discoveredLayout.sections.length > 1 ? (
+                  <ModelGroupHeader
+                    title={section.title ?? t("settings.providers.models.other")}
+                    count={section.totalCount}
+                    showBorder={index > 0}
+                  />
+                ) : null}
+                {section.models.map((model) => (
+                  <DiscoveredModelRow key={model.id} model={model} />
+                ))}
+              </View>
             ))}
+            {!searchActive && collapsedDiscoveredLayout.hiddenCount > 0 ? (
+              <ModelListDisclosure
+                expanded={discoveredExpanded}
+                hiddenCount={collapsedDiscoveredLayout.hiddenCount}
+                onPress={onToggleDiscoveredExpanded}
+              />
+            ) : null}
           </View>
         </View>
       ) : null}
@@ -547,6 +649,7 @@ export function ProviderDiagnosticSheet({
   const [addSheetOpen, setAddSheetOpen] = useState(false);
   const [diagSheetOpen, setDiagSheetOpen] = useState(false);
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
+  const [discoveredExpanded, setDiscoveredExpanded] = useState(false);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -580,6 +683,7 @@ export function ProviderDiagnosticSheet({
       setQuery("");
       setAddSheetOpen(false);
       setDiagSheetOpen(false);
+      setDiscoveredExpanded(false);
     }
   }, [visible]);
 
@@ -597,6 +701,9 @@ export function ProviderDiagnosticSheet({
     void refresh([provider]);
   }, [provider, refresh]);
 
+  const handleToggleDiscoveredExpanded = useCallback(() => {
+    setDiscoveredExpanded((current) => !current);
+  }, []);
   const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
   const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
   const handleOpenDiagSheet = useCallback(() => setDiagSheetOpen(true), []);
@@ -660,6 +767,8 @@ export function ProviderDiagnosticSheet({
           filteredDiscovered={filteredDiscovered}
           filteredCustom={filteredCustom}
           deletingModelId={deletingModelId}
+          discoveredExpanded={discoveredExpanded}
+          onToggleDiscoveredExpanded={handleToggleDiscoveredExpanded}
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
           theme={theme}
@@ -741,6 +850,44 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  modelGroupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+  },
+  modelGroupHeaderBorder: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  modelGroupTitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+  },
+  modelGroupCount: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  modelDisclosure: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  modelDisclosureHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  modelDisclosureLabel: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
   },
   modelRow: {
     flexDirection: "row",

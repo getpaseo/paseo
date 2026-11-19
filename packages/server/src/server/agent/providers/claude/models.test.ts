@@ -110,6 +110,21 @@ describe("getClaudeModels", () => {
     ]);
   });
 
+  it("tags every catalog entry with a model family for grouped provider settings", () => {
+    const models = getClaudeModels();
+
+    expect(models.every((model) => typeof model.metadata?.modelFamily === "string")).toBe(true);
+    expect(models.find((model) => model.id === "claude-opus-5-5")?.metadata?.modelFamily).toBe(
+      "Opus",
+    );
+    expect(models.find((model) => model.id === "claude-sonnet-5-5")?.metadata?.modelFamily).toBe(
+      "Sonnet",
+    );
+    expect(models.find((model) => model.id === "claude-haiku-5-5")?.metadata?.modelFamily).toBe(
+      "Haiku",
+    );
+  });
+
   it("marks exactly one model as default", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
