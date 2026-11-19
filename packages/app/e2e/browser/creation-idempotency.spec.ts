@@ -4,7 +4,80 @@ import { test } from "../support/creation-fixtures";
 import {
   delayBrowserWorkspaceCreatedResponse,
   selectWorkspaceIsolation,
+  connectNewWorkspaceDaemonClient,
 } from "../support/helpers/new-workspace";
+import { selectLaunchOption, submitTerminalLaunch } from "../support/helpers/new-workspace-launch";
+
+test("an uncertain background agent cannot lose its identity through a terminal launch after reload", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const delay = await delayBrowserWorkspaceCreatedResponse(page);
+  const client = await connectNewWorkspaceDaemonClient();
+  try {
+    await creation.openWorkspaceForm("local");
+    const before = new Set((await client.fetchWorkspaces()).entries.map((entry) => entry.id));
+    await creation.submitPrompt("Reconcile the original uncertain start", "Create");
+    await delay.waitForCreateRequest();
+    await creation.leaveWorkspaceForm();
+    delay.release();
+    // Wait for the real checkpoint before discarding the original app instance.
+    await page.waitForFunction(() =>
+      Object.keys(localStorage).some((key) => {
+        if (!key.startsWith("draft-creation:")) return false;
+        const record = JSON.parse(localStorage.getItem(key)!);
+        return (
+          record.workspace &&
+          record.attempt?.agentRequested === true &&
+          record.attempt.outcome === "pending"
+        );
+      }),
+    );
+    await creation.returnToWorkspaceForm();
+    await page.reload();
+    await selectLaunchOption(page, "blank");
+    await submitTerminalLaunch(page);
+    await expect(
+      page
+        .getByText(
+          "The previous start may still be running. Check your workspaces and agents before starting another.",
+        )
+        .filter({ visible: true })
+        .first(),
+    ).toBeVisible();
+    const created = (await client.fetchWorkspaces()).entries.filter(
+      (entry) => !before.has(entry.id),
+    );
+    expect(created).toHaveLength(1);
+    expect(
+      (
+        await client.listTerminals(created[0]!.workspaceDirectory, undefined, {
+          workspaceId: created[0]!.id,
+        })
+      ).terminals,
+    ).toHaveLength(0);
+    await startup.release();
+    await selectLaunchOption(page, "chat");
+    await creation.submitPrompt("Reconcile the original uncertain start", "Create");
+    await creation.expectPromptVisible("Reconcile the original uncertain start");
+    expect(
+      (await client.fetchAgents()).entries.filter(
+        (entry) => entry.agent.workspaceId === created[0]!.id,
+      ),
+    ).toHaveLength(1);
+    expect(
+      (await client.fetchWorkspaces()).entries
+        .filter((entry) => !before.has(entry.id))
+        .map((entry) => entry.id),
+    ).toEqual([created[0]!.id]);
+  } finally {
+    delay.release();
+    await startup.release();
+    await client.close();
+  }
+});
 
 const backgroundRecoveryScenarios: Array<{
   name: string;

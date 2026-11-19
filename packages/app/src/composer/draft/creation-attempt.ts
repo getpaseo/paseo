@@ -160,6 +160,16 @@ export function createDraftCreations(deps: Dependencies) {
     const sameRequest =
       prior?.kind === "workspace" && prior.key === draftCreationKey(input.draftId, input.request);
     if (sameRequest) return { kind: "replay" };
+    // A terminal/empty launch would retire the draft ID on success. It must not
+    // detach saved chat content from an agent whose outcome is still unresolved.
+    const workspaceOnly = !requestsAgent({ kind: "workspace", request: input.request });
+    if (
+      workspaceOnly &&
+      prior?.agentRequested !== false &&
+      (prior?.outcome === "pending" || prior?.outcome === "unknown")
+    ) {
+      throw new DraftCreationOutcomeUnknownError(prior, deps.outcomeUnknownMessage());
+    }
     if (scope.record.workspacePlacementKey !== workspacePlacementKey(input.request)) {
       throw new Error(
         "Workspace placement has changed. Restore the original project, branch, and isolation, or open a new draft.",

@@ -73,6 +73,60 @@ function failure(options: {
 const scope = { serverId: "host", draftId: "draft-1" };
 
 describe("draft creation retry admission", () => {
+  it.each(["pending", "unknown"] as const)(
+    "rejects workspace-only reuse while the original agent outcome is %s after reload",
+    async (outcome) => {
+      const disk = storage();
+      const workspace = WorkspaceDescriptorPayloadSchema.parse({
+        id: "workspace-1",
+        projectId: "project",
+        projectDisplayName: "Project",
+        projectRootPath: "/repo",
+        workspaceDirectory: "/repo",
+        projectKind: "git",
+        workspaceKind: "local_checkout",
+        name: "Ready workspace",
+        status: "running",
+        statusEnteredAt: null,
+        activityAt: null,
+        archivingAt: null,
+        scripts: [],
+      });
+      const source = { kind: "directory", path: "/repo", projectId: "project" };
+      const originalRequest = { source, agent: request };
+      await expect(
+        creationsFor(disk).submit({
+          ...scope,
+          kind: "workspace",
+          request: originalRequest,
+          send: async ({ idempotencyKey, onEvent }) => {
+            onEvent({
+              ...failure({ kind: "workspace", idempotencyKey, unknown: true }),
+              phase: outcome === "pending" ? "workspace_ready" : "failed",
+              workspace,
+            });
+            throw new Error("Disconnected from the original start");
+          },
+        }),
+      ).rejects.toThrow("Disconnected from the original start");
+      const restored = creationsFor(disk);
+      await expect(restored.workspaceRetry({ ...scope, request: { source } })).rejects.toThrow(
+        DraftCreationOutcomeUnknownError,
+      );
+      expect(await restored.workspaceRetry({ ...scope, request: originalRequest })).toEqual({
+        kind: "replay",
+      });
+      await expect(
+        restored.submit({
+          ...scope,
+          kind: "agent",
+          request: { ...request, initialPrompt: "Edited task" },
+          send: async () => "must-not-create",
+        }),
+      ).rejects.toThrow(DraftCreationOutcomeUnknownError);
+    },
+  );
+
   it.each([
     { initialAgent: false, phase: "workspace_ready" },
     { initialAgent: false, phase: "completed" },
