@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { buildSelfNodeCommand } from "../server/paseo-env.js";
+import { settleSpawnCommandResolutions } from "./resolve-spawn-command.js";
 import { execCommand, spawnProcess } from "./spawn.js";
 
 const printEnvScript = `
@@ -215,4 +217,63 @@ describe("execCommand", () => {
       PASEO_SUPERVISED: null,
     });
   });
+});
+
+describe("spawnProcess", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const tempDir of tempDirs) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+    tempDirs.length = 0;
+  });
+
+  async function runToCompletion(
+    child: ChildProcess,
+  ): Promise<{ code: number | null; stdout: string }> {
+    const chunks: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    return { code, stdout: Buffer.concat(chunks).toString() };
+  }
+
+  // libuv on macOS finds a bare command by trying posix_spawn in each PATH directory, and every
+  // miss runs on the event loop. Once spawnProcess knows where a command lives it hands libuv
+  // that file instead.
+  test.skipIf(process.platform === "win32")(
+    "starts a bare command from its resolved PATH location, keeping argv[0]",
+    async () => {
+      const root = realpathSync(mkdtempSync(path.join(tmpdir(), "spawn-path-")));
+      tempDirs.push(root);
+      const misses = Array.from({ length: 20 }, (_, index) => path.join(root, `miss-${index}`));
+      for (const miss of misses) fs.mkdirSync(miss);
+      const bin = path.join(root, "bin");
+      fs.mkdirSync(bin);
+      const tool = path.join(bin, "paseo-spawn-test-tool");
+      fs.writeFileSync(tool, "#!/bin/sh\necho tool-ran\n", { mode: 0o755 });
+      const options = {
+        env: { PATH: [...misses, bin, "/usr/bin", "/bin"].join(path.delimiter) },
+        stdio: ["ignore", "pipe", "pipe"] as const,
+      };
+
+      const first = spawnProcess("paseo-spawn-test-tool", [], {
+        ...options,
+        stdio: [...options.stdio],
+      });
+      expect(await runToCompletion(first)).toEqual({ code: 0, stdout: "tool-ran\n" });
+      await settleSpawnCommandResolutions();
+
+      const second = spawnProcess("paseo-spawn-test-tool", [], {
+        ...options,
+        stdio: [...options.stdio],
+      });
+      expect(second.spawnfile).toBe(tool);
+      expect(second.spawnargs[0]).toBe("paseo-spawn-test-tool");
+      expect(await runToCompletion(second)).toEqual({ code: 0, stdout: "tool-ran\n" });
+    },
+  );
 });

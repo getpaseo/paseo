@@ -1,6 +1,7 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawnProcess as spawnCli, execCommand as execCli } from "@getpaseo/plugin/server";
 import { createExternalCommandProcessEnv, type ProcessEnvRecord } from "../server/paseo-env.js";
+import { resolveSpawnCommand } from "./resolve-spawn-command.js";
 
 interface ExternalEnvOptions {
   baseEnv?: ProcessEnvRecord;
@@ -42,7 +43,14 @@ export function spawnProcess(
           ...(envOverlay ? [envOverlay] : []),
         );
 
-  return spawnCli(command, args, {
+  // A shell command line is not a file name; the shell does its own PATH search.
+  const resolvedCommand = spawnOptions.shell
+    ? command
+    : resolveSpawnCommand(command, childEnv.PATH);
+
+  return spawnCli(resolvedCommand, args, {
+    // Keep argv[0] as the caller wrote it; only the file the kernel opens changes.
+    ...(resolvedCommand !== command ? { argv0: command } : {}),
     ...spawnOptions,
     env: childEnv,
     signal: options?.signal,
