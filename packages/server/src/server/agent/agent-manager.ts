@@ -279,7 +279,12 @@ export type {
 } from "./agent-timeline-store-types.js";
 
 export type AgentManagerEvent =
-  | { type: "agent_state"; agent: ManagedAgent }
+  | {
+      type: "agent_state";
+      agent: ManagedAgent;
+      /** Set when this state comes from a detach, which has already dropped the parent label. */
+      previousParentAgentId?: string;
+    }
   | { type: "agent_removed"; agentId: string; workspaceId?: string; internal: boolean }
   | { type: "provider_subagent"; event: ProviderSubagentStoreEvent }
   | { type: "background_work"; agentId: string; items: AgentBackgroundWorkItem[] }
@@ -2713,13 +2718,20 @@ export class AgentManager {
     });
   }
 
-  private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
+  private async writeLabels(
+    agentId: string,
+    patch: AgentLabelPatch,
+    options?: { previousParentAgentId?: string },
+  ): Promise<WriteLabelsResult> {
     const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       liveAgent.labels = applyRecordPatch(liveAgent.labels, patch);
       this.touchUpdatedAt(liveAgent);
       await this.persistSnapshot(liveAgent);
-      this.emitState(liveAgent, { persist: false });
+      this.emitState(liveAgent, {
+        persist: false,
+        previousParentAgentId: options?.previousParentAgentId,
+      });
       const record = this.registry ? await this.registry.get(agentId) : null;
       return { record, live: true };
     }
@@ -2775,7 +2787,13 @@ export class AgentManager {
         return { record, live: true, previousParentAgentId: null };
       }
 
-      const { record } = await this.writeLabels(agentId, detachedAgentLabelPatch(liveAgent.labels));
+      const { record } = await this.writeLabels(
+        agentId,
+        detachedAgentLabelPatch(liveAgent.labels),
+        {
+          previousParentAgentId,
+        },
+      );
       if (!record) {
         throw new Error(`Agent not found in storage after detach: ${agentId}`);
       }
@@ -5827,7 +5845,10 @@ export class AgentManager {
     return row;
   }
 
-  private emitState(agent: ManagedAgent, options?: { persist?: boolean }): void {
+  private emitState(
+    agent: ManagedAgent,
+    options?: { persist?: boolean; previousParentAgentId?: string },
+  ): void {
     // Keep attention as an edge-triggered unread signal, not a level signal.
     this.checkAndSetAttention(agent);
     if (options?.persist !== false) {
@@ -5853,6 +5874,9 @@ export class AgentManager {
     this.dispatch({
       type: "agent_state",
       agent: { ...agent },
+      ...(options?.previousParentAgentId
+        ? { previousParentAgentId: options.previousParentAgentId }
+        : {}),
     });
   }
 

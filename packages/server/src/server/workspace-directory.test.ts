@@ -650,7 +650,10 @@ class HiddenWorkspaceActivity {
     };
     const agents = new AgentDirectory({
       storage: this.storage,
-      manager: { listAgents: () => [...this.live.values()] },
+      manager: {
+        listAgents: () => [...this.live.values()],
+        getAgentBackgroundWorkSummary: (agentId) => this.states.get(agentId)?.backgroundWork,
+      },
       workspaces: workspaceRegistry,
       projectLive: async (agent) => this.project(agent.id),
       projectStored: (record) =>
@@ -708,6 +711,8 @@ class HiddenWorkspaceActivity {
       provider: "codex",
       cwd: this.home,
       workspaceId: input.workspaceId,
+      lifecycle: input.status,
+      updatedAt: new Date(NOW),
       labels,
       ...(input.background ? { background: true } : {}),
     } as ManagedAgent);
@@ -726,6 +731,7 @@ class HiddenWorkspaceActivity {
 
   setStatus(id: string, status: AgentSnapshotPayload["status"]): void {
     this.states.set(id, { ...this.states.get(id)!, status });
+    this.live.set(id, { ...this.live.get(id)!, lifecycle: status } as ManagedAgent);
   }
 
   // Archive persists the archived record, then closes the runtime.

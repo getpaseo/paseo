@@ -8,6 +8,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { buildStoredAgentPayload } from "./agent-projections.js";
 import { AgentStorage } from "./agent-storage.js";
 import { AgentDirectory, type BackgroundVisibility } from "./directory.js";
+import type { ManagedAgent } from "./agent-manager.js";
 import type { PersistedWorkspaceRecord } from "../workspace-registry.js";
 
 const NOW = "2026-03-01T12:00:00.000Z";
@@ -167,4 +168,53 @@ test("a hidden agent's activity shows on its nearest ancestor outside a backgrou
   expect(await rollupOf("helper")).toBeNull();
   expect(await rollupOf("in-background-workspace")).toBeNull();
   expect(await rollupOf("loop-a")).toBeNull();
+});
+
+test("hidden activity reads loaded agents without projecting them and skips idle ones", async () => {
+  const base = { provider: "codex", cwd: home, createdAt: NOW, updatedAt: NOW };
+  await storage.upsert({ ...base, id: "parent", workspaceId: "open" });
+  function loaded(id: string, lifecycle: ManagedAgent["lifecycle"]): ManagedAgent {
+    return {
+      id,
+      provider: "codex",
+      workspaceId: "hidden",
+      lifecycle,
+      labels: { "paseo.parent-agent-id": "parent" },
+      updatedAt: new Date(NOW),
+    } as ManagedAgent;
+  }
+  const workspaces = [workspace("open", false), workspace("hidden", true)];
+  const lookedUp: string[] = [];
+  const hidden = new AgentDirectory({
+    storage,
+    manager: {
+      listAgents: () => [
+        loaded("turn", "running"),
+        loaded("waiting", "idle"),
+        loaded("background-work", "idle"),
+      ],
+      getAgentBackgroundWorkSummary: (agentId) =>
+        agentId === "background-work" ? { count: 1 } : undefined,
+    },
+    workspaces: {
+      get: async (id) => {
+        lookedUp.push(id);
+        return workspaces.find((entry) => entry.workspaceId === id) ?? null;
+      },
+    },
+    projectLive: () => {
+      throw new Error("Projected a live agent");
+    },
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
+    isProviderVisible: () => true,
+    isStoredProviderAvailable: () => true,
+  });
+
+  expect(await hidden.listHiddenRunningRollups()).toEqual([
+    { workspaceId: "open", updatedAt: NOW },
+    { workspaceId: "open", updatedAt: NOW },
+  ]);
+  // The idle agent never reaches a workspace lookup.
+  expect(lookedUp).toEqual(["hidden", "open", "hidden", "open"]);
 });

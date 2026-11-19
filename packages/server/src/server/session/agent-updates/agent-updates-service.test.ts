@@ -97,7 +97,7 @@ function buildHarness() {
   const emitted: SessionOutboundMessage[] = [];
   // One entry per workspace update call, holding every workspace id it batched.
   const workspaceUpdates: string[][] = [];
-  const rollupWorkspaceIdByAgentId = new Map<string, string>();
+  const visibleWorkspaceIdByParentId = new Map<string, string>();
   const loggedErrors: unknown[][] = [];
   const payloadById = new Map<string, AgentSnapshotPayload>();
   const queuedPayloadBuilds: Promise<AgentSnapshotPayload>[] = [];
@@ -139,7 +139,10 @@ function buildHarness() {
     emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
       workspaceUpdates.push(workspaceIds);
     },
-    resolveRollupWorkspaceId: async (agent) => rollupWorkspaceIdByAgentId.get(agent.id) ?? null,
+    resolveRollupWorkspaceId: async (agent) => {
+      const parentId = agent.labels["paseo.parent-agent-id"];
+      return parentId ? (visibleWorkspaceIdByParentId.get(parentId) ?? null) : null;
+    },
     sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
       directorySync.sequenceAgentUpdate(
         payload,
@@ -167,9 +170,9 @@ function buildHarness() {
       }
       return payload;
     },
-    // The agent sits in a background workspace; its activity shows on this visible workspace.
-    rollsUpTo(agentId: string, workspaceId: string) {
-      rollupWorkspaceIdByAgentId.set(agentId, workspaceId);
+    // Hidden children of this parent show their activity on this visible workspace.
+    parentShowsOn(parentAgentId: string, workspaceId: string) {
+      visibleWorkspaceIdByParentId.set(parentAgentId, workspaceId);
     },
     setProviderVisible(fn: (provider: string) => boolean) {
       providerVisible = fn;
@@ -447,16 +450,28 @@ describe("forwardLiveAgent", () => {
 
   test("a hidden agent updates its own and its visible parent's workspace in one batch", async () => {
     const h = buildHarness();
-    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws" }));
-    h.rollsUpTo("worker", "parent-ws");
+    const labels = { "paseo.parent-agent-id": "lead" };
+    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws", labels }));
+    h.parentShowsOn("lead", "parent-ws");
 
     await h.service.forwardLiveAgent(h.managed("worker"));
-    await h.service.forwardStoredAgent({ ...h.stored("worker"), workspaceId: "hidden-ws" });
+    await h.service.forwardStoredAgent({ ...h.stored("worker"), workspaceId: "hidden-ws", labels });
 
     expect(h.workspaceUpdates).toEqual([
       ["hidden-ws", "parent-ws"],
       ["hidden-ws", "parent-ws"],
     ]);
+  });
+
+  test("a detach also updates the workspace the agent showed on before", async () => {
+    const h = buildHarness();
+    // The detach state already has no parent label.
+    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws" }));
+    h.parentShowsOn("lead", "parent-ws");
+
+    await h.service.forwardLiveAgent(h.managed("worker"), { previousParentAgentId: "lead" });
+
+    expect(h.workspaceUpdates).toEqual([["hidden-ws", "parent-ws"]]);
   });
 
   test("drops an upsert whose provider is not visible to the client", async () => {

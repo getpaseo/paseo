@@ -6365,10 +6365,12 @@ test("detachAgent removes relationship lifecycle labels from a live agent and em
     },
   );
   const emittedLabels: Array<Record<string, string>> = [];
+  const previousParentAgentIds: Array<string | undefined> = [];
   const unsubscribe = manager.subscribe(
     (event) => {
       if (event.type === "agent_state" && event.agent.id === child.id) {
         emittedLabels.push(event.agent.labels);
+        previousParentAgentIds.push(event.previousParentAgentId);
       }
     },
     { agentId: child.id, replayState: false },
@@ -6378,6 +6380,8 @@ test("detachAgent removes relationship lifecycle labels from a live agent and em
   await manager.flush();
   unsubscribe();
 
+  // Every subscriber learns the former parent, so the workspace it showed on can refresh.
+  expect(previousParentAgentIds).toEqual([parent.id]);
   expect(result.previousParentAgentId).toBe(parent.id);
   expect(result.live).toBe(true);
   expect(result.record.labels).toEqual({ team: "infra" });
@@ -10827,6 +10831,18 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
       },
     },
   );
+  const detachStates: Array<{ parentLabel?: string; previousParentAgentId?: string }> = [];
+  manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.previousParentAgentId) {
+        detachStates.push({
+          parentLabel: event.agent.labels[PARENT_AGENT_ID_LABEL],
+          previousParentAgentId: event.previousParentAgentId,
+        });
+      }
+    },
+    { agentId: child.id, replayState: false },
+  );
 
   await manager.archiveAgent(parent.id);
 
@@ -10834,6 +10850,8 @@ test("archiveAgent detaches a cross-workspace child even when its tab is closed"
   expect(storedChild?.archivedAt).toBeUndefined();
   expect(storedChild?.workspaceId).toBe("workspace-b");
   expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+  // The cascade detach names the former parent like a requested detach does.
+  expect(detachStates).toEqual([{ parentLabel: undefined, previousParentAgentId: parent.id }]);
 });
 
 test.each([

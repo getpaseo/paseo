@@ -35,7 +35,7 @@ interface DiscoverableAgent {
 export class AgentDirectory {
   constructor(
     private readonly deps: {
-      manager: Pick<AgentManager, "listAgents">;
+      manager: Pick<AgentManager, "listAgents" | "getAgentBackgroundWorkSummary">;
       storage: Pick<
         AgentStorage,
         "get" | "listActive" | "listByWorkspaces" | "lastUserMessageAtByWorkspace"
@@ -79,18 +79,24 @@ export class AgentDirectory {
 
   /**
    * Running agents in background workspaces, each counted against the workspace it rolls up to.
-   * A running agent is always live, so stored records are only read to walk parents.
+   * A running agent is always live, so stored records are only read to walk parents. Every agent
+   * update rebuilds this, so it reads only what the rule needs and never projects an agent.
    */
   async listHiddenRunningRollups(): Promise<HiddenRunningRollup[]> {
     const live = this.deps.manager.listAgents();
     const liveById = new Map(live.map((agent) => [agent.id, agent]));
     const rollups: HiddenRunningRollup[] = [];
     for (const agent of live) {
-      if (!this.deps.isProviderVisible(agent.provider) || !(await this.rollsUp(agent))) continue;
-      const payload = await this.deps.projectLive(agent);
-      if (payload.archivedAt || !isAgentRunning(payload)) continue;
+      const running = isAgentRunning({
+        status: agent.lifecycle,
+        backgroundWork: this.deps.manager.getAgentBackgroundWorkSummary(agent.id),
+      });
+      if (!running || !this.deps.isProviderVisible(agent.provider)) continue;
+      if (!(await this.rollsUp(agent))) continue;
+      // Archive stores the record before it closes the runtime.
+      if ((await this.deps.storage.get(agent.id))?.archivedAt) continue;
       const workspaceId = await this.findVisibleAncestorWorkspaceId(agent, liveById);
-      if (workspaceId) rollups.push({ workspaceId, updatedAt: payload.updatedAt });
+      if (workspaceId) rollups.push({ workspaceId, updatedAt: agent.updatedAt.toISOString() });
     }
     return rollups;
   }

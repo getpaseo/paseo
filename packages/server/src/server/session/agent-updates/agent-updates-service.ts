@@ -9,6 +9,7 @@ import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
 import type { BackgroundVisibility, RollupSource } from "../../agent/directory.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 type AgentUpdatesFilter = NonNullable<
@@ -43,7 +44,10 @@ export interface AgentUpdatesService {
   clearSubscription(subscriptionId: string): void;
   hasSubscription(): boolean;
   includesLiveAgent(agent: ManagedAgent, subscriptionIds?: ReadonlySet<string>): Promise<boolean>;
-  forwardLiveAgent(agent: ManagedAgent): Promise<void>;
+  forwardLiveAgent(
+    agent: ManagedAgent,
+    options?: { previousParentAgentId?: string },
+  ): Promise<void>;
   forwardStoredAgent(record: StoredAgentRecord): Promise<void>;
   emitStoredRecord(record: StoredAgentRecord): Promise<AgentSnapshotPayload>;
   removeAgent(agentId: string): Promise<void>;
@@ -305,18 +309,28 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return payload;
   }
 
-  async function emitAgentUpdate(
-    agent: RollupSource,
-    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>,
-  ): Promise<void> {
+  async function emitAgentUpdate(input: {
+    agent: RollupSource;
+    projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>;
+    previousParentAgentId?: string;
+  }): Promise<void> {
+    const { agent, projectPayload, previousParentAgentId } = input;
     try {
       if (projectPayload && hasSubscription()) await publishPayload(await projectPayload());
       const { workspaceId } = agent;
       if (workspaceId) {
-        const rollupWorkspaceId = await deps.resolveRollupWorkspaceId(agent);
-        await deps.emitWorkspaceUpdatesForWorkspaceIds(
-          rollupWorkspaceId ? [workspaceId, rollupWorkspaceId] : [workspaceId],
+        // A detach has already dropped the parent label, so also resolve the agent as it was
+        // before: the workspace it showed on must refresh too.
+        const sources = previousParentAgentId
+          ? [agent, { ...agent, labels: { [PARENT_AGENT_ID_LABEL]: previousParentAgentId } }]
+          : [agent];
+        const rollupWorkspaceIds = await Promise.all(
+          sources.map((source) => deps.resolveRollupWorkspaceId(source)),
         );
+        await deps.emitWorkspaceUpdatesForWorkspaceIds([
+          workspaceId,
+          ...rollupWorkspaceIds.filter((id): id is string => id !== null),
+        ]);
       }
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
@@ -338,22 +352,33 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     return next;
   }
 
-  function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
+  function forwardLiveAgent(
+    agent: ManagedAgent,
+    options?: { previousParentAgentId?: string },
+  ): Promise<void> {
+    const previousParentAgentId = options?.previousParentAgentId;
     if (!hasSubscription()) {
       return agent.workspaceId
-        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(agent))
+        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate({ agent, previousParentAgentId }))
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
     return enqueueAgentUpdate(payload.id, () =>
-      emitAgentUpdate(agent, () => deps.enrichAgentPayload(payload)),
+      emitAgentUpdate({
+        agent,
+        projectPayload: () => deps.enrichAgentPayload(payload),
+        previousParentAgentId,
+      }),
     );
   }
 
   function forwardStoredAgent(record: StoredAgentRecord): Promise<void> {
     if (!hasSubscription() && !record.workspaceId) return Promise.resolve();
     return enqueueAgentUpdate(record.id, () =>
-      emitAgentUpdate(record, () => deps.buildStoredAgentPayload(record)),
+      emitAgentUpdate({
+        agent: record,
+        projectPayload: () => deps.buildStoredAgentPayload(record),
+      }),
     );
   }
 

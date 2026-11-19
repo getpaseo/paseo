@@ -2177,7 +2177,9 @@ export class Session {
             },
             "agent.session.forward_update",
           );
-          void this.agentUpdates.forwardLiveAgent(event.agent);
+          void this.agentUpdates.forwardLiveAgent(event.agent, {
+            previousParentAgentId: event.previousParentAgentId,
+          });
           return;
         }
 
@@ -3829,17 +3831,8 @@ export class Session {
     this.sessionLogger.info({ agentId, requestId }, "Detaching agent from parent");
 
     try {
-      // Detach drops the parent label, so find where the agent's activity rolled up first.
-      const attached =
-        this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
-      const formerRollupWorkspaceId = attached
-        ? await this.agentDirectory.resolveRollupWorkspaceId(attached)
-        : null;
       const result = await detachAgentCommand({ agentManager: this.agentManager }, agentId);
       const affectedWorkspaceIds = new Set<string>();
-      if (formerRollupWorkspaceId) {
-        affectedWorkspaceIds.add(formerRollupWorkspaceId);
-      }
 
       if (!result.live) {
         const payload = await this.agentUpdates.emitStoredRecord(result.record);
