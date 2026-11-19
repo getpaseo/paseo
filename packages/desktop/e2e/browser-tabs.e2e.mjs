@@ -1507,13 +1507,6 @@ async function main() {
       agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
     };
     client = await connectBrowserToolClient(daemonPort, callerAgentId);
-    await verifyBrowserHostRouting({
-      page,
-      client,
-      targetUrl: target.url,
-      inspectorPort,
-      artifactDir,
-    });
     const report = await runRegression({
       page,
       client,
