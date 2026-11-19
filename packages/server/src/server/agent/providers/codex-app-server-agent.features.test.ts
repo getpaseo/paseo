@@ -139,13 +139,14 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
 
 function createSessionHarness(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
 } {
   const config = createConfig(configOverrides);
   const appServer = createFakeCodexAppServer({
+    initialize: () => ({ userAgent: options.userAgent ?? "codex/0.156.0" }),
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
     "model/list": () => ({ data: options.models ?? TEST_SPEED_MODELS }),
   });
@@ -160,7 +161,7 @@ function createSessionHarness(
 
 async function createConnectedSession(
   configOverrides: Partial<AgentSessionConfig> = {},
-  options: { logger?: pino.Logger; models?: unknown[] } = {},
+  options: { logger?: pino.Logger; models?: unknown[]; userAgent?: string } = {},
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
@@ -525,6 +526,30 @@ describe("Codex app-server provider controls", () => {
     });
   });
 
+  test.each([
+    { name: "a model catalog", models: TEST_SPEED_MODELS },
+    { name: "an empty model catalog", models: [] },
+  ])("older Codex clears saved Flex with $name", async ({ models }) => {
+    const { session, appServer } = await createConnectedSession(
+      { thinkingOptionId: "medium", providerOptions: { service_tier: "flex" } },
+      { models, userAgent: "codex/0.155.0" },
+    );
+    try {
+      const speed = session.controls?.find((control) => control.key === "service_tier");
+      expect(
+        speed?.type === "select" && speed.choices.some((choice) => choice.value === "flex"),
+      ).toBeFalsy();
+      await expect(session.applyOptions?.({ service_tier: "flex" })).rejects.toThrow(
+        "Codex speed 'flex' is not available",
+      );
+      expect(session.openOptionsPatch).toEqual({ service_tier: "default" });
+      await session.startTurn("hello");
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({ serviceTier: "default" });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("Flex is offered on a model that advertises no speed and reaches the turn", async () => {
     const { session, appServer } = await createConnectedSession({ model: "gpt-3.5-turbo" });
     try {
@@ -539,8 +564,6 @@ describe("Codex app-server provider controls", () => {
   });
 
   test("a restored Flex runs on Flex instead of falling back to Normal", async () => {
-    // `service_tier = "flex"` in Codex's own config, or a saved Paseo profile: the tier is not in
-    // the catalog, and the session still runs it rather than quietly switching to Normal.
     const { session, appServer } = await createConnectedSession({
       providerOptions: { service_tier: "flex" },
     });
