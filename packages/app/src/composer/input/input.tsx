@@ -2239,7 +2239,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const toolbar = useMemo(
       () => (
         <>
-          {!isFullscreen && mode.showVoice && !showOverlay && dictationStartError ? (
+          {!isFullscreen && !showOverlay && dictationStartError ? (
             <Text accessibilityRole="alert" style={styles.dictationStartError}>
               {t(`message.dictation.${dictationStartError}`)}
             </Text>

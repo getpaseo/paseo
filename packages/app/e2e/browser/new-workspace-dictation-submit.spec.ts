@@ -16,6 +16,11 @@ import {
   expectComposerFullscreenControls,
 } from "../support/helpers/composer";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import {
+  seedTerminalProfiles,
+  selectLaunchOption,
+  terminalPromptInput,
+} from "../support/helpers/new-workspace-launch";
 
 test.use({ channel: "chromium", launchOptions: { args: ["--use-fake-device-for-media-stream"] } });
 
@@ -307,5 +312,31 @@ test("keeps the draft and retries from the mic after access is restored", async 
     await expect(composerLocator(page)).toHaveValue(draft);
   } finally {
     await agent.cleanup();
+  }
+});
+
+test("shows dictation failure when the terminal prompt starts it by shortcut", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "terminal-dictation-permission-" });
+  const profile = {
+    id: "echo-prompt",
+    name: "Echo prompt",
+    command: "echo",
+    args: ["{{{prompt}}}"],
+  };
+  const profiles = await seedTerminalProfiles([profile]);
+  await installDictationFailureHarness(page);
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, workspace);
+    await selectLaunchOption(page, profile.id);
+
+    const setMicrophonePermission = await controlMicrophonePermission(page);
+    await setMicrophonePermission("denied");
+    await terminalPromptInput(page).press("Control+d");
+    await expectDictationPermissionError(page);
+  } finally {
+    await profiles.restore();
+    await workspace.cleanup();
   }
 });
