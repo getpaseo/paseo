@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { router } from "expo-router";
 import {
   View,
-  Text,
   Pressable,
   Keyboard,
   useWindowDimensions,
@@ -62,6 +61,7 @@ import {
   useAgentControlCommandCenterActions,
   type AgentControlCommandCenterSource,
 } from "@/command-center/agent-control-registration";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import {
   composerToolbarGeometry,
@@ -74,9 +74,14 @@ import { ComposerControlLayoutProvider } from "@/composer/agent-controls/layout-
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import {
   ComposerControls,
+  ControlTooltipHint,
   type ComposerControlItem,
 } from "@/composer/agent-controls/composer-control";
-import { useAgentControlItems } from "@/composer/agent-controls/control-items";
+import {
+  useAgentControlItems,
+  useEffortCycleShortcut,
+  useModelPickerShortcut,
+} from "@/composer/agent-controls/control-items";
 import { CompactModelSheet } from "@/composer/agent-controls/model-sheet";
 import { useComposerSheetBridge } from "@/composer/agent-controls/sheet-bridge";
 import { draftComposerAgent } from "@/composer/draft/composer-agent";
@@ -583,6 +588,7 @@ function ControlledAgentControls({
       selectedThinkingOptionId,
     ],
   );
+  const effortKeys = useEffortCycleShortcut(thinking, disabled);
   const items = useAgentControlItems({
     surface: presentation.foldControls ? "sheet" : "toolbar",
     presentation,
@@ -645,6 +651,7 @@ function ControlledAgentControls({
             provider={provider}
             selectedModelId={selectedModelId}
             thinkingItems={items.thinking}
+            effortKeys={effortKeys}
             featureItems={items.features}
             onApplyAgentProfile={onApplyAgentProfile}
             onEditAgentProfiles={onEditAgentProfiles}
@@ -677,6 +684,7 @@ function ControlledAgentControls({
             provider={provider}
             selectedModelId={selectedModelId}
             thinkingItems={items.thinking}
+            effortKeys={effortKeys}
             featureItems={items.features}
             onApplyAgentProfile={onApplyAgentProfile}
             onEditAgentProfiles={onEditAgentProfiles}
@@ -719,6 +727,7 @@ interface AgentControlsContentProps {
   provider: string;
   selectedModelId?: string;
   thinkingItems: ComposerControlItem[];
+  effortKeys: ReturnType<typeof useShortcutKeys>;
   featureItems: ComposerControlItem[];
   onApplyAgentProfile?: (profileId: string) => void;
   onEditAgentProfiles?: () => void;
@@ -758,6 +767,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     provider,
     selectedModelId,
     thinkingItems,
+    effortKeys,
     featureItems,
     onApplyAgentProfile,
     onEditAgentProfiles,
@@ -785,6 +795,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleCloseSheet,
     modelSelectorServerId,
   } = props;
+  const { action: toggleAction, keys: modelKeys } = useModelPickerShortcut(disabled);
   const modelToolbar = useMemo(
     () => ({ glyph: glyphs.label, showCaret: presentation.showCarets }),
     [glyphs, presentation.showCarets],
@@ -813,6 +824,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
                 onEditProfile={onEditAgentProfile}
                 isLoading={isModelLoading}
                 disabled={disabled}
+                toggleAction={toggleAction}
                 onOpen={onModelSelectorOpen}
                 onClose={onDropdownClose}
                 onRetryProvider={onRetryModelProvider}
@@ -825,13 +837,17 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             </View>
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{t(getAgentControlHintKey("model"))}</Text>
+            <ControlTooltipHint
+              label={t(getAgentControlHintKey("model"))}
+              shortcutKeys={modelKeys}
+            />
           </TooltipContent>
         </Tooltip>
       ) : null}
 
       <ComposerControls
         items={thinkingItems}
+        shortcutKeys={effortKeys}
         surface="toolbar"
         disabled={disabled}
         openId={openSelector}
@@ -902,6 +918,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     provider,
     selectedModelId,
     thinkingItems,
+    effortKeys,
     featureItems,
     onApplyAgentProfile,
     onEditAgentProfiles,
@@ -956,6 +973,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       selectedProvider={provider}
       selectedModel={selectedModelId ?? ""}
       thinkingLabel={displayThinking}
+      effortKeys={effortKeys}
       onSelect={handleSheetModelSelect}
       profiles={agentProfiles}
       onApplyProfile={onApplyAgentProfile}
@@ -1477,11 +1495,6 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
     backgroundColor: "transparent",
     borderRadius: theme.borderRadius.full,
-  },
-  tooltipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    lineHeight: theme.fontSize.base * 1.4,
   },
   combinedSheetControls: {
     gap: theme.spacing[1],
