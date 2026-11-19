@@ -1510,6 +1510,25 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
     test("branches off a fork pull request's head without checking it out", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
+      // The base repository's main moved on since this clone last fetched.
+      const baseRemoteDir = path.join(tempDir, "base.git");
+      const upstreamMain = execFileSync("git", [
+        `--git-dir=${baseRemoteDir}`,
+        "commit-tree",
+        "main^{tree}",
+        "-p",
+        "main",
+        "-m",
+        "upstream commit",
+      ])
+        .toString()
+        .trim();
+      execFileSync("git", [
+        `--git-dir=${baseRemoteDir}`,
+        "update-ref",
+        "refs/heads/main",
+        upstreamMain,
+      ]);
       const github = {
         ...createGitHubServiceStub(),
         getPullRequestCheckoutTarget: async () => ({
@@ -1536,13 +1555,15 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
 
       const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
       // The fork's branch is not in this repository, so a pull request from the new branch goes
-      // into the fork pull request's base.
+      // into the fork pull request's base, compared as the remote has it now.
       expect(result.intent).toEqual({
         kind: "branch-off",
-        baseBranch: "main",
+        baseBranch: "refs/remotes/origin/main",
         startPoint: "refs/paseo/change-requests/526",
         branchName: "follow-up",
       });
+      expect(git(repoDir, "rev-parse", "refs/remotes/origin/main")).toBe(upstreamMain);
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/origin/main");
       expect(result.worktree.branchName).toBe("follow-up");
       expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
       expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();

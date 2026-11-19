@@ -148,7 +148,8 @@ export async function resolveWorktreeCreationIntent(
  * request out. A same-repository head lands where `git fetch` puts the branch and is the new
  * branch's base, so its pull request stacks on the change request. A fork's head is not a branch
  * of this repository, so the new branch starts from it and its base is the change request's base.
- * That head lands outside `refs/remotes`, which base branch pickers list.
+ * That head lands outside `refs/remotes`, which base branch pickers list, and the base branch is
+ * fetched from origin.
  */
 async function fetchChangeRequestHead(params: {
   input: ResolveWorktreeCreationIntentInput;
@@ -171,7 +172,14 @@ async function fetchChangeRequestHead(params: {
   }
   const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
   await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination: startPoint });
-  return { baseBranch: checkout.baseRefName, startPoint };
+  // The base is compared as the remote has it, not as a local branch last pulled.
+  const baseBranch = `refs/remotes/origin/${checkout.baseRefName}`;
+  await deps.fetchRef({
+    repoRoot,
+    sources: [{ remoteName: "origin", remoteRef: `refs/heads/${checkout.baseRefName}` }],
+    destination: baseBranch,
+  });
+  return { baseBranch, startPoint };
 }
 
 interface PrCheckoutIntentParams {
