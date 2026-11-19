@@ -10,6 +10,8 @@ log.initialize({ spyRendererConsole: true });
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
+import { randomBytes } from "node:crypto";
+import { hostname } from "node:os";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -668,6 +670,15 @@ function getWorkAreasPrimaryFirst(): Electron.Rectangle[] {
   return [primary, ...others].map((display) => display.workArea);
 }
 
+const browserHostLabels = new WeakMap<BrowserWindow, string>();
+const browserHostComputerName =
+  hostname()
+    .replace(/\.local$/i, "")
+    .trim()
+    .slice(0, 120) || "Desktop";
+const browserHostSessionCode = randomBytes(3).toString("hex").toUpperCase();
+let browserHostWindowNumber = 0;
+
 async function createWindow(
   options: {
     initialRoute?: string | null;
@@ -693,6 +704,7 @@ async function createWindow(
     : null;
 
   const title = devWorktreeName ? `${APP_NAME} (${devWorktreeName})` : APP_NAME;
+  const browserHostLabel = `${browserHostComputerName} · Window ${++browserHostWindowNumber} (${browserHostSessionCode})`;
   const mainWindow = new BrowserWindow({
     title,
     ...resolveWindowBounds(restoredWindowState),
@@ -704,12 +716,16 @@ async function createWindow(
     }),
     webPreferences: {
       preload: getPreloadPath(),
-      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE)],
+      additionalArguments: [
+        windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE),
+        `--paseo-browser-host-label=${browserHostLabel}`,
+      ],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
     },
   });
+  browserHostLabels.set(mainWindow, browserHostLabel);
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
   const webContentsId = mainWindow.webContents.id;
@@ -960,6 +976,7 @@ async function bootstrap(): Promise<void> {
 
   await applyAppIcon();
   setupApplicationMenu({
+    getBrowserHostLabel: (win) => browserHostLabels.get(win),
     onNewWindow: () => {
       void desktopWindowOwner.openAdditional().catch((error) => {
         log.error("[window] failed to create window from menu", error);

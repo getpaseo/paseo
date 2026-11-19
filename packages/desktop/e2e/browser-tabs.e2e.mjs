@@ -201,9 +201,9 @@ async function waitForDesktopStatus(page) {
 }
 
 async function settleDesktopStartup(page) {
-  await expect(
-    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
-  ).toBeVisible({ timeout: timeoutMs });
+  await expect(page.getByRole("button", { name: /^Desktop browser workspace 1\b/ })).toBeVisible({
+    timeout: timeoutMs,
+  });
   // The dev launcher supplies its package directory as an open-project request.
   // Before the local host connects, that request opens the connection prompt.
   // Finish startup before exercising the unrelated Settings/browser workflows.
@@ -336,6 +336,86 @@ function mcpPayload(result, command) {
 
 async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
+}
+
+async function connectBrowserToolClient(daemonPort, callerAgentId) {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(
+      `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
+    ),
+  );
+  return experimental_createMCPClient({ transport });
+}
+
+async function openBrowserWorkspace(page) {
+  await page.getByRole("button", { name: /^Desktop browser workspace 1\b/ }).click();
+}
+
+async function openSecondDesktopWindow(page) {
+  const nextWindow = page.context().waitForEvent("page", { timeout: timeoutMs });
+  await page.evaluate(() => window.paseoDesktop.window.openNew());
+  const secondWindow = await nextWindow;
+  await settleDesktopStartup(secondWindow);
+  return secondWindow;
+}
+
+async function listBrowserHosts(client) {
+  const reply = await client.callTool({ name: "browser_list_hosts", args: {} });
+  assert(Array.isArray(reply.structuredContent?.browserHosts), JSON.stringify(reply));
+  return reply.structuredContent.browserHosts;
+}
+
+async function readBrowserHostMenuLabel(inspectorPort) {
+  return evaluateDesktopWindow(
+    inspectorPort,
+    `return process.mainModule.require('electron').Menu.getApplicationMenu().items
+      .find(item => item.label === 'Window').submenu.items
+      .find(item => item.label === 'Browser host')?.submenu.items[0].label;`,
+  );
+}
+
+async function verifyBrowserHostRouting({ page, client, targetUrl, inspectorPort, artifactDir }) {
+  await openBrowserWorkspace(page);
+  await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(1);
+  const [firstHost] = await listBrowserHosts(client);
+  await expect.poll(() => readBrowserHostMenuLabel(inspectorPort)).toBe(firstHost.label);
+  const secondWindow = await openSecondDesktopWindow(page);
+
+  try {
+    await openBrowserWorkspace(secondWindow);
+    await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(2);
+    const secondHost = (await listBrowserHosts(client)).find(
+      (host) => host.browserHostId !== firstHost.browserHostId,
+    );
+    assert(secondHost?.label && secondHost.label !== firstHost.label, "Windows share a host label");
+    await expect.poll(() => readBrowserHostMenuLabel(inspectorPort)).toBe(secondHost.label);
+
+    const ambiguous = await client.callTool({ name: "browser_new_tab", args: { url: targetUrl } });
+    expect(ambiguous.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_host_ambiguous", browserHosts: [firstHost, secondHost] },
+    });
+    expect((await callBrowserTool(client, "browser_list_tabs")).tabs).toEqual([]);
+
+    const { browserId, browserHost } = await callBrowserTool(client, "browser_new_tab", {
+      url: targetUrl,
+      browserHostId: firstHost.browserHostId,
+    });
+    expect(browserHost).toEqual(firstHost);
+    // Only the tab's test ID carries the exact ID returned by the agent tool.
+    await expect(page.getByTestId(`workspace-tab-browser_${browserId}`)).toBeVisible();
+    await expect(secondWindow.getByTestId(`workspace-tab-browser_${browserId}`)).toHaveCount(0);
+    expect((await callBrowserTool(client, "browser_list_tabs")).tabs).toMatchObject([
+      { browserId, browserHost: firstHost, isActive: false },
+    ]);
+    await callBrowserTool(client, "browser_wait", { browserId, text: "Bridge target" });
+    await page.screenshot({ path: path.join(artifactDir, "selected-browser-host.png") });
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  } finally {
+    await secondWindow.close();
+  }
+
+  await expect.poll(() => listBrowserHosts(client)).toEqual([firstHost]);
 }
 
 async function waitForGuestSelector(client, browserId) {
@@ -1372,6 +1452,19 @@ async function main() {
     const status = await waitForDesktopStatus(page);
     await settleDesktopStartup(page);
 
+    if (process.env.PASEO_DESKTOP_BROWSER_HOSTS_ONLY === "1") {
+      client = await connectBrowserToolClient(daemonPort, await createCallerAgent(daemonPort));
+      await verifyBrowserHostRouting({
+        page,
+        client,
+        targetUrl: target.url,
+        inspectorPort,
+        artifactDir,
+      });
+      console.log("Browser host discovery, window labels, and explicit routing passed.");
+      return;
+    }
+
     const checkPluginLinks = () =>
       runPluginLinksRegression({
         page,
@@ -1413,12 +1506,14 @@ async function main() {
       workspaceId: workspaceIds.at(-1),
       agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
     };
-    const transport = new StreamableHTTPClientTransport(
-      new URL(
-        `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
-      ),
-    );
-    client = await experimental_createMCPClient({ transport });
+    client = await connectBrowserToolClient(daemonPort, callerAgentId);
+    await verifyBrowserHostRouting({
+      page,
+      client,
+      targetUrl: target.url,
+      inspectorPort,
+      artifactDir,
+    });
     const report = await runRegression({
       page,
       client,

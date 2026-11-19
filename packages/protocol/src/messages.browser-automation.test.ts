@@ -13,7 +13,7 @@ import {
 describe("browser automation protocol integration", () => {
   const browserId = "11111111-1111-4111-8111-111111111111";
 
-  test("browser host capability parses supported commands in hello", () => {
+  test("browser host capability parses supported commands and a label in hello", () => {
     expect(
       WSHelloMessageSchema.parse({
         type: "hello",
@@ -24,6 +24,7 @@ describe("browser automation protocol integration", () => {
           [CLIENT_CAPS.browserHost]: {
             supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
             hostKind: "desktop app",
+            label: "MacBook Pro · Window 2",
           },
         },
       }).capabilities,
@@ -31,6 +32,7 @@ describe("browser automation protocol integration", () => {
       [CLIENT_CAPS.browserHost]: {
         supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
         hostKind: "desktop app",
+        label: "MacBook Pro · Window 2",
       },
     });
   });
@@ -131,6 +133,18 @@ describe("browser automation protocol integration", () => {
         protocolVersion: 1,
       }).capabilities,
     ).toBeUndefined();
+  });
+
+  test("browser host registration accepts a label and remains valid without one", () => {
+    const request = {
+      type: "browser.host.register.request",
+      requestId: "register-browser",
+      hostKind: "desktop app",
+      supportedCommands: ["new_tab"],
+    };
+    const label = "MacBook Pro · Window 2";
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    expect(SessionInboundMessageSchema.parse({ ...request, label })).toEqual({ ...request, label });
   });
 
   test("daemon to browser host execute request is an outbound session message", () => {

@@ -12,6 +12,11 @@ const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
 
+function readBrowserHostLabel(): string | undefined {
+  const prefix = "--paseo-browser-host-label=";
+  return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+}
+
 function readWindowChromeMode(): DesktopWindowChromeMode {
   const prefix = "--paseo-window-chrome-mode=";
   const value = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
@@ -32,6 +37,7 @@ interface AttachedBrowserRegistration {
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
   windowChromeMode: readWindowChromeMode(),
+  browserHostLabel: readBrowserHostLabel(),
   invoke: (command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("paseo:invoke", command, args),
   getPendingOpenProject: () =>

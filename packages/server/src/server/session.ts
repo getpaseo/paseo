@@ -1407,6 +1407,7 @@ export class Session {
             type: "browser.host.register.request" as const,
             requestId: uuidv4(),
             hostKind: host.data.hostKind,
+            label: host.data.label,
             supportedCommands: host.data.supportedCommands,
           };
           void this.delivery
@@ -2571,6 +2572,7 @@ export class Session {
       unregister = this.browserToolsBroker.registerClient({
         id: owner.id,
         hostKind: request.hostKind,
+        label: request.label,
         supportedCommands: request.supportedCommands,
         sendBrowserAutomationRequest: (message) => owner.emit(message),
       });
