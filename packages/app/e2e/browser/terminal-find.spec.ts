@@ -522,6 +522,16 @@ test.describe("terminal history with a finger", () => {
     await expect(input(page)).toBeFocused();
   });
 
+  test("finger scrolling keeps an open keyboard open", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await tapTerminalScreen(page);
+    await expect(input(page)).toBeFocused();
+
+    await showSoftwareKeyboard(page);
+    await expectSingleFingerScroll(page, 24);
+    await expect(input(page)).toBeFocused();
+  });
+
   for (const mode of ["alternate", "mouse"] as const) {
     test(`preserves finger navigation in ${mode} input mode`, async ({ page }) => {
       await openPhoneInputCapture(page, mode);
@@ -565,6 +575,17 @@ async function tapTerminalScreen(page: Page) {
   const box = await terminalScreen(page).boundingBox();
   expect(box).not.toBeNull();
   await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 3);
+}
+
+// Playwright cannot show a software keyboard. A phone browser keeps the layout
+// viewport and shortens the visual viewport by the keyboard height.
+async function showSoftwareKeyboard(page: Page) {
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport!, "height", {
+      configurable: true,
+      get: () => window.innerHeight - 300,
+    });
+  });
 }
 
 async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
