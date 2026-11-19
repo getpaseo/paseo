@@ -7,6 +7,15 @@ export type WorkspaceDeepLinkAction =
   | { kind: "open-workspace"; workspaceId: string }
   | { kind: "register-project" };
 
+export async function registerLinkedProject<T>(input: {
+  confirm: () => Promise<boolean>;
+  isCurrent: () => boolean;
+  register: () => Promise<T>;
+}): Promise<T | null> {
+  if (!(await input.confirm()) || !input.isCurrent()) return null;
+  return input.register();
+}
+
 export function resolveWorkspaceDeepLinkAction(input: {
   target: WorkspaceDeepLinkTarget;
   hostExists: boolean;

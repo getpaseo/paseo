@@ -1,32 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WorkspaceDeepLinkTarget } from "@getpaseo/protocol/workspace-deep-link";
+import {
+  readWorkspaceDeepLinkTarget,
+  type WorkspaceDeepLinkTarget,
+} from "@getpaseo/protocol/workspace-deep-link";
 import { getDesktopHost } from "@/desktop/host";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { useAddHost } from "@/hosts/add-host";
 import { useOpenProject } from "@/hooks/use-open-project";
+import { useStableEvent } from "@/hooks/use-stable-event";
 import { useDirectoryDemand } from "@/hooks/use-directory-demand";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRegistryLoaded, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { resolveWorkspaceDeepLinkAction } from "./workspace-navigation-model";
-
-interface OpenWorkspaceEventPayload {
-  serverId?: unknown;
-  path?: unknown;
-}
-
-function readTarget(payload: OpenWorkspaceEventPayload | null): WorkspaceDeepLinkTarget | null {
-  const serverId = typeof payload?.serverId === "string" ? payload.serverId.trim() : "";
-  const path = typeof payload?.path === "string" ? payload.path.trim() : "";
-  return serverId && path ? { serverId, path } : null;
-}
+import { confirmDialog } from "@/utils/confirm-dialog";
+import {
+  registerLinkedProject,
+  resolveWorkspaceDeepLinkAction,
+} from "./workspace-navigation-model";
 
 function WorkspaceTargetResolver({
   target,
+  isCurrent,
   onHandled,
 }: {
   target: WorkspaceDeepLinkTarget;
+  isCurrent: () => boolean;
   onHandled: () => void;
 }) {
   const isConnected = useHostRuntimeIsConnected(target.serverId);
@@ -37,7 +36,7 @@ function WorkspaceTargetResolver({
   const workspaces = useSessionStore(
     (state) => state.sessions[target.serverId]?.workspaces ?? EMPTY_WORKSPACES,
   );
-  const openProject = useOpenProject(target.serverId);
+  const openProject = useStableEvent(useOpenProject(target.serverId));
   const toast = useToast();
   const attemptRef = useRef<string | null>(null);
   const action = resolveWorkspaceDeepLinkAction({
@@ -60,15 +59,24 @@ function WorkspaceTargetResolver({
     attemptRef.current = attemptKey;
     void (async () => {
       try {
-        const result = await openProject(target.path);
-        if (!result.ok) toast.error(result.error ?? "Could not open the linked project.");
+        const result = await registerLinkedProject({
+          confirm: () =>
+            confirmDialog({
+              title: "Add project from link?",
+              message: `Host: ${target.serverId}\nDirectory: ${target.path}`,
+              confirmLabel: "Add project",
+            }),
+          isCurrent,
+          register: () => openProject(target.path),
+        });
+        if (result && !result.ok) toast.error(result.error ?? "Could not open the linked project.");
       } catch {
         toast.error("Could not open the linked project.");
       } finally {
         onHandled();
       }
     })();
-  }, [action.kind, onHandled, openProject, target, toast, workspaceId]);
+  }, [action.kind, isCurrent, onHandled, openProject, target, toast, workspaceId]);
 
   return null;
 }
@@ -79,6 +87,9 @@ export function WorkspaceNavigationListener() {
   const hosts = useHosts();
   const hostRegistryLoaded = useHostRegistryLoaded();
   const [target, setTarget] = useState<WorkspaceDeepLinkTarget | null>(null);
+  const currentTarget = useRef(target);
+  currentTarget.current = target;
+  const isCurrent = useCallback(() => currentTarget.current === target, [target]);
   const requestedConnectionRef = useRef<WorkspaceDeepLinkTarget | null>(null);
   const toast = useToast();
   const handleTargetHandled = useCallback(
@@ -118,8 +129,8 @@ export function WorkspaceNavigationListener() {
 
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    const accept = (payload: OpenWorkspaceEventPayload | null) => {
-      const next = readTarget(payload);
+    const accept = (payload: unknown) => {
+      const next = readWorkspaceDeepLinkTarget(payload);
       if (next) {
         setTarget((current) =>
           current?.serverId === next.serverId && current.path === next.path ? current : next,
@@ -127,7 +138,7 @@ export function WorkspaceNavigationListener() {
       }
     };
 
-    void listenToDesktopEvent<OpenWorkspaceEventPayload>("open-workspace", accept)
+    void listenToDesktopEvent<unknown>("open-workspace", accept)
       .then(async (dispose) => {
         if (disposed) {
           dispose();
@@ -148,5 +159,12 @@ export function WorkspaceNavigationListener() {
 
   if (!target || !hostRegistryLoaded || !hostExists || requestedConnectionRef.current === target)
     return null;
-  return <WorkspaceTargetResolver target={target} onHandled={handleTargetHandled} />;
+  return (
+    <WorkspaceTargetResolver
+      key={`${target.serverId}\u0000${target.path}`}
+      target={target}
+      isCurrent={isCurrent}
+      onHandled={handleTargetHandled}
+    />
+  );
 }

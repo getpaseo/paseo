@@ -658,8 +658,8 @@ default; pass `--server <server-id>` when targeting another server.
 Desktop integrations can also select an exact remote worktree with
 `paseo://h/<server-id>/open-project?path=<absolute-remote-path>`. Use the daemon's
 stable `srv_...` ID and URL-encode the canonical absolute POSIX path. Paseo opens an existing workspace
-whose recorded directory exactly matches the path; if none exists, it registers
-the path as a project. This action never creates an agent. The link contains no
+whose recorded directory exactly matches the path. If none exists, Paseo asks before
+registering the path as a project. This action never creates an agent. The link contains no
 connection endpoint or credential. When the server ID is not saved, Paseo opens
 the Remote SSH flow and applies the pending path only if the connection the user
 approves reports that exact server ID.

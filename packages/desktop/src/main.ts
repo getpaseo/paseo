@@ -382,7 +382,6 @@ let pendingWorkspaceNavigation = parseWorkspaceDeepLinkFromArgv(process.argv);
 let desktopWindowOwner: DesktopWindowOwner<AgentDeepLinkTarget>;
 
 if (PASEO_DEBUG) {
-  log.info("[open-project] argv:", process.argv);
   log.info("[open-project] isDefaultApp:", process.defaultApp);
   log.info("[open-project] pendingOpenProjectPath:", pendingOpenProjectPath);
 }
@@ -977,7 +976,6 @@ function setupSingleInstanceLock(): boolean {
       return;
     }
 
-    log.info("[open-project] second-instance commandLine:", commandLine);
     const openProjectPath = parseOpenProjectPathFromArgv({
       argv: commandLine,
       isDefaultApp: false,

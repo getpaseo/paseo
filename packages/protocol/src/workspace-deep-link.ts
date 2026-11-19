@@ -7,6 +7,7 @@ const MAX_SERVER_ID_LENGTH = 256;
 const MAX_WORKSPACE_PATH_LENGTH = 4_096;
 const SERVER_ID_PATTERN = /^srv_[A-Za-z0-9_-]+$/;
 const MAX_LINK_LENGTH = 50_000;
+const BIDI_CONTROL_PATTERN = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
 function hasControlCharacters(value: string): boolean {
   for (const character of value) {
@@ -16,16 +17,20 @@ function hasControlCharacters(value: string): boolean {
   return false;
 }
 
-function normalizeWorkspaceDeepLinkTarget(
-  target: WorkspaceDeepLinkTarget,
-): WorkspaceDeepLinkTarget {
-  const { serverId, path } = target;
+export function readWorkspaceDeepLinkTarget(input: unknown): WorkspaceDeepLinkTarget | null {
+  if (typeof input !== "object" || input === null || !("serverId" in input) || !("path" in input)) {
+    return null;
+  }
+  const { serverId, path } = input;
   if (
+    typeof serverId !== "string" ||
+    typeof path !== "string" ||
     !SERVER_ID_PATTERN.test(serverId) ||
     serverId.length > MAX_SERVER_ID_LENGTH ||
     path.length > MAX_WORKSPACE_PATH_LENGTH ||
     path !== path.trim() ||
     hasControlCharacters(path) ||
+    BIDI_CONTROL_PATTERN.test(path) ||
     !path.startsWith("/") ||
     path.includes("\\") ||
     path
@@ -33,13 +38,15 @@ function normalizeWorkspaceDeepLinkTarget(
       .split("/")
       .some((segment) => !segment || segment === "." || segment === "..")
   ) {
-    throw new Error("Workspace deep links require a valid server ID and absolute path.");
+    return null;
   }
   return { serverId, path };
 }
 
 export function buildWorkspaceDeepLink(target: WorkspaceDeepLinkTarget): string {
-  const normalized = normalizeWorkspaceDeepLinkTarget(target);
+  const normalized = readWorkspaceDeepLinkTarget(target);
+  if (!normalized)
+    throw new Error("Workspace deep links require a valid server ID and absolute path.");
   const search = new URLSearchParams({ path: normalized.path });
   return `paseo://h/${encodeURIComponent(normalized.serverId)}/open-project?${search}`;
 }
@@ -50,7 +57,7 @@ export function parseWorkspaceDeepLink(input: string): WorkspaceDeepLinkTarget |
   if (!match) return null;
 
   try {
-    return normalizeWorkspaceDeepLinkTarget({
+    return readWorkspaceDeepLinkTarget({
       serverId: match[1] ?? "",
       path: decodeURIComponent((match[2] ?? "").replaceAll("+", " ")),
     });
