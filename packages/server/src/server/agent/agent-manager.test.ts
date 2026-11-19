@@ -9768,6 +9768,59 @@ test.each([
   },
 );
 
+test("turns an agent starts on its own notify once until its finish is read", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-autonomous-finish-unread-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class AutonomousClient extends TestAgentClient {
+    readonly session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const client = new AutonomousClient();
+  const attentionReasons: Array<"finished" | "error" | "permission"> = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    onAgentAttention: ({ reason }) => attentionReasons.push(reason),
+  });
+  onTestFinished(async () => {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  async function runAutonomousTurn(turnId: string): Promise<void> {
+    const running = waitForAgentLifecycle(manager, agent.id, "running");
+    client.session.pushEvent({ type: "turn_started", provider: "codex", turnId });
+    await running;
+    const idle = waitForAgentLifecycle(manager, agent.id, "idle");
+    client.session.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+    await idle;
+  }
+
+  // A background task's output wakes the agent three times while nobody reads it.
+  await runAutonomousTurn("wake-1");
+  await runAutonomousTurn("wake-2");
+  await runAutonomousTurn("wake-3");
+  expect(attentionReasons).toEqual(["finished"]);
+  expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+
+  // After the user reads the agent, the next finish notifies again.
+  await manager.clearAgentAttention(agent.id);
+  await runAutonomousTurn("wake-4");
+  expect(attentionReasons).toEqual(["finished", "finished"]);
+});
+
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-start-turn-failure-"));
   const storagePath = join(workdir, "agents");

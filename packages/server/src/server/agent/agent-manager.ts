@@ -5596,7 +5596,11 @@ export class AgentManager {
       this.openActiveTurn(agent, eventTurnId, new Date());
     }
     agent.lastError = undefined;
-    agent.attention = { requiresAttention: false };
+    // Nobody read the agent, so an unread finish stays unread. Clearing it would make every
+    // turn the agent starts on its own, such as a reaction to background output, notify again.
+    if (agent.attention.requiresAttention && agent.attention.attentionReason === "error") {
+      agent.attention = { requiresAttention: false };
+    }
     agent.lifecycle = "running";
     this.emitState(agent);
   }
