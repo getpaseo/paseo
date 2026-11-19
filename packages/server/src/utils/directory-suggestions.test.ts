@@ -759,6 +759,52 @@ describe("home search with excluded discovery paths", () => {
     ]);
     await expect(searchHome("~/Library/su")).resolves.toEqual([path.join(libraryDir, "sub")]);
   });
+
+  it("skips directories with excluded discovery suffixes while still resolving explicit paths", async () => {
+    const appDir = path.join(homeDir, "Tool.app");
+    const appContents = path.join(appDir, "Contents");
+    const nestedMatch = path.join(appContents, "match-inside-app");
+    mkdirSync(nestedMatch, { recursive: true });
+
+    const searchWithSuffixes = async (query: string) => {
+      const entries = await searchDirectoryEntries({
+        root: homeDir,
+        query,
+        pathFormat: "absolute",
+        includeDirectories: true,
+        includeFiles: false,
+        pathQueryPolicy: "rooted",
+        rootAliases: ["~"],
+        blankQueryBehavior: "none",
+        excludedDiscoverySuffixes: [".app"],
+      });
+      return entries.map((entry) => entry.path);
+    };
+
+    await expect(searchWithSuffixes("match-inside-app")).resolves.toEqual([]);
+    await expect(searchWithSuffixes("~/Tool.app/Contents/match-inside-app")).resolves.toEqual([
+      nestedMatch,
+    ]);
+    await expect(searchWithSuffixes("~/Tool.app/")).resolves.toEqual([appDir, appContents]);
+  });
+
+  it("stops scanning immediately when the abort signal is triggered", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      searchDirectoryEntries({
+        root: homeDir,
+        query: "projects",
+        pathFormat: "absolute",
+        includeDirectories: true,
+        includeFiles: false,
+        pathQueryPolicy: "rooted",
+        rootAliases: ["~"],
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual([]);
+  });
 });
 
 describe("rooted queries with a typed parent", () => {
@@ -793,6 +839,34 @@ describe("rooted queries with a typed parent", () => {
     const results = await searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pasta" });
 
     expect(results[0]).toBe(path.join(homeDir, "Developer", "pasta"));
+  });
+
+  it("lists only direct children when browsing an existing rooted directory ending in a separator", async () => {
+    mkdirSync(path.join(homeDir, "Developer", "pasta", "deep-nested"), { recursive: true });
+    mkdirSync(path.join(homeDir, "Developer", "beta"));
+
+    await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/" })).resolves.toEqual(
+      [
+        path.join(homeDir, "Developer"),
+        path.join(homeDir, "Developer", "beta"),
+        path.join(homeDir, "Developer", "pasta"),
+      ],
+    );
+  });
+
+  it("treats a leading full-width tilde the same as an ASCII tilde", async () => {
+    mkdirSync(path.join(homeDir, "Developer", "pasta", "deep-nested"), { recursive: true });
+
+    await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "～" })).resolves.toEqual([
+      path.join(homeDir, "Archive"),
+      path.join(homeDir, "Developer"),
+    ]);
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "～/Developer/" }),
+    ).resolves.toEqual([path.join(homeDir, "Developer"), path.join(homeDir, "Developer", "pasta")]);
+    await expect(
+      searchAbsoluteDirectoryPaths({ homeDir, query: "～/Developer/pas" }),
+    ).resolves.toEqual(await searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pas" }));
   });
 });
 

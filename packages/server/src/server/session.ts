@@ -248,6 +248,7 @@ import {
 } from "./session/agent-updates/agent-updates-service.js";
 import { expandTilde } from "../utils/path.js";
 import {
+  MACOS_EXCLUDED_DISCOVERY_SUFFIXES,
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
 } from "../utils/directory-suggestions.js";
@@ -797,6 +798,7 @@ export class Session {
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
+  private homeDirectorySuggestionsAbortController: AbortController | null = null;
 
   private agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
@@ -5706,35 +5708,72 @@ export class Session {
     }
   }
 
+  private buildDirectorySuggestionsSearchOptions(
+    msg: DirectorySuggestionsRequest,
+    signal: AbortSignal | undefined,
+  ) {
+    const workspaceCwd = msg.cwd?.trim();
+    const searchesWorkspace = Boolean(workspaceCwd);
+    const homeRoot = process.env.HOME ?? homedir();
+    const isDarwinHomeSearch = !searchesWorkspace && process.platform === "darwin";
+    // readdir on TCC-protected folders under ~/Library, ~/Movies/TV, ~/Music/Music, and
+    // ~/Pictures/Photos Library.photoslibrary blocks forever for a background process that cannot
+    // show a consent prompt, holding libuv threadpool threads. ~/Applications contains large app
+    // bundles that are never coding projects. Explicit typed paths still resolve and browse.
+    return {
+      root: workspaceCwd ? expandTilde(workspaceCwd) : homeRoot,
+      query: msg.query,
+      pathFormat: searchesWorkspace ? ("relative" as const) : ("absolute" as const),
+      pathQueryPolicy: searchesWorkspace ? ("slashes" as const) : ("rooted" as const),
+      blankQueryBehavior: searchesWorkspace ? ("children" as const) : ("none" as const),
+      rootAliases: searchesWorkspace ? [] : ["~"],
+      traversableHiddenDirectoryNames: searchesWorkspace ? WORKSPACE_SEARCH_HIDDEN_DIRECTORIES : [],
+      confidentResultScanThreshold: searchesWorkspace ? undefined : 1_500,
+      respectGitIgnore: searchesWorkspace,
+      excludedDiscoveryPaths: isDarwinHomeSearch
+        ? [
+            join(homeRoot, "Library"),
+            join(homeRoot, "Applications"),
+            join(homeRoot, "Movies"),
+            join(homeRoot, "Music"),
+            join(homeRoot, "Pictures"),
+          ]
+        : [],
+      excludedDiscoverySuffixes: isDarwinHomeSearch ? MACOS_EXCLUDED_DISCOVERY_SUFFIXES : [],
+      signal,
+      includeFiles: msg.includeFiles,
+      includeDirectories: msg.includeDirectories,
+      matchMode: msg.matchMode,
+      limit: msg.limit,
+    };
+  }
+
   private async handleDirectorySuggestionsRequest(msg: DirectorySuggestionsRequest): Promise<void> {
-    const { query, limit, requestId, cwd, includeFiles, includeDirectories, matchMode } = msg;
+    const { requestId, cwd } = msg;
+    const searchesWorkspace = Boolean(cwd?.trim());
+    let homeSearchController: AbortController | null = null;
+    if (!searchesWorkspace) {
+      this.homeDirectorySuggestionsAbortController?.abort();
+      homeSearchController = new AbortController();
+      this.homeDirectorySuggestionsAbortController = homeSearchController;
+    }
 
     try {
-      const workspaceCwd = cwd?.trim();
-      const searchesWorkspace = Boolean(workspaceCwd);
-      const homeRoot = process.env.HOME ?? homedir();
-      // readdir on TCC-protected folders under ~/Library blocks forever for a process that cannot
-      // show a consent prompt, and each blocked call holds a libuv threadpool thread.
-      const excludedDiscoveryPaths =
-        !searchesWorkspace && process.platform === "darwin" ? [join(homeRoot, "Library")] : [];
-      const entries = await searchDirectoryEntries({
-        root: workspaceCwd ? expandTilde(workspaceCwd) : homeRoot,
-        query,
-        pathFormat: searchesWorkspace ? "relative" : "absolute",
-        pathQueryPolicy: searchesWorkspace ? "slashes" : "rooted",
-        blankQueryBehavior: searchesWorkspace ? "children" : "none",
-        rootAliases: searchesWorkspace ? [] : ["~"],
-        traversableHiddenDirectoryNames: searchesWorkspace
-          ? WORKSPACE_SEARCH_HIDDEN_DIRECTORIES
-          : [],
-        confidentResultScanThreshold: searchesWorkspace ? undefined : 5_000,
-        respectGitIgnore: searchesWorkspace,
-        excludedDiscoveryPaths,
-        includeFiles,
-        includeDirectories,
-        matchMode,
-        limit,
-      });
+      const entries = await searchDirectoryEntries(
+        this.buildDirectorySuggestionsSearchOptions(msg, homeSearchController?.signal),
+      );
+      if (homeSearchController?.signal.aborted) {
+        this.emit({
+          type: "directory_suggestions_response",
+          payload: {
+            directories: [],
+            entries: [],
+            error: "Search cancelled",
+            requestId,
+          },
+        });
+        return;
+      }
       const directories = entries
         .filter((entry) => entry.kind === "directory")
         .map((entry) => entry.path);
@@ -5757,6 +5796,13 @@ export class Session {
           requestId,
         },
       });
+    } finally {
+      if (
+        homeSearchController &&
+        this.homeDirectorySuggestionsAbortController === homeSearchController
+      ) {
+        this.homeDirectorySuggestionsAbortController = null;
+      }
     }
   }
 
@@ -9459,6 +9505,8 @@ export class Session {
   public async cleanup(): Promise<void> {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
+    this.homeDirectorySuggestionsAbortController?.abort();
+    this.homeDirectorySuggestionsAbortController = null;
     this.unsubscribeSetupObservation();
     await this.delivery.close();
 
