@@ -36,6 +36,8 @@ export interface FieldTriggerContentProps {
   label: string;
   icon: ReactNode;
   value: string;
+  /** A word before the value that a badge needs because it shows no label, such as "from". */
+  qualifier?: string;
   /** Secondary text after the value, such as a terminal profile's name. */
   detail?: string;
 }
@@ -45,12 +47,14 @@ export function FieldTriggerContent({
   label,
   icon,
   value,
+  qualifier,
   detail,
 }: FieldTriggerContentProps): ReactElement {
   const valueLine = (
     <>
       <View style={styles.iconBox}>{icon}</View>
       <Text style={variant === "field" ? styles.fieldValue : styles.value} numberOfLines={1}>
+        {qualifier && variant === "badge" ? <Text style={styles.detail}>{qualifier} </Text> : null}
         {value}
         {detail ? <Text style={styles.detail}> {detail}</Text> : null}
       </Text>

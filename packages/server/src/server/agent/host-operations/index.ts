@@ -353,6 +353,10 @@ export function createHostResolver(input: {
           async createWorkspace(args) {
             const isolation = z.enum(["local", "worktree"]).parse(args.isolation);
             const path = z.string().min(1).parse(args.path);
+            if (args.mode === "branch-off" && args.prNumber !== undefined) {
+              // As on the local host: branching off a pull request is the app's, not this tool's.
+              throw new Error("branch, prNumber, and forge require a checkout mode");
+            }
             const response = await client.createWorkspace({
               source:
                 isolation === "local"
@@ -361,10 +365,12 @@ export function createHostResolver(input: {
                       kind: "worktree",
                       cwd: path,
                       projectId: args.projectId as string | undefined,
+                      // A pull request with no mode is checked out, as it was before a pull request could be branched off.
                       action:
-                        args.mode === "checkout-branch" || args.mode === "checkout-pr"
-                          ? "checkout"
-                          : "branch-off",
+                        args.mode === "branch-off" ||
+                        (args.mode === undefined && args.prNumber === undefined)
+                          ? "branch-off"
+                          : "checkout",
                       baseBranch: args.baseBranch as string | undefined,
                       branchName: args.branchName as string | undefined,
                       refName: args.branch as string | undefined,
