@@ -29,8 +29,8 @@ function WorkspaceTargetResolver({
   onHandled: () => void;
 }) {
   const isConnected = useHostRuntimeIsConnected(target.serverId);
-  const hydrated = useSessionStore(
-    (state) => state.sessions[target.serverId]?.hasHydratedWorkspaces ?? false,
+  const hasLiveDirectory = useSessionStore(
+    (state) => state.sessions[target.serverId]?.hasLiveWorkspaceDirectory ?? false,
   );
   useDirectoryDemand(target.serverId);
   const workspaces = useSessionStore(
@@ -42,12 +42,13 @@ function WorkspaceTargetResolver({
   const action = resolveWorkspaceDeepLinkAction({
     target,
     hostExists: true,
-    directoryReady: isConnected && hydrated,
+    directoryReady: isConnected && hasLiveDirectory,
     workspaces: workspaces.values(),
   });
   const workspaceId = action.kind === "open-workspace" ? action.workspaceId : null;
 
   useEffect(() => {
+    if (!isCurrent()) return;
     if (workspaceId) {
       navigateToWorkspace({ serverId: target.serverId, workspaceId });
       onHandled();
@@ -65,9 +66,28 @@ function WorkspaceTargetResolver({
               title: "Add project from link?",
               message: `Host: ${target.serverId}\nDirectory: ${target.path}`,
               confirmLabel: "Add project",
+              defaultToCancel: true,
             }),
           isCurrent,
-          register: () => openProject(target.path),
+          register: async () => {
+            const latest = useSessionStore.getState().sessions[target.serverId];
+            const latestAction = resolveWorkspaceDeepLinkAction({
+              target,
+              hostExists: !!latest,
+              directoryReady: latest?.hasLiveWorkspaceDirectory === true,
+              workspaces: latest?.workspaces.values() ?? [],
+            });
+            if (latestAction.kind === "open-workspace") {
+              navigateToWorkspace({
+                serverId: target.serverId,
+                workspaceId: latestAction.workspaceId,
+              });
+              return null;
+            }
+            if (latestAction.kind === "register-project") return openProject(target.path);
+            toast.error("The workspace directory changed. Open the link again to retry.");
+            return null;
+          },
         });
         if (result && !result.ok) toast.error(result.error ?? "Could not open the linked project.");
       } catch {
@@ -87,26 +107,29 @@ export function WorkspaceNavigationListener() {
   const hosts = useHosts();
   const hostRegistryLoaded = useHostRegistryLoaded();
   const [target, setTarget] = useState<WorkspaceDeepLinkTarget | null>(null);
-  const currentTarget = useRef(target);
-  currentTarget.current = target;
+  const currentTarget = useRef<WorkspaceDeepLinkTarget | null>(null);
   const isCurrent = useCallback(() => currentTarget.current === target, [target]);
   const requestedConnectionRef = useRef<WorkspaceDeepLinkTarget | null>(null);
   const toast = useToast();
-  const handleTargetHandled = useCallback(
-    () => setTarget((current) => (current === target ? null : current)),
-    [target],
-  );
+  const handleTargetHandled = useCallback(() => {
+    if (!isCurrent()) return;
+    currentTarget.current = null;
+    setTarget(null);
+  }, [isCurrent]);
   const handleAddedHost = useCallback(
     (serverId: string) => {
-      if (!target) return;
+      if (!target || !isCurrent()) return;
       if (serverId !== target.serverId) {
         toast.error("The connected host does not match the workspace link.");
         handleTargetHandled();
         return;
       }
-      setTarget((current) => (current === target ? { ...target } : current));
+      requestedConnectionRef.current = null;
+      const connectedTarget = { ...target };
+      currentTarget.current = connectedTarget;
+      setTarget(connectedTarget);
     },
-    [handleTargetHandled, target, toast],
+    [handleTargetHandled, isCurrent, target, toast],
   );
   const addRemoteSshHost = useAddHost({
     method: "ssh",
@@ -116,11 +139,11 @@ export function WorkspaceNavigationListener() {
   const hostExists = !!target && hosts.some((host) => host.serverId === target.serverId);
 
   useEffect(() => {
-    if (!hostRegistryLoaded || !target) return;
+    if (!hostRegistryLoaded || !target || !isCurrent()) return;
     if (hostExists || requestedConnectionRef.current === target) return;
     requestedConnectionRef.current = target;
     addRemoteSshHost();
-  }, [addRemoteSshHost, hostExists, hostRegistryLoaded, target]);
+  }, [addRemoteSshHost, hostExists, hostRegistryLoaded, isCurrent, target]);
 
   useEffect(() => {
     const host = getDesktopHost();
@@ -129,16 +152,21 @@ export function WorkspaceNavigationListener() {
 
     let disposed = false;
     let unlisten: (() => void) | null = null;
+    let receivedLiveTarget = false;
     const accept = (payload: unknown) => {
       const next = readWorkspaceDeepLinkTarget(payload);
-      if (next) {
-        setTarget((current) =>
-          current?.serverId === next.serverId && current.path === next.path ? current : next,
-        );
-      }
+      if (!next) return;
+      const current = currentTarget.current;
+      if (current?.serverId === next.serverId && current.path === next.path) return;
+      currentTarget.current = next;
+      setTarget(next);
     };
 
-    void listenToDesktopEvent<unknown>("open-workspace", accept)
+    void listenToDesktopEvent<unknown>("open-workspace", (payload) => {
+      if (disposed) return;
+      receivedLiveTarget = true;
+      accept(payload);
+    })
       .then(async (dispose) => {
         if (disposed) {
           dispose();
@@ -146,7 +174,7 @@ export function WorkspaceNavigationListener() {
         }
         unlisten = dispose;
         const pending = await ready();
-        if (!disposed) accept(pending);
+        if (!disposed && !receivedLiveTarget) accept(pending);
         return undefined;
       })
       .catch(() => undefined);

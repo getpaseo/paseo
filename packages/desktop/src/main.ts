@@ -1110,7 +1110,9 @@ async function bootstrap(): Promise<void> {
 }
 
 void runDesktopStartup({
-  hasPendingGuiLaunchRequest: Boolean(pendingOpenProjectPath || pendingAgentNavigation),
+  hasPendingGuiLaunchRequest: Boolean(
+    pendingOpenProjectPath || pendingAgentNavigation || pendingWorkspaceNavigation,
+  ),
   runCliPassthroughIfRequested,
   inheritLoginShellEnv,
   bootstrapGui: bootstrap,

@@ -19,6 +19,7 @@ export interface DesktopDialogAskOptions {
   title?: string;
   okLabel?: string;
   cancelLabel?: string;
+  defaultToCancel?: boolean;
   kind?: "info" | "warning" | "error";
 }
 
