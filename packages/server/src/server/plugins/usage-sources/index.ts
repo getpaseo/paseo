@@ -33,6 +33,9 @@ interface KnownReport {
 export interface AgentUsageLookup {
   hasAgent(id: string): boolean;
   usageSession(id: string): AgentUsageSession | null;
+  resolveLaunch?(
+    provider: string,
+  ): Promise<import("@getpaseo/plugin/server/provider").ProviderLaunch | undefined>;
 }
 
 export interface ListUsageReportsOptions {
@@ -143,6 +146,7 @@ export class UsageSourceRegistry {
       provider: session.provider,
       model: session.model,
       env: session.env,
+      launch: session.launch,
     });
     // A query that finishes after a resume must not publish the previous launch's mapping.
     if (this.agents.usageSession(agentId)?.sessionKey !== session.sessionKey) return [];

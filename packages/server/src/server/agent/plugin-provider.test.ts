@@ -2512,6 +2512,30 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("exposes the session launch for usage discovery", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([{ ...harness.registration, command: [process.execPath, "acp"] }]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const session = await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        { env: { HOME: "/session-home" } },
+      );
+      expect(session.usageSession?.()).toMatchObject({
+        provider: harness.registration.id,
+        model: "plugin-model",
+        env: { HOME: "/session-home" },
+        launch: { command: process.execPath, args: ["acp"], env: { HOME: "/session-home" } },
+        sessionKey: expect.any(String),
+      });
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves relative executable paths before sending launch data", async () => {
     const harness = createProviderHarness();
     const launches: Array<ProviderLaunch | undefined> = [];

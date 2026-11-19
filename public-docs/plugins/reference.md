@@ -446,6 +446,11 @@ is never inline SVG or a URL.
 `server.registerUsageSource()`. Import its contract and helpers from
 `@getpaseo/plugin/server/usage`.
 
+A source that needs its plugin's provider command may set `provider` to that provider's ID.
+The daemon supplies the resolved launch in `scope.launch` for global discovery and for that
+provider's sessions. The launch includes the trusted process environment; keep it daemon-side and
+use an opaque store locator as the input. It is absent when the provider is unavailable.
+
 A source implements two calls:
 
 ```ts
@@ -457,13 +462,20 @@ interface UsageAccount {
 }
 
 type UsageScope =
-  | { kind: "global" }
-  | { kind: "session"; provider: string; model?: string; env: Record<string, string> };
+  | { kind: "global"; launch?: ProviderLaunch }
+  | {
+      kind: "session";
+      provider: string;
+      model?: string;
+      env: Record<string, string>;
+      launch?: ProviderLaunch;
+    };
 
 interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
+  provider?: string;
   input: ZodType;
   discover(scope: UsageScope): Promise<UsageAccount[]>;
   fetch(input: unknown): Promise<UsageReport>;

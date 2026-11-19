@@ -130,6 +130,7 @@ function isProviderRequestReply(
 
 class ProviderRuntime {
   private connection: ProviderConnection | null = null;
+  connectedLaunch: ProviderLaunch | undefined;
   private connecting: Promise<ProviderConnection> | null = null;
   private closed = false;
   private generation = 0;
@@ -156,7 +157,7 @@ class ProviderRuntime {
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
-  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+  async resolveLaunch(): Promise<ProviderLaunch | undefined> {
     const command = this.registration.command;
     if (!command) return undefined;
     const launch = await resolveProviderLaunch({
@@ -380,8 +381,9 @@ class ProviderRuntime {
   }
 
   private async establishConnection(generation: number): Promise<ProviderConnection> {
+    const launch = await this.resolveLaunch();
     const rawConnection = await this.registration.connect({
-      launch: await this.resolveLaunch(),
+      launch,
       versions: [PROVIDER_PROTOCOL_VERSION],
       capabilities: PROVIDER_CAPABILITIES,
     });
@@ -395,6 +397,7 @@ class ProviderRuntime {
       await rawConnection.close().catch(() => undefined);
       throw error;
     }
+    this.connectedLaunch = launch;
     const connection = normalizeConnection(rawConnection);
     const unsubscribe = connection.onEvent((event) => this.accept(event));
     if (this.closed || generation !== this.generation) {
@@ -973,6 +976,10 @@ class PluginAgentClient implements AgentClient {
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
   }
 
+  resolveUsageLaunch() {
+    return this.runtime.resolveLaunch();
+  }
+
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.runtime.negotiatedCapabilities);
   }
@@ -1138,6 +1145,12 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
       config.settings,
+      this.runtime.connectedLaunch
+        ? {
+            ...this.runtime.connectedLaunch,
+            env: { ...this.runtime.connectedLaunch.env, ...config.env },
+          }
+        : undefined,
     );
     bind(bridge);
     return session;
@@ -1238,6 +1251,7 @@ class PluginAgentSession implements AgentSession {
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     givenOptions: Readonly<Record<string, JsonValue>>,
+    private readonly usageLaunch: ProviderLaunch | undefined,
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1251,6 +1265,17 @@ class PluginAgentSession implements AgentSession {
       (entry) => entry.item.type === "notification",
     );
     this.unsubscribe = bridge.onEvent((event) => this.accept(event, true));
+  }
+
+  usageSession() {
+    if (this.closed || !this.usageLaunch) return null;
+    return {
+      provider: this.provider,
+      model: this.bridge.config.model,
+      env: this.usageLaunch.env,
+      launch: this.usageLaunch,
+      sessionKey: this.bridge.id,
+    };
   }
 
   get id(): string {
