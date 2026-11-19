@@ -33,6 +33,7 @@ export class FakeRewindSession implements AgentSession {
   readonly capabilities = REWIND_TEST_CAPABILITIES;
   readonly recordedRewinds: RecordedRewind[] = [];
   aborted = false;
+  pendingConversationRewind = false;
   historyReadCount = 0;
   history: AgentTimelineItem[] = [{ type: "user_message", text: "before", messageId: "message-1" }];
 
@@ -117,7 +118,7 @@ export class FakeRewindSession implements AgentSession {
     this.recordedRewinds.push({ mode: "both", messageId: input.messageId });
   }
 
-  private emit(event: AgentStreamEvent): void {
+  emit(event: AgentStreamEvent): void {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }

@@ -451,6 +451,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get persistenceUpdatedOnResume() {
       return inner.persistenceUpdatedOnResume;
     },
+    get pendingConversationRewind() {
+      return inner.pendingConversationRewind;
+    },
     get controls() {
       return inner.controls;
     },

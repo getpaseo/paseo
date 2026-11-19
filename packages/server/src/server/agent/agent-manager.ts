@@ -1902,6 +1902,26 @@ export class AgentManager {
       existing = this.requireSessionAgent(agentId);
     }
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
+    const discardsRewind = existing.session.pendingConversationRewind === true;
+    if (discardsRewind && !rehydrateFromDisk) {
+      throw new Error(
+        "This session needs to reload. Use Reload agent to discard the pending rewind before continuing.",
+      );
+    }
+    const registered = await this.replaceSessionForReload(existing, overrides, rehydrateFromDisk);
+    if (discardsRewind) {
+      await this.hydrateTimelineFromProvider(agentId);
+      this.broadcastRewindReplacement(agentId);
+    }
+    return registered;
+  }
+
+  private async replaceSessionForReload(
+    existing: ActiveManagedAgent,
+    overrides: Partial<AgentSessionConfig> | undefined,
+    rehydrateFromDisk: boolean,
+  ): Promise<ManagedAgent> {
+    const agentId = existing.id;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
@@ -4054,6 +4074,23 @@ export class AgentManager {
     await this.hydrateTimelineFromLegacyProviderHistory(agent, options);
   }
 
+  private async replaceTimelineAfterRewind(agentId: string): Promise<void> {
+    await this.hydrateTimelineFromProvider(agentId, {
+      force: true,
+      broadcast: true,
+      broadcastTimeline: false,
+    });
+    this.broadcastRewindReplacement(agentId);
+  }
+
+  private broadcastRewindReplacement(agentId: string): void {
+    this.dispatch({
+      type: "timeline_replacement",
+      agentId,
+      epoch: this.timelineStore.getEpoch(agentId),
+    });
+  }
+
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
@@ -4086,16 +4123,7 @@ export class AgentManager {
       );
       await invokeRewindCapability(agent.session, { messageId: providerMessageId, mode });
       if (mode !== "files") {
-        await this.hydrateTimelineFromProvider(agentId, {
-          force: true,
-          broadcast: true,
-          broadcastTimeline: false,
-        });
-        this.dispatch({
-          type: "timeline_replacement",
-          agentId,
-          epoch: this.timelineStore.getEpoch(agentId),
-        });
+        await this.replaceTimelineAfterRewind(agentId);
       }
       // Rewind stages provider events under the run lock; publish its final state directly.
       this.refreshSessionPersistence(agent);
@@ -5522,13 +5550,26 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
+    let failure = this.formatTurnFailedMessage(event);
     agent.lastError = event.error;
-    await this.appendSystemErrorTimelineMessage(
-      agent,
-      event.provider,
-      this.formatTurnFailedMessage(event),
-      options,
-    );
+    if (event.code === "rewind_rejected" && !options?.fromHistory) {
+      // The provider refused the staged cut. Replace its preview before the failed turn settles.
+      try {
+        await this.replaceTimelineAfterRewind(agent.id);
+      } catch (err) {
+        this.logger.error(
+          { err, agentId: agent.id },
+          "Failed to restore history after rewind rejection",
+        );
+        failure += `\nFailed to restore conversation history: ${err instanceof Error ? err.message : String(err)}`;
+        agent.lastError = failure;
+      }
+    }
+    await this.appendSystemErrorTimelineMessage(agent, event.provider, failure, {
+      ...options,
+      // This error belongs to the rejected turn, not to the final restored assistant reply.
+      turnId: event.code === "rewind_rejected" ? eventTurnId : undefined,
+    });
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
   }
 
@@ -5762,7 +5803,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     provider: AgentProvider,
     message: string,
-    options?: { fromHistory?: boolean },
+    options?: { fromHistory?: boolean; turnId?: string },
   ): Promise<void> {
     if (options?.fromHistory) {
       return;
@@ -5780,20 +5821,7 @@ export class AgentManager {
     }
 
     const item: AgentTimelineItem = { type: "assistant_message", text };
-    const row = this.recordTimeline(agent.id, item);
-    this.dispatchStream(
-      agent.id,
-      {
-        type: "timeline",
-        item,
-        provider,
-      },
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agent.id),
-        timestamp: row.timestamp,
-      },
-    );
+    this.recordAndDispatchTimelineItem(agent.id, item, provider, options?.turnId);
   }
 
   private formatTurnFailedMessage(
