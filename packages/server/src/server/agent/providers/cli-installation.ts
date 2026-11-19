@@ -56,7 +56,8 @@ export function createCliInstallation(options: CliInstallationOptions): AgentCli
       commandConfig: runtimeSettings?.command,
       defaultBinary: options.defaultBinary,
     });
-    // The agent spawn looks the bare command up on the provider's PATH; find it the same way.
+    // Agents spawn the bare command with the provider's environment, so look on its PATH. The
+    // OpenCode 1.x legacy server is the exception: it resolves on the daemon's PATH.
     const availability = await checkProviderLaunchAvailable({
       ...launch,
       env: createProviderEnv({ runtimeSettings }),
