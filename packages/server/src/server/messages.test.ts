@@ -156,6 +156,21 @@ describe("serializeAgentStreamEvent", () => {
     expect(serialized).toBeNull();
   });
 
+  test("drops internal request timing events from websocket payloads", () => {
+    expect(
+      serializeAgentStreamEvent({
+        type: "request_timing",
+        provider: "pi",
+        turnId: "turn-1",
+        timing: {
+          scope: "request",
+          durationMs: 1200,
+          reasoningStreamed: false,
+        },
+      }),
+    ).toBeNull();
+  });
+
   test("drops internal session config drift events from websocket payloads", () => {
     const events: AgentStreamEvent[] = [
       {

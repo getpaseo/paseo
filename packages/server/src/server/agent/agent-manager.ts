@@ -48,6 +48,7 @@ import {
   type AgentProviderNotice,
   type AgentPromptInput,
   type AgentProvider,
+  type AgentRequestTiming,
   type AgentRunOptions,
   type AgentSteerOptions,
   type AgentRunResult,
@@ -504,6 +505,7 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  lastRequestTiming?: AgentRequestTiming;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -1899,6 +1901,7 @@ export class AgentManager {
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
+    const preservedRequestTiming = existing.lastRequestTiming;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
@@ -1985,6 +1988,7 @@ export class AgentManager {
         lastUserMessageAt: existing.lastUserMessageAt,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
+        lastRequestTiming: preservedRequestTiming,
         lastError: preservedLastError,
         attention: preservedAttention,
         restoring: true,
@@ -4374,6 +4378,7 @@ export class AgentManager {
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
+      lastRequestTiming?: AgentRequestTiming;
       lastError?: string;
       attention?: AttentionState;
       /**
@@ -4584,6 +4589,7 @@ export class AgentManager {
           metadata?: AgentMetadata;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
+          lastRequestTiming?: AgentRequestTiming;
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
@@ -4637,6 +4643,7 @@ export class AgentManager {
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
+      lastRequestTiming: options?.lastRequestTiming,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
@@ -5181,6 +5188,15 @@ export class AgentManager {
         eventTurnId,
         options?.fromHistory === true,
       );
+    }
+
+    if (event.type === "request_timing") {
+      if (options?.fromHistory) return false;
+      // Internal-only: usage_updated follows the same pattern and is not in
+      // the wire union, so old clients never see an unknown stream event.
+      agent.lastRequestTiming = event.timing;
+      this.emitState(agent, { persist: false });
+      return false;
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };

@@ -188,7 +188,7 @@ if (agent.pendingPermissions?.length) {
 console.log(agent.lastUsage?.totalCostUsd, agent.runtimeInfo?.sessionId);
 ```
 
-句柄以属性的形式提供 `status`、`capabilities`、`availableModes`、`pendingPermissions`、`activeTurn`、`lastUsage`、`lastError`、`features`、`runtimeInfo`、`archivedAt`、`workspaceId` 和 `cwd`。它们读取的都是句柄最近观察到的快照，从不发起请求。
+句柄以属性的形式提供 `status`、`capabilities`、`availableModes`、`pendingPermissions`、`activeTurn`、`lastUsage`、`lastRequestTiming`、`lastError`、`features`、`runtimeInfo`、`archivedAt`、`workspaceId` 和 `cwd`。它们读取的都是句柄最近观察到的快照，从不发起请求。
 
 `ref()` 返回的句柄还没有观察到任何内容，因此在 `refresh()`、`run()`、`waitForFinish()`、时间线重新获取或 `subscribe()` 投递快照之前，这些属性都是 `null`。已观察到的快照中的可选值也读作 `null`。当你需要整个快照，或需要区分这些状态时，请使用 `current()`。
 

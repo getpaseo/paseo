@@ -219,6 +219,31 @@ export interface AgentUsage {
   contextWindowUsedTokens?: number;
 }
 
+/**
+ * Wall-clock timing for one model request (Pi) or one prompt turn (ACP).
+ * Timings are measured from the provider stream; they are not inferred from text.
+ */
+export interface AgentRequestTiming {
+  /** `request` = one assistant request; `turn` = one prompt turn. */
+  scope: "request" | "turn";
+  /** Stable provider response id when available. */
+  requestId?: string;
+  turnId?: string;
+  model?: string;
+  /** Start to the first generated delta (text, thinking, or tool-call JSON). */
+  timeToFirstTokenMs?: number;
+  /** Sum of generation windows, excluding tool execution. */
+  generationMs?: number;
+  /** Whole unit: Pi request timestamp/message_start→message_end; ACP prompt sent→PromptResponse. When Pi start is unknown, duration starts at the first delta. */
+  durationMs: number;
+  /** Tokens for this request/turn, never cumulative session totals. */
+  outputTokens?: number;
+  reasoningTokens?: number;
+  /** Whether thinking deltas were streamed separately from output. */
+  reasoningStreamed: boolean;
+  stopReason?: string;
+}
+
 export const TOOL_CALL_ICON_NAMES = [
   "wrench",
   "square_terminal",

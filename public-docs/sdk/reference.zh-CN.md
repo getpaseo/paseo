@@ -88,6 +88,7 @@ nav: API 参考
 | `pendingPermissions`                           | 权限请求或 `null`                         | 等待回应的请求。                                                                                                                              |
 | `activeTurn`                                   | 当前轮次或 `null`                         | 正在进行的轮次，包含 `turnId` 和 `startedAt`。                                                                                                |
 | `lastUsage`                                    | 用量或 `null`                             | 上一轮的 token 数、费用和上下文窗口用量。                                                                                                     |
+| `lastRequestTiming`                            | 请求计时或 `null`                         | 最近一次已完成请求/轮次的计时：可选的 TTFT 和生成窗口、总时长和可选 token 数。本版本中 ACP 样本仅含时间。首个样本前为 `null`。                |
 | `lastError`                                    | `string \| null`                          | daemon 为该 Agent 记录的最后一个错误。                                                                                                        |
 | `features`                                     | Agent 功能或 `null`                       | Provider 的功能开关和选择项及其当前值。                                                                                                       |
 | `runtimeInfo`                                  | 运行时信息或 `null`                       | 实时的 Provider、会话 ID、模型、思考选项和模式。                                                                                              |

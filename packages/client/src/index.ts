@@ -422,6 +422,7 @@ export interface PaseoAgentHandle {
   readonly pendingPermissions: PaseoAgent["pendingPermissions"] | null;
   readonly activeTurn: NonNullable<PaseoAgent["activeTurn"]> | null;
   readonly lastUsage: NonNullable<PaseoAgent["lastUsage"]> | null;
+  readonly lastRequestTiming: NonNullable<PaseoAgent["lastRequestTiming"]> | null;
   readonly lastError: NonNullable<PaseoAgent["lastError"]> | null;
   /** @deprecated Use `controls` and `options`. */
   readonly features: NonNullable<PaseoAgent["features"]> | null;
@@ -1115,6 +1116,9 @@ function createAgentHandleFactory(
       },
       get lastUsage() {
         return current?.lastUsage ?? null;
+      },
+      get lastRequestTiming() {
+        return current?.lastRequestTiming ?? null;
       },
       get lastError() {
         return current?.lastError ?? null;

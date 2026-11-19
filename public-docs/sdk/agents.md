@@ -200,7 +200,7 @@ if (agent.pendingPermissions?.length) {
 console.log(agent.lastUsage?.totalCostUsd, agent.runtimeInfo?.sessionId);
 ```
 
-The handle exposes `status`, `capabilities`, `availableModes`, `pendingPermissions`, `activeTurn`, `lastUsage`, `lastError`, `features`, `runtimeInfo`, `archivedAt`, `workspaceId`, and `cwd` as properties. All of them read the last snapshot the handle observed and never fetch.
+The handle exposes `status`, `capabilities`, `availableModes`, `pendingPermissions`, `activeTurn`, `lastUsage`, `lastRequestTiming`, `lastError`, `features`, `runtimeInfo`, `archivedAt`, `workspaceId`, and `cwd` as properties. All of them read the last snapshot the handle observed and never fetch.
 
 A handle from `ref()` has observed nothing, so every one of them is `null` until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Use `current()` when you need the whole snapshot or need to distinguish those states.
 
