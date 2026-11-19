@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { inputSchema } from "../shared/input.js";
 import { discover, fetchUsage } from "./usage.js";
 
 let home: string;
@@ -32,14 +33,15 @@ async function accountIdentity(
 ) {
   const accounts = await discover({ kind: "global" }, lookup(env), profile);
   const account = accounts.find(
-    (candidate) => JSON.stringify(candidate.input) === JSON.stringify(input),
+    (candidate) =>
+      JSON.stringify(inputSchema.parse(candidate.input).route) === JSON.stringify(input.route),
   );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
 async function logins(options: Parameters<typeof discover>[1]) {
-  return (await discover({ kind: "global" }, options, profile)).map(
-    (account) => account.input as Parameters<typeof fetchUsage>[0],
+  return (await discover({ kind: "global" }, options, profile)).map((account) =>
+    inputSchema.parse(account.input),
   );
 }
 async function database(path: string) {
@@ -103,8 +105,9 @@ test("Pi uses its own OAuth identity and re-reads rotated tokens without writing
     (
       await fetchUsage(
         inputs[0]!,
-        async (_url, init) => {
+        async (url, init) => {
           expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fixture-rotated");
+          if (String(url).endsWith("/profile")) return profile(url, init);
           return new Response("{}", { status: 401 });
         },
         lookup(),
@@ -119,7 +122,9 @@ test("Pi honors directory override and ignores API keys and malformed files", as
   const env = { PI_CODING_AGENT_DIR: directory };
   const path = join(directory, "auth.json");
   await json(path, { anthropic: { type: "oauth", access: "fixture-pi", accountId: "pi-account" } });
-  expect(await logins(lookup(env))).toEqual([{ route: { store: "pi", path } }]);
+  expect(await logins(lookup(env))).toEqual([
+    { route: { store: "pi", path }, accountKey: "pi-account.pi-org" },
+  ]);
   await json(path, { anthropic: { type: "api_key", key: "fixture-key" } });
   expect(await logins(lookup(env))).toEqual([]);
   await writeFile(path, "broken");
@@ -169,7 +174,7 @@ for (const location of ["default", "profile", "xdg", "override", "config"]) {
     const before = await readFile(path);
     const inputs = await logins(lookup(env));
     expect(inputs).toEqual([
-      { route: { store: "omp", path, credentialId: 1 } },
+      { route: { store: "omp", path, credentialId: 1 }, accountKey: "pi-account.pi-org" },
       { route: { store: "omp", path, credentialId: 2 } },
     ]);
     expect(await accountIdentity(inputs[0]!, env)).toEqual({ key: "pi-account.pi-org" });
@@ -196,7 +201,10 @@ test("missing SQLite skips only OMP", async () => {
   });
   const inputs = await logins({ ...lookup(), sqlite: () => undefined });
   expect(inputs).toEqual([
-    { route: { store: "pi", path: join(home, ".pi", "agent", "auth.json") } },
+    {
+      route: { store: "pi", path: join(home, ".pi", "agent", "auth.json") },
+      accountKey: "pi-account.pi-org",
+    },
   ]);
 });
 
@@ -211,7 +219,10 @@ test("Claude Keychain login replaces the fallback file", async () => {
     readKeychainCredentials: async () => ({ claudeAiOauth: { accessToken: "fixture-keychain" } }),
   });
   expect(inputs).toEqual([
-    { route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" } },
+    {
+      route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+      accountKey: "pi-account.pi-org",
+    },
   ]);
 });
 
@@ -243,6 +254,7 @@ test("keychain identity belongs to its token even when Claude Code metadata name
     harness: "Claude",
     input: {
       route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+      accountKey: "pi-account.pi-org",
     },
   });
 });
@@ -259,10 +271,11 @@ test("OMP fetch re-reads its row after rotation and skips a newly disabled login
     (
       await fetchUsage(
         input!,
-        async (_url, init) => {
+        async (url, init) => {
           expect(new Headers(init?.headers).get("Authorization")).toBe(
             "Bearer fixture-rotated-omp",
           );
+          if (String(url).endsWith("/profile")) return profile(url, init);
           return new Response("{}", { status: 401 });
         },
         lookup(),
@@ -295,6 +308,9 @@ test("Claude discovery honors CLAUDE_CONFIG_DIR", async () => {
     lookup({ CLAUDE_CONFIG_DIR: directory, CLAUDE_HOME: ignoredDirectory }),
   );
   expect(inputs).toEqual([
-    { route: { store: "claude", path: join(directory, ".credentials.json") } },
+    {
+      route: { store: "claude", path: join(directory, ".credentials.json") },
+      accountKey: "pi-account.pi-org",
+    },
   ]);
 });

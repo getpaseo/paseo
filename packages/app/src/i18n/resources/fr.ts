@@ -1791,7 +1791,7 @@ export const fr: TranslationResources = {
         },
         providers: {
           label: "Fournisseurs",
-          title: "Vos agents",
+          title: "Vos fournisseurs",
           description: "Paseo utilise les CLI d'agents déjà installées sur cet ordinateur",
         },
         projects: {
@@ -2735,11 +2735,11 @@ export const fr: TranslationResources = {
       layout: {
         title: "Mise en page",
         contentWidth: "Largeur du contenu",
-        contentWidthHint:
-          "Largeur maximale de la discussion et des fichiers Markdown sur les grands écrans",
-        contentWidthAccessibility: "Largeur du contenu en pixels",
-        reset: "Réinitialiser",
-        resetAccessibility: "Réinitialiser la largeur du contenu",
+        contentWidthHint: "Largeur du chat, de la zone de saisie et des aperçus Markdown",
+        contentWidthDefault: "Par défaut",
+        contentWidthWide: "Large",
+        contentWidthFull: "Pleine largeur",
+        contentWidthCustom: "Largeur personnalisée · {{width}} px",
       },
       syntax: {
         title: "Syntaxe",
@@ -3133,6 +3133,22 @@ export const fr: TranslationResources = {
     providers: {
       title: "Fournisseurs",
       addProvider: "Ajouter un fournisseur",
+      list: {
+        add: "Fournisseur",
+        updatingTo: "Mise à jour vers {{version}}…",
+      },
+      detail: {
+        backToProviders: "Retour aux fournisseurs",
+        notOnHost: "Ce fournisseur n'est pas sur cet hôte",
+        enabled: "Activé",
+        unavailableTitle: "{{name}} n'est pas disponible",
+        troubleshooting: "Dépannage",
+        status: "État du fournisseur",
+        checked: "Vérifié {{time}}",
+        diagnosticReport: "Rapport de diagnostic",
+        dangerZone: "Zone de danger",
+        removeHint: "Supprime ce fournisseur de config.json",
+      },
       providerDetails: "Détails du fournisseur {{name}}",
       enableProvider: "Activer {{name}}",
       unavailable: "Connectez-vous à cet hôte pour voir les fournisseurs",
@@ -3175,6 +3191,7 @@ export const fr: TranslationResources = {
         retrying: "Nouvelle tentative…",
         noSearchMatches: "Aucun modèle ne correspond à votre recherche",
         noneDetected: "Aucun modèle détecté",
+        noCustom: "Aucun modèle personnalisé",
         discovered: "Détectés",
         custom: "Modèles personnalisés",
         updated: "Mis à jour {{time}}",

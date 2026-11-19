@@ -1746,7 +1746,7 @@ export const ar: TranslationResources = {
         },
         providers: {
           label: "المزوّدون",
-          title: "وكلاؤك",
+          title: "مزوّدوك",
           description: "يشغّل Paseo أدوات CLI للوكلاء المثبتة على هذا الكمبيوتر",
         },
         projects: {
@@ -2711,10 +2711,11 @@ export const ar: TranslationResources = {
       layout: {
         title: "التخطيط",
         contentWidth: "عرض المحتوى",
-        contentWidthHint: "أقصى عرض للمحادثة وملفات Markdown على الشاشات العريضة",
-        contentWidthAccessibility: "عرض المحتوى بالبكسل",
-        reset: "إعادة تعيين",
-        resetAccessibility: "إعادة عرض المحتوى إلى الافتراضي",
+        contentWidthHint: "عرض المحادثة ومحرر الرسائل ومعاينات Markdown",
+        contentWidthDefault: "افتراضي",
+        contentWidthWide: "عريض",
+        contentWidthFull: "كامل",
+        contentWidthCustom: "عرض مخصص · {{width}} بكسل",
       },
       syntax: {
         title: "بناء الجملة",
@@ -3097,6 +3098,22 @@ export const ar: TranslationResources = {
     providers: {
       title: "مقدمي الخدمات",
       addProvider: "إضافة مزود",
+      list: {
+        add: "مزود",
+        updatingTo: "جارٍ التحديث إلى {{version}}...",
+      },
+      detail: {
+        backToProviders: "العودة إلى المزودين",
+        notOnHost: "هذا المزود غير موجود على هذا المضيف",
+        enabled: "مفعّل",
+        unavailableTitle: "{{name}} غير متاح",
+        troubleshooting: "استكشاف الأخطاء",
+        status: "حالة المزود",
+        checked: "تم الفحص {{time}}",
+        diagnosticReport: "تقرير التشخيص",
+        dangerZone: "منطقة الخطر",
+        removeHint: "يحذف هذا المزود من config.json",
+      },
       providerDetails: "تفاصيل مزود{{name}}",
       enableProvider: "تمكين{{name}}",
       unavailable: "اتصل بهذا المضيف لرؤية مقدمي الخدمة",
@@ -3138,6 +3155,7 @@ export const ar: TranslationResources = {
         retrying: "جارٍ إعادة المحاولة...",
         noSearchMatches: "لا توجد نماذج تطابق بحثك",
         noneDetected: "لم يتم اكتشاف أي نماذج",
+        noCustom: "لا توجد نماذج مخصصة",
         discovered: "اكتشف",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",

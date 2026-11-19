@@ -80,7 +80,7 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { renderStreamRow, type RenderStreamItem } from "./stream-row";
 import { type NearBottom, useIsNearBottom, useNearBottom } from "./near-bottom";
-import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
+import { ChatOutlineRail, useChatOutlineRailLayout } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
@@ -617,18 +617,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           mountedHistoryMessageIds.has(messageId) || liveHeadMessageIds.has(messageId),
       };
     }, [baseRenderModel.segments.liveHead, mountedHistoryMessageIds]);
+    const outlineEnabled = supportsChatOutline && chatOutlineEnabled;
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
       timelineEpoch,
       tail: effectiveStreamItems,
       head: effectiveStreamHead,
-      enabled: supportsChatOutline && chatOutlineEnabled,
+      enabled: outlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
       mountedHistoryMessageIds,
       revealLoadedMessage: revealLoadedHistory,
     });
+
+    const outlineLayout = useChatOutlineRailLayout(outlineEnabled);
 
     useImperativeHandle(
       ref,
@@ -1173,7 +1176,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         visibleMessageIds={mountedMessageIds}
       >
         <ToolCallSheetProvider>
-          <AssistantSelectionCopySurface style={stylesheet.container}>
+          <AssistantSelectionCopySurface
+            style={stylesheet.container}
+            onLayout={outlineLayout.onLayout}
+          >
             <MessageOuterSpacingProvider disableOuterSpacing>
               <ToolCallExpansionContext.Provider value={toolCallExpansion}>
                 <UserMessageExpansionContext.Provider value={userMessageExpansion}>
@@ -1202,15 +1208,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                     baseListContentContainerStyle: stylesheet.listContentContainer,
                     forwardListContentContainerStyle: stylesheet.forwardListContentContainer,
                     contentMaxWidth,
+                    outlineInset: outlineLayout.inset,
                   })}
                 </UserMessageExpansionContext.Provider>
               </ToolCallExpansionContext.Provider>
             </MessageOuterSpacingProvider>
-            <ChatOutlineRail
-              prompts={chatOutline.prompts}
-              activePrompt={chatOutline.activePrompt}
-              onJumpToPrompt={chatOutline.jumpToPrompt}
-            />
+            {outlineLayout.inset > 0 && chatOutline.prompts.length >= 2 ? (
+              <ChatOutlineRail
+                prompts={chatOutline.prompts}
+                activePrompt={chatOutline.activePrompt}
+                onJumpToPrompt={chatOutline.jumpToPrompt}
+              />
+            ) : null}
             <ScrollToBottomButton
               nearBottom={nearBottom}
               isTimelineDetached={isTimelineDetached}
