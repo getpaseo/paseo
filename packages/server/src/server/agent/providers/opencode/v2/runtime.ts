@@ -3,6 +3,7 @@ import { resolvePaseoHome } from "../../../../paseo-home.js";
 import { OpenCode } from "@opencode/client";
 import type { V2Api } from "./api.js";
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { mkdir } from "node:fs/promises";
 import type { Logger } from "pino";
 import { spawnProcess } from "../../../../../utils/spawn.js";
@@ -17,8 +18,12 @@ import { resolveOpenCodeHomeDir } from "../paths.js";
 import { OpenCodeHttpError } from "../http-error.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 import { resolveExternalOpenCodeServer, type ExternalOpenCodeServer } from "./external-server.js";
-import { selectOpenCodeService, type OpenCodeServiceSelection } from "./service-selection.js";
-import { bridgeBindings, connectSharedService } from "./shared-service.js";
+import {
+  compatibleVersion,
+  selectOpenCodeService,
+  type OpenCodeServiceSelection,
+} from "./service-selection.js";
+import { bridgeBindings, connectSharedService, type SharedService } from "./shared-service.js";
 import {
   hasManagedBridge,
   openCodeConfigDirectory,
@@ -27,11 +32,19 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OpenCodeBridge } from "../bridge.js";
+import { V2_SESSION_ENV_KEYS } from "./configuration.js";
+import type { McpServerConfig } from "../../../agent-sdk-types.js";
+
+function processEnvironment(env: Record<string, string> = {}): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !V2_SESSION_ENV_KEYS.has(key)));
+}
 
 export interface V2Connection {
   client: V2Api;
   release(): Promise<void>;
-  retain(): V2Connection;
+  retain(input?: V2RuntimeAcquireOptions): V2Connection;
+  reserveMcpServers(cwd: string, servers: Record<string, McpServerConfig>): void;
+  commitMcpServers(cwd: string): void;
   bindSession(sessionId: string, cwd: string): Promise<void>;
   unbindSession(sessionId: string, cwd: string): Promise<void>;
   refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
@@ -40,11 +53,26 @@ export interface V2Connection {
 interface Generation {
   client: V2Api;
   users: number;
+  locations: Map<string, McpLocation>;
   stop(): Promise<void>;
   exited: Promise<Error>;
   bindSession(sessionId: string, cwd: string): Promise<void>;
   unbindSession(sessionId: string, cwd: string): Promise<void>;
   refreshLocation(cwd: string, signal?: AbortSignal): Promise<void>;
+}
+interface McpLocation {
+  servers: Record<string, McpServerConfig>;
+  users: number;
+  // OpenCode keeps location registrations after a lease closes, including partial writes.
+  committed: boolean;
+}
+interface TrackedStart {
+  promise: Promise<Generation>;
+  abort: AbortController;
+  reservations: number;
+  generation?: Generation;
+  isolated: boolean;
+  env: Record<string, string>;
 }
 export interface V2RuntimeOptions {
   logger: Logger;
@@ -53,6 +81,16 @@ export interface V2RuntimeOptions {
   externalServer?: ExternalOpenCodeServer;
   selection?: OpenCodeServiceSelection;
   bridge?: OpenCodeBridge;
+  startup?: V2RuntimeStartup;
+}
+
+export interface V2RuntimeStartup {
+  select(): Promise<OpenCodeServiceSelection>;
+  start(input: {
+    selection: OpenCodeServiceSelection;
+    env: Record<string, string>;
+    signal: AbortSignal;
+  }): Promise<SharedService>;
 }
 
 export interface V2RuntimeAcquireOptions {
@@ -64,16 +102,18 @@ export interface V2RuntimeAcquireOptions {
 
 // The runtime owns a credential for each subprocess; sessions only receive its authenticated client.
 export class V2Runtime {
-  private current: Promise<Generation> | null = null;
+  private current: TrackedStart | null = null;
   private generations = new Set<Generation>();
-  private starts = new Set<Promise<Generation>>();
+  private starts = new Set<TrackedStart>();
+  private readonly lifetime = new AbortController();
   private closed = false;
   private readonly selection: Promise<OpenCodeServiceSelection>;
 
   constructor(private readonly options: V2RuntimeOptions) {
     this.selection = options.selection
       ? Promise.resolve(options.selection)
-      : selectOpenCodeService({
+      : (options.startup?.select() ??
+        selectOpenCodeService({
           explicit:
             options.externalServer ??
             resolveExternalOpenCodeServer({
@@ -81,58 +121,58 @@ export class V2Runtime {
               ...options.settings?.env,
             }),
           env: options.settings?.env,
-        });
+        }));
   }
 
   async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
     this.assertBridgePort();
-    const selection = await raceProviderRefreshAbort(input.signal, this.selection);
-    let pending: Promise<Generation>;
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, this.lifetime.signal])
+      : this.lifetime.signal;
+    let selection = await raceProviderRefreshAbort(signal, this.selection);
+    signal.throwIfAborted();
+    const isolated = Boolean(input.dedicated || Object.keys(processEnvironment(input.env)).length);
+    const processOverrides = this.processOverrides(selection);
+    if (selection.kind === "discovered" && (isolated || processOverrides.length)) {
+      this.options.logger.info("Using an owned OpenCode helper for custom session settings");
+      selection = { kind: "owned" };
+    }
+    let pending: TrackedStart;
     if (selection.kind !== "owned") {
       this.assertSharedConfiguration(input, selection);
-      this.current ??= this.startTracked();
+      this.current ??= this.startTracked(selection);
       pending = this.current;
-    } else if (input.env || input.dedicated) {
-      pending = this.startTracked(input.env);
+    } else if (isolated) {
+      pending = this.startTracked(selection, input.env, true);
     } else {
-      if (!this.current) this.current = this.startTracked();
+      if (!this.current) this.current = this.startTracked(selection);
       pending = this.current;
     }
-    let generation: Generation;
+    pending.reservations += 1;
     try {
-      generation = await raceProviderRefreshAbort(input.signal, pending);
-    } catch (error) {
-      if (this.current === pending) this.current = null;
-      if (input.signal?.aborted) {
-        void pending
-          .then(async (started) => {
-            if (started.users !== 0) return undefined;
-            this.generations.delete(started);
-            await started.stop();
-            return undefined;
-          })
-          .catch((cleanupError: unknown) => {
-            this.options.logger.warn(
-              { error: String(cleanupError) },
-              "OpenCode canceled startup cleanup failed",
-            );
-          });
+      const generation = await raceProviderRefreshAbort(signal, pending.promise);
+      signal.throwIfAborted();
+      if (!this.generations.has(generation)) {
+        throw new Error("OpenCode helper server exited");
       }
-      throw error;
+      return this.lease(generation, pending);
+    } finally {
+      await this.releaseReservation(pending, signal);
     }
-    if (!this.generations.has(generation)) {
+  }
+
+  private async releaseReservation(pending: TrackedStart, signal: AbortSignal): Promise<void> {
+    pending.reservations -= 1;
+    if (pending.reservations) return;
+    if (!pending.generation) {
       if (this.current === pending) this.current = null;
-      throw new Error("OpenCode helper server exited");
+      pending.abort.abort(new Error("OpenCode startup has no remaining callers"));
+    } else if (pending.generation.users === 0 && signal.aborted) {
+      if (this.current === pending) this.current = null;
+      await this.stopGeneration(pending.generation);
     }
-    const connection = this.lease(generation, pending);
-    if (input.signal?.aborted || this.closed) {
-      await connection.release();
-      input.signal?.throwIfAborted();
-      throw new Error("OpenCode runtime is closed");
-    }
-    return connection;
   }
 
   private assertBridgePort(): void {
@@ -143,10 +183,7 @@ export class V2Runtime {
       throw new Error("PASEO_OPENCODE_BRIDGE_PORT changed; restart Paseo to apply the bridge port");
   }
 
-  private assertSharedConfiguration(
-    input: V2RuntimeAcquireOptions,
-    selection: OpenCodeServiceSelection,
-  ): void {
+  private processOverrides(selection: OpenCodeServiceSelection): string[] {
     const connectionEnv = new Set([
       "PASEO_OPENCODE_SERVER_URL",
       "PASEO_OPENCODE_SERVER_PASSWORD",
@@ -158,34 +195,76 @@ export class V2Runtime {
       connectionEnv.add("XDG_STATE_HOME");
       connectionEnv.add("OPENCODE_CONFIG_DIR");
     }
-    const processOverrides = Object.keys(this.options.settings?.env ?? {}).filter(
-      (key) => !connectionEnv.has(key),
-    );
-    if (input.env || input.dedicated || processOverrides.length) {
+    return Object.keys(this.options.settings?.env ?? {}).filter((key) => !connectionEnv.has(key));
+  }
+
+  private assertSharedConfiguration(
+    input: V2RuntimeAcquireOptions,
+    selection: OpenCodeServiceSelection,
+  ): void {
+    const processOverrides = this.processOverrides(selection);
+    if (
+      Object.keys(processEnvironment(input.env)).length ||
+      input.dedicated ||
+      processOverrides.length
+    ) {
       throw new Error(
         `Custom OpenCode MCP servers or process environment require an isolated server and cannot be used with a shared OpenCode service${processOverrides.length ? `: ${processOverrides.join(", ")}` : ""}.`,
       );
     }
   }
 
-  private lease(generation: Generation, pending: Promise<Generation>): V2Connection {
+  private lease(generation: Generation, pending: TrackedStart): V2Connection {
     if (this.closed || !this.generations.has(generation))
       throw new Error("OpenCode helper server is no longer running");
     generation.users += 1;
     let released = false;
+    const locations = new Map<string, McpLocation>();
     const release = async () => {
       if (released) return;
       released = true;
+      for (const [cwd, location] of locations) {
+        location.users -= 1;
+        if (!location.users && !location.committed) generation.locations.delete(cwd);
+      }
       generation.users -= 1;
-      if (generation.users !== 0) return;
+      if (generation.users !== 0 || pending.reservations !== 0) return;
       if (this.current === pending) return;
-      this.generations.delete(generation);
-      await generation.stop();
+      await this.stopGeneration(generation);
     };
     return {
       client: generation.client,
       release,
-      retain: () => this.lease(generation, pending),
+      reserveMcpServers: (cwd, servers) => {
+        if (released) throw new Error("OpenCode connection has been released");
+        let location = generation.locations.get(cwd);
+        if (location && !isDeepStrictEqual(location.servers, servers))
+          throw new Error(
+            "OpenCode retained connection cannot change MCP servers in the same location",
+          );
+        if (locations.has(cwd)) return;
+        if (!location) {
+          location = { servers: structuredClone(servers), users: 0, committed: false };
+          generation.locations.set(cwd, location);
+        }
+        location.users += 1;
+        locations.set(cwd, location);
+      },
+      commitMcpServers: (cwd) => {
+        const location = locations.get(cwd);
+        if (released || !location)
+          throw new Error("OpenCode MCP location must be reserved before configuration");
+        location.committed = true;
+      },
+      retain: (input = {}) => {
+        if (released) throw new Error("OpenCode connection has been released");
+        const env = processEnvironment(input.env);
+        if ((input.dedicated || Object.keys(env).length) && !pending.isolated)
+          throw new Error("OpenCode retained connection requires an isolated server");
+        if (pending.isolated && !isDeepStrictEqual(env, pending.env))
+          throw new Error("OpenCode retained connection cannot change process environment");
+        return this.lease(generation, pending);
+      },
       bindSession: generation.bindSession,
       unbindSession: generation.unbindSession,
       refreshLocation: generation.refreshLocation,
@@ -195,39 +274,68 @@ export class V2Runtime {
 
   async shutdown(): Promise<void> {
     this.closed = true;
-    await Promise.allSettled(this.starts);
-    await Promise.all([...this.generations].map((generation) => generation.stop()));
-    this.generations.clear();
+    this.lifetime.abort(new Error("OpenCode runtime is closed"));
+    for (const start of this.starts) start.abort.abort(this.lifetime.signal.reason);
+    await Promise.allSettled([...this.starts].map((start) => start.promise));
+    await Promise.all([...this.generations].map((generation) => this.stopGeneration(generation)));
     this.current = null;
   }
 
-  private startTracked(env?: Record<string, string>): Promise<Generation> {
-    const pending = this.start(env);
-    this.starts.add(pending);
-    void pending.then(
-      (generation) =>
-        generation.exited.then(() => {
+  private async stopGeneration(generation: Generation): Promise<void> {
+    if (!this.generations.delete(generation)) return;
+    await generation.stop();
+  }
+
+  private startTracked(
+    selection: OpenCodeServiceSelection,
+    env?: Record<string, string>,
+    isolated = false,
+  ): TrackedStart {
+    const abort = new AbortController();
+    const snapshot = { ...env };
+    const pending: TrackedStart = {
+      abort,
+      reservations: 0,
+      isolated,
+      env: processEnvironment(snapshot),
+      promise: Promise.resolve().then(async () => {
+        abort.signal.throwIfAborted();
+        const service = await (this.options.startup
+          ? this.options.startup.start({ selection, env: snapshot, signal: abort.signal })
+          : this.start(selection, snapshot, abort.signal));
+        if (abort.signal.aborted) {
+          await service.stop();
+          abort.signal.throwIfAborted();
+        }
+        const generation: Generation = { ...service, users: 0, locations: new Map() };
+        pending.generation = generation;
+        this.generations.add(generation);
+        void generation.exited.then(() => {
+          this.generations.delete(generation);
           if (this.current === pending) this.current = null;
           return undefined;
-        }),
-      () => undefined,
-    );
-    void pending.then(
+        });
+        return generation;
+      }),
+    };
+    this.starts.add(pending);
+    void pending.promise.then(
       () => this.starts.delete(pending),
-      () => this.starts.delete(pending),
+      () => {
+        this.starts.delete(pending);
+        if (this.current === pending) this.current = null;
+      },
     );
     return pending;
   }
 
-  private async start(env: Record<string, string> = {}): Promise<Generation> {
-    const selection = await this.selection;
+  private async start(
+    selection: OpenCodeServiceSelection,
+    env: Record<string, string>,
+    signal: AbortSignal,
+  ): Promise<SharedService> {
     if (selection.kind !== "owned") {
-      const generation: Generation = {
-        ...(await connectSharedService(selection, this.options)),
-        users: 0,
-      };
-      this.generations.add(generation);
-      return generation;
+      return connectSharedService(selection, this.options, signal);
     }
 
     const { settings, managedProcesses, logger } = this.options;
@@ -259,6 +367,7 @@ export class V2Runtime {
       ? configured
       : decorateOpenCodeV2Env(configured, plugin, bridge ? {} : { mode: "structured-only" });
     const args = [...launch.args, "serve", "--hostname", "127.0.0.1", "--port", "0"];
+    signal.throwIfAborted();
     const process = spawnProcess(launch.command, args, {
       cwd,
       detached: globalThis.process.platform !== "win32",
@@ -312,6 +421,7 @@ export class V2Runtime {
           process.stdout?.off("data", onData);
           process.off("error", onError);
           process.off("exit", onExit);
+          signal.removeEventListener("abort", onAbort);
           if (result instanceof Error) reject(result);
           else resolve(result);
         };
@@ -323,9 +433,11 @@ export class V2Runtime {
         const onError = (error: Error) => finish(error);
         const onExit = (code: number | null) =>
           finish(new Error(`OpenCode v2 server exited during startup (${code})`));
+        const onAbort = () => finish(signal.reason);
         process.stdout?.on("data", onData);
         process.once("error", onError);
         process.once("exit", onExit);
+        signal.addEventListener("abort", onAbort, { once: true });
         // Drain stderr without retaining provider output that may contain credentials.
         process.stderr?.on("data", () => undefined);
       });
@@ -335,10 +447,10 @@ export class V2Runtime {
           Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
         },
         fetch: async (request, init) => {
-          const signal = init?.signal
+          const requestSignal = init?.signal
             ? AbortSignal.any([init.signal, processAbort.signal])
             : processAbort.signal;
-          const response = await fetch(request, { ...init, signal });
+          const response = await fetch(request, { ...init, signal: requestSignal });
           const html = response.headers.get("content-type")?.includes("text/html") ?? false;
           if (!response.ok || html) {
             const requestUrl = request instanceof Request ? request.url : String(request);
@@ -347,17 +459,20 @@ export class V2Runtime {
           return response;
         },
       });
-      await client.server.info({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
-      const generation: Generation = {
+      const info = await client.server.info({
+        signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, deadline - Date.now()))]),
+      });
+      if (!compatibleVersion(info.version))
+        throw new Error(
+          `Unsupported OpenCode version ${info.version}; version 2.0.10 or newer is required`,
+        );
+      const generation: SharedService = {
         client,
-        users: 0,
         stop,
         exited,
         ...bridgeBindings(client, bridge),
       };
-      this.generations.add(generation);
       process.once("exit", () => {
-        this.generations.delete(generation);
         void stop().catch((error: unknown) =>
           logger.warn({ error }, "OpenCode process cleanup failed"),
         );

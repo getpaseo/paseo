@@ -68,6 +68,7 @@ import { readPluginOptionState } from "./plugin-provider-options.js";
 import type { RegisteredProviderDefinition } from "./provider-registry.js";
 import { runProviderTurn } from "./providers/provider-runner.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
+import { ToolPolicyUnsupportedError } from "./provider-options.js";
 
 interface Deferred<Value> {
   promise: Promise<Value>;
@@ -90,6 +91,7 @@ interface PendingOpenDescendantState {
 interface OpenProviderSessionInput {
   sessionId: string;
   config: ProviderSessionConfig;
+  toolPolicySource?: "plugin";
   persistence?: ProviderPersistence;
   history: "replay" | "skip";
 }
@@ -153,6 +155,7 @@ class ProviderRuntime {
 
   constructor(
     private readonly registration: ProviderRegistration,
+    private readonly logger: Logger,
     private readonly runtimeSettings?: ProviderRuntimeSettings,
   ) {}
 
@@ -243,6 +246,18 @@ class ProviderRuntime {
       throw new Error(`Provider session already exists: ${input.sessionId}`);
     }
     const connection = await this.getConnection();
+    if (input.config.toolPolicy && !connection.capabilities.includes("permission.tool_policy")) {
+      const count = input.config.toolPolicy.preapproved.length;
+      if (count && input.toolPolicySource !== "plugin") {
+        throw new ToolPolicyUnsupportedError(this.registration.id);
+      }
+      if (count)
+        this.logger.warn(
+          { provider: this.registration.id, preapprovalCount: count },
+          "Provider does not support plugin preapprovals; keeping ordinary permission prompts",
+        );
+      input = { ...input, config: { ...input.config, toolPolicy: undefined } };
+    }
     requireProviderCapabilities(connection.capabilities, {
       type: "session.open",
       requestId: "capability-check",
@@ -898,16 +913,13 @@ export class PluginAgentClientRegistry {
 
     for (const [id, registration] of incoming) {
       if (this.providers.has(id)) continue;
-      const client = new PluginAgentClient(registration);
+      const client = new PluginAgentClient(registration, this.logger);
       const clients = new Set([client]);
-      const definition = createPluginProviderDefinition(
-        registration,
-        (_logger, runtimeSettings) => {
-          const configuredClient = new PluginAgentClient(registration, runtimeSettings);
-          clients.add(configuredClient);
-          return configuredClient;
-        },
-      );
+      const definition = createPluginProviderDefinition(registration, (logger, runtimeSettings) => {
+        const configuredClient = new PluginAgentClient(registration, logger, runtimeSettings);
+        clients.add(configuredClient);
+        return configuredClient;
+      });
       this.providers.set(id, { registration, client, definition, clients });
     }
   }
@@ -947,7 +959,7 @@ function createPluginProviderDefinition(
     requiresConfiguration: registration.requiresConfiguration,
     defaultModeId: null,
     modes: [],
-    supportsExactMcpPreapproval: true,
+    supportsExactMcpPreapproval: "deferred",
     createClient,
   };
 }
@@ -965,9 +977,13 @@ class PluginAgentClient implements AgentClient {
 
   readonly getCatalogCacheKey?: AgentClient["getCatalogCacheKey"];
 
-  constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
+  constructor(
+    registration: ProviderRegistration,
+    logger: Logger,
+    runtimeSettings?: ProviderRuntimeSettings,
+  ) {
     this.provider = registration.id;
-    this.runtime = new ProviderRuntime(registration, runtimeSettings);
+    this.runtime = new ProviderRuntime(registration, logger, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
     this.runtime.onSessionOpened((session, opened) => this.acceptChild(session, opened));
@@ -1103,6 +1119,7 @@ class PluginAgentClient implements AgentClient {
     const bridge = await this.runtime.openSession({
       sessionId,
       config: mapSessionConfig(input.config, input.launchContext, input.persist),
+      toolPolicySource: input.config.toolPolicySource,
       persistence: input.persistence,
       history: input.history,
     });
@@ -1124,6 +1141,7 @@ class PluginAgentClient implements AgentClient {
         forget();
         return await this.runtime.openSession({
           sessionId: randomUUID(),
+          toolPolicySource: input.config.toolPolicySource,
           config: {
             ...config,
             model: state.model,

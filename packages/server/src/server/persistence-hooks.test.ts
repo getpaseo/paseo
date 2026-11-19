@@ -27,6 +27,17 @@ function createRecord(overrides?: Partial<StoredAgentRecord>): StoredAgentRecord
 }
 
 describe("persistence hooks", () => {
+  test("restores plugin policy origin without inferring it for legacy records", () => {
+    const record = createRecord({
+      config: { toolPolicy: { preapproved: [] }, toolPolicySource: "plugin" },
+    });
+    expect(buildConfigOverrides(record)).toMatchObject({ toolPolicySource: "plugin" });
+    expect(buildSessionConfig(record)).toMatchObject({ toolPolicySource: "plugin" });
+    expect(
+      buildSessionConfig(createRecord({ config: { toolPolicy: { preapproved: [] } } })),
+    ).not.toHaveProperty("toolPolicySource");
+  });
+
   test("buildConfigOverrides prefers the last live mode over the creation-time mode", () => {
     const record = createRecord({
       lastModeId: "bypass",

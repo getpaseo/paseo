@@ -453,6 +453,7 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
     serializable.toolPolicy = {
       preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
     };
+    if (config.toolPolicySource) serializable.toolPolicySource = config.toolPolicySource;
   }
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;
@@ -507,6 +508,7 @@ function projectPersistenceHandleForWire(
   delete projected.metadata.pluginAppendSystemPrompt;
   delete projected.metadata.daemonAppendSystemPrompt;
   delete projected.metadata.paseoInstructionReceipt;
+  delete projected.metadata.toolPolicySource;
   if (Object.keys(projected.metadata).length === 0) {
     delete projected.metadata;
   }

@@ -637,6 +637,8 @@ export interface AgentSessionConfig {
   title?: string | null;
   providerOptions?: ProviderOptions;
   toolPolicy?: ToolPolicy;
+  /** Daemon-owned provenance; absent means the caller requires the complete policy. */
+  toolPolicySource?: "plugin";
   mcpServers?: Record<string, McpServerConfig>;
   /**
    * Internal agents are hidden from listings and don't trigger notifications.

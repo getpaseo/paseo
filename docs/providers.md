@@ -99,6 +99,12 @@ Exact MCP preapproval is a separate daemon-owned contract. A new provider must f
 closed for Hub unattended execution until it can approve one exact injected MCP
 server and tool identity without approving native tools.
 
+Plugin-provider policy support is resolved from the connection's negotiated
+`permission.tool_policy` capability. Caller policies remain required. Policies
+added only by creation hooks can use ordinary permission prompts on unsupported
+providers; the daemon records that origin privately so reopen does not promote
+those conveniences into requirements. See the [create-hook contract](../public-docs/plugins/hooks.md#agentcreatebefore).
+
 ## Core adapter patterns
 
 ### ACP (Agent Client Protocol) -- recommended

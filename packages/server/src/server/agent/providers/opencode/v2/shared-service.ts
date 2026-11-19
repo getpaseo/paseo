@@ -34,10 +34,14 @@ export interface SharedService {
 export async function connectSharedService(
   selection: Extract<OpenCodeServiceSelection, { kind: "explicit" | "discovered" }>,
   options: SharedServiceOptions,
+  startupSignal?: AbortSignal,
 ): Promise<SharedService> {
   const server = selection.server;
   const { logger } = options;
   const lifetime = new AbortController();
+  const connectionSignal = startupSignal
+    ? AbortSignal.any([lifetime.signal, startupSignal])
+    : lifetime.signal;
   const closed = new Error(`OpenCode external server connection closed (${server.url})`);
   let resolveExited!: (error: Error) => void;
   const exited = new Promise<Error>((resolve) => {
@@ -51,8 +55,8 @@ export async function connectSharedService(
     ...(authorization ? { headers: { Authorization: authorization } } : {}),
     fetch: async (request, init) => {
       const signal = init?.signal
-        ? AbortSignal.any([init.signal, lifetime.signal])
-        : lifetime.signal;
+        ? AbortSignal.any([init.signal, connectionSignal])
+        : connectionSignal;
       let response: Response;
       try {
         response = await fetch(request, { ...init, signal });
@@ -81,7 +85,7 @@ export async function connectSharedService(
   let info: Awaited<ReturnType<typeof client.server.info>>;
   try {
     info = await client.server.info({
-      signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]),
+      signal: AbortSignal.any([connectionSignal, AbortSignal.timeout(30_000)]),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -95,6 +99,7 @@ export async function connectSharedService(
     );
   const bridge = options.bridge;
   const pluginDirectory = bridge ? fileURLToPath(await bridge.materializeV2Plugin()) : undefined;
+  connectionSignal.throwIfAborted();
   if (selection.kind === "discovered" && pluginDirectory) {
     const env = { ...globalThis.process.env, ...options.settings?.env };
     const configDirectory = openCodeConfigDirectory(env);
@@ -110,6 +115,7 @@ export async function connectSharedService(
       throw new Error(
         `OpenCode service does not use the expected configuration directory ${configDirectory}; configure the bridge on that service explicitly`,
       );
+    connectionSignal.throwIfAborted();
     await provisionLocalBridge({
       configDirectory,
       artifact: path.join(pluginDirectory, "server.js"),

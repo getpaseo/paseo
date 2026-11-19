@@ -14,6 +14,7 @@ import {
   OpenCodeProviderOptionsSchema,
 } from "./providers/opencode/options.js";
 import { buildProviderRegistry } from "./provider-registry.js";
+import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 const hubPolicy = {
   preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],
@@ -135,6 +136,77 @@ describe("provider-owned option schemas", () => {
 });
 
 describe("exact MCP preapproval mappings", () => {
+  test("unsupported launch omits plugin policy but stored configuration preserves its intent", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "optional-policy-launch-"));
+    const base = createTestAgentClients({ supportsMcpServers: true }).codex;
+    let launched: import("./agent-sdk-types.js").AgentSessionConfig | undefined;
+    const client = {
+      ...base,
+      provider: "pi",
+      capabilities: base.capabilities,
+      isAvailable: () => base.isAvailable(),
+      fetchCatalog: (...args: Parameters<typeof base.fetchCatalog>) => base.fetchCatalog(...args),
+      createSession: async (config: import("./agent-sdk-types.js").AgentSessionConfig) => {
+        launched = config;
+        return base.createSession({ ...config, provider: "codex" });
+      },
+      resumeSession: (...args: Parameters<typeof base.resumeSession>) =>
+        base.resumeSession(...args),
+    };
+    const logger = createTestLogger();
+    const manager = new AgentManager({
+      logger,
+      clients: { pi: client },
+      providerDefinitions: buildProviderRegistry(logger),
+      pluginLifecycle: {
+        emit: () => {},
+        before: async (name, request) =>
+          name === "agent.create.before"
+            ? {
+                ...request,
+                config: {
+                  ...request.config,
+                  mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
+                  toolPolicy: hubPolicy,
+                },
+              }
+            : request,
+      },
+    });
+    try {
+      const agent = await manager.createAgent({ provider: "pi", cwd }, undefined, {
+        workspaceId: undefined,
+      });
+      expect(agent.config).toMatchObject({ toolPolicy: hubPolicy, toolPolicySource: "plugin" });
+      expect(launched?.toolPolicy).toBeUndefined();
+      expect(launched?.toolPolicySource).toBeUndefined();
+      await manager.closeAgent(agent.id);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("an unsupported built-in keeps plugin preapprovals optional", () => {
+    const registry = buildProviderRegistry(createTestLogger());
+    expect(
+      registry.pi.applyToolPolicy(
+        { provider: "pi", cwd: "/tmp", toolPolicySource: "plugin", toolPolicy: hubPolicy },
+        hubPolicy,
+      ),
+    ).toMatchObject({ toolPolicy: hubPolicy, toolPolicySource: "plugin" });
+  });
+
+  test("empty policy does not require exact support but remains present for native providers", () => {
+    const registry = buildProviderRegistry(createTestLogger());
+    const empty = { preapproved: [] };
+    expect(
+      registry.pi.applyToolPolicy({ provider: "pi", cwd: "/tmp" }, empty).toolPolicy,
+    ).toBeUndefined();
+    expect(
+      registry.opencode.applyToolPolicy({ provider: "opencode", cwd: "/tmp" }, empty).toolPolicy,
+    ).toEqual(empty);
+  });
+
   test("unsupported providers fail closed with an unattended-execution error", () => {
     const registry = buildProviderRegistry(createTestLogger());
     expect(() =>

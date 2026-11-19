@@ -226,7 +226,9 @@ server.addHook("worktree.create.after", async ({ worktree }) => {
 
 ## agent.create.before
 
-Receives `{ request: { config, env?, metadata } }`. Config and `metadata` changes are saved and remain after the plugin is disabled or removed; `env` applies to the initial launch and is not saved. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
+Receives `{ request: { config, env?, metadata } }`. Config and `metadata` changes are saved and remain after the plugin is disabled or removed. Environment overrides are saved separately and restored when the agent reopens. You cannot change `config.cwd`. A throw, invalid result, or timeout fails creation.
+
+Tool preapprovals added only by create hooks are conveniences: Paseo applies them when the provider supports exact MCP approvals; otherwise it logs a warning and leaves normal permission prompts in place. A policy supplied by the caller remains required, including when hooks add grants. Hooks cannot remove its grants or replace their original server bindings. To require exact approval for unattended work, supply the policy when calling `agents.create`, not only from a hook. Existing saved policies without recorded hook origin remain required.
 
 **`agent.create.before.config`** uses `AgentSessionConfig`:
 
@@ -356,8 +358,8 @@ server.addHook("agent.open.before", async ({ request }) => {
 });
 ```
 
-Session-open overrides are re-derived on every open. `agent.create.before.env` applies only to the
-initial launch and is not saved in the agent's configuration.
+Session-open overrides are re-derived on every open. `agent.create.before.env` is saved separately
+from the agent's session configuration and supplies the starting overrides on later opens.
 
 ### Inject MCP servers
 

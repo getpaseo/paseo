@@ -64,6 +64,64 @@ describe("V2Runtime against an external server", () => {
     server = undefined;
   });
 
+  test("shutdown cancels shared readiness without waiting for its deadline or stopping the service", async () => {
+    let received!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    let aborted!: () => void;
+    const disconnected = new Promise<void>((resolve) => {
+      aborted = resolve;
+    });
+    server = createServer((request) => {
+      request.once("aborted", aborted);
+      received();
+    });
+    const port = await listen(server);
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      externalServer: { url: `http://127.0.0.1:${port}` },
+    });
+    const pending = runtime.acquire();
+    const rejected = expect(pending).rejects.toThrow("runtime is closed");
+    await requested;
+    try {
+      await runtime.shutdown();
+      await rejected;
+      await disconnected;
+      expect(server.listening).toBe(true);
+    } finally {
+      await close(server);
+      server = undefined;
+      await runtime.shutdown();
+    }
+  }, 2_000);
+
+  test("explicit server isolation errors never start a helper", async () => {
+    let starts = 0;
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      selection: { kind: "explicit", server: { url: "http://127.0.0.1:1" } },
+      startup: {
+        select: async () => {
+          throw new Error("explicit selection must win");
+        },
+        start: async () => {
+          starts += 1;
+          throw new Error("helper must not start");
+        },
+      },
+    });
+    await expect(runtime.acquire({ dedicated: true })).rejects.toThrow(
+      "require an isolated server",
+    );
+    await expect(runtime.acquire({ env: { TOKEN: "dummy" } })).rejects.toThrow(
+      "require an isolated server",
+    );
+    expect(starts).toBe(0);
+    await runtime.shutdown();
+  });
+
   test("reuses the configured server and never spawns a local one", async () => {
     const requests: Array<{ url: string | undefined; authorization: string | undefined }> = [];
     server = createServer((request, response) => {

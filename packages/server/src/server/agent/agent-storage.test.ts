@@ -7,7 +7,7 @@ import { Session as InspectorSession } from "node:inspector/promises";
 import type { HeapProfiler } from "node:inspector";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentStorage } from "./agent-storage.js";
+import { AgentStorage, parseStoredAgentRecord } from "./agent-storage.js";
 import { buildConfigOverrides, buildSessionConfig } from "../persistence-hooks.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type {
@@ -43,6 +43,7 @@ function buildManagedAgentConfig(
     thinkingOptionId: configOverrides.thinkingOptionId,
     providerOptions: configOverrides.providerOptions,
     toolPolicy: configOverrides.toolPolicy,
+    toolPolicySource: configOverrides.toolPolicySource,
     systemPrompt: configOverrides.systemPrompt,
     mcpServers: configOverrides.mcpServers,
   };
@@ -153,6 +154,33 @@ describe("AgentStorage", () => {
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test("plugin policy origin round trips without changing the required legacy default", async () => {
+    const agent = createManagedAgent({
+      cwd: tmpDir,
+      config: { toolPolicy: { preapproved: [] }, toolPolicySource: "plugin" },
+    });
+    await storage.applySnapshot(agent);
+    await storage.flush();
+    const reloaded = new AgentStorage(storagePath, logger);
+    const record = await reloaded.get(agent.id);
+    expect(record?.config).toMatchObject({
+      toolPolicySource: "plugin",
+      toolPolicy: { preapproved: [] },
+    });
+    expect(buildSessionConfig(record!)).toMatchObject({ toolPolicySource: "plugin" });
+    expect(() =>
+      parseStoredAgentRecord({
+        ...record,
+        config: { ...record!.config, toolPolicySource: "caller-optional" },
+      }),
+    ).toThrow();
+    const legacy = parseStoredAgentRecord({
+      ...record,
+      config: { toolPolicy: { preapproved: [] } },
+    });
+    expect(buildSessionConfig(legacy)).not.toHaveProperty("toolPolicySource");
   });
 
   test("workspace and active queries follow updates, removal, and reload", async () => {

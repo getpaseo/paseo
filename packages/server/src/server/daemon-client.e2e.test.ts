@@ -1090,6 +1090,41 @@ test("resume_agent rehydrates the newest private MCP config from a redacted pers
   }
 });
 
+test.each([
+  { name: "stored plugin policy", plugin: true, replace: false, expected: "plugin" },
+  { name: "explicit replacement", plugin: true, replace: true, expected: undefined },
+  { name: "legacy required policy", plugin: false, replace: false, expected: undefined },
+])("resume_agent preserves required intent for $name", async ({ plugin, replace, expected }) => {
+  const cwd = tmpCwd();
+  const provider = new RecordingMcpResumeClient();
+  const localCtx = await createDaemonTestContext({ agentClients: { codex: provider } });
+  const toolPolicy = { preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish" }] };
+  const mcpServers = { hub: { type: "http" as const, url: "http://127.0.0.1/hub" } };
+  try {
+    const created = await localCtx.client.createAgent({ config: { provider: "codex", cwd } });
+    const handle = created.persistence!;
+    await localCtx.client.archiveAgent(created.id);
+    const storage = localCtx.daemon.daemon.agentStorage;
+    const record = await storage.get(created.id);
+    await storage.upsert({
+      ...record!,
+      config: {
+        ...record!.config,
+        toolPolicy,
+        mcpServers,
+        ...(plugin ? { toolPolicySource: "plugin" as const } : {}),
+      },
+    });
+    await localCtx.client.resumeAgent(handle, replace ? { toolPolicy } : undefined);
+    expect(provider.resumeOverrides).toHaveLength(1);
+    expect(provider.resumeOverrides[0]?.toolPolicySource).toBe(expected);
+    expect(provider.resumeOverrides[0]?.toolPolicy).toEqual(toolPolicy);
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("resume_agent keeps the workspace of the agent it matches", async () => {
   const cwd = tmpCwd();
   const provider = new RecordingMcpResumeClient();
