@@ -26,7 +26,7 @@ function useServerPlugins(serverId: string | null): InstalledPlugin[] {
   );
 }
 
-/** How many composer items the host's plugins registered; the toolbar budgets room for them. */
+/** How many composer items the host's plugins registered, whether or not each renders anything. */
 export function usePluginComposerItemCount(serverId: string | null): number {
   const plugins = useServerPlugins(serverId);
   return plugins.reduce((count, plugin) => count + plugin.composerItems.length, 0);

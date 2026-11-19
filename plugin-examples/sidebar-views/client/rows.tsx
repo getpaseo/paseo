@@ -91,7 +91,12 @@ export function AgentRow({
     () => ({ color: view.theme.colors.foreground, fontSize: 12 }),
     [view.theme],
   );
+  const detail = useMemo(
+    () => ({ color: view.theme.colors.foregroundMuted, fontSize: 11 }),
+    [view.theme],
+  );
   if (!agent) return null;
+  const tasks = agent.backgroundWork.count;
   return (
     <Pressable
       accessibilityRole="button"
@@ -102,6 +107,11 @@ export function AgentRow({
       <Text numberOfLines={1} style={style}>
         {agent.title ?? agent.provider}
       </Text>
+      {tasks > 0 ? (
+        <Text numberOfLines={1} style={detail}>
+          {tasks === 1 ? "1 background task" : `${tasks} background tasks`}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }

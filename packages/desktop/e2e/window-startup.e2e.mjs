@@ -5,21 +5,28 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { _electron as electron, expect } from "playwright/test";
 
 const root = await mkdtemp(path.join(tmpdir(), "paseo-window-startup-"));
-const modulePath = fileURLToPath(new URL("../dist/window/show-when-ready.js", import.meta.url));
+const showWhenReadyPath = fileURLToPath(
+  new URL("../dist/window/show-when-ready.js", import.meta.url),
+);
+const rendererRecoveryPath = fileURLToPath(
+  new URL("../dist/window/renderer-recovery.js", import.meta.url),
+);
 const automationPath = fileURLToPath(
   new URL("../dist/features/browser-automation/", import.meta.url),
 );
 
-async function launchWindowWithoutHiddenFrames() {
+async function launchDesktopWindow() {
   const main = path.join(root, "main.cjs");
   await writeFile(
     main,
     `const { app, BrowserWindow } = require("electron");
-     const { showWindowWhenReady } = require(${JSON.stringify(modulePath)});
+     const { showWindowWhenReady } = require(${JSON.stringify(showWhenReadyPath)});
+     const { reloadWhenRendererExits } = require(${JSON.stringify(rendererRecoveryPath)});
      app.setPath("userData", ${JSON.stringify(path.join(root, "user-data"))});
      app.whenReady().then(async () => {
        const win = global.mainWindow = new BrowserWindow({ show: false, paintWhenInitiallyHidden: false });
        showWindowWhenReady(win, { showOnLoad: true });
+       reloadWhenRendererExits(win);
        await win.loadURL("data:text/html,<h1>Desktop ready</h1>");
        global.visibleAfterLoad = win.isVisible();
      });`,
@@ -38,6 +45,25 @@ async function expectLoadedDesktopIsShown(desktop) {
   await expect.poll(() => desktop.evaluate(() => global.visibleAfterLoad)).toBe(true);
   const page = await desktop.firstWindow();
   await expect(page.getByRole("heading", { name: "Desktop ready" })).toBeVisible();
+}
+
+function rendererPid(desktop) {
+  return desktop.evaluate(() => global.mainWindow.webContents.getOSProcessId());
+}
+
+async function expectDesktopReloadsAfterRendererIsTerminated(desktop) {
+  const terminated = await rendererPid(desktop);
+  process.kill(terminated, "SIGTERM");
+  await expect.poll(() => rendererPid(desktop), { timeout: 15_000 }).not.toBe(terminated);
+  await expect
+    .poll(
+      () =>
+        desktop.evaluate(() =>
+          global.mainWindow.webContents.executeJavaScript("document.body.textContent"),
+        ),
+      { timeout: 15_000 },
+    )
+    .toBe("Desktop ready");
 }
 
 async function launchBackgroundBrowser() {
@@ -185,9 +211,11 @@ async function expectBackgroundBrowserWorks(desktop) {
 
 let desktop;
 try {
-  desktop = await launchWindowWithoutHiddenFrames();
+  desktop = await launchDesktopWindow();
   await expectLoadedDesktopIsShown(desktop);
   console.log("Loaded desktop is visible without hidden compositor frames");
+  await expectDesktopReloadsAfterRendererIsTerminated(desktop);
+  console.log("Desktop reloads its window after the renderer is terminated");
   await desktop.close();
   desktop = await launchBackgroundBrowser();
   await expectBackgroundBrowserWorks(desktop);

@@ -22,6 +22,7 @@ class FakeImage implements TabImage {
   public constructor(
     private readonly bytes = new Uint8Array([137, 80, 78, 71, 1, 2, 3]),
     private readonly size = { width: 640, height: 480 },
+    private readonly alpha = 255,
   ) {}
 
   public toPNG(): Uint8Array {
@@ -31,7 +32,13 @@ class FakeImage implements TabImage {
   public getSize(): { width: number; height: number } {
     return this.size;
   }
+
+  public toBitmap(): Uint8Array {
+    return new Uint8Array([0, 0, 0, 0, 10, 20, 30, this.alpha]);
+  }
 }
+
+const UNPAINTED_FULL_PAGE_PNG = "unpaintedPng";
 
 class FakeTab implements TabContents {
   public withFrameProduction<T>(capture: () => Promise<T>): Promise<T> {
@@ -71,12 +78,14 @@ class FakeTab implements TabContents {
   public dialogsToCapture: BrowserAutomationDialogEvent[] = [];
   public paintDelayMs = 0;
   public captureNeverPaints = false;
+  public unpaintedViewportCaptures = 0;
   public captureThrows = false;
   public captureErrorMessage = "capture failed";
   public deferCaptures = false;
   public fullPageScreenshotThrows = false;
   public fullPageScreenshotErrorMessage = "UnknownVizError";
   public fullPageCaptureFailuresBeforeSuccess = 0;
+  public fullPageUnpaintedCapturesBeforePainted = 0;
   public layoutMetrics = {
     cssLayoutViewport: { clientWidth: 390, clientHeight: 844 },
     cssContentSize: { width: 390, height: 1200 },
@@ -184,11 +193,20 @@ class FakeTab implements TabContents {
         this.deferredCaptures.push(resolve);
       });
     }
+    if (this.unpaintedViewportCaptures > 0) {
+      this.unpaintedViewportCaptures -= 1;
+      return new FakeImage(undefined, undefined, 0);
+    }
     return new FakeImage();
   }
 
   public invalidate(): void {
     this.actions.push("invalidate");
+  }
+
+  public decodePng(png: Uint8Array): TabImage {
+    const unpainted = Buffer.from(png).equals(Buffer.from(UNPAINTED_FULL_PAGE_PNG, "base64"));
+    return new FakeImage(png, { width: 390, height: 1200 }, unpainted ? 0 : 255);
   }
 
   public getConsoleMessages(): BrowserAutomationConsoleLogEntry[] {
@@ -217,6 +235,10 @@ class FakeTab implements TabContents {
       }
       if (this.fullPageScreenshotThrows) {
         throw new Error(this.fullPageScreenshotErrorMessage);
+      }
+      if (this.fullPageUnpaintedCapturesBeforePainted > 0) {
+        this.fullPageUnpaintedCapturesBeforePainted -= 1;
+        return { data: UNPAINTED_FULL_PAGE_PNG };
       }
       return { data: this.fullPageScreenshotData };
     }
@@ -1791,6 +1813,28 @@ describe("executeAutomationCommand", () => {
     expect(browser.tab.actions).toEqual(["invalidate", "capture"]);
   });
 
+  test("screenshot retries a fully transparent viewport and returns the painted frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.unpaintedViewportCaptures = 1;
+      const result = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A },
+      });
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      await expect(result).resolves.toMatchObject({
+        ok: true,
+        result: { dataBase64: "iVBORwECAw==" },
+      });
+      expect(browser.tab.actions).toEqual(["invalidate", "capture", "invalidate", "capture"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("screenshot returns no-frame when the viewport never paints", async () => {
     vi.useFakeTimers();
     try {
@@ -2030,6 +2074,56 @@ describe("executeAutomationCommand", () => {
         "debug:Page.getLayoutMetrics",
         "debug:Page.captureScreenshot",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("screenshot with fullPage waits for a CDP image with painted pixels", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.fullPageUnpaintedCapturesBeforePainted = 1;
+
+      const resultPromise = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A, fullPage: true },
+      });
+      await vi.advanceTimersByTimeAsync(200);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        ok: true,
+        result: { command: "screenshot", dataBase64: "fullPagePng" },
+      });
+      expect(
+        browser.tab.debugCommands.filter((entry) => entry.command === "Page.captureScreenshot"),
+      ).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("screenshot with fullPage returns no-frame when the page never paints", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = new BrowserAutomationHarness();
+      browser.tab.fullPageUnpaintedCapturesBeforePainted = Number.POSITIVE_INFINITY;
+
+      const resultPromise = browser.execute({
+        command: "screenshot",
+        args: { browserId: BROWSER_A, fullPage: true },
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toEqual({
+        requestId: "req-screenshot",
+        ok: false,
+        error: {
+          code: "screenshot_no_frame",
+          message: "The tab has not painted yet. Retry the screenshot.",
+          retryable: true,
+        },
+      });
     } finally {
       vi.useRealTimers();
     }

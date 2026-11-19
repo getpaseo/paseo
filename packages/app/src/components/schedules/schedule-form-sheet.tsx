@@ -825,20 +825,22 @@ function ScheduleIsolationField({
       {
         id: "local",
         value: "local",
-        label: "Local",
+        label: "Project directory",
         testID: "schedule-isolation-local",
       },
       {
         id: "worktree",
         value: "worktree",
-        label: "Worktree",
+        label: "New worktree",
         testID: "schedule-isolation-worktree",
       },
     ],
     [],
   );
   const selectedDisplay = useMemo<SelectFieldDisplay>(
-    () => ({ label: state.effectiveIsolation === "worktree" ? "Worktree" : "Local" }),
+    () => ({
+      label: state.effectiveIsolation === "worktree" ? "New worktree" : "Project directory",
+    }),
     [state.effectiveIsolation],
   );
   const triggerLeading = useMemo(

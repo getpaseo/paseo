@@ -340,6 +340,14 @@ the number of Git processes that have started but not exited. Every Git command 
 including initial workspace reads, filesystem-triggered refreshes, background checks, and explicit
 requests.
 
+Commands wait in one of three lanes, drained in order: `high` (worktree creation and archive),
+`normal` (everything a caller waits for, including diffs and explicit refreshes), and `background`
+(workspace reconciliation, refreshes triggered by watchers, polls and fetches, and the fetches
+themselves). Daemon-initiated fan-out must run in the background lane: one rescan over ~90 worktrees
+queues over 1,000 commands, and in the normal lane every command a cold diff runs waited behind
+them. Set the lane on the runner with `createRunGitCommand(provenance, { priority })`, or around a
+whole operation with `runWithGitCommandPriority`.
+
 Environment variables override `config.json`:
 
 | Environment variable                 | Setting                  |
@@ -581,6 +589,16 @@ The cache is capped at 32 MiB and evicts whole hosts in least-recently-written o
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
+
+### Saved hosts
+
+**AsyncStorage key:** `@paseo:daemon-registry`, an array of host profiles.
+
+Every app build on a device shares this key, including an older build after a downgrade and a newer
+one that saves a connection kind this build doesn't know. The key holds every saved host and its
+password, so never remove it. Read each host and connection on its own, skip the ones this build
+can't read, and write them back on every save. A value that isn't a JSON array is copied to
+`@paseo:daemon-registry:unreadable` before the next save overwrites it.
 
 ### Draft Store
 

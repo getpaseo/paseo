@@ -147,6 +147,7 @@ export function adaptWebContents(
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
     captureFrame: (signal) => captureViewportFrame({ contents, signal, sendCommand, decodeImage }),
+    decodePng: (png) => decodeImage(Buffer.from(png)),
     invalidate: () => contents.invalidate(),
     withFrameProduction: async (capture) => {
       const previous = contents.getBackgroundThrottling();

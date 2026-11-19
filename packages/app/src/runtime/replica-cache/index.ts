@@ -1,8 +1,10 @@
 import { findMountedWindowStart } from "@/agent-stream/history-window";
 import { z } from "zod";
 import {
+  AgentBackgroundWorkSummarySchema,
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
+  ForgeWebSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
@@ -235,7 +237,7 @@ const StoredAgentSnapshotSchema = z.strictObject({
   updatedAt: IsoDateSchema,
   lastUserMessageAt: IsoDateSchema.nullable(),
   status: AgentStatusSchema,
-  backgroundWork: z.object({ count: z.number().int().nonnegative() }).optional(),
+  backgroundWork: AgentBackgroundWorkSummarySchema.optional(),
   activeTurn: z
     .strictObject({
       turnId: z.string(),
@@ -335,6 +337,7 @@ const StoredWorkspaceSchema = z.strictObject({
   gitRuntime: WorkspaceGitRuntimeSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const StoredProjectSchema = z.strictObject({
@@ -768,6 +771,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     gitRuntime: workspace.gitRuntime,
     githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
+    forgeWeb: workspace.forgeWeb,
   };
 }
 

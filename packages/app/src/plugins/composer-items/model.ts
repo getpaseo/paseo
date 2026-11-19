@@ -5,6 +5,7 @@ import type { ComposerModel, ComposerState } from "@/composer/model";
 import type { InstalledPlugin } from "../types";
 import { createPluginResourceAttachment } from "../attachments/model";
 import { cloneAndFreeze, ownCopy } from "../freeze";
+import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 
 function isPluginAttachment(
   attachment: UserComposerAttachment,
@@ -49,6 +50,11 @@ export function toPluginComposer(input: {
     },
     setPrompt: (text) => model.setPrompt(text),
     insertText: (text) => model.insertText(text),
+    focus(options) {
+      // The Command Center, which may have run this command, gives focus back when it closes.
+      clearCommandCenterFocusRestoreElement();
+      return model.focus(options);
+    },
     addAttachment({ sourceId, item }) {
       const source = plugin.attachmentSources.find((candidate) => candidate.id === sourceId);
       if (!source) throw new Error(`Unknown attachment source: ${sourceId}`);

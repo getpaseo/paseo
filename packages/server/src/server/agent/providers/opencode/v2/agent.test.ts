@@ -17,6 +17,54 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("reopening replaces and removes plugin instructions", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: ["first"],
+    });
+    expect(harness.instructions.get("paseo")).toBe("first");
+    const handle = created.describePersistence()!;
+    await created.close();
+    const resumed = await client.resumeSession(handle, {
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: ["changed"],
+    });
+    expect(harness.instructions.get("paseo")).toBe("changed");
+    await resumed.close();
+    const cleared = await client.resumeSession(handle, {
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: undefined,
+    });
+    expect(harness.instructions.has("paseo")).toBe(false);
+    await cleared.close();
+  });
+
+  test("opening history does not change an existing session instruction", async () => {
+    const harness = new V2Harness();
+    harness.instructions.set("paseo", "Existing plugin instruction");
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.resumeSession(
+      { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } },
+      { cwd: "/tmp/project" },
+      undefined,
+      { purpose: "history" },
+    );
+    try {
+      expect(harness.instructions.get("paseo")).toBe("Existing plugin instruction");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("refreshes the existing location before reading a forced catalog", async () => {
     const harness = new V2Harness();
     const refreshed: string[] = [];

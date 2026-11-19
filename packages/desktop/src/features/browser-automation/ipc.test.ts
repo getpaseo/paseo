@@ -11,6 +11,10 @@ class FakeImage implements TabImage {
   public getSize(): { width: number; height: number } {
     return { width: 640, height: 480 };
   }
+
+  public toBitmap(): Uint8Array {
+    return new Uint8Array([0, 0, 0, 0, 10, 20, 30, 255]);
+  }
 }
 
 function adaptWebContents(contents: FakeWebContents) {

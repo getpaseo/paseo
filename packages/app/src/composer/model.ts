@@ -17,6 +17,12 @@ export interface ComposerState {
   metadata: Record<string, JsonValue>;
 }
 
+/** Where the cursor goes when a composer takes focus. */
+export interface ComposerFocusOptions {
+  /** Offsets into the prompt, clamped to its length. Omit to keep the cursor where it is. */
+  selection?: { start: number; end: number };
+}
+
 /**
  * A composer as plugins use it: its state, a way to hear about changes, and the commands that
  * change it. The commands enforce the rules the built-in controls follow (a draft being created
@@ -29,6 +35,8 @@ export interface ComposerModel {
   setPrompt(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
+  /** Puts the cursor in the input. Resolves once it is there; rejects when it cannot get there. */
+  focus(options?: ComposerFocusOptions): Promise<void>;
   changeAttachments(updater: (current: UserComposerAttachment[]) => UserComposerAttachment[]): void;
   setProvider(provider: string): Promise<void>;
   setModel(modelId: string): Promise<void>;

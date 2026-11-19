@@ -150,12 +150,13 @@ Users can also detach an existing subagent from the subagents track. Detach is d
 
 `notifyOnFinish` defaults to `true` for agent-scoped creation and prompt follow-ups because most delegated work needs to report back to the creating agent. Set it to `false` for explicit reporting or no completion callback.
 
-Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch, allowing a child to report and finish in the same two-second quiet window. Human prompts dispatch directly. Conflicting explicit interruption or session-mode choices retain separate ordered dispatches.
+Agent-originated messages and automatic notifications share a recipient-daemon delivery module. A queued receipt acknowledges admission before provider dispatch. Idle recipients retain the two-second quiet window. While a recipient has a running or starting turn (including compaction), messages stay queued across quiet windows and are delivered together after that turn settles, including failure or cancellation. A ready batch is released when the daemon observes the recipient settle; the two-second timer also retries it. Agent callers using `steer`, including the default, wait for the turn to end; only explicit `interrupt` replaces a running turn. An explicit interrupt or a command the provider accepts out of band runs before earlier queued messages. Those messages stay queued and are delivered after the running or replacement turn ends. Human prompts dispatch directly with their existing behavior. Conflicting session-mode choices retain separate ordered dispatches.
 
 The pending message window is in memory. Clean shutdown flushes it before closing agents; an abrupt
 crash can lose queued prompts. A durable send receipt remains pending until actual dispatch
 acknowledgment, so a lost window never becomes a completed receipt. Completion waits cover queued
-admission within their original timeout and cancellation scope.
+admission within their original timeout and cancellation scope, and return permission checkpoints
+while messages are waiting.
 
 Finish notification intent has a separate daemon-owned lifetime. The finish-subscriptions module
 persists caller, child, host, and ownership policy through an injectable store; its JSON adapter uses
@@ -257,7 +258,7 @@ Workspace archive is a separate lifecycle. Archiving or removing a worktree can 
 agent record without setting the agent's `archivedAt`, while its `workspaceId` still points at the
 archived workspace. History navigation must not infer workspace lifecycle from `agent.archivedAt`
 or mutate either lifecycle. The workspace route asks the daemon for authoritative recovery state;
-only the route's explicit Unarchive or Restore action changes the archived workspace.
+the route exposes explicit Unarchive and Restore actions.
 
 Workspace archive is undoable from the archived toast, or with Cmd/Ctrl+Z, while the toast is up.
 The daemon runs one archive lane per workspace, shared by every connection
@@ -281,9 +282,12 @@ does not flip it back. Tabs and layout are purged only once the undo window clos
 archive committed.
 
 History navigation opens the selected agent without changing either archive state. Workspace
-**Restore** recovers only the workspace; the selected archived agent stays open with its callout.
-The agent's **Unarchive** runs the provider's native unarchive hook before interactive resume and
-history hydration. Other archived agents stay archived.
+**Unarchive**, **Restore**, Undo, and reopening the directory recover the agents closed by that
+workspace archive, including
+after a daemon restart or after the toast expires. Agents archived individually beforehand stay
+archived. A failed worktree recreation leaves the workspace and its agents archived for retry.
+Each recovered agent runs the provider's native unarchive hook before interactive resume and
+history hydration.
 
 Opening an agent is a navigation choice, independent of whether its details are cached. The
 layout retains that choice across reload while the panel fetches the agent from the daemon.

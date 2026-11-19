@@ -9,6 +9,26 @@ export const CodexServiceTierSchema = z.object({
 });
 export type CodexServiceTier = z.infer<typeof CodexServiceTierSchema>;
 
+// Newer Codex versions accept Flex as a request option without advertising it per model.
+const CODEX_FLEX_SERVICE_TIER: CodexServiceTier = {
+  id: "flex",
+  name: "Flex",
+  description: "Slower processing, reduced usage",
+};
+
+export function codexSpeedTiers(
+  catalogTiers: CodexServiceTier[],
+  supportsUnadvertisedFlex: boolean,
+): CodexServiceTier[] {
+  if (
+    !supportsUnadvertisedFlex ||
+    catalogTiers.some((tier) => tier.id === CODEX_FLEX_SERVICE_TIER.id)
+  ) {
+    return catalogTiers;
+  }
+  return [CODEX_FLEX_SERVICE_TIER, ...catalogTiers];
+}
+
 function buildCodexSpeedControl(tiers: CodexServiceTier[]): AgentOptionControl[] {
   if (tiers.length === 0) return [];
   return [

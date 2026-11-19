@@ -16,6 +16,12 @@ export interface PluginComposerAttachment {
   readonly item: PluginAttachmentItem;
 }
 
+/** Where the cursor goes when a composer takes focus. */
+export interface PluginComposerFocusOptions {
+  /** Offsets into `prompt`, clamped to its length. Equal offsets place the cursor. Omit to keep the cursor where it is. */
+  selection?: { start: number; end: number };
+}
+
 /**
  * The composer the item sits in: the prompt, the attachments and the agent being configured.
  * The commands behave the same in every composer. `context` says where the composer is; it does
@@ -39,6 +45,11 @@ export interface PluginComposer {
   setPrompt(text: string): void;
   /** Inserts at the cursor, replacing the selection. */
   insertText(text: string): void;
+  /**
+   * Puts the cursor in this composer, ready to type. Paseo opens the agent's tab or workspace when
+   * it is not on screen. Resolves once the input has focus; rejects when it could not get there.
+   */
+  focus(options?: PluginComposerFocusOptions): Promise<void>;
   addAttachment(input: { sourceId: string; item: PluginAttachmentItem }): void;
   removeAttachment(input: { sourceId: string; itemId: string }): void;
   /** Resets the model like the built-in control. Rejects on a running agent, which keeps its provider. */

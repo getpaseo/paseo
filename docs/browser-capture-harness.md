@@ -120,10 +120,11 @@ Viewport screenshots use CDP with an explicit visual-viewport clip, including it
 The clip stays bounded to the viewport while `captureBeyondViewport` lets Chromium render it without
 waiting for another compositor paint. Frame subscriptions can stall on static hidden guests even when
 JavaScript and animation callbacks are running. Full-page screenshots use the same CDP path with the
-page content bounds.
+page content bounds. Both paths retry fully transparent frames and return
+`screenshot_no_frame` if no painted pixels appear within the capture budget.
 
-The startup E2E also creates a never-shown window and checks animation callbacks, repeated viewport
-captures, viewport resizing, and scrolled pixel content. Run it with:
+The startup E2E checks renderer recovery, then creates a separate never-shown window to check
+animation callbacks, repeated viewport captures, viewport resizing, and scrolled pixel content. Run it with:
 
 ```bash
 xvfb-run -a npm run test:e2e:window-startup --workspace=@getpaseo/desktop

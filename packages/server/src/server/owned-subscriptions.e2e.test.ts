@@ -16,6 +16,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import {
   SessionInboundMessageSchema,
   type SessionInboundMessage,
@@ -1641,6 +1642,69 @@ test("request outcomes for import and attention reach only their requesting sock
     requester.close();
     sibling.close();
     await admin.close();
+    await daemon.close();
+  }
+});
+
+test("clearing a closed agent's attention does not resume its provider session", async () => {
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await daemon.daemon.agentManager.markAgentUnread(agent.id);
+    await client.clearAgentAttention(agent.id);
+    expect(daemon.daemon.agentManager.getAgent(agent.id)).toBeNull();
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
+class SessionGoneAgentClient extends MockLoadTestAgentClient {
+  resumeCalls = 0;
+
+  override async resumeSession(): Promise<never> {
+    this.resumeCalls += 1;
+    throw new Error("Session not found");
+  }
+}
+
+test("clearing a closed agent's attention succeeds when its provider session is gone", async () => {
+  const agentClient = new SessionGoneAgentClient();
+  const daemon = await createTestPaseoDaemon({
+    mcpEnabled: false,
+    isDev: true,
+    agentClients: { mock: agentClient },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    const agent = await client.createAgent({ provider: "mock", cwd: daemon.staticDir });
+    await daemon.daemon.agentManager.closeAgent(agent.id);
+    await client.markWorkspaceUnread(agent.workspaceId!);
+    expect((await client.fetchAgent(agent.id))?.agent.requiresAttention).toBe(true);
+
+    await withTimeout(
+      client.clearAgentAttention(agent.id),
+      5_000,
+      "clear_agent_attention got no response",
+    );
+
+    const snapshot = await client.fetchAgent(agent.id);
+    expect(snapshot?.agent.requiresAttention).toBe(false);
+    expect(snapshot?.agent.status).toBe("closed");
+    expect(agentClient.resumeCalls).toBe(0);
+  } finally {
+    await client.close();
     await daemon.close();
   }
 });

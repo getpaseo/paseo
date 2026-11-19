@@ -114,6 +114,12 @@ export function toStoredAgentRecord(
   } satisfies StoredAgentRecord;
 }
 
+/** Account discovery depends on the harness session and its model, so the key follows both. */
+function projectUsageScopeKey(agent: ManagedAgent): string | undefined {
+  const usageSession = agent.session?.usageSession?.();
+  return usageSession ? `${usageSession.sessionKey}:${usageSession.model ?? ""}` : undefined;
+}
+
 export function toAgentPayload(
   agent: ManagedAgent,
   options?: ProjectionOptions,
@@ -161,6 +167,11 @@ export function toAgentPayload(
     archivedAt: options?.archivedAt ?? null,
     ...visibilityFlags(agent),
   };
+
+  const usageScopeKey = projectUsageScopeKey(agent);
+  if (usageScopeKey !== undefined) {
+    payload.usageScopeKey = usageScopeKey;
+  }
 
   const usage = sanitizeUsage(agent.lastUsage);
   if (usage !== undefined) {
@@ -249,10 +260,18 @@ function buildStoredOptionControls(
   };
 }
 
+function visibleStoredBackgroundWork(
+  record: StoredAgentRecord,
+  summary: AgentSnapshotPayload["backgroundWork"],
+): AgentSnapshotPayload["backgroundWork"] {
+  return record.internal || record.archivedAt ? undefined : summary;
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
   effectiveOptionsFor: EffectiveOptionsResolver,
+  backgroundWork?: AgentSnapshotPayload["backgroundWork"],
 ): AgentSnapshotPayload {
   const defaultCapabilities = {
     supportsStreaming: false,
@@ -293,6 +312,7 @@ export function buildStoredAgentPayload(
     updatedAt: updatedAt.toISOString(),
     lastUserMessageAt: lastUserMessageAt ? lastUserMessageAt.toISOString() : null,
     status: record.lastStatus,
+    backgroundWork: visibleStoredBackgroundWork(record, backgroundWork),
     capabilities: defaultCapabilities,
     currentModeId: record.lastModeId ?? null,
     availableModes: [],
@@ -484,6 +504,9 @@ function projectPersistenceHandleForWire(
     return projected;
   }
   delete projected.metadata.mcpServers;
+  delete projected.metadata.pluginAppendSystemPrompt;
+  delete projected.metadata.daemonAppendSystemPrompt;
+  delete projected.metadata.paseoInstructionReceipt;
   if (Object.keys(projected.metadata).length === 0) {
     delete projected.metadata;
   }

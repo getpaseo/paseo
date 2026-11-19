@@ -11,8 +11,11 @@ import {
   seedLongMockAgentTimeline,
 } from "../support/helpers/timeline-pagination";
 import {
+  answerFreshnessCheck,
   commitTimelineTurnsWhileDisconnected,
   disconnectViewedTimeline,
+  expectEmptyChatSynced,
+  expectPromptAndWholeReply,
   expectResumeAnsweredWithoutFetch,
   expectResumeOverflowFallsBackToOneTail,
   hideTabAndReturn,
@@ -21,6 +24,11 @@ import {
   restoreUnchangedViewedTimeline,
   restoreViewedTimelineHoldingCatchUp,
   restoreViewedTimelineWithHeldResponse,
+  restoreViewedTimelineWithLiveRowsFirst,
+  reopenWithFreshnessCheckUnanswered,
+  seedStreamingReplyAgent,
+  sendPromptWhileDisconnected,
+  stopStreamingReply,
   waitForResumeAnswer,
   reopenAppWatchingForUpdatingToast,
   watchForUpdatingToast,
@@ -101,6 +109,27 @@ test.describe("Agent timeline resume", () => {
     }
   });
 
+  test("opening cached history reports an unanswered check until the daemon answers", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedLongMockAgentTimeline({ turns: 3 });
+    try {
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+      const requests = rememberTimelineRequestCounts(gate);
+
+      await reopenWithFreshnessCheckUnanswered(page, gate, agent);
+      await answerFreshnessCheck(page, gate);
+
+      expectResumeAnsweredWithoutFetch(gate, requests);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
   test("returning to a changed chat reports the update and shows the new messages", async ({
     page,
   }) => {
@@ -119,6 +148,29 @@ test.describe("Agent timeline resume", () => {
       await expectTimelinePresentationUnchanged(page, presentation);
       await releaseHeldCatchUp(page, gate);
       await expectTimelinePromptVisible(page, background.newestPrompt);
+    } finally {
+      gate.restore();
+      await agent.cleanup();
+    }
+  });
+
+  test("an empty chat that reconnects mid-reply keeps the prompt and the whole reply", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const gate = await installDaemonWebSocketGate(page);
+    const agent = await seedStreamingReplyAgent();
+    try {
+      await openAgentTimeline(page, agent);
+      await expectEmptyChatSynced(page, gate);
+      await disconnectViewedTimeline(page, gate);
+      await sendPromptWhileDisconnected(agent);
+      await restoreViewedTimelineWithLiveRowsFirst(gate);
+      const reply = await stopStreamingReply(agent);
+      await expectPromptAndWholeReply(page, agent, reply);
+
+      await page.reload();
+      await expectPromptAndWholeReply(page, agent, reply);
     } finally {
       gate.restore();
       await agent.cleanup();

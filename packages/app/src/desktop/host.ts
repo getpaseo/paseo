@@ -186,6 +186,8 @@ export interface DesktopInvokeBridge {
 export interface DesktopHostBridge {
   platform?: string;
   windowChromeMode?: string;
+  browserHostLabel?: string;
+  browserHostInstanceId?: string;
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
