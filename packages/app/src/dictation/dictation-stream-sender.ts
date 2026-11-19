@@ -109,6 +109,10 @@ export class DictationStreamSender {
     return this.segments.length;
   }
 
+  getSegments(): string[] {
+    return [...this.segments];
+  }
+
   dispose(): void {
     this.setClient(null);
   }
