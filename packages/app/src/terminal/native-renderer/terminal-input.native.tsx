@@ -59,6 +59,10 @@ interface TerminalInputProps {
 const CJK_COMPOSITION_PATTERN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]/u;
 
+// Android IMEs dispatch onChangeText before the matching onKeyPress in the same
+// batch edit (<5ms), whereas MSIME's fastest key repeat interval is 30ms.
+const PENDING_INPUT_EVENT_WINDOW_MS = 25;
+
 // Only ASCII travels the keypress path. An IME script reports the jamo it is
 // composing, which the text-change diff below immediately contradicts, so
 // forwarding both would put two conflicting characters on the wire.
@@ -75,6 +79,18 @@ function getCommonPrefixLength(left: string[], right: string[]): number {
   return index;
 }
 
+function isAllowedLatinCompositionEdit(removedText: string, insertedText: string): boolean {
+  const compactRemoved = removedText.replace(/[' ]+/g, "").toLowerCase();
+  const compactInserted = insertedText.replace(/[' ]+/g, "").toLowerCase();
+  if (compactRemoved.length === 0 || compactInserted.length === 0) {
+    return false;
+  }
+  if (!/^[a-z]+$/.test(compactRemoved) || !/^[a-z]+[a-z0-9_.-]*$/.test(compactInserted)) {
+    return false;
+  }
+  return compactInserted.startsWith(compactRemoved);
+}
+
 /**
  * What the terminal receives for an edit that is not a plain append.
  *
@@ -83,20 +99,25 @@ function getCommonPrefixLength(left: string[], right: string[]): number {
  * a multi-character reading (`nihao` -> `你好`, `にほんご` -> `日本語`). None of
  * those are appends, so rub out the rewritten suffix and send the replacement.
  *
- * The inserted suffix must contain a CJK script. Ordinary autocorrect and
- * suggestion replacements stay swallowed: the hidden input can edit text the
- * terminal has already committed, and the terminal cannot take it back.
+ * The inserted suffix must contain a CJK script or be a Latin/Pinyin segment
+ * or word-candidate completion whose stripped letters preserve the typed prefix
+ * (`mo'de'l` -> `model`, `bendi` -> `ben di`, `Hel` -> `hello`). Ordinary
+ * autocorrect (`teh` -> `the`) stays swallowed.
  */
 function resolveCompositionEdit(previousText: string, text: string): string {
   const previousCharacters = Array.from(previousText);
   const nextCharacters = Array.from(text);
   const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
   const removed = previousCharacters.slice(commonPrefixLength);
+  const removedText = removed.join("");
   const inserted = nextCharacters.slice(commonPrefixLength).join("");
   if (removed.length === 0 || inserted.length === 0) {
     return "";
   }
-  if (!CJK_COMPOSITION_PATTERN.test(inserted)) {
+  if (
+    !CJK_COMPOSITION_PATTERN.test(inserted) &&
+    !isAllowedLatinCompositionEdit(removedText, inserted)
+  ) {
     return "";
   }
   return `${"\x7f".repeat(removed.length)}${inserted}`;
@@ -112,7 +133,10 @@ export function resolveTerminalInputFocusRequest(input: {
   return input.isKeyboardVisible ? "none" : "refocus";
 }
 
-export function createTerminalTextInputState(): TerminalTextInputState {
+export function createTerminalTextInputState(options?: {
+  now?: () => number;
+}): TerminalTextInputState {
+  const now = options?.now ?? Date.now;
   let previousText = "";
   let submittedText: string | null = null;
   // A swallowed replacement leaves the terminal holding text the buffer no
@@ -120,31 +144,66 @@ export function createTerminalTextInputState(): TerminalTextInputState {
   // would delete whatever is actually sitting there rather than the character
   // the buffer thinks it is replacing. Stay off until the input state resets.
   let replacementDesynced = false;
+  let pendingTextChangeKey = "";
+  let pendingTextChangeAt = 0;
+  let pendingTextBackspaceCount = 0;
+  let pendingTextBackspaceAt = 0;
+
+  function rememberEmittedTrailingKey(text: string): void {
+    const trailingKey = Array.from(text).at(-1) ?? "";
+    if (!isPrintableKey(trailingKey)) {
+      return;
+    }
+    pendingTextChangeKey = trailingKey;
+    pendingTextChangeAt = now();
+  }
 
   return {
     receiveKeyPress(key: string): TerminalTextInputChange {
+      const matchedPendingKey =
+        pendingTextChangeKey !== "" && now() - pendingTextChangeAt <= PENDING_INPUT_EVENT_WINDOW_MS
+          ? pendingTextChangeKey
+          : "";
+      pendingTextChangeKey = "";
+
       const terminalKey = resolveNativeTerminalKey(key);
       if (terminalKey) {
+        pendingTextBackspaceCount = 0;
         return { data: "", key: terminalKey, shouldClear: false };
       }
       if (key === "Backspace") {
+        if (
+          pendingTextBackspaceCount > 0 &&
+          now() - pendingTextBackspaceAt <= PENDING_INPUT_EVENT_WINDOW_MS
+        ) {
+          pendingTextBackspaceCount -= 1;
+          return { data: "", shouldClear: false };
+        }
+        pendingTextBackspaceCount = 0;
         previousText = Array.from(previousText).slice(0, -1).join("");
         if (replacementDesynced) {
           return { data: "", shouldClear: false };
         }
         return { data: "\x7f", shouldClear: false };
       }
+      pendingTextBackspaceCount = 0;
       if (key === "Enter" || key === "Return" || key === "return") {
         submittedText = previousText;
         return { data: "\r", shouldClear: true };
       }
       if (isPrintableKey(key)) {
+        if (matchedPendingKey === key) {
+          return { data: "", shouldClear: false };
+        }
         previousText += key;
         return { data: key, shouldClear: false };
       }
       return { data: "", shouldClear: false };
     },
     receiveTextChange(text: string): TerminalTextInputChange {
+      pendingTextChangeKey = "";
+      pendingTextBackspaceCount = 0;
+
       if (submittedText !== null) {
         const lateSubmitText = `${submittedText}\n`;
         submittedText = null;
@@ -155,15 +214,33 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         }
       }
 
-      if (text.length === 0) {
-        previousText = "";
-        return { data: "", shouldClear: false };
-      }
-
       if (text.includes("\n") || text.includes("\r")) {
         previousText = "";
         replacementDesynced = false;
         return { data: "", shouldClear: true };
+      }
+
+      const previousCharacters = Array.from(previousText);
+      const nextCharacters = Array.from(text);
+      const commonPrefixLength = getCommonPrefixLength(previousCharacters, nextCharacters);
+
+      if (nextCharacters.length === 0 && previousCharacters.length === 0) {
+        previousText = "";
+        return { data: "", shouldClear: false };
+      }
+
+      if (
+        previousCharacters.length > nextCharacters.length &&
+        commonPrefixLength === nextCharacters.length
+      ) {
+        const removedCount = previousCharacters.length - nextCharacters.length;
+        previousText = text;
+        if (replacementDesynced) {
+          return { data: "", shouldClear: false };
+        }
+        pendingTextBackspaceCount = removedCount;
+        pendingTextBackspaceAt = now();
+        return { data: "\x7f".repeat(removedCount), shouldClear: false };
       }
 
       if (!text.startsWith(previousText)) {
@@ -173,6 +250,8 @@ export function createTerminalTextInputState(): TerminalTextInputState {
         }
         if (compositionEdit === "") {
           replacementDesynced = true;
+        } else {
+          rememberEmittedTrailingKey(text);
         }
         previousText = text;
         return { data: compositionEdit, shouldClear: false };
@@ -180,6 +259,9 @@ export function createTerminalTextInputState(): TerminalTextInputState {
 
       const appendedText = text.slice(previousText.length);
       previousText = text;
+      if (appendedText.length > 0) {
+        rememberEmittedTrailingKey(text);
+      }
       return {
         data: appendedText,
         shouldClear: false,
@@ -188,6 +270,8 @@ export function createTerminalTextInputState(): TerminalTextInputState {
     reset(): void {
       previousText = "";
       replacementDesynced = false;
+      pendingTextChangeKey = "";
+      pendingTextBackspaceCount = 0;
     },
   };
 }
@@ -359,6 +443,7 @@ export const TerminalInput = forwardRef<TerminalInputHandle, TerminalInputProps>
         onBlur={handleBlur}
         onFocus={handleFocus}
         onKeyPress={handleKeyPress}
+        remeasureOnEdit={false}
         showSoftInputOnFocus={true}
         spellCheck={false}
         style={inputStyle}

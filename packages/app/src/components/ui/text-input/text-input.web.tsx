@@ -16,6 +16,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       onChangeText,
       onPasteImages: _,
       onPasteError: __,
+      remeasureOnEdit: ______,
       variant: ___,
       value: ____,
       defaultValue: _____,

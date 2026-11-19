@@ -34,6 +34,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       onChangeText,
       onPasteImages,
       onPasteError,
+      remeasureOnEdit = true,
       variant = isInsideBottomSheet ? "bottom-sheet" : "default",
       value: _,
       defaultValue: __,
@@ -131,9 +132,11 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       (nextText: string) => {
         textRef.current = nextText;
         onChangeText?.(nextText);
-        bumpTextRevision();
+        if (remeasureOnEdit) {
+          bumpTextRevision();
+        }
       },
-      [onChangeText],
+      [onChangeText, remeasureOnEdit],
     );
     const handlePaste = useCallback(
       (error: string | null | undefined, files: PastedFile[]) => {
@@ -147,6 +150,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     );
 
     const autoFocus = replacement.revision === 0 ? props.autoFocus : replacement.autoFocus;
+    const defaultValue = remeasureOnEdit ? textRef.current : initialTextRef.current;
 
     if (onPasteImages || onPasteError) {
       return (
@@ -155,7 +159,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           autoFocus={autoFocus}
           key={replacement.revision}
           ref={assignInputRef as React.Ref<PasteTextInputInstance>}
-          defaultValue={textRef.current}
+          defaultValue={defaultValue}
           onChangeText={handleChangeText}
           onPaste={handlePaste}
         />
@@ -168,7 +172,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
           autoFocus={autoFocus}
           key={replacement.revision}
           ref={assignInputRef as unknown as React.Ref<never>}
-          defaultValue={textRef.current}
+          defaultValue={defaultValue}
           onChangeText={handleChangeText}
         />
       );
@@ -179,7 +183,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
         autoFocus={autoFocus}
         key={replacement.revision}
         ref={assignInputRef as React.Ref<TextInput>}
-        defaultValue={textRef.current}
+        defaultValue={defaultValue}
         onChangeText={handleChangeText}
       />
     );
