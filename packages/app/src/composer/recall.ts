@@ -13,6 +13,15 @@ interface RecalledMessage {
 export class ComposerRecall {
   private recalled: RecalledMessage | null = null;
 
+  /**
+   * Stops treating the composer's text as recalled. Call it when the composer is
+   * filled from elsewhere, such as a queued message taken back for editing, which
+   * can hold the same text as the last recalled message; Down would clear it.
+   */
+  forget(): void {
+    this.recalled = null;
+  }
+
   /** True while the composer shows a recalled message the user has not edited. */
   isShowing(text: string): boolean {
     return this.recalled !== null && this.recalled.text === text;
@@ -65,4 +74,20 @@ function isCaretOnFirstLine(text: string, caret: number): boolean {
 
 function isCaretOnLastLine(text: string, caret: number): boolean {
   return !text.slice(caret).includes("\n");
+}
+
+/**
+ * Up in an empty composer edits the newest queued message, the same as its
+ * Edit button, before recall walks the sent ones: it is the most recent thing
+ * the user wrote, and queueing the last message again keeps the queue's order.
+ * A draft, text or attachments, is never replaced.
+ */
+export function shouldEditNewestQueuedMessage(
+  event: ComposerKeyPressEvent,
+  composer: { queuedCount: number; hasAttachments: boolean },
+): boolean {
+  if (event.key !== "ArrowUp" || event.hasModifier) return false;
+  if (composer.queuedCount === 0 || composer.hasAttachments) return false;
+  const { text, selection } = event.input;
+  return text.length === 0 && selection.start === selection.end;
 }
