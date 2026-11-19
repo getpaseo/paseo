@@ -1,0 +1,1 @@
+{ "id": "deepseek-usage-source", "requirements": { "paseo": ">=0.15.3" } }

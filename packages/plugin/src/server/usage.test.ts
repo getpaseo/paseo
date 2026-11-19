@@ -3,9 +3,46 @@ import {
   balanceToneFromRemaining,
   toneFromUsedPct,
   usedPctOf,
+  UsageScopeSchema,
   windowFromUsedPct,
   windowFromReportedDuration,
 } from "./usage.js";
+
+test("global usage scope carries provider model metadata", () => {
+  expect(
+    UsageScopeSchema.parse({
+      kind: "global",
+      providers: [
+        {
+          provider: "pi",
+          models: [
+            {
+              id: "deepseek/deepseek-flash",
+              label: "DeepSeek V4.1 Flash",
+              description: "DeepSeek",
+              aliases: ["deepseek-flash"],
+            },
+          ],
+        },
+      ],
+    }),
+  ).toEqual({
+    kind: "global",
+    providers: [
+      {
+        provider: "pi",
+        models: [
+          {
+            id: "deepseek/deepseek-flash",
+            label: "DeepSeek V4.1 Flash",
+            description: "DeepSeek",
+            aliases: ["deepseek-flash"],
+          },
+        ],
+      },
+    ],
+  });
+});
 
 test("shared usage tones preserve the app threshold contract", () => {
   expect([null, 69.9, 70, 90, 90.1].map(toneFromUsedPct)).toEqual([

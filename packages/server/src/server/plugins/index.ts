@@ -35,6 +35,7 @@ import {
   UsageSourceRegistry,
 } from "./usage-sources/index.js";
 import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
+import type { UsageProviderModel } from "@getpaseo/plugin/server/usage";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
@@ -198,6 +199,10 @@ export class PluginService {
 
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void {
     this.runtime.bindPaseoSessionHost(sessionHost);
+  }
+
+  bindUsageProviderModels(resolver: () => Promise<readonly UsageProviderModel[]>): void {
+    this.usageSources.setProviderModels(resolver);
   }
 
   getProviderRegistrations(): readonly ProviderRegistration[] {
