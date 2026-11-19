@@ -233,7 +233,16 @@ async function resolveTypedParent(input: SearchInput): Promise<WalkStart | null>
   const resolvedPath = await realpath(visiblePath).catch(() => null);
   if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
   const info = await stat(resolvedPath).catch(() => null);
-  return info?.isDirectory() ? { visiblePath, resolvedPath } : null;
+  if (!info?.isDirectory()) return null;
+  return {
+    visiblePath: withResolvedSpelling(visiblePath, resolvedPath),
+    resolvedPath,
+  };
+}
+
+function withResolvedSpelling(visiblePath: string, resolvedPath: string): string {
+  // Keep the visible name when realpath follows a differently named symlink.
+  return visiblePath.toLowerCase() === resolvedPath.toLowerCase() ? resolvedPath : visiblePath;
 }
 
 async function resolveExistingPaths(paths: readonly string[]): Promise<Set<string>> {
@@ -296,7 +305,8 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
     (kind === "file" && !input.includeFiles)
   )
     return null;
-  return formatEntry({ path: visiblePath, kind }, input.root, input.pathFormat);
+  const entryPath = withResolvedSpelling(visiblePath, resolvedPath);
+  return formatEntry({ path: entryPath, kind }, input.root, input.pathFormat);
 }
 
 interface SearchInput {
@@ -317,10 +327,11 @@ interface SearchInput {
 }
 
 async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
-  const visibleParent = path.resolve(input.root, input.plan.parentPart || ".");
-  const parent = await realpath(visibleParent).catch(() => null);
+  const typedParent = path.resolve(input.root, input.plan.parentPart || ".");
+  const parent = await realpath(typedParent).catch(() => null);
   if (!parent || !isPathInsideRoot(input.root, parent)) return [];
   if (isGitIgnoredPath(parent, input)) return [];
+  const visibleParent = withResolvedSpelling(typedParent, parent);
   // Browsing inside an excluded path is explicit: the caller typed it, so list what is there.
   const discoveryInput = isInsideExcludedPath(parent, input)
     ? { ...input, excludedDiscoveryPaths: new Set<string>() }
