@@ -19,11 +19,13 @@ import type {
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   listComparison,
+  isMovingRevision,
   validateCompare,
   worktreeRoot,
   DiffReadError,
   type Compare,
   type Comparison,
+  type ComparisonRevisions,
 } from "./git.js";
 import { DiffDependencyObserver } from "./dependencies.js";
 
@@ -42,6 +44,7 @@ interface Target {
   compare: Compare;
   listeners: Set<Listener>;
   revision: number;
+  revisions: ComparisonRevisions | null;
   committed: number;
   cache: Map<string, RecordCache>;
   entries: DiffEntry[];
@@ -141,6 +144,7 @@ export class DiffSubscriptions {
         compare,
         listeners: new Set(),
         revision: 0,
+        revisions: null,
         committed: 0,
         cache: new Map(),
         entries: [],
@@ -164,11 +168,11 @@ export class DiffSubscriptions {
           .declareDependencies(
             {
               cwd: compare.cwd,
-              refs: [compare.base, compare.head].flatMap((endpoint) =>
-                endpoint.kind === "rev" && !/^[a-f0-9]{40,64}$/.test(endpoint.rev)
-                  ? [endpoint.rev]
-                  : [],
+              movingRevision: [compare.base, compare.head].some(
+                (endpoint) => endpoint.kind === "rev" && isMovingRevision(endpoint.rev),
               ),
+              checkoutBase: compare.checkoutBase,
+              getRevisions: () => captured.revisions,
               index: compare.base.kind === "index" || compare.head.kind !== "rev",
               worktree: compare.head.kind === "worktree",
             },
@@ -329,7 +333,9 @@ export class DiffSubscriptions {
       let began = false;
       try {
         this.computations++;
-        comparison = await listComparison(target.compare);
+        const revisions: ComparisonRevisions = { refs: new Map() };
+        target.revisions = revisions;
+        comparison = await listComparison(target.compare, revisions);
         target.checkInterpretation = comparison.hasInterpretationChanged;
         const resolved = {
           baseSha: comparison.baseSha,

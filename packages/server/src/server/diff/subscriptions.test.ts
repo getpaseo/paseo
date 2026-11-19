@@ -8,6 +8,9 @@ import { DiffSubscriptions } from "./index.js";
 import { createFileObserver } from "../file-observer/index.js";
 import {
   configureGitProcessPolicy,
+  getGitCommandMetrics,
+  startGitCommandMetrics,
+  stopGitCommandMetrics,
   runGitCommand,
   runWithGitCommandPriority,
 } from "../../utils/run-git-command.js";
@@ -1255,6 +1258,106 @@ test.each(["pinned", "HEAD"] as const)(
       await streams.close();
       await observer.close();
       await rm(cwd, { recursive: true, force: true });
+    }
+  },
+  30000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "overflow fallback opens before probing refs and refreshes only comparisons whose inputs move",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-overflow-");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const record = (frames: DiffFrame[]) => async (frame: DiffFrame) => {
+      frames.push(frame);
+    };
+    const selectedFrames: DiffFrame[] = [];
+    const pinnedFrames: DiffFrame[] = [];
+    try {
+      const head = git("rev-parse", "HEAD");
+      const selectedRef = "refs/heads/selected";
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git(
+        "-c",
+        "commit.gpgsign=false",
+        "commit-tree",
+        empty,
+        "-p",
+        head,
+        "-m",
+        "next",
+      );
+      execFileSync("git", ["update-ref", "--stdin"], {
+        cwd: fixture.cwd,
+        input: [
+          `create ${selectedRef} ${head}`,
+          ...Array.from({ length: 5010 }, (_, i) => `create refs/heads/overflow-${i}/ref ${head}`),
+          "",
+        ].join("\n"),
+      });
+
+      // The valid packed refs alone are larger than a full Git command's output budget.
+      const packedPrefix = `refs/heads/${"p".repeat(180)}`;
+      const packed = Array.from(
+        { length: 100000 },
+        (_, i) => `${head} ${packedPrefix}/${String(i).padStart(6, "0")}\n`,
+      );
+      await writeFile(
+        join(fixture.cwd, ".git", "packed-refs"),
+        "# pack-refs with: peeled fully-peeled sorted \n" + packed.join(""),
+      );
+      expect(git("rev-parse", "--verify", `${packedPrefix}/099999`)).toBe(head);
+
+      startGitCommandMetrics();
+      const selected = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: selectedRef }, highlight: false },
+        record(selectedFrames),
+      );
+      const pinned = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: head }, highlight: false },
+        record(pinnedFrames),
+      );
+      await Promise.all([selected.start(), pinned.start()]);
+      expect(selectedFrames.find((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        revision: 1,
+        error: null,
+      });
+      expect(pinnedFrames.find((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        revision: 1,
+        error: null,
+      });
+      expect(
+        getGitCommandMetrics().submissions.filter((command) => command.priority === "background"),
+      ).toEqual([]);
+
+      // Move the selected ref before the first poll. The pinned comparison shares the
+      // same working tree and Git metadata, but the ref is unrelated to its inputs.
+      git("update-ref", selectedRef, moved);
+      await expect
+        .poll(() => selectedFrames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 10000,
+        })
+        .toMatchObject({ revision: 2, baseSha: moved });
+      await expect
+        .poll(() => selectedFrames.findLast((frame) => frame.opcode === DiffOpcode.End))
+        .toMatchObject({ revision: 2, error: null });
+      expect(
+        getGitCommandMetrics().submissions.filter((command) => command.priority === "background"),
+      ).toEqual([
+        {
+          args: ["cat-file", "-z", "--batch-check=%(objectname)"],
+          cwd: fixture.cwd,
+          priority: "background",
+        },
+      ]);
+      await selected.release();
+      await pinned.release();
+      expect(pinnedFrames.filter((frame) => frame.opcode === DiffOpcode.Begin)).toHaveLength(1);
+      expect(fixture.subscriptions.getMetrics().computations).toBe(3);
+    } finally {
+      await fixture.close();
+      stopGitCommandMetrics();
     }
   },
   30000,
