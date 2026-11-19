@@ -436,6 +436,22 @@ export interface CreatePullRequestOptions {
   body?: string;
 }
 
+export interface CurrentPullRequestLookup {
+  cwd: string;
+  headRef: string;
+  headSha?: string;
+  headRepositoryOwner?: string;
+  /** Local branch name when it differs from the PR source ref. */
+  currentBranch?: string;
+}
+
+export function isOnDefaultBranch(
+  lookup: Pick<CurrentPullRequestLookup, "currentBranch" | "headRef">,
+  defaultBranch: string | null | undefined,
+): boolean {
+  return (lookup.currentBranch ?? lookup.headRef) === defaultBranch;
+}
+
 export interface ForgeService {
   listPullRequests(options: ListPullRequestsOptions): Promise<PullRequestSummary[]>;
   listIssues(options: ListIssuesOptions): Promise<IssueSummary[]>;
@@ -475,12 +491,7 @@ export interface ForgeService {
    */
   getReferenceRepository?(options: { cwd: string } & ForgeReadOptions): Promise<string | null>;
   getCurrentPullRequestStatus(
-    options: {
-      cwd: string;
-      headRef: string;
-      headSha?: string;
-      headRepositoryOwner?: string;
-    } & ForgeReadOptions,
+    options: CurrentPullRequestLookup & ForgeReadOptions,
   ): Promise<CurrentPullRequestStatus | null>;
   getPullRequestTimeline(options: GetPullRequestTimelineOptions): Promise<PullRequestTimeline>;
   getCheckDetails(options: GetCheckDetailsOptions): Promise<CheckDetails>;
@@ -516,14 +527,12 @@ export interface ForgeService {
    * cannot change the outcome and is pure overhead.
    */
   authProbeCanThrow?: boolean;
-  retainCurrentPullRequestStatusPoll?(options: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-    headRepositoryOwner?: string;
-    onStatus?: (status: CurrentPullRequestStatus | null) => void;
-    onError?: (error: unknown) => void;
-  }): { unsubscribe: () => void };
+  retainCurrentPullRequestStatusPoll?(
+    options: CurrentPullRequestLookup & {
+      onStatus?: (status: CurrentPullRequestStatus | null) => void;
+      onError?: (error: unknown) => void;
+    },
+  ): { unsubscribe: () => void };
   invalidate(options: { cwd: string }): void;
   dispose?(): void;
 }

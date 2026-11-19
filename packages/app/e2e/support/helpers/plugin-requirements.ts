@@ -9,6 +9,15 @@ import { addConnectedHostAndReload } from "./hosts";
 import { gotoAppShell, openSettings } from "./app";
 import { openHostSection, selectSettingsHost } from "./settings";
 import { pluginRequirements } from "./plugin-fixture";
+import {
+  backToPlugins,
+  expectPluginFailed,
+  expectPluginHealthy,
+  openPluginPage,
+  selectPluginPageAction,
+} from "./plugin-gallery";
+
+const PLUGIN_ID = "requirements-example";
 
 export const test = base.extend<{
   requirementHost: { serverId: string; port: number; directory: string; client: DaemonClient };
@@ -80,7 +89,7 @@ export const test = base.extend<{
 async function writeRequirements(directory: string, paseo: string) {
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
-    JSON.stringify({ id: "requirements-example", requirements: { paseo } }),
+    JSON.stringify({ id: PLUGIN_ID, requirements: { paseo } }),
   );
 }
 
@@ -93,7 +102,7 @@ export async function openRequirementHost(page: Page, host: { serverId: string; 
 }
 
 export async function expectAppMismatch(page: Page) {
-  await expect(page.getByLabel("requirements-example failed", { exact: true })).toBeVisible();
+  await expectPluginFailed(page, PLUGIN_ID);
   await expect(
     page.getByText(/Plugin "requirements-example" requires Paseo \^99.0.0. Your app is/),
   ).toBeVisible();
@@ -102,18 +111,21 @@ export async function expectAppMismatch(page: Page) {
 export async function correctRequirementAndReload(page: Page, directory: string) {
   await writeRequirements(directory, pluginRequirements.paseo);
   await reloadRequirementsPlugin(page);
-  await expect(page.getByLabel("requirements-example running", { exact: true })).toBeVisible();
+  await backToPlugins(page, PLUGIN_ID);
+  await expectPluginHealthy(page, PLUGIN_ID);
   await expect(page.getByText(/Your app is/)).toHaveCount(0);
 }
 
 export async function rejectDaemonMismatch(page: Page, directory: string) {
   await writeRequirements(directory, ">=100.0.0");
   await reloadRequirementsPlugin(page);
-  await expect(page.getByLabel("requirements-example failed", { exact: true })).toBeVisible();
+  await backToPlugins(page, PLUGIN_ID);
+  await expectPluginFailed(page, PLUGIN_ID);
   await expect(page.getByText(/Your daemon is 99.0.0/).first()).toBeVisible();
 }
 
+/** Reload lives on the plugin's page. */
 async function reloadRequirementsPlugin(page: Page) {
-  await page.getByRole("button", { name: "Actions for requirements-example", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Reload", exact: true }).click();
+  await openPluginPage(page, PLUGIN_ID);
+  await selectPluginPageAction(page, PLUGIN_ID, "Reload");
 }

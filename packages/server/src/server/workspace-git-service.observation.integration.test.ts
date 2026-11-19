@@ -1238,6 +1238,9 @@ test("a failed parent lookup is retried by the pull request status poll, keeping
     paseoHome: path.join(path.dirname(repo), "home"),
     deps: {
       now: () => new Date(nowMs),
+      // Observing the workspace starts a background fetch of origin. A real one would run ssh
+      // against the alias host in the checkout, and can outlive disposal and hold the folder.
+      runGitFetch: async () => ({ changes: [], error: null }),
       resolveSshHostname: async (host) => (host === "github.com-work" ? "github.com" : null),
       forgeOverrides: {
         // The adapter is real; only the poll is driven by the test instead of a timer.

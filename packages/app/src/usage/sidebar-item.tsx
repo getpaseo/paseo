@@ -9,14 +9,9 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { TriangleAlert } from "lucide-react-native";
-import {
-  Pressable,
-  Text,
-  View,
-  type LayoutChangeEvent,
-  type PressableStateCallbackType,
-} from "react-native";
+import { Text, View, type LayoutChangeEvent, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import type { Theme } from "@/styles/theme";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
@@ -119,7 +114,7 @@ function pinnedUsageLabel(
 }
 
 function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
-  return hovered ? [styles.trigger, styles.triggerHovered] : styles.trigger;
+  return [styles.trigger, hovered && styles.triggerHovered];
 }
 
 function layoutWidth(event: LayoutChangeEvent): number {
@@ -161,11 +156,12 @@ function PinnedUsageTrigger({
     windowCount: sources.reduce((count, source) => count + source.windows.length, 0),
   });
   return (
-    <Pressable
+    <PressHighlight
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={pinnedUsageLabel(label, sources, errorLabel)}
       style={triggerStyle}
+      highlightStyle={styles.triggerPressed}
       testID="sidebar-usage"
     >
       <View style={styles.line} onLayout={handleAvailableLayout}>
@@ -185,7 +181,7 @@ function PinnedUsageTrigger({
           <PinnedUsageLine sources={sources} layout="percents" measuring />
         </View>
       </View>
-    </Pressable>
+    </PressHighlight>
   );
 }
 
@@ -257,6 +253,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   triggerHovered: {
     backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  triggerPressed: {
+    backgroundColor: theme.colors.surface2,
   },
   line: {
     flex: 1,

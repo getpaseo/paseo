@@ -101,6 +101,33 @@ describe("V2Runtime against an external server", () => {
     expect(requests).toHaveLength(1);
   });
 
+  test("reports the external server as exited once it stops accepting connections", async () => {
+    server = createServer((request, response) => {
+      if (request.url !== "/api/info") {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ version: "2.0.10", pid: 1, urls: [], paths: { tmp: "/tmp" } }));
+    });
+    const port = await listen(server);
+    const runtime = new V2Runtime({
+      logger: createTestLogger(),
+      externalServer: { url: `http://127.0.0.1:${port}` },
+    });
+    const connection = await runtime.acquire();
+    const exited = connection.exited.then((error) => error.message);
+
+    await close(server);
+    server = undefined;
+    await expect(connection.client.server.info()).rejects.toThrow();
+
+    await expect(exited).resolves.toContain(`OpenCode server at http://127.0.0.1:${port} stopped`);
+    await connection.release();
+    await runtime.shutdown();
+  });
+
   test("selects the external server from provider environment", async () => {
     const paths: Array<string | undefined> = [];
     server = createServer((request, response) => {

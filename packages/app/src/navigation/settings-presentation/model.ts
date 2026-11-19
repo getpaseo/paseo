@@ -1,3 +1,5 @@
+import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
+import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import { createStore } from "zustand/vanilla";
 
 interface SettingsRouteEntry {
@@ -7,14 +9,33 @@ interface SettingsRouteEntry {
 
 interface SettingsSelectionState {
   selectedServerId: string | null;
+  sidebarReturn: (ActiveWorkspaceSelection & { phase: "opening" | "covered" }) | null;
 }
 
 export function createSettingsPresentation() {
-  const store = createStore<SettingsSelectionState>(() => ({ selectedServerId: null }));
+  const store = createStore<SettingsSelectionState>(() => ({
+    selectedServerId: null,
+    sidebarReturn: null,
+  }));
   const enteredRoutes = new Map<string, string>();
   let inSettings = false;
   let sidebarOffset = 0;
   let sidebarOwner: object | null = null;
+
+  function beginSidebarVisit(workspace: ActiveWorkspaceSelection) {
+    store.setState({ sidebarReturn: { ...workspace, phase: "opening" } });
+  }
+
+  function presentContent() {
+    const origin = store.getState().sidebarReturn;
+    if (origin?.phase === "opening") {
+      store.setState({ sidebarReturn: { ...origin, phase: "covered" } });
+    }
+  }
+
+  function clearSidebarReturn() {
+    if (store.getState().sidebarReturn) store.setState({ sidebarReturn: null });
+  }
 
   function attachSidebar() {
     const owner = {};
@@ -35,17 +56,24 @@ export function createSettingsPresentation() {
   function enterRoute(
     { key, pathname }: SettingsRouteEntry,
     workspaceServerId: string | null,
-  ): void {
+  ): boolean {
     const isSettings = pathname === "/settings" || pathname.startsWith("/settings/");
     if (!isSettings) {
+      const origin = store.getState().sidebarReturn;
+      const destination = parseHostWorkspaceRouteFromPathname(pathname);
+      const discardSidebar =
+        origin !== null &&
+        (origin.serverId !== destination?.serverId ||
+          origin.workspaceId !== destination?.workspaceId);
+      clearSidebarReturn();
       sidebarOffset = 0;
       sidebarOwner = null;
       inSettings = false;
       enteredRoutes.clear();
-      return;
+      return discardSidebar;
     }
     // A retained route returning through Back must not replay its old host intent.
-    if (enteredRoutes.get(key) === pathname) return;
+    if (enteredRoutes.get(key) === pathname) return false;
     const isNewVisit = !inSettings;
     inSettings = true;
     enteredRoutes.set(key, pathname);
@@ -56,11 +84,20 @@ export function createSettingsPresentation() {
     } else if (isNewVisit) {
       store.setState({ selectedServerId: workspaceServerId });
     }
+    return false;
   }
 
   function selectHost(serverId: string): void {
     store.setState({ selectedServerId: serverId });
   }
 
-  return { store, enterRoute, selectHost, attachSidebar };
+  return {
+    store,
+    enterRoute,
+    selectHost,
+    attachSidebar,
+    beginSidebarVisit,
+    clearSidebarReturn,
+    presentContent,
+  };
 }

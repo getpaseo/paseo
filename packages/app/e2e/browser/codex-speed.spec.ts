@@ -26,7 +26,7 @@ test.use({
   },
 });
 
-// Rendered light-theme colors: palette yellow 400 for Fast and Ultrafast, muted foreground for Normal.
+// The Speed icon highlights any explicit tier other than Normal.
 const ACTIVE_SPEED_COLOR = "rgb(251, 191, 36)";
 const NORMAL_SPEED_COLOR = "rgb(113, 113, 122)";
 
@@ -63,7 +63,7 @@ async function expectSpeedIconColor(page: Page, color: string): Promise<void> {
 }
 
 async function expectSpeedChoices(page: Page, choices: string[]): Promise<void> {
-  for (const choice of ["Normal", "Fast", "Ultrafast"]) {
+  for (const choice of ["Normal", "Flex", "Fast", "Ultrafast"]) {
     const option = page.getByText(choice, { exact: true }).last();
     if (choices.includes(choice)) {
       await expect(option).toBeVisible();
@@ -115,21 +115,24 @@ for (const viewport of [
       await expectSpeedIconColor(page, ACTIVE_SPEED_COLOR);
       await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-fast-selected.png`) });
       await openSpeedSelector(page);
-      await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
+      await expectSpeedChoices(page, ["Normal", "Flex", "Fast", "Ultrafast"]);
       await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-speed-options.png`) });
       await selectSpeed(page, "Ultrafast");
       await expectSpeedIconColor(page, ACTIVE_SPEED_COLOR);
       await openSpeedSelector(page);
-      await expectSpeedChoices(page, ["Normal", "Fast", "Ultrafast"]);
+      await expectSpeedChoices(page, ["Normal", "Flex", "Fast", "Ultrafast"]);
       await page.screenshot({
         path: testInfo.outputPath(`${viewport.name}-ultrafast-selected.png`),
       });
+      await selectSpeed(page, "Flex");
+      await expectSpeedIconColor(page, ACTIVE_SPEED_COLOR);
+      await openSpeedSelector(page);
       await selectSpeed(page, "Normal");
       await expectSpeedIconColor(page, NORMAL_SPEED_COLOR);
       if (viewport.name === "desktop") {
         await switchAgentModel(agent.id, "gpt-6-sol");
         await openSpeedSelector(page);
-        await expectSpeedChoices(page, ["Normal", "Fast"]);
+        await expectSpeedChoices(page, ["Normal", "Flex", "Fast"]);
         await page.screenshot({ path: testInfo.outputPath("desktop-fast-only.png") });
       }
     } finally {

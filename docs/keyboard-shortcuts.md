@@ -59,6 +59,8 @@ Register keyboard handling with `useOverlayRegistration` from `@/keyboard`.
 Pass the surface's open state, layer, handled keys and `onKeyDown`. The highest
 layer gets first refusal; the latest registration wins a tie. Native registration
 does not need a DOM ref. Web adds focus trapping and restoration through its adapter.
+Declaring Tab takes it from the web focus trap and hands it to `onKeyDown`; the command
+center rotates its tabs with it. Native sources drop Tab from the declarations.
 
 Capture a global overlay’s layer in state for its opening lifetime. Memo caches can
 be discarded or removed by React Compiler; recomputing against the registry lets an

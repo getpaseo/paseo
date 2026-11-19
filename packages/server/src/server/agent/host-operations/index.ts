@@ -298,7 +298,7 @@ export function createHostResolver(input: {
               status: agent.status,
               guidance:
                 receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                  ? "Queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },
@@ -353,6 +353,10 @@ export function createHostResolver(input: {
           async createWorkspace(args) {
             const isolation = z.enum(["local", "worktree"]).parse(args.isolation);
             const path = z.string().min(1).parse(args.path);
+            if (args.mode === "branch-off" && args.prNumber !== undefined) {
+              // As on the local host: branching off a pull request is the app's, not this tool's.
+              throw new Error("branch, prNumber, and forge require a checkout mode");
+            }
             const response = await client.createWorkspace({
               source:
                 isolation === "local"
@@ -361,10 +365,12 @@ export function createHostResolver(input: {
                       kind: "worktree",
                       cwd: path,
                       projectId: args.projectId as string | undefined,
+                      // A pull request with no mode is checked out, as it was before a pull request could be branched off.
                       action:
-                        args.mode === "checkout-branch" || args.mode === "checkout-pr"
-                          ? "checkout"
-                          : "branch-off",
+                        args.mode === "branch-off" ||
+                        (args.mode === undefined && args.prNumber === undefined)
+                          ? "branch-off"
+                          : "checkout",
                       baseBranch: args.baseBranch as string | undefined,
                       branchName: args.branchName as string | undefined,
                       refName: args.branch as string | undefined,
