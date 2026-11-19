@@ -1,3 +1,4 @@
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 import { expect, test } from "../support/fixtures";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
@@ -309,4 +310,33 @@ test.describe("Composer attachments", () => {
       await workspace.cleanup();
     }
   });
+});
+
+test("image lightbox hides when its retained workspace becomes inactive", async ({ page }) => {
+  const first = await seedMockAgentWorkspace({
+    repoPrefix: "image-owner-",
+    title: "Image workspace",
+  });
+  const second = await seedMockAgentWorkspace({
+    repoPrefix: "image-other-",
+    title: "Other workspace",
+  });
+  try {
+    await openAgentRoute(page, first);
+    await expectComposerVisible(page);
+    await attachImageFromMenu(page, TEST_IMAGE);
+    await openImageLightbox(page);
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${second.workspaceId}`));
+    await expect(page.getByTestId("attachment-lightbox-close")).not.toBeVisible();
+    await expectComposerVisible(page);
+    await page.keyboard.press("Alt+]");
+    await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${first.workspaceId}`));
+    await expect(page.getByTestId("attachment-lightbox-close")).toBeVisible();
+    await closeImageLightbox(page);
+    await expect(page.getByRole("button", { name: "Open image attachment" }).first()).toBeFocused();
+  } finally {
+    await second.cleanup();
+    await first.cleanup();
+  }
 });

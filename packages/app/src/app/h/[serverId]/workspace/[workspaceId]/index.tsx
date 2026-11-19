@@ -237,7 +237,12 @@ function WorkspaceDeckEntry({
 }) {
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
   const workspaceExists = useWorkspaceExists(selection.serverId, selection.workspaceId);
+  const hasOpenNativeSheets = useWorkspaceLayoutStore(
+    (state) =>
+      isNative && (state.sheetsByWorkspace[getWorkspaceSelectionKey(selection)]?.length ?? 0) > 0,
+  );
   const shouldKeepMounted = shouldKeepWorkspaceDeckEntryMounted({
+    hasOpenNativeSheets,
     isActive: active,
     hasHydratedWorkspaces,
     workspaceExists,

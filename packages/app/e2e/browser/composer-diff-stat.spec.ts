@@ -248,6 +248,33 @@ test.describe("review comments", () => {
     }
   });
 
+  test("compact review draft survives a workspace switch", async ({ page }) => {
+    const workspace = await seedChangedAgent("retained-review-draft-");
+    const other = await seedMockAgentWorkspace({
+      repoPrefix: "review-other-",
+      title: "Other workspace",
+    });
+    try {
+      await openReviewDiff(page, workspace);
+      await showCompactLayout(page);
+      await tapFirstAddedDiffLine(page);
+      await expectCompactCommentSheet(page);
+      await fillReviewComment(page, "Keep this unsaved review");
+      await page.keyboard.press("Alt+]");
+      await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${other.workspaceId}`));
+      await expect(page.getByTestId("review-comment-sheet")).not.toBeInViewport();
+      await page.keyboard.press("Alt+]");
+      await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
+      await expect(page.getByRole("textbox", { name: "Review comment" })).toHaveValue(
+        "Keep this unsaved review",
+      );
+      await cancelReviewComment(page);
+    } finally {
+      await other.cleanup();
+      await workspace.cleanup();
+    }
+  });
+
   test("wide review comments retain inline editing", async ({ page }) => {
     const workspace = await seedChangedAgent("wide-review-comment-");
     try {

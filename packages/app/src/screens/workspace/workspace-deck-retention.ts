@@ -9,7 +9,9 @@ export interface RetainedWorkspaceSelection {
 }
 
 export function resolveWorkspaceDeckRetentionLimit(input: { isNative: boolean }): number {
-  return input.isNative ? 1 : WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
+  // Keep recent switches warm without retaining the desktop-sized set of
+  // native chat trees. Reconciliation evicts the least recently used entry.
+  return input.isNative ? 3 : WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
 }
 
 interface ReconcileRetainedWorkspaceSelectionsInput {
@@ -28,6 +30,7 @@ interface GetNextWorkspaceDeckExpirationDelayInput {
 }
 
 interface WorkspaceDeckEntryMountInput {
+  hasOpenNativeSheets: boolean;
   isActive: boolean;
   hasHydratedWorkspaces: boolean;
   workspaceExists: boolean;
@@ -159,6 +162,7 @@ export function resolveWorkspaceDeckEntries({
 }
 
 export function shouldKeepWorkspaceDeckEntryMounted({
+  hasOpenNativeSheets,
   isActive,
   hasHydratedWorkspaces,
   workspaceExists,
@@ -166,6 +170,9 @@ export function shouldKeepWorkspaceDeckEntryMounted({
   if (isActive) {
     return true;
   }
+  // Native sheets can present on the app-wide host. Preserve their existing
+  // teardown on navigation until the sheet stack supports inactive owners.
+  if (hasOpenNativeSheets) return false;
   if (!hasHydratedWorkspaces) {
     return true;
   }

@@ -1,0 +1,36 @@
+diff --git a/node_modules/react-native-keyboard-controller/src/animated.tsx b/node_modules/react-native-keyboard-controller/src/animated.tsx
+--- a/node_modules/react-native-keyboard-controller/src/animated.tsx
++++ b/node_modules/react-native-keyboard-controller/src/animated.tsx
+@@ -226,7 +226,7 @@
+         onKeyboardMoveStart={OS === "ios" ? onKeyboardMove : undefined}
+         onKeyboardMove={OS === "android" ? onKeyboardMove : undefined}
+         onKeyboardMoveInteractive={onKeyboardMove}
+-        onKeyboardMoveEnd={OS === "android" ? onKeyboardMove : undefined}
++        onKeyboardMoveEnd={OS === "web" ? undefined : onKeyboardMove}
+         onFocusedInputLayoutChangedReanimated={inputLayoutHandler}
+       >
+         {children}
+diff --git a/node_modules/react-native-keyboard-controller/lib/module/animated.js b/node_modules/react-native-keyboard-controller/lib/module/animated.js
+--- a/node_modules/react-native-keyboard-controller/lib/module/animated.js
++++ b/node_modules/react-native-keyboard-controller/lib/module/animated.js
+@@ -173,7 +173,7 @@
+     onKeyboardMoveStart: OS === "ios" ? onKeyboardMove : undefined,
+     onKeyboardMove: OS === "android" ? onKeyboardMove : undefined,
+     onKeyboardMoveInteractive: onKeyboardMove,
+-    onKeyboardMoveEnd: OS === "android" ? onKeyboardMove : undefined,
++    onKeyboardMoveEnd: OS === "web" ? undefined : onKeyboardMove,
+     onFocusedInputLayoutChangedReanimated: inputLayoutHandler
+   }, children), /*#__PURE__*/React.createElement(Animated.View, {
+     // we are using this small hack, because if the component (where
+diff --git a/node_modules/react-native-keyboard-controller/lib/commonjs/animated.js b/node_modules/react-native-keyboard-controller/lib/commonjs/animated.js
+--- a/node_modules/react-native-keyboard-controller/lib/commonjs/animated.js
++++ b/node_modules/react-native-keyboard-controller/lib/commonjs/animated.js
+@@ -181,7 +181,7 @@
+     onKeyboardMoveStart: OS === "ios" ? onKeyboardMove : undefined,
+     onKeyboardMove: OS === "android" ? onKeyboardMove : undefined,
+     onKeyboardMoveInteractive: onKeyboardMove,
+-    onKeyboardMoveEnd: OS === "android" ? onKeyboardMove : undefined,
++    onKeyboardMoveEnd: OS === "web" ? undefined : onKeyboardMove,
+     onFocusedInputLayoutChangedReanimated: inputLayoutHandler
+   }, children), /*#__PURE__*/_react.default.createElement(_reactNative.Animated.View, {
+     // we are using this small hack, because if the component (where

@@ -1,3 +1,4 @@
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   BottomSheetModal as GorhomBottomSheetModal,
   type BottomSheetModalProps,
@@ -160,7 +161,7 @@ export const IsolatedBottomSheetModal = forwardRef<
 });
 
 export function useIsolatedBottomSheetVisibility({
-  visible,
+  visible: requestedVisible,
   isEnabled,
   onClose,
   onBack,
@@ -171,6 +172,8 @@ export function useIsolatedBottomSheetVisibility({
   /** Offered Android Back before it closes the sheet; returns true when it handled the press. */
   onBack?: () => boolean;
 }) {
+  const active = useRetainedPanelActive();
+  const visible = requestedVisible && active;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const onBackRef = useRef(onBack);
@@ -201,11 +204,12 @@ export function useIsolatedBottomSheetVisibility({
   const handleSheetDismiss = useCallback(() => tracker.handleSheetDismiss(), [tracker]);
 
   useEffect(() => {
-    tracker.syncDesired({ visible, isEnabled });
-  }, [isEnabled, tracker, visible]);
+    tracker.syncDesired({ visible: requestedVisible, active, isEnabled });
+  }, [active, isEnabled, tracker, requestedVisible]);
   useDismissibleOverlay(visible && isEnabled !== false, onClose);
 
   return {
+    visible,
     sheetRef: setSheetRef,
     handleSheetChange,
     handleSheetDismiss,

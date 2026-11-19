@@ -5,6 +5,7 @@ export interface BottomSheetController {
 
 export interface BottomSheetVisibilityInput {
   visible: boolean;
+  active?: boolean;
   isEnabled?: boolean;
 }
 
@@ -101,8 +102,16 @@ export function createBottomSheetVisibilityTracker(opts: {
       }
     },
     syncDesired(next) {
-      visible = next.visible;
+      visible = next.visible && next.active !== false;
       isEnabled = next.isEnabled;
+      if (!next.visible) hasNotifiedClose = false;
+      // Leaving a retained owner is a close, not a temporary presentation pause.
+      // Clear its desired state so returning does not reopen the old sheet.
+      if (next.visible && next.active === false) {
+        dismiss();
+        notifyClose();
+        return;
+      }
       if (isEnabled === false) return;
       if (visible) {
         present();
@@ -117,9 +126,7 @@ export function createBottomSheetVisibilityTracker(opts: {
     },
     handleSheetIndexChange(index) {
       if (index !== -1) {
-        if (phase === "presenting" || phase === "dismissing") {
-          setPhase("presented");
-        }
+        setPhase("presented");
         // A dismiss sent before the sheet measured its layout is dropped, and the sheet still
         // finishes opening. The owner wants it hidden, so it goes again.
         if (!visible && isEnabled !== false) {

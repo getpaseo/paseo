@@ -291,3 +291,46 @@ it("does not cancel the owner's editor when the compact sheet leaves the tree on
   expect(context.closeCount()).toBe(0);
   expect(context.backPress.press()).toBe(false);
 });
+
+it("closes a retained owner's sheet and releases Back when the owner becomes inactive", () => {
+  const { sheet, tracker, backPress, closeCount } = setup();
+  tracker.attachController(sheet);
+  tracker.syncDesired({ visible: true, active: true });
+  tracker.handleSheetIndexChange(0);
+  tracker.syncDesired({ visible: true, active: false });
+  expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }]);
+  expect(closeCount()).toBe(1);
+  expect(backPress.press()).toBe(false);
+  tracker.syncDesired({ visible: false, active: false });
+  tracker.handleSheetDismiss();
+  tracker.syncDesired({ visible: false, active: true });
+  expect(sheet.events).toHaveLength(2);
+});
+
+it("dismisses a late opening after the inactive owner acknowledges closure", () => {
+  const { sheet, tracker, backPress, closeCount } = setup();
+  tracker.attachController(sheet);
+  tracker.syncDesired({ visible: true, active: true });
+  tracker.syncDesired({ visible: true, active: false });
+  expect(closeCount()).toBe(1);
+  tracker.syncDesired({ visible: false, active: false });
+  // Gorhom can drop an early dismiss before its first layout measurement.
+  tracker.handleSheetIndexChange(0);
+  expect(sheet.events).toEqual([{ type: "present" }, { type: "dismiss" }, { type: "dismiss" }]);
+  expect(backPress.press()).toBe(false);
+  tracker.handleSheetDismiss();
+  tracker.syncDesired({ visible: false, active: true });
+  expect(sheet.events).toHaveLength(3);
+});
+
+it("closes a disabled presentation on every departure after owner acknowledgement", () => {
+  const { tracker, closeCount } = setup();
+  for (let departure = 1; departure <= 2; departure++) {
+    tracker.syncDesired({ visible: true, active: true, isEnabled: false });
+    tracker.syncDesired({ visible: true, active: false, isEnabled: false });
+    tracker.syncDesired({ visible: true, active: false, isEnabled: false });
+    expect(closeCount()).toBe(departure);
+    tracker.syncDesired({ visible: false, active: false, isEnabled: false });
+    tracker.syncDesired({ visible: false, active: true, isEnabled: false });
+  }
+});

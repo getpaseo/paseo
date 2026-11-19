@@ -30,15 +30,24 @@ function retainedWorkspaceIds(
 }
 
 describe("reconcileRetainedWorkspaceSelections", () => {
-  it("retains only the active workspace on native", () => {
-    const entries = reconcileRetainedWorkspaceSelections({
-      currentEntries: [retained("A", null)],
-      activeSelection: workspace("B"),
-      now: 2,
-      maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative: true }),
-    });
+  it("keeps recent native workspaces warm and evicts the least recently used workspace", () => {
+    let entries = [retained("A", null)];
+    const visit = (workspaceId: string, now: number) => {
+      entries = reconcileRetainedWorkspaceSelections({
+        currentEntries: entries,
+        activeSelection: workspace(workspaceId),
+        now,
+        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative: true }),
+      });
+      return retainedWorkspaceIds(entries);
+    };
 
-    expect(retainedWorkspaceIds(entries)).toEqual(["B"]);
+    expect(visit("B", 1)).toEqual(["B", "A"]);
+    expect(visit("C", 2)).toEqual(["C", "B", "A"]);
+    expect(visit("A", 3)).toEqual(["A", "C", "B"]);
+    expect(visit("D", 4)).toEqual(["D", "A", "C"]);
+    expect(visit("A", 5)).toEqual(["A", "D", "C"]);
+    expect(visit("E", 6)).toEqual(["E", "A", "D"]);
   });
 
   it("retains the desktop deck limit on web", () => {
@@ -179,9 +188,23 @@ describe("resolveWorkspaceDeckEntries", () => {
 });
 
 describe("shouldKeepWorkspaceDeckEntryMounted", () => {
+  it("tears down native sheet owners when leaving, while keeping the active sheet mounted", () => {
+    for (const isActive of [true, false]) {
+      expect(
+        shouldKeepWorkspaceDeckEntryMounted({
+          isActive,
+          hasOpenNativeSheets: true,
+          hasHydratedWorkspaces: true,
+          workspaceExists: true,
+        }),
+      ).toBe(isActive);
+    }
+  });
+
   it("keeps the active workspace mounted even when it is missing from hydrated workspaces", () => {
     expect(
       shouldKeepWorkspaceDeckEntryMounted({
+        hasOpenNativeSheets: false,
         isActive: true,
         hasHydratedWorkspaces: true,
         workspaceExists: false,
@@ -192,6 +215,7 @@ describe("shouldKeepWorkspaceDeckEntryMounted", () => {
   it("keeps inactive workspaces mounted until workspace hydration finishes", () => {
     expect(
       shouldKeepWorkspaceDeckEntryMounted({
+        hasOpenNativeSheets: false,
         isActive: false,
         hasHydratedWorkspaces: false,
         workspaceExists: false,
@@ -202,6 +226,7 @@ describe("shouldKeepWorkspaceDeckEntryMounted", () => {
   it("unmounts inactive workspaces that are gone after hydration", () => {
     expect(
       shouldKeepWorkspaceDeckEntryMounted({
+        hasOpenNativeSheets: false,
         isActive: false,
         hasHydratedWorkspaces: true,
         workspaceExists: false,
@@ -212,6 +237,7 @@ describe("shouldKeepWorkspaceDeckEntryMounted", () => {
   it("keeps inactive workspaces that still exist after hydration", () => {
     expect(
       shouldKeepWorkspaceDeckEntryMounted({
+        hasOpenNativeSheets: false,
         isActive: false,
         hasHydratedWorkspaces: true,
         workspaceExists: true,

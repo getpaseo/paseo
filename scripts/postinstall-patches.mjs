@@ -8,6 +8,13 @@ import { join, relative } from "node:path";
 // workspace root live in their workspace's own node_modules, and patch-package resolves
 // the patch's node_modules/... paths relative to its working directory.
 const patchedPackages = [
+  // iOS retained views need the final keyboard event to settle the native animation graph.
+  // Remove when upstream binds onKeyboardMoveEnd to Animated.event on iOS too.
+  {
+    nodeModulesPath: "packages/app/node_modules/react-native-keyboard-controller",
+    patchPrefix: "react-native-keyboard-controller+",
+    cwd: "packages/app",
+  },
   // Backport for expo-modules-core 57.0.23: https://github.com/expo/expo/pull/49634.
   // Remove when the installed Expo SDK includes the Activity recreation fix.
   {

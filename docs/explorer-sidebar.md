@@ -126,8 +126,12 @@ keeps Explorer underneath and closing the sheet uncovers it. Semantic navigation
 actual destination before revealing it, including deduplicated targets.
 
 Compact overlay selection and saved dock visibility are independent. Folding changes geometry,
-not either mode’s visibility intent. Native workspace retention remains one workspace; web retains
-up to ten with its existing inactive TTL.
+not either mode’s visibility intent. Native retains up to three recent workspaces; web retains
+up to ten. Both use the existing inactive TTL. A native workspace with an open file sheet still
+unmounts on navigation because its sheet stack uses the app-wide host. Other sheets close when
+their retained owner becomes inactive, unless the owner already hides them on focus loss.
+Import-session and tab-rename forms retain their open state on return. Review drafts survive
+presentation unmounts.
 
 PR discovery belongs to the active workspace: split layouts discover while active, and other
 layouts discover while Explorer is active. The rail requests summary status; selected visible PR
