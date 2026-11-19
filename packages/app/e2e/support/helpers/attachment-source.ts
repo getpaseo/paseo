@@ -2,6 +2,7 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { expectComposerVisible } from "./composer";
 import { clickNewChat } from "./launcher";
+import { TEST_HOST_LABEL } from "./daemon-registry";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { copyPluginFixture } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
@@ -13,6 +14,7 @@ const PLUGIN_ID = "test-attachment-source";
 
 interface AttachmentSourceActions {
   openShortcut(): Promise<void>;
+  expectPickerLabels(viewport: "desktop" | "compact"): Promise<void>;
   attachDefaultResult(): Promise<void>;
   expectAttachmentInDraft(): Promise<void>;
 }
@@ -69,6 +71,39 @@ export async function withAttachmentSourceFixture(
           await expect(
             page.getByPlaceholder("Search conversations", { exact: true }),
           ).toBeVisible();
+        }),
+      expectPickerLabels: (viewport) =>
+        test.step("show the title, workspace, and source host", async () => {
+          const result = page.getByRole("button", { name: new RegExp(`^${RESULT_TITLE}`) });
+          const title = result.getByText(RESULT_TITLE);
+          const workspaceLabel = result.getByText("Example workspace", { exact: true });
+          const host = page.getByTestId("plugin-attachment-source-host");
+          await expect(result).toBeVisible();
+          await expect(result).not.toContainText("a1b2c3d4");
+          await expect(host).toHaveText(TEST_HOST_LABEL);
+          await expect(host).toBeVisible();
+          await expect(workspaceLabel).toBeVisible();
+          expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+            true,
+          );
+          const titleBox = await title.boundingBox();
+          const workspaceBox = await workspaceLabel.boundingBox();
+          expect(workspaceBox!.y).toBeGreaterThanOrEqual(titleBox!.y + titleBox!.height);
+          expect(workspaceBox!.x).toBeCloseTo(titleBox!.x);
+
+          const search = page.getByPlaceholder("Search conversations", { exact: true });
+          await search.fill("no such conversation");
+          await expect(result).toHaveCount(0);
+          await search.fill("a1b2c3d4");
+          await expect(result).toBeVisible();
+          await search.clear();
+
+          const screenshotPath = info.outputPath(`attachment-source-picker-${viewport}.png`);
+          await page.screenshot({ path: screenshotPath, animations: "disabled" });
+          await info.attach(`attachment-source-picker-${viewport}`, {
+            path: screenshotPath,
+            contentType: "image/png",
+          });
         }),
       attachDefaultResult: () =>
         test.step("select the default result without typing a query", async () => {

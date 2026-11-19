@@ -60,8 +60,20 @@ test.describe("Composer attachments", () => {
   }, info) => {
     await withAttachmentSourceFixture(page, info, async (context) => {
       await context.openShortcut();
+      await context.expectPickerLabels("desktop");
       await context.attachDefaultResult();
       await context.expectAttachmentInDraft();
+    });
+  });
+
+  test("compact agent attachment picker keeps the workspace and source host visible", async ({
+    page,
+  }, info) => {
+    await withAttachmentSourceFixture(page, info, async (context) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await context.openShortcut();
+      await context.expectPickerLabels("compact");
+      await context.attachDefaultResult();
     });
   });
 
