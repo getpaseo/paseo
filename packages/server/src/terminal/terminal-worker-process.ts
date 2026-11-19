@@ -279,6 +279,7 @@ function runWorker(argv: string[]): void {
       workspaceId: session.workspaceId,
       ...(session.getTitle() ? { title: session.getTitle() } : {}),
       activity: session.getActivity(),
+      commandRunning: session.getCommandRunning?.() ?? true,
     };
   }
 
@@ -390,6 +391,13 @@ function runWorker(argv: string[]): void {
         info,
       });
     });
+    const unsubscribeCommandStart =
+      session.onCommandStart?.(() => {
+        sendToController({
+          type: "terminalCommandStarted",
+          terminalId: session.id,
+        });
+      }) ?? (() => {});
     const unsubscribeActivity = session.onActivityChange((transition) => {
       sendToController({
         type: "terminalActivityChange",
@@ -404,6 +412,7 @@ function runWorker(argv: string[]): void {
       unsubscribeExit,
       unsubscribeTitle,
       unsubscribeCommandFinished,
+      unsubscribeCommandStart,
       unsubscribeActivity,
     ]);
   }

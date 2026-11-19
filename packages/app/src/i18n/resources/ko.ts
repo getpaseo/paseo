@@ -148,6 +148,7 @@ export const ko: TranslationResources = {
       sendAndInterrupt: "보내고 중단",
       sendAndSteer: "보내고 지시 추가",
       sendMessage: "메시지 보내기",
+      sendQueue: "대기열 보내기",
       longPressToQueue: "길게 눌러 대기열에 추가",
       longPressToSendNow: "길게 눌러 지금 보내기",
       queue: "대기열",
@@ -2489,6 +2490,11 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      queueDrain: {
+        label: "대기열 전송",
+        description: "대기열 메시지를 한 번에 모두 보낼지 하나씩 보낼지 선택합니다",
+        options: { all: "대기열 모두 보내기", next: "다음 메시지 보내기" },
+      },
       sendShortcut: {
         label: "전송 단축키",
         options: {
@@ -2667,6 +2673,13 @@ export const ko: TranslationResources = {
         highlightThemeAccessibility: "강조 테마: {{value}}",
         previewAccessibility: "콘텐츠 타이포그래피, 구문 테마, 코드 글꼴의 실시간 미리보기",
         previewContent: "콘텐츠 및 코드 미리보기",
+      },
+      terminal: {
+        sectionTitle: "터미널",
+        title: "터미널 테마",
+        hint: "앱 테마와 독립적인 터미널 색상",
+        matchApp: "앱 테마 사용",
+        themeAccessibility: "터미널 테마: {{value}}",
       },
     },
     shortcuts: {

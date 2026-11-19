@@ -221,6 +221,7 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
+import { shouldConfirmTerminalClose } from "@/screens/workspace/terminals/terminal-close-policy";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   WorkspaceHeaderMenuDesktop,
@@ -1073,6 +1074,7 @@ function WorkspaceScreenContent({
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
 
   const normalizedServerId = useMemo(() => trimNonEmpty(decodeSegment(serverId)) ?? "", [serverId]);
+  const supportsTerminalCommandState = useHostFeature(normalizedServerId, "terminalCommandState");
 
   const normalizedWorkspaceId = useMemo(
     () => resolveWorkspaceRouteId({ routeWorkspaceId: workspaceId }) ?? "",
@@ -1235,6 +1237,7 @@ function WorkspaceScreenContent({
     queryKey: terminalsQueryKey,
     removeTerminalFromCache,
     standaloneTerminalIds,
+    terminals,
   } = useWorkspaceTerminals({
     client,
     isConnected,
@@ -1958,15 +1961,18 @@ function WorkspaceScreenContent({
     async (input: { tabId: string; terminalId: string }) => {
       const { tabId, terminalId } = input;
       await closeTab(tabId, async () => {
-        const confirmed = await confirmDialog({
-          title: t("workspace.tabs.confirmations.closeTerminalTitle"),
-          message: t("workspace.tabs.confirmations.closeTerminalMessage"),
-          confirmLabel: t("workspace.tabs.confirmations.close"),
-          cancelLabel: t("workspace.tabs.confirmations.cancel"),
-          destructive: true,
-        });
-        if (!confirmed) {
-          return;
+        const terminal = terminals.find((candidate) => candidate.id === terminalId);
+        if (shouldConfirmTerminalClose(terminal?.commandRunning, supportsTerminalCommandState)) {
+          const confirmed = await confirmDialog({
+            title: t("workspace.tabs.confirmations.closeTerminalTitle"),
+            message: t("workspace.tabs.confirmations.closeTerminalMessage"),
+            confirmLabel: t("workspace.tabs.confirmations.close"),
+            cancelLabel: t("workspace.tabs.confirmations.cancel"),
+            destructive: true,
+          });
+          if (!confirmed) {
+            return;
+          }
         }
 
         removeTerminalFromCache(terminalId);
@@ -1988,6 +1994,8 @@ function WorkspaceScreenContent({
       killTerminalAsync,
       persistenceKey,
       removeTerminalFromCache,
+      supportsTerminalCommandState,
+      terminals,
       t,
     ],
   );
@@ -2100,13 +2108,18 @@ function WorkspaceScreenContent({
 
   const handleCloseTabById = useCallback(
     async (tabId: string) => {
-      if (persistenceKey && sheets.some((sheet) => sheet.tab.tabId === tabId)) {
-        if (await confirmDiscardModifiedTab(tabId)) {
-          closeWorkspaceTab(persistenceKey, tabId);
-        }
-        return;
-      }
-      const tab = allTabDescriptorsById.get(tabId);
+      const sheet = sheets.find((candidate) => candidate.tab.tabId === tabId);
+      const tab =
+        allTabDescriptorsById.get(tabId) ??
+        (sheet
+          ? {
+              key: sheet.tab.tabId,
+              tabId: sheet.tab.tabId,
+              kind: sheet.tab.target.kind,
+              target: sheet.tab.target,
+              state: sheet.tab.state,
+            }
+          : undefined);
       if (!tab) {
         return;
       }
@@ -2125,12 +2138,10 @@ function WorkspaceScreenContent({
     },
     [
       allTabDescriptorsById,
-      closeWorkspaceTab,
       confirmDiscardModifiedTab,
       handleCloseAgentTab,
       handleClosePassiveTab,
       handleCloseTerminalTab,
-      persistenceKey,
       sheets,
     ],
   );

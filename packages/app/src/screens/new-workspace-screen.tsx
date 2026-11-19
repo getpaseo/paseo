@@ -1392,7 +1392,11 @@ export function NewWorkspaceScreen({
             input.workspaceDirectory,
             input.name,
             undefined,
-            { command: input.command, args: input.args, workspaceId: input.workspaceId },
+            {
+              command: input.command,
+              args: input.args,
+              workspaceId: input.workspaceId,
+            },
           );
           const terminal = createdTerminal.terminal;
           if (!terminal) {

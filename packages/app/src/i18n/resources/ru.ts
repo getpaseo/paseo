@@ -149,6 +149,7 @@ export const ru: TranslationResources = {
       sendAndInterrupt: "Отправить и прервать",
       sendAndSteer: "Отправить и направить",
       sendMessage: "Отправить сообщение",
+      sendQueue: "Отправить очередь",
       longPressToQueue: "Удерживайте, чтобы поставить в очередь",
       longPressToSendNow: "Удерживайте, чтобы отправить сейчас",
       queue: "Очередь",
@@ -2517,6 +2518,11 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
+      queueDrain: {
+        label: "Отправка очереди",
+        description: "Отправлять сообщения из очереди все сразу или по одному",
+        options: { all: "Отправить всю очередь", next: "Отправить следующее" },
+      },
       sendShortcut: {
         label: "Сочетание клавиш для отправки",
         options: {
@@ -2700,6 +2706,13 @@ export const ru: TranslationResources = {
         previewAccessibility:
           "Предварительный просмотр типографики содержимого, темы синтаксиса и шрифта кода в реальном времени.",
         previewContent: "Предварительный просмотр содержимого и кода",
+      },
+      terminal: {
+        sectionTitle: "Терминал",
+        title: "Тема терминала",
+        hint: "Цвета терминала независимо от темы приложения",
+        matchApp: "Использовать тему приложения",
+        themeAccessibility: "Тема терминала: {{value}}",
       },
     },
     shortcuts: {

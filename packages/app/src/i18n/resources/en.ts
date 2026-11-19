@@ -146,6 +146,7 @@ export const en = {
       sendAndInterrupt: "Send and interrupt",
       sendAndSteer: "Send and steer",
       sendMessage: "Send message",
+      sendQueue: "Send queue",
       longPressToQueue: "Long press to queue",
       longPressToSendNow: "Long press to send now",
       queue: "Queue",
@@ -2606,6 +2607,14 @@ export const en = {
           queue: "Queue",
         },
       },
+      queueDrain: {
+        label: "Queue sending",
+        description: "When queued messages are sent, send them all together or one at a time",
+        options: {
+          all: "Send all queued",
+          next: "Send next queued",
+        },
+      },
       sendShortcut: {
         label: "Send shortcut",
         options: {
@@ -2783,6 +2792,13 @@ export const en = {
         highlightThemeAccessibility: "Highlight theme: {{value}}",
         previewAccessibility: "Live preview of content typography, syntax theme, and code font",
         previewContent: "Readable content and code preview",
+      },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Terminal theme",
+        hint: "Colours for terminals, independent of the app theme",
+        matchApp: "Match app theme",
+        themeAccessibility: "Terminal theme: {{value}}",
       },
     },
     shortcuts: {

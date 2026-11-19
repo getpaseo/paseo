@@ -148,6 +148,7 @@ export const zhCN: TranslationResources = {
       sendAndInterrupt: "发送并中断",
       sendAndSteer: "发送并引导",
       sendMessage: "发送消息",
+      sendQueue: "发送队列",
       longPressToQueue: "长按加入队列",
       longPressToSendNow: "长按立即发送",
       queue: "排队",
@@ -2448,6 +2449,11 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      queueDrain: {
+        label: "发送队列",
+        description: "选择一次发送全部排队消息，还是一次发送一条",
+        options: { all: "发送全部排队消息", next: "发送下一条" },
+      },
       sendShortcut: {
         label: "发送快捷键",
         options: {
@@ -2623,6 +2629,13 @@ export const zhCN: TranslationResources = {
         highlightThemeAccessibility: "高亮主题：{{value}}",
         previewAccessibility: "内容排版、语法主题和代码字体的实时预览",
         previewContent: "内容和代码预览",
+      },
+      terminal: {
+        sectionTitle: "终端",
+        title: "终端主题",
+        hint: "独立于应用主题的终端配色",
+        matchApp: "跟随应用主题",
+        themeAccessibility: "终端主题：{{value}}",
       },
     },
     shortcuts: {

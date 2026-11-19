@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import {
   SYNTAX_THEME_OPTIONS,
   type SyntaxThemeId,
@@ -13,6 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { ThemePicker } from "@/appearance/theme-picker";
+import { ThemePreview, ThemePreviewFrame } from "@/appearance/theme-preview";
 import { Button } from "@/components/ui/button";
 import { EditingTextInput, type EditingTextInputHandle } from "@/components/ui/text-input";
 import {
@@ -29,9 +30,16 @@ import {
   useAppSettings,
   type AppSettings,
 } from "@/hooks/use-settings";
-import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK } from "@/styles/theme";
+import {
+  DEFAULT_MONO_FONT_STACK,
+  DEFAULT_UI_FONT_STACK,
+  resolveTerminalTheme,
+  TERMINAL_THEME_PREFERENCES,
+  type TerminalThemePreference,
+} from "@/styles/theme";
 import { isNative } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
+import type { Theme } from "@/styles/theme";
 import { AppearancePreview } from "./appearance-preview";
 
 // Subscribe the input leaf to numeric theme changes without resetting its editing state.
@@ -39,7 +47,6 @@ const TextInput = withUnistyles(EditingTextInput, (theme) => {
   void theme.fontSize;
   return {};
 });
-
 // Platform default stacks can be the bare native tokens ("normal"/"monospace");
 // those read as a bug, so show a human label in the placeholder instead.
 const BARE_DEFAULT_STACKS: ReadonlySet<string> = new Set(["normal", "monospace"]);
@@ -305,6 +312,91 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
   );
 }
 
+function terminalThemeLabel(t: TFunction, value: TerminalThemePreference): string {
+  if (value === "match") return t("settings.appearance.terminal.matchApp");
+  return t(`settings.appearance.theme.options.${value}`);
+}
+
+function TerminalThemeMenuItem({
+  option,
+  selected,
+  activeTheme,
+  onChange,
+}: {
+  option: TerminalThemePreference;
+  selected: boolean;
+  activeTheme: Theme;
+  onChange: (value: TerminalThemePreference) => void;
+}) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onChange(option), [onChange, option]);
+  const previewTheme = resolveTerminalTheme(option, activeTheme);
+  const preview = useMemo(
+    () => (
+      <ThemePreviewFrame>
+        <ThemePreview theme={previewTheme} />
+      </ThemePreviewFrame>
+    ),
+    [previewTheme],
+  );
+  return (
+    <View style={styles.terminalMenuCell}>
+      <DropdownMenuItem
+        stacked
+        selected={selected}
+        onSelect={handleSelect}
+        leading={preview}
+        leadingStyle={styles.terminalMenuPreview}
+        style={[styles.terminalMenuItem, selected ? styles.terminalMenuItemSelected : null]}
+      >
+        {terminalThemeLabel(t, option)}
+      </DropdownMenuItem>
+    </View>
+  );
+}
+
+function TerminalThemeRow({
+  value,
+  onChange,
+}: {
+  value: TerminalThemePreference;
+  onChange: (value: TerminalThemePreference) => void;
+}) {
+  const { t } = useTranslation();
+  const activeTheme = UnistylesRuntime.getTheme();
+  const selectedLabel = terminalThemeLabel(t, value);
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.appearance.terminal.title")}</Text>
+        <Text style={settingsStyles.rowHint}>{t("settings.appearance.terminal.hint")}</Text>
+      </View>
+      <DropdownMenu>
+        <DropdownTrigger
+          accessibilityLabel={t("settings.appearance.terminal.themeAccessibility", {
+            value: selectedLabel,
+          })}
+        >
+          {selectedLabel}
+        </DropdownTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={420}>
+          <View style={styles.terminalMenuGrid}>
+            {TERMINAL_THEME_PREFERENCES.map((option) => (
+              <TerminalThemeMenuItem
+                key={option}
+                option={option}
+                selected={value === option}
+                activeTheme={activeTheme}
+                onChange={onChange}
+              />
+            ))}
+          </View>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -343,6 +435,13 @@ export function AppearanceSection() {
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
+    },
+    [updateSettings],
+  );
+
+  const handleTerminalThemeChange = useCallback(
+    (terminalTheme: TerminalThemePreference) => {
+      void updateSettings({ terminalTheme });
     },
     [updateSettings],
   );
@@ -518,6 +617,11 @@ export function AppearanceSection() {
           <AppearancePreview overrides={previewOverrides} />
         </View>
       </SettingsSection>
+      <SettingsSection title={t("settings.appearance.terminal.sectionTitle")}>
+        <View style={settingsStyles.card}>
+          <TerminalThemeRow value={settings.terminalTheme} onChange={handleTerminalThemeChange} />
+        </View>
+      </SettingsSection>
     </View>
   );
 }
@@ -537,6 +641,33 @@ const styles = StyleSheet.create((theme) => ({
   },
   themeCard: {
     padding: theme.spacing[3],
+  },
+  terminalMenuPreview: {
+    width: "90%",
+    alignSelf: "center",
+  },
+  terminalMenuGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    margin: -theme.spacing[3] / 2,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+  },
+  terminalMenuCell: {
+    width: { xs: "100%", md: "50%", lg: "33.3333%" },
+    padding: theme.spacing[3] / 2,
+  },
+  terminalMenuItem: {
+    width: "100%",
+    marginHorizontal: 0,
+    backgroundColor: "transparent",
+    padding: theme.spacing[1],
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[2],
+  },
+  terminalMenuItemSelected: {
+    borderColor: theme.colors.accent,
   },
   fontFamilyInput: {
     flexGrow: 1,

@@ -150,6 +150,7 @@ export const fr: TranslationResources = {
       sendAndInterrupt: "Envoyer et interrompre",
       sendAndSteer: "Envoyer et réorienter",
       sendMessage: "Envoyer le message",
+      sendQueue: "Envoyer la file",
       longPressToQueue: "Appui long pour mettre en file d’attente",
       longPressToSendNow: "Appui long pour envoyer maintenant",
       queue: "Mettre en file d’attente",
@@ -2530,6 +2531,11 @@ export const fr: TranslationResources = {
           queue: "File d’attente",
         },
       },
+      queueDrain: {
+        label: "Envoi de la file",
+        description: "Envoyez les messages en file ensemble ou un par un",
+        options: { all: "Envoyer toute la file", next: "Envoyer le suivant" },
+      },
       sendShortcut: {
         label: "Raccourci d’envoi",
         options: {
@@ -2714,6 +2720,13 @@ export const fr: TranslationResources = {
         previewAccessibility:
           "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police du code",
         previewContent: "Aperçu du contenu et du code",
+      },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Thème du terminal",
+        hint: "Couleurs du terminal, indépendantes du thème de l’application",
+        matchApp: "Utiliser le thème de l’application",
+        themeAccessibility: "Thème du terminal : {{value}}",
       },
     },
     shortcuts: {

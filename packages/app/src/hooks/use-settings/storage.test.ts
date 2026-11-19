@@ -24,7 +24,11 @@ import {
   DEFAULT_SIDEBAR_ROW_ITEMS,
   SIDEBAR_ROW_ITEMS,
 } from "@/components/sidebar/display-preferences/row-items";
-import { DEFAULT_CONTENT_MAX_WIDTH, THEME_OPTIONS } from "@/styles/theme";
+import {
+  DEFAULT_CONTENT_MAX_WIDTH,
+  TERMINAL_THEME_PREFERENCES,
+  THEME_OPTIONS,
+} from "@/styles/theme";
 
 const LEGACY_SETTINGS_KEY = "@paseo:settings";
 
@@ -166,6 +170,41 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe("auto");
   });
 
+  it("defaults terminal theme to match the app when storage is empty", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalTheme).toBe("match");
+  });
+
+  it.each(TERMINAL_THEME_PREFERENCES)("loads the persisted terminal theme %s", async (theme) => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ terminalTheme: theme }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalTheme).toBe(theme);
+  });
+
+  it.each([undefined, null, "invalid", 42])(
+    "falls back to matching the app for an invalid terminal theme: %j",
+    async (terminalTheme) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ terminalTheme }),
+        }),
+      });
+
+      const result = await loadAppSettingsFromStorage(deps);
+
+      expect(result.terminalTheme).toBe("match");
+    },
+  );
+
   it.each(THEME_OPTIONS)("loads the persisted $name theme", async ({ name }) => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -232,8 +271,8 @@ describe("loadAppSettingsFromStorage", () => {
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.sendShortcut).toBe("enter");
-    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("enter");
+    expect(result.sendShortcut).toBe("mod-enter");
+    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("mod-enter");
   });
 
   it("loads the modifier Enter send preference", async () => {
@@ -257,7 +296,7 @@ describe("loadAppSettingsFromStorage", () => {
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.sendShortcut).toBe("enter");
+    expect(result.sendShortcut).toBe("mod-enter");
   });
 
   it("defaults sidebar navigation items to an empty preference list", async () => {

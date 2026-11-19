@@ -148,6 +148,7 @@ export const ar: TranslationResources = {
       sendAndInterrupt: "إرسال ومقاطعة",
       sendAndSteer: "إرسال وتوجيه",
       sendMessage: "أرسل رسالة",
+      sendQueue: "إرسال قائمة الانتظار",
       longPressToQueue: "اضغط مطولًا لإضافتها إلى الطابور",
       longPressToSendNow: "اضغط مطولًا للإرسال الآن",
       queue: "طابور",
@@ -2511,6 +2512,11 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      queueDrain: {
+        label: "إرسال قائمة الانتظار",
+        description: "عند إرسال الرسائل في قائمة الانتظار، أرسلها معًا أو رسالة واحدة في كل مرة",
+        options: { all: "إرسال كل الرسائل المنتظرة", next: "إرسال الرسالة التالية" },
+      },
       sendShortcut: {
         label: "اختصار الإرسال",
         options: {
@@ -2689,6 +2695,13 @@ export const ar: TranslationResources = {
         previewAccessibility:
           "معاينة مباشرة لطباعة المحتوى وموضوع بناء الجملة وخط التعليمات البرمجية",
         previewContent: "معاينة المحتوى والرمز",
+      },
+      terminal: {
+        sectionTitle: "المحطة الطرفية",
+        title: "سمة المحطة الطرفية",
+        hint: "ألوان للمحطات الطرفية مستقلة عن سمة التطبيق",
+        matchApp: "مطابقة سمة التطبيق",
+        themeAccessibility: "سمة المحطة الطرفية: {{value}}",
       },
     },
     shortcuts: {

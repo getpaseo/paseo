@@ -149,6 +149,7 @@ export const es: TranslationResources = {
       sendAndInterrupt: "Enviar e interrumpir",
       sendAndSteer: "Enviar y orientar",
       sendMessage: "enviar mensaje",
+      sendQueue: "Enviar cola",
       longPressToQueue: "Mantén pulsado para poner en cola",
       longPressToSendNow: "Mantén pulsado para enviar ahora",
       queue: "Cola",
@@ -2530,6 +2531,11 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      queueDrain: {
+        label: "Envío de la cola",
+        description: "Al enviar mensajes en cola, envíalos todos juntos o de uno en uno",
+        options: { all: "Enviar toda la cola", next: "Enviar el siguiente" },
+      },
       sendShortcut: {
         label: "Atajo de envío",
         options: {
@@ -2712,6 +2718,13 @@ export const es: TranslationResources = {
         previewAccessibility:
           "Vista previa en vivo de la tipografía de contenido, el tema de sintaxis y la fuente del código",
         previewContent: "Vista previa de contenido y código",
+      },
+      terminal: {
+        sectionTitle: "Terminal",
+        title: "Tema del terminal",
+        hint: "Colores para terminales, independientes del tema de la aplicación",
+        matchApp: "Usar el tema de la aplicación",
+        themeAccessibility: "Tema del terminal: {{value}}",
       },
     },
     shortcuts: {

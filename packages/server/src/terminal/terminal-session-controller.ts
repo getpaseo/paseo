@@ -321,6 +321,7 @@ export class TerminalSessionController {
       workspaceId: terminal.workspaceId,
       ...(title ? { title } : {}),
       activity,
+      commandRunning: terminal.getCommandRunning?.() ?? true,
       createdAt: terminal.createdAt ?? null,
       isScript: this.options.isScriptTerminal?.(terminal) ?? false,
     };
