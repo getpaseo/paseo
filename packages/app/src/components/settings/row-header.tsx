@@ -217,7 +217,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The button under the row's content; it fills the row, padding included.
   pressTarget: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   passThrough: {
     pointerEvents: "none",
