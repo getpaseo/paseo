@@ -190,10 +190,10 @@ function AgentControlCommandCenterRegistration({
   enabled: boolean;
   controls: AgentControlCommandCenterSource;
 }) {
-  const { isActiveComposer } = useComposerKeyboardScope();
+  const { isCommandCenterTarget } = useComposerKeyboardScope();
   useAgentControlCommandCenterActions({
     sourceId,
-    enabled: enabled && isActiveComposer,
+    enabled: enabled && isCommandCenterTarget,
     controls,
   });
   return null;

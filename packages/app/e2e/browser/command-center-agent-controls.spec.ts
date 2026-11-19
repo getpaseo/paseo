@@ -35,6 +35,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
 import { buildSchedulesRoute } from "@/utils/host-routes";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
@@ -291,14 +292,21 @@ test.describe("Command Center agent controls", () => {
     }
   });
 
-  test("keeps draft settings searchable in the compact fullscreen editor", async ({ page }) => {
+  test("keeps draft settings searchable from the compact sidebar and fullscreen editor", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "command-center-fullscreen-draft-" });
     await seedMockDraftPreferences(page);
-    const model = DRAFT_AGENT_CONTROL_CHOICES[0];
+    const [model, mode] = DRAFT_AGENT_CONTROL_CHOICES;
 
     try {
       await openDraftComposer(page, workspace.workspaceId);
       await resizeComposerViewport(page, "portrait");
+      await openMobileAgentSidebar(page);
+      await openCommandCenter(page);
+      await chooseCommandCenterAgentControl({ page, ...mode });
+      await closeMobileAgentSidebar(page);
+
       await fillComposerDraft(page, "First line\nSecond line\nThird line");
       await enterComposerFullscreen(page);
 
@@ -307,6 +315,7 @@ test.describe("Command Center agent controls", () => {
       await exitComposerFullscreen(page);
       await openCommandCenterWithShortcut(page);
       await expectCommandCenterAgentControlSelected({ page, ...model });
+      await expectCommandCenterAgentControlSelected({ page, ...mode });
     } finally {
       await workspace.cleanup();
     }

@@ -1253,14 +1253,17 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
   // user's own pane: closing the panel does not bring focus back.
   const isCompact = useIsCompactFormFactor();
   const paneHost = usePaneHost();
-  const overlayPanelRequested = usePanelStore((state) =>
-    isMobilePanelCoveringHost(state.mobilePanel.target, paneHost),
-  );
-  const coveredByOverlayPanel = isCompact && overlayPanelRequested;
+  const mobilePanelTarget = usePanelStore((state) => state.mobilePanel.target);
+  const coveredByOverlayPanel = isCompact && isMobilePanelCoveringHost(mobilePanelTarget, paneHost);
+  // Search from the sidebar uses the center pane as its context.
+  const commandCenterPanel = mobilePanelTarget === "agent-list" ? "agent" : mobilePanelTarget;
+  const coveredForCommandCenter =
+    isCompact && isMobilePanelCoveringHost(commandCenterPanel, paneHost);
   return (
     <ComposerKeyboardScopeProvider
       isPaneFocused={isPaneFocused}
       isActiveComposer={isPaneFocused && !coveredByOverlayPanel}
+      isCommandCenterTarget={isPaneFocused && !coveredForCommandCenter}
     >
       <OverlayDismissalScope>
         <RenderProfile id="ComposerContent">
