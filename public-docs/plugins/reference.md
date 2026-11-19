@@ -551,10 +551,10 @@ window IDs across all accounts, so users must select the corrected window again.
 effective selection for cards, the sidebar, and toggles. The first edit snapshots those defaults;
 an explicit empty selection stays empty.
 
-Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
-refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
-and rewriting parsed files can discard fields you do not model. If the store disappeared after
-discovery, throw; the card shows the error until the next discovery removes it.
+Re-read the selected store in `fetch()` so the CLI's token rotations take effect. If you discover
+a specific account, pass its identity in the input and verify it before returning usage.
+Throw if the store disappears or the login changes accounts. The next discovery updates the card.
+Only the CLI should redeem its refresh tokens or write its credential stores.
 
 Use `unavailable(problem)` to explain why an existing login cannot supply quota. It requires a
 problem; there is no zero-argument form. `expiresAt` is an ISO timestamp. A rejected login carries
@@ -604,10 +604,11 @@ hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT 
 metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
 `node:sqlite`.
 
-`usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
-accounts without rediscovering identity. If a store switches accounts, the existing card shows the
-new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`usage.list_reports` discovers accounts for the requested agent. A host-wide request discovers
+the defaults and revisits the agents whose usage Paseo has already queried. A request with report
+IDs fetches known reports using their existing discovery inputs. Reports are cached for five minutes.
+Set `forceRefresh` to bypass that cache. Entries carry `id`, `account.label`, and `fetchedAt`.
+Failed accounts also carry optional
 `loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
