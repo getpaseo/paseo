@@ -65,4 +65,39 @@ describe("terminal resize debouncer", () => {
 
     expect(emitted).toEqual([]);
   });
+
+  it("holds resizes longer while a pinch runs and sends the last one when it ends", () => {
+    vi.useFakeTimers();
+    let pinching = true;
+    const emitted: Array<{ rows: number; cols: number }> = [];
+    const debouncer = createTerminalResizeDebouncer({
+      delayMs: () => (pinching ? 150 : 100),
+      emit: ({ rows, cols }) => emitted.push({ rows, cols }),
+    });
+
+    debouncer.schedule({ rows: 40, cols: 90, shouldClaim: false });
+    vi.advanceTimersByTime(100);
+    debouncer.schedule({ rows: 36, cols: 80, shouldClaim: false });
+    vi.advanceTimersByTime(149);
+    expect(emitted).toEqual([]);
+
+    pinching = false;
+    debouncer.flush();
+    expect(emitted).toEqual([{ rows: 36, cols: 80 }]);
+    vi.advanceTimersByTime(500);
+    debouncer.flush();
+    expect(emitted).toHaveLength(1);
+  });
+
+  it("sends a pinch's size once it has been stable for 150 ms", () => {
+    vi.useFakeTimers();
+    const emitted: Array<{ rows: number; cols: number }> = [];
+    const debouncer = createTerminalResizeDebouncer({
+      delayMs: () => 150,
+      emit: ({ rows, cols }) => emitted.push({ rows, cols }),
+    });
+    debouncer.schedule({ rows: 30, cols: 70, shouldClaim: false });
+    vi.advanceTimersByTime(150);
+    expect(emitted).toEqual([{ rows: 30, cols: 70 }]);
+  });
 });

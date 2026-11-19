@@ -6,6 +6,7 @@ import { getLanguageForFile } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
+import { reconfigureEditorTheme, useZoomedEditorTheme } from "../editor/zoom.web";
 import { FilePanelLoading } from "../../loading";
 import type { SourcePresentation } from "./presentation";
 
@@ -28,8 +29,10 @@ export function FileSourceView({
   location,
   navigationRevision,
   presentation,
-  theme,
+  theme: appearanceTheme,
 }: FileSourceViewProps) {
+  const theme = useZoomedEditorTheme(appearanceTheme);
+  const fontSizeRef = useRef(theme.codeFontSize);
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -73,11 +76,16 @@ export function FileSourceView({
   }, [content]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({
-      effects: [
-        languageCompartment.reconfigure(languageFor({ filename, presentation })),
-        themeCompartment.reconfigure(editorTheme(theme)),
-      ],
+    const view = viewRef.current;
+    const fontSizeChanged = fontSizeRef.current !== theme.codeFontSize;
+    fontSizeRef.current = theme.codeFontSize;
+    if (!view) return;
+    reconfigureEditorTheme({
+      view,
+      compartment: themeCompartment,
+      theme: editorTheme(theme),
+      fontSizeChanged,
+      extra: [languageCompartment.reconfigure(languageFor({ filename, presentation }))],
     });
   }, [filename, presentation, theme]);
 

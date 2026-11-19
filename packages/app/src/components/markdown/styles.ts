@@ -1,6 +1,7 @@
 import type { MarkdownStyle } from "react-native-enriched-markdown";
 import type { Theme } from "@/styles/theme";
 import { isWeb } from "@/constants/platform";
+import { zoomedFontSize } from "@/text-zoom/model";
 
 // iOS Safari needs the prefix to override the gesture host's selection suppression.
 const WEB_CONTAINER = { userSelect: "text", WebkitUserSelect: "text" } as const;
@@ -11,9 +12,17 @@ export function createMarkdownStyles(
     compact = false,
     muted = false,
     blockGap,
-  }: { compact?: boolean; muted?: boolean; blockGap: number },
+    zoom = 1,
+  }: {
+    compact?: boolean;
+    muted?: boolean;
+    blockGap: number;
+    /** The text zoom of the surface rendering it, such as the chat's pinch zoom. */
+    zoom?: number;
+  },
 ): { markdownStyle: MarkdownStyle; selectionColor: string; containerStyle?: typeof WEB_CONTAINER } {
-  const fontSize = compact ? theme.fontSize.base : theme.fontSize.content;
+  const fontSize = zoomedFontSize(compact ? theme.fontSize.base : theme.fontSize.content, zoom);
+  const codeFontSize = zoomedFontSize(theme.fontSize.code, zoom);
   // Every block is followed by the same gap; the library drops it after the last block.
   const block = { marginTop: 0, marginBottom: blockGap };
   const paragraph = {
@@ -72,7 +81,7 @@ export function createMarkdownStyles(
       },
       code: {
         fontFamily: theme.fontFamily.mono === "ui-monospace" && !isWeb ? "" : theme.fontFamily.mono,
-        fontScale: theme.fontSize.code / fontSize,
+        fontScale: codeFontSize / fontSize,
         color: theme.colors.foreground,
         backgroundColor: theme.colors.surface2,
         borderColor: "transparent",
@@ -80,7 +89,7 @@ export function createMarkdownStyles(
       codeBlock: {
         ...paragraph,
         fontFamily: theme.fontFamily.mono === "ui-monospace" && !isWeb ? "" : theme.fontFamily.mono,
-        fontSize: theme.fontSize.code,
+        fontSize: codeFontSize,
         backgroundColor: theme.colors.surface2,
         borderColor: theme.colors.border,
         borderRadius: 8,

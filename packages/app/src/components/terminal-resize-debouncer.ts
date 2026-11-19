@@ -6,10 +6,13 @@ export interface TerminalResizeRequest {
 }
 
 export function createTerminalResizeDebouncer(input: {
-  delayMs: number;
+  /** A function is read on every schedule, so a pinch can hold resizes longer while it runs. */
+  delayMs: number | (() => number);
   emit: (resize: TerminalResizeRequest) => void;
 }): {
   schedule: (resize: TerminalResizeRequest) => void;
+  /** Sends a pending resize now. */
+  flush: () => void;
   cancel: () => void;
 } {
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -23,6 +26,15 @@ export function createTerminalResizeDebouncer(input: {
     pending = null;
   };
 
+  const emitPending = () => {
+    timeout = null;
+    const resizeToEmit = pending;
+    pending = null;
+    if (resizeToEmit) {
+      input.emit(resizeToEmit);
+    }
+  };
+
   return {
     schedule: (resize) => {
       pending = {
@@ -33,14 +45,14 @@ export function createTerminalResizeDebouncer(input: {
       if (timeout !== null) {
         clearTimeout(timeout);
       }
-      timeout = setTimeout(() => {
-        timeout = null;
-        const resizeToEmit = pending;
-        pending = null;
-        if (resizeToEmit) {
-          input.emit(resizeToEmit);
-        }
-      }, input.delayMs);
+      const delayMs = typeof input.delayMs === "function" ? input.delayMs() : input.delayMs;
+      timeout = setTimeout(emitPending, delayMs);
+    },
+    flush: () => {
+      if (timeout !== null) {
+        clearTimeout(timeout);
+      }
+      emitPending();
     },
     cancel,
   };
