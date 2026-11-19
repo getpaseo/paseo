@@ -44,10 +44,6 @@ const antigravity: AcpTransformer = {
   },
   async configure(change, { apply, catalog }) {
     // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
-    if (change.target === "mode" && change.value === "full-access") {
-      await apply({ target: "mode", value: "default" });
-      return "handled";
-    }
     if (change.target === "model" && change.value) {
       const legacyModel = /^(.*)-(xhigh|high|medium|low|minimal)$/.exec(change.value);
       if (legacyModel) {
@@ -76,7 +72,21 @@ export function createAntigravityProvider(): ProviderRegistration {
     description: "Antigravity CLI on your host",
     icon: "icon.svg",
     command: ["agy", "acp", "--disable-telemetry"],
-    acpOptions: { waitForInitialCommands: true, loadReplayQuietPeriodMs: 200 },
+    acpOptions: {
+      waitForInitialCommands: true,
+      loadReplayQuietPeriodMs: 200,
+      autoAcceptMode: {
+        mode: {
+          id: "full-access",
+          label: "Full access",
+          description: "Approve tool requests without asking.",
+          icon: "ShieldOff",
+          colorTier: "dangerous",
+        },
+        nativeMode: "default",
+        default: true,
+      },
+    },
     transformers: [antigravity],
   });
   return {

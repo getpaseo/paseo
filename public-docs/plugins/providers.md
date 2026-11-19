@@ -500,6 +500,11 @@ Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after
 response. Paseo waits for that interval without session updates before it publishes the session as
 ready. The wait is bounded at five times the interval.
 
+Set `acpOptions.autoAcceptMode` to offer an unattended mode backed by a specific native mode.
+The adapter selects an unambiguous ACP `allow_once` action without opening a Paseo approval.
+Set `default: true` to make this the default for new sessions. The adapter requires an idle
+session without pending approvals before it switches to or from this mode.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:

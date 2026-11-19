@@ -3,6 +3,7 @@ import type {
   ProviderCatalog,
   ProviderCommand,
   ProviderConfigState,
+  ProviderMode,
   ProviderNotice,
   ProviderPersistence,
   ProviderRegistration,
@@ -52,6 +53,12 @@ export interface AcpOptions {
   initialCommandsTimeoutMs?: number;
   /** Allow delayed session/load updates before publishing the session as ready. */
   loadReplayQuietPeriodMs?: number;
+  /** An unattended mode that approves ACP allow-once requests in the specified native mode. */
+  autoAcceptMode?: {
+    mode: Omit<ProviderMode, "isUnattended">;
+    nativeMode: string;
+    default?: boolean;
+  };
 }
 
 export interface AcpContext {

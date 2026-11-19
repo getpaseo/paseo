@@ -136,7 +136,10 @@ it.each([true, false])(
         expect.objectContaining({
           type: "session.config",
           config: expect.objectContaining({
-            mode: "default",
+            mode: "full-access",
+            modes: expect.arrayContaining([
+              expect.objectContaining({ id: "full-access", isUnattended: true }),
+            ]),
             model: "gemini-3.8-flash",
             thinkingOption: "high",
           }),

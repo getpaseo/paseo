@@ -33,7 +33,9 @@ nav: Antigravity
 
 Paseo 连接到 `agy acp`，并显示 CLI 提供的权限模式。在 **Default** 模式下，如果 Antigravity 的权限策略要求批准编辑或命令，Paseo 会显示审批请求。在 **Accept edits** 模式下，Antigravity 会自动批准工作区内的编辑，仍会询问是否批准需要审批的命令。**Plan** 模式让 Antigravity 先规划，再执行。
 
-以前以 **Full access** 模式保存的 Paseo 聊天会以 **Default** 模式重新打开。Paseo 不提供 Antigravity 的无人值守模式。如果计划任务遇到审批请求，本次运行就会失败。
+**Full access** 是默认模式。如果工具请求只提供一个 **Allow once** 操作，Paseo 会自动批准。Antigravity 仍会执行自己的工具策略。以前以 **Full access** 模式保存的聊天会保留该模式，计划任务也可以使用该模式，无需人为逐次审批。
+
+切换到 **Full access** 或从该模式切换到其他模式前，请先完成或停止当前轮次。
 
 ## 会话和工具 {#sessions-and-tools}
 

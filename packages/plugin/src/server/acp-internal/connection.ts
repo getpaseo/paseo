@@ -207,9 +207,11 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
     case "session.open":
       await openSession(input, state);
       return;
-    case "session.prompt":
-      await requireSession(state, input.sessionId).runtime.prompt(input);
+    case "session.prompt": {
+      const session = requireSession(state, input.sessionId);
+      await mutateSession(session, () => session.runtime.prompt(input));
       return;
+    }
     case "session.interrupt":
       await requireSession(state, input.sessionId).runtime.interrupt();
       state.emit({ type: "request.completed", requestId: input.requestId });
@@ -356,6 +358,12 @@ interface StartRuntimeOptions {
   emit(event: ProviderEvent): void;
 }
 
+interface PendingPermission {
+  request: RequestPermissionRequest;
+  turnId: string | undefined;
+  resolve(response: RequestPermissionResponse): void;
+}
+
 class AcpRuntime {
   readonly connection: ClientSideConnection;
   agentCapabilities: AgentCapabilities = {};
@@ -367,10 +375,7 @@ class AcpRuntime {
   // Running tool rows published by transformers; the turn's terminal closes any left open.
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
-  private readonly permissions = new Map<
-    string,
-    { request: RequestPermissionRequest; resolve(response: RequestPermissionResponse): void }
-  >();
+  private readonly permissions = new Map<string, PendingPermission>();
   private readonly transformers: readonly AcpTransformer[];
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
@@ -399,7 +404,7 @@ class AcpRuntime {
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
-  private promptLane: Promise<void> = Promise.resolve();
+  private autoAccept = false;
   private activePrompt: { turnId: string; settled: Promise<void> } | null = null;
   private lastUsage: ProviderUsage = {};
 
@@ -553,6 +558,7 @@ class AcpRuntime {
     const sessionCapabilities = connectionCapabilities.filter(
       (capability) =>
         capability !== "session.configure" ||
+        this.options.options.acpOptions?.autoAcceptMode !== undefined ||
         this.modes !== null ||
         this.configOptions.length > 0 ||
         this.transformers.some((transformer) => transformer.configure !== undefined),
@@ -589,18 +595,17 @@ class AcpRuntime {
     this.nativeSessionId = response.sessionId;
     this.modes = response.modes ?? null;
     this.configOptions = response.configOptions ?? [];
-    return toProviderCatalog(response.modes, response.configOptions ?? []);
+    const catalog = toProviderCatalog(this.modes, this.configOptions);
+    const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
+    if (!autoAcceptMode) return catalog;
+    return {
+      ...catalog,
+      modes: [...catalog.modes, { ...autoAcceptMode.mode, isUnattended: true }],
+      defaultMode: autoAcceptMode.default ? autoAcceptMode.mode.id : catalog.defaultMode,
+    };
   }
 
-  prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
-    const admission = this.promptLane.then(() => this.admitPrompt(input));
-    this.promptLane = admission.catch(() => undefined);
-    return admission;
-  }
-
-  private async admitPrompt(
-    input: Extract<ProviderInput, { type: "session.prompt" }>,
-  ): Promise<void> {
+  async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
     const active = this.activePrompt;
     if (active) {
       await this.interrupt();
@@ -659,6 +664,7 @@ class AcpRuntime {
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems(state);
+        this.finishTurnPermissions(turnId);
         this.emit({
           type: "session.turn",
           sessionId: this.options.boundarySessionId,
@@ -671,6 +677,7 @@ class AcpRuntime {
         await this.drainNotifications();
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems("failed");
+        this.finishTurnPermissions(turnId);
         this.emit({
           type: "session.turn",
           sessionId: this.options.boundarySessionId,
@@ -712,12 +719,28 @@ class AcpRuntime {
         `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
       );
     }
-    this.permissions.delete(permissionId);
-    pending.resolve({
+    this.resolvePermission(permissionId, pending, {
       outcome: selected
         ? { outcome: "selected", optionId: selected.optionId }
         : { outcome: "cancelled" },
     });
+  }
+
+  private finishTurnPermissions(turnId: string): void {
+    for (const [permissionId, pending] of this.permissions) {
+      if (pending.turnId === turnId) {
+        this.resolvePermission(permissionId, pending, { outcome: { outcome: "cancelled" } });
+      }
+    }
+  }
+
+  private resolvePermission(
+    permissionId: string,
+    pending: PendingPermission,
+    response: RequestPermissionResponse,
+  ): void {
+    this.permissions.delete(permissionId);
+    pending.resolve(response);
     this.emit({
       type: "session.permission_resolved",
       sessionId: this.options.boundarySessionId,
@@ -728,6 +751,17 @@ class AcpRuntime {
   async configure(
     changes: Extract<ProviderInput, { type: "session.configure" }>["changes"],
   ): Promise<void> {
+    const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
+    if (
+      autoAcceptMode &&
+      changes.mode !== undefined &&
+      (changes.mode === autoAcceptMode.mode.id) !== this.autoAccept &&
+      (this.activePrompt || this.permissions.size > 0)
+    ) {
+      throw new Error(
+        `Finish or stop the current turn before switching to or from ${autoAcceptMode.mode.label}.`,
+      );
+    }
     const requested: AcpConfigChange[] = [];
     if (changes.model !== undefined) requested.push({ target: "model", value: changes.model });
     if (changes.mode !== undefined) requested.push({ target: "mode", value: changes.mode });
@@ -738,6 +772,7 @@ class AcpRuntime {
       requested.push({ target: "setting", id, value });
     }
     const ordered = this.inAgentOrder(requested);
+    const previousAutoAccept = this.autoAccept;
     const previousModes = this.modes ? structuredClone(this.modes) : null;
     const previousOptions = structuredClone(this.configOptions);
     this.configTransaction = true;
@@ -763,6 +798,7 @@ class AcpRuntime {
         await this.close();
         throw failure;
       }
+      this.autoAccept = previousAutoAccept;
       this.modes = previousModes;
       this.configOptions = previousOptions;
       this.stagedTransformerConfig = null;
@@ -805,7 +841,9 @@ class AcpRuntime {
   private async applyInitialConfig(config: ProviderSessionConfig): Promise<void> {
     const requested: AcpConfigChange[] = [];
     if (config.model) requested.push({ target: "model", value: config.model });
-    if (config.mode) requested.push({ target: "mode", value: config.mode });
+    const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
+    const mode = config.mode ?? (autoAcceptMode?.default ? autoAcceptMode.mode.id : undefined);
+    if (mode) requested.push({ target: "mode", value: mode });
     if (config.thinkingOption) {
       requested.push({ target: "thinking", value: config.thinkingOption });
     }
@@ -836,6 +874,24 @@ class AcpRuntime {
   }
 
   private async applyConfigChange(change: AcpConfigChange): Promise<void> {
+    const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
+    if (
+      change.target === "mode" &&
+      autoAcceptMode &&
+      (this.autoAccept || change.value === autoAcceptMode.mode.id)
+    ) {
+      const enableAutoAccept = change.value === autoAcceptMode.mode.id;
+      const nativeMode = enableAutoAccept ? autoAcceptMode.nativeMode : change.value;
+      this.autoAccept = false;
+      if (nativeMode !== this.nativeModeId()) {
+        await this.applyNativeConfigChange({ target: "mode", value: nativeMode });
+      }
+      if (nativeMode !== this.nativeModeId()) {
+        throw new Error(`ACP agent did not switch to mode '${nativeMode}'`);
+      }
+      this.autoAccept = enableAutoAccept;
+      return;
+    }
     const access = this.configAccess();
     for (const transformer of this.transformers) {
       if (
@@ -909,7 +965,20 @@ class AcpRuntime {
     this.emitConfigSnapshot(toProviderConfigState(this.modes, this.configOptions));
   }
 
+  private nativeModeId(): string | undefined {
+    return selectedValue(modeOption(this.configOptions)) ?? this.modes?.currentModeId;
+  }
+
   private emitConfigSnapshot(config: ProviderConfigState): void {
+    const autoAcceptMode = this.options.options.acpOptions?.autoAcceptMode;
+    if (autoAcceptMode) {
+      if (this.nativeModeId() !== autoAcceptMode.nativeMode) this.autoAccept = false;
+      config = {
+        ...config,
+        mode: this.autoAccept ? autoAcceptMode.mode.id : config.mode,
+        modes: [...config.modes, { ...autoAcceptMode.mode, isUnattended: true }],
+      };
+    }
     this.emit({
       type: "session.config",
       sessionId: this.options.boundarySessionId,
@@ -947,10 +1016,28 @@ class AcpRuntime {
     }
   }
 
-  private requestPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  private async requestPermission(
+    request: RequestPermissionRequest,
+  ): Promise<RequestPermissionResponse> {
+    await this.notificationLane;
+    if (this.closing || this.processFailed) return { outcome: { outcome: "cancelled" } };
+    if (
+      this.autoAccept &&
+      request.sessionId === this.nativeSessionId &&
+      this.nativeModeId() === this.options.options.acpOptions?.autoAcceptMode?.nativeMode
+    ) {
+      const allowOptions = request.options.filter((option) => option.kind.startsWith("allow"));
+      const allowOnce = allowOptions.find((option) => option.kind === "allow_once");
+      if (
+        allowOnce &&
+        new Set(allowOptions.map((option) => option.kind)).size === allowOptions.length
+      ) {
+        return { outcome: { outcome: "selected", optionId: allowOnce.optionId } };
+      }
+    }
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     return new Promise((resolve) => {
-      this.permissions.set(permissionId, { request, resolve });
+      this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
       this.emit({
         type: "session.permission",
         sessionId: this.options.boundarySessionId,
@@ -1111,6 +1198,12 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "current_mode_update") {
+      const option = modeOption(this.configOptions);
+      if (option?.type === "select") {
+        this.configOptions = this.configOptions.map((candidate) =>
+          candidate === option ? { ...option, currentValue: update.currentModeId } : candidate,
+        );
+      }
       if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId };
       this.emitConfig();
       return;

@@ -35,7 +35,9 @@ If you already override the command, add `acp` to the command arguments. See [Cu
 
 Paseo connects to `agy acp` and shows the permission modes the CLI offers. In **Default**, Paseo shows approval requests for edits and commands that Antigravity policy requires you to approve. In **Accept edits**, Antigravity approves workspace edits and still asks about commands that require approval. **Plan** lets Antigravity plan before it acts.
 
-Existing Paseo chats saved in **Full access** reopen in **Default**. Antigravity has no unattended mode in Paseo. If a scheduled run reaches an approval request, the run fails at that request.
+**Full access** is the default. Paseo approves tool requests that offer a single **Allow once** action. Antigravity still enforces its own tool policy. Existing chats saved in **Full access** keep that mode, and scheduled runs can use it without a person to approve each tool call.
+
+Finish or stop the current turn before you switch to or from **Full access**.
 
 ## Sessions and tools
 
