@@ -38,7 +38,8 @@ function readShownModels(
 /**
  * The installation the page shows. A provider added from the catalog has no installation the
  * host can report, so when its CLI is missing the page says so with the catalog's install guide.
- * The host's own install link wins over the guide.
+ * The host's own install link wins over the guide. A host that cannot report installations gets
+ * the same row, because the guide is the app's own catalog data.
  */
 export function readShownInstallation(input: {
   entry: ProviderSnapshotEntry;
@@ -47,8 +48,9 @@ export function readShownInstallation(input: {
   installGuide: string | null;
 }): ProviderInstallationState {
   const { entry, installation, installGuide } = input;
-  if (installation.status !== "ready" || !installGuide) return installation;
-  const reported = installation.installation;
+  if (!installGuide) return installation;
+  if (installation.status !== "ready" && installation.status !== "unsupported") return installation;
+  const reported = installation.status === "ready" ? installation.installation : null;
   if (reported?.installUrl) return installation;
   const notInstalled =
     reported?.inspection?.status === "not_installed" ||

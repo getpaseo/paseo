@@ -135,17 +135,39 @@ describe("provider detail installation", () => {
     ).toEqual(noContract);
   });
 
-  it("leaves a host that cannot report installations, or is still checking, as it is", () => {
+  it("says Not installed with the guide on a host that cannot report installations", () => {
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: unsupported,
+        installGuide: guide,
+      }),
+    ).toEqual({
+      status: "ready",
+      installation: { inspection: { status: "not_installed" }, installUrl: guide },
+    });
+    // Without a guide, or for a provider the host runs, there is nothing to show.
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: unsupported,
+        installGuide: null,
+      }),
+    ).toEqual(unsupported);
+    expect(
+      readShownInstallation({ entry: entry(), installation: unsupported, installGuide: guide }),
+    ).toEqual(unsupported);
+  });
+
+  it("waits while the host is still checking", () => {
     const checking: ProviderInstallationState = { status: "loading" };
-    for (const state of [unsupported, checking]) {
-      expect(
-        readShownInstallation({
-          entry: entry({ status: "unavailable" }),
-          installation: state,
-          installGuide: guide,
-        }),
-      ).toEqual(state);
-    }
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: checking,
+        installGuide: guide,
+      }),
+    ).toEqual(checking);
   });
 });
 
