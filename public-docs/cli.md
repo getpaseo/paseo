@@ -126,10 +126,9 @@ Use `--output-schema` to return only matching JSON output. You can pass a schema
 
 By default, `paseo run` waits for completion. Use `--no-wait` to return immediately while the agent keeps running, the same flag `paseo send` takes.
 
-The old `run --background` and `-d` aliases still mean `--no-wait`. They are deprecated, hidden
-from help, and print a warning to stderr. Use `--no-wait` in scripts. Workspace visibility is
-selected separately with `workspace create --background`; this release does not repurpose
-`run --background`.
+Use `--background` to hide the new agent from tabs, default lists, and its parent's subagent track. A workspace created by the same run is also hidden. An existing workspace keeps its visibility. When you omit the flag, the agent inherits its caller's setting and runs visibly from a human shell. Use `--no-background` to override inheritance. Both visibility flags require a host that supports background agents.
+
+Combine `--background --no-wait` to launch a hidden agent and return immediately. If a script used an older CLI's `run --background` to return immediately, change it to `--no-wait`. The deprecated `-d` alias still means `--no-wait`.
 
 ## Projects
 

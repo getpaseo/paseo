@@ -1,12 +1,17 @@
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { resolveCallerAgentId as resolveRunCallerAgentId } from "../../utils/caller-agent.js";
+import { connectToDaemon } from "../../utils/client.js";
 import {
+  addRunOptions,
   resolveExistingRunWorkspace,
   runRunCommand,
   waitsForFinish,
   type AgentRunOptions,
 } from "./run";
+
+vi.mock("../../utils/client.js", () => ({ connectToDaemon: vi.fn() }));
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
@@ -23,11 +28,19 @@ function daemonWithAgents(...agentIds: string[]) {
 }
 
 describe("run wait policy", () => {
-  it("waits by default and stops waiting on --no-wait or a legacy alias", () => {
-    expect(waitsForFinish({})).toBe(true);
-    expect(waitsForFinish({ wait: false })).toBe(false);
-    expect(waitsForFinish({ background: true })).toBe(false);
-    expect(waitsForFinish({ detach: true })).toBe(false);
+  it.each([
+    { flags: [], background: undefined, waits: true },
+    { flags: ["--background"], background: true, waits: true },
+    { flags: ["--no-background"], background: false, waits: true },
+    { flags: ["--background", "--no-wait"], background: true, waits: false },
+    { flags: ["-d"], background: undefined, waits: false },
+    { flags: ["--detach"], background: undefined, waits: false },
+  ])("keeps visibility and waiting independent for $flags", ({ flags, background, waits }) => {
+    const command = addRunOptions(new Command());
+    command.parse([...flags, "do something"], { from: "user" });
+    const options = command.opts<AgentRunOptions>();
+    expect(options.background).toBe(background);
+    expect(waitsForFinish(options)).toBe(waits);
   });
 });
 
@@ -71,35 +84,54 @@ describe("managed agent caller context", () => {
 });
 
 describe("existing run workspace resolution", () => {
-  it("queries the daemon for an exact workspace id and uses its directory", async () => {
-    const fetchWorkspaces = vi.fn().mockResolvedValue({
-      entries: [{ id: "workspace-2", workspaceDirectory: "/workspace/two" }],
-      pageInfo: { nextCursor: null },
-    });
+  it("uses the directory of the workspace found by id", async () => {
+    const findWorkspace = vi
+      .fn()
+      .mockResolvedValue({ id: "workspace-2", workspaceDirectory: "/workspace/two" });
 
-    await expect(resolveExistingRunWorkspace({ fetchWorkspaces }, "workspace-2")).resolves.toEqual({
+    await expect(resolveExistingRunWorkspace({ findWorkspace }, "workspace-2")).resolves.toEqual({
       id: "workspace-2",
       cwd: "/workspace/two",
     });
-    expect(fetchWorkspaces).toHaveBeenCalledWith({
-      filter: { query: "workspace-2" },
-      page: { limit: 200 },
-    });
+    expect(findWorkspace).toHaveBeenCalledWith("workspace-2");
   });
 
   it("rejects a workspace id absent from daemon state", async () => {
-    const fetchWorkspaces = vi.fn().mockResolvedValue({
-      entries: [],
-      pageInfo: { nextCursor: null },
-    });
+    const findWorkspace = vi.fn().mockResolvedValue(null);
 
-    await expect(resolveExistingRunWorkspace({ fetchWorkspaces }, "missing")).rejects.toMatchObject(
-      {
-        code: "WORKSPACE_NOT_FOUND",
-        message: "Workspace not found: missing",
-      },
-    );
+    await expect(resolveExistingRunWorkspace({ findWorkspace }, "missing")).rejects.toMatchObject({
+      code: "WORKSPACE_NOT_FOUND",
+      message: "Workspace not found: missing",
+    });
   });
+});
+
+describe("run background host compatibility", () => {
+  it.each([true, false])(
+    "rejects background=%s before creating anything on an older host",
+    async (background) => {
+      const client = {
+        getLastServerInfoMessage: () => ({ features: { backgroundWorkspaces: true } }),
+        fetchAgent: vi.fn().mockRejectedValue(new Error("Agent not found")),
+        createWorkspace: vi.fn(),
+        createAgent: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined),
+      };
+      vi.mocked(connectToDaemon).mockResolvedValueOnce(
+        client as unknown as Awaited<ReturnType<typeof connectToDaemon>>,
+      );
+
+      await expect(
+        runRunCommand(
+          "do something",
+          { provider: "claude", background, daemonTarget },
+          new Command(),
+        ),
+      ).rejects.toMatchObject({ code: "DAEMON_UPDATE_REQUIRED" });
+      expect(client.createWorkspace).not.toHaveBeenCalled();
+      expect(client.createAgent).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // validateRunOptions runs before the CLI ever connects to a daemon, so these

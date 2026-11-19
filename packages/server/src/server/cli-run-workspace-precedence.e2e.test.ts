@@ -1,4 +1,8 @@
 import { test, expect } from "vitest";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { z } from "zod";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -126,3 +130,74 @@ test("daemon resolves human and managed CLI workspace ownership", async () => {
     rmSync(otherCwd, { recursive: true, force: true });
   }
 }, 180000);
+
+test("CLI run creates background agents and supports overriding inherited visibility", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  async function runCli(args: string[], callerAgentId = "") {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        "--conditions=source",
+        "--import",
+        "tsx",
+        fileURLToPath(new URL("../../../cli/src/index.ts", import.meta.url)),
+        "--host",
+        `127.0.0.1:${daemon.port}`,
+        "run",
+        "--json",
+        "--provider",
+        "claude/claude-test-model",
+        "--mode",
+        "bypassPermissions",
+        "--cwd",
+        daemon.staticDir,
+        ...args,
+        "say done and stop",
+      ],
+      {
+        env: {
+          ...process.env,
+          PASEO_HOME: daemon.paseoHome,
+          PASEO_AGENT_ID: callerAgentId,
+          PASEO_WORKSPACE_ID: "",
+        },
+        timeout: 15_000,
+      },
+    );
+    return z.object({ agentId: z.string(), status: z.string() }).parse(JSON.parse(stdout));
+  }
+
+  try {
+    await client.connect();
+    const parent = await runCli(["--background"]);
+    expect(parent.status).toBe("completed");
+    const parentSnapshot = (await client.fetchAgent(parent.agentId))?.agent;
+    expect(parentSnapshot?.background).toBe(true);
+    const workspaceId = z.string().parse(parentSnapshot?.workspaceId);
+    expect(await workspaceIds(client)).not.toContain(workspaceId);
+    expect(
+      (await client.fetchWorkspaces({ filter: { includeBackground: true } })).entries.map(
+        (workspace) => workspace.id,
+      ),
+    ).toContain(workspaceId);
+
+    const inherited = await runCli(["--no-wait"], parent.agentId);
+    const visible = await runCli(["--no-background", "--workspace", workspaceId], parent.agentId);
+    expect((await client.fetchAgent(inherited.agentId))?.agent).toMatchObject({
+      background: true,
+      workspaceId,
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.agentId },
+    });
+    const visibleSnapshot = (await client.fetchAgent(visible.agentId))?.agent;
+    expect(visibleSnapshot).toMatchObject({
+      workspaceId,
+      labels: { [PARENT_AGENT_ID_LABEL]: parent.agentId },
+    });
+    expect(visibleSnapshot?.background).not.toBe(true);
+    expect(await workspaceIds(client)).not.toContain(workspaceId);
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60_000);
