@@ -317,6 +317,53 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
+  test("Tab completes the active directory and drills into its children", async ({ page }) => {
+    const parentDirectory = await mkdtemp(path.join(homedir(), "paseo-e2e-tab-"));
+    const parentName = path.basename(parentDirectory);
+    const childName = "tab-target-repo";
+    const childDirectory = path.join(parentDirectory, childName);
+    let projectId: string | null = null;
+    try {
+      await mkdir(childDirectory);
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+
+      const input = addProjectFlowInput(page);
+      const results = page.getByTestId("add-project-flow-results");
+      await input.fill(`~/${parentName}`);
+      await expect(
+        results.getByTestId(`add-project-flow-path-${encodeURIComponent(parentDirectory)}`),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await page.keyboard.press("Tab");
+      await expect(input).toHaveValue(`~/${parentName}/`);
+      await expect(input).toBeFocused();
+      await expect(
+        results.getByTestId(`add-project-flow-path-${encodeURIComponent(childDirectory)}`),
+      ).toBeVisible({ timeout: 30_000 });
+
+      await page.keyboard.type(childName);
+      await expect(input).toHaveValue(`~/${parentName}/${childName}`);
+      const childRow = results.getByTestId(
+        `add-project-flow-path-${encodeURIComponent(childDirectory)}`,
+      );
+      await expect(childRow).toBeVisible({ timeout: 30_000 });
+      await childRow.click();
+
+      projectId = await expectOpenedProject(page, childName);
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName: childName,
+        projectPath: childDirectory,
+      });
+    } finally {
+      if (projectId) await removeCreatedProject(childDirectory, projectId);
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("keyboard navigation keeps the selected row inside the visible results", async ({
     page,
   }) => {

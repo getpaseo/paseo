@@ -66,6 +66,7 @@ import {
 } from "@/add-project-flow/options";
 import {
   buildProjectPickerOptions,
+  formatDirectoryCompletion,
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -90,6 +91,10 @@ import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
+import {
+  filterDirectoryPathsByQuery,
+  normalizeDirectoryQuery,
+} from "@/utils/working-directory-suggestions";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 
 interface AddProjectFlowProps {
@@ -103,6 +108,7 @@ interface FlowRowOption {
   subtitle: string | null;
   icon: ComponentType<{ size?: number; color?: string }>;
   disabled?: boolean;
+  completePath?: string;
   testID: string;
   select: () => void;
 }
@@ -132,9 +138,14 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 
 const lastCloneParentByHost = new Map<string, string>();
 const EMPTY_PATHS: string[] = [];
+const DIRECTORY_SEARCH_DEBOUNCE_MS = 120;
+const GITHUB_SEARCH_DEBOUNCE_MS = 250;
 const NAVIGATION_HINT_KEYS = ["Up", "Down"];
+const COMPLETE_HINT_KEYS = ["Tab"];
 const SELECT_HINT_KEYS = ["Enter"];
 const ESCAPE_HINT_KEYS = ["Esc"];
+const BASE_OVERLAY_KEYS = ["Escape", "Enter", "ArrowUp", "ArrowDown"] as const;
+const DIRECTORY_OVERLAY_KEYS = ["Escape", "Enter", "ArrowUp", "ArrowDown", "Tab"] as const;
 
 function FlowBackButton({ onPress }: { onPress: () => void }) {
   return (
@@ -400,6 +411,13 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   pageInputValueRef.current = page.kind === "method" ? "" : pageInput(page);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
+  const searchesDirectories =
+    page.kind === "directory-search" ||
+    page.kind === "github-location" ||
+    page.kind === "new-directory-parent";
+  const normalizedDirectoryQuery = normalizeDirectoryQuery(query);
+  const normalizedDebouncedDirectoryQuery = normalizeDirectoryQuery(debouncedQuery);
+
   useEffect(() => {
     setState((current) =>
       applyAvailableAddProjectHosts(current, availableHosts, request.preferredHostId),
@@ -407,9 +425,14 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [availableHosts, request.preferredHostId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    if (!query.trim()) {
+      setDebouncedQuery(query);
+      return;
+    }
+    const delayMs = searchesDirectories ? DIRECTORY_SEARCH_DEBOUNCE_MS : GITHUB_SEARCH_DEBOUNCE_MS;
+    const timer = setTimeout(() => setDebouncedQuery(query), delayMs);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, searchesDirectories]);
 
   useEffect(() => {
     inputRef.current?.replaceText(pageInputValueRef.current);
@@ -417,29 +440,30 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     return () => clearTimeout(timer);
   }, [page.kind]);
 
-  const searchesDirectories =
-    page.kind === "directory-search" ||
-    page.kind === "github-location" ||
-    page.kind === "new-directory-parent";
   const directoryQuery = useFetchQuery({
-    queryKey: ["add-project-flow-directories", hostId, debouncedQuery],
+    queryKey: ["add-project-flow-directories", hostId, normalizedDebouncedDirectoryQuery],
     queryFn: async () => {
-      if (!client) return { query: debouncedQuery, paths: [] as string[] };
+      if (!client || !normalizedDebouncedDirectoryQuery) {
+        return { query: normalizedDebouncedDirectoryQuery, paths: [] as string[] };
+      }
       const payload = await client.getDirectorySuggestions({
-        query: debouncedQuery,
+        query: normalizedDebouncedDirectoryQuery,
         includeDirectories: true,
         includeFiles: false,
         limit: 30,
       });
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
       return {
-        query: debouncedQuery,
+        query: normalizedDebouncedDirectoryQuery,
         paths:
           payload.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
           [],
       };
     },
-    enabled: Boolean(client && searchesDirectories),
-    dataShape: "value",
+    enabled: Boolean(client && searchesDirectories && normalizedDebouncedDirectoryQuery.length > 0),
+    dataShape: "list",
     retry: false,
     staleTimeMs: 15_000,
   });
@@ -542,10 +566,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [browse, hostId],
   );
 
-  const directoryPaths = useMemo(
-    () => (directoryQuery.data?.query === query ? directoryQuery.data.paths : EMPTY_PATHS),
-    [directoryQuery.data, query],
-  );
+  const directoryPaths = useMemo(() => {
+    if (!normalizedDirectoryQuery || !directoryQuery.data) return EMPTY_PATHS;
+    if (directoryQuery.data.query === normalizedDirectoryQuery) return directoryQuery.data.paths;
+    return filterDirectoryPathsByQuery(directoryQuery.data.paths, normalizedDirectoryQuery);
+  }, [directoryQuery.data, normalizedDirectoryQuery]);
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
@@ -640,6 +665,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           title: shortPath,
           subtitle: directoryOptionSubtitle(option, shortPath),
           icon: Folder,
+          completePath: option.path,
           testID: pathTestId(option.path),
           select: () => void openAddedProject(option.path, "directory-search"),
         };
@@ -692,6 +718,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         subtitle: option.secondaryText,
         icon: HardDrive,
         disabled: option.disabled,
+        completePath: option.path,
         testID: pathTestId(option.displayPath),
         select: () => void cloneRepository(page, option.path),
       }));
@@ -702,6 +729,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         title: shortenPath(option.path),
         subtitle: option.kind === "path" ? "Use this parent" : option.path,
         icon: Folder,
+        completePath: option.path,
         testID: pathTestId(option.path),
         select: () =>
           setState((current) => openNewDirectoryNamePage(current, page.hostId, option.path)),
@@ -787,6 +815,23 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     if (option && !option.disabled) option.select();
   }, [activeIndex, createDirectory, page.kind, rows]);
 
+  const completeActiveDirectory = useCallback((): boolean => {
+    if (!searchesDirectories) return false;
+    const option = rows[activeIndex];
+    if (!option?.completePath) return true;
+    const completed = formatDirectoryCompletion(option.completePath, query);
+    if (!completed) return true;
+    if (completed !== query) {
+      inputRef.current?.replaceText(completed, {
+        start: completed.length,
+        end: completed.length,
+      });
+      setState((current) => setAddProjectPageInput(current, completed));
+      setDebouncedQuery(completed);
+    }
+    return true;
+  }, [activeIndex, query, rows, searchesDirectories]);
+
   const handleKey = useCallback(
     (key: string): boolean => {
       if (key === "Escape") {
@@ -797,6 +842,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         submitActive();
         return true;
       }
+      if (key === "Tab") {
+        return completeActiveDirectory();
+      }
       if (key !== "ArrowDown" && key !== "ArrowUp") return false;
       const next = moveAddProjectSelection(
         activeIndex,
@@ -806,7 +854,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       setState((current) => setAddProjectActiveIndex(current, next));
       return true;
     },
-    [activeIndex, handleBack, rows, submitActive],
+    [activeIndex, completeActiveDirectory, handleBack, rows, submitActive],
   );
 
   const modalLayer = useGlobalOverlayLayer("modal", true);
@@ -819,7 +867,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [handleKey],
   );
   const setOverlayScope = useOverlayRegistration({
-    keys: ["Escape", "Enter", "ArrowUp", "ArrowDown"],
+    keys: searchesDirectories ? DIRECTORY_OVERLAY_KEYS : BASE_OVERLAY_KEYS,
     active: true,
     layer: modalLayer,
     onKeyDown: handleOverlayKeyDown,
@@ -838,13 +886,16 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? githubQuery.data.payload
       : null;
   const loading =
-    (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
+    (searchesDirectories &&
+      normalizedDirectoryQuery.length > 0 &&
+      (normalizedDirectoryQuery !== normalizedDebouncedDirectoryQuery ||
+        directoryQuery.isFetching)) ||
     (page.kind === "github-search" &&
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));
   const queryError = queryErrorText({
     searchesDirectories,
-    directoryFailed: directoryQuery.isError,
+    directoryFailed: directoryQuery.isError && directoryQuery.error?.message !== "Search cancelled",
     githubFailed: page.kind === "github-search" && githubQuery.isError,
     githubAvailable: currentGithubSearch?.available ?? null,
     githubError: currentGithubSearch?.error ?? null,
@@ -925,14 +976,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                   {queryError}
                 </Text>
               ) : null}
-              {!isSubmitting && loading ? (
-                <Text style={styles.stateText} testID="add-project-flow-loading">
-                  Loading...
-                </Text>
-              ) : null}
-              {!isSubmitting &&
-              (!loading || page.kind === "github-search") &&
-              (!queryError || page.kind === "github-search")
+              {!isSubmitting && (!queryError || page.kind === "github-search")
                 ? rows.map((option, index) => (
                     <FlowRow
                       key={option.id}
@@ -943,6 +987,11 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
                     />
                   ))
                 : null}
+              {!isSubmitting && loading ? (
+                <Text style={styles.stateText} testID="add-project-flow-loading">
+                  Loading...
+                </Text>
+              ) : null}
               {!isSubmitting &&
               !loading &&
               !queryError &&
@@ -956,6 +1005,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           </ScrollView>
           <View style={styles.footer} testID="add-project-flow-footer">
             <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
+            {searchesDirectories ? <FlowHint keys={COMPLETE_HINT_KEYS} action="Complete" /> : null}
             <FlowHint keys={SELECT_HINT_KEYS} action="Select" />
             <FlowHint keys={ESCAPE_HINT_KEYS} action={state.pages.length > 1 ? "Back" : "Close"} />
           </View>

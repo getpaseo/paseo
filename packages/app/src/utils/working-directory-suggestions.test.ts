@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildWorkingDirectorySuggestions } from "./working-directory-suggestions";
+import {
+  buildWorkingDirectorySuggestions,
+  filterDirectoryPathsByQuery,
+  normalizeDirectoryQuery,
+} from "./working-directory-suggestions";
 
 describe("buildWorkingDirectorySuggestions", () => {
   it("returns de-duplicated recommendations when query is empty", () => {
@@ -70,5 +74,42 @@ describe("buildWorkingDirectorySuggestions", () => {
       "/Users/me/documents",
       "/Users/me/projects",
     ]);
+  });
+
+  it("matches home-relative tilde queries against shortened recommended paths, including non-ASCII names", () => {
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: ["/Users/me/代码/paseo", "/Users/me/projects/other"],
+      serverPaths: [],
+      query: "~/代码",
+    });
+
+    expect(results).toEqual(["/Users/me/代码/paseo"]);
+  });
+
+  it("normalizes a leading full-width tilde in queries", () => {
+    expect(normalizeDirectoryQuery("～")).toBe("~");
+    expect(normalizeDirectoryQuery("～/Code/")).toBe("~/Code/");
+    expect(normalizeDirectoryQuery("～\\Code")).toBe("~\\Code");
+    expect(normalizeDirectoryQuery("～other")).toBe("～other");
+
+    const results = buildWorkingDirectorySuggestions({
+      recommendedPaths: ["/Users/me/projects/paseo"],
+      serverPaths: ["/Users/me/projects"],
+      query: "～/projects",
+    });
+
+    expect(results).toEqual(["/Users/me/projects/paseo", "/Users/me/projects"]);
+  });
+
+  it("filters retained server paths locally for narrower queries", () => {
+    expect(
+      filterDirectoryPathsByQuery(
+        ["/Users/me/Code", "/Users/me/Code/paseo", "/Users/me/Code/other"],
+        "~/Code/pas",
+      ),
+    ).toEqual(["/Users/me/Code/paseo"]);
+    expect(filterDirectoryPathsByQuery(["/Users/me/Code", "/Users/me/Code/paseo"], "  ")).toEqual(
+      [],
+    );
   });
 });

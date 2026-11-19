@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectPickerOptions, isOpenableProjectPath } from "./project-picker-options";
+import {
+  buildProjectPickerOptions,
+  formatDirectoryCompletion,
+  isOpenableProjectPath,
+} from "./project-picker-options";
 
 describe("isOpenableProjectPath", () => {
-  it("accepts POSIX, tilde, Windows drive-letter, and UNC paths", () => {
+  it("accepts POSIX, tilde, full-width tilde, Windows drive-letter, and UNC paths", () => {
     expect(isOpenableProjectPath("/repo")).toBe(true);
+    expect(isOpenableProjectPath("~")).toBe(true);
+    expect(isOpenableProjectPath("~/")).toBe(true);
     expect(isOpenableProjectPath("~/src")).toBe(true);
+    expect(isOpenableProjectPath("~\\src")).toBe(true);
+    expect(isOpenableProjectPath("～")).toBe(true);
+    expect(isOpenableProjectPath("～/src")).toBe(true);
     expect(isOpenableProjectPath("C:\\Users\\mo")).toBe(true);
     expect(isOpenableProjectPath("c:/users/mo")).toBe(true);
     expect(isOpenableProjectPath("\\\\server\\share")).toBe(true);
   });
 
-  it("rejects relative input", () => {
+  it("rejects relative and non-separator tilde input", () => {
     expect(isOpenableProjectPath("repo")).toBe(false);
     expect(isOpenableProjectPath("repo/sub")).toBe(false);
     expect(isOpenableProjectPath("c:repo")).toBe(false);
+    expect(isOpenableProjectPath("~repo")).toBe(false);
+    expect(isOpenableProjectPath("～repo")).toBe(false);
     expect(isOpenableProjectPath("")).toBe(false);
   });
 });
@@ -76,5 +87,58 @@ describe("buildProjectPickerOptions", () => {
     });
 
     expect(options).toEqual([{ kind: "suggestion", path: "/repo/app" }]);
+  });
+
+  it("does not duplicate an existing suggestion when typed with a tilde or trailing slash", () => {
+    expect(
+      buildProjectPickerOptions({
+        recommendedPaths: [],
+        serverPaths: ["/Users/mo/src", "/Users/mo/src/api"],
+        query: "~/src",
+      }),
+    ).toEqual([
+      { kind: "suggestion", path: "/Users/mo/src" },
+      { kind: "suggestion", path: "/Users/mo/src/api" },
+    ]);
+
+    expect(
+      buildProjectPickerOptions({
+        recommendedPaths: [],
+        serverPaths: ["/Users/mo/src", "/Users/mo/src/api"],
+        query: "～/src/",
+      }),
+    ).toEqual([
+      { kind: "suggestion", path: "/Users/mo/src" },
+      { kind: "suggestion", path: "/Users/mo/src/api" },
+    ]);
+  });
+
+  it("normalizes a full-width tilde when creating an open-path row", () => {
+    const options = buildProjectPickerOptions({
+      recommendedPaths: [],
+      serverPaths: [],
+      query: "～/src",
+    });
+
+    expect(options).toEqual([{ kind: "path", path: "~/src" }]);
+  });
+});
+
+describe("formatDirectoryCompletion", () => {
+  it("shortens home paths to tilde form with a trailing slash for word and tilde queries", () => {
+    expect(formatDirectoryCompletion("/Users/mo/Code", "~/Co")).toBe("~/Code/");
+    expect(formatDirectoryCompletion("/Users/mo/Code", "Code")).toBe("~/Code/");
+    expect(formatDirectoryCompletion("/Users/mo/Code", "～/Co")).toBe("~/Code/");
+    expect(formatDirectoryCompletion("~/Code", "~/Co")).toBe("~/Code/");
+    expect(formatDirectoryCompletion("~/Code/", "~/Code/")).toBe("~/Code/");
+    expect(formatDirectoryCompletion("~", "~")).toBe("~/");
+  });
+
+  it("preserves explicit POSIX absolute paths and Windows separators", () => {
+    expect(formatDirectoryCompletion("/Users/mo/Code", "/Users/mo/Co")).toBe("/Users/mo/Code/");
+    expect(formatDirectoryCompletion("/", "/")).toBe("/");
+    expect(formatDirectoryCompletion("C:\\Users\\mo\\Code", "C:\\Users\\mo")).toBe(
+      "C:\\Users\\mo\\Code\\",
+    );
   });
 });
