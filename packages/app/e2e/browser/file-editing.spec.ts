@@ -777,7 +777,9 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
     await selectFileView(page, "Preview");
-    await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(
+      visibleFilePane.getByRole("heading", { name: "Saved from source", exact: true }),
+    ).toBeVisible();
     await expect(toolbar.getByLabel("Line 1, column 1")).toHaveCount(0);
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).not.toBeVisible();
@@ -864,7 +866,7 @@ test.describe("CodeMirror workspace file editing", () => {
 
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
-    await expect(preview.host).toHaveCount(0);
+    await expect(preview.host).toBeHidden();
     await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
   });
