@@ -48,7 +48,9 @@ function emit(frame) {
     converted.result.conversation_id = conversationId;
     if (process.env.AGY_TEST_DENIAL_COUNTS && converted.result.denied_actions?.length) {
       converted.result.denied_actions = Array.from(
-        { length: Number(process.env.AGY_TEST_DENIAL_COUNTS.split(",")[denialResults++]) },
+        {
+          length: Number(process.env.AGY_TEST_DENIAL_COUNTS.split(",")[denialResults++]),
+        },
         () => converted.result.denied_actions[0],
       );
     }
@@ -60,20 +62,93 @@ if (args.includes("--model")) init.init.model = args[args.indexOf("--model") + 1
 emit(init);
 let interrupted = null;
 const turns = new Map();
+const FIXTURE_MARKERS = [
+  ["Attached image: ", "image-file-external"],
+  ["TOOLS", "tools-default"],
+  ["DENIAL_REPLAY", "denial-replay"],
+  ["SUBAGENT", "subagent"],
+  ["MULTI", "multi-turn-reasoning"],
+  ["RESUME", "resume"],
+  ["HANG", "sigint-mid-text"],
+  ["TOOL_HANG", "sigint-mid-tool"],
+];
+function resolveFixtureName(text) {
+  for (const [marker, fixtureName] of FIXTURE_MARKERS) {
+    if (text.includes(marker)) return fixtureName;
+  }
+  return "text-turn";
+}
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const input = JSON.parse(line);
   record({ input });
   const text = input.message.content;
-  let name = "text-turn";
-  if (text.includes("Attached image: ")) name = "image-file-external";
-  if (text.includes("TOOLS")) name = "tools-default";
-  if (text.includes("DENIAL_REPLAY")) name = "denial-replay";
-  if (text.includes("SUBAGENT")) name = "subagent";
-  if (text.includes("MULTI")) name = "multi-turn-reasoning";
-  if (text.includes("RESUME")) name = "resume";
-  if (text.includes("HANG")) name = "sigint-mid-text";
-  if (text.includes("TOOL_HANG")) name = "sigint-mid-tool";
+  const name = resolveFixtureName(text);
+  if (
+    text.includes("STREAM_INTERRUPT_ALWAYS") ||
+    (turns.get("stream-interrupt-always") &&
+      text.includes("The stream was interrupted. Please continue"))
+  ) {
+    turns.set("stream-interrupt-always", (turns.get("stream-interrupt-always") || 0) + 1);
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "The stream was interrupted. Please continue the task you were working on.",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
+  if (text.includes("STREAM_INTERRUPT_ONCE")) {
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "",
+        error: "The stream was interrupted. Please continue the task you were working on.",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
+  if (text.includes("RECOVERED_TURN_WITH_STALE_ERROR")) {
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 5,
+        state: "ACTIVE",
+        step_type: "agent_response",
+        text_delta: "Recovered final answer.",
+      },
+    });
+    emit({
+      event: "step_update",
+      step_update: {
+        conversation_id: conversationId,
+        step_index: 5,
+        state: "DONE",
+        step_type: "agent_response",
+        text_delta: "",
+      },
+    });
+    emit({
+      event: "result",
+      result: {
+        conversation_id: conversationId,
+        status: "ERROR",
+        response: "Recovered final answer.",
+        error:
+          "API error (attempt 1): request failed: stream idle timeout (10m0s): context deadline exceeded",
+        denied_actions: [],
+      },
+    });
+    return;
+  }
   const frames = fixture(name).slice(1);
   if (name.startsWith("sigint")) {
     interrupted = frames[frames.length - 1];

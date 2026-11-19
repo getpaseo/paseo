@@ -47,6 +47,7 @@ import type {
   AgentSlashCommand,
   AgentStreamEvent,
   AgentTimelineItem,
+  AgentUsageSession,
   FetchCatalogOptions,
   ImportableProviderSession,
   ImportedProviderSession,
@@ -967,6 +968,7 @@ class PluginAgentClient implements AgentClient {
 
   constructor(registration: ProviderRegistration, runtimeSettings?: ProviderRuntimeSettings) {
     this.provider = registration.id;
+    this.runtimeSettings = runtimeSettings;
     this.runtime = new ProviderRuntime(registration, runtimeSettings);
     if (registration.getCatalogCacheKey)
       this.getCatalogCacheKey = (options) => this.runtime.catalogCacheKey(options);
@@ -1138,6 +1140,10 @@ class PluginAgentClient implements AgentClient {
       },
       bind,
       config.settings,
+      createProviderEnv({
+        runtimeSettings: this.runtimeSettings,
+        overlays: [config.env],
+      }),
     );
     bind(bridge);
     return session;
@@ -1226,6 +1232,7 @@ class PluginAgentSession implements AgentSession {
     closed: boolean;
   } | null = null;
   private replaying: Promise<void> | null = null;
+  private readonly usageSessionKey = randomUUID();
 
   constructor(
     readonly provider: string,
@@ -1238,6 +1245,7 @@ class PluginAgentSession implements AgentSession {
     ) => Promise<ProviderRuntimeSession>,
     private readonly onBind: (bridge: ProviderRuntimeSession) => void,
     givenOptions: Readonly<Record<string, JsonValue>>,
+    private readonly launchEnv: Record<string, string> = {},
   ) {
     this.subagentIdsBySession.set(bridge.id, null);
     // Every setting the session opened with that was not given, including ones nobody set.
@@ -1255,6 +1263,16 @@ class PluginAgentSession implements AgentSession {
 
   get id(): string {
     return this.describePersistence()?.sessionId ?? this.bridge.id;
+  }
+
+  usageSession(): AgentUsageSession | null {
+    if (this.closed) return null;
+    return {
+      provider: this.provider,
+      model: this.bridge.config.model ?? undefined,
+      env: this.launchEnv,
+      sessionKey: this.usageSessionKey,
+    };
   }
 
   get capabilities(): AgentCapabilityFlags {

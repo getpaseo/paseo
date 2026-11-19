@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type {
   ProviderCatalog,
+  ProviderCommand,
   ProviderConfigChanges,
   ProviderEvent,
   ProviderPersistence,
@@ -12,16 +16,139 @@ import type {
   ProviderUsage,
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
-import { validateSelection } from "./catalog.js";
+import {
+  getModelContextWindow,
+  getThinkingOptionsForModel,
+  supportsEffort,
+  validateSelection,
+} from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
+const BUILTIN_COMMANDS: readonly ProviderCommand[] = [
+  { name: "plan", description: "Plan carefully before executing a task." },
+  {
+    name: "compact",
+    description: "Compact the conversation now (summarize history to free up the context window).",
+  },
+  {
+    name: "goal",
+    description: "Run until the specified goal is completely finished.",
+  },
+  { name: "grill-me", description: "Interview me to align on a plan." },
+  {
+    name: "learn",
+    description: "Reflect on recent successes or corrections to capture reusable skills or rules.",
+  },
+  { name: "browser", description: "Invoke a browser agent for web tasks." },
+  {
+    name: "schedule",
+    description: "Run an instruction on a recurring schedule or as a one-time timer.",
+  },
+  {
+    name: "usage",
+    description: "Show Antigravity 5-hour and weekly quota usage.",
+  },
+];
+
+function discoverCommands(cwd: string | undefined, homeDir: string): ProviderCommand[] {
+  const seen = new Set<string>();
+  const result: ProviderCommand[] = [];
+  for (const cmd of BUILTIN_COMMANDS) {
+    seen.add(cmd.name);
+    result.push({ ...cmd });
+  }
+  const skillDirs = [
+    ...(cwd ? [path.join(cwd, ".agent", "skills")] : []),
+    path.join(homeDir, ".gemini", "antigravity-cli", "skills"),
+    path.join(homeDir, ".gemini", "antigravity-cli", "builtin", "skills"),
+  ];
+  for (const dir of skillDirs) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const skillMd = path.join(dir, entry.name, "SKILL.md");
+      let raw: string;
+      try {
+        raw = fs.readFileSync(skillMd, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const fmMatch = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
+      let name = entry.name;
+      let description = `Run skill ${entry.name}`;
+      if (fmMatch) {
+        const nameMatch = /^name:\s*(.+)$/m.exec(fmMatch[1]);
+        const descMatch = /^description:\s*(.+)$/m.exec(fmMatch[1]);
+        if (nameMatch) name = nameMatch[1].trim().replace(/^["']|["']$/g, "");
+        if (descMatch) description = descMatch[1].trim().replace(/^["']|["']$/g, "");
+      }
+      if (!seen.has(name)) {
+        seen.add(name);
+        result.push({ name, description });
+      }
+    }
+  }
+  return result;
+}
+
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_RETRY_DELAY_MS = 1_500;
+const TRANSIENT_CONTINUATION_PROMPT =
+  "Error: The stream was interrupted. Please continue the task you were working on.";
+const SAFETY_CONTINUATION_PROMPT =
+  "Your previous response was blocked by content safety filters. Please provide a response that complies with content policies without repeating the blocked command or text.";
+
+function recoverableTurnPrompt(error: string): string | null {
+  if (
+    error.includes("The stream was interrupted") ||
+    error.includes("stream idle timeout") ||
+    error.includes("context deadline exceeded") ||
+    error.includes("UNAVAILABLE (code 503)") ||
+    error.includes("Service Unavailable")
+  ) {
+    return TRANSIENT_CONTINUATION_PROMPT;
+  }
+  if (error.includes("blocked by content safety filters") || error.includes("Retries remaining:")) {
+    return SAFETY_CONTINUATION_PROMPT;
+  }
+  return null;
+}
+
+function hasCompletedResponse(turn: Turn, error: string): boolean {
+  if (error === "interrupted") return false;
+  if (
+    turn.lastStepIndex === undefined ||
+    turn.lastStepType !== "agent_response" ||
+    turn.lastStepState !== "DONE"
+  ) {
+    return false;
+  }
+  const finalText = turn.text.get(turn.lastStepIndex) ?? "";
+  return finalText.trim().length > 0;
+}
+
 const persistenceSchema = z
-  .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
+  .object({
+    version: z.literal(1),
+    data: z.object({ conversationId: z.string().min(1) }).strict(),
+  })
   .strict();
 interface Turn {
   id: string;
+  retries: number;
+  retryTimer?: ReturnType<typeof setTimeout>;
+  lastStepIndex?: number;
+  lastStepType?: string;
+  lastStepState?: "ACTIVE" | "DONE" | "ERROR";
   text: Map<number, string>;
   usageSteps: Set<number>;
   tools: Map<string, Extract<ProviderTimelineItem, { type: "tool_call" }>>;
@@ -38,9 +165,162 @@ interface SessionOptions {
   id: string;
   config: ProviderSessionConfig;
   launch: ProviderLaunch;
+  history?: "replay" | "skip";
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
   emit(event: ProviderEvent): void;
+}
+
+interface SavedContextUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  usedTokens: number;
+}
+
+interface ReplayHistoryOptions {
+  conversationId: string | null;
+  sessionId: string;
+  homeDir: string;
+  emit: (event: ProviderEvent) => void;
+}
+
+const transcriptLineSchema = z.object({
+  step_index: z.number().optional(),
+  type: z.string().optional(),
+  content: z.string().optional(),
+  thinking: z.string().optional(),
+  created_at: z.string().optional(),
+  input_tokens: z.number().optional(),
+  cache_read_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+});
+
+function extractUserText(content: string): string {
+  const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(content);
+  return (match ? match[1] : content).trim();
+}
+
+function resolveTranscriptPath(conversationId: string, homeDir: string): string {
+  const logDir = path.join(
+    homeDir,
+    ".gemini",
+    "antigravity-cli",
+    "brain",
+    conversationId,
+    ".system_generated",
+    "logs",
+  );
+  const fullPath = path.join(logDir, "transcript_full.jsonl");
+  if (fs.existsSync(fullPath)) return fullPath;
+  return path.join(logDir, "transcript.jsonl");
+}
+
+function readTranscriptContent(conversationId: string | null, homeDir: string): string | null {
+  if (!conversationId) return null;
+  try {
+    return fs.readFileSync(resolveTranscriptPath(conversationId, homeDir), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function replayHistoryFromTranscript(options: ReplayHistoryOptions): void {
+  const { conversationId, sessionId, homeDir, emit } = options;
+  const content = readTranscriptContent(conversationId, homeDir);
+  if (!content) return;
+
+  const lines = content.trim().split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const parsed = transcriptLineSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const obj = parsed.data;
+    const stepKey = obj.step_index ?? index;
+    if (obj.type === "USER_INPUT" && typeof obj.content === "string") {
+      const text = extractUserText(obj.content);
+      if (!text || text === TRANSIENT_CONTINUATION_PROMPT || text === SAFETY_CONTINUATION_PROMPT)
+        continue;
+      emit({
+        type: "timeline.item",
+        sessionId,
+        timestamp: obj.created_at,
+        item: {
+          type: "user_message",
+          id: `user-${stepKey}`,
+          messageId: `user-${stepKey}`,
+          text,
+        },
+      });
+    } else if (obj.type === "PLANNER_RESPONSE") {
+      if (typeof obj.thinking === "string" && obj.thinking.trim().length > 0) {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          timestamp: obj.created_at,
+          item: {
+            type: "reasoning",
+            id: `reasoning-${stepKey}`,
+            text: obj.thinking.trim(),
+          },
+        });
+      }
+      if (typeof obj.content === "string" && obj.content.trim().length > 0) {
+        emit({
+          type: "timeline.item",
+          sessionId,
+          timestamp: obj.created_at,
+          item: {
+            type: "assistant_message",
+            id: `assistant-${stepKey}`,
+            messageId: `assistant-${stepKey}`,
+            text: obj.content,
+          },
+        });
+      }
+    }
+  }
+}
+
+function readLastContextUsage(
+  conversationId: string | null,
+  homeDir: string,
+): SavedContextUsage | null {
+  const content = readTranscriptContent(conversationId, homeDir);
+  if (!content) return null;
+
+  const lines = content.trim().split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const parsed = transcriptLineSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const obj = parsed.data;
+    if (typeof obj.input_tokens === "number") {
+      const inputTokens = obj.input_tokens;
+      const cachedInputTokens = obj.cache_read_tokens ?? 0;
+      const outputTokens = obj.output_tokens ?? 0;
+      return {
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        usedTokens: inputTokens + cachedInputTokens + outputTokens,
+      };
+    }
+  }
+  return null;
 }
 
 export class Session {
@@ -52,7 +332,13 @@ export class Session {
   private readonly reportedDenials = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {
-    this.config = { ...options.config, mode: options.config.mode ?? "full-access" };
+    this.config = {
+      ...options.config,
+      mode: options.config.mode ?? "full-access",
+      thinkingOption: supportsEffort(options.config.model)
+        ? options.config.thinkingOption
+        : undefined,
+    };
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
@@ -74,22 +360,58 @@ export class Session {
     });
     this.publishFullAccessNotice();
     this.publishConfig();
-    this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    const homeDir = this.resolveHomeDir();
+    this.emit({
+      type: "session.commands",
+      sessionId: this.options.id,
+      commands: discoverCommands(this.config.cwd, homeDir),
+    });
+
+    if (this.options.history === "replay") {
+      replayHistoryFromTranscript({
+        conversationId: this.conversationId,
+        sessionId: this.options.id,
+        homeDir,
+        emit: (e) => this.emit(e),
+      });
+    }
+
+    const lastUsage = readLastContextUsage(this.conversationId, homeDir);
+    const currentModelId = this.config.model;
+    const catalogModel = currentModelId
+      ? this.options.catalog().models.find((m) => m.id === currentModelId)
+      : undefined;
+    const contextWindowMaxTokens =
+      catalogModel?.contextWindowMaxTokens ??
+      (currentModelId ? getModelContextWindow(currentModelId) : 1_048_576);
+
+    if (lastUsage) {
+      this.emit({
+        type: "session.usage",
+        sessionId: this.options.id,
+        usage: {
+          inputTokens: lastUsage.inputTokens,
+          cachedInputTokens: lastUsage.cachedInputTokens,
+          outputTokens: lastUsage.outputTokens,
+          contextWindowMaxTokens,
+          contextWindowUsedTokens: lastUsage.usedTokens,
+        },
+      });
+    }
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
   async prompt(prompt: ProviderPrompt): Promise<void> {
-    if (this.state.type === "running")
-      throw new AntigravityError(
-        "Antigravity already has an active turn; wait for it to finish",
-        "TURN_ACTIVE",
-      );
+    if (this.state.type === "running") {
+      await this.interrupt();
+    }
     const { text, nativeText } = await this.promptFiles.encode(prompt);
     await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
     const turn: Turn = {
       id: randomUUID(),
+      retries: 0,
       text: new Map(),
       usageSteps: new Set(),
       tools: new Map(),
@@ -129,18 +451,39 @@ export class Session {
   }
 
   configure(changes: ProviderConfigChanges): void {
+    const nextSettings = { ...this.config.settings };
+    if (changes.settings) {
+      for (const [key, value] of Object.entries(changes.settings)) {
+        if (key !== "sandbox") {
+          throw new AntigravityError(`Unknown Antigravity setting: ${key}`);
+        }
+        nextSettings.sandbox = Boolean(value);
+      }
+    }
+    const nextModel = changes.model === null ? undefined : (changes.model ?? this.config.model);
+    const catalog = this.options.catalog();
+    const modelThinkingOptions = getThinkingOptionsForModel(nextModel, catalog);
+    let nextThinkingOption =
+      changes.thinkingOption === null
+        ? undefined
+        : (changes.thinkingOption ?? this.config.thinkingOption);
+    if (!supportsEffort(nextModel)) {
+      nextThinkingOption = undefined;
+    } else if (
+      changes.thinkingOption === undefined &&
+      nextThinkingOption &&
+      !modelThinkingOptions.some((option) => option.id === nextThinkingOption)
+    ) {
+      nextThinkingOption = undefined;
+    }
     const config = {
       ...this.config,
-      model: changes.model === null ? undefined : (changes.model ?? this.config.model),
+      model: nextModel,
       mode: changes.mode === null ? "full-access" : (changes.mode ?? this.config.mode),
-      thinkingOption:
-        changes.thinkingOption === null
-          ? undefined
-          : (changes.thinkingOption ?? this.config.thinkingOption),
+      thinkingOption: nextThinkingOption,
+      settings: nextSettings,
     };
-    if (changes.settings && Object.keys(changes.settings).length > 0)
-      throw new AntigravityError("Antigravity has no configurable settings");
-    validateSelection(config, this.options.catalog());
+    validateSelection(config, catalog);
     this.config = config;
     this.publishConfig();
   }
@@ -148,6 +491,7 @@ export class Session {
   async interrupt(): Promise<void> {
     if (this.state.type !== "running") return;
     const { driver, turn } = this.state;
+    clearTimeout(turn.retryTimer);
     this.state = { type: "stopping", driver };
     await driver.stop("interrupt");
     this.finishTools(turn, "canceled");
@@ -162,6 +506,7 @@ export class Session {
 
   async close(): Promise<void> {
     const state = this.state;
+    if (state.type === "running") clearTimeout(state.turn.retryTimer);
     this.state = { type: "closed" };
     try {
       if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
@@ -259,7 +604,34 @@ export class Session {
         },
       });
     }
-    if (result.status === "ERROR") {
+    if (result.status === "ERROR" && !hasCompletedResponse(turn, result.error)) {
+      const retryPrompt = recoverableTurnPrompt(result.error);
+      if (retryPrompt && turn.retries < MAX_TRANSIENT_RETRIES) {
+        turn.retries += 1;
+        const delayMs = this.options.launch.env?.AGY_TEST_LOG ? 10 : TRANSIENT_RETRY_DELAY_MS;
+        clearTimeout(turn.retryTimer);
+        turn.retryTimer = setTimeout(() => {
+          turn.retryTimer = undefined;
+          if (
+            this.state.type !== "running" ||
+            this.state.turn !== turn ||
+            this.state.driver !== driver
+          )
+            return;
+          void driver.prompt(retryPrompt).catch((error) => {
+            if (
+              this.state.type === "running" &&
+              this.state.turn === turn &&
+              this.state.driver === driver
+            ) {
+              this.failTurn(
+                new AntigravityError(error instanceof Error ? error.message : String(error)),
+              );
+            }
+          });
+        }, delayMs);
+        return;
+      }
       const canceled = result.error === "interrupted";
       this.finishTools(turn, canceled ? "canceled" : "failed");
       this.retire(driver);
@@ -271,6 +643,7 @@ export class Session {
         error: { message: diagnostic(result.error) },
       });
     } else {
+      clearTimeout(turn.retryTimer);
       this.finishTools(turn, "completed");
       this.state = { type: "idle", driver };
       this.emit({
@@ -284,6 +657,11 @@ export class Session {
 
   private acceptStep(step: Step, turn: Turn): void {
     const id = `${turn.id}:${step.step_index}`;
+    if (turn.lastStepIndex === undefined || step.step_index >= turn.lastStepIndex) {
+      turn.lastStepIndex = step.step_index;
+      turn.lastStepType = step.step_type;
+      turn.lastStepState = step.state;
+    }
     if (step.step_type === "agent_response") {
       const previous = turn.text.get(step.step_index) || "";
       const text = previous + step.text_delta;
@@ -294,11 +672,24 @@ export class Session {
         turn.usage.inputTokens += step.usage.input_tokens;
         turn.usage.outputTokens += step.usage.output_tokens;
         turn.usage.cachedInputTokens += step.usage.cache_read_tokens;
+        const currentModelId = this.config.model;
+        const catalogModel = currentModelId
+          ? this.options.catalog().models.find((m) => m.id === currentModelId)
+          : undefined;
+        const contextWindowMaxTokens =
+          catalogModel?.contextWindowMaxTokens ??
+          (currentModelId ? getModelContextWindow(currentModelId) : 1_048_576);
+        const contextWindowUsedTokens =
+          step.usage.input_tokens + step.usage.cache_read_tokens + step.usage.output_tokens;
         this.emit({
           type: "session.usage",
           sessionId: this.options.id,
           turnId: turn.id,
-          usage: { ...turn.usage },
+          usage: {
+            ...turn.usage,
+            contextWindowMaxTokens,
+            contextWindowUsedTokens,
+          },
         });
       }
     } else if (step.step_type === "tool" || step.step_type === "subagent") {
@@ -311,6 +702,7 @@ export class Session {
   private failTurn(error: AntigravityError): void {
     const state = this.state;
     if (state.type !== "running" && state.type !== "idle") return;
+    if (state.type === "running") clearTimeout(state.turn.retryTimer);
     this.retire(state.driver);
     if (state.type === "running") {
       this.finishTools(state.turn, "failed");
@@ -351,17 +743,42 @@ export class Session {
     return { version: 1, data: { conversationId: this.conversationId } };
   }
 
+  private resolveHomeDir(): string {
+    return (
+      this.config.env?.HOME ?? this.options.launch?.env?.HOME ?? process.env.HOME ?? os.homedir()
+    );
+  }
+
   private publishConfig(): void {
+    const model = this.config.model;
+    const catalog = this.options.catalog();
+    const thinkingOptions = getThinkingOptionsForModel(model, catalog);
+    const suffixMatch = model ? /^(gemini-[^]+)-(low|medium|high|xhigh)$/.exec(model) : null;
+    let defaultEffort: string | undefined;
+    if (thinkingOptions.length > 0) {
+      defaultEffort = suffixMatch ? suffixMatch[2] : "high";
+    }
+    const inferredEffort =
+      thinkingOptions.length > 0 ? (this.config.thinkingOption ?? defaultEffort) : undefined;
     this.emit({
       type: "session.config",
       sessionId: this.options.id,
       config: {
         model: this.config.model,
         mode: this.config.mode || "full-access",
-        models: this.options.catalog().models,
-        modes: this.options.catalog().modes,
-        thinkingOptions: [],
-        settings: [],
+        thinkingOption: inferredEffort,
+        models: catalog.models,
+        modes: catalog.modes,
+        thinkingOptions,
+        settings: [
+          {
+            type: "toggle",
+            id: "sandbox",
+            label: "Sandbox",
+            description: "Run in a sandbox with terminal restrictions enabled (--sandbox)",
+            value: Boolean(this.config.settings?.sandbox),
+          },
+        ],
       },
     });
   }
