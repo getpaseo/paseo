@@ -124,6 +124,18 @@
       "metaTitle": "Antigravity 开源移动端与桌面端应用",
       "metaDescription": "通过 Paseo 运行你已安装的 Antigravity CLI。在手机或桌面端观察 Agent 工作并审查改动。自托管，代码留在你的机器上。"
     },
+    "fx": {
+      "title": "fx 的开源应用",
+      "subtitle": "在你的机器上运行 Vercel Labs 的 fx，从手机或桌面端操控。",
+      "metaTitle": "fx 开源移动端与桌面端应用",
+      "metaDescription": "Vercel Labs 编程 Agent fx 的开源移动端与桌面端应用。运行你已安装的 fx CLI，随时随地观察 Agent 工作并审查改动。自托管。"
+    },
+    "hoplite": {
+      "title": "Hoplite 的开源应用",
+      "subtitle": "从手机或桌面端操控 Hoplite 的云端编程 Agent，与你的其他 Agent 并列使用。",
+      "metaTitle": "Hoplite 开源移动端与桌面端应用",
+      "metaDescription": "Hoplite 的开源移动端与桌面端应用。通过你已安装的 Hoplite CLI 启动 Hoplite 的云端编程 Agent，随时随地观察它工作并审查改动。"
+    },
     "copilot": {
       "title": "GitHub Copilot 的开源应用",
       "subtitle": "从手机或桌面端操控 GitHub Copilot。同一个账号，同一台机器，不必坐在桌前也能交付。",
@@ -333,7 +345,7 @@
     "metaTitle": "支持的 Agent – Paseo 可运行的所有编程 Agent",
     "metaDescription": "在手机上运行 Claude Code、Codex、OpenCode、Pi、OMP、Cursor、Muse Code、Antigravity 以及数十个其他编程 Agent。自托管，代码留在你的机器上。",
     "title": "支持的 Agent",
-    "intro": "Paseo 原生支持许多 Agent，可以运行任何 <acp>ACP Agent</acp>，你还可以通过<plugins>插件</plugins>实现新的 Provider。"
+    "intro": "Paseo 原生支持许多 Agent，还可以运行任何 <acp>ACP Agent</acp>，你也可以通过<plugins>插件</plugins>添加新的 Provider。"
   },
   "landing": {
     "socialProof": {
@@ -446,7 +458,8 @@
     },
     "mockup": {
       "alt": "Paseo 桌面应用，并排打开了编程 Agent、一段对话和一份代码 diff",
-      "build": "并行 Agent",
+      "orchestrate": "编排",
+      "remote": "远程",
       "review": "代码审查",
       "ship": "Pull Request",
       "extend": "插件",
@@ -459,6 +472,15 @@
         "working": "运行中",
         "done": "已完成",
         "addProject": "添加 project",
+        "addHost": "添加主机",
+        "hosts": "主机",
+        "agentCount": "{{count}} 个 Agent",
+        "hostLinks": {
+          "local": "本地",
+          "relay": "中继",
+          "tailscale": "Tailscale",
+          "ssh": "SSH"
+        },
         "files": "文件",
         "changes": "变更",
         "uncommitted": "未 commit",
@@ -473,6 +495,11 @@
         "tasksProgress": "{{completed}}/{{total}} 项任务",
         "composerPlaceholder": "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
         "mobileComposerPlaceholder": "发消息，@files，/commands",
+        "reviewCommentPlaceholder": "留下评论",
+        "reviewCancel": "取消",
+        "reviewSave": "评论",
+        "sendFeedback": "发送反馈 ({{count}})",
+        "feedbackSent": "已向 {{recipient}} 发送反馈",
         "plugin": "插件",
         "mergedWeek": "已合并 · 7 天",
         "inReview": "审查中",
@@ -482,7 +509,8 @@
         "minutesAgo": "{{count}} 分钟前",
         "hoursAgo": "{{count}} 小时前",
         "reviewing": "审查中",
-        "subagents": "{{count}} 个 subagent",
+        "subagents_one": "{{count}} 个 subagent",
+        "subagents_other": "{{count}} 个 subagent",
         "checksPassedShort": "通过"
       }
     }

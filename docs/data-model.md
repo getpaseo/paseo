@@ -590,6 +590,16 @@ bookkeeping may scan opaque row sizes during a deferred write, never during host
 before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
 source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
 
+### Saved hosts
+
+**AsyncStorage key:** `@paseo:daemon-registry`, an array of host profiles.
+
+Every app build on a device shares this key, including an older build after a downgrade and a newer
+one that saves a connection kind this build doesn't know. The key holds every saved host and its
+password, so never remove it. Read each host and connection on its own, skip the ones this build
+can't read, and write them back on every save. A value that isn't a JSON array is copied to
+`@paseo:daemon-registry:unreadable` before the next save overwrites it.
+
 ### Draft Store
 
 **AsyncStorage key:** `paseo-drafts` (version 2)

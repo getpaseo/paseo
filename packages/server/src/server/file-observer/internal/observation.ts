@@ -65,11 +65,13 @@ class Observation implements ManagedObservation, ObservationHost {
   }
 
   async start(): Promise<void> {
-    const rootStats = await stat(this.root);
-    if (!rootStats.isDirectory()) {
-      throw new Error(`File observation requires a directory: ${this.root}`);
-    }
     try {
+      const rootStats = await stat(this.root);
+      if (!rootStats.isDirectory()) {
+        throw new Error(`File observation requires a directory: ${this.root}`);
+      }
+      // Shutdown can close the observation while stat is pending.
+      if (!this.isActive()) return;
       await this.backend.start();
     } catch (error) {
       await this.close();

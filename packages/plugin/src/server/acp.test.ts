@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { runAcpProvider, type AcpStreamMessage } from "./acp.js";
 
 const temporaryDirectories: string[] = [];
@@ -51,7 +52,7 @@ function openInput(
     type: "session.open",
     requestId: "open-1",
     sessionId: "session-1",
-    config: { cwd: "/repo", env: {}, mcpServers: {}, settings, persist: true },
+    config: { cwd: process.cwd(), env: {}, mcpServers: {}, settings, persist: true },
     history: "skip",
   };
 }
@@ -225,6 +226,306 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
+  it.each(["replay", "skip"] as const)(
+    "handles trailing load updates with %s history",
+    async (history) => {
+      const sessionId = "connector-session";
+      const notifyUpdate = (runtime: ConnectorInstance, update: unknown) =>
+        runtime.notify("session/update", { sessionId, update });
+      const { connector, instances } = connectorHarness({
+        capabilities: { loadSession: true },
+        handleRequest(runtime, request) {
+          if (request.method !== "session/load") return false;
+          notifyUpdate(runtime, {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "help", description: "Help" }],
+          });
+          runtime.respond(request, { configOptions: [] });
+          setTimeout(() => {
+            notifyUpdate(runtime, {
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: "previous question" },
+            });
+            notifyUpdate(runtime, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "previous answer" },
+            });
+          }, 100);
+          return true;
+        },
+      });
+      const connection = await runAcpProvider({
+        id: "load",
+        label: "Load",
+        connector,
+        acpOptions: {
+          waitForInitialCommands: true,
+          initialCommandsTimeoutMs: 10_000,
+          loadReplayQuietPeriodMs: 200,
+        },
+      }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send({
+          ...openInput(),
+          history,
+          persistence: { version: 1, data: { sessionId } },
+        });
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        notifyUpdate(instances[1], {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "stale history outside the replay window" },
+        });
+        notifyUpdate(instances[1], {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "different", description: "Different" }],
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.commands" && event.commands[0]?.name === "different",
+        );
+        const items = events
+          .filter((event) => event.type === "timeline.item")
+          .map((event) => event.item);
+        expect(items).toEqual(
+          history === "skip"
+            ? []
+            : [
+                expect.objectContaining({ type: "user_message", text: "previous question" }),
+                expect.objectContaining({ type: "assistant_message", text: "previous answer" }),
+              ],
+        );
+        expect(events.some((event) => event.type === "session.turn")).toBe(false);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
+  it("auto-accepts ordinary permissions only in the unattended mode and refuses to switch while busy", async () => {
+    const modeConfig = {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: "default",
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    };
+    const approval = {
+      sessionId: "connector-session",
+      toolCall: { toolCallId: "tool", title: "Write a file", rawInput: {} },
+      options: [
+        { optionId: "always", name: "Always allow", kind: "allow_always" },
+        { optionId: "once", name: "Allow once", kind: "allow_once" },
+        { optionId: "deny", name: "Deny", kind: "reject_once" },
+      ],
+    };
+    let finishPrompt: (() => void) | undefined;
+    let stopping = false;
+    const outcomes: unknown[] = [];
+    const { connector } = connectorHarness({
+      configOptions: [modeConfig],
+      handleMessage(_runtime, message) {
+        if (!("method" in message) || message.method !== "session/cancel") return false;
+        stopping = true;
+        return true;
+      },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/prompt") return false;
+        void runtime.request("session/request_permission", approval).then((outcome) => {
+          outcomes.push(outcome);
+          if (stopping) {
+            stopping = false;
+            runtime.respond(request, { stopReason: "cancelled" });
+          } else {
+            finishPrompt = () => runtime.respond(request, { stopReason: "end_turn" });
+          }
+          return undefined;
+        });
+        return true;
+      },
+    });
+    const connection = await runAcpProvider({
+      id: "unattended",
+      label: "Unattended",
+      connector,
+      acpOptions: {
+        autoAcceptMode: {
+          mode: { id: "full-access", label: "Full access" },
+          nativeMode: "default",
+          default: true,
+        },
+      },
+    }).connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.configure", "permission"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    const configure = async (requestId: string, mode: string) => {
+      await connection.send({
+        type: "session.configure",
+        requestId,
+        sessionId: "session-1",
+        changes: { mode },
+      });
+      return waitForEvent(events, (event) => "requestId" in event && event.requestId === requestId);
+    };
+    const prompt = (id: string) =>
+      connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: id,
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: id }] },
+        },
+      });
+    try {
+      await connection.send({ type: "catalog", requestId: "catalog" });
+      expect(await waitForEvent(events, (event) => event.type === "catalog")).toMatchObject({
+        catalog: {
+          defaultMode: "full-access",
+          modes: expect.arrayContaining([
+            { id: "full-access", label: "Full access", isUnattended: true },
+          ]),
+        },
+      });
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await prompt("unattended");
+      await expect
+        .poll(() => outcomes[0])
+        .toEqual({ outcome: { outcome: "selected", optionId: "once" } });
+      expect(events.some((event) => event.type === "session.permission")).toBe(false);
+      expect(await configure("busy", "plan")).toMatchObject({ type: "request.failed" });
+      finishPrompt!();
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      expect(await configure("leave", "default")).toMatchObject({ type: "request.completed" });
+
+      await prompt("interactive");
+      await waitForEvent(events, (event) => event.type === "session.permission");
+      expect(await configure("pending", "full-access")).toMatchObject({ type: "request.failed" });
+      expect(outcomes).toHaveLength(1);
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:interactive" &&
+          event.state === "canceled",
+      );
+      await expect.poll(() => outcomes[1]).toEqual({ outcome: { outcome: "cancelled" } });
+      await connection.send({
+        type: "session.permission",
+        sessionId: "session-1",
+        permissionId: "permission:tool",
+        response: { behavior: "allow" },
+      });
+      expect(await configure("enter", "full-access")).toMatchObject({ type: "request.completed" });
+      expect(events.some((event) => event.type === "session.runtime_failed")).toBe(false);
+      expect(
+        events.filter((event) => event.type === "session.config").map((event) => event.config.mode),
+      ).toEqual(["full-access", "default", "full-access"]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("accepts a prompt as soon as the session reports ready", async () => {
+    const { connector } = connectorHarness();
+    const connection = await runAcpProvider({
+      id: "ready-acp",
+      label: "Ready ACP",
+      connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message"] });
+    try {
+      const prompted = Promise.withResolvers<void>();
+      connection.onEvent((event) => {
+        if (event.type !== "session.ready") return;
+        void connection
+          .send({
+            type: "session.prompt",
+            sessionId: event.sessionId!,
+            prompt: {
+              clientMessageId: "first",
+              delivery: "auto",
+              input: { type: "message", content: [{ type: "text", text: "Hi" }] },
+            },
+          })
+          .then(prompted.resolve, prompted.reject);
+      });
+      await connection.send(openInput());
+      await prompted.promise;
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("uses config options for mode selection when the agent exposes no legacy modes", async () => {
+    const { connector } = connectorHarness({
+      configOptions: [
+        {
+          id: "permissions",
+          category: "mode",
+          name: "Permissions",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "edit", name: "Accept edits" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({ id: "modes", label: "Modes", connector }).connect({
+      versions: [1],
+      capabilities: ["session.configure"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.mode = "edit";
+      await connection.send(input);
+      expect(
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.config" || event.type === "request.failed",
+        ),
+      ).toMatchObject({
+        type: "session.config",
+        config: { mode: "edit", modes: [{ id: "default" }, { id: "edit" }], settings: [] },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.configure",
+        requestId: "default",
+        sessionId: input.sessionId,
+        changes: { mode: "default" },
+      });
+      expect(
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.config" && event.config.mode === "default",
+        ),
+      ).toBeDefined();
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("spawns the daemon-resolved launch for probes, catalogues, listing, and sessions", async () => {
     const executable = await fakeAcp(`
 if (process.env.LAUNCH_TOKEN !== "resolved" || process.env.CLAUDECODE || process.env.PASEO_NODE_ENV) process.exit(1);
@@ -235,7 +536,7 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   let result;
   if (message.method === "initialize") result = { protocolVersion: message.params.protocolVersion, agentCapabilities: { sessionCapabilities: { list: {} } } };
-  else if (message.method === "session/new") result = { sessionId: "native", configOptions: [{ id: "model", name: "Model", category: "model", type: "select", currentValue: "resolved", options: [{ value: "resolved", name: process.env.SESSION_TOKEN || "probe" }] }] };
+  else if (message.method === "session/new") result = { sessionId: "native", configOptions: [{ id: "model", name: "Model", category: "model", type: "select", currentValue: "resolved", options: [{ value: "resolved", name: require("node:fs").realpathSync(message.params.cwd) === process.cwd() ? (process.env.SESSION_TOKEN || "probe") : "wrong cwd" }] }] };
   else if (message.method === "session/list") result = { sessions: [] };
   else return;
   send({ jsonrpc: "2.0", id: message.id, result });
@@ -253,7 +554,11 @@ lines.on("line", (line) => {
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
     try {
-      await connection.send({ type: "catalog", requestId: "catalog" });
+      await connection.send({
+        type: "catalog",
+        requestId: "catalog",
+        cwd: path.dirname(executable),
+      });
       expect(await waitForEvent(events, (event) => event.type === "catalog")).toMatchObject({
         catalog: { models: [{ id: "resolved", label: "probe" }] },
       });
@@ -263,6 +568,7 @@ lines.on("line", (line) => {
       });
       const input = openInput();
       input.config.env = { SESSION_TOKEN: "session" };
+      input.config.cwd = path.dirname(executable);
       await connection.send(input);
       expect(await waitForEvent(events, (event) => event.type === "session.config")).toMatchObject({
         config: { models: [{ id: "resolved", label: "session" }] },
@@ -884,6 +1190,72 @@ lines.on("line", (line) => {
           (event) => event.type === "session.turn" && event.state === "completed",
         );
         expect(lastUsage).toBeLessThan(completed);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
+  it.each([
+    { status: "failed", output: undefined, error: { message: "Tool failed" } },
+    { status: "failed", output: null, error: { message: "Tool failed" } },
+    {
+      status: "failed",
+      output: { message: "File not found" },
+      error: { message: "File not found" },
+    },
+    { status: "failed", output: "Permission denied", error: "Permission denied" },
+    { status: "completed", output: null, error: null },
+  ] as const)(
+    "keeps a $status ACP tool with output $output valid on the history wire",
+    async ({ status, output, error }) => {
+      const harness = connectorHarness({
+        promptUpdates: () => [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "read-1",
+            title: "Read file",
+            kind: "read",
+            status: "in_progress",
+          },
+          { sessionUpdate: "tool_call_update", toolCallId: "read-1", status, rawOutput: output },
+        ],
+      });
+      const registration = runAcpProvider({
+        id: "tool-history-acp",
+        label: "Tool history ACP",
+        connector: harness.connector,
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "first",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "Read a file" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.turn" && event.state === "completed",
+        );
+        const rows = events.flatMap((event) =>
+          event.type === "timeline.item" && event.item.id === "read-1" ? [event.item] : [],
+        );
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(AgentTimelineItemPayloadSchema.safeParse(row).success).toBe(true);
+        }
+        expect(rows.at(-1)).toMatchObject({ type: "tool_call", status, error });
       } finally {
         await connection.close();
       }

@@ -362,7 +362,7 @@ test.describe("Schedules project target", () => {
     ).toHaveCount(0);
     await page.getByTestId("schedule-isolation-trigger").click();
     await page.getByTestId("schedule-isolation-worktree").click();
-    await expect(page.getByTestId("schedule-isolation-trigger")).toContainText("Worktree");
+    await expect(page.getByTestId("schedule-isolation-trigger")).toContainText("New worktree");
     await page.getByTestId("schedule-archive-on-finish-switch").click();
     await page.getByLabel("Schedule name").fill(scheduleName);
     await page.getByLabel("Prompt").fill("Run with custom workspace cleanup.");
@@ -383,7 +383,7 @@ test.describe("Schedules project target", () => {
     const formSheet = page.getByTestId("schedule-form-sheet");
     await expect(formSheet).toBeVisible({ timeout: 10_000 });
     await expectStableHeight(formSheet);
-    await expect(page.getByTestId("schedule-isolation-trigger")).toContainText("Worktree");
+    await expect(page.getByTestId("schedule-isolation-trigger")).toContainText("New worktree");
     await expect(page.getByTestId("schedule-archive-on-finish-switch")).toHaveAttribute(
       "aria-checked",
       "false",

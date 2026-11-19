@@ -6,12 +6,27 @@ type InventoryEvent = Extract<AgentStreamEvent, { type: "background_work" }>;
 interface Client {
   request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
 }
+interface ForegroundCommands {
+  items: Set<string>;
+  processes: Set<string>;
+}
+interface CommandStartedInput {
+  thread: string;
+  itemId: string | null;
+  processId?: string;
+}
+interface ReadInventoriesInput {
+  client: Client;
+  threads: readonly string[];
+  foreground: ReadonlyMap<string, ForegroundCommands>;
+}
 
 export class CodexBackgroundInventory {
   private generation = 0;
   private client: Client | null = null;
   private thread: string | null = null;
   private readonly threads = new Set<string>();
+  private readonly foreground = new Map<string, ForegroundCommands>();
   private origins = new Map<string, { threadId: string; processId: string }>();
   private pending = false;
   private dirty = false;
@@ -85,6 +100,7 @@ export class CodexBackgroundInventory {
     this.client = null;
     this.thread = null;
     this.threads.clear();
+    this.foreground.clear();
     this.origins.clear();
     this.pending = false;
     this.dirty = false;
@@ -101,6 +117,24 @@ export class CodexBackgroundInventory {
     this.dirty = true;
     if (!this.retrying) this.refresh();
   }
+  turnStarted(thread: string) {
+    if (!this.foreground.has(thread))
+      this.foreground.set(thread, { items: new Set(), processes: new Set() });
+  }
+  commandStarted({ thread, itemId, processId }: CommandStartedInput) {
+    let turn = this.foreground.get(thread);
+    if (!turn) {
+      turn = { items: new Set(), processes: new Set() };
+      this.foreground.set(thread, turn);
+    }
+    if (itemId) turn.items.add(itemId);
+    if (processId) turn.processes.add(processId);
+    this.changed(thread);
+  }
+  turnSettled(thread: string) {
+    this.foreground.delete(thread);
+    this.changed(thread);
+  }
   private refresh() {
     if (this.pending || !this.client || !this.thread || this.unsupported) return;
     if (this.timer) clearTimeout(this.timer);
@@ -113,7 +147,11 @@ export class CodexBackgroundInventory {
     void (async () => {
       let failed = false;
       try {
-        const { items, origins, activeThreads } = await readInventories(client, threads);
+        const { items, origins, activeThreads } = await readInventories({
+          client,
+          threads,
+          foreground: this.foreground,
+        });
         if (generation !== this.generation || this.dirty) return;
         this.origins = origins;
         this.threads.clear();
@@ -149,7 +187,7 @@ export class CodexBackgroundInventory {
   }
 }
 
-async function readInventories(client: Client, threads: string[]) {
+async function readInventories({ client, threads, foreground }: ReadInventoriesInput) {
   const items: NonNullable<InventoryEvent["items"]> = [];
   const origins = new Map<string, { threadId: string; processId: string }>();
   const activeThreads = new Set<string>();
@@ -158,7 +196,9 @@ async function readInventories(client: Client, threads: string[]) {
     do {
       const page = z
         .object({
-          data: z.array(z.object({ processId: z.string(), command: z.string() })),
+          data: z.array(
+            z.object({ itemId: z.string().optional(), processId: z.string(), command: z.string() }),
+          ),
           nextCursor: z.string().nullable(),
         })
         .parse(
@@ -169,9 +209,17 @@ async function readInventories(client: Client, threads: string[]) {
           ),
         );
       for (const row of page.data) {
+        activeThreads.add(threadId);
+        // Codex registers processes before the initial tool call returns. Only commands
+        // surviving their owning turn belong in the background-work presentation.
+        const turn = foreground.get(threadId);
+        if (
+          turn &&
+          ((row.itemId && turn.items.has(row.itemId)) || turn.processes.has(row.processId))
+        )
+          continue;
         const id = JSON.stringify([threadId, row.processId]);
         origins.set(id, { threadId, processId: row.processId });
-        activeThreads.add(threadId);
         items.push({
           id,
           kind: "shell",

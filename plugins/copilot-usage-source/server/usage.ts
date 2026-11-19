@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   unavailable,
+  windowFromUsedPct,
+  type UsageWindow,
   type UsageAccount,
   type UsageReport,
   type UsageDetail,
@@ -18,6 +20,19 @@ const ApiOptionalStringSchema = z.preprocess(
 const CopilotUsageResponseSchema = z.object({
   copilot_plan: ApiOptionalStringSchema,
   quota_reset_date: ApiOptionalStringSchema,
+  quota_reset_date_utc: ApiOptionalStringSchema,
+  quota_snapshots: z
+    .object({
+      premium_interactions: z
+        .object({
+          entitlement: z.number().nonnegative().nullish(),
+          remaining: z.number().nonnegative().nullish(),
+          percent_remaining: z.number().min(0).max(100).nullish(),
+          unlimited: z.boolean().optional(),
+        })
+        .nullish(),
+    })
+    .nullish(),
 });
 
 async function readToken(input: UsageInput): Promise<string | undefined> {
@@ -72,10 +87,32 @@ export async function fetchUsage(
     ? [{ id: "reset", label: "Quota reset", value: resp.quota_reset_date }]
     : [];
 
+  const windows: UsageWindow[] = [];
+  const premium = resp.quota_snapshots?.premium_interactions;
+  if (premium && !premium.unlimited) {
+    if (premium.percent_remaining != null) {
+      windows.push(
+        windowFromUsedPct({
+          id: "premium_interactions",
+          label: "Premium requests",
+          utilizationPct: 100 - premium.percent_remaining,
+          resetsAt: resp.quota_reset_date_utc || resp.quota_reset_date,
+        }),
+      );
+    }
+    if (premium.remaining != null && premium.entitlement != null) {
+      details.push({
+        id: "premium_remaining",
+        label: "Premium requests remaining",
+        value: `${premium.remaining} / ${premium.entitlement}`,
+      });
+    }
+  }
+
   return {
     status: "available",
     planLabel: resp.copilot_plan || undefined,
-    windows: [],
+    windows,
     balances: [],
     details,
   };
