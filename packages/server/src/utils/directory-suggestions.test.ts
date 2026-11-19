@@ -1,6 +1,7 @@
 import { createHook } from "node:async_hooks";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -779,6 +780,18 @@ describe("rooted queries with a typed parent", () => {
       searchAbsoluteDirectoryPaths({ homeDir, query: "~/Developer/pas" }),
     ).resolves.toEqual([path.join(homeDir, "Developer", "pasta")]);
   });
+
+  it.for(["~/developer/pas", "~/developer/PASTA"])(
+    "returns the on-disk spelling exactly once for %s",
+    async (query, { skip }) => {
+      if (!existsSync(path.join(homeDir, "developer"))) {
+        skip("Requires a case-insensitive filesystem");
+      }
+      await expect(searchAbsoluteDirectoryPaths({ homeDir, query })).resolves.toEqual([
+        path.join(homeDir, "Developer", "pasta"),
+      ]);
+    },
+  );
 
   it("matches the whole tree when the typed parent does not exist", async () => {
     await expect(searchAbsoluteDirectoryPaths({ homeDir, query: "~/Devel/pas" })).resolves.toEqual([
