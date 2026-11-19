@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -173,6 +173,7 @@ test("shares computation, highlights only the changed file, recovers refs and re
       computations: before,
       highlightCalls: previousHighlightCalls,
       metadataObservers: 1,
+      fallbackTargets: 0,
     });
     first.length = 0;
     second.length = 0;
@@ -1361,4 +1362,63 @@ test.skipIf(process.platform !== "linux")(
     }
   },
   30000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "a running comparison keeps following its ref after metadata observation overflows",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-runtime-overflow-");
+    const overflow = await mkdtemp(join(tmpdir(), "diff-runtime-refs-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const frames: DiffFrame[] = [];
+    try {
+      git("branch", "selected");
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git("-c", "commit.gpgsign=false", "commit-tree", empty, "-m", "next");
+      // Move the populated directory into the metadata watch in a single event.
+      for (let index = 0; index < 5010; index += 64) {
+        await Promise.all(
+          Array.from({ length: Math.min(64, 5010 - index) }, (_, offset) =>
+            mkdir(join(overflow, String(index + offset))),
+          ),
+        );
+      }
+      const subscription = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: "refs/heads/selected" }, highlight: false },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await subscription.start();
+      expect(fixture.subscriptions.getMetrics()).toMatchObject({
+        metadataObservers: 1,
+        fallbackTargets: 0,
+      });
+
+      await rename(overflow, join(fixture.cwd, ".git", "refs", "heads", "overflow"));
+      await expect
+        .poll(() => fixture.subscriptions.getMetrics(), { timeout: 10000 })
+        .toMatchObject({ metadataObservers: 0, fallbackTargets: 1 });
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toMatchObject({ revision: 2, error: null });
+
+      git("update-ref", "refs/heads/selected", moved);
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 12000,
+        })
+        .toMatchObject({ revision: 3, baseSha: moved });
+      await subscription.release();
+      expect(fixture.subscriptions.getMetrics()).toMatchObject({
+        metadataObservers: 0,
+        fallbackTargets: 0,
+      });
+    } finally {
+      await fixture.close();
+      await rm(overflow, { recursive: true, force: true });
+    }
+  },
+  35000,
 );

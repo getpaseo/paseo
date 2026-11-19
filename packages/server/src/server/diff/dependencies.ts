@@ -1,4 +1,5 @@
 import { resolve, relative } from "node:path";
+import type { Logger } from "pino";
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { createFileObserver, type FileObserverSubscription } from "../file-observer/index.js";
 import {
@@ -17,7 +18,10 @@ export interface DiffDependencies extends Omit<RevisionWatch, "changed"> {
 }
 
 type MetadataListener = (paths: string[] | null) => void;
-type Release = () => Promise<void>;
+export interface DiffDependencySubscription {
+  release(): Promise<void>;
+  isPolling(): boolean;
+}
 
 interface MetadataObservation {
   listeners: Set<MetadataListener>;
@@ -32,12 +36,15 @@ export class DiffDependencyObserver {
   private observer = createFileObserver();
   private roots = new Map<string, MetadataObservation>();
 
-  constructor(private workspaceGit: Pick<WorkspaceGitService, "requestWorkingTreeWatch">) {}
+  constructor(
+    private workspaceGit: Pick<WorkspaceGitService, "requestWorkingTreeWatch">,
+    private logger?: Pick<Logger, "warn">,
+  ) {}
 
   async declareDependencies(
     input: DiffDependencies,
     changed: (kind: "endpoints" | "interpretation") => void,
-  ): Promise<Release> {
+  ): Promise<DiffDependencySubscription> {
     const hasMutableEndpoints =
       input.movingRevision || input.checkoutBase !== undefined || input.index || input.worktree;
     const rootPaths = await runGitCommand(["rev-parse", "--absolute-git-dir", "--git-common-dir"], {
@@ -55,14 +62,14 @@ export class DiffDependencyObserver {
             [commonRoot, ["common"]],
           ];
 
-    const release: Release[] = [];
-    const close = async () => {
-      await Promise.all(release.map((unsubscribe) => unsubscribe()));
+    const metadata: DiffDependencySubscription[] = [];
+    const releaseMetadata = async () => {
+      await Promise.all(metadata.map((subscription) => subscription.release()));
     };
     try {
       for (const [root, scopes] of roots) {
         const isWorktree = scopes.includes("worktree");
-        release.push(
+        metadata.push(
           await this.observeMetadata(
             root,
             root === commonRoot ? { ...input, changed: () => changed("endpoints") } : null,
@@ -94,10 +101,18 @@ export class DiffDependencyObserver {
       const workingTree = await this.workspaceGit.requestWorkingTreeWatch(input.cwd, () =>
         changed(input.worktree ? "endpoints" : "interpretation"),
       );
-      release.push(async () => workingTree.unsubscribe());
-      return close;
+      return {
+        isPolling: () => metadata.some((subscription) => subscription.isPolling()),
+        async release() {
+          try {
+            workingTree.unsubscribe();
+          } finally {
+            await releaseMetadata();
+          }
+        },
+      };
     } catch (error) {
-      await close();
+      await releaseMetadata();
       throw error;
     }
   }
@@ -106,7 +121,7 @@ export class DiffDependencyObserver {
     root: string,
     revisions: RevisionWatch | null,
     listener: MetadataListener,
-  ): Promise<Release> {
+  ): Promise<DiffDependencySubscription> {
     let observation = this.roots.get(root);
     if (!observation) {
       observation = { listeners: new Set(), revisions: new Set(), ready: Promise.resolve() };
@@ -117,12 +132,15 @@ export class DiffDependencyObserver {
     current.listeners.add(listener);
     if (revisions) current.revisions.add(revisions);
     await current.ready;
-    return async () => {
-      current.listeners.delete(listener);
-      if (revisions) current.revisions.delete(revisions);
-      if (current.listeners.size) return;
-      this.roots.delete(root);
-      await Promise.all([current.watcher?.unsubscribe(), current.poll?.close()]);
+    return {
+      isPolling: () => current.poll !== undefined,
+      release: async () => {
+        if (!current.listeners.delete(listener)) return;
+        if (revisions) current.revisions.delete(revisions);
+        if (current.listeners.size) return;
+        this.roots.delete(root);
+        await Promise.all([current.watcher?.unsubscribe(), current.poll?.close()]);
+      },
     };
   }
 
@@ -130,11 +148,19 @@ export class DiffDependencyObserver {
     const notify: MetadataListener = (paths) => {
       for (const listener of observation.listeners) listener(paths);
     };
-    const startPoll = () =>
-      (observation.poll ??= pollDiffMetadata(root, observation.revisions, notify));
-    const recover = async () => {
+    const startPoll = (error: unknown) => {
+      if (!observation.poll) {
+        this.logger?.warn(
+          { err: error, root },
+          "Diff metadata watcher failed; using degraded polling",
+        );
+        observation.poll = pollDiffMetadata(root, observation.revisions, notify);
+      }
+      return observation.poll;
+    };
+    const recover = async (error: Error) => {
       // Resample the gap between the last watcher batch and the first poll.
-      await startPoll().ready;
+      await startPoll(error).ready;
       notify(null);
     };
 
@@ -143,15 +169,15 @@ export class DiffDependencyObserver {
         root,
         (error, events) => {
           if (error) {
-            void recover();
+            void recover(error);
             return;
           }
           notify(events.map((event) => relative(root, event.path).replaceAll("\\", "/")));
         },
         { ignore: [resolve(root, "objects"), resolve(root, "logs"), resolve(root, "hooks")] },
       );
-    } catch {
-      await startPoll().ready;
+    } catch (error) {
+      await startPoll(error).ready;
     }
   }
 
