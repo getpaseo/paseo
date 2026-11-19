@@ -6429,9 +6429,29 @@ test("detachAgent removes relationship lifecycle labels from a stored-only agent
     },
   );
   await manager.closeAgent(child.id);
+  const detachStates: Array<{
+    labels: Record<string, string>;
+    previousParentAgentId?: string;
+  }> = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_state" && event.agent.id === child.id) {
+        detachStates.push({
+          labels: event.agent.labels,
+          previousParentAgentId: event.previousParentAgentId,
+        });
+      }
+    },
+    { replayState: false },
+  );
 
   const result = await manager.detachAgent(child.id);
+  unsubscribe();
 
+  // Every subscriber learns about a stored detach too, with the former parent.
+  expect(detachStates).toEqual([
+    { labels: { role: "reviewer" }, previousParentAgentId: parent.id },
+  ]);
   expect(result.previousParentAgentId).toBe(parent.id);
   expect(result.live).toBe(false);
   expect(result.record.labels).toEqual({ role: "reviewer" });
@@ -10890,10 +10910,12 @@ test.each([
     await manager.closeAgent(child.id);
     // Unfiltered, as a session subscribes: a closed survivor's update must reach every client.
     const emittedLabels: Array<Record<string, string>> = [];
+    const previousParentAgentIds: Array<string | undefined> = [];
     const unsubscribe = manager.subscribe(
       (event) => {
         if (event.type === "agent_state" && event.agent.id === child.id) {
           emittedLabels.push(event.agent.labels);
+          previousParentAgentIds.push(event.previousParentAgentId);
         }
       },
       { replayState: false },
@@ -10908,6 +10930,7 @@ test.each([
     expect(storedChild?.archivedAt).toBeUndefined();
     expect(storedChild?.labels).toEqual(expectedLabels);
     expect(emittedLabels).toEqual([expectedLabels]);
+    expect(previousParentAgentIds).toEqual([parent.id]);
 
     // The child is already detached; repeating detach has nothing to sever.
     const detached = await manager.detachAgent(child.id);

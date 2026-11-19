@@ -2338,10 +2338,7 @@ export class AgentManager {
           return;
         }
         if (shouldDetachFromArchivedParent(parent, currentChild)) {
-          const detached = await this.detachAgentUnlocked(currentChild.id);
-          if (!detached.live) {
-            this.dispatchStoredAgentState(detached.record);
-          }
+          await this.detachAgentUnlocked(currentChild.id);
         } else if (this.agents.has(currentChild.id)) {
           await this.archiveAgentUnlocked(currentChild.id, parent.archivedAt);
         } else {
@@ -2413,7 +2410,10 @@ export class AgentManager {
     }
   }
 
-  private dispatchStoredAgentState(record: StoredAgentRecord): void {
+  private dispatchStoredAgentState(
+    record: StoredAgentRecord,
+    options?: { previousParentAgentId?: string },
+  ): void {
     const updatedAt = new Date(record.updatedAt);
     const attention = extractAttention(record);
     this.dispatch({
@@ -2459,6 +2459,9 @@ export class AgentManager {
         labels: record.labels,
         metadata: record.metadata,
       },
+      ...(options?.previousParentAgentId
+        ? { previousParentAgentId: options.previousParentAgentId }
+        : {}),
     });
   }
 
@@ -2813,6 +2816,8 @@ export class AgentManager {
     if (!result.record) {
       throw new Error(`Agent not found in storage after detach: ${agentId}`);
     }
+    // A stored write publishes nothing, so publish here like a live detach does.
+    this.dispatchStoredAgentState(result.record, { previousParentAgentId });
     return { record: result.record, live: false, previousParentAgentId };
   }
 
