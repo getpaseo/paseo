@@ -41,7 +41,12 @@ import {
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { useAgentDescriptor } from "@/agent-presentation";
-import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
+import {
+  useToastHost,
+  type DismissToastById,
+  type ToastApi,
+  type ToastState,
+} from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
@@ -1079,7 +1084,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   hasCachedHistory: boolean;
   toastApi: ToastApi;
   toast: ToastState | null;
-  dismiss: () => void;
+  dismiss: DismissToastById;
   streamViewRef: React.RefObject<AgentStreamViewHandle | null>;
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
