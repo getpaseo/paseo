@@ -55,6 +55,13 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
+    /** Opens the native New workspace draft without creating a workspace or agent. */
+    readonly openNewWorkspace?: (input?: {
+      readonly serverId?: string;
+      readonly projectId?: string;
+      readonly sourceDirectory?: string;
+      readonly displayName?: string;
+    }) => void;
     readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;

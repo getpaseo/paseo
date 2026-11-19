@@ -6,6 +6,7 @@ interface HostNavigationOwner {
   browserAvailable: boolean;
   openAgent(input: { serverId: string; agentId: string }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
+  openNewWorkspace: NonNullable<NonNullable<PluginSurfaceProps["navigation"]>["openNewWorkspace"]>;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
 }
@@ -19,6 +20,8 @@ export function createPluginHostNavigation(
       owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
       owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
+    openNewWorkspace: ({ serverId: targetServerId, ...context } = {}) =>
+      owner.openNewWorkspace({ ...context, serverId: targetServerId ?? serverId }),
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");
