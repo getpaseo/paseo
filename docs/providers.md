@@ -263,6 +263,53 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ---
 
+## Installation and updates
+
+The provider list and the **Installation** section of a provider's page read `AgentClient.installation`. Built-ins set
+it on the client; plugins set `ProviderRegistration.installation`, which the plugin bridge maps to
+the same interface. `ProviderInstallations` in `packages/server/src/server/agent/provider-installation/`
+owns deadlines, caching and the one running update per provider, so a provider only answers.
+
+Declare only what the vendor offers:
+
+- `installUrl` and `updateUrl` link the vendor's own install and update docs.
+- `inspect` reports the version the CLI prints. Versions are opaque: Paseo shows them as written
+  and never parses them.
+- `checkForUpdates` receives the version `inspect` reported as `installedVersion` and asks the
+  source the CLI's own updater reads, such as the vendor's release endpoint or the CLI's
+  `update --check`. Do not read the version again. Leave it out when that source is inside the binary or
+  depends on how the CLI was installed, which is why Copilot and OpenCode have no check. Do not
+  build a release lookup of your own.
+- `update` runs the CLI's own update command and passes its output through, using
+  `runUpdateCommand`. Paseo adds no verification, signature check or rollback, so the update does
+  exactly what the same command does in a terminal.
+
+The three calls are separate because they cost differently. `inspect` runs for every provider
+whenever the provider list shows, because each row states its version; a provider's page shares the
+row's request. It has a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
+network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
+answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
+checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
+aborted only when the daemon stops. A failed update stays on the provider until the next refresh
+of its installation, which tells every client observing the provider's updates that it is gone; a
+running one is never dropped.
+
+The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
+for a provider that declares `update`, or **Update instructions** for one that declares only
+`updateUrl`, whatever the check answers and whether the provider has one. The check's answer shows
+beside the action when it has one. Copilot and OpenCode have no check, so they show **Update** alone.
+
+Write the success message for the provider's process model. A CLI that Paseo starts once per agent
+uses `updatedForNewAgents()`. OpenCode agents share one server that keeps the old binary running,
+so its message asks the user to restart the daemon.
+
+`createCliInstallation()` covers a CLI that prints `--version` and updates with a subcommand. It
+resolves the configured command, so a profile that extends a built-in reports and updates the CLI
+that profile launches. Clients for `extends: "acp"` providers declare no installation.
+
+Test with fake executables, as `providers/provider-update-checks.test.ts` does. Running a real
+updater during development replaces the CLI on your machine.
+
 ## Usage sources
 
 See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the

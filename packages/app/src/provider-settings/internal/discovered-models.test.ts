@@ -3,7 +3,7 @@ import type { AgentModelDefinition } from "@getpaseo/protocol/agent-types";
 import {
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
-} from "./provider-diagnostic-models";
+} from "./discovered-models";
 
 const piModel: AgentModelDefinition = {
   provider: "pi",

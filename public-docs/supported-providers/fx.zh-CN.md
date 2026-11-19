@@ -12,7 +12,7 @@ nav: fx
 
 1. 在 daemon 主机上[安装 fx](https://fx.sh/docs/getting-started/installation)。
 2. [为 fx 连接一个模型提供方](https://fx.sh/docs/getting-started/authentication)，例如运行 `fx login`。
-3. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**，在目录里找到 **fx** 并选择 **添加**。
+3. 在 Paseo 中打开 **设置 → Hosts → 你的主机 → Providers**，选择 **+ Provider**，找到 **fx** 并选择 **添加**。
 
 Paseo 会启动 `fx acp`，并使用你的 fx 凭据和设置。在 fx 拿到凭据之前，该 Provider 会显示 fx 给出的登录提示。
 
