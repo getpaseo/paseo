@@ -125,6 +125,11 @@ export function useProviderInstallation(input: {
         follow(response.update?.operation);
       },
       update: (message) => {
+        if (message.type === "provider.installation.update.cleared") {
+          const { operationId } = message.payload;
+          setCurrentUpdate((current) => (current?.operation.id === operationId ? null : current));
+          return;
+        }
         if (message.type !== "provider.installation.update.progress") return;
         setCurrentUpdate((current) => applyProviderUpdateProgress(current, message.payload));
         follow(message.payload.operation);

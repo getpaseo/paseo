@@ -2640,9 +2640,7 @@ export class Session {
     let stop: (() => void) | undefined;
     const owner = this.delivery.begin("provider-update", undefined, () => stop?.());
     // Register and read in one synchronous turn so no progress falls between them.
-    stop = installations.observeUpdates(request.provider, (progress) =>
-      owner.emit({ type: "provider.installation.update.progress", payload: progress }),
-    );
+    stop = installations.observeUpdates(request.provider, (event) => owner.emit(event));
     this.emit({
       type: "provider.installation.update.subscribe.response",
       payload: {

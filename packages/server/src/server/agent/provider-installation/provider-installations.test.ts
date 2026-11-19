@@ -13,7 +13,7 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { AgentClient, AgentClientInstallation } from "../agent-sdk-types.js";
 import { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import { ProviderInstallations } from "./provider-installations.js";
+import { ProviderInstallations, type ProviderUpdateEvent } from "./provider-installations.js";
 
 const OPAQUE_VERSION = "  v1.2.3-beta+weird (build 7)\n";
 const MISSING_COMMAND = "paseo-provider-installation-missing-binary";
@@ -629,15 +629,20 @@ describe("provider updates", () => {
       refreshProvider: options.refreshProvider,
       updateOutputLimit: options.updateOutputLimit,
     });
+    const events: ProviderUpdateEvent[] = [];
     const progress: ProviderInstallationUpdateProgress[] = [];
-    installations.observeUpdates("codex", (event) => progress.push(event));
-    return { installations, progress, calls: () => calls };
+    installations.observeUpdates("codex", (event) => {
+      events.push(event);
+      if (event.type === "provider.installation.update.progress") progress.push(event.payload);
+    });
+    return { installations, events, progress, calls: () => calls };
   }
 
   function settled(installations: ProviderInstallations): Promise<ProviderInstallationUpdate> {
     return new Promise((resolve) => {
       const stop = installations.observeUpdates("codex", (event) => {
-        if (event.operation.status === "running") return;
+        if (event.type !== "provider.installation.update.progress") return;
+        if (event.payload.operation.status === "running") return;
         stop();
         resolve(installations.getUpdate("codex")!);
       });
@@ -743,6 +748,28 @@ describe("provider updates", () => {
     const done = settled(installations);
     finish();
     await done;
+  });
+
+  test("tells observers when a refresh drops a failed update", async () => {
+    const { installations, events } = updating(
+      async () => ({ status: "failed", message: "EACCES" }),
+      {
+        inspect: async () => ({ status: "installed", version: "1.0.0" }),
+      },
+    );
+    const failed = settled(installations);
+    const started = installations.update("codex");
+    await failed;
+    events.length = 0;
+
+    await installations.inspect("codex", { refresh: true });
+    await installations.inspect("codex", { refresh: true });
+    expect(events).toEqual([
+      {
+        type: "provider.installation.update.cleared",
+        payload: { provider: "codex", operationId: started.operation.id },
+      },
+    ]);
   });
 
   test("a second request while an update runs joins it instead of starting another", async () => {

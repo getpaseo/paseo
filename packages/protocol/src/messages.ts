@@ -6953,6 +6953,19 @@ export const ProviderInstallationUpdateProgressMessageSchema = z.object({
   }),
 });
 
+/**
+ * Sent to `provider.installation.update.subscribe` owners when a refresh of the provider drops
+ * the failed update `operationId`, so the provider has no current update.
+ */
+export const ProviderInstallationUpdateClearedMessageSchema = z.object({
+  type: z.literal("provider.installation.update.cleared"),
+  payload: z.object({
+    subscriptionId: z.string().optional(),
+    provider: AgentProviderSchema,
+    operationId: z.string(),
+  }),
+});
+
 export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
 export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
 
@@ -7825,6 +7838,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderInstallationUpdateResponseMessageSchema,
   ProviderInstallationUpdateSubscribeResponseMessageSchema,
   ProviderInstallationUpdateProgressMessageSchema,
+  ProviderInstallationUpdateClearedMessageSchema,
   ProviderUsageListResponseMessageSchema,
   UsageListReportsUpdateMessageSchema,
   UsageListReportsResponseMessageSchema,
@@ -8027,6 +8041,10 @@ export type ProviderInstallationUpdateOperation = z.infer<
 export type ProviderInstallationUpdate = z.infer<typeof ProviderInstallationUpdateSchema>;
 export type ProviderInstallationUpdateProgress = Omit<
   z.infer<typeof ProviderInstallationUpdateProgressMessageSchema>["payload"],
+  "subscriptionId"
+>;
+export type ProviderInstallationUpdateCleared = Omit<
+  z.infer<typeof ProviderInstallationUpdateClearedMessageSchema>["payload"],
   "subscriptionId"
 >;
 export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;

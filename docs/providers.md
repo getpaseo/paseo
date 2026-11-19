@@ -290,7 +290,8 @@ network. Paseo calls it only after `inspect` reports the CLI installed, and keep
 answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
 checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
 aborted only when the daemon stops. A failed update stays on the provider until the next refresh
-of its installation; a running one is never dropped.
+of its installation, which tells every client observing the provider's updates that it is gone; a
+running one is never dropped.
 
 The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
 for a provider that declares `update`, or **Update instructions** for one that declares only

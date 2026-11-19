@@ -6301,7 +6301,8 @@ export class DaemonClient {
 
   /**
    * The provider's latest update, then `provider.installation.update.progress` as updates start,
-   * report output and settle. Survives reconnects: each new snapshot replaces the previous one.
+   * report output and settle, and `provider.installation.update.cleared` when a refresh drops a
+   * failed update. Survives reconnects: each new snapshot replaces the previous one.
    */
   observeProviderUpdates(
     provider: AgentProvider,

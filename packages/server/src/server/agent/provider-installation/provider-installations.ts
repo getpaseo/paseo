@@ -5,6 +5,7 @@ import type {
   ProviderInstallationInspection,
   ProviderInstallationUpdate,
   ProviderInstallationUpdateCheck,
+  ProviderInstallationUpdateCleared,
   ProviderInstallationUpdateProgress,
 } from "@getpaseo/protocol/messages";
 import {
@@ -45,7 +46,12 @@ export interface ProviderInstallationsOptions {
   now?: () => number;
 }
 
-export type ProviderUpdateListener = (progress: ProviderInstallationUpdateProgress) => void;
+/** What an update observer hears, shaped as the message the session forwards to its clients. */
+export type ProviderUpdateEvent =
+  | { type: "provider.installation.update.progress"; payload: ProviderInstallationUpdateProgress }
+  | { type: "provider.installation.update.cleared"; payload: ProviderInstallationUpdateCleared };
+
+export type ProviderUpdateListener = (event: ProviderUpdateEvent) => void;
 
 export interface InspectProviderInstallationOptions {
   /** Skip the settled-result cache. Joins a call that is already running. */
@@ -186,9 +192,11 @@ export class ProviderInstallations {
       provider,
       startedAt: this.timestamp(),
       outputLimit: this.updateOutputLimit,
-      publish: (progress) => {
-        for (const listener of this.updateListeners.get(provider) ?? []) listener(progress);
-      },
+      publish: (progress) =>
+        this.publishUpdate(provider, {
+          type: "provider.installation.update.progress",
+          payload: progress,
+        }),
     });
     this.updates.set(provider, operation);
     void this.runUpdate(provider, client, operation, (context) =>
@@ -205,7 +213,10 @@ export class ProviderInstallations {
     return this.updates.get(provider)?.snapshot() ?? null;
   }
 
-  /** Calls `listener` when an update of the provider starts, reports output or settles. */
+  /**
+   * Calls `listener` when an update of the provider starts, reports output or settles, and when
+   * a refresh drops a failed update.
+   */
   observeUpdates(provider: AgentProvider, listener: ProviderUpdateListener): () => void {
     let listeners = this.updateListeners.get(provider);
     if (!listeners) {
@@ -217,6 +228,10 @@ export class ProviderInstallations {
       listeners.delete(listener);
       if (listeners.size === 0) this.updateListeners.delete(provider);
     };
+  }
+
+  private publishUpdate(provider: AgentProvider, event: ProviderUpdateEvent): void {
+    for (const listener of this.updateListeners.get(provider) ?? []) listener(event);
   }
 
   /** Aborts running updates. Each settles as failed with the provider's answer to the abort. */
@@ -234,8 +249,14 @@ export class ProviderInstallations {
     client: AgentClient,
     options: InspectProviderInstallationOptions,
   ): Promise<ProviderInstallationInspection> | undefined {
-    if (options.refresh && this.updates.get(provider)?.snapshot().operation.status === "failed")
+    const failed = this.updates.get(provider)?.snapshot().operation;
+    if (options.refresh && failed?.status === "failed") {
       this.updates.delete(provider);
+      this.publishUpdate(provider, {
+        type: "provider.installation.update.cleared",
+        payload: { provider, operationId: failed.id },
+      });
+    }
     const installation = client.installation;
     const inspect = installation?.inspect;
     if (!installation || !inspect) return undefined;
