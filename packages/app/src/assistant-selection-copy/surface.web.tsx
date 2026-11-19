@@ -1,10 +1,11 @@
 import { useCallback, type ClipboardEvent, type CSSProperties, type ReactNode } from "react";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from "react-native";
 import { createAssistantSelectionClipboardContent } from "./content.web";
 
 interface AssistantSelectionCopySurfaceProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }
 
 const DISPLAY_CONTENTS: CSSProperties = { display: "contents" };
@@ -12,6 +13,7 @@ const DISPLAY_CONTENTS: CSSProperties = { display: "contents" };
 export function AssistantSelectionCopySurface({
   children,
   style,
+  onLayout,
 }: AssistantSelectionCopySurfaceProps) {
   const handleCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
     const content = createAssistantSelectionClipboardContent(window.getSelection());
@@ -26,7 +28,9 @@ export function AssistantSelectionCopySurface({
 
   return (
     <div onCopy={handleCopy} style={DISPLAY_CONTENTS}>
-      <View style={style}>{children}</View>
+      <View style={style} onLayout={onLayout}>
+        {children}
+      </View>
     </div>
   );
 }

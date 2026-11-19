@@ -3,11 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Check } from "lucide-react-native";
-import {
-  AdaptiveModalSheet,
-  FULL_SHEET_SNAP_POINTS,
-  SheetFooter,
-} from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, SheetFooter } from "@/components/adaptive-modal-sheet";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { Button } from "@/components/ui/button";
 import { PressHighlight } from "@/components/ui/press-highlight";
@@ -17,6 +13,7 @@ import { useProjectSuggestions, type ProjectSuggestionsController } from "@/proj
 import type { Theme } from "@/styles/theme";
 import type { OnboardingModel, OnboardingState, OnboardingStepId } from "./model";
 import { useOrchestrationSetup, type OrchestrationSetupController } from "./orchestration-setup";
+import { SETUP_CARD_FRAME } from "./setup-card";
 import { OnboardingStepContent } from "./steps";
 
 type OpenState = Extract<OnboardingState, { status: "open" }>;
@@ -112,9 +109,9 @@ export function OnboardingModal({ model, state }: { model: OnboardingModel; stat
       header={isCompact ? compactHeader : undefined}
       footer={isCompact ? actions : undefined}
       scrollable={false}
-      snapPoints={FULL_SHEET_SNAP_POINTS}
-      desktopMaxWidth={880}
-      desktopHeight={640}
+      snapPoints={SETUP_CARD_FRAME.snapPoints}
+      desktopMaxWidth={SETUP_CARD_FRAME.desktopMaxWidth}
+      desktopHeight={SETUP_CARD_FRAME.desktopHeight}
       contentStyle={styles.content}
       testID="onboarding-modal"
     >

@@ -4,7 +4,10 @@ import { lightTheme } from "../src/styles/theme";
 
 const pinnedTheme = {
   colorScheme: "light",
+  // The light theme's colours, so a `withUnistyles` mapping finds every key it reads, with the
+  // values below pinned so a test can name the colour it expects.
   colors: {
+    ...lightTheme.colors,
     syntax: lightHighlightColors,
     foreground: "#111111",
     foregroundMuted: "#666666",
@@ -161,15 +164,14 @@ type UniPropsMapping = (
 ) => Record<string, unknown>;
 
 /**
- * Applies the HOC's `mappings` and the `uniProps` prop with the test theme, so a themed control
- * (the switch track, for one) gets real colors in a browser test. Explicit props win, as in
- * Unistyles' `deepMergeObjects(mappings, uniProps, props)`.
+ * Applies the theme mapping and `uniProps` with the test theme, the way Unistyles maps theme values
+ * onto props: mapped props first, then `uniProps`, then the props the caller passed.
  */
-export const withUnistyles = <T>(Component: T, mappings?: UniPropsMapping): T => {
+export const withUnistyles = <T>(Component: T, mapping?: UniPropsMapping): T => {
   function ThemedComponent({ uniProps, ...props }: { uniProps?: UniPropsMapping }) {
     return createElement(Component as ElementType, {
-      ...(mappings ? mappings(testTheme, UnistylesRuntime) : {}),
-      ...(uniProps ? uniProps(testTheme, UnistylesRuntime) : {}),
+      ...mapping?.(testTheme, UnistylesRuntime),
+      ...uniProps?.(testTheme, UnistylesRuntime),
       ...props,
     });
   }

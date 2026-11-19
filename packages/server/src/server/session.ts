@@ -2658,6 +2658,31 @@ export class Session {
     });
   }
 
+  private async subscribeProviderUpdates(
+    request: Extract<
+      SessionInboundMessage,
+      { type: "provider.installation.update.subscribe.request" }
+    >,
+  ): Promise<void> {
+    if (!this.delivery.isModern(this.delivery.currentSource))
+      throw new Error("Provider update observation requires owned subscriptions");
+    const installations = this.providerSnapshotManager.installations;
+    let stop: (() => void) | undefined;
+    const owner = this.delivery.begin("provider-update", undefined, () => stop?.());
+    // Register and read in one synchronous turn so no progress falls between them.
+    stop = installations.observeUpdates(request.provider, (event) => owner.emit(event));
+    this.emit({
+      type: "provider.installation.update.subscribe.response",
+      payload: {
+        requestId: request.requestId,
+        subscriptionId: owner.responseId,
+        provider: request.provider,
+        update: installations.getUpdate(request.provider),
+        error: null,
+      },
+    });
+  }
+
   private dispatchSubscriptionMessage(
     msg: SessionInboundMessage,
     source?: object,
@@ -2670,6 +2695,8 @@ export class Session {
     }
     if (msg.type === "network.tunnel.close.request")
       return this.networkTunnelSession.handleCloseRequest(msg);
+    if (msg.type === "provider.installation.update.subscribe.request")
+      return this.subscribeProviderUpdates(msg);
     if (msg.type === "browser.automation.execute.response") {
       if (source)
         this.browserToolsBroker?.receiveResponse(
@@ -3567,6 +3594,12 @@ export class Session {
         return this.providerCatalogSession.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
+      case "provider.installation.inspect.request":
+        return this.providerCatalogSession.handleInspectProviderInstallationRequest(msg);
+      case "provider.installation.check_updates.request":
+        return this.providerCatalogSession.handleCheckProviderUpdatesRequest(msg);
+      case "provider.installation.update.request":
+        return this.providerCatalogSession.handleUpdateProviderRequest(msg);
       case "provider.usage.list.request":
         return this.usageSession.handleLegacyList(msg);
       case "usage.list_reports.request":

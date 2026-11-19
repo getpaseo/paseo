@@ -936,6 +936,7 @@ function RootStack() {
       <Stack.Screen name="settings/hosts/[serverId]/plugin-directory/[owner]/[slug]" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/index" />
       <Stack.Screen name="settings/hosts/[serverId]/projects/[projectId]" />
+      <Stack.Screen name="settings/hosts/[serverId]/providers/[providerId]" />
     </ThemedStack>
   );
 }
