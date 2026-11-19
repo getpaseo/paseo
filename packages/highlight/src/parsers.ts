@@ -31,6 +31,7 @@ function language(parser: Parser): Language {
 }
 
 const shellLanguage = StreamLanguage.define(shell);
+const dockerfileLanguage = StreamLanguage.define(dockerFile);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -84,7 +85,7 @@ const languagesByExtension: Record<string, Language> = {
   bash: shellLanguage,
   zsh: shellLanguage,
   // Docker
-  dockerfile: StreamLanguage.define(dockerFile),
+  dockerfile: dockerfileLanguage,
   // Swift
   swift: StreamLanguage.define(swift),
   // Dart
@@ -106,8 +107,16 @@ const languagesByExtension: Record<string, Language> = {
 };
 
 export function getLanguageForFile(filename: string): Language | null {
-  const basename = filename.split(/[\\/]/).pop();
-  const ext = basename?.split(".").pop()?.toLowerCase();
+  const basename = filename.slice(
+    Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\")) + 1,
+  );
+  if (basename.toLowerCase() === "dockerfile") return dockerfileLanguage;
+
+  const dot = basename.lastIndexOf(".");
+  // Callers also pass bare language keys for code fences.
+  if (dot === -1 && basename !== filename) return null;
+
+  const ext = basename.slice(dot + 1).toLowerCase();
   if (!ext) return null;
   return languagesByExtension[ext] ?? null;
 }
