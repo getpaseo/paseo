@@ -19,7 +19,7 @@ import { hasActiveOverlay } from "@/keyboard";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelinePromptJump } from "@/timeline/timeline-sync-plan";
-import { ChatFindModel, type ChatFindFailure } from "./model";
+import { ChatFindModel, type ChatFindFailure, type ChatFindOperations } from "./model";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps, ChatFindExpansionProps } from "./types";
 
@@ -38,6 +38,19 @@ const ROOT_STYLE = {
   outline: "none",
 } as const;
 let nextHighlightId = 0;
+
+function withNavigationNotice(
+  viewport: Pick<ChatFindOperations, "reveal" | "clear">,
+  onNavigate: () => void,
+): Pick<ChatFindOperations, "reveal" | "clear"> {
+  return {
+    clear: () => viewport.clear(),
+    reveal(messageId, query, occurrence, signal) {
+      onNavigate();
+      return viewport.reveal(messageId, query, occurrence, signal);
+    },
+  };
+}
 
 /**
  * The message chat find has landed on, for surfaces that must keep it addressable:
@@ -60,6 +73,7 @@ export function ChatFind({
   viewportRef,
   revealLoadedMessage,
   visibleMessageIds,
+  onNavigate,
   children,
 }: ChatFindProps) {
   const { t } = useTranslation();
@@ -67,6 +81,8 @@ export function ChatFind({
   const root = useRef<HTMLDivElement>(null);
   const bindings = useRef({ viewportRef, revealLoadedMessage, visibleMessageIds });
   bindings.current = { viewportRef, revealLoadedMessage, visibleMessageIds };
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
   const [highlightName] = useState(() => `paseo-chat-find-${++nextHighlightId}`);
   const { isInteractive } = usePaneFocus();
   const active = useRetainedPanelActive();
@@ -85,11 +101,14 @@ export function ChatFind({
             planTimelinePromptJump({ epoch: targetEpoch, seq }),
           );
         },
-        ...createFindViewport({
-          getBindings: () => bindings.current,
-          getRoot: () => root.current,
-          highlightName,
-        }),
+        ...withNavigationNotice(
+          createFindViewport({
+            getBindings: () => bindings.current,
+            getRoot: () => root.current,
+            highlightName,
+          }),
+          () => onNavigateRef.current?.(),
+        ),
       }),
     [agentId, serverId, highlightName],
   );

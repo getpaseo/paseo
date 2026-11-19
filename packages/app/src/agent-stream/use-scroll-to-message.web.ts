@@ -151,6 +151,7 @@ export function useScrollToMessage({
 
   return {
     isJumpSettling: settleController.isActive,
+    cancelJump: settleController.cancel,
     scrollToMessage,
   };
 }

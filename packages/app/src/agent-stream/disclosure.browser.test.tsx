@@ -54,6 +54,7 @@ function mountRow(rowId: string, isApplied: () => boolean, children: ReactNode) 
   const viewport: StreamViewportHandle = {
     scrollToBottom: vi.fn(),
     prepareForViewportChange: vi.fn(),
+    holdReadingPosition: vi.fn(),
     holdRow: (heldRowId, apply, triggerEdge) => {
       holds.push({ rowId: heldRowId, triggerEdge, appliedBefore: isApplied() });
       apply();

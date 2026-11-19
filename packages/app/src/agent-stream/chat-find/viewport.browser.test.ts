@@ -27,6 +27,7 @@ function viewport(root: HTMLElement, capture: Capture) {
     holdRow(_rowId, apply) {
       apply();
     },
+    holdReadingPosition() {},
     scrollToMessage(_messageId, occurrence) {
       if (occurrence) capture.occurrence = occurrence;
     },
