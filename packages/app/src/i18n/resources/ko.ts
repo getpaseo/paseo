@@ -1400,8 +1400,9 @@ export const ko: TranslationResources = {
     title: "새 워크스페이스",
     create: "생성",
     isolation: {
-      local: "로컬",
+      local: "프로젝트 디렉터리",
       worktree: "새 워크트리",
+      existing: "기존 워크트리",
       label: "격리",
     },
     fields: {
@@ -1416,12 +1417,17 @@ export const ko: TranslationResources = {
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",
+      branchInProjectDirectory:
+        "{{branch}} 브랜치는 프로젝트 디렉터리에 체크아웃되어 있습니다. 거기서 작업하려면 프로젝트 디렉터리를 선택하거나, 새 브랜치를 만드세요.",
+      branchInWorktree:
+        "{{branch}} 브랜치는 {{path}}에 체크아웃되어 있습니다. 기존 워크트리에서 그 워크트리를 선택하거나, 새 브랜치를 만드세요.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "시작 위치를 선택하세요",
+      worktree: "작업할 워크트리를 선택하세요",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1429,8 +1435,27 @@ export const ko: TranslationResources = {
       intoBase: "{{baseRef}}(으)로",
       searching: "검색 중...",
       noMatchingRefs: "일치하는 ref가 없습니다.",
-      searchPlaceholder: "브랜치와 PR 검색",
+      searchBranches: "브랜치 검색",
+      searchPullRequests: "풀 리퀘스트 검색",
+      branches: "브랜치",
+      pullRequests: "풀 리퀘스트",
+      pullRequestsShort: "PR",
+      branchOff: "새 브랜치",
+      checkout: "체크아웃",
+      branchOffHint: "여기서 새 브랜치를 만듭니다",
+      checkoutHint: "바로 작업합니다",
+      base: "기준",
+      from: "기준",
+      branch: "브랜치",
+      pullRequest: "풀 리퀘스트",
+      inProjectDirectory: "프로젝트 디렉터리에 있음",
+      inWorktree: "워크트리에 있음",
       title: "시작 위치",
+    },
+    worktreePicker: {
+      title: "워크트리",
+      searchPlaceholder: "워크트리 검색",
+      empty: "일치하는 워크트리가 없습니다.",
     },
     launch: {
       title: "What to launch",

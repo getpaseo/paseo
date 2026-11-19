@@ -1403,8 +1403,9 @@ export const en = {
     title: "New workspace",
     create: "Create",
     isolation: {
-      local: "Local",
+      local: "Project directory",
       worktree: "New worktree",
+      existing: "Existing worktree",
       label: "Isolation",
     },
     fields: {
@@ -1419,12 +1420,17 @@ export const en = {
       createWorktreeFailed: "Failed to create worktree",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
+      branchInProjectDirectory:
+        "{{branch}} is checked out in the project directory. Choose Project directory to work on it, or branch off it.",
+      branchInWorktree:
+        "{{branch}} is checked out in {{path}}. Choose that worktree under Existing worktree, or branch off it.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "Choose where to start from",
+      worktree: "Choose the worktree to work in",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1432,8 +1438,27 @@ export const en = {
       intoBase: "into {{baseRef}}",
       searching: "Searching...",
       noMatchingRefs: "No matching refs.",
-      searchPlaceholder: "Search branches and PRs",
+      searchBranches: "Search branches",
+      searchPullRequests: "Search pull requests",
+      branches: "Branches",
+      pullRequests: "Pull requests",
+      pullRequestsShort: "PRs",
+      branchOff: "Branch off",
+      checkout: "Check out",
+      branchOffHint: "Start a new branch from it",
+      checkoutHint: "Work on it directly",
+      base: "Base",
+      from: "from",
+      branch: "Branch",
+      pullRequest: "Pull request",
+      inProjectDirectory: "In project directory",
+      inWorktree: "In a worktree",
       title: "Start from",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Search worktrees",
+      empty: "No matching worktrees.",
     },
     launch: {
       title: "What to launch",

@@ -1429,8 +1429,9 @@ export const es: TranslationResources = {
     title: "Nuevo espacio de trabajo",
     create: "Crear",
     isolation: {
-      local: "Local",
+      local: "Directorio del proyecto",
       worktree: "Nuevo worktree",
+      existing: "Worktree existente",
       label: "Aislamiento",
     },
     fields: {
@@ -1445,12 +1446,17 @@ export const es: TranslationResources = {
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
+      branchInProjectDirectory:
+        "{{branch}} está activa en el directorio del proyecto. Elige Directorio del proyecto para trabajar en ella, o crea una rama a partir de ella.",
+      branchInWorktree:
+        "{{branch}} está activa en {{path}}. Elige ese worktree en Worktree existente, o crea una rama a partir de ella.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "Elige por dónde empezar",
+      worktree: "Elige el worktree en el que trabajar",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1458,8 +1464,27 @@ export const es: TranslationResources = {
       intoBase: "en {{baseRef}}",
       searching: "Búsqueda...",
       noMatchingRefs: "No hay árbitros coincidentes.",
-      searchPlaceholder: "Buscar sucursales y relaciones públicas",
+      searchBranches: "Buscar ramas",
+      searchPullRequests: "Buscar pull requests",
+      branches: "Ramas",
+      pullRequests: "Pull requests",
+      pullRequestsShort: "PR",
+      branchOff: "Nueva rama",
+      checkout: "Usar directamente",
+      branchOffHint: "Crea una rama nueva a partir de ella",
+      checkoutHint: "Trabaja directamente en ella",
+      base: "Base",
+      from: "desde",
+      branch: "Rama",
+      pullRequest: "Pull request",
+      inProjectDirectory: "En el directorio del proyecto",
+      inWorktree: "En un worktree",
       title: "Empezar desde",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Buscar worktrees",
+      empty: "No hay worktrees que coincidan.",
     },
     launch: {
       title: "What to launch",

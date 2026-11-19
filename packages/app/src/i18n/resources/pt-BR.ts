@@ -1419,8 +1419,9 @@ export const ptBR: TranslationResources = {
     title: "Novo workspace",
     create: "Criar",
     isolation: {
-      local: "Local",
+      local: "Diretório do projeto",
       worktree: "Novo worktree",
+      existing: "Worktree existente",
       label: "Isolamento",
     },
     fields: {
@@ -1435,12 +1436,17 @@ export const ptBR: TranslationResources = {
       createWorktreeFailed: "Falha ao criar worktree",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
+      branchInProjectDirectory:
+        "{{branch}} está em uso no diretório do projeto. Escolha Diretório do projeto para trabalhar nela, ou crie uma branch a partir dela.",
+      branchInWorktree:
+        "{{branch}} está em uso em {{path}}. Escolha esse worktree em Worktree existente, ou crie uma branch a partir dela.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "Escolha de onde começar",
+      worktree: "Escolha o worktree em que trabalhar",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1448,8 +1454,27 @@ export const ptBR: TranslationResources = {
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",
-      searchPlaceholder: "Buscar branches e PRs",
+      searchBranches: "Buscar branches",
+      searchPullRequests: "Buscar pull requests",
+      branches: "Branches",
+      pullRequests: "Pull requests",
+      pullRequestsShort: "PRs",
+      branchOff: "Nova branch",
+      checkout: "Usar diretamente",
+      branchOffHint: "Cria uma branch nova a partir dela",
+      checkoutHint: "Trabalha diretamente nela",
+      base: "Base",
+      from: "de",
+      branch: "Branch",
+      pullRequest: "Pull request",
+      inProjectDirectory: "No diretório do projeto",
+      inWorktree: "Em um worktree",
       title: "Começar de",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Buscar worktrees",
+      empty: "Nenhum worktree correspondente.",
     },
     launch: {
       title: "What to launch",

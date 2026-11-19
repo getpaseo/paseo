@@ -1423,8 +1423,9 @@ export const fr: TranslationResources = {
     title: "Nouvel espace de travail",
     create: "Créer",
     isolation: {
-      local: "Local",
+      local: "Répertoire du projet",
       worktree: "Nouveau worktree",
+      existing: "Worktree existant",
       label: "Isolation",
     },
     fields: {
@@ -1439,12 +1440,17 @@ export const fr: TranslationResources = {
       createWorktreeFailed: "Impossible de créer le worktree",
       composerStateRequired: "L’état de la zone de saisie est requis",
       selectModel: "Sélectionnez un modèle",
+      branchInProjectDirectory:
+        "{{branch}} est extraite dans le répertoire du projet. Choisissez Répertoire du projet pour y travailler, ou créez une branche à partir d’elle.",
+      branchInWorktree:
+        "{{branch}} est extraite dans {{path}}. Choisissez ce worktree dans Worktree existant, ou créez une branche à partir d’elle.",
     },
     tooltips: {
       project: "Choisir le projet",
       host: "Choisir l’hôte",
       isolation: "Choisir le niveau d’isolation",
       startingRef: "Choisir le point de départ",
+      worktree: "Choisir le worktree où travailler",
       launch: "Choisir quoi lancer",
     },
     refPicker: {
@@ -1452,8 +1458,27 @@ export const fr: TranslationResources = {
       intoBase: "vers {{baseRef}}",
       searching: "Recherche…",
       noMatchingRefs: "Aucune référence correspondante.",
-      searchPlaceholder: "Rechercher des branches et des PR",
+      searchBranches: "Rechercher des branches",
+      searchPullRequests: "Rechercher des PR",
+      branches: "Branches",
+      pullRequests: "Pull requests",
+      pullRequestsShort: "PR",
+      branchOff: "Nouvelle branche",
+      checkout: "Extraire",
+      branchOffHint: "Crée une nouvelle branche à partir de celle-ci",
+      checkoutHint: "Travaille directement dessus",
+      base: "Base",
+      from: "depuis",
+      branch: "Branche",
+      pullRequest: "Pull request",
+      inProjectDirectory: "Dans le répertoire du projet",
+      inWorktree: "Dans un worktree",
       title: "Partir de",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Rechercher des worktrees",
+      empty: "Aucun worktree correspondant.",
     },
     launch: {
       title: "Que lancer ?",

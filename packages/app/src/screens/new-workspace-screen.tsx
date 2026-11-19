@@ -7,6 +7,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import type { ReactNode } from "react";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
@@ -87,7 +88,6 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
-  pickerItemToCheckoutRequest,
   startsNewBranch,
   type BranchPickerDetail,
   type PickerCheckoutRequest,
@@ -103,16 +103,22 @@ import {
   type NewWorkspaceItemsScreen,
 } from "@/plugins/new-workspace-items";
 import {
+  BranchInWorktreeError,
   createNewWorkspaceSetup,
+  refActionOf,
   useNewWorkspaceSetupState,
   type NewWorkspaceSetup,
+  type SetupInputs,
 } from "./new-workspace/setup-model";
+import type { IsolationChoice } from "./new-workspace/form";
+import { shortenPath } from "@/utils/shorten-path";
 import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { useExistingWorktrees, useProjectWorktrees } from "./new-workspace/existing-worktrees";
 import { useNewWorkspaceForm } from "./new-workspace/form";
 import { ImportSessionButton } from "./new-workspace/import-session-button";
 import { useImportSession } from "@/hooks/use-import-session";
@@ -196,7 +202,12 @@ const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = [
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
   setIsolation: (value: "local" | "worktree") => void;
+  /** What the workspace is created as. An existing worktree is a local workspace at its path. */
   effectiveIsolation: "local" | "worktree";
+  /** The Isolation field's choice. */
+  choice: IsolationChoice;
+  /** The worktree an Existing worktree workspace is created in. */
+  existingWorktreePath: string | null;
   canCreateWorktree: boolean;
   showRefPicker: boolean;
 }
@@ -213,17 +224,43 @@ function useWorkspaceIsolation(input: {
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences } = useFormPreferences();
-  const { manualIsolation } = useNewWorkspaceSetupState(setup);
+  const { manualIsolation, existingWorktreePath: chosenPath } = useNewWorkspaceSetupState(setup);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const isWorktree = isolation === "worktree" && canCreateWorktree;
+  const existingWorktreePath = canCreateWorktree ? chosenPath : null;
+  const isWorktree = isolation === "worktree" && canCreateWorktree && !existingWorktreePath;
+  const worktreeChoice = isWorktree ? "worktree" : "local";
 
   return {
     isolation,
     setIsolation: setup.chooseIsolation,
     effectiveIsolation: isWorktree ? "worktree" : "local",
+    choice: existingWorktreePath ? "existing" : worktreeChoice,
+    existingWorktreePath,
     canCreateWorktree,
     showRefPicker: !supportsMultiplicity || isWorktree,
   };
+}
+
+/** Create's checkout request, with the model's refusal said in the user's language. */
+function checkoutRequestOrExplain(
+  resolve: () => PickerCheckoutRequest | undefined,
+  t: TFunction,
+): PickerCheckoutRequest | undefined {
+  try {
+    return resolve();
+  } catch (error) {
+    if (!(error instanceof BranchInWorktreeError)) throw error;
+    const branch = error.branchName;
+    throw new Error(
+      error.worktree.containsCwd
+        ? t("newWorkspace.errors.branchInProjectDirectory", { branch })
+        : t("newWorkspace.errors.branchInWorktree", {
+            branch,
+            path: shortenPath(error.worktree.path),
+          }),
+      { cause: error },
+    );
+  }
 }
 
 function normalizeBranchDetails(
@@ -1005,9 +1042,17 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const supportsWorktreeList = useHostFeature(selectedServerId, "checkoutWorktreeList");
+  const projectWorktrees = useProjectWorktrees({
+    client,
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory,
+    enabled: supportsWorktreeList && isConnected,
+  });
   const { setup, pluginProject, canCreateWorktree, isPending } = usePluginSetup({
     serverId: selectedServerId,
     project: selectedProject,
+    worktrees: projectWorktrees,
     supportsMultiplicity: supportsWorkspaceMultiplicity,
     pendingAction,
     isDraftHandoffActive,
@@ -1015,7 +1060,18 @@ export function NewWorkspaceScreen({
     setAttachments: chatDraft.setAttachments,
   });
   const dispatchPickerSelection = setup.dispatchPicker;
-  const selectedItem = useNewWorkspaceSetupState(setup).pickerSelection.selectedItem;
+  const setupState = useNewWorkspaceSetupState(setup);
+  const selectedItem = setupState.pickerSelection.selectedItem;
+  const supportsRefActions = useHostFeature(selectedServerId, "worktreeRefActions");
+  const { refActions } = setupState;
+  const refActionFor = useMemo(
+    () => ({
+      branch: refActionOf({ refActions, supportsRefActions, kind: "branch" }),
+      "github-pr": refActionOf({ refActions, supportsRefActions, kind: "github-pr" }),
+    }),
+    [refActions, supportsRefActions],
+  );
+  const existingWorktrees = useExistingWorktrees(projectWorktrees);
 
   const handleForgeChangeRequestDetected = useCallback(() => {
     dispatchPickerSelection({ type: "pr-detected" });
@@ -1048,11 +1104,12 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const { effectiveIsolation, setIsolation, showRefPicker } = useWorkspaceIsolation({
-    setup,
-    supportsMultiplicity: supportsWorkspaceMultiplicity,
-    canCreateWorktree,
-  });
+  const { effectiveIsolation, setIsolation, showRefPicker, choice, existingWorktreePath } =
+    useWorkspaceIsolation({
+      setup,
+      supportsMultiplicity: supportsWorkspaceMultiplicity,
+      canCreateWorktree,
+    });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1116,7 +1173,7 @@ export function NewWorkspaceScreen({
   }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
-      setup.chooseBase(item);
+      setup.chooseRef(item);
       setPickerOpen(false);
     },
     [setup],
@@ -1252,8 +1309,12 @@ export function NewWorkspaceScreen({
           })
         : null;
       const checkoutRequest = checkoutStatusForCreate
-        ? pickerItemToCheckoutRequest(
-            selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+        ? checkoutRequestOrExplain(
+            () =>
+              setup.checkoutRequestFor(
+                selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+              ),
+            t,
           )
         : undefined;
       const normalizedWorkspace = await createMultiplicityWorkspace({
@@ -1262,7 +1323,7 @@ export function NewWorkspaceScreen({
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
         project: selectedProject,
-        sourceDirectory: selectedSourceDirectory,
+        sourceDirectory: existingWorktreePath ?? selectedSourceDirectory,
         checkoutRequest,
         branchName: setup.getSnapshot().branch,
         metadata: setup.getSnapshot().metadata,
@@ -1282,6 +1343,7 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
+      existingWorktreePath,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1503,9 +1565,12 @@ export function NewWorkspaceScreen({
       open: openIsolationPicker,
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
-      effectiveIsolation,
+      choice,
       canCreateWorktree,
       onSelect: setIsolation,
+      existingWorktrees,
+      existingWorktreePath,
+      onChooseExistingWorktree: setup.chooseExistingWorktree,
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -1522,6 +1587,10 @@ export function NewWorkspaceScreen({
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
       showRefPicker,
+      worktrees: projectWorktrees,
+      actionFor: refActionFor,
+      onActionChange: setup.chooseRefAction,
+      canChooseAction: supportsRefActions,
     },
     launch: {
       serverId: selectedServerId,
@@ -1619,6 +1688,7 @@ export function NewWorkspaceScreen({
 function usePluginSetup(input: {
   serverId: string;
   project: Parameters<typeof getHostProjectId>[0] | null;
+  worktrees: SetupInputs["worktrees"];
   supportsMultiplicity: boolean;
   pendingAction: Parameters<typeof isNewWorkspacePending>[0]["pendingAction"];
   isDraftHandoffActive: boolean;
@@ -1628,6 +1698,7 @@ function usePluginSetup(input: {
   const {
     serverId,
     project,
+    worktrees,
     supportsMultiplicity,
     pendingAction,
     isDraftHandoffActive,
@@ -1646,7 +1717,16 @@ function usePluginSetup(input: {
     () => (projectId && projectName ? { id: projectId, name: projectName } : null),
     [projectId, projectName],
   );
-  const inputs = { serverId, locked, project: pluginProject, canCreateWorktree, supportsMetadata };
+  const supportsRefActions = useHostFeature(serverId, "worktreeRefActions");
+  const inputs: SetupInputs = {
+    serverId,
+    locked,
+    project: pluginProject,
+    canCreateWorktree,
+    supportsMetadata,
+    supportsRefActions,
+    worktrees,
+  };
   // Both are stable for the life of the screen: preferences write through the query client, and
   // the draft is keyed per mount. A command and a pick run the same effects.
   const [setup] = useState(() =>

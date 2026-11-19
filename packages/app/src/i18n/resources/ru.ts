@@ -1412,8 +1412,9 @@ export const ru: TranslationResources = {
     title: "Новое рабочее пространство",
     create: "Создать",
     isolation: {
-      local: "Локально",
+      local: "Папка проекта",
       worktree: "Новый worktree",
+      existing: "Существующий worktree",
       label: "Изоляция",
     },
     fields: {
@@ -1428,12 +1429,17 @@ export const ru: TranslationResources = {
       createWorktreeFailed: "Не удалось создать worktree.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",
+      branchInProjectDirectory:
+        "Ветка {{branch}} уже открыта в папке проекта. Выберите «Папка проекта», чтобы работать в ней, или создайте от неё новую ветку.",
+      branchInWorktree:
+        "Ветка {{branch}} уже открыта в {{path}}. Выберите этот worktree в «Существующий worktree» или создайте от неё новую ветку.",
     },
     tooltips: {
       project: "Выберите проект",
       host: "Выберите хост",
       isolation: "Выберите уровень изоляции",
       startingRef: "Выберите, с чего начать",
+      worktree: "Выберите worktree для работы",
       launch: "Выберите, что запустить",
     },
     refPicker: {
@@ -1441,8 +1447,27 @@ export const ru: TranslationResources = {
       intoBase: "в ветку {{baseRef}}",
       searching: "Идет поиск...",
       noMatchingRefs: "Нет подходящих веток или PR.",
-      searchPlaceholder: "Поиск веток и PR",
+      searchBranches: "Поиск веток",
+      searchPullRequests: "Поиск PR",
+      branches: "Ветки",
+      pullRequests: "Pull requests",
+      pullRequestsShort: "PR",
+      branchOff: "Новая ветка",
+      checkout: "Переключиться",
+      branchOffHint: "Создать от неё новую ветку",
+      checkoutHint: "Работать прямо в ней",
+      base: "База",
+      from: "от",
+      branch: "Ветка",
+      pullRequest: "Pull request",
+      inProjectDirectory: "В папке проекта",
+      inWorktree: "В worktree",
       title: "Начать с",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Поиск worktree",
+      empty: "Нет подходящих worktree.",
     },
     launch: {
       title: "Что запустить",
