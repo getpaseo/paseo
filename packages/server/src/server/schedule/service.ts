@@ -243,8 +243,8 @@ type ScheduleAgentManager = Pick<
     | "runAgent"
     | "waitForAgentEvent"
     | "waitForAgentClose"
-    | "setHeartbeatBackgroundWork"
-    | "removeHeartbeatBackgroundWork"
+    | "setDaemonBackgroundWork"
+    | "removeDaemonBackgroundWork"
   >;
 
 interface ScheduleWorkspaceCreateInput {
@@ -529,7 +529,7 @@ export class ScheduleService {
     const { id, name, createdAt } = schedule;
     if (change === "delete" || schedule.status !== "active") {
       this.heartbeatStops.delete(id);
-      this.agentManager.removeHeartbeatBackgroundWork(agentId, id);
+      this.agentManager.removeDaemonBackgroundWork({ agentId, namespace: "heartbeat", id });
       return;
     }
     if (this.recovering) {
@@ -552,11 +552,14 @@ export class ScheduleService {
       this.heartbeatStops.set(id, stopHeartbeat);
       stop = stopHeartbeat;
     }
-    this.agentManager.setHeartbeatBackgroundWork({
+    this.agentManager.setDaemonBackgroundWork({
       agentId,
-      scheduleId: id,
-      name,
-      createdAt,
+      namespace: "heartbeat",
+      id,
+      kind: "heartbeat",
+      countsAsRunning: false,
+      description: name,
+      startedAt: createdAt,
       stop,
     });
   }

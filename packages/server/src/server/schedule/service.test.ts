@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { deriveAgentStateBucket } from "@getpaseo/protocol/agent-state-bucket";
 import { AgentManager } from "../agent/agent-manager.js";
 import { AgentStorage } from "../agent/agent-storage.js";
 import { createAgentCommand } from "../agent/create-agent/create.js";
@@ -649,7 +650,7 @@ describe("ScheduleService", () => {
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
   });
 
-  test("shows an active heartbeat and stops it through agent background work", async () => {
+  test("lists and stops an active heartbeat while the agent is idle", async () => {
     const logger = createTestLogger();
     const manager = new AgentManager({
       logger,
@@ -674,6 +675,12 @@ describe("ScheduleService", () => {
     } as const;
     const created = await service.create(input);
 
+    expect(
+      deriveAgentStateBucket({
+        status: "idle",
+        backgroundWork: manager.getAgentBackgroundWorkSummary(agent.id),
+      }),
+    ).toBe("done");
     const items = manager.listAgentBackgroundWork(agent.id);
     expect(items).toEqual([
       expect.objectContaining({

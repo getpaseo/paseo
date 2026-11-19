@@ -98,6 +98,7 @@ import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
+  type NotificationPlan,
 } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
@@ -599,6 +600,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
+  // Per agent, the unread finish (by its attention timestamp) that a notification was delivered for.
+  private readonly notifiedUnreadFinishAt = new Map<string, number>();
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -752,6 +755,7 @@ export class VoiceAssistantWebSocketServer {
           prompt: batch.prompt,
           activeTurnBehavior: batch.activeTurnBehavior,
           idleOnly: batch.idleOnly,
+          admit: batch.admit,
           sessionMode: batch.sessionMode,
           clearPendingPermissions: batch.clearPendingPermissions,
           unarchive: batch.unarchive,
@@ -2044,6 +2048,7 @@ export class VoiceAssistantWebSocketServer {
         relayProtectedSecurity: true,
         usageSetting: true,
         usageSources: true,
+        providerInstallation: true,
         ownedSubscriptions: true,
         providerOptionControls: true,
         entityMetadata: true,
@@ -2057,6 +2062,10 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: true,
         workspaceBaseBranch: true,
+        // COMPAT(checkoutWorktreeList): added after v0.16.2, remove gate after 2027-11-19.
+        checkoutWorktreeList: true,
+        // COMPAT(worktreeRefActions): added after v0.16.2, remove gate after 2027-11-19.
+        worktreeRefActions: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -2917,6 +2926,7 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    attentionTimestamp: Date | null;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -2955,12 +2965,15 @@ export class VoiceAssistantWebSocketServer {
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
-      nowMs,
-    });
+    const plan = this.planOncePerUnreadFinish(
+      params,
+      computeNotificationPlan({
+        allStates,
+        focusTarget: { kind: "agent", id: params.agentId },
+        pushEligible: isPushEligibleAttentionReason(params.reason),
+        nowMs,
+      }),
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
@@ -3009,6 +3022,26 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.get(ws)!.session.publishToSource(ws, message.message);
       else this.sendToClient(ws, message);
     }
+  }
+
+  // An agent can finish many times while its first finish is unread, for example when it
+  // reacts to each event of a background task. The user hears about an unread finish once.
+  // A finish that was not delivered, because the user had the agent on screen, does not count.
+  private planOncePerUnreadFinish(
+    params: { agentId: string; reason: string; attentionTimestamp: Date | null },
+    plan: NotificationPlan,
+  ): NotificationPlan {
+    if (params.reason !== "finished" || params.attentionTimestamp === null) {
+      return plan;
+    }
+    const unreadFinishAt = params.attentionTimestamp.getTime();
+    if (this.notifiedUnreadFinishAt.get(params.agentId) === unreadFinishAt) {
+      return { inAppRecipientIndex: null, shouldPush: false };
+    }
+    if (plan.shouldPush || plan.inAppRecipientIndex !== null) {
+      this.notifiedUnreadFinishAt.set(params.agentId, unreadFinishAt);
+    }
+    return plan;
   }
 
   private async broadcastTerminalAttention(params: {

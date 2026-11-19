@@ -1,3 +1,6 @@
+import { resolveKeyboardFocusScope } from "../focus-scope";
+
 export function hasFocusedTextInput(): boolean {
-  return false;
+  const scope = resolveKeyboardFocusScope({ target: null, commandCenterOpen: false });
+  return scope === "editable" || scope === "message-input";
 }
