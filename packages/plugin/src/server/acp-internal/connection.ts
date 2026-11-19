@@ -405,7 +405,8 @@ class AcpRuntime {
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
   private autoAccept = false;
-  private activePrompt: { turnId: string; settled: Promise<void> } | null = null;
+  private activePrompt: { turnId: string; settled: Promise<void>; cancelling: boolean } | null =
+    null;
   private lastUsage: ProviderUsage = {};
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
@@ -688,14 +689,21 @@ class AcpRuntime {
         return undefined;
       },
     );
-    this.activePrompt = { turnId, settled };
+    this.activePrompt = { turnId, settled, cancelling: false };
     void settled.finally(() => {
       if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
     });
   }
 
-  interrupt(): Promise<void> {
-    return this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+  async interrupt(): Promise<void> {
+    const active = this.activePrompt;
+    if (active) active.cancelling = true;
+    try {
+      await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+    } finally {
+      // An agent may wait for its outstanding permission replies before ending the prompt.
+      if (active) this.finishTurnPermissions(active.turnId);
+    }
   }
 
   listSessions(cwd?: string) {
@@ -712,7 +720,9 @@ class AcpRuntime {
     response: Extract<ProviderInput, { type: "session.permission" }>["response"],
   ): void {
     const pending = this.permissions.get(permissionId);
-    if (!pending) throw new Error(`Unknown ACP permission: ${permissionId}`);
+    if (!pending) return;
+    const active = this.activePrompt;
+    if (active?.cancelling && pending.turnId === active.turnId) return;
     const selected = selectPermissionOption(pending.request.options, response);
     if (response.selectedActionId !== undefined && !selected) {
       throw new Error(
@@ -1020,7 +1030,9 @@ class AcpRuntime {
     request: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
     await this.notificationLane;
-    if (this.closing || this.processFailed) return { outcome: { outcome: "cancelled" } };
+    if (this.closing || this.processFailed || this.activePrompt?.cancelling) {
+      return { outcome: { outcome: "cancelled" } };
+    }
     if (
       this.autoAccept &&
       request.sessionId === this.nativeSessionId &&

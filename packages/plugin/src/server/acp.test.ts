@@ -325,22 +325,25 @@ describe("runAcpProvider", () => {
       ],
     };
     let finishPrompt: (() => void) | undefined;
-    let nativePrompt: AcpRequestMessage | undefined;
+    let stopping = false;
     const outcomes: unknown[] = [];
     const { connector } = connectorHarness({
       configOptions: [modeConfig],
-      handleMessage(runtime, message) {
-        if (!("method" in message) || message.method !== "session/cancel" || !nativePrompt)
-          return false;
-        runtime.respond(nativePrompt, { stopReason: "cancelled" });
+      handleMessage(_runtime, message) {
+        if (!("method" in message) || message.method !== "session/cancel") return false;
+        stopping = true;
         return true;
       },
       handleRequest(runtime, request) {
         if (request.method !== "session/prompt") return false;
-        nativePrompt = request;
         void runtime.request("session/request_permission", approval).then((outcome) => {
           outcomes.push(outcome);
-          finishPrompt = () => runtime.respond(request, { stopReason: "end_turn" });
+          if (stopping) {
+            stopping = false;
+            runtime.respond(request, { stopReason: "cancelled" });
+          } else {
+            finishPrompt = () => runtime.respond(request, { stopReason: "end_turn" });
+          }
           return undefined;
         });
         return true;
@@ -424,7 +427,14 @@ describe("runAcpProvider", () => {
           event.state === "canceled",
       );
       await expect.poll(() => outcomes[1]).toEqual({ outcome: { outcome: "cancelled" } });
+      await connection.send({
+        type: "session.permission",
+        sessionId: "session-1",
+        permissionId: "permission:tool",
+        response: { behavior: "allow" },
+      });
       expect(await configure("enter", "full-access")).toMatchObject({ type: "request.completed" });
+      expect(events.some((event) => event.type === "session.runtime_failed")).toBe(false);
       expect(
         events.filter((event) => event.type === "session.config").map((event) => event.config.mode),
       ).toEqual(["full-access", "default", "full-access"]);
