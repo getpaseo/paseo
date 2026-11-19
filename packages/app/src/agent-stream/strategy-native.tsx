@@ -147,6 +147,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     isInitialHistoryLoading,
     revealInitialHistory,
     onNearBottomChange,
+    onUserScroll,
     onNearHistoryStart,
     isLoadingOlderHistory,
     hasOlderHistory,
@@ -291,6 +292,11 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     },
     [onNearBottomChange],
   );
+  const scrollToMessage = useStableEvent((messageId: string) => {
+    const index = rows.findIndex((row) => row.id === messageId);
+    if (index < 0) return;
+    listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0 });
+  });
 
   const bottomAnchorController = useBottomAnchorController({
     agentId,
@@ -460,6 +466,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
       },
       holdRow,
+      scrollToMessage,
     };
     viewportRef.current = handle;
     return () => {
@@ -467,7 +474,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         viewportRef.current = null;
       }
     };
-  }, [agentId, bottomAnchorController, holdRow, viewportRef]);
+  }, [agentId, bottomAnchorController, holdRow, scrollToMessage, viewportRef]);
 
   // The scroll-to-bottom button shows whenever following would not resume on its own. A detached
   // list resumes only from the end, so the button shows anywhere short of it. While following, the
@@ -559,6 +566,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   });
 
   const handleScrollBeginDrag = useStableEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    onUserScroll?.();
     finishInitialFill();
     clearPendingUserScrollEnd();
     isUserScrollActiveRef.current = true;

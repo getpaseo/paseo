@@ -15,6 +15,8 @@ export type PluginButtonIcon = PluginIcon<PluginButtonIconProps>;
 
 export type PluginButtonBehavior<Text extends PluginText = string> =
   | { kind: "action"; onPress(): void | Promise<void> }
+  /** A host-owned timeline jump. Only available on agent timeline buttons. */
+  | { kind: "timeline"; target: "last-user-message" }
   | { kind: "menu"; items: readonly PluginButtonMenuEntry<Text>[] }
   | { kind: "popover"; Content: ComponentType<PluginButtonContentProps> };
 export type PluginButtonMenuEntry<Text extends PluginText = string> =
@@ -53,4 +55,29 @@ export interface PluginComposerPillContribution<
   Text extends PluginText = string,
 > extends PluginHeaderButtonContribution<Text> {
   agentId: string;
+}
+
+/**
+ * An icon button in every composer toolbar of the installation's host, beside the context meter.
+ * Icon and popover props carry the composer's agent.
+ */
+export interface PluginComposerToolbarButtonContribution<Text extends PluginText = string> {
+  id: string;
+  button: PluginButton<Text>;
+}
+
+/**
+ * An icon button in the system vertical bar of a folded iPhone, below Paseo's workspace actions.
+ * It shows only while the workspace actions are in the bar. Icon and popover props carry the
+ * workspace on screen.
+ */
+export interface PluginVerticalBarButtonContribution<Text extends PluginText = string> {
+  id: string;
+  button: PluginButton<Text>;
+}
+
+/** A floating control rendered beside the agent transcript's scroll-to-bottom button. */
+export interface PluginTimelineButtonContribution<Text extends PluginText = string> {
+  id: string;
+  button: PluginButton<Text>;
 }

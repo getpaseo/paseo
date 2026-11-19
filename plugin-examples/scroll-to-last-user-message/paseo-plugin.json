@@ -1,0 +1,4 @@
+{
+  "id": "scroll-to-last-user-message",
+  "requirements": { "paseo": ">=0.16.0-beta.2" }
+}

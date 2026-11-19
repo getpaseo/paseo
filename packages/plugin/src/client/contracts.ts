@@ -22,6 +22,9 @@ import type {
   PluginButtonRegistration,
   PluginHeaderButtonContribution,
   PluginComposerPillContribution,
+  PluginComposerToolbarButtonContribution,
+  PluginVerticalBarButtonContribution,
+  PluginTimelineButtonContribution,
 } from "./buttons.js";
 import type {
   PluginTheme,
@@ -243,6 +246,15 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   ): PluginButtonRegistration<PluginText>;
   addComposerPill(
     contribution: PluginComposerPillContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addComposerToolbarButton(
+    contribution: PluginComposerToolbarButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addVerticalBarButton(
+    contribution: PluginVerticalBarButtonContribution<PluginText>,
+  ): PluginButtonRegistration<PluginText>;
+  addTimelineButton(
+    contribution: PluginTimelineButtonContribution<PluginText>,
   ): PluginButtonRegistration<PluginText>;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addComposerItem(contribution: PluginComposerItemContribution): PluginCleanup;

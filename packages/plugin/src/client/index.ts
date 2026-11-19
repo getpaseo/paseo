@@ -55,7 +55,10 @@ export type {
   PluginButtonMenuEntry,
   PluginButtonRegistration,
   PluginComposerPillContribution,
+  PluginComposerToolbarButtonContribution,
   PluginHeaderButtonContribution,
+  PluginVerticalBarButtonContribution,
+  PluginTimelineButtonContribution,
 } from "./buttons.js";
 export type { PluginIconProps, PluginSerializableIcon, PluginSvgIcon } from "../icons.js";
 export type {
@@ -124,6 +127,26 @@ export declare function useHosts(): readonly PluginHostSummary[];
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;
+
+/**
+ * The system vertical bar: the side rail a folded iPhone uses for the status bar and bar items.
+ * `edge` is "none" on every other device, window size, and platform.
+ */
+export interface PluginVerticalBar {
+  readonly edge: "none" | "leading" | "trailing";
+  readonly behavior: "automatic" | "disabled";
+}
+/** The window's vertical bar, live. Supplied by the app's client bundle loader. */
+export declare function useVerticalBar(): PluginVerticalBar;
+/** The window's vertical bar now, for code outside components. */
+export declare function getVerticalBar(): PluginVerticalBar;
+/** Calls `listener` whenever the vertical bar's edge or behavior changes. Returns the remover. */
+export declare function subscribeVerticalBar(listener: () => void): () => void;
+/**
+ * "disabled" moves the status bar to the top and gives the bar's column to Paseo's content;
+ * "automatic" restores the system bar. Does nothing where `edge` is "none".
+ */
+export declare function setVerticalBarBehavior(behavior: PluginVerticalBar["behavior"]): void;
 
 export { defineTranslations, useTranslation } from "./translations.js";
 export type { PluginI18n } from "./translations.js";

@@ -13,11 +13,14 @@ import {
   WindowLayoutActions,
 } from "@/window-layout";
 import { IconButtonChromeProvider } from "@/components/ui/icon-button-chrome";
+import { PluginVerticalBarButtons } from "@/plugins";
 
 export { MobileWorkspaceTabSwitcher } from "./tab-switcher";
+export { CompactWorkspaceTabStrip, type CompactWorkspaceTabStripMenuActions } from "./tab-strip";
 
 interface CompactWorkspaceHeaderProps {
   serverId: string;
+  workspaceId: string;
   isLoading: boolean;
   title: string;
   subtitle: string;
@@ -26,6 +29,8 @@ interface CompactWorkspaceHeaderProps {
   explorerToggleLabel: string;
   explorerToggleAccessibilityState: { expanded: boolean };
   tabSwitcher: ReactNode;
+  /** Scrolling tabs for the full-width control row beside a folded iPhone's status pill. */
+  tabStrip?: ReactNode;
   /** Workspace overflow menu. */
   children: ReactNode;
   headerVariant: "compact" | "full";
@@ -43,7 +48,9 @@ export function CompactWorkspaceHeader({
   explorerToggleAccessibilityState,
   children,
   tabSwitcher,
+  tabStrip,
   serverId,
+  workspaceId,
   headerVariant,
   actionsActive,
 }: CompactWorkspaceHeaderProps) {
@@ -87,9 +94,13 @@ export function CompactWorkspaceHeader({
           subtitle={projectRow}
           loading={isLoading}
           actions={actionsInBar ? undefined : actions}
+          strip={actionsInBar ? undefined : tabStrip}
         />
       ) : null}
-      <WindowLayoutActions active={actionsActive}>{actions}</WindowLayoutActions>
+      <WindowLayoutActions active={actionsActive}>
+        {actions}
+        <PluginVerticalBarButtons serverId={serverId} workspaceId={workspaceId} />
+      </WindowLayoutActions>
     </IconButtonChromeProvider>
   );
 }

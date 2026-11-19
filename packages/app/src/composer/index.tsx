@@ -180,7 +180,11 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
-import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
+import {
+  PluginComposerToolbarButtons,
+  PluginResourceAttachmentPill,
+  usePluginAttachmentPicker,
+} from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -2199,19 +2203,31 @@ function ComposerContentImpl({
   const beforeVoiceContent = useMemo(
     () =>
       hasAgent ? (
-        <View style={styles.contextWindowMeterSlot}>
-          <ContextWindowMeter
-            serverId={serverId}
-            agentId={agentId}
-            maxTokens={agentState.contextWindowMaxTokens}
-            usedTokens={agentState.contextWindowUsedTokens}
-            totalCostUsd={agentState.totalCostUsd}
-            toolbarRing={TOOLBAR_RINGS[controlSizing]}
-          />
-        </View>
+        <>
+          {workspaceId ? (
+            <PluginComposerToolbarButtons
+              serverId={serverId}
+              workspaceId={workspaceId}
+              agentId={agentId}
+              compact={isCompactFormFactor}
+            />
+          ) : null}
+          <View style={styles.contextWindowMeterSlot}>
+            <ContextWindowMeter
+              serverId={serverId}
+              agentId={agentId}
+              maxTokens={agentState.contextWindowMaxTokens}
+              usedTokens={agentState.contextWindowUsedTokens}
+              totalCostUsd={agentState.totalCostUsd}
+              toolbarRing={TOOLBAR_RINGS[controlSizing]}
+            />
+          </View>
+        </>
       ) : null,
     [
       hasAgent,
+      workspaceId,
+      isCompactFormFactor,
       serverId,
       agentId,
       agentState.contextWindowMaxTokens,
