@@ -382,6 +382,11 @@ export const ja: TranslationResources = {
       details: "詳細",
     },
     dictation: {
+      insecureContext: "マイクを使用するには、HTTPS または localhost で Paseo を開いてください。",
+      unsupported: "このブラウザーでは音声入力を利用できません。",
+      noMicrophone: "マイクを接続して、もう一度お試しください。",
+      permissionDenied: "マイクへのアクセスを許可して、もう一度お試しください。",
+      startFailed: "音声入力を開始できませんでした。もう一度お試しください。",
       paused: "マイクが中断されました。再開を待っています…",
       start: "音声入力を開始",
       cancel: "音声入力をキャンセル",

@@ -377,6 +377,11 @@ export const ar: TranslationResources = {
       details: "تفاصيل",
     },
     dictation: {
+      insecureContext: "افتح Paseo عبر HTTPS أو localhost لاستخدام الميكروفون.",
+      unsupported: "الإملاء غير متاح في هذا المتصفح.",
+      noMicrophone: "صِل ميكروفونًا وحاول مرة أخرى.",
+      permissionDenied: "اسمح بالوصول إلى الميكروفون وحاول مرة أخرى.",
+      startFailed: "تعذر بدء الإملاء. حاول مرة أخرى.",
       paused: "تمت مقاطعة الميكروفون. في انتظار الاستئناف…",
       start: "بدء الإملاء الصوتي",
       cancel: "إلغاء الإملاء",

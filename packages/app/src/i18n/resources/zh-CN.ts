@@ -377,6 +377,11 @@ export const zhCN: TranslationResources = {
       details: "详情",
     },
     dictation: {
+      insecureContext: "请通过 HTTPS 或 localhost 打开 Paseo，以使用麦克风。",
+      unsupported: "此浏览器无法使用听写。",
+      noMicrophone: "请连接麦克风，然后重试。",
+      permissionDenied: "请允许访问麦克风，然后重试。",
+      startFailed: "无法开始听写。请重试。",
       paused: "麦克风已中断，正在等待恢复…",
       start: "开始语音听写",
       cancel: "取消听写",

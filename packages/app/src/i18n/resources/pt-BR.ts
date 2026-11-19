@@ -381,6 +381,11 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      insecureContext: "Abra o Paseo por HTTPS ou em localhost para usar o microfone.",
+      unsupported: "O ditado não está disponível neste navegador.",
+      noMicrophone: "Conecte um microfone e tente novamente.",
+      permissionDenied: "Permita o acesso ao microfone e tente novamente.",
+      startFailed: "Não foi possível iniciar o ditado. Tente novamente.",
       paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",
