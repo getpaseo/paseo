@@ -22,10 +22,11 @@ until then prefer copying the closest file and trimming.
 
 ## Picker trigger tooltips
 
-Pass picker hints through `ComboboxTrigger`'s `tooltip` prop and render the
-`Combobox` outside the trigger. React focus events bubble through portals.
-Wrapping the picker with `TooltipTrigger` makes focus in its search field
-look like focus on the button when a shortcut opens the picker.
+Keep the picker surface outside `TooltipTrigger`. React focus events bubble
+through portals, so putting the surface inside the trigger makes focus in its
+search field look like focus on the button when a shortcut opens the picker.
+For new `ComboboxTrigger` buttons, pass the hint through the `tooltip` prop. An
+explicit `TooltipTrigger` wrapper is also safe when it wraps only the button.
 
 ## Popover width contract
 
