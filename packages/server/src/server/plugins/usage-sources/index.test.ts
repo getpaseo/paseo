@@ -175,7 +175,7 @@ test("concurrent requests for the same ID share one vendor fetch", async () => {
   const second = registry.listReports();
   finish({ status: "available", windows: [] });
   const [one, two] = await Promise.all([first, second]);
-  expect(one[0]).toBe(two[0]);
+  expect(one[0]).toEqual(two[0]);
   expect(fetches).toBe(1);
 });
 
@@ -624,6 +624,76 @@ test("a hung login records its own timeout and still tries the next login", asyn
   ]);
 });
 
+test("#3589: host listings discover each configured provider's environment after the host's own logins", async () => {
+  let providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } },
+    { provider: "claude", label: "Claude (copy)", env: { CLAUDE_CONFIG_DIR: "/default-copy" } },
+  ];
+  const calls: unknown[] = [];
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => providers,
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      if (scope.kind === "global") return [{ key: "default", input: "/default" }];
+      const dir = scope.env.CLAUDE_CONFIG_DIR;
+      return [{ key: dir === "/work" ? "work" : "default", input: dir }];
+    },
+    fetch: async (input) => {
+      calls.push(input);
+      return input === "/default"
+        ? { status: "unavailable", problem: { kind: "rejected", status: 401 } }
+        : { status: "available", windows: [] };
+    },
+  });
+  const reports = await registry.listReports();
+  expect(reports.map((entry) => [entry.id, entry.report.status])).toEqual([
+    ["claude:default", "available"],
+    ["claude:work", "available"],
+  ]);
+  expect(calls).toEqual(["/default", "/default-copy", "/work"]);
+  providers = [];
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["claude:default"]);
+});
+
+test("#3589: a failed provider login is named after its provider; one the host already has keeps the host's name", async () => {
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label: "Claude (home)", env: { CLAUDE_CONFIG_DIR: "/default" } },
+      { provider: "claude", label: "Claude (a)", env: { CLAUDE_CONFIG_DIR: "/a" } },
+      { provider: "claude", label: "Claude (b)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+      { provider: "claude", label: "Claude (b again)", env: { CLAUDE_CONFIG_DIR: "/b" } },
+    ],
+  });
+  // An expired login has no account to read, so each directory is its own account.
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      const dir = scope.kind === "global" ? "/default" : scope.env.CLAUDE_CONFIG_DIR;
+      return [{ key: `dir${dir?.replace("/", "-")}`, harness: "Claude", input: dir }];
+    },
+    fetch: async () => ({
+      status: "unavailable",
+      problem: { kind: "expired", expiresAt: "1970-01-01T00:00:01.000Z", refreshedBy: "claude" },
+    }),
+  });
+  const reports = await registry.listReports();
+  expect(
+    reports.map((entry) => [entry.id, entry.loginErrors?.map((login) => login.harness)]),
+  ).toEqual([
+    ["claude:dir-default", ["Claude"]],
+    ["claude:dir-a", ["Claude (a)"]],
+    ["claude:dir-b", ["Claude (b)"]],
+  ]);
+});
+
 test("retains the last successful poll across failures, cache expiry, and recovery", async () => {
   let now = 0;
   let report: unknown = {
@@ -827,4 +897,108 @@ test("failed discovery preserves history until discovery confirms account remova
   expect(await registry.listReports()).toEqual([]);
   present = true;
   expect((await registry.listReports())[0]?.lastSuccessful).toBeUndefined();
+});
+
+test("#3589: a provider's failed discovery keeps only that provider's last logins", async () => {
+  let providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } },
+  ];
+  const failing = new Set<string>();
+  const registry = new UsageSourceRegistry(
+    Date.now,
+    300_000,
+    { warn: () => {} },
+    {
+      hasAgent: () => false,
+      usageSession: () => null,
+      providerEnvironments: () => providers,
+    },
+  );
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) => {
+      const dir = scope.kind === "global" ? "/default" : scope.env.CLAUDE_CONFIG_DIR;
+      if (failing.has(dir)) throw new Error("Login store temporarily unavailable");
+      return [{ key: dir.slice(1), input: dir }];
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  const listIds = async () => (await registry.listReports()).map((entry) => entry.id);
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  failing.add("/work");
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // Renaming a provider keeps its launch environment.
+  providers = [{ provider: "claude", label: "Claude (Work)", env: { CLAUDE_CONFIG_DIR: "/work" } }];
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // A changed launch environment has no previous result to keep.
+  providers = [
+    { provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/other" } },
+  ];
+  failing.add("/other");
+  expect(await listIds()).toEqual(["claude:default"]);
+  failing.clear();
+  providers = [{ provider: "claude", label: "Claude (work)", env: { CLAUDE_CONFIG_DIR: "/work" } }];
+  expect(await listIds()).toEqual(["claude:default", "claude:work"]);
+  // The host's own failed discovery keeps the host's logins, not a disabled provider's.
+  providers = [];
+  failing.add("/default");
+  expect(await listIds()).toEqual(["claude:default"]);
+});
+
+test("unregistering a source drops the accounts each host scope kept for it", async () => {
+  let fails = false;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, { warn: () => {} });
+  const claude = source({
+    id: "claude",
+    discover: async () => {
+      if (fails) throw new Error("Login store temporarily unavailable");
+      return [{ key: "default", input: {} }];
+    },
+  });
+  registry.register(claude);
+  expect((await registry.listReports()).map((entry) => entry.id)).toEqual(["claude:default"]);
+  registry.unregister("claude");
+  registry.register(claude);
+  fails = true;
+  expect(await registry.listReports()).toEqual([]);
+});
+
+test("#3589: renaming a provider preserves cached usage and recovery history while updating error labels", async () => {
+  let label = "Before";
+  let available = true;
+  let polls = 0;
+  const registry = new UsageSourceRegistry(Date.now, 300_000, undefined, {
+    hasAgent: () => false,
+    usageSession: () => null,
+    providerEnvironments: () => [
+      { provider: "claude", label, env: { CLAUDE_CONFIG_DIR: "/work" } },
+    ],
+  });
+  registry.register({
+    id: "claude",
+    label: "Claude",
+    discover: async (scope) =>
+      scope.kind === "global" ? [] : [{ key: "work", input: { path: "/work" } }],
+    fetch: async () => {
+      polls++;
+      return available
+        ? { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] }
+        : { status: "error", error: "offline" };
+    },
+  });
+  const [success] = await registry.listReports();
+  available = false;
+  label = "After";
+  const [cached] = await registry.listReports();
+  expect(cached?.report).toEqual(success?.report);
+  expect(polls).toBe(1);
+  const [failed] = await registry.listReports({ forceRefresh: true });
+  expect(failed?.lastSuccessful?.report).toEqual(success?.report);
+  expect(failed?.loginErrors?.map((login) => login.harness)).toEqual(["After"]);
+  label = "Renamed again";
+  const [relabeled] = await registry.listReports();
+  expect(polls).toBe(2);
+  expect(relabeled?.lastSuccessful).toEqual(failed?.lastSuccessful);
+  expect(relabeled?.loginErrors?.map((login) => login.harness)).toEqual(["Renamed again"]);
 });
