@@ -441,6 +441,96 @@ test("a gap absorbed by a running tail is recovered after the tail completes", a
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
+test("a gap parked behind a running tail resumes after the rows that tail applied", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const tail = await world.nextFetch("agent-a");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 7 });
+  tail.respond({ hasNewer: false, seq: 7 });
+
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 7 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  recovery.respond({ hasNewer: false, seq: 7 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("a chat without coverage that recovers a gap loads the latest tail when history overflows a page", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  const tail = await world.nextFetch("agent-a");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  tail.respond({ hasNewer: false, seq: 0 });
+
+  const recovery = await world.nextFetch("agent-a");
+  expect(recovery.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 0 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  recovery.respond({ hasNewer: true, seq: 40 });
+
+  const fallback = await world.nextFetch("agent-a");
+  expect(fallback.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  fallback.respond({ hasNewer: false, seq: 90 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
+test("a recovery's follow-up page starts after rows another fetch applied meanwhile", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  (await world.nextFetch("agent-a")).respond({ hasNewer: false, seq: 0 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 0 });
+  const firstPage = await world.nextFetch("agent-a");
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 40 });
+  firstPage.respond({ hasNewer: true, seq: 40 });
+  const latestTail = await world.nextFetch("agent-a");
+  expect(latestTail.request.direction).toBe("tail");
+
+  world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 40 });
+  const recovery = await world.nextFetch("agent-a");
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 300 });
+  latestTail.respond({ hasNewer: false, seq: 300 });
+  recovery.respond({ hasNewer: true, seq: 80 });
+
+  const followUp = await world.nextFetch("agent-a");
+  expect(followUp.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "epoch-agent-a", seq: 300 },
+    limit: 40,
+    projection: "projected",
+    wholeTurns: true,
+  });
+  followUp.respond({ hasNewer: false, seq: 300 });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+  world.sync.dispose();
+});
+
 test("reports a chat current only once its parked follow-up page completes", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
@@ -885,7 +975,8 @@ test("gap recovery supersedes completed catch-up and pages through the current t
   const membership = await world.nextMembership();
   membership.succeed();
   const initial = await world.nextFetch("agent-a");
-  initial.respond({ hasNewer: false });
+  world.cursors.set("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });
+  initial.respond({ hasNewer: false, seq: 10 });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 
   world.sync.recoverGap("agent-a", { epoch: "epoch-agent-a", endSeq: 10 });

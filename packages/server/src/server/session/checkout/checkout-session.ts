@@ -11,6 +11,7 @@ import type {
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
   CheckoutStatusRequest,
+  CheckoutWorktreesListRequest,
   SessionInboundMessage,
   SessionOutboundMessage,
   SubscribeCheckoutDiffRequest,
@@ -54,6 +55,7 @@ import {
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
+import { listGitWorktrees } from "../../../utils/worktree.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 /**
@@ -286,6 +288,23 @@ export class CheckoutSession {
       this.host.emit({
         type: "checkout.commits.list.response",
         payload: { cwd, baseRef: null, commits: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  async handleWorktreesListRequest(msg: CheckoutWorktreesListRequest): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const worktrees = await listGitWorktrees({ cwd: expandTilde(cwd) });
+      this.host.emit({
+        type: "checkout.worktrees.list.response",
+        payload: { cwd, worktrees, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.worktrees.list.response",
+        payload: { cwd, worktrees: [], error: toCheckoutError(error), requestId },
       });
     }
   }

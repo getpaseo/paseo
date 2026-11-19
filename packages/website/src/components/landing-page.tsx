@@ -1370,7 +1370,7 @@ const FAQ_ENTRIES = [
 const FAQ_LINKS = {
   relay: "/docs/security",
   agents: "/agents",
-  muse: "/docs/muse-code",
+  muse: "/docs/supported-providers/muse-code",
   voice: "/docs/voice",
   configuration: "/docs/configuration",
   worktrees: "/docs/worktrees",
