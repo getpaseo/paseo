@@ -1,0 +1,23 @@
+import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDeepLinkTarget } from "@getpaseo/protocol/workspace-deep-link";
+
+export type WorkspaceDeepLinkAction =
+  | { kind: "connect-host" }
+  | { kind: "open-workspace"; workspaceId: string }
+  | { kind: "register-project" };
+
+export function resolveWorkspaceDeepLinkAction(input: {
+  target: WorkspaceDeepLinkTarget;
+  hostExists: boolean;
+  workspaces: Iterable<WorkspaceDescriptor>;
+}): WorkspaceDeepLinkAction {
+  if (!input.hostExists) return { kind: "connect-host" };
+
+  for (const workspace of input.workspaces) {
+    if (workspace.workspaceDirectory === input.target.path) {
+      return { kind: "open-workspace", workspaceId: workspace.id };
+    }
+  }
+
+  return { kind: "register-project" };
+}

@@ -112,7 +112,15 @@ import {
   parseAgentDeepLink,
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
+import {
+  parseWorkspaceDeepLink,
+  type WorkspaceDeepLinkTarget,
+} from "@getpaseo/protocol/workspace-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import {
+  parseWorkspaceDeepLinkFromArgv,
+  WorkspaceNavigationInbox,
+} from "./workspace-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -127,6 +135,7 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
+const workspaceNavigationInbox = new WorkspaceNavigationInbox();
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -364,6 +373,7 @@ let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
   isDefaultApp: process.defaultApp,
 });
 let pendingAgentNavigation = parseAgentDeepLinkFromArgv(process.argv);
+let pendingWorkspaceNavigation = parseWorkspaceDeepLinkFromArgv(process.argv);
 
 // Each window pulls its own pending open-project path on mount, keyed by
 // webContents id, so deep-linked windows (second-instance launches, the
@@ -391,6 +401,10 @@ ipcMain.handle("paseo:get-pending-open-project", (event) => {
 
 ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
+});
+
+ipcMain.handle("paseo:workspace-navigation:ready", (event) => {
+  return workspaceNavigationInbox.windowReady(event.sender.id);
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
@@ -732,11 +746,13 @@ async function createWindow(
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
     if (isMainFrame && !isSameDocument) {
       agentNavigationInbox.windowLoading(webContentsId);
+      workspaceNavigationInbox.windowLoading(webContentsId);
     }
   });
   mainWindow.on("closed", () => {
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
+    workspaceNavigationInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);
     browserKeyboard.detachHost(webContentsId);
   });
@@ -846,6 +862,34 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
     agentNavigationInbox.deliverOrQueue(webContentsId, target),
 });
 
+let workspaceWindowCreation: Promise<void> | null = null;
+
+async function openOrFocusWorkspace(target: WorkspaceDeepLinkTarget): Promise<void> {
+  const windows = BrowserWindow.getAllWindows();
+  const win =
+    BrowserWindow.getFocusedWindow() ??
+    windows.find((candidate) => candidate.isVisible()) ??
+    windows[0];
+  if (!win || win.isDestroyed()) {
+    if (!workspaceWindowCreation) {
+      workspaceWindowCreation = desktopWindowOwner.openPrimary().finally(() => {
+        workspaceWindowCreation = null;
+      });
+      await workspaceWindowCreation;
+      await openOrFocusWorkspace(target);
+      return;
+    }
+    await workspaceWindowCreation;
+    await openOrFocusWorkspace(target);
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  const deliverable = workspaceNavigationInbox.deliverOrQueue(win.webContents.id, target);
+  if (deliverable) win.webContents.send("paseo:event:open-workspace", deliverable);
+}
+
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
@@ -876,9 +920,32 @@ function receiveAgentDeepLink(input: string): void {
   });
 }
 
+function receiveWorkspaceDeepLink(input: string): void {
+  const target = parseWorkspaceDeepLink(input);
+  if (!target) return;
+
+  if (bootstrapIsComplete) {
+    void openOrFocusWorkspace(target).catch((error) =>
+      log.error("[window] failed to route workspace link", error),
+    );
+    return;
+  }
+
+  pendingWorkspaceNavigation = target;
+  void bootstrapComplete.then(() => {
+    if (pendingWorkspaceNavigation !== target) return undefined;
+    pendingWorkspaceNavigation = null;
+    void openOrFocusWorkspace(target).catch((error) =>
+      log.error("[window] failed to route queued workspace link", error),
+    );
+    return undefined;
+  });
+}
+
 app.on("open-url", (event, url) => {
   event.preventDefault();
   receiveAgentDeepLink(url);
+  receiveWorkspaceDeepLink(url);
 });
 
 function setupSingleInstanceLock(): boolean {
@@ -899,6 +966,14 @@ function setupSingleInstanceLock(): boolean {
       void bootstrapComplete
         .then(() => desktopWindowOwner.openOrFocusAgent(agentTarget))
         .catch((error) => log.error("[window] failed to route second-instance agent link", error));
+      return;
+    }
+
+    const workspaceTarget = parseWorkspaceDeepLinkFromArgv(commandLine);
+    if (workspaceTarget) {
+      void bootstrapComplete
+        .then(() => openOrFocusWorkspace(workspaceTarget))
+        .catch((error) => log.error("[window] failed to route workspace link", error));
       return;
     }
 
@@ -1021,6 +1096,12 @@ async function bootstrap(): Promise<void> {
     const target = pendingAgentNavigation;
     pendingAgentNavigation = null;
     await desktopWindowOwner.openOrFocusAgent(target);
+  }
+
+  if (pendingWorkspaceNavigation) {
+    const target = pendingWorkspaceNavigation;
+    pendingWorkspaceNavigation = null;
+    await openOrFocusWorkspace(target);
   }
 
   app.on("activate", () => {

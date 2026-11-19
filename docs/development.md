@@ -655,6 +655,15 @@ sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run
 `paseo agent open <agent-id>`. The CLI reads the local daemon's server ID by
 default; pass `--server <server-id>` when targeting another server.
 
+Desktop integrations can also select an exact remote worktree with
+`paseo://h/<server-id>/open-project?path=<absolute-remote-path>`. Use the daemon's
+stable `srv_...` ID and URL-encode the path. Paseo opens an existing workspace
+whose recorded directory exactly matches the path; if none exists, it registers
+the path as a project. This action never creates an agent. The link contains no
+connection endpoint or credential. When the server ID is not saved, Paseo opens
+the Remote SSH flow and applies the pending path only if the connection the user
+approves reports that exact server ID.
+
 ## Agent state
 
 Agent data lives at:
