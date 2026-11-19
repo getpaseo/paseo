@@ -368,6 +368,29 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
   return false;
 }
 
+// A wait whose condition never matches must say which condition expired, not blame the host.
+async function verifyExpiredWaitNamesItsCondition(client, targetUrl) {
+  const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
+  const browserId = created.browserId;
+  assert(typeof browserId === "string", "browser_new_tab returned no browserId for the wait page");
+  try {
+    await callBrowserTool(client, "browser_wait", { browserId, text: "Bridge target" });
+    // The page title is not body text, so this wait expires.
+    const response = await client.callTool({
+      name: "browser_wait",
+      args: { browserId, text: "Desktop browser target", timeoutMs: 1_000 },
+    });
+    const text = response.content?.[0]?.text;
+    assert(
+      response.structuredContent?.ok === false &&
+        text === "Timed out waiting for browser text: Desktop browser target",
+      `browser_wait did not name its expired condition: ${JSON.stringify(response.content)}`,
+    );
+  } finally {
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  }
+}
+
 // A page whose Content Security Policy omits 'unsafe-eval' refuses eval(); the tools must still work.
 async function verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl) {
   const created = await callBrowserTool(client, "browser_new_tab", {
@@ -791,6 +814,7 @@ async function runRegression({
 
   await verifyReactFormFill((name, args) => callBrowserTool(client, name, args), targetUrl);
   await verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl);
+  await verifyExpiredWaitNamesItsCondition(client, targetUrl);
 
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
