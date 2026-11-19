@@ -702,6 +702,8 @@ export interface AgentUsageSession {
 export interface AgentSession {
   /** Persist the session's current handle immediately after an interactive resume. */
   readonly persistenceUpdatedOnResume?: boolean;
+  /** A replacement runtime would lose the rewind the user selected for their next prompt. */
+  readonly pendingConversationRewind?: boolean;
   usageSession?(): AgentUsageSession | null;
   readonly provider: AgentProvider;
   readonly id: string | null;

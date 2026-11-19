@@ -31,10 +31,14 @@ class FakeRewindClient implements AgentClient {
 class RewindHistoryGate {
   private gate: Promise<void> | null = null;
   private releaseGate: (() => void) | null = null;
+  private entered: (() => void) | null = null;
 
-  hold(): void {
+  hold(): Promise<void> {
     this.gate = new Promise<void>((resolve) => {
       this.releaseGate = resolve;
+    });
+    return new Promise<void>((resolve) => {
+      this.entered = resolve;
     });
   }
 
@@ -45,6 +49,8 @@ class RewindHistoryGate {
   }
 
   async wait(): Promise<void> {
+    this.entered?.();
+    this.entered = null;
     await this.gate;
   }
 }
@@ -111,6 +117,83 @@ describe("AgentManager rewind", () => {
       }),
     ]);
     expect(events.filter((type) => type === "agent_stream")).toEqual([]);
+  });
+
+  test("replaces the preview with the original history before reporting a rejected rewind", async () => {
+    const historyGate = new RewindHistoryGate();
+    const { manager, session, agentId } = await createRewindHarness({ historyGate });
+    await manager.rewind(agentId, "message-1", "conversation");
+    const previewEpoch = manager.fetchTimeline(agentId).epoch;
+    const original = [
+      ...session.history,
+      { type: "assistant_message" as const, text: "original reply", messageId: "original" },
+    ];
+    const run = manager.streamAgent(agentId, "replacement prompt");
+    await run.next();
+    const observed: string[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "timeline_replacement") observed.push(event.type);
+        if (event.type === "agent_stream" && event.event.type === "turn_failed") {
+          observed.push(event.event.type);
+        }
+      },
+      { replayState: false },
+    );
+    try {
+      session.history = original;
+      const restoring = historyGate.hold();
+      session.emit({
+        type: "turn_failed",
+        provider: "claude",
+        turnId: "turn-1",
+        code: "rewind_rejected",
+        error: "Claude rejected the rewind",
+      });
+      await restoring;
+      expect(() => manager.streamAgent(agentId, "too early")).toThrow("already has an active run");
+      historyGate.release();
+      await Array.fromAsync(run);
+      const restored = manager.fetchTimeline(agentId, { limit: 0 });
+      expect(restored.epoch).not.toBe(previewEpoch);
+      expect(manager.getTimeline(agentId).slice(0, 2)).toEqual(original);
+      expect(manager.getTimeline(agentId).at(-1)).toMatchObject({
+        type: "assistant_message",
+        text: expect.stringContaining("Claude rejected the rewind"),
+      });
+      expect(observed).toEqual(["timeline_replacement", "turn_failed"]);
+    } finally {
+      historyGate.release();
+      unsubscribe();
+      await manager.closeAgent(agentId);
+    }
+  });
+
+  test("implicit session replacement cannot discard a pending rewind", async () => {
+    const { manager, session, agentId } = await createRewindHarness();
+    await manager.rewind(agentId, "message-1", "conversation");
+    session.pendingConversationRewind = true;
+    manager.invalidatePluginSessions();
+    await expect(manager.reloadStalePluginSession(agentId)).rejects.toThrow("pending rewind");
+    expect(session.historyReadCount).toBe(1);
+    expect(manager.getTimeline(agentId)).toEqual(session.history);
+
+    session.history = [...session.history, { type: "assistant_message", text: "original reply" }];
+    const replacements: string[] = [];
+    const unsubscribe = manager.subscribe(
+      (event) => {
+        if (event.type === "timeline_replacement") replacements.push(event.epoch);
+      },
+      { replayState: false },
+    );
+    try {
+      await manager.reloadAgentSession(agentId, undefined, { rehydrateFromDisk: true });
+      expect(manager.getTimeline(agentId)).toEqual(session.history);
+      expect(replacements).toEqual([manager.fetchTimeline(agentId).epoch]);
+    } finally {
+      unsubscribe();
+      await manager.closeAgent(agentId);
+    }
   });
 
   test("rewinds files without rehydrating the conversation timeline", async () => {

@@ -57,7 +57,11 @@ import {
 } from "./model-manifest.js";
 import { expandTilde } from "../../../../utils/path.js";
 import { parsePartialJsonObject } from "./partial-json.js";
-import { withClaudeReplayHistory, type ClaudeReplayHistory } from "./transcript-history.js";
+import {
+  withClaudeReplayHistory,
+  isClaudeConversationPrompt,
+  type ClaudeReplayHistory,
+} from "./transcript-history.js";
 import { ClaudeSidechainTracker } from "./sidechain-tracker.js";
 import { readClaudeSubagentHandback } from "./subagent-handback.js";
 import { ClaudeTaskState } from "./task-state.js";
@@ -88,13 +92,7 @@ import {
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { discoverClaudeModels, killExitingClaudeModelDiscoveries } from "./model-discovery.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
-import {
-  findSteeredMessageParent,
-  realClaudeRewindSdk,
-  revertClaudeConversation,
-  revertClaudeFiles,
-  type ClaudeRewindSdk,
-} from "./rewind.js";
+import { revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -368,14 +366,11 @@ interface PersistedTimelineEntry {
   timestamp?: string;
 }
 
-interface ClaudeRewindTurnAnchor {
-  userMessageId: string;
-  assistantMessageId: string | null;
+interface ClaudeConversationRewind {
+  options: { resumeSessionAt: string; resumeDropsTurn?: string };
+  transcriptPath: string;
+  headUuid: string;
 }
-
-type ClaudeConversationRewindTarget =
-  | { kind: "fresh-session" }
-  | { kind: "fork"; messageId: string };
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -481,7 +476,6 @@ interface ClaudeAgentClientOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
-  rewindSdk?: ClaudeRewindSdk;
 }
 
 type ClaudeImportDescriptorResult =
@@ -499,7 +493,6 @@ interface ClaudeAgentSessionOptions {
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
   independentUltracode: boolean;
-  rewindSdk?: ClaudeRewindSdk;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1564,15 +1557,6 @@ function firstTrimmedString(sources: readonly unknown[]): string | null {
   return null;
 }
 
-function readTranscriptUuid(message: SDKMessage): string | null {
-  const root = toObjectRecord(message) ?? {};
-  const messageType = readTrimmedString(root.type);
-  if (messageType !== "user" && messageType !== "assistant") {
-    return null;
-  }
-  return firstTrimmedString([root.uuid]);
-}
-
 export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   const root = toObjectRecord(message) ?? {};
   const messageType = readTrimmedString(root.type);
@@ -1622,7 +1606,6 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private version: Promise<string | undefined> | undefined;
-  private readonly rewindSdk: ClaudeRewindSdk;
   private readonly scheduleImportDescriptors = createImportDescriptorScheduler(
     (candidate: ClaudeSessionCandidate, signal) => this.readImportDescriptor(candidate, signal),
   );
@@ -1643,7 +1626,6 @@ export class ClaudeAgentClient implements AgentClient {
     this.resolveVersion =
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
-    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
   }
 
   resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -1666,7 +1648,6 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      rewindSdk: this.rewindSdk,
     });
   }
 
@@ -1696,7 +1677,6 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
       independentUltracode: await this.supportsIndependentUltracode(),
-      rewindSdk: this.rewindSdk,
     });
     await session.ensureHistoryReady();
     return session;
@@ -2421,8 +2401,7 @@ class ClaudeAgentSession implements AgentSession {
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
-  /** True from the moment a query's launch options are copied until the query exists. */
-  private queryStarting = false;
+  private openingQuery: Promise<Query> | null = null;
   private pendingInterruptAbort = false;
   /**
    * Whether Claude's main session is inside one of its own turns: set by system/init and by a
@@ -2441,9 +2420,8 @@ class ClaudeAgentSession implements AgentSession {
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
-  private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
-  private readonly rewindSdk: ClaudeRewindSdk;
-  private pendingFreshSessionId: string | null = null;
+  private pendingRewind: ClaudeConversationRewind | null = null;
+  private rewindQuery: Query | null = null;
   private recentStderr = "";
   private closed = false;
   readonly openOptionsPatch: Record<string, unknown> = {};
@@ -2461,7 +2439,6 @@ class ClaudeAgentSession implements AgentSession {
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
     this.independentUltracode = options.independentUltracode;
-    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       getClaudeContextWindowMaxTokens(this.config.model),
     );
@@ -2596,7 +2573,6 @@ class ClaudeAgentSession implements AgentSession {
     const sdkMessage = this.toSdkUserMessage(prompt);
     const sdkUserMessageId =
       typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
-    this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
     this.notificationTurnId = null;
@@ -2637,7 +2613,22 @@ class ClaudeAgentSession implements AgentSession {
     this.notifySubscribers({ type: "turn_started", provider: "claude" });
 
     try {
-      await this.ensureQuery();
+      const rewind = this.pendingRewind;
+      // The SDK guard covers one discarded turn. Check the saved head for a wider cut.
+      if (
+        rewind &&
+        !rewind.options.resumeDropsTurn &&
+        !(await withClaudeReplayHistory(
+          rewind.transcriptPath,
+          async (history) => history.headUuid === rewind.headUuid,
+        ))
+      ) {
+        await this.rejectConversationRewind(
+          "Claude history changed since you selected this message. Check the conversation and select the message again.",
+        );
+        return { turnId };
+      }
+      if (!cancelIssued) await this.ensureQuery(this.currentMode, rewind);
       if (cancelIssued) {
         // Stopped while Claude was still starting up: withdrawn by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
@@ -2651,6 +2642,7 @@ class ClaudeAgentSession implements AgentSession {
       this.startQueryPump();
       this.runtimeSafety.notePromptSent();
       this.input.push(sdkMessage);
+      if (rewind) this.pendingRewind = null;
       setTimeout(() => {
         if (this.activeForegroundTurnId === turnId) {
           void this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId).catch(
@@ -2973,7 +2965,7 @@ class ClaudeAgentSession implements AgentSession {
 
   async applyOptions(options: ProviderOptions): Promise<void> {
     // Replacing a started query ends background work, so only flag settings can change live.
-    if (this.query || this.queryStarting) {
+    if (this.query || this.openingQuery) {
       assertChangesAreLive({
         provider: "claude",
         patch: options,
@@ -3180,11 +3172,16 @@ class ClaudeAgentSession implements AgentSession {
     return this.persistence;
   }
 
+  get pendingConversationRewind(): boolean {
+    return this.pendingRewind !== null;
+  }
+
   async canStopRuntime(): Promise<boolean> {
     return (
       !this.activeForegroundTurnId &&
       !this.autonomousTurn &&
       !this.mainTurnInFlight &&
+      !this.pendingRewind &&
       this.unstartedMessageUuids.size === 0 &&
       this.pendingPermissions.size === 0 &&
       this.processingSdkMessages === 0 &&
@@ -3296,35 +3293,20 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
-    await this.ensureHistoryReady();
     const target = await this.resolveConversationRewindTarget(input.messageId);
-    if (target.kind === "fresh-session") {
-      this.startFreshConversationSession();
-      return;
-    }
-    const currentSessionId = this.claudeSessionId;
-    await revertClaudeConversation({
-      sdk: this.rewindSdk,
-      sessionId: currentSessionId,
-      transcriptPath: currentSessionId ? await this.resolveHistoryPath(currentSessionId) : null,
-      messageId: target.messageId,
-      resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
-    });
+    await this.stageConversationRewind(target);
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {
     await this.ensureHistoryReady();
-    const messageId = await this.resolveClaudeMessageId(input.messageId);
-    await revertClaudeFiles({
-      query: await this.ensureQuery(),
-      messageId,
-    });
+    await revertClaudeFiles({ query: await this.ensureQuery(), messageId: input.messageId });
   }
 
   async revertBoth(input: { messageId: string }): Promise<void> {
+    // Validate before changing files: the first prompt has no preceding conversation to resume.
+    const target = await this.resolveConversationRewindTarget(input.messageId);
     await this.revertFiles(input);
-    await this.revertConversation(input);
+    await this.stageConversationRewind(target);
   }
 
   private resolveSlashCommandInvocation(prompt: AgentPromptInput): SlashCommandInvocation | null {
@@ -3489,65 +3471,26 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private rebindConversationSession(sessionId: string): Promise<void> {
-    const previousReady = this.ensureHistoryReady();
-    const rebind = (async () => {
-      await previousReady;
+  private stageConversationRewind(target: ClaudeConversationRewind): Promise<void> {
+    const sessionId = this.claudeSessionId;
+    if (!sessionId) throw new Error("Claude session is not ready for rewind");
+    const stage = (async () => {
+      if (this.openingQuery) await this.openingQuery;
       await this.retireQuery();
-      if (this.closed) return;
-      const oldSessionId = this.claudeSessionId;
-      this.claudeSessionId = sessionId;
-      this.pendingFreshSessionId = null;
-      this.persistence = null;
-      this.cachedRuntimeInfo = null;
-      this.queryRestartNeeded = true;
-      this.persistedHistory = [];
-      this.persistedProviderSubagentEvents = [];
-      this.historyPending = false;
-      this.userMessageIds = [];
-      this.emittedUserMessageIds.clear();
-      this.rewindTurnAnchors.length = 0;
-      this.taskState.reset();
-      this.historySessionId = sessionId;
-      await this.loadPersistedHistory(sessionId);
-      if (this.closed) return;
-      if (oldSessionId && oldSessionId !== sessionId) {
-        this.dispatchEvents([
-          {
-            type: "timeline",
-            provider: "claude",
-            item: this.createClaudeSessionChangedNotice(oldSessionId, sessionId),
-          },
-          {
-            type: "thread_started",
-            provider: "claude",
-            sessionId,
-          },
-        ]);
-      }
+      if (this.closed) throw new Error("Claude session is closed");
+      await this.reloadRewindHistory(sessionId, target.options.resumeSessionAt);
+      this.pendingRewind = target;
     })();
-    this.historyReady = rebind.catch((error) => {
-      this.logger.warn({ err: error, sessionId }, "Failed to rebind Claude session");
+    this.historyReady = stage.catch((error) => {
+      this.logger.warn({ err: error, sessionId }, "Failed to prepare Claude conversation rewind");
     });
-    return rebind;
+    return stage;
   }
 
-  private startFreshConversationSession(): void {
-    this.historySessionId = null;
-    this.historyReady = Promise.resolve();
-    const sessionId = randomUUID();
-    this.claudeSessionId = sessionId;
-    this.pendingFreshSessionId = sessionId;
-    this.persistence = null;
-    this.cachedRuntimeInfo = null;
-    this.queryRestartNeeded = true;
-    this.persistedHistory = [];
-    this.persistedProviderSubagentEvents = [];
-    this.historyPending = false;
-    this.userMessageIds = [];
-    this.emittedUserMessageIds.clear();
-    this.rewindTurnAnchors.length = 0;
-    this.taskState.reset();
+  private async reloadRewindHistory(sessionId: string, throughUuid?: string): Promise<void> {
+    const file = await this.resolveHistoryPath(sessionId);
+    if (!file) throw new Error("Cannot rewind without the Claude transcript");
+    await this.replayClaudeTranscript(file, throughUuid);
   }
 
   private rememberUserMessageId(messageId: string | null | undefined): void {
@@ -3568,103 +3511,70 @@ class ClaudeAgentSession implements AgentSession {
     this.emittedUserMessageIds.add(messageId);
   }
 
-  private rememberRewindUserAnchor(userMessageId: string | null | undefined): void {
-    if (typeof userMessageId !== "string" || userMessageId.length === 0) {
-      return;
-    }
-    if (this.rewindTurnAnchors.some((anchor) => anchor.userMessageId === userMessageId)) {
-      return;
-    }
-    this.rewindTurnAnchors.push({
-      userMessageId,
-      assistantMessageId: null,
+  private async resolveConversationRewindTarget(
+    messageId: string,
+  ): Promise<ClaudeConversationRewind> {
+    await this.ensureHistoryReady();
+    const transcriptPath =
+      this.claudeSessionId && (await this.resolveHistoryPath(this.claudeSessionId));
+    if (!transcriptPath) throw new Error("Claude session is not ready for rewind");
+    return withClaudeReplayHistory(transcriptPath, async ({ parentEntries, headUuid }) => {
+      let target: ClaudeConversationRewind["options"] | undefined;
+      let hasEarlierPrompt = false;
+      for await (const entry of parentEntries) {
+        const userPrompt = isClaudeConversationPrompt(entry);
+        const steer = readSteeredPromptHistoryItem(entry);
+        if (!userPrompt && !steer) continue;
+        if (userPrompt && target) {
+          // The SDK's guard describes exactly one discarded turn. An explicit rewind across
+          // several turns (or to a steer inside a turn) uses the inclusive cutoff alone.
+          delete target.resumeDropsTurn;
+        }
+        if (
+          (userPrompt && entry.uuid === messageId) ||
+          (steer?.type === "user_message" && steer.messageId === messageId)
+        ) {
+          if (!hasEarlierPrompt) {
+            throw new Error(
+              "Cannot rewind before the first message in this Claude session. Start a new session to begin again; the current session is unchanged.",
+            );
+          }
+          if (typeof entry.parentUuid !== "string") {
+            throw new Error(
+              "Claude has no checkpoint before this message. The current session is unchanged.",
+            );
+          }
+          target = {
+            resumeSessionAt: entry.parentUuid,
+            ...(userPrompt ? { resumeDropsTurn: messageId } : {}),
+          };
+        }
+        hasEarlierPrompt = true;
+      }
+      if (!target || !headUuid)
+        throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
+      return { options: target, transcriptPath, headUuid };
     });
   }
 
-  private rememberRewindAssistantAnchor(assistantMessageId: string | null | undefined): void {
-    if (typeof assistantMessageId !== "string" || assistantMessageId.length === 0) {
+  private async rejectConversationRewind(reason: string): Promise<void> {
+    this.pendingRewind = null;
+    this.rewindQuery = null;
+    await this.retireQuery();
+    this.unstartedMessageUuids.clear();
+    this.permissionClearingSteerUuids.clear();
+    try {
+      if (!this.claudeSessionId) throw new Error("Claude session is closed");
+      await this.reloadRewindHistory(this.claudeSessionId);
+    } catch (error) {
+      this.finishForegroundTurn(
+        this.buildTurnFailedEvent(
+          `${reason} Failed to reload the original conversation: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
       return;
     }
-    for (let index = this.rewindTurnAnchors.length - 1; index >= 0; index -= 1) {
-      const anchor = this.rewindTurnAnchors[index];
-      if (!anchor) {
-        continue;
-      }
-      anchor.assistantMessageId = assistantMessageId;
-      return;
-    }
-  }
-
-  private rememberTranscriptProgress(message: SDKMessage, messageId: string | null): void {
-    if (!messageId) {
-      return;
-    }
-    // Subagent frames ride the same stream as the conversation, but their uuids live on the
-    // subagent's sidechain, so forkSession cannot resolve one. Anchoring a turn on one leaves
-    // rewind throwing "Message <uuid> not found in session". The persisted history path already
-    // skips sidechain entries; the live stream has to skip them too.
-    if (readClaudeParentToolUseId(message)) {
-      return;
-    }
-    if (
-      message.type === "user" &&
-      !isSyntheticUserEntry(message) &&
-      !isToolResultUserEntry(message)
-    ) {
-      this.rememberRewindUserAnchor(messageId);
-      return;
-    }
-    if (message.type === "assistant") {
-      this.rememberRewindAssistantAnchor(messageId);
-      return;
-    }
-    if (message.type === "stream_event") {
-      const event = toObjectRecord(message.event) ?? {};
-      const eventType = readTrimmedString(event.type);
-      if (eventType === "message_start") {
-        this.rememberRewindAssistantAnchor(messageId);
-      }
-      return;
-    }
-  }
-
-  private resolveClaudeMessageId(messageId: string): string {
-    return messageId;
-  }
-
-  private async resolveConversationRewindTarget(
-    messageId: string,
-  ): Promise<ClaudeConversationRewindTarget> {
-    const targetUserMessageId = this.resolveClaudeMessageId(messageId);
-    const index = this.rewindTurnAnchors.findIndex(
-      (anchor) => anchor.userMessageId === targetUserMessageId,
-    );
-    if (index < 0) {
-      // A message steered into a running turn opens no turn of its own.
-      const transcriptPath = this.claudeSessionId
-        ? await this.resolveHistoryPath(this.claudeSessionId)
-        : null;
-      const steerParent = transcriptPath
-        ? await findSteeredMessageParent(transcriptPath, targetUserMessageId)
-        : null;
-      if (steerParent) {
-        return { kind: "fork", messageId: steerParent };
-      }
-      throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
-    }
-
-    // A turn the model never answered — an instant gateway error, or an abort before the first
-    // token — leaves its anchor without an assistant id, and carries no conversation state worth
-    // preserving. Fork at the most recent turn before the target that did answer. Reading only
-    // the immediately preceding anchor let one such turn fail every later rewind in the
-    // conversation.
-    for (let previous = index - 1; previous >= 0; previous -= 1) {
-      const assistantMessageId = this.rewindTurnAnchors[previous]?.assistantMessageId;
-      if (assistantMessageId) {
-        return { kind: "fork", messageId: assistantMessageId };
-      }
-    }
-    return { kind: "fresh-session" };
+    this.finishForegroundTurn({ ...this.buildTurnFailedEvent(reason), code: "rewind_rejected" });
   }
 
   private async retireQuery(): Promise<void> {
@@ -3703,17 +3613,34 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private async ensureQuery(launchMode: PermissionMode = this.currentMode): Promise<Query> {
+  private async ensureQuery(
+    launchMode: PermissionMode = this.currentMode,
+    rewind: ClaudeConversationRewind | null = null,
+  ): Promise<Query> {
     await this.ensureHistoryReady();
-    // Controls use the running turn's query. Pending launch settings take effect
-    // after that turn finishes, when its active query handle has been cleared.
-    if (this.query && (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)) {
+    // Command discovery and a user send can launch concurrently. A staged rewind must not
+    // reuse (or orphan) a plain query that is still being opened for a control.
+    while (this.openingQuery) await this.openingQuery;
+    if (
+      !rewind &&
+      this.query &&
+      (!this.queryRestartNeeded || this.activeForegroundQuery === this.query)
+    )
       return this.query;
+    const launch = this.openQuery(launchMode, rewind);
+    this.openingQuery = launch;
+    try {
+      return await launch;
+    } finally {
+      this.openingQuery = null;
     }
+  }
 
-    if (this.queryRestartNeeded && this.query) {
-      await this.retireQuery();
-    }
+  private async openQuery(
+    launchMode: PermissionMode,
+    rewind: ClaudeConversationRewind | null,
+  ): Promise<Query> {
+    if (this.query) await this.retireQuery();
 
     // Preserve claudeSessionId across query recreation so buildOptions() passes
     // resume: sessionId and the new query continues the existing conversation.
@@ -3721,16 +3648,9 @@ class ClaudeAgentSession implements AgentSession {
 
     const input = createAsyncMessageInput<SDKUserMessage>();
     // buildOptions copies the launch options before it waits, so from here they are fixed.
-    this.queryStarting = true;
-    let options: ClaudeOptions;
-    try {
-      options = await this.buildOptions(launchMode);
-      // Closure can finish while launch options are being prepared.
-      if (this.closed) throw new Error("Claude session is closed");
-    } catch (error) {
-      this.queryStarting = false;
-      throw error;
-    }
+    const options = await this.buildOptions(launchMode);
+    if (this.closed) throw new Error("Claude session is closed");
+    if (rewind) Object.assign(options, rewind.options);
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.runtimeSafety.reset();
@@ -3749,7 +3669,7 @@ class ClaudeAgentSession implements AgentSession {
         },
       },
     );
-    this.queryStarting = false;
+    this.rewindQuery = rewind ? this.query : null;
     const fastMode = this.resolveFastModeSetting();
     const ultracode = this.independentUltracode ? this.resolveUltracodeSetting() : undefined;
     if (fastMode !== null || ultracode !== undefined) {
@@ -3895,12 +3815,6 @@ class ClaudeAgentSession implements AgentSession {
       },
       "Resolved Claude executable",
     );
-    const sessionBinding: Pick<ClaudeOptions, "resume" | "sessionId"> = {};
-    if (this.pendingFreshSessionId) {
-      sessionBinding.sessionId = this.pendingFreshSessionId;
-    } else if (this.claudeSessionId) {
-      sessionBinding.resume = this.claudeSessionId;
-    }
 
     const base: ClaudeOptions = {
       cwd: this.config.cwd,
@@ -3929,7 +3843,6 @@ class ClaudeAgentSession implements AgentSession {
       enableFileCheckpointing: true,
       // If we have a session ID from a previous query (e.g., after interrupt),
       // resume that session to continue the conversation history.
-      ...sessionBinding,
       ...(thinking ? { thinking } : {}),
       ...(effort ? { effort } : {}),
       ...providerOptions,
@@ -3953,7 +3866,7 @@ class ClaudeAgentSession implements AgentSession {
       base.model = this.config.model;
     }
     this.lastOptionsModel = base.model ?? null;
-    if (this.claudeSessionId && !this.pendingFreshSessionId) {
+    if (this.claudeSessionId) {
       base.resume = this.claudeSessionId;
     }
     if (this.runtimeSettings?.disallowedTools?.length) {
@@ -4432,6 +4345,23 @@ class ClaudeAgentSession implements AgentSession {
           this.backgroundStops.get(message.task_id)?.(message.status);
         logRawMessage(message);
         consecutiveInterruptAbortRecoveries = 0;
+        if (activeQuery === this.rewindQuery) {
+          if (message.type === "result" && message.subtype === "error_during_execution") {
+            const refusal = message.errors.find((text) =>
+              text.startsWith("Resume rejected by --resume-drops-turn:"),
+            );
+            if (refusal) {
+              await this.rejectConversationRewind(refusal);
+              return true;
+            }
+          }
+          if (
+            message.type === "assistant" ||
+            (message.type === "result" && message.subtype === "success")
+          ) {
+            this.rewindQuery = null;
+          }
+        }
         if (await this.handleMissingResumedConversation(message, activeQuery)) return true;
         if (!this.ownsQuery(activeQuery)) return true;
         await this.routeSdkMessageFromPump(message);
@@ -4597,7 +4527,6 @@ class ClaudeAgentSession implements AgentSession {
 
     const turnId = this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? null;
     const identifiers = readEventIdentifiers(message);
-    this.rememberTranscriptProgress(message, readTranscriptUuid(message));
 
     this.logger.trace(
       {
@@ -5337,12 +5266,10 @@ class ClaudeAgentSession implements AgentSession {
     }
     if (this.claudeSessionId === null) {
       this.claudeSessionId = sessionId;
-      this.pendingFreshSessionId = null;
       this.persistence = null;
       return { threadStartedSessionId: sessionId, notice: null };
     }
     if (this.claudeSessionId === sessionId) {
-      this.pendingFreshSessionId = null;
       return { threadStartedSessionId: null, notice: null };
     }
     const oldSessionId = this.claudeSessionId;
@@ -5354,7 +5281,6 @@ class ClaudeAgentSession implements AgentSession {
       "Claude session ID changed in message; accepting new session",
     );
     this.claudeSessionId = sessionId;
-    this.pendingFreshSessionId = null;
     this.persistence = null;
     return {
       threadStartedSessionId: sessionId,
@@ -5385,11 +5311,9 @@ class ClaudeAgentSession implements AgentSession {
 
     if (existingSessionId === null) {
       this.claudeSessionId = newSessionId;
-      this.pendingFreshSessionId = null;
       threadStartedSessionId = newSessionId;
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID set for the first time");
     } else if (existingSessionId === newSessionId) {
-      this.pendingFreshSessionId = null;
       this.logger.debug({ sessionId: newSessionId }, "Claude session ID unchanged (same value)");
     } else {
       // Session ID changed in an init message (e.g. a hook restarted Claude
@@ -5399,7 +5323,6 @@ class ClaudeAgentSession implements AgentSession {
         "Claude session ID changed in init message; accepting new session",
       );
       this.claudeSessionId = newSessionId;
-      this.pendingFreshSessionId = null;
       threadStartedSessionId = newSessionId;
       notice = this.createClaudeSessionChangedNotice(existingSessionId, newSessionId);
     }
@@ -5714,9 +5637,7 @@ class ClaudeAgentSession implements AgentSession {
 
   private async loadPersistedHistory(sessionId: string): Promise<void> {
     let historyPath: string | null = null;
-    this.replayingHistory = true;
     try {
-      this.taskState.reset();
       historyPath = await this.resolveHistoryPath(sessionId);
       if (!historyPath || !(await transcriptExists(historyPath))) {
         this.logger.info(
@@ -5725,14 +5646,32 @@ class ClaudeAgentSession implements AgentSession {
         );
         return;
       }
-      await withClaudeReplayHistory(historyPath, async (history) => {
-        const replay = await this.ingestPersistedSidechains(history);
-        await this.ingestPersistedHistory(history.parentEntries, replay);
-      });
+      await this.replayClaudeTranscript(historyPath);
     } catch (error) {
       this.logger.warn(
         { err: error, sessionId, historyPath },
         "Failed to load Claude history from transcript",
+      );
+    }
+  }
+
+  private async replayClaudeTranscript(historyPath: string, throughUuid?: string): Promise<void> {
+    this.replayingHistory = true;
+    try {
+      await withClaudeReplayHistory(
+        historyPath,
+        async (history) => {
+          this.persistedHistory = [];
+          this.persistedProviderSubagentEvents = [];
+          this.historyPending = false;
+          this.userMessageIds = [];
+          this.emittedUserMessageIds.clear();
+          this.taskState.reset();
+          this.taskProtocolSource.reset();
+          const replay = await this.ingestPersistedSidechains(history);
+          await this.ingestPersistedHistory(history.parentEntries, replay);
+        },
+        throughUuid,
       );
     } finally {
       this.replayingHistory = false;
@@ -5845,17 +5784,8 @@ class ClaudeAgentSession implements AgentSession {
         labelReplayedSubagentCard(item, replay.subagentToolCalls),
       ),
     ];
-    const isVisibleUserEntry =
-      entry.type === "user" &&
-      typeof entry.uuid === "string" &&
-      !isSyntheticHistoryUserEntry(entry) &&
-      !isToolResultUserEntry(entry);
-    if (isVisibleUserEntry && typeof entry.uuid === "string") {
+    if (isClaudeConversationPrompt(entry) && typeof entry.uuid === "string") {
       this.rememberUserMessageId(entry.uuid);
-      this.rememberRewindUserAnchor(entry.uuid);
-    }
-    if (entry.type === "assistant" && typeof entry.uuid === "string") {
-      this.rememberRewindAssistantAnchor(entry.uuid);
     }
 
     if (items.length > 0) {

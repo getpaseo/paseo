@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -8,7 +8,9 @@ import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 const PROVIDER_ID = "claude-secondary";
-const SESSION_ID = "provider-config-dir-session";
+const SESSION_ID = "40a6ff40-896b-4995-866f-3527fe241ba5";
+const FIRST_PROMPT = "fc00ad34-d9c0-4404-aada-b52d8dc0de26";
+const FIRST_REPLY = "1a32d4bf-fb8f-4628-a19b-868bb39be26d";
 
 function timelineText(entries: ReadonlyArray<{ item: { type: string; text?: string } }>): string {
   return entries
@@ -44,13 +46,16 @@ describe("daemon E2E - Claude history lives in the provider's CLAUDE_CONFIG_DIR"
       [
         {
           type: "user",
-          uuid: "user-uuid-1",
+          uuid: FIRST_PROMPT,
+          parentUuid: null,
           sessionId: SESSION_ID,
           cwd,
           message: { role: "user", content: "hello from the custom config dir" },
         },
         {
           type: "assistant",
+          uuid: FIRST_REPLY,
+          parentUuid: FIRST_PROMPT,
           sessionId: SESSION_ID,
           cwd,
           message: { role: "assistant", content: "reply from the custom config dir" },
@@ -125,6 +130,52 @@ describe("daemon E2E - Claude history lives in the provider's CLAUDE_CONFIG_DIR"
     const text = timelineText(timeline.entries);
     expect(text).toContain("hello from the custom config dir");
     expect(text).toContain("reply from the custom config dir");
+  }, 60_000);
+
+  test("restarting before a replacement prompt restores the unedited conversation", async () => {
+    const secondPrompt = "98d0aea9-15e8-43a0-8130-49a3053dbf32";
+    const projectDir = claudeProjectDirSync(cwd, { configDir: providerConfigDir });
+    appendFileSync(
+      path.join(projectDir, `${SESSION_ID}.jsonl`),
+      JSON.stringify({
+        type: "user",
+        uuid: secondPrompt,
+        parentUuid: FIRST_REPLY,
+        sessionId: SESSION_ID,
+        cwd,
+        message: { role: "user", content: "second question" },
+      }) + "\n",
+    );
+    const original =
+      "hello from the custom config dir\nreply from the custom config dir\nsecond question";
+    const firstClient = await startDaemon();
+    const agent = await firstClient.importAgent({
+      provider: PROVIDER_ID,
+      sessionId: SESSION_ID,
+      cwd,
+    });
+    const texts = async (connection: DaemonClient) =>
+      timelineText(
+        (
+          await connection.fetchAgentTimeline(agent.id, {
+            direction: "tail",
+            limit: 0,
+            projection: "canonical",
+          })
+        ).entries,
+      );
+    expect(await texts(firstClient)).toBe(original);
+    await firstClient.rewindAgent(agent.id, secondPrompt, "conversation");
+    expect(await texts(firstClient)).toBe(
+      "hello from the custom config dir\nreply from the custom config dir",
+    );
+    await stopDaemon();
+
+    const restarted = await startDaemon();
+    expect(await texts(restarted)).toBe(original);
+    expect((await restarted.fetchAgent({ agentId: agent.id }))?.agent.persistence?.sessionId).toBe(
+      SESSION_ID,
+    );
   }, 60_000);
 
   test("the import list finds the provider's sessions", async () => {

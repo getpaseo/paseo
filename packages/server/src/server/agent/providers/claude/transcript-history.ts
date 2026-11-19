@@ -117,6 +117,58 @@ function indexedRecords(
   }
 }
 
+const chainTypes = new Set<unknown>(["user", "assistant", "attachment", "system", "progress"]);
+
+export function isClaudeConversationPrompt(entry: ClaudeReplayEntry): boolean {
+  return (
+    entry.type === "user" &&
+    !entry.isMeta &&
+    !entry.isSynthetic &&
+    !entry.isCompactSummary &&
+    !entry.toolUseResult &&
+    !isToolResult(entry)
+  );
+}
+
+/** Claude appends a replacement prompt to the same file with its retained parent UUID. Other
+ * record types (parallel tool results, queued attachments and compact summaries) can be siblings
+ * without replacing a conversation. Keep their file order, including legacy rows with no UUID. */
+class ParentTranscriptIndex {
+  private readonly locations: RecordLocation[] = [];
+  private readonly indexes = new Map<string, number>();
+  private readonly jumps = new Map<number, number>();
+  private lastChainIndex = -1;
+  headUuid: string | null = null;
+
+  append(entry: TranscriptEntry, location: RecordLocation): void {
+    const index = this.locations.push(location) - 1;
+    if (typeof entry.uuid !== "string" || !entry.uuid || !chainTypes.has(entry.type)) return;
+    if (isClaudeConversationPrompt(entry) && typeof entry.parentUuid === "string") {
+      const parent = this.indexes.get(entry.parentUuid);
+      if (parent !== undefined && parent < this.lastChainIndex) this.jumps.set(index, parent);
+    }
+    this.indexes.set(entry.uuid, index);
+    this.lastChainIndex = index;
+    this.headUuid = entry.uuid;
+  }
+
+  branch(throughUuid?: string): RecordLocation[] {
+    let branch = this.locations;
+    if (this.jumps.size > 0) {
+      const newestFirst: RecordLocation[] = [];
+      for (let i = branch.length - 1; i >= 0; i = this.jumps.get(i) ?? i - 1)
+        newestFirst.push(branch[i]!);
+      branch = newestFirst.toReversed();
+    }
+    if (throughUuid === undefined) return branch;
+    const offset = this.indexes.get(throughUuid);
+    const end = offset === undefined ? -1 : branch.indexOf(this.locations[offset]!);
+    if (end < 0)
+      throw new Error(`Claude rewind checkpoint ${throughUuid} is not in the active conversation`);
+    return branch.slice(0, end + 1);
+  }
+}
+
 function isToolResult(entry: TranscriptEntry): boolean {
   return (
     Array.isArray(entry.message?.content) &&
@@ -146,6 +198,8 @@ async function readOptionalFile(file: string): Promise<string | null> {
 /** Discover sources without retaining transcript contents. Unrelated sidechains stay excluded
  * by the replay ownership resolver; workflow children retain their separate run ownership. */
 export interface ClaudeReplayHistory {
+  /** Actual head on disk, including when parentEntries is a preview ending at an earlier UUID. */
+  headUuid: string | null;
   parentEntries: AsyncIterable<TranscriptEntry>;
   subagents: {
     agentId: string;
@@ -161,10 +215,11 @@ export interface ClaudeReplayHistory {
 export async function withClaudeReplayHistory<T>(
   historyPath: string,
   consume: (history: ClaudeReplayHistory) => Promise<T>,
+  throughUuid?: string,
 ): Promise<T> {
   const descriptors = new Map<string, FileHandle>();
   try {
-    return await consume(await indexHistory(historyPath, descriptors));
+    return await consume(await indexHistory(historyPath, descriptors, throughUuid));
   } finally {
     await closeReplaySources(descriptors.values());
   }
@@ -179,6 +234,7 @@ async function closeReplaySources(descriptors: Iterable<FileHandle>): Promise<vo
 async function indexHistory(
   historyPath: string,
   descriptors: Map<string, FileHandle>,
+  throughUuid?: string,
 ): Promise<ClaudeReplayHistory> {
   const sessionDirectory = path.join(
     path.dirname(historyPath),
@@ -215,7 +271,7 @@ async function indexHistory(
       if (meta) metaByAgentId.set(agentId, meta);
     }
   }
-  const parentLocations: RecordLocation[] = [];
+  const parent = new ParentTranscriptIndex();
   const locationsByAgentId = new Map<string, RecordLocation[]>();
   async function scan(
     file: string,
@@ -227,13 +283,14 @@ async function indexHistory(
   }
   for (const file of sidechainFiles) {
     await scan(file, (entry, location) => {
-      if (file === historyPath && entry.isSidechain !== true) parentLocations.push(location);
+      if (file === historyPath && entry.isSidechain !== true) parent.append(entry, location);
       if (entry.isSidechain !== true || typeof entry.agentId !== "string") return;
       const locations = locationsByAgentId.get(entry.agentId) ?? [];
       locations.push(location);
       locationsByAgentId.set(entry.agentId, locations);
     });
   }
+  const parentLocations = parent.branch(throughUuid);
   const workflowEntriesByRunId = new Map<string, AsyncIterable<TranscriptEntry>>();
   for (const [runId, files] of workflowFiles) {
     const locations: RecordLocation[] = [];
@@ -250,6 +307,7 @@ async function indexHistory(
     workflowEntriesByRunId.set(runId, indexedRecords(locations, descriptors));
   }
   return {
+    headUuid: parent.headUuid,
     parentEntries: indexedRecords(parentLocations, descriptors),
     subagents: [...locationsByAgentId].map(([agentId, locations]) => ({
       agentId,

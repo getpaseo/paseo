@@ -8,7 +8,6 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createTestPaseoDaemon } from "../../../test-utils/paseo-daemon.js";
-import type { ClaudeRewindSdk } from "./rewind.js";
 import { ClaudeAgentClient } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { withClaudeReplayHistory } from "./transcript-history.js";
@@ -39,7 +38,7 @@ describe("ClaudeAgentSession persisted history load", () => {
 
   async function resume(
     queryFactory?: ClaudeQueryFactory,
-    rewindSdk?: ClaudeRewindSdk,
+    resolveBinary = async () => process.execPath,
   ): Promise<AgentSession> {
     const client = new ClaudeAgentClient({
       logger: pino({ level: "info" }, { write: (line: string) => records.push(JSON.parse(line)) }),
@@ -48,9 +47,8 @@ describe("ClaudeAgentSession persisted history load", () => {
         (() => {
           throw new Error("history load must not start a query");
         }),
-      resolveBinary: async () => process.execPath,
+      resolveBinary,
       resolveVersion: async () => "2.1.220",
-      rewindSdk,
     });
     return client.resumeSession({ provider: "claude", sessionId: SESSION_ID }, { cwd });
   }
@@ -174,25 +172,96 @@ describe("ClaudeAgentSession persisted history load", () => {
     }
   }, 60_000);
 
-  test("rebinds ordered history before returning from rewind and accepts a live turn", async () => {
+  test("resumes the same Claude session at the kept message only when the replacement prompt is sent", async () => {
     const entries = [
-      { type: "user", uuid: "u1", message: { content: "first" } },
-      { type: "assistant", uuid: "a1", message: { content: "first reply" } },
-      { type: "user", uuid: "u2", message: { content: "second" } },
-      { type: "assistant", uuid: "a2", message: { content: "second reply" } },
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "first reply" } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { content: "second" } },
+      { type: "assistant", uuid: "a2", parentUuid: "u2", message: { content: "second reply" } },
     ];
     mkdirSync(path.dirname(transcriptPath()), { recursive: true });
     writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
-    const forkId = "rebound-history";
-    const forkFile = path.join(path.dirname(transcriptPath()), `${forkId}.jsonl`);
-    writeFileSync(
-      forkFile,
-      entries
-        .slice(0, 2)
-        .map((entry) => JSON.stringify(entry))
-        .join("\n"),
-    );
-    const forks: unknown[] = [];
+    const launch = vi.fn(replyFactory("replacement reply"));
+    const session = await resume(launch);
+    try {
+      const original = await Array.fromAsync(session.streamHistory());
+      expect(original).toHaveLength(4);
+      await session.revertConversation!({ messageId: "u2" });
+      expect(session.id).toBe(SESSION_ID);
+      expect(launch).not.toHaveBeenCalled();
+      expect(await Array.fromAsync(session.streamHistory())).toEqual(original.slice(0, 2));
+      const reopened = await resume();
+      try {
+        expect(await Array.fromAsync(reopened.streamHistory())).toEqual(original);
+      } finally {
+        await reopened.close();
+      }
+      await collectSessionTurnEvents(session, "replacement");
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: expect.objectContaining({
+            resume: SESSION_ID,
+            resumeSessionAt: "a1",
+            resumeDropsTurn: "u2",
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("retires a plain query still opening for a control when the replacement prompt is sent", async () => {
+    const entries = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "first reply" } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { content: "second" } },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((e) => JSON.stringify(e)).join("\n"));
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const plainClosed = vi.fn();
+    const respond = replyFactory("replacement");
+    const launch = vi.fn<ClaudeQueryFactory>((input) => {
+      const query = respond(input);
+      if (!input.options.resumeSessionAt) query.close = plainClosed;
+      return query;
+    });
+    const session = await resume(launch, async () => {
+      started.resolve();
+      await release.promise;
+      return process.execPath;
+    });
+    try {
+      await session.revertConversation!({ messageId: "u2" });
+      const control = session.listCommands!();
+      await started.promise;
+      const live = collectSessionTurnEvents(session, "replacement");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      release.resolve();
+      const [, events] = await Promise.all([control, live]);
+      expect(plainClosed).toHaveBeenCalledOnce();
+      expect(launch.mock.calls.map(([call]) => call.options.resumeSessionAt)).toEqual([
+        undefined,
+        "a1",
+      ]);
+      expect(events).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+    } finally {
+      release.resolve();
+      await session.close();
+    }
+  });
+
+  test("prepares ordered history before returning from rewind and accepts a live turn", async () => {
+    const entries = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "first reply" } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { content: "second" } },
+      { type: "assistant", uuid: "a2", parentUuid: "u2", message: { content: "second reply" } },
+    ];
+    mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+    writeFileSync(transcriptPath(), entries.map((entry) => JSON.stringify(entry)).join("\n"));
     const late = {
       type: "assistant",
       uuid: "retired-reply",
@@ -242,12 +311,7 @@ describe("ClaudeAgentSession persisted history load", () => {
         },
       };
     }) as ClaudeQueryFactory;
-    const session = await resume(queryFactory, {
-      async forkSession(sessionId, options) {
-        forks.push({ sessionId, ...options });
-        return { sessionId: forkId };
-      },
-    });
+    const session = await resume(queryFactory);
     try {
       const original = await Array.fromAsync(session.streamHistory());
       expect(original).toHaveLength(4);
@@ -278,24 +342,12 @@ describe("ClaudeAgentSession persisted history load", () => {
         emitted.filter(
           (event) => event.type === "timeline" && event.item.type === "assistant_message",
         ),
-      ).toEqual([
-        {
-          type: "timeline",
-          provider: "claude",
-          item: {
-            type: "assistant_message",
-            text: `Claude switched to a new session: ${SESSION_ID} -> ${forkId}`,
-          },
-        },
-      ]);
-      expect(forks).toEqual([
-        { sessionId: SESSION_ID, upToMessageId: "a1", transcriptPath: transcriptPath() },
-      ]);
-      expect(session.id).toBe(forkId);
+      ).toEqual([]);
+      expect(session.id).toBe(SESSION_ID);
       const [history, secondRead] = await Promise.all([reading, readingAgain]);
       expect(history).toEqual(original.slice(0, 2));
       expect(secondRead).toEqual([]);
-      const live = await collectSessionTurnEvents(session, "continue the fork");
+      const live = await collectSessionTurnEvents(session, "continue the same session");
       expect(
         live
           .filter((event) => event.type === "timeline" && event.item.type === "assistant_message")
@@ -314,9 +366,9 @@ describe("ClaudeAgentSession persisted history load", () => {
     writeFileSync(
       transcriptPath(),
       [
-        { type: "user", uuid: "u1", message: { content: "first" } },
-        { type: "assistant", uuid: "a1", message: { content: "reply" } },
-        { type: "user", uuid: "u2", message: { content: "second" } },
+        { type: "user", uuid: "u1", parentUuid: null, message: { content: "first" } },
+        { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "reply" } },
+        { type: "user", uuid: "u2", parentUuid: "a1", message: { content: "second" } },
       ]
         .map((entry) => JSON.stringify(entry))
         .join("\n"),
@@ -348,11 +400,7 @@ describe("ClaudeAgentSession persisted history load", () => {
         },
       };
     }) as ClaudeQueryFactory;
-    const session = await resume(queryFactory, {
-      async forkSession() {
-        return { sessionId: "failed-rebind" };
-      },
-    });
+    const session = await resume(queryFactory);
     try {
       await Array.fromAsync(session.streamHistory());
       await collectSessionTurnEvents(session, "before rewind");
@@ -362,8 +410,8 @@ describe("ClaudeAgentSession persisted history load", () => {
       expect(records).toContainEqual(
         expect.objectContaining({
           level: pino.levels.values.warn,
-          msg: "Failed to rebind Claude session",
-          sessionId: "failed-rebind",
+          msg: "Failed to prepare Claude conversation rewind",
+          sessionId: SESSION_ID,
           err: expect.objectContaining({ message: "retirement failed" }),
         }),
       );

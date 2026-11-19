@@ -1,319 +1,184 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test, vi } from "vitest";
-
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import { collectSessionTurnEvents } from "../test-utils/session-stream-adapter.js";
 import { ClaudeAgentClient } from "./agent.js";
-import { claudeProjectDir } from "./project-dir.js";
-import { FakeClaudeSdk } from "./test-rewind-claude-sdk.js";
-import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession } from "../../agent-sdk-types.js";
+import { claudeProjectDirSync } from "./project-dir.js";
+import type { ClaudeQueryFactory } from "./query.js";
 
-const SESSION_ID = "session-1";
+const sessionId = "original-claude-session";
+const prefix = [
+  { type: "user", uuid: "first", parentUuid: null, message: { content: "First prompt" } },
+  { type: "assistant", uuid: "answer", parentUuid: "first", message: { content: "First answer" } },
+];
+const prompt = {
+  type: "user",
+  uuid: "retry",
+  parentUuid: "answer",
+  message: { content: "Second prompt" },
+};
 
-/** Claude Code replies to a turn either with an assistant message or with nothing at all. */
-type TurnOutcome = { assistantMessageId: string; subagentMessageId?: string } | "no-response";
+describe("Claude conversation rewind anchors", () => {
+  let root: string;
+  let file: string;
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), "paseo-rewind-"));
+    const configDir = path.join(root, "provider-home");
+    const dir = claudeProjectDirSync(root, { configDir });
+    mkdirSync(dir, { recursive: true });
+    file = path.join(dir, `${sessionId}.jsonl`);
+    vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(root, { recursive: true, force: true });
+  });
 
-function initMessage(): Record<string, unknown> {
-  return {
-    type: "system",
-    subtype: "init",
-    session_id: SESSION_ID,
-    permissionMode: "default",
-    model: "claude-sonnet-4-6",
-  };
-}
+  async function open(entries: readonly object[], queryFactory?: ClaudeQueryFactory) {
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => process.execPath,
+      queryFactory,
+    });
+    return client.resumeSession({ provider: "claude", sessionId }, { cwd: root });
+  }
 
-/** Claude Code echoes the user message back under the uuid Paseo minted for it. */
-function userEcho(uuid: string): Record<string, unknown> {
-  return {
-    type: "user",
-    uuid,
-    session_id: SESSION_ID,
-    message: { role: "user", content: [{ type: "text", text: "prompt" }] },
-  };
-}
-
-function assistantReply(uuid: string): Record<string, unknown> {
-  return {
-    type: "assistant",
-    uuid,
-    session_id: SESSION_ID,
-    message: { id: uuid, role: "assistant", content: [{ type: "text", text: "ok" }] },
-  };
-}
-
-/**
- * A message from a Task subagent. The CLI streams these on the same query as the main
- * conversation, and their uuids live on the subagent's sidechain, not on the session's
- * own message chain, so `forkSession` cannot resolve one.
- */
-function subagentReply(uuid: string): Record<string, unknown> {
-  return {
-    type: "assistant",
-    uuid,
-    session_id: SESSION_ID,
-    parent_tool_use_id: "toolu_subagent_1",
-    message: { id: uuid, role: "assistant", content: [{ type: "text", text: "subagent work" }] },
-  };
-}
-
-function successResult(): Record<string, unknown> {
-  return {
-    type: "result",
-    subtype: "success",
-    uuid: "result-ok",
-    session_id: SESSION_ID,
-    duration_ms: 1,
-    duration_api_ms: 1,
-    is_error: false,
-    num_turns: 1,
-    result: "",
-    total_cost_usd: 0,
-    usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
-    permission_denials: [],
-  };
-}
-
-/** A turn that dies upstream before the model emits its first token. */
-function failedResult(): Record<string, unknown> {
-  return {
-    type: "result",
-    subtype: "error_during_execution",
-    uuid: "result-failed",
-    session_id: SESSION_ID,
-    duration_ms: 1,
-    duration_api_ms: 1,
-    is_error: true,
-    num_turns: 1,
-    errors: ["upstream gateway returned 503"],
-    total_cost_usd: 0,
-    usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 0 },
-    permission_denials: [],
-  };
-}
-
-interface Conversation {
-  queryFactory: ReturnType<typeof vi.fn>;
-  /** The uuid Paseo minted for each prompt, in the order the turns ran. */
-  userMessageIds: string[];
-}
-
-function createConversation(outcomes: TurnOutcome[]): Conversation {
-  const userMessageIds: string[] = [];
-  const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
-    const queued: Array<Record<string, unknown>> = [];
-    const waiters: Array<() => void> = [];
-    const closedRef = { value: false };
-    let turnIndex = 0;
-
-    const wake = () => waiters.shift()?.();
-    const enqueue = (message: Record<string, unknown>) => {
-      queued.push(message);
-      wake();
-    };
-
-    void (async () => {
-      for await (const sent of prompt) {
-        const userMessageId = String((sent as { uuid?: unknown }).uuid);
-        userMessageIds.push(userMessageId);
-        const outcome = outcomes[turnIndex];
-        turnIndex += 1;
-        if (turnIndex === 1) {
-          enqueue(initMessage());
-        }
-        enqueue(userEcho(userMessageId));
-        if (outcome === "no-response" || !outcome) {
-          enqueue(failedResult());
-          continue;
-        }
-        enqueue(assistantReply(outcome.assistantMessageId));
-        if (outcome.subagentMessageId) {
-          enqueue(subagentReply(outcome.subagentMessageId));
-        }
-        enqueue(successResult());
+  test.each(["revertConversation", "revertBoth"] as const)(
+    "%s rejects an empty prefix before touching files or starting a query",
+    async (method) => {
+      const launch = vi.fn<ClaudeQueryFactory>(() => {
+        throw new Error("First-message rewind must not start Claude");
+      });
+      const session = await open(prefix, launch);
+      try {
+        const before = readFileSync(file, "utf8");
+        await expect(session[method]!({ messageId: "first" })).rejects.toThrow(
+          /before the first message.*new session/i,
+        );
+        expect(session.id).toBe(sessionId);
+        expect(readFileSync(file, "utf8")).toBe(before);
+        expect(launch).not.toHaveBeenCalled();
+        expect(readdirSync(path.dirname(file))).toEqual([`${sessionId}.jsonl`]);
+      } finally {
+        await session.close();
       }
-      closedRef.value = true;
-      wake();
-    })();
+    },
+  );
 
-    return {
-      next: vi.fn(async () => {
-        while (queued.length === 0 && !closedRef.value) {
-          await new Promise<void>((resolve) => {
-            waiters.push(resolve);
-          });
-        }
-        if (queued.length === 0) {
-          return { done: true, value: undefined };
-        }
-        return { done: false, value: queued.shift() };
-      }),
-      interrupt: vi.fn(async () => undefined),
-      return: vi.fn(async () => {
-        closedRef.value = true;
-        wake();
-        return undefined;
-      }),
-      close: vi.fn(() => {
-        closedRef.value = true;
-        wake();
-      }),
-      setPermissionMode: vi.fn(async () => undefined),
-      setModel: vi.fn(async () => undefined),
-      supportedModels: vi.fn(async () => []),
-      supportedCommands: vi.fn(async () => []),
-      rewindFiles: vi.fn(async () => ({ canRewind: true })),
-      [Symbol.asyncIterator]() {
-        return this;
+  test("keeps a turn's actual last entry even if it was a tool result, not an assistant reply", async () => {
+    const toolResult = {
+      type: "user",
+      uuid: "tool-result",
+      parentUuid: "answer",
+      message: { content: [{ type: "tool_result", tool_use_id: "call", content: "tool output" }] },
+    };
+    const sidechain = {
+      type: "assistant",
+      isSidechain: true,
+      uuid: "subagent",
+      parentUuid: "answer",
+      message: { content: "Subagent output" },
+    };
+    const launch = vi.fn<ClaudeQueryFactory>(() => {
+      throw new Error("Stop before starting the provider");
+    });
+    const session = await open(
+      [...prefix, toolResult, sidechain, { ...prompt, parentUuid: "tool-result" }],
+      launch,
+    );
+    try {
+      await session.revertConversation!({ messageId: "retry" });
+      expect(await session.canStopRuntime?.()).toBe(false);
+      await collectSessionTurnEvents(session, "replacement");
+      expect(launch.mock.calls[0]?.[0].options).toMatchObject({
+        resume: sessionId,
+        resumeSessionAt: "tool-result",
+        resumeDropsTurn: "retry",
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps a valid anchor when the discarded turn had no assistant reply", async () => {
+    const session = await open([...prefix, prompt]);
+    try {
+      await session.revertConversation!({ messageId: "retry" });
+      const events = await Array.fromAsync(session.streamHistory());
+      expect(events.filter((e) => e.type === "timeline").map((e) => e.item.type)).toEqual([
+        "user_message",
+        "assistant_message",
+      ]);
+      expect(session.id).toBe(sessionId);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("does not discard another prompt appended after selecting a multi-turn rewind", async () => {
+    const later = {
+      ...prompt,
+      uuid: "third",
+      parentUuid: "retry",
+      message: { content: "Third prompt" },
+    };
+    const entries = [...prefix, prompt, later];
+    const launch = vi.fn<ClaudeQueryFactory>(() => {
+      throw new Error("A stale rewind must not start the provider");
+    });
+    const session = await open(entries, launch);
+    try {
+      await session.revertConversation!({ messageId: "retry" });
+      const external = {
+        ...prompt,
+        uuid: "external",
+        parentUuid: "third",
+        message: { content: "External prompt" },
+      };
+      writeFileSync(file, [...entries, external].map((e) => JSON.stringify(e)).join("\n") + "\n");
+      const result = await collectSessionTurnEvents(session, "replacement");
+      expect(result).toContainEqual(
+        expect.objectContaining({ type: "turn_failed", code: "rewind_rejected" }),
+      );
+      expect(launch).not.toHaveBeenCalled();
+      const full = await Array.fromAsync(session.streamHistory());
+      expect(full).toContainEqual(
+        expect.objectContaining({
+          item: expect.objectContaining({ type: "user_message", messageId: "external" }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("uses the queued command's parent when rewinding a mid-turn steer", async () => {
+    const steer = {
+      type: "attachment",
+      uuid: "queued",
+      parentUuid: "answer",
+      attachment: {
+        type: "queued_command",
+        commandMode: "prompt",
+        source_uuid: "steer",
+        prompt: "wait",
       },
     };
-  });
-  return { queryFactory, userMessageIds };
-}
-
-async function createSession(
-  conversation: Conversation,
-  rewindSdk: FakeClaudeSdk,
-): Promise<AgentSession> {
-  const client = new ClaudeAgentClient({
-    logger: createTestLogger(),
-    queryFactory: conversation.queryFactory as never,
-    resolveBinary: async () => "/test/claude/bin",
-    rewindSdk,
-  });
-  return client.createSession({
-    provider: "claude",
-    cwd: process.cwd(),
-    model: "claude-sonnet-4-6",
-  });
-}
-
-async function runTurns(session: AgentSession, count: number): Promise<void> {
-  for (let index = 0; index < count; index += 1) {
-    for await (const _ of streamSession(session, `turn ${index + 1}`)) {
-      // drain to the terminal event
-    }
-  }
-}
-
-describe("Claude rewind across a turn that produced no response", () => {
-  test("forks at the most recent turn that did produce a response", async () => {
-    const conversation = createConversation([
-      { assistantMessageId: "assistant-1" },
-      "no-response",
-      { assistantMessageId: "assistant-3" },
-    ]);
-    const rewindSdk = new FakeClaudeSdk();
-    const session = await createSession(conversation, rewindSdk);
-
+    const launch = vi.fn<ClaudeQueryFactory>(() => {
+      throw new Error("Stop before starting the provider");
+    });
+    const session = await open([...prefix, steer], launch);
     try {
-      await runTurns(session, 3);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[2] });
+      await session.revertConversation!({ messageId: "steer" });
+      await collectSessionTurnEvents(session, "replacement");
+      const options = launch.mock.calls[0]?.[0].options;
+      expect(options).toMatchObject({ resume: sessionId, resumeSessionAt: "answer" });
+      expect(options?.resumeDropsTurn).toBeUndefined();
     } finally {
       await session.close();
     }
-
-    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
-  });
-
-  test("starts a fresh session when no earlier turn produced a response", async () => {
-    const conversation = createConversation(["no-response", { assistantMessageId: "assistant-2" }]);
-    const rewindSdk = new FakeClaudeSdk();
-    const session = await createSession(conversation, rewindSdk);
-
-    try {
-      await runTurns(session, 2);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
-    } finally {
-      await session.close();
-    }
-
-    expect(rewindSdk.recordedForks).toEqual([]);
-  });
-
-  test("still forks at the previous turn when every turn produced a response", async () => {
-    const conversation = createConversation([
-      { assistantMessageId: "assistant-1" },
-      { assistantMessageId: "assistant-2" },
-    ]);
-    const rewindSdk = new FakeClaudeSdk();
-    const session = await createSession(conversation, rewindSdk);
-
-    try {
-      await runTurns(session, 2);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
-    } finally {
-      await session.close();
-    }
-
-    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
-  });
-});
-
-describe("Claude rewind after a turn whose last assistant message came from a subagent", () => {
-  test("forks at the turn's own reply, not at the subagent message", async () => {
-    const conversation = createConversation([
-      { assistantMessageId: "assistant-1", subagentMessageId: "subagent-1" },
-      { assistantMessageId: "assistant-2" },
-    ]);
-    const rewindSdk = new FakeClaudeSdk();
-    const session = await createSession(conversation, rewindSdk);
-
-    try {
-      await runTurns(session, 2);
-      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
-    } finally {
-      await session.close();
-    }
-
-    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
-  });
-});
-
-describe("Claude rewind to a message steered into a running turn", () => {
-  test("forks at the entry Claude read the message after", async () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), "claude-rewind-steer-"));
-    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = configDir;
-    const conversation = createConversation([{ assistantMessageId: "assistant-1" }]);
-    const rewindSdk = new FakeClaudeSdk();
-    const session = await createSession(conversation, rewindSdk);
-
-    try {
-      await runTurns(session, 1);
-      // A steered message opens no turn: Claude Code records it as a queued_command attachment
-      // under the uuid Paseo minted for it, hung off the entry it was read after.
-      const projectDir = await claudeProjectDir(process.cwd(), { configDir });
-      mkdirSync(projectDir, { recursive: true });
-      const entries = [
-        { type: "user", uuid: conversation.userMessageIds[0], parentUuid: null },
-        { type: "assistant", uuid: "assistant-1", parentUuid: conversation.userMessageIds[0] },
-        { type: "user", uuid: "tool-result-1", parentUuid: "assistant-1" },
-        {
-          type: "attachment",
-          uuid: "queued-command-1",
-          parentUuid: "tool-result-1",
-          attachment: { type: "queued_command", source_uuid: "steered-message-1" },
-        },
-      ];
-      writeFileSync(
-        path.join(projectDir, `${SESSION_ID}.jsonl`),
-        entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
-      );
-
-      await session.revertConversation?.({ messageId: "steered-message-1" });
-    } finally {
-      await session.close();
-      if (previousConfigDir === undefined) {
-        delete process.env.CLAUDE_CONFIG_DIR;
-      } else {
-        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-      }
-      rmSync(configDir, { recursive: true, force: true });
-    }
-
-    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "tool-result-1" }]);
   });
 });
