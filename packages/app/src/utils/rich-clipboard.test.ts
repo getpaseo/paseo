@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCodeClipboardContent,
   createMarkdownClipboardContent,
+  createSelectionClipboardContent,
   type MarkdownClipboardEnvironment,
   type RichClipboardWriter,
   writeMarkdownToRichClipboard,
@@ -41,7 +42,41 @@ function createRecordingClipboard(
   return { environment, richWrites, plainTexts };
 }
 
+describe("createSelectionClipboardContent", () => {
+  it.each(["README.md", "main.py", "https://example.com", "www.example.com", "user@example.com"])(
+    "keeps bare text unlinked in clipboard HTML: %s",
+    (text) => {
+      expect(createSelectionClipboardContent(text, text)).toEqual({
+        plainText: text,
+        html: `<meta charset="utf-8"><p>${text}</p>\n`,
+      });
+    },
+  );
+
+  it("writes the given plain flavor", () => {
+    expect(createSelectionClipboardContent("a \\| b", "a | b")).toEqual({
+      plainText: "a | b",
+      html: '<meta charset="utf-8"><p>a | b</p>\n',
+    });
+  });
+});
+
 describe("createMarkdownClipboardContent", () => {
+  it("links a bare URL in clipboard HTML", () => {
+    expect(createMarkdownClipboardContent("https://example.com").html).toBe(
+      '<meta charset="utf-8"><p><a href="https://example.com">https://example.com</a></p>\n',
+    );
+  });
+
+  it("preserves explicit filename and web links in clipboard HTML", () => {
+    const markdown = "[README.md](README.md) and [website](https://example.com)";
+
+    expect(createMarkdownClipboardContent(markdown)).toEqual({
+      plainText: markdown,
+      html: '<meta charset="utf-8"><p><a href="README.md">README.md</a> and <a href="https://example.com">website</a></p>\n',
+    });
+  });
+
   it("renders markdown structures to clipboard html", () => {
     const markdown = [
       "# Heading",

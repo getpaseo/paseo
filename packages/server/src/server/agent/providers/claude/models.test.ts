@@ -1,3 +1,4 @@
+import { ChildProcess } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -7,7 +8,6 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
-  CLAUDE_ULTRACODE_THINKING_OPTION_ID,
   claudeManifestModelSupportsFastMode,
   normalizeClaudeManifestModelId,
   parseClaudeCodeVersion,
@@ -189,7 +189,6 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-5")?.thinkingOptions?.map((option) => option.id)).toEqual([
       CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -198,14 +197,7 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
-    expect(
-      models
-        .get("claude-sonnet-5")
-        ?.thinkingOptions?.find((option) => option.id === CLAUDE_ULTRACODE_THINKING_OPTION_ID)
-        ?.label,
-    ).toBe("Ultra Code");
     expect(models.get("claude-sonnet-5")?.defaultThinkingOptionId).toBe("high");
     expect(models.get("claude-sonnet-5[1m]")?.thinkingOptions).toEqual(
       models.get("claude-sonnet-5")?.thinkingOptions,
@@ -218,7 +210,6 @@ describe("getClaudeModels", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(models.get("claude-sonnet-4-6")?.thinkingOptions?.map((option) => option.id)).toEqual([
       CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -419,9 +410,12 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       { id: "low", label: "Low" },
       { id: "medium", label: "Medium" },
       { id: "high", label: "High", isDefault: true },
-      { id: "xhigh", label: "Extra High" },
+      {
+        id: "xhigh",
+        label: "Extra High",
+        metadata: { replacesThinkingOptionId: "ultracode" },
+      },
       { id: "max", label: "Max" },
-      { id: CLAUDE_ULTRACODE_THINKING_OPTION_ID, label: "Ultra Code" },
     ];
     const configDir = await createClaudeConfigDir({
       model: "us.anthropic.claude-opus-4-7[1m]",
@@ -844,7 +838,6 @@ describe("Claude Fable 5.2 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5-2")).toBe(true);
   });
@@ -886,7 +879,6 @@ describe("Claude Opus 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(opus55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -921,7 +913,6 @@ describe("Claude Sonnet 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(sonnet55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -958,7 +949,6 @@ describe("Claude Haiku 5.5 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(haiku55?.defaultThinkingOptionId).toBe("medium");
     expect(
@@ -1015,7 +1005,6 @@ describe("Claude Mythos 5.1 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(
       models[0].thinkingOptions?.filter((option) => option.isDefault).map((option) => option.id),
@@ -1087,7 +1076,6 @@ describe("Claude Mythos 5.2 catalog", () => {
       "high",
       "xhigh",
       "max",
-      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
     ]);
     expect(claudeManifestModelSupportsFastMode("claude-mythos-5-2")).toBe(true);
   });
@@ -1172,5 +1160,128 @@ describe("Claude model discovery process", () => {
     );
     await expect(result).rejects.toBe(failure);
     expect(closed).toBe(true);
+  });
+
+  describe("when the CLI is still starting up at the deadline", () => {
+    // Without a pid, terminateWithTreeKill signals the child directly instead of a real tree.
+    class StartingClaudeProcess extends ChildProcess {
+      readonly signals: string[] = [];
+      override kill(signal?: NodeJS.Signals | number): boolean {
+        this.signals.push(String(signal));
+        this.emit("exit", null, signal);
+        return true;
+      }
+      exitOnItsOwn(): void {
+        this.emit("exit", 0, null);
+      }
+    }
+
+    interface StalledDiscoveryState {
+      closed: boolean;
+      inputEnded: boolean;
+    }
+
+    async function recordInputEnd(
+      prompt: AsyncIterable<unknown>,
+      state: StalledDiscoveryState,
+    ): Promise<void> {
+      await prompt[Symbol.asyncIterator]().next();
+      state.inputEnded = true;
+    }
+
+    // By default the CLI never answers: an expired OAuth token is refreshed first.
+    function startStalledDiscovery(
+      supportedModels: () => Promise<ModelInfo[]> = () => new Promise<ModelInfo[]>(() => {}),
+    ) {
+      const child = new StartingClaudeProcess();
+      const state: StalledDiscoveryState = { closed: false, inputEnded: false };
+      const result = discoverClaudeModels(
+        { resolveBinary: async () => "/claude", env: {} },
+        (input, context) => {
+          if (typeof input.prompt === "string") throw new Error("unexpected inference prompt");
+          void recordInputEnd(input.prompt, state);
+          context.onChildProcess?.(child);
+          return {
+            supportedModels,
+            close: () => {
+              state.closed = true;
+            },
+          };
+        },
+      );
+      return { child, state, result };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("stops waiting at the limit but lets the CLI finish instead of killing it", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+      expect(state.inputEnded).toBe(true);
+      expect(child.signals).toEqual([]);
+      expect(state.closed).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(child.signals).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.signals).toEqual(["SIGTERM"]);
+      expect(state.closed).toBe(true);
+    });
+
+    async function answerAtOnce(): Promise<ModelInfo[]> {
+      return [];
+    }
+
+    it("lets the CLI finish after it answers instead of killing it", async () => {
+      // The CLI answers supportedModels() before its startup token refresh has saved the
+      // rotated refresh token, so a kill right after the answer also logs the user out.
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery(answerAtOnce);
+      await expect(result).resolves.toEqual([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.inputEnded).toBe(true);
+      expect(child.signals).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      child.exitOnItsOwn();
+      expect(state.closed).toBe(true);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(child.signals).toEqual([]);
+    });
+
+    it("never signals a CLI that exits on its own during the grace period", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      child.exitOnItsOwn();
+      expect(state.closed).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(child.signals).toEqual([]);
+    });
+
+    it("tree-kills a still-running CLI when the daemon shuts down", async () => {
+      vi.useFakeTimers();
+      const { child, state, result } = startStalledDiscovery();
+      const settled = expect(result).rejects.toThrow("Claude model discovery timed out");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+      expect(child.signals).toEqual([]);
+
+      await new ClaudeAgentClient({ logger: createTestLogger() }).shutdown();
+      expect(child.signals).toEqual(["SIGTERM"]);
+      expect(state.closed).toBe(true);
+    });
   });
 });

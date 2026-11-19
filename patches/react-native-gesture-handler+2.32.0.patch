@@ -152,18 +152,92 @@ index 8d78aea..b84d19e 100644
      viewGroup: ViewGroup,
      coords: FloatArray,
 diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-index 629c155..dc0790d 100644
+index 629c155..2efd508 100644
 --- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
 +++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerRootHelper.kt
-@@ -19,6 +19,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+@@ -19,7 +19,9 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
    private val jsGestureHandler: GestureHandler?
    val rootView: ViewGroup
    private var shouldIntercept = false
 +  private var wasIntercepting = false
    private var passingTouch = false
++  private var lastTouch: MotionEvent? = null
  
    init {
-@@ -118,6 +119,14 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     UiThreadUtil.assertOnUiThread()
+@@ -47,6 +49,7 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+   }
+ 
+   fun tearDown() {
++    clearLastTouch()
+     Log.i(
+       ReactConstants.TAG,
+       "[GESTURE HANDLER] Tearing down gesture handler registered for root view $rootView",
+@@ -90,17 +93,46 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+ 
+     override fun onCancel() {
+       shouldIntercept = true
+-      val time = SystemClock.uptimeMillis()
+-      val event = MotionEvent.obtain(time, time, MotionEvent.ACTION_CANCEL, 0f, 0f, 0).apply {
+-        action = MotionEvent.ACTION_CANCEL
+-      }
+       if (rootView is RootView) {
+-        rootView.onChildStartedNativeGesture(rootView, event)
++        val cancel = createReactCancelEvent()
++        try {
++          rootView.onChildStartedNativeGesture(rootView, cancel)
++        } finally {
++          cancel.recycle()
++          clearLastTouch()
++        }
+       }
+-      event.recycle()
+     }
+   }
+ 
++  private fun clearLastTouch() {
++    lastTouch?.recycle()
++    lastTouch = null
++  }
++
++  private fun createReactCancelEvent(): MotionEvent {
++    val now = SystemClock.uptimeMillis()
++    val touch = lastTouch ?: return MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
++    // The enclosing React root already dispatched this event before it reached the
++    // gesture handler. A POINTER_UP is still in MotionEvent but already ended in JS.
++    val lifted = if (touch.actionMasked == MotionEvent.ACTION_POINTER_UP) touch.actionIndex else -1
++    val count = touch.pointerCount - if (lifted >= 0) 1 else 0
++    val properties = Array(count) { MotionEvent.PointerProperties() }
++    val coords = Array(count) { MotionEvent.PointerCoords() }
++    var index = 0
++    for (pointer in 0 until touch.pointerCount) {
++      if (pointer == lifted) continue
++      touch.getPointerProperties(pointer, properties[index])
++      touch.getPointerCoords(pointer, coords[index])
++      index++
++    }
++    return MotionEvent.obtain(
++      touch.downTime, now, MotionEvent.ACTION_CANCEL, count, properties, coords,
++      touch.metaState, touch.buttonState, touch.xPrecision, touch.yPrecision,
++      touch.deviceId, touch.edgeFlags, touch.source, touch.flags,
++    )
++  }
++
+   fun requestDisallowInterceptTouchEvent() {
+     // If this method gets called it means that some native view is attempting to grab lock for
+     // touch event delivery. In that case we cancel all gesture recognizers
+@@ -115,9 +147,25 @@ class RNGestureHandlerRootHelper(private val context: ReactContext, wrappedView:
+     // We mark `mPassingTouch` before we get into `mOrchestrator.onTouchEvent` so that we can tell
+     // if `requestDisallow` has been called as a result of a normal gesture handling process or
+     // as a result of one of the gesture handlers activating
++    // Keep the stream for recognizers that activate between events (e.g. long press).
++    // Once native handling begins, React no longer receives the remaining touches.
++    if (!event.isHoverAction() && (!shouldIntercept || event.actionMasked == MotionEvent.ACTION_DOWN)) {
++      clearLastTouch()
++      if (event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL) {
++        lastTouch = MotionEvent.obtainNoHistory(event)
++      }
++    }
      passingTouch = true
      orchestrator!!.onTouchEvent(event)
      passingTouch = false

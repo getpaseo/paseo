@@ -26,11 +26,13 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
   CheckDetails,
   CreatePullRequestOptions,
+  CurrentPullRequestLookup,
   CurrentPullRequestStatus,
   DisablePullRequestAutoMergeOptions,
   EnablePullRequestAutoMergeOptions,
@@ -251,6 +253,7 @@ const GiteaPullRequestApiSchema = z
 const GiteaRepositoryApiSchema = z
   .object({
     full_name: z.string(),
+    default_branch: z.string().nullish(),
     parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
   })
   .passthrough();
@@ -1585,11 +1588,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return { items, truncated: true };
   }
 
-  async function loadCurrentPullRequestStatus(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<CurrentPullRequestStatus | null> {
+  async function loadCurrentPullRequestStatus(
+    input: CurrentPullRequestLookup,
+  ): Promise<CurrentPullRequestStatus | null> {
     const match = await findCurrentPullRequestForHeadRef(input);
     if (!match) {
       return null;
@@ -1613,11 +1614,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return identity ? { owner: identity.owner, name: identity.name } : null;
   }
 
-  async function findCurrentPullRequestForHeadRef(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<GiteaPrListItem | null> {
+  function readRepository(cwd: string, repoPath: string) {
+    return runJson(["api", repoPath], { cwd }, GiteaRepositoryApiSchema);
+  }
+
+  function repositoryApiPath(repo: { owner: string; name: string } | null): string {
+    return repo
+      ? `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`
+      : "repos/{owner}/{repo}";
+  }
+
+  async function findCurrentPullRequestForHeadRef(
+    input: CurrentPullRequestLookup,
+  ): Promise<GiteaPrListItem | null> {
     const repoIdentity = await resolveCurrentRepoIdentity(input.cwd);
     const expectedHeadOwner = repoIdentity?.owner ?? null;
     const openMatch = await findOpenPullRequestForHeadRef(input, expectedHeadOwner);
@@ -1628,9 +1637,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     // tea discovers repository context from any configured git remote, while
     // the default remote resolver reads origin only. Preserve that broader
     // discovery for repositories whose primary remote has another name.
-    const repoPath = repoIdentity
-      ? `repos/${encodeURIComponent(repoIdentity.owner)}/${encodeURIComponent(repoIdentity.name)}`
-      : "repos/{owner}/{repo}";
+    const repoPath = repositoryApiPath(repoIdentity);
     const recentItems = await runJsonArray(
       [
         "api",
@@ -1666,6 +1673,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       ) ??
       candidates[0] ??
       null;
+    if (match && mapGiteaState(match.state) !== "open") {
+      const repository = await readRepository(input.cwd, repoPath).catch(() => null);
+      if (isOnDefaultBranch(input, repository?.default_branch)) {
+        return null;
+      }
+    }
     return match ? currentPullRequestApiToListItem(match) : null;
   }
 
@@ -2020,20 +2033,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       if (!repo) {
         return null;
       }
-      const repository = await runJson(
-        ["api", `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`],
-        { cwd: input.cwd },
-        GiteaRepositoryApiSchema,
-      );
+      const repository = await readRepository(input.cwd, repositoryApiPath(repo));
       return repository.parent?.full_name ?? null;
     },
 
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
-      return loadCurrentPullRequestStatus({
-        cwd: input.cwd,
-        headRef: input.headRef,
-        headSha: input.headSha,
-      });
+      return loadCurrentPullRequestStatus(input);
     },
 
     async getPullRequest(input: GetPullRequestOptions): Promise<PullRequestSummary> {

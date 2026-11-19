@@ -448,6 +448,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     get initialTimeline() {
       return inner.initialTimeline;
     },
+    get persistenceUpdatedOnResume() {
+      return inner.persistenceUpdatedOnResume;
+    },
     get controls() {
       return inner.controls;
     },
@@ -623,6 +626,7 @@ function wrapClientProvider(
     getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
     isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
+    installation: inner.installation,
   };
 }
 

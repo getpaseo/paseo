@@ -39,7 +39,6 @@ export function SidebarGroupToggleRow({
       styles.row,
       indented && sidebarWorkspaceRowStyles.rowIndented,
       hovered && !pressed && styles.rowHovered,
-      pressed && styles.rowPressed,
     ],
     [indented],
   );
@@ -50,6 +49,7 @@ export function SidebarGroupToggleRow({
       accessibilityLabel={label}
       onPress={onPress}
       style={rowStyle}
+      highlightStyle={styles.rowPressed}
       testID={testID}
     >
       {({ hovered, pressed }) => (

@@ -2,7 +2,7 @@
 title: Plugin hooks
 description: Register hooks to change requests or observe agent and workspace operations.
 nav: Hooks
-order: 48
+order: 49
 category: Plugins
 ---
 
@@ -31,7 +31,7 @@ Names follow `subject.operation.position`: the subject, the operation, then `bef
 
 All handlers must be async. Turn completion includes success, failure, and cancellation; inspect `outcome`. Permission completion includes every resolution; inspect `resolution`.
 
-Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
+Creating an agent happens once, and `agent.create.before` changes its saved configuration. Opening starts the provider process: the first run, resume after a daemon restart, reading history, importing an outside session, or reload. `agent.open.before` contributes launch-only environment, instructions, tools, and MCP servers each time. Creating opens the agent; opening an existing agent does not create it; closing ends the running instance. Opening a tab in the app is a separate action.
 
 `worktree.create.after` runs before the workspace is registered. It precedes `workspace.create.after`, and both precede the first agent's `agent.create.before` / `agent.open.before`.
 
@@ -49,22 +49,22 @@ Paseo only sees the returned promise, so detached work gets no error reporting a
 
 ## Hooks
 
-| Hook                      | Waits | Payload                                   | Handler may change                             |
-| ------------------------- | ----- | ----------------------------------------- | ---------------------------------------------- |
-| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                          |
-| `workspace.create.after`  | no    | `{ workspace }`                           |                                                |
-| `workspace.archive.after` | no    | `{ workspace }`                           |                                                |
-| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination               |
-| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation |
-| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`   |
-| `agent.create.after`      | no    | `{ agent }`                               |                                                |
-| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `tools`, `mcpServers`       |
-| `agent.close.after`       | no    | `{ agent }`                               |                                                |
-| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                |
-| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                |
-| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                |
-| `agent.permission.before` | no    | `{ agent, request }`                      |                                                |
-| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                |
+| Hook                      | Waits | Payload                                   | Handler may change                                             |
+| ------------------------- | ----- | ----------------------------------------- | -------------------------------------------------------------- |
+| `workspace.create.before` | yes   | `{ request }`                             | Entire create request                                          |
+| `workspace.create.after`  | no    | `{ workspace }`                           |                                                                |
+| `workspace.archive.after` | no    | `{ workspace }`                           |                                                                |
+| `worktree.create.before`  | yes   | `{ request }`                             | Creation options and destination                               |
+| `worktree.create.after`   | yes   | `{ worktree }`                            | Files in the worktree; throw to abort creation                 |
+| `agent.create.before`     | yes   | `{ request: { config, env?, metadata } }` | Saved config except `cwd`; `env`; `metadata`                   |
+| `agent.create.after`      | no    | `{ agent }`                               |                                                                |
+| `agent.open.before`       | yes   | `{ request }`                             | Launch-only `env`, `appendSystemPrompt`, `tools`, `mcpServers` |
+| `agent.close.after`       | no    | `{ agent }`                               |                                                                |
+| `agent.archive.after`     | no    | `{ agent, archivedAt }`                   |                                                                |
+| `agent.turn.before`       | no    | `{ agent, turnId }`                       |                                                                |
+| `agent.turn.after`        | no    | `{ agent, turnId, outcome }`              |                                                                |
+| `agent.permission.before` | no    | `{ agent, request }`                      |                                                                |
+| `agent.permission.after`  | no    | `{ agent, requestId, resolution }`        |                                                                |
 
 ## Shared payloads
 
@@ -283,7 +283,7 @@ server.addHook("agent.create.after", async ({ agent }) => {
 
 ## agent.open.before
 
-Receives `{ request }`; only `env`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
+Receives `{ request }`; only `env`, `appendSystemPrompt`, `tools`, and `mcpServers` may change, for this launch. All other fields are read-only. A throw, invalid result, or timeout fails the open.
 
 Do not await a write to the agent being opened: `setMetadata`, `setLabels`, or an option, model, thinking or mode change. The write waits for the open to finish, the open waits for your hook, so the hook times out and the open fails. Start the write without awaiting it; it runs right after the open:
 
@@ -328,6 +328,19 @@ server.addHook("agent.open.before", async ({ request }, { paseo }) => {
 | `reason`      | `create`, `resume`, `refresh`, `import`                                                                                 |
 | `purpose`     | `interactive`, `history`                                                                                                |
 | `env`         | Launch override map; excludes the daemon's inherited environment. Replace the map to add, replace, or remove overrides. |
+
+### Append instructions on every session opening
+
+```ts
+server.addHook("agent.open.before", async ({ request }) => ({
+  ...request,
+  appendSystemPrompt: [...(request.appendSystemPrompt ?? []), "Follow the team engineering guide."],
+}));
+```
+
+Instructions follow the saved agent prompt and daemon instructions, in plugin order. They are not saved in the agent configuration and are ignored for history opens. Reload the plugin after changing its data to apply new instructions on the next reopen. Running turns continue; removing an instruction does not remove conversation history. Internal agents also receive these instructions. The ACP adapter does not send system instructions to its providers. Plugin providers receive the composed prompt, but must apply it themselves.
+
+Codex instruction updates require Codex 0.121.0 or newer with a recognizable version reported by the app server. Source builds reporting `0.0.0` must use a versioned build. Paseo adds a current instruction snapshot to existing threads; earlier snapshots remain in the conversation. A crash during an update or rewinding a thread can repeat a snapshot.
 
 ### Inject environment variables on every session opening
 

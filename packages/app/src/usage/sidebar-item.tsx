@@ -113,8 +113,8 @@ function pinnedUsageLabel(
   return `${label}: ${summary}${error}`;
 }
 
-function triggerStyle({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) {
-  return [styles.trigger, hovered && styles.triggerHovered, pressed && styles.triggerPressed];
+function triggerStyle({ hovered }: PressableStateCallbackType & { hovered?: boolean }) {
+  return [styles.trigger, hovered && styles.triggerHovered];
 }
 
 function layoutWidth(event: LayoutChangeEvent): number {
@@ -161,6 +161,7 @@ function PinnedUsageTrigger({
       accessibilityRole="button"
       accessibilityLabel={pinnedUsageLabel(label, sources, errorLabel)}
       style={triggerStyle}
+      highlightStyle={styles.triggerPressed}
       testID="sidebar-usage"
     >
       <View style={styles.line} onLayout={handleAvailableLayout}>
