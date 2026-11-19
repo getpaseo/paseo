@@ -728,23 +728,40 @@ export class VoiceAssistantWebSocketServer {
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.agentMessages = createAgentMessageDelivery({
+      tryRunOutOfBand: (request, onAccepted) =>
+        agentManager.tryRunOutOfBand(
+          request.recipientId,
+          request.prompt,
+          { clientMessageId: request.messageIds[0] },
+          onAccepted,
+        ),
+      isRunning: (agentId) => agentManager.hasInFlightRun(agentId),
+      hasPendingPermission: (agentId) => agentManager.hasPendingPermissions(agentId),
+      subscribe: (notify) =>
+        agentManager.subscribe(
+          (event) => {
+            if (event.type === "agent_state") notify(event.agent.id);
+          },
+          { replayState: false },
+        ),
       dispatch: async (batch) => {
-        const { disposition } = await sendPreparedPromptToAgent({
+        const dispatch = await sendPreparedPromptToAgent({
           agentManager,
           agentStorage,
           agentId: batch.recipientId,
           prompt: batch.prompt,
           activeTurnBehavior: batch.activeTurnBehavior,
+          idleOnly: batch.idleOnly,
+          admit: batch.admit,
           sessionMode: batch.sessionMode,
           clearPendingPermissions: batch.clearPendingPermissions,
           unarchive: batch.unarchive,
           runOptions: { clientMessageId: batch.messageIds[0] },
-          onDispatch: batch.onDispatch,
           logger: this.logger,
         });
-        if (disposition === "turn_started")
-          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId);
-        return disposition;
+        if (dispatch.disposition === "turn_started")
+          await waitForAgentRunStartWithTimeout(agentManager, batch.recipientId, dispatch.started);
+        return dispatch.disposition;
       },
       onError: (err, batch) =>
         this.logger.error(
@@ -982,9 +999,7 @@ export class VoiceAssistantWebSocketServer {
       callback(false, 403, "Host not allowed");
       return;
     }
-    const sameOrigin = isWebSocketSameOrigin(origin, requestHost);
-
-    if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin) || sameOrigin) {
+    if (!origin || isDaemonOriginAllowed(origin, requestHost, allowedOrigins)) {
       callback(true);
     } else {
       this.incrementRuntimeCounter("originRejected");
@@ -2092,6 +2107,8 @@ export class VoiceAssistantWebSocketServer {
         pluginGitManagement: true,
         pluginSourceInstallation: true,
         pluginSourceUpdates: true,
+        // COMPAT(pluginRegistry): added in v0.16.0, remove gate after 2027-05-15.
+        pluginRegistry: true,
         pluginLogs: true,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         pluginThemes: true,
@@ -3247,6 +3264,22 @@ function isLoopbackAlias(hostname: string): boolean {
     return true;
   }
   return /^127(?:\.\d{1,3}){3}$/.test(normalized);
+}
+
+/**
+ * Whether a page at `origin` may talk to the daemon reached at `requestHost`. The WebSocket
+ * upgrade and the HTTP CORS check both use it, so a page that can connect can also fetch.
+ */
+export function isDaemonOriginAllowed(
+  origin: string,
+  requestHost: string | null,
+  allowedOrigins: Set<string>,
+): boolean {
+  return (
+    allowedOrigins.has("*") ||
+    allowedOrigins.has(origin) ||
+    isWebSocketSameOrigin(origin, requestHost)
+  );
 }
 
 export function isWebSocketSameOrigin(

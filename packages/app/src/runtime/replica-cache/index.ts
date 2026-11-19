@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
+  ForgeWebSchema,
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
@@ -336,6 +337,7 @@ const StoredWorkspaceSchema = z.strictObject({
   gitRuntime: WorkspaceGitRuntimeSchema,
   githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
   forge: z.string().optional(),
+  forgeWeb: ForgeWebSchema.optional(),
 });
 
 const StoredProjectSchema = z.strictObject({
@@ -769,6 +771,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     gitRuntime: workspace.gitRuntime,
     githubRuntime: workspace.githubRuntime,
     forge: workspace.forge,
+    forgeWeb: workspace.forgeWeb,
   };
 }
 
@@ -830,7 +833,10 @@ function selectCertifiedTimelineWindow(
   for (let index = minSeqFrom.length - 2; index >= 0; index -= 1) {
     minSeqFrom[index] = Math.min(minSeqFrom[index]!, minSeqFrom[index + 1]!);
   }
-  let trimmedEndSeq = Math.max(...seqs.slice(0, firstStart));
+  let trimmedEndSeq = -Infinity;
+  for (let index = 0; index < firstStart; index += 1) {
+    trimmedEndSeq = Math.max(trimmedEndSeq, seqs[index]!);
+  }
   for (let start = firstStart; start <= lastEndIndex; start += 1) {
     const startSeq = seqs[start]!;
     if (

@@ -53,7 +53,14 @@ export async function connectSharedService(
       const signal = init?.signal
         ? AbortSignal.any([init.signal, lifetime.signal])
         : lifetime.signal;
-      const response = await fetch(request, { ...init, signal });
+      let response: Response;
+      try {
+        response = await fetch(request, { ...init, signal });
+      } catch (error) {
+        // Paseo does not own this process, so a refused connection is its only exit signal.
+        if (isConnectionRefused(error)) markExited(error);
+        throw error;
+      }
       const html = response.headers.get("content-type")?.includes("text/html") ?? false;
       if (!response.ok || html) {
         const requestUrl = request instanceof Request ? request.url : String(request);
@@ -62,6 +69,15 @@ export async function connectSharedService(
       return response;
     },
   });
+  const markExited = (cause: unknown) => {
+    if (lifetime.signal.aborted) return;
+    const error = new Error(`OpenCode server at ${server.url} stopped accepting connections`, {
+      cause,
+    });
+    logger.warn({ url: server.url }, "OpenCode v2 server stopped accepting connections");
+    lifetime.abort(error);
+    resolveExited(error);
+  };
   let info: Awaited<ReturnType<typeof client.server.info>>;
   try {
     info = await client.server.info({
@@ -115,6 +131,13 @@ export async function connectSharedService(
   };
   logger.info({ url: server.url }, "Using existing OpenCode v2 server");
   return generation;
+}
+
+function isConnectionRefused(error: unknown): boolean {
+  const cause = error instanceof Error ? error.cause : undefined;
+  return Boolean(
+    cause && typeof cause === "object" && "code" in cause && cause.code === "ECONNREFUSED",
+  );
 }
 
 function validateBridgeAddress(

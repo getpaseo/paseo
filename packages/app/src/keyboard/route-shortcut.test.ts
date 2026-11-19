@@ -304,6 +304,8 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     ["dictation-confirm", "message-input.dictation-confirm"],
     ["voice-toggle", "message-input.voice-toggle"],
     ["voice-mute-toggle", "message-input.voice-mute-toggle"],
+    ["model-toggle", "message-input.model-toggle"],
+    ["effort-cycle", "message-input.effort-cycle"],
     ["mode-cycle", "message-input.mode-cycle"],
   ] as const)("kind=%s → dispatch %s", (kind, id) => {
     expect(
@@ -376,10 +378,10 @@ describe("routeKeyboardShortcut — callbacks and pickers", () => {
 });
 
 describe("routeKeyboardShortcut — toggle dialogs", () => {
-  it("opens the command center scoped to files from a workspace", () => {
+  it("opens the command center on the Files tab from a workspace", () => {
     expect(
       routeKeyboardShortcut({ action: "command-center.files", payload: null }, makeCtx()),
-    ).toEqual<ShortcutAction>({ kind: "command-center-toggle", nextOpen: true, scope: "files" });
+    ).toEqual<ShortcutAction>({ kind: "command-center-toggle", nextOpen: true, tab: "files" });
   });
 
   it("leaves the file-search shortcut to the project-picker host outside a workspace", () => {

@@ -1,12 +1,9 @@
 import { useAddHost } from "@/hosts/add-host";
-import type {
-  CreateAgentRequestOptions,
-  CreateWorkspaceRequestOptions,
-} from "@getpaseo/client/internal/daemon-client";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/messages";
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useTranslation } from "react-i18next";
@@ -124,9 +121,11 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
+import {
+  captureWorkspaceDraftCleanup,
+  handOffDraftMetadata,
+} from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { retriedAgentRequest } from "./new-workspace/retry-agent-request";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -189,7 +188,10 @@ function noopChangeAttachments() {}
 function noopClearDraft() {}
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
-const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
+const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = [
+  "workspace.project.pick",
+  "workspace.new",
+];
 
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
@@ -243,7 +245,6 @@ interface SubmitDraftInput {
   clearConsumedDraft: () => void;
   agentCreation?: {
     result: Promise<AgentSnapshotPayload>;
-    retry: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
   };
   serverId: string;
   draftKey: string;
@@ -471,13 +472,13 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     images: images?.length ? images : undefined,
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
-  const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
+  const execute = async (): Promise<AgentSnapshotPayload> => {
     const { agent } = await ensureWorkspace({
       cwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
-      agent: requestedAgent,
+      agent: initialAgent,
       onEvent: (snapshot) => {
         if (!snapshot.workspace || navigated) return;
         navigated = true;
@@ -516,11 +517,8 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     if (!agent) throw new Error("Workspace creation returned no agent");
     return agent;
   };
-  const agentCreation = {
-    result: Promise.resolve().then(() => execute()),
-    retry: (request: CreateAgentRequestOptions) =>
-      execute(retriedAgentRequest(initialAgent, request, cwd)),
-  };
+  // A retry after a failed agent start belongs to the ready workspace's draft, not to this creation.
+  const agentCreation = { result: Promise.resolve().then(() => execute()) };
   await agentCreation.result;
   if (outcome === "background") clearConsumedDraft();
   return outcome;
@@ -643,6 +641,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): SubmitOutcome {
     allowEmptyText: true,
     agentCreation: input.agentCreation,
   });
+  handOffDraftMetadata({ serverId, draftId, metadata: composerState.metadata });
   clearDraft("sent");
   navigateToWorkspace({
     serverId,
@@ -911,6 +910,7 @@ export function NewWorkspaceScreen({
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
   const isStillOnCreateScreen = useNewWorkspaceScreenPresence();
   const isScreenFocused = useIsFocused();
+  const projectPickHandlerId = useId();
 
   // Launch target: what the composer submits to (chat agent, or a terminal
   // profile). Mirrors useWorkspaceIsolation's pattern below: the derived
@@ -1185,19 +1185,18 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
-  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
-  // switch projects from the keyboard. Registered only while this screen is
-  // mounted, so the shortcut doesn't swallow the browser's native print
-  // elsewhere; gated on having projects to pick.
+  // On this screen, both project-pick and new-workspace open the chooser.
+  // Take precedence over global new-workspace navigation to preserve the draft.
   const handleProjectPick = useCallback(() => {
     openProjectPicker();
     return true;
   }, [openProjectPicker]);
   useKeyboardActionHandler({
-    handlerId: "new-workspace-project-pick",
+    handlerId: `new-workspace-project-pick:${projectPickHandlerId}`,
     actions: PROJECT_PICK_ACTIONS,
-    enabled: projectPickerOptions.length > 0,
-    priority: 0,
+    enabled: isScreenFocused,
+    isActive: isStillOnCreateScreen,
+    priority: 10,
     handle: handleProjectPick,
   });
 

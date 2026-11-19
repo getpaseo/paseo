@@ -162,6 +162,10 @@ export function getDoc(slug: string, locale: Locale): Doc | undefined {
 }
 
 export function getLegacyDocsRedirect(pathname: string): string | undefined {
+  // These provider pages sat at the top level before they moved under Supported providers.
+  const provider = /^\/docs\/(claude-code|codex|muse-code)(\.md)?\/?$/.exec(pathname);
+  if (provider) return `/docs/supported-providers/${provider[1]}${provider[2] ?? ""}`;
+
   const match =
     /^\/docs\/plugins\/v0\.[78](?:(\.md)|\/(index|reference|providers|migration)(\.md)?)?\/?$/.exec(
       pathname,
@@ -292,6 +296,21 @@ export function buildDocsNavTree(docs: Doc[]): DocsNavNode[] {
 
   sortNodes(root);
   return root;
+}
+
+function navHrefs(nodes: DocsNavNode[]): string[] {
+  return nodes.flatMap((node) => {
+    if (node.type === "page") return [node.href];
+    const own = node.type === "group" && node.href !== undefined ? [node.href] : [];
+    return [...own, ...navHrefs(node.children)];
+  });
+}
+
+/** Every doc in a language, in the order the sidebar lists them. */
+export function getDocsInSidebarOrder(locale: Locale): Doc[] {
+  const docs = getDocs(locale);
+  const byHref = new Map(docs.map((doc) => [doc.href, doc]));
+  return navHrefs(buildDocsNavTree(docs)).flatMap((href) => byHref.get(href) ?? []);
 }
 
 function findNodePath(

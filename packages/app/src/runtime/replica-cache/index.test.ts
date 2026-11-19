@@ -350,7 +350,7 @@ function longTimelineItems(count: number, options: { prompts: boolean }): Stream
 async function persistAndRestoreLongTimeline(items: StreamItem[]) {
   const storage = new MemoryStorage();
   const writer = createCache(storage);
-  const endSeq = Math.max(...items.map((entry) => entry.timelineCursor?.seq ?? 0));
+  const endSeq = items.reduce((max, entry) => Math.max(max, entry.timelineCursor?.seq ?? 0), 0);
   writer.commitTimeline(SERVER_ID, "agent-1", {
     agentId: "agent-1",
     items,
@@ -395,6 +395,21 @@ describe("ReplicaCache", () => {
     expect((await reader.readWorkspace(SERVER_ID, workspace.id))?.workspace.parentWorkspaceId).toBe(
       "parent",
     );
+  });
+
+  it("preserves where the workspace's forge is on the web across cache reopen", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({ workspaces: { generation: "g", afterSeq: 8 } });
+    const forgeWeb = { host: "github.com", referenceRepository: "main-owner/repo" };
+    const workspace = normalizeWorkspaceDescriptor({ ...workspacePayload(), forgeWeb });
+    baseline.workspaces.set(workspace.id, workspace);
+    commitDirectory(writer, SERVER_ID, baseline);
+    await writer.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.get(workspace.id)?.forgeWeb).toEqual(forgeWeb);
   });
 
   it("preserves workspace sorting timestamps across cache reopen", async () => {
@@ -821,6 +836,16 @@ describe("ReplicaCache", () => {
   });
 
   describe("long timeline coverage", () => {
+    it("persists a certified suffix when discarded history exceeds the argument limit", async () => {
+      const items = longTimelineItems(150_000, { prompts: true });
+
+      const restored = await persistAndRestoreLongTimeline(items);
+
+      expect(restored?.items).toEqual(items.slice(149_944));
+      expect(restored?.range).toEqual({ epoch: "epoch-1", startSeq: 299_890, endSeq: 300_000 });
+      expect(restored?.hasOlder).toBe(true);
+    });
+
     it("keeps the complete certified turn when its prompts cross the cache target", async () => {
       const items = longTimelineItems(80, { prompts: true });
       for (let index = 0; index < items.length; index += 1) {

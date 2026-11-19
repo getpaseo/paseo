@@ -14,6 +14,7 @@ import {
 import { filterSelectableModels, findModelByReference } from "@/provider-selection/model-catalog";
 import {
   buildProviderDefinitionMapForStatuses,
+  findThinkingOptionReplacement,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
   resolveDefaultModelId,
@@ -273,7 +274,14 @@ function resolveThinkingOptions(
   modelId: string,
 ): NonNullable<AgentModelDefinition["thinkingOptions"]> {
   const model = resolveEffectiveModel(resolveAvailableModels(entries, provider), modelId);
-  return model?.thinkingOptions ?? [];
+  const options = model?.thinkingOptions ?? [];
+  // COMPAT(claudeUltracodePreference): added in v0.17.0, remove after 2027-05-18
+  // once schedules edit the Ultracode option independently.
+  // Schedules still use a single effort field.
+  return findThinkingOptionReplacement(options, "ultracode") &&
+    !options.some((option) => option.id === "ultracode")
+    ? [...options, { id: "ultracode", label: "Ultra Code" }]
+    : options;
 }
 
 function resolveModelDisplay(input: {

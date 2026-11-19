@@ -97,7 +97,7 @@ import {
 } from "@/components/ui/text-input";
 
 const ComposerTextInput = withUnistyles(EditingTextInput, (theme) => ({
-  placeholderTextColor: theme.colors.surface4,
+  placeholderTextColor: theme.colors.foregroundExtraMuted,
 }));
 import {
   resolveSendTooltipLabel,
@@ -204,7 +204,7 @@ export interface MessageInputProps {
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
   onKeyPress?: (event: ComposerKeyPressEvent) => boolean;
-  /** Reports cursor selection updates from the underlying input. */
+  /** Reports selection updates from user input and programmatic replacements. */
   onSelectionChange?: (selection: { start: number; end: number }) => void;
   onFocusChange?: (focused: boolean) => void;
   onHeightChange?: (height: number) => void;
@@ -1468,11 +1468,18 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         if (nextText === "") {
           textInputRef.current?.reset();
         } else {
-          textInputRef.current?.replaceText(nextText, selection);
+          textInputRef.current?.replaceText(nextText, selectionRef.current);
         }
         onChangeText(nextText);
+        // iOS does not emit a selection event for a programmatic text replacement.
+        onSelectionChangeCallback?.(selectionRef.current);
       },
-      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
+      [
+        onChangeText,
+        onSelectionChangeCallback,
+        updateComposerHeightForText,
+        updateLiveTextPresence,
+      ],
     );
 
     useLayoutEffect(
@@ -1617,6 +1624,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       volume: dictationVolume,
       duration: dictationDuration,
       error: dictationError,
+      startError: dictationStartError,
+      clearStartError: clearDictationStartError,
       status: dictationStatus,
       startDictation,
       cancelDictation,
@@ -1653,17 +1662,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       sendAfterTranscriptRef.current = false;
     }, [dictationStatus, isDictating, isDictationProcessing]);
 
-    const startDictationIfAvailable = useCallback(
-      () =>
-        startDictationIfAvailableImpl({
-          dictationUnavailableMessage,
-          canStartDictation,
-          toast,
-          startDictation,
-          exitFullscreen,
-        }),
-      [canStartDictation, dictationUnavailableMessage, startDictation, toast, exitFullscreen],
-    );
+    useEffect(() => {
+      if (showRealtimeOverlay) {
+        clearDictationStartError();
+      }
+    }, [showRealtimeOverlay, clearDictationStartError]);
+
+    const startDictationIfAvailable = useCallback(() => {
+      clearDictationStartError();
+      return startDictationIfAvailableImpl({
+        dictationUnavailableMessage,
+        canStartDictation,
+        toast,
+        startDictation,
+        exitFullscreen,
+      });
+    }, [
+      canStartDictation,
+      clearDictationStartError,
+      dictationUnavailableMessage,
+      startDictation,
+      toast,
+      exitFullscreen,
+    ]);
 
     const handleVoicePress = useCallback(
       () =>
@@ -2217,42 +2238,54 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
     const toolbar = useMemo(
       () => (
-        <View style={buttonRowStyle}>
-          {/* Toolbar left: attachment button + agent controls */}
-          <View style={styles.leftButtonGroup}>
-            <AttachmentDropdown
-              visible={mode.showAttachments}
-              isConnected={isConnected}
-              disabled={disabled}
-              attachButtonStyle={attachButtonStyle}
-              renderAttachButtonIcon={renderAttachButtonIcon}
-              attachmentMenuItems={attachmentMenuItems}
-              addAttachmentLabel={t("composer.input.addAttachment")}
-            />
-            {leftContent}
-          </View>
+        <>
+          {!isFullscreen && !showOverlay && dictationStartError ? (
+            <Text accessibilityRole="alert" style={styles.dictationStartError}>
+              {t(`message.dictation.${dictationStartError}`)}
+            </Text>
+          ) : null}
+          <View style={isFullscreen ? styles.hiddenToolbar : buttonRowStyle}>
+            {/* Toolbar left: attachment button + agent controls */}
+            <View style={styles.leftButtonGroup}>
+              {!isFullscreen && (
+                <AttachmentDropdown
+                  visible={mode.showAttachments}
+                  isConnected={isConnected}
+                  disabled={disabled}
+                  attachButtonStyle={attachButtonStyle}
+                  renderAttachButtonIcon={renderAttachButtonIcon}
+                  attachmentMenuItems={attachmentMenuItems}
+                  addAttachmentLabel={t("composer.input.addAttachment")}
+                />
+              )}
+              {leftContent}
+            </View>
 
-          {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
-          <View style={styles.rightButtonGroup}>
-            {beforeVoiceContent}
-            <VoiceButtonTooltip
-              visible={mode.showVoice}
-              onVoicePress={handleVoicePress}
-              isDictationStartEnabled={isDictationStartEnabled}
-              voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-              voiceButtonStyle={voiceButtonStyle}
-              renderVoiceButtonIcon={renderVoiceButtonIcon}
-              voiceTooltipText={voiceTooltipText}
-              isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-              voiceMuteToggleKeys={voiceMuteToggleKeys}
-              dictationToggleKeys={dictationToggleKeys}
-            />
-            <View style={styles.trailingDisc}>{sendButton}</View>
+            {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
+            {!isFullscreen && (
+              <View style={styles.rightButtonGroup}>
+                {beforeVoiceContent}
+                <VoiceButtonTooltip
+                  visible={mode.showVoice}
+                  onVoicePress={handleVoicePress}
+                  isDictationStartEnabled={isDictationStartEnabled}
+                  voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+                  voiceButtonStyle={voiceButtonStyle}
+                  renderVoiceButtonIcon={renderVoiceButtonIcon}
+                  voiceTooltipText={voiceTooltipText}
+                  isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+                  voiceMuteToggleKeys={voiceMuteToggleKeys}
+                  dictationToggleKeys={dictationToggleKeys}
+                />
+                <View style={styles.trailingDisc}>{sendButton}</View>
+              </View>
+            )}
           </View>
-        </View>
+        </>
       ),
       [
         buttonRowStyle,
+        isFullscreen,
         mode.showAttachments,
         isConnected,
         disabled,
@@ -2263,6 +2296,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         leftContent,
         beforeVoiceContent,
         mode.showVoice,
+        showOverlay,
+        dictationStartError,
         handleVoicePress,
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
@@ -2339,7 +2374,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         <ComposerInputPresentation
           fullscreen={isFullscreen}
           controlSizing={controlSizing}
-          sendIconSize={toolbarGlyph.size}
           surface={textSurface}
           toolbar={toolbar}
           send={sendButton}
@@ -2457,6 +2491,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  hiddenToolbar: { display: "none" },
   // The row keeps a full touch target's height; its disc-sized controls centre in it.
   buttonRow: {
     minHeight: TOOLBAR_CONTROL_HEIGHT,
@@ -2464,6 +2499,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  dictationStartError: {
+    alignSelf: "flex-end",
+    textAlign: "right",
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   leftButtonGroup: {
     minWidth: 0,

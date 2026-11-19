@@ -23,7 +23,10 @@ import { isAbsolute } from "node:path";
 import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
-import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
+import {
+  isDaemonBackgroundWorkItem,
+  type AgentBackgroundWorkItem,
+} from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
@@ -144,7 +147,10 @@ import {
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
 import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
-import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
+import {
+  assertPluginTimelineDataSize,
+  assertPluginTimelineKind,
+} from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
@@ -219,6 +225,7 @@ import type { PushNotifications } from "./push/index.js";
 import {
   archivePersistedWorkspaceRecord,
   archiveWorkspaceContents,
+  unarchiveWorkspaceAgents,
 } from "./workspace-archive-service.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { renameCurrentBranch as renameCurrentBranchDefault } from "../utils/checkout-git.js";
@@ -318,6 +325,7 @@ type ProviderSubagentManagerEvent = Extract<
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
+const FULL_AGENT_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_EXPLICIT_WORKSPACE_RECOVERY = "0.1.105";
 function errorToFriendlyMessage(error: unknown): string {
@@ -536,6 +544,10 @@ export interface SessionOptions {
     statusSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
+    listRegistry(): Promise<import("@getpaseo/protocol/plugin-registry").PluginRegistryIndex>;
+    getRegistryPlugin(
+      id: string,
+    ): Promise<import("@getpaseo/protocol/plugin-registry").PublishedPluginDetail>;
     previewUpdates(input: {
       pluginId?: string;
       target?: import("@getpaseo/protocol/messages").PluginUpdateSelection;
@@ -1003,6 +1015,13 @@ export class Session {
     });
     this.workspaceAutoName = workspaceAutoName;
     this.workspaceProvisioning = createWorkspaceProvisioningService({
+      unarchiveWorkspaceAgents: (request) =>
+        unarchiveWorkspaceAgents({
+          ...request,
+          agentStorage: this.agentStorage,
+          unarchiveAgent: (id) => unarchiveAgentState(this.agentStorage, this.agentManager, id),
+          sessionLogger: this.sessionLogger,
+        }),
       withCheckoutLock: this.workspaceBaseBranch.withCheckoutLock,
       lifecycle: this.pluginRuntime,
       serverId,
@@ -1388,6 +1407,8 @@ export class Session {
             type: "browser.host.register.request" as const,
             requestId: uuidv4(),
             hostKind: host.data.hostKind,
+            label: host.data.label,
+            instanceId: host.data.instanceId,
             supportedCommands: host.data.supportedCommands,
           };
           void this.delivery
@@ -2164,7 +2185,12 @@ export class Session {
         }
 
         if (event.type === "background_work") {
-          this.forwardBackgroundWork(event);
+          void this.forwardBackgroundWork(event.agentId).catch((error) =>
+            this.sessionLogger.error(
+              { err: error, agentId: event.agentId },
+              "Failed to emit background work update",
+            ),
+          );
           return;
         }
 
@@ -2247,16 +2273,34 @@ export class Session {
     this.forwardProviderSubagentUpdate(event);
   }
 
-  private forwardBackgroundWork(
-    event: Extract<AgentManagerEvent, { type: "background_work" }>,
-  ): void {
-    const agent = this.agentManager.getAgent(event.agentId);
-    if (agent?.internal) return;
+  private async forwardBackgroundWork(agentId: string): Promise<void> {
+    const target = await this.resolveBackgroundWorkAgent(agentId);
+    if ("error" in target) return;
+    const { agent, record } = target;
+    // The inventory may have changed while resolving a dormant agent.
+    const items = this.agentManager.getAgentBackgroundWorkSummary(agentId)
+      ? this.agentManager.listAgentBackgroundWork(agentId)
+      : [];
     this.emit({
       type: "agent.background_work.update",
-      payload: { agentId: event.agentId, items: event.items },
+      payload: { agentId, items: this.projectBackgroundWorkItems(items) },
     });
-    if (agent) void this.agentUpdates.forwardLiveAgent(agent);
+    if (agent) await this.agentUpdates.forwardLiveAgent(agent);
+    else if (record) await this.agentUpdates.forwardStoredAgent(record);
+  }
+
+  private projectBackgroundWorkItems(items: AgentBackgroundWorkItem[]): AgentBackgroundWorkItem[] {
+    if (
+      this.authorization.allowsPermission("automation.manage") &&
+      this.authorization.allowsInbound({ type: "agent.background_work.stop.request" })
+    ) {
+      return items;
+    }
+    return items.map((item) => {
+      if (!isDaemonBackgroundWorkItem(item)) return item;
+      const { canStop: _canStop, stopToken: _stopToken, ...visible } = item;
+      return visible;
+    });
   }
 
   private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {
@@ -2291,10 +2335,12 @@ export class Session {
   }
 
   private async enrichAgentPayload(payload: AgentSnapshotPayload): Promise<AgentSnapshotPayload> {
-    payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
     const storedRecord = await this.agentStorage.get(payload.id);
     payload.title = storedRecord?.title ?? null;
     payload.archivedAt = storedRecord?.archivedAt ?? null;
+    if (!payload.internal && !storedRecord?.internal && !payload.archivedAt) {
+      payload.backgroundWork = this.agentManager.getAgentBackgroundWorkSummary(payload.id);
+    }
     return payload;
   }
 
@@ -2306,8 +2352,11 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds, (provider, own) =>
-      this.agentManager.effectiveOptionsFor(provider, own),
+    return buildStoredAgentPayload(
+      record,
+      registeredProviderIds,
+      (provider, own) => this.agentManager.effectiveOptionsFor(provider, own),
+      this.agentManager.getAgentBackgroundWorkSummary(record.id),
     );
   }
 
@@ -2524,6 +2573,8 @@ export class Session {
       unregister = this.browserToolsBroker.registerClient({
         id: owner.id,
         hostKind: request.hostKind,
+        label: request.label,
+        instanceId: request.instanceId,
         supportedCommands: request.supportedCommands,
         sendBrowserAutomationRequest: (message) => owner.emit(message),
       });
@@ -2892,6 +2943,30 @@ export class Session {
     });
   }
 
+  private dispatchPluginRegistryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "plugin.registry.list.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.listRegistry().then((index) => {
+        this.emit({
+          type: "plugin.registry.list.response",
+          payload: { requestId: msg.requestId, index },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.registry.get.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.getRegistryPlugin(msg.id).then((plugin) => {
+        this.emit({
+          type: "plugin.registry.get.response",
+          payload: { requestId: msg.requestId, plugin },
+        });
+        return undefined;
+      });
+    }
+    return undefined;
+  }
+
   private dispatchPluginDirectoryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "plugin.source.install.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
@@ -2972,7 +3047,7 @@ export class Session {
         return undefined;
       });
     }
-    return undefined;
+    return this.dispatchPluginRegistryMessage(msg);
   }
 
   private subscribeToPluginChanges(
@@ -4074,6 +4149,7 @@ export class Session {
       const removedWorkspaceIds: string[] = [];
       try {
         for (const workspaceId of activeWorkspaceIds) {
+          const archivedAt = new Date().toISOString();
           await archiveWorkspaceContents(
             {
               agentManager: this.agentManager,
@@ -4083,8 +4159,9 @@ export class Session {
               sessionLogger: this.sessionLogger,
             },
             workspaceId,
+            archivedAt,
           );
-          await this.archiveWorkspaceRecord(workspaceId);
+          await this.archiveWorkspaceRecord(workspaceId, archivedAt);
           removedWorkspaceIds.push(workspaceId);
         }
 
@@ -5383,15 +5460,11 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
-      );
+      for (const id of agentIds) {
+        if (!this.agentManager.getAgent(id) && !(await this.agentStorage.get(id))) {
+          throw new Error(`Agent not found: ${id}`);
+        }
+      }
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
@@ -5678,7 +5751,8 @@ export class Session {
         agentStorage: this.agentStorage,
         findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
         listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+          this.archiveWorkspaceRecord(workspaceId, archivedAt),
         emit: (message) => this.emit(message),
         emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
           this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
@@ -5754,6 +5828,12 @@ export class Session {
 
     if (knownIds.has(trimmed)) {
       return { ok: true, agentId: trimmed };
+    }
+
+    // A complete agent ID names one agent. When none has it, no prefix or
+    // title answers for it, so a command never acts on a different agent.
+    if (FULL_AGENT_ID_PATTERN.test(trimmed)) {
+      return { ok: false, notFound: true, error: `Agent not found: ${trimmed}` };
     }
 
     const prefixMatches = Array.from(knownIds).filter((id) => id.startsWith(trimmed));
@@ -6173,6 +6253,7 @@ export class Session {
       // resolves to "github") so the sidebar/hover-card brand mark matches the
       // status projection without a second resolve.
       forge: snapshot.forge.forge,
+      forgeWeb: snapshot.forgeWeb,
     };
   }
 
@@ -8019,7 +8100,8 @@ export class Session {
               findWorkspaceIdForCwd: (cwd) => this.findWorkspaceIdForCwd(cwd),
               getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
               listActiveWorkspaces: () => this.listActiveWorkspaceRefs(),
-              archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+              archiveWorkspaceRecord: (workspaceId, archivedAt) =>
+                this.archiveWorkspaceRecord(workspaceId, archivedAt),
               emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
                 this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
               markWorkspaceArchiving: (workspaceIds, archivingAt) =>
@@ -8130,19 +8212,8 @@ export class Session {
     }
     if (workspace.archivedAt) {
       await this.workspaceRecovery.restore(workspaceId);
-    }
-    const results = await Promise.allSettled(
-      input.agentIds.map((agentId) =>
-        unarchiveAgentState(this.agentStorage, this.agentManager, agentId),
-      ),
-    );
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected") {
-        this.sessionLogger.warn(
-          { err: result.reason, workspaceId, agentId: input.agentIds[index] },
-          "Failed to unarchive agent while undoing workspace archive",
-        );
-      }
+    } else if (input.archivedAt) {
+      await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace, input.archivedAt);
     }
     await this.publishRecoveredWorkspace(workspaceId);
   }
@@ -8499,6 +8570,7 @@ export class Session {
   ): Promise<void> {
     const pluginId = parsePluginClientId(this.clientId);
     if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
+    assertPluginTimelineKind(msg.item.kind);
     assertPluginTimelineDataSize(msg.item.data);
     const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
       ...msg.item,
@@ -8648,10 +8720,13 @@ export class Session {
   ): Promise<void> {
     let error: string | null = null;
     try {
+      const target = await this.resolveBackgroundWorkAgent(msg.agentId);
+      if ("error" in target) throw new Error(target.error);
       await this.agentManager.stopAgentBackgroundWork({
         agentId: msg.agentId,
         itemId: msg.itemId,
         stopToken: msg.stopToken,
+        canManageAutomation: this.authorization.allowsPermission("automation.manage"),
       });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -8693,23 +8768,27 @@ export class Session {
     }
   }
 
-  // Background work lives only in memory, so an agent that is not loaded has none.
-  // Answering from storage keeps a read from resuming a dormant agent.
   private async readAgentBackgroundWork(agentId: string): Promise<AgentBackgroundWorkItem[]> {
-    if (this.agentManager.getAgent(agentId)) {
-      if (!this.agentManager.getAgentBackgroundWorkSummary(agentId)) {
-        throw new Error("Background work inventory is unavailable");
-      }
-      return this.agentManager.listAgentBackgroundWork(agentId);
+    const target = await this.resolveBackgroundWorkAgent(agentId);
+    if ("error" in target) throw new Error(target.error);
+    if (!this.agentManager.getAgentBackgroundWorkSummary(agentId)) {
+      throw new Error("Background work inventory is unavailable");
     }
+    return this.projectBackgroundWorkItems(this.agentManager.listAgentBackgroundWork(agentId));
+  }
+
+  private async resolveBackgroundWorkAgent(
+    agentId: string,
+  ): Promise<{ agent: ManagedAgent | null; record: StoredAgentRecord | null } | { error: string }> {
     const record = await this.agentStorage.get(agentId);
-    if (!record || record.internal) {
-      throw new Error(`Unknown agent '${agentId}'`);
+    const agent = this.agentManager.getAgent(agentId);
+    if ((!agent && !record) || agent?.internal || record?.internal) {
+      return { error: `Unknown agent '${agentId}'` };
     }
-    if (record.archivedAt) {
-      throw new Error(`Agent is archived: ${agentId}`);
+    if (record?.archivedAt) {
+      return { error: `Agent is archived: ${agentId}` };
     }
-    throw new Error("Background work inventory is unavailable");
+    return { agent, record };
   }
 
   private async handleProviderSubagentTimelineRequest(
@@ -8916,8 +8995,9 @@ export class Session {
         queued = acceptAdmission;
       });
       let deliveryStatus: "queued" | undefined;
-      const send = async () => {
+      const send = async (beforeDispatch: () => Promise<void>) => {
         if (msg.sourceAgentId) {
+          await beforeDispatch();
           const receipt = this.agentMessages.enqueue({
             recipientId: agentId,
             messageId: msg.messageId,
@@ -8948,12 +9028,14 @@ export class Session {
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
           sessionMode: msg.sessionMode,
           clearPendingPermissions: true,
+          beforeDispatch,
           logger: this.sessionLogger,
         });
         if (result.disposition === "turn_started") {
           await waitForAgentRunStartWithTimeout(
             this.agentManager,
             agentId,
+            result.started,
             this.delivery.requestSignal,
           );
         }
@@ -8970,12 +9052,12 @@ export class Session {
               activeTurnBehavior:
                 msg.activeTurnBehavior ?? (msg.sourceAgentId ? "steer" : "interrupt"),
             },
-            prepare: async () => {
+            send: async (beforeDispatch) => {
               if (!msg.sourceAgentId) await this.prepareAgentMessage(agentId, msg.text);
+              await send(beforeDispatch);
             },
-            send,
           })
-        : send();
+        : send(async () => {});
       void sent.catch((error) => {
         if (deliveryStatus === "queued") {
           this.handleAgentRunError(agentId, error, "Failed to dispatch queued agent message");
