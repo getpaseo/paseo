@@ -22,6 +22,7 @@ function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {
   return selectMetaRowItems({
     currentBranch: "feature/sidebar-badges",
     projectName: "Paseo",
+    repositoryName: "acme/app",
     hasHostBadge: true,
     prHint: PR_HINT,
     serviceSummary: SERVICE,
@@ -35,11 +36,17 @@ function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {
 const kinds = (items: ReturnType<typeof selectMetaRowItems>) => items.map((item) => item.kind);
 
 describe("selectMetaRowItems", () => {
-  it("puts the enabled branch and project badges first", () => {
-    const visible = { ...DEFAULT_SIDEBAR_ROW_ITEMS, branch: true, project: true };
+  it("puts the enabled branch, project, and repository badges first", () => {
+    const visible = {
+      ...DEFAULT_SIDEBAR_ROW_ITEMS,
+      branch: true,
+      project: true,
+      repository: true,
+    };
     expect(kinds(select({ visible }))).toEqual([
       "branch",
       "project",
+      "repository",
       "host",
       "changeRequest",
       "checks",
@@ -58,6 +65,7 @@ describe("selectMetaRowItems", () => {
         select({
           currentBranch: null,
           projectName: null,
+          repositoryName: null,
           hasHostBadge: false,
           prHint: null,
           serviceSummary: null,
@@ -68,14 +76,36 @@ describe("selectMetaRowItems", () => {
   });
 
   it("only draws identity badges when enabled and available", () => {
-    const visible = { ...DEFAULT_SIDEBAR_ROW_ITEMS, branch: true, project: true };
-    expect(kinds(select({ currentBranch: null, projectName: null, visible }))).toEqual([
+    const visible = {
+      ...DEFAULT_SIDEBAR_ROW_ITEMS,
+      branch: true,
+      project: true,
+      repository: true,
+    };
+    expect(
+      kinds(select({ currentBranch: null, projectName: null, repositoryName: null, visible })),
+    ).toEqual(["host", "changeRequest", "checks", "services", "labels"]);
+  });
+
+  it("draws the repository between project and host once it is switched on", () => {
+    const items = select({ visible: { ...DEFAULT_SIDEBAR_ROW_ITEMS, repository: true } });
+    expect(kinds(items)).toEqual([
+      "repository",
       "host",
       "changeRequest",
       "checks",
       "services",
       "labels",
     ]);
+    expect(items[0]).toEqual({ kind: "repository", name: "acme/app" });
+  });
+
+  it("draws no repository without a remote even when it is switched on", () => {
+    const items = select({
+      repositoryName: null,
+      visible: { ...DEFAULT_SIDEBAR_ROW_ITEMS, repository: true },
+    });
+    expect(kinds(items)).toEqual(["host", "changeRequest", "checks", "services", "labels"]);
   });
 
   it("carries every label as one item, so the line keeps one separator however many there are", () => {

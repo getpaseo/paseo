@@ -71,6 +71,73 @@ describe("createSidebarWorkspaceEntry forge threading", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry repositoryName", () => {
+  function entryWithRemote(
+    remoteUrl: string | null | undefined,
+    overrides: Partial<WorkspaceDescriptor> = {},
+  ) {
+    return createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: {
+        ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+        ...overrides,
+        gitRuntime: remoteUrl === undefined ? undefined : { ...overrides.gitRuntime, remoteUrl },
+      },
+    });
+  }
+
+  it("reads owner/repo from an SSH remote", () => {
+    expect(entryWithRemote("git@github.com:acme/app.git").repositoryName).toBe("acme/app");
+  });
+
+  it("reads owner/repo from an HTTPS remote", () => {
+    expect(
+      entryWithRemote("https://github.com/qa/sidebar-repository-with-a-long-name.git")
+        .repositoryName,
+    ).toBe("qa/sidebar-repository-with-a-long-name");
+  });
+
+  it("keeps nested namespaces from a self-hosted remote", () => {
+    expect(entryWithRemote("https://git.example.com:60443/group/sub/repo.git").repositoryName).toBe(
+      "group/sub/repo",
+    );
+  });
+
+  it("ignores the worktree directory and custom project label", () => {
+    const entry = entryWithRemote("git@github.com:real/remote.git", {
+      projectCustomName: "My Label",
+      projectDisplayName: "something-else",
+      workspaceDirectory: "/worktrees/totally-different",
+      worktreeSlug: "totally-different",
+    });
+
+    expect(entry.repositoryName).toBe("real/remote");
+    expect(entry.projectName).toBe("My Label");
+  });
+
+  it("omits the repository when the remote is missing or unusable", () => {
+    expect(entryWithRemote(null).repositoryName).toBeNull();
+    expect(entryWithRemote(undefined).repositoryName).toBeNull();
+    expect(entryWithRemote("not a remote").repositoryName).toBeNull();
+    expect(entryWithRemote("  ").repositoryName).toBeNull();
+  });
+
+  it("omits the repository for a workspace without git metadata", () => {
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: {
+        ...workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42"),
+        projectKind: "non_git",
+        workspaceKind: "directory",
+        gitRuntime: undefined,
+      },
+    });
+
+    expect(entry.currentBranch).toBeNull();
+    expect(entry.repositoryName).toBeNull();
+  });
+});
+
 describe("createSidebarWorkspaceEntry workspace directory label", () => {
   it("uses the daemon-provided slug for a Paseo-owned worktree", () => {
     const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
