@@ -17,5 +17,11 @@ export const routeSchema = z.discriminatedUnion("store", [
     })
     .strict(),
 ]);
-export const inputSchema = z.object({ route: routeSchema }).strict();
+export const inputSchema = z
+  .object({
+    route: routeSchema,
+    // Claude Code's settings.json for this login; its `env` proxy applies to Claude requests.
+    settingsPath: z.string().min(1).optional(),
+  })
+  .strict();
 export type UsageInput = z.infer<typeof inputSchema>;

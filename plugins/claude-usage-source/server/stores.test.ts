@@ -211,7 +211,10 @@ test("Claude Keychain login replaces the fallback file", async () => {
     readKeychainCredentials: async () => ({ claudeAiOauth: { accessToken: "fixture-keychain" } }),
   });
   expect(inputs).toEqual([
-    { route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" } },
+    {
+      route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+      settingsPath: join(home, ".claude", "settings.json"),
+    },
   ]);
 });
 
@@ -243,6 +246,7 @@ test("keychain identity belongs to its token even when Claude Code metadata name
     harness: "Claude",
     input: {
       route: { store: "keychain", service: "Claude Code-credentials", account: "fixture-user" },
+      settingsPath: join(home, ".claude", "settings.json"),
     },
   });
 });
@@ -295,6 +299,9 @@ test("Claude discovery honors CLAUDE_CONFIG_DIR", async () => {
     lookup({ CLAUDE_CONFIG_DIR: directory, CLAUDE_HOME: ignoredDirectory }),
   );
   expect(inputs).toEqual([
-    { route: { store: "claude", path: join(directory, ".credentials.json") } },
+    {
+      route: { store: "claude", path: join(directory, ".credentials.json") },
+      settingsPath: join(directory, "settings.json"),
+    },
   ]);
 });

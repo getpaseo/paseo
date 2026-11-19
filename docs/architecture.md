@@ -500,7 +500,9 @@ The daemon and its plugin processes honor `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_P
 share this policy. Loopback (`localhost`, `127.0.0.1`, `::1`) always goes direct.
 A proxy without a scheme uses HTTP. Invalid values and unsupported proxy schemes
 are treated as unset, with one warning naming the variable in `daemon.log`.
-Agent and terminal environments are unchanged. System proxy settings and SOCKS-only
+Agent and terminal environments are unchanged. One exception: when a Claude login's
+Claude Code `settings.json` sets a proxy in `env`, the Claude usage source sends that
+account's Anthropic requests through it, as Claude Code does. System proxy settings and SOCKS-only
 `ALL_PROXY` configurations are not supported.
 
 ## Deployment models
