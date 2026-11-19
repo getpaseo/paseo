@@ -437,11 +437,13 @@ export function SheetHeaderSubtitle({ text, testID }: { text: string; testID?: s
 export function SheetHeaderView({
   header,
   onClose,
+  showCloseButton = true,
   testID,
   closeTestID,
 }: {
   header: SheetHeader;
   onClose: () => void;
+  showCloseButton?: boolean;
   testID?: string;
   closeTestID?: string;
 }) {
@@ -473,12 +475,14 @@ export function SheetHeaderView({
           </View>
           <View style={styles.headerTrailing}>
             {header.actions}
-            <SheetHeaderIconButton
-              icon={X}
-              label={t("common.actions.close")}
-              onPress={onClose}
-              testID={closeTestID}
-            />
+            {showCloseButton ? (
+              <SheetHeaderIconButton
+                icon={X}
+                label={t("common.actions.close")}
+                onPress={onClose}
+                testID={closeTestID}
+              />
+            ) : null}
           </View>
         </View>
       </IconButtonChromeProvider>
