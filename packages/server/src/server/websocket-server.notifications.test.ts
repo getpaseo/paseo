@@ -246,7 +246,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(unsubscribed.send).not.toHaveBeenCalled();
@@ -271,7 +271,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toEqual([
@@ -306,7 +306,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-2",
       provider: "claude",
       reason: "finished",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(pushNotifications.sent).toHaveLength(1);
@@ -333,7 +333,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-X",
       provider: "claude",
       reason: "finished",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
@@ -349,7 +349,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "finished",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
@@ -364,7 +364,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "error",
-      repeatsUnreadFinish: false,
+      attentionTimestamp: new Date(),
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
@@ -372,21 +372,22 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
   });
   it("notifies once while an agent's finish stays unread", async () => {
     const { server, pushNotifications } = createServer();
-    const broadcast = (repeatsUnreadFinish: boolean) =>
+    const broadcast = (attentionTimestamp: Date) =>
       asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
         agentId: "agent-1",
         provider: "claude",
         reason: "finished",
-        repeatsUnreadFinish,
+        attentionTimestamp,
       });
+    const firstUnreadFinish = new Date(1_000);
 
-    await broadcast(false);
-    await broadcast(true);
-    await broadcast(true);
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
+    await broadcast(firstUnreadFinish);
     expect(pushNotifications.sent).toHaveLength(1);
 
-    // After the user reads the agent, its next finish is a new unread finish.
-    await broadcast(false);
+    // After the user reads the agent (or marks it unread), its next unread finish is new.
+    await broadcast(new Date(2_000));
     expect(pushNotifications.sent).toHaveLength(2);
   });
 
@@ -399,23 +400,24 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       lastActivityAt: new Date(),
     };
     connectClient(server, activity);
-    const broadcast = (repeatsUnreadFinish: boolean) =>
+    const unreadFinish = new Date(1_000);
+    const broadcast = () =>
       asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
         agentId: "agent-1",
         provider: "claude",
         reason: "finished",
-        repeatsUnreadFinish,
+        attentionTimestamp: unreadFinish,
       });
 
-    await broadcast(false);
+    await broadcast();
     expect(pushNotifications.sent).toEqual([]);
 
     // The user leaves; the agent keeps finishing turns it starts on its own.
     activity.appVisible = false;
     activity.focusedAgentId = null;
     activity.lastActivityAt = new Date(Date.now() - 600_000);
-    await broadcast(true);
-    await broadcast(true);
+    await broadcast();
+    await broadcast();
     expect(pushNotifications.sent).toHaveLength(1);
   });
 });

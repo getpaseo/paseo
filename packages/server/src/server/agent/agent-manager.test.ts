@@ -9780,13 +9780,13 @@ test("turns an agent starts on its own keep its finish unread until it is read",
   }
 
   const client = new AutonomousClient();
-  const attention: Array<{ reason: string; repeatsUnreadFinish: boolean }> = [];
+  const attention: Array<{ reason: string; attentionTimestamp: Date | null }> = [];
   const manager = new AgentManager({
     clients: { codex: client },
     registry: storage,
     logger,
-    onAgentAttention: ({ reason, repeatsUnreadFinish }) =>
-      attention.push({ reason, repeatsUnreadFinish }),
+    onAgentAttention: ({ reason, attentionTimestamp }) =>
+      attention.push({ reason, attentionTimestamp }),
   });
   onTestFinished(async () => {
     await manager.closeAgent(agent.id);
@@ -9810,10 +9810,13 @@ test("turns an agent starts on its own keep its finish unread until it is read",
   await runAutonomousTurn("wake-1");
   await runAutonomousTurn("wake-2");
   await runAutonomousTurn("wake-3");
+  // Each finish is reported, and all three belong to the same unread finish.
+  const unreadFinish = attention[0]?.attentionTimestamp;
+  expect(unreadFinish).toBeInstanceOf(Date);
   expect(attention).toEqual([
-    { reason: "finished", repeatsUnreadFinish: false },
-    { reason: "finished", repeatsUnreadFinish: true },
-    { reason: "finished", repeatsUnreadFinish: true },
+    { reason: "finished", attentionTimestamp: unreadFinish },
+    { reason: "finished", attentionTimestamp: unreadFinish },
+    { reason: "finished", attentionTimestamp: unreadFinish },
   ]);
   expect(toAgentPayload(manager.getAgent(agent.id)!)).toMatchObject({
     requiresAttention: true,
@@ -9823,7 +9826,9 @@ test("turns an agent starts on its own keep its finish unread until it is read",
   // After the user reads the agent, its next finish is a new unread finish.
   await manager.clearAgentAttention(agent.id);
   await runAutonomousTurn("wake-4");
-  expect(attention.at(-1)).toEqual({ reason: "finished", repeatsUnreadFinish: false });
+  expect(attention).toHaveLength(4);
+  expect(attention[3]?.reason).toBe("finished");
+  expect(attention[3]?.attentionTimestamp).not.toBe(unreadFinish);
 });
 
 test("streamAgent clears pending run when startTurn fails before a turn id exists", async () => {

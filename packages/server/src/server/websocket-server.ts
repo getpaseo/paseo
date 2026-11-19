@@ -600,7 +600,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
-  private readonly agentsToldOfUnreadFinish = new Set<string>();
+  // Per agent, the unread finish (by its attention timestamp) that a notification was delivered for.
+  private readonly notifiedUnreadFinishAt = new Map<string, number>();
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -2920,7 +2921,7 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
-    repeatsUnreadFinish: boolean;
+    attentionTimestamp: Date | null;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -3022,19 +3023,18 @@ export class VoiceAssistantWebSocketServer {
   // reacts to each event of a background task. The user hears about an unread finish once.
   // A finish that was not delivered, because the user had the agent on screen, does not count.
   private planOncePerUnreadFinish(
-    params: { agentId: string; reason: string; repeatsUnreadFinish: boolean },
+    params: { agentId: string; reason: string; attentionTimestamp: Date | null },
     plan: NotificationPlan,
   ): NotificationPlan {
-    if (params.reason !== "finished") {
+    if (params.reason !== "finished" || params.attentionTimestamp === null) {
       return plan;
     }
-    if (params.repeatsUnreadFinish && this.agentsToldOfUnreadFinish.has(params.agentId)) {
+    const unreadFinishAt = params.attentionTimestamp.getTime();
+    if (this.notifiedUnreadFinishAt.get(params.agentId) === unreadFinishAt) {
       return { inAppRecipientIndex: null, shouldPush: false };
     }
     if (plan.shouldPush || plan.inAppRecipientIndex !== null) {
-      this.agentsToldOfUnreadFinish.add(params.agentId);
-    } else {
-      this.agentsToldOfUnreadFinish.delete(params.agentId);
+      this.notifiedUnreadFinishAt.set(params.agentId, unreadFinishAt);
     }
     return plan;
   }
