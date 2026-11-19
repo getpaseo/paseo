@@ -46,6 +46,7 @@ The built-in `worktree-include` plugin reads the file from the checkout you crea
 - Matching files must exist in the source checkout.
 - Existing destination files are skipped, preserving their contents.
 - Copies happen during creation, with no ongoing synchronization between checkouts.
+- Archiving a worktree deletes its copies. The app's archive warning names copies that differ from the main checkout's, and matching files the main checkout lacks, such as an edited `.env`.
 - A copy error aborts creation and removes the new worktree. Avoid including symlinked directories or nested repositories, which cannot be copied as files.
 
 ## Run commands during setup

@@ -985,6 +985,9 @@ export const fr: TranslationResources = {
           deletedLines: "{{count}} lignes supprimées",
           unpushedCommit: "{{count}} commit non poussé",
           unpushedCommits: "{{count}} commits non poussés",
+          editedCopiedFiles: "Fichiers copiés modifiés : {{files}}",
+          editedCopiedFilesAndMore: "Fichiers copiés modifiés : {{files}} et {{count}} de plus",
+          uncheckedCopiedFiles: "Certains fichiers copiés n’ont pas été vérifiés",
         },
       },
       diff: {

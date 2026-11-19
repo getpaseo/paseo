@@ -101,7 +101,11 @@ checks cover that registry. Unlisted directories do not load.
 
 The `worktree-include` built-in copies gitignored files selected by
 [`.worktreeinclude`](../public-docs/worktrees.md#copy-local-files-with-worktreeinclude)
-before setup and agents, through `worktree.create.after`.
+before setup and agents, through `worktree.create.after`. It also owns the copies' archive risk:
+`checkout_status_request` for a Paseo worktree calls its `edited-includes` RPC, and the app's
+archive warning names the copies that differ from the main checkout's. Git ignores them, so git
+status can't, and archive deletes them. `packages/server/src/server/plugins/builtin/worktree-include.ts`
+is the only core code that names the plugin; without it the status omits `editedIncludes`.
 
 Desktop packaging ships the entire built-in plugin directory as an external resource,
 including declarations. The external esbuild compiler cannot read Electron's `app.asar`

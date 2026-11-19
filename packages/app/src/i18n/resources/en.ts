@@ -969,6 +969,9 @@ export const en = {
           deletedLines: "{{count}} deleted lines",
           unpushedCommit: "{{count}} unpushed commit",
           unpushedCommits: "{{count}} unpushed commits",
+          editedCopiedFiles: "Edited copied files: {{files}}",
+          editedCopiedFilesAndMore: "Edited copied files: {{files}} and {{count}} more",
+          uncheckedCopiedFiles: "Some copied files were not checked",
         },
       },
       diff: {

@@ -951,6 +951,9 @@ export const zhCN: TranslationResources = {
           deletedLines: "删除 {{count}} 行",
           unpushedCommit: "{{count}} 个未 push 的 commit",
           unpushedCommits: "{{count}} 个未 push 的 commit",
+          editedCopiedFiles: "已编辑的复制文件：{{files}}",
+          editedCopiedFilesAndMore: "已编辑的复制文件：{{files}} 及另外 {{count}} 个",
+          uncheckedCopiedFiles: "部分复制文件未检查",
         },
       },
       diff: {

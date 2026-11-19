@@ -276,7 +276,7 @@ New status pills use `<StatusBadge>`. Identity, shortcut, and interactive link b
 - Raw DOM APIs without an `isWeb` guard.
 - Spacing values outside the scale. `padding: 20` and `gap: 10` are wrong.
 - Color changes for disabled state. Opacity only.
-- Destructive actions without `confirmDialog`. Restart, remove, and future destructive actions are confirmed. Archive workspace is confirmed only when its worktree backing reports uncommitted changes or unpushed commits; otherwise it archives immediately.
+- Destructive actions without `confirmDialog`. Restart, remove, and future destructive actions are confirmed. Archive workspace is confirmed only when its worktree backing reports uncommitted changes, unpushed commits or edited `.worktreeinclude` copies; otherwise it archives immediately.
 - Bespoke status pills. `<StatusBadge>` is the pill primitive.
 - Raw `Modal` for a focused task. `<AdaptiveModalSheet>` is the modal primitive.
 - Importing `ActivityIndicator` directly. `<LoadingSpinner>` is the loading primitive.

@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { copyWorktreeIncludes } from "./copy.js";
+import { copyWorktreeIncludes, findEditedWorktreeIncludes } from "./copy.js";
 
 let root: string;
 let source: string;
@@ -287,5 +287,96 @@ describe("copyWorktreeIncludes", () => {
     });
 
     expect(await copied()).toEqual(["newdir/.env"]);
+  });
+});
+
+describe("findEditedWorktreeIncludes", () => {
+  // A Git worktree of `source` with the include copies in it, as Paseo creates one.
+  async function createWorktree(files: Record<string, string>): Promise<void> {
+    await writeSource(files);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: source, stdio: "pipe" });
+    git("add", ".gitignore", ".worktreeinclude");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "init");
+    await rm(worktree, { recursive: true });
+    git("worktree", "add", "-q", worktree);
+    await copyWorktreeIncludes(worktree, source);
+  }
+
+  async function writeWorktree(files: Record<string, string>): Promise<void> {
+    for (const [file, contents] of Object.entries(files)) {
+      await mkdir(dirname(join(worktree, file)), { recursive: true });
+      await writeFile(join(worktree, file), contents);
+    }
+  }
+
+  it("names copies that differ from the source's and included files the source lacks", async () => {
+    await createWorktree({
+      ".gitignore": ".env*\nconfig/*.local.json\n",
+      ".worktreeinclude": ".env*\nconfig/*.local.json\n",
+      ".env": "TOKEN=a",
+      ".env.shared": "SHARED=1",
+      "config/dev.local.json": "{}",
+    });
+    await writeWorktree({
+      ".env": "TOKEN=b",
+      ".env.local": "LOCAL=1",
+      "config/dev.local.json": '{"port":3000}',
+    });
+
+    expect(await findEditedWorktreeIncludes(worktree, source)).toEqual({
+      paths: [".env", ".env.local", "config/dev.local.json"],
+      complete: true,
+    });
+  });
+
+  it("reports nothing for unchanged copies, tracked files or ignored files the patterns skip", async () => {
+    await createWorktree({
+      ".gitignore": ".env\n*.log\n",
+      ".worktreeinclude": ".env\n",
+      ".env": "TOKEN=a",
+      "debug.log": "source log",
+    });
+    await writeWorktree({ ".gitignore": ".env\n*.log\n# edited\n", "debug.log": "worktree log" });
+
+    expect(await findEditedWorktreeIncludes(worktree, source)).toEqual({
+      paths: [],
+      complete: true,
+    });
+  });
+
+  it("says the check is incomplete when the file bound stops it, after the shallow files", async () => {
+    await createWorktree({
+      ".gitignore": ".env\n",
+      ".worktreeinclude": ".env\n",
+      ".env": "TOKEN=a",
+      "a/.env": "TOKEN=a",
+      "a/b/.env": "TOKEN=a",
+    });
+    await writeWorktree({ ".env": "TOKEN=b", "a/b/.env": "TOKEN=b" });
+
+    expect(
+      await findEditedWorktreeIncludes(worktree, source, { maxFiles: 2, maxBytes: 1024 }),
+    ).toEqual({ paths: [".env"], complete: false });
+  });
+
+  it("still compares sizes once the byte bound stops reading contents", async () => {
+    await createWorktree({
+      ".gitignore": ".env*\n",
+      ".worktreeinclude": ".env*\n",
+      ".env": "A=1",
+      ".env.b": "B=1",
+      ".env.c": "C=1",
+    });
+    await writeWorktree({ ".env": "A=2", ".env.b": "B=2", ".env.c": "C=10" });
+
+    expect(
+      await findEditedWorktreeIncludes(worktree, source, { maxFiles: 1_000, maxBytes: 8 }),
+    ).toEqual({ paths: [".env", ".env.c"], complete: false });
+  });
+
+  it("returns null when the source has no .worktreeinclude", async () => {
+    await writeSource({ ".gitignore": ".env\n", ".env": "TOKEN=a" });
+
+    expect(await findEditedWorktreeIncludes(worktree, source)).toBeNull();
   });
 });

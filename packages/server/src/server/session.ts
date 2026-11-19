@@ -1068,6 +1068,7 @@ export class Session {
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
       logger: this.sessionLogger,
+      pluginRuntime,
     });
     this.workspaceGitObserver = createWorkspaceGitObserverService({
       workspaceGitService: this.workspaceGitService,

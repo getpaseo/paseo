@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Dialog, Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
@@ -360,6 +360,36 @@ test.describe("Workspace archive risk warning for worktree backing", () => {
 
     await expectWorktreeKept(page, worktree);
     expect(existsSync(path.join(worktree.workspaceDirectory, "NEW.md"))).toBe(true);
+  });
+
+  test("an edited copy of a .worktreeinclude file warns by name, and Cancel keeps it", async ({
+    page,
+  }) => {
+    await writeFile(path.join(tempRepo.path, ".gitignore"), ".env\n");
+    await writeFile(path.join(tempRepo.path, ".worktreeinclude"), ".env\n");
+    for (const command of [
+      "git add .gitignore .worktreeinclude",
+      'git commit -m "Copy .env into worktrees"',
+      "git push origin main",
+    ]) {
+      execSync(command, { cwd: tempRepo.path, stdio: "ignore" });
+    }
+    await writeFile(path.join(tempRepo.path, ".env"), "TOKEN=main\n");
+    const worktree = await createWorktree("archive-risk-include");
+    const copy = path.join(worktree.workspaceDirectory, ".env");
+    expect(await readFile(copy, "utf8")).toBe("TOKEN=main\n");
+    await writeFile(copy, "TOKEN=edited\n");
+    await openSidebarRow(page, worktree.workspaceId);
+
+    const warning = await answerArchiveWarning(page, "dismiss", () =>
+      clickRowArchiveButton(page, worktree.workspaceId),
+    );
+    expect(warning.message()).toContain(`Archive "${worktree.workspaceName}"?`);
+    expect(warning.message()).toContain("Edited copied files: .env");
+    expect(warning.message()).not.toContain("Uncommitted changes");
+
+    await expectWorktreeKept(page, worktree);
+    expect(await readFile(copy, "utf8")).toBe("TOKEN=edited\n");
   });
 
   test("a failed git read shows its error and keeps the worktree", async ({ page }) => {

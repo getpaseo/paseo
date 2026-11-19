@@ -7,6 +7,7 @@ import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import type {
   BranchSuggestionsRequest,
   CheckoutCommitsListRequest,
+  CheckoutEditedIncludes,
   CheckoutCommitFileDiffRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
@@ -54,6 +55,10 @@ import {
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
+import {
+  readEditedWorktreeIncludes,
+  type PluginRpcInvoker,
+} from "../../plugins/builtin/worktree-include.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 /**
@@ -129,6 +134,8 @@ export interface CheckoutSessionOptions {
   paseoHome: string;
   worktreesRoot: string | undefined;
   logger: pino.Logger;
+  /** Absent without a plugin runtime. */
+  pluginRuntime?: PluginRpcInvoker;
 }
 
 /**
@@ -156,6 +163,7 @@ export class CheckoutSession {
   private readonly paseoHome: string;
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
+  private readonly pluginRuntime: PluginRpcInvoker | undefined;
   private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
@@ -168,6 +176,7 @@ export class CheckoutSession {
     this.paseoHome = options.paseoHome;
     this.worktreesRoot = options.worktreesRoot;
     this.logger = options.logger;
+    this.pluginRuntime = options.pluginRuntime;
   }
 
   private async resolveForgeService(
@@ -239,13 +248,19 @@ export class CheckoutSession {
 
     try {
       const snapshot = await this.workspaceGitService.getSnapshot(resolvedCwd);
+      const payload = buildCheckoutStatusPayloadFromSnapshot({
+        cwd,
+        requestId,
+        snapshot,
+      });
+      // Read per request, not per snapshot: the app asks before it archives a worktree.
+      const editedIncludes = payload.isPaseoOwnedWorktree
+        ? await this.readEditedIncludes(payload.repoRoot, payload.mainRepoRoot)
+        : null;
       this.host.emit({
         type: "checkout_status_response",
-        payload: buildCheckoutStatusPayloadFromSnapshot({
-          cwd,
-          requestId,
-          snapshot,
-        }),
+        payload:
+          payload.isPaseoOwnedWorktree && editedIncludes ? { ...payload, editedIncludes } : payload,
       });
     } catch (error) {
       this.host.emit({
@@ -267,6 +282,20 @@ export class CheckoutSession {
           requestId,
         },
       });
+    }
+  }
+
+  // Archive deletes a worktree's include copies, and git status can't see them.
+  private async readEditedIncludes(
+    worktree: string,
+    mainCheckout: string,
+  ): Promise<CheckoutEditedIncludes | null> {
+    if (!this.pluginRuntime) return null;
+    try {
+      return await readEditedWorktreeIncludes(this.pluginRuntime, { worktree, mainCheckout });
+    } catch (error) {
+      this.logger.warn({ err: error, worktree }, "Failed to compare worktree include copies");
+      return null;
     }
   }
 
