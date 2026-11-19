@@ -29,7 +29,7 @@ Paseo ships an integration for each of these agents.
 
 Paseo runs any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP). The in-app catalog lists the agents below.
 
-To add one, open **Settings → Hosts → your host → Providers**, find the agent in the catalog, and choose **Add**. Entries that launch through `npx` or `uvx` need only that tool on your daemon host. For the other entries, install the CLI of the agent first. Each entry links to its install instructions.
+To add one, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find the agent, and choose **Add**. Entries that launch through `npx` or `uvx` need only that tool on your daemon host. For the other entries, install the CLI of the agent first. If the CLI is missing, the page of the provider says **Not installed**, and **Install** opens its install instructions.
 
 - [Agoragentic](https://agoragentic.com), agent marketplace with 174+ AI capabilities.
 - [Amp](https://github.com/tao12345666333/amp-acp), frontier coding agent.

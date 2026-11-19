@@ -1777,7 +1777,7 @@ export const ru: TranslationResources = {
         },
         providers: {
           label: "Провайдеры",
-          title: "Ваши агенты",
+          title: "Ваши провайдеры",
           description: "Paseo использует CLI агентов, уже установленные на этом компьютере",
         },
         projects: {
@@ -3119,6 +3119,22 @@ export const ru: TranslationResources = {
     providers: {
       title: "Провайдеры",
       addProvider: "Добавить провайдера",
+      list: {
+        add: "Провайдер",
+        updatingTo: "Обновление до {{version}}...",
+      },
+      detail: {
+        backToProviders: "Назад к провайдерам",
+        notOnHost: "Этого провайдера нет на этом хосте",
+        enabled: "Включён",
+        unavailableTitle: "{{name}} недоступен",
+        troubleshooting: "Диагностика",
+        status: "Состояние провайдера",
+        checked: "Проверено {{time}}",
+        diagnosticReport: "Диагностический отчёт",
+        dangerZone: "Опасная зона",
+        removeHint: "Удаляет этого провайдера из config.json",
+      },
       providerDetails: "Сведения о провайдере {{name}}",
       enableProvider: "Включить {{name}}",
       unavailable: "Подключитесь к этому хосту, чтобы увидеть провайдеров",
@@ -3161,6 +3177,7 @@ export const ru: TranslationResources = {
         retrying: "Повторная попытка...",
         noSearchMatches: "Ни одна модель не соответствует вашему запросу",
         noneDetected: "Модели не обнаружены",
+        noCustom: "Нет пользовательских моделей",
         discovered: "Обнаруженные модели",
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",

@@ -15,7 +15,8 @@ import {
   expectProviderInstalledInSettings,
   findAcpCatalogProvider,
   installAcpCatalogProvider,
-  openAddProviderArea,
+  openAddProvider,
+  openProviderDetail,
   openSettingsHost,
   openSettingsHostSection,
   seedSavedSettingsHosts,
@@ -47,7 +48,7 @@ test.describe("ACP provider catalog", () => {
       await openSettings(page);
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
-      await openAddProviderArea(page);
+      await openAddProvider(page);
 
       await installAcpCatalogProvider(page, ACP_PROVIDER.name);
       await expectProviderInstalledInSettings(page, ACP_PROVIDER.name);
@@ -69,7 +70,7 @@ test("adds fx from the catalog with only a config entry", async ({ page }, testI
     await openSettings(page);
     await openSettingsHost(page, getServerId());
     await openSettingsHostSection(page, getServerId(), "providers");
-    await openAddProviderArea(page);
+    await openAddProvider(page);
 
     await findAcpCatalogProvider(page, "fx");
     await page.screenshot({ path: testInfo.outputPath("fx-catalog.png") });
@@ -104,7 +105,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("button", { name: "Hoplite provider details", exact: true }),
       ).toHaveCount(0);
-      await openAddProviderArea(page);
+      await openAddProvider(page);
       await findAcpCatalogProvider(page, "Hoplite");
       await page.screenshot({ path: testInfo.outputPath(`hoplite-catalog-${theme}.png`) });
       await installAcpCatalogProvider(page, "Hoplite");
@@ -127,7 +128,7 @@ for (const theme of ["light", "dark"] as const) {
         testInfo.outputPath(`hoplite-removed-${theme}.json`),
         JSON.stringify(await client.getProvidersSnapshot(), null, 2),
       );
-      await openAddProviderArea(page);
+      await openAddProvider(page);
       await findAcpCatalogProvider(page, "Hoplite");
       await page.screenshot({ path: testInfo.outputPath(`hoplite-removed-${theme}.png`) });
       await installAcpCatalogProvider(page, "Hoplite");
@@ -140,11 +141,11 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 async function removeHoplite(page: import("@playwright/test").Page): Promise<void> {
-  await page.getByTestId("provider-actions-hoplite").click();
+  await openProviderDetail(page, "Hoplite");
   page.once("dialog", (dialog) => {
     void dialog.accept();
   });
-  await page.getByTestId("provider-remove-hoplite").click();
+  await page.getByTestId("provider-remove").click();
 }
 
 test("unsupported host asks for an update without writing Hoplite config", async ({
@@ -164,7 +165,7 @@ test("unsupported host asks for an update without writing Hoplite config", async
     await openSettings(page);
     await openSettingsHost(page, outdatedDaemon.serverId);
     await openSettingsHostSection(page, outdatedDaemon.serverId, "providers");
-    await openAddProviderArea(page);
+    await openAddProvider(page);
     await page.getByRole("button", { name: "Add Hoplite", exact: true }).click();
     const errorToast = page.getByTestId("app-toast-message");
     await expect(errorToast).toHaveText("Update the host to add Hoplite.");

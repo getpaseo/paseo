@@ -6,7 +6,7 @@ import { gotoAppShell, openSettings } from "./app";
 import { connectDaemonClient } from "./daemon-client-loader";
 import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { getServerId } from "./server-id";
-import { openSettingsHostSection } from "./settings";
+import { leaveProviderDetail, openSettingsHostSection } from "./settings";
 
 const PLUGIN_ID = "provider-update-failure";
 const PROVIDER_ID = "update-failure";
@@ -101,10 +101,30 @@ export async function runFailingUpdate(page: Page): Promise<void> {
 }
 
 export async function refreshProviderDetails(page: Page): Promise<void> {
-  await page
-    .getByTestId("provider-settings-sheet")
-    .getByRole("button", { name: "Refresh", exact: true })
-    .click();
+  await page.getByTestId("provider-refresh").click();
+}
+
+export async function backToProviderList(page: Page): Promise<void> {
+  await leaveProviderDetail(page);
+}
+
+function providerRow(page: Page) {
+  return page.getByTestId(`provider-row-${PROVIDER_ID}`);
+}
+
+/** The provider's row in the list reports the failed update, with the error dot. */
+export async function expectRowReportsUpdateFailure(page: Page): Promise<void> {
+  const row = providerRow(page);
+  await expect(row).toContainText(FAILURE);
+  await expect(row.getByTestId("settings-row-error-dot")).toHaveCount(1);
+}
+
+/** The provider's row reads its version and model count again, with no error dot. */
+export async function expectRowReadsVersionAndModels(page: Page): Promise<void> {
+  const row = providerRow(page);
+  await expect(row).toContainText("1.0.0 · 1 model");
+  await expect(row).not.toContainText(FAILURE);
+  await expect(row.getByTestId("settings-row-error-dot")).toHaveCount(0);
 }
 
 export async function refreshFromOtherClient(client: ObserverClient): Promise<void> {
