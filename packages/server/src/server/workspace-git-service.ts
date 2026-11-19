@@ -834,11 +834,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd = resolve(cwd);
     const request = this.normalizeRefreshRequest(options, "getSnapshot");
     const target = this.ensureWorkspaceTarget(cwd);
-    if (!request.force && target.latestSnapshot) {
-      return target.latestSnapshot;
-    }
+    // The snapshot cached while the folder was gone can say "not git". Resume
+    // first, so a restored folder is read again instead of served from it.
     if (target.folderMissing) {
       await this.resumeWorkspaceIfFolderRestored(target);
+    }
+    if (!request.force && target.latestSnapshot) {
+      return target.latestSnapshot;
     }
 
     return this.requestWorkspaceSnapshot(target, request);
