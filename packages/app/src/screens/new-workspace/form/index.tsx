@@ -112,6 +112,8 @@ export interface NewWorkspaceFormProps {
     onActionChange: (list: RefList, action: RefAction) => void;
     /** Whether the host lets the user pick the action; otherwise each list keeps its default. */
     canChooseAction: boolean;
+    /** Selects the forge's change-request words, such as "Merge requests" on GitLab. */
+    changeRequestContext: "mr" | undefined;
   };
   launch: {
     serverId: string;
@@ -286,6 +288,7 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
   const { t } = useTranslation();
   const { options: allOptions, itemById, selectedItem, selectedOptionId, worktrees } = base;
   const { open: openPicker, onSelect, actionFor, onActionChange } = base;
+  const context = base.changeRequestContext;
   const [list, setList] = useState<RefList>("branch");
   const action = actionFor[list];
   const options = useMemo(
@@ -323,9 +326,10 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
         action={action}
         onActionChange={handleActionChange}
         canChooseAction={base.canChooseAction}
+        changeRequestContext={context}
       />
     ),
-    [action, base.canChooseAction, handleActionChange, list],
+    [action, base.canChooseAction, context, handleActionChange, list],
   );
   const shown = itemById.get(selectedOptionId);
   const shownList = refListOf(shown);
@@ -338,7 +342,7 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
       : {
           label:
             shownList === "github-pr"
-              ? t("newWorkspace.refPicker.pullRequest")
+              ? t("newWorkspace.refPicker.pullRequest", { context })
               : t("newWorkspace.refPicker.branch"),
           qualifier: undefined,
         };
@@ -350,7 +354,7 @@ function useRefPicker(base: NewWorkspaceFormProps["base"], isPending: boolean) {
     toolbar,
     searchPlaceholder:
       list === "github-pr"
-        ? t("newWorkspace.refPicker.searchPullRequests")
+        ? t("newWorkspace.refPicker.searchPullRequests", { context })
         : t("newWorkspace.refPicker.searchBranches"),
     trigger: {
       ...trigger,

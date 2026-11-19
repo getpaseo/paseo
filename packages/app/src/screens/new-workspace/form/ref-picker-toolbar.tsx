@@ -21,12 +21,14 @@ export function RefPickerToolbar({
   action,
   onActionChange,
   canChooseAction,
+  changeRequestContext: context,
 }: {
   list: RefList;
   onListChange: (list: RefList) => void;
   action: RefAction;
   onActionChange: (action: RefAction) => void;
   canChooseAction: boolean;
+  changeRequestContext: "mr" | undefined;
 }): ReactElement {
   const { t } = useTranslation();
   const isNarrow = useWindowDimensions().width < SHORT_LABEL_MAX_WIDTH;
@@ -40,12 +42,12 @@ export function RefPickerToolbar({
       {
         value: "github-pr",
         label: isNarrow
-          ? t("newWorkspace.refPicker.pullRequestsShort")
-          : t("newWorkspace.refPicker.pullRequests"),
+          ? t("newWorkspace.refPicker.pullRequestsShort", { context })
+          : t("newWorkspace.refPicker.pullRequests", { context }),
         testID: "new-workspace-ref-picker-tab-pull-requests",
       },
     ],
-    [isNarrow, t],
+    [context, isNarrow, t],
   );
   const actionOptions = useMemo<SegmentedControlOption<RefAction>[]>(
     () => [

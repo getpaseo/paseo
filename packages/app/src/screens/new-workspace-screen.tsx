@@ -26,6 +26,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
+import { getForgePresentation } from "@/git/forge";
+import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { ensureCheckoutStatus } from "@/git/checkout-status-cache";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -118,7 +120,11 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
-import { useExistingWorktrees, useProjectWorktrees } from "./new-workspace/existing-worktrees";
+import {
+  useExistingWorktrees,
+  useProjectWorktrees,
+  type ExistingWorktree,
+} from "./new-workspace/existing-worktrees";
 import { useNewWorkspaceForm } from "./new-workspace/form";
 import { ImportSessionButton } from "./new-workspace/import-session-button";
 import { useImportSession } from "@/hooks/use-import-session";
@@ -208,6 +214,8 @@ interface WorkspaceIsolationState {
   choice: IsolationChoice;
   /** The worktree an Existing worktree workspace is created in. */
   existingWorktreePath: string | null;
+  /** Where the workspace works: the existing worktree, else the project directory. */
+  workingDirectory: string | null;
   canCreateWorktree: boolean;
   showRefPicker: boolean;
 }
@@ -218,15 +226,21 @@ function useWorkspaceIsolation(input: {
   setup: NewWorkspaceSetup;
   supportsMultiplicity: boolean;
   canCreateWorktree: boolean;
+  existingWorktrees: readonly ExistingWorktree[];
+  projectDirectory: string | null;
 }): WorkspaceIsolationState {
-  const { setup, supportsMultiplicity, canCreateWorktree } = input;
+  const { setup, supportsMultiplicity, canCreateWorktree, existingWorktrees } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences } = useFormPreferences();
   const { manualIsolation, existingWorktreePath: chosenPath } = useNewWorkspaceSetupState(setup);
   const isolation = manualIsolation ?? preferences.isolation ?? "local";
-  const existingWorktreePath = canCreateWorktree ? chosenPath : null;
+  // A worktree that left the list (removed since it was chosen) is no choice.
+  const existingWorktreePath =
+    canCreateWorktree && existingWorktrees.some((worktree) => worktree.path === chosenPath)
+      ? chosenPath
+      : null;
   const isWorktree = isolation === "worktree" && canCreateWorktree && !existingWorktreePath;
   const worktreeChoice = isWorktree ? "worktree" : "local";
 
@@ -236,6 +250,7 @@ function useWorkspaceIsolation(input: {
     effectiveIsolation: isWorktree ? "worktree" : "local",
     choice: existingWorktreePath ? "existing" : worktreeChoice,
     existingWorktreePath,
+    workingDirectory: existingWorktreePath ?? input.projectDirectory,
     canCreateWorktree,
     showRefPicker: !supportsMultiplicity || isWorktree,
   };
@@ -1104,12 +1119,20 @@ export function NewWorkspaceScreen({
     cwd: selectedSourceDirectory ?? "",
   });
 
-  const { effectiveIsolation, setIsolation, showRefPicker, choice, existingWorktreePath } =
-    useWorkspaceIsolation({
-      setup,
-      supportsMultiplicity: supportsWorkspaceMultiplicity,
-      canCreateWorktree,
-    });
+  const {
+    effectiveIsolation,
+    setIsolation,
+    showRefPicker,
+    choice,
+    existingWorktreePath,
+    workingDirectory,
+  } = useWorkspaceIsolation({
+    setup,
+    supportsMultiplicity: supportsWorkspaceMultiplicity,
+    canCreateWorktree,
+    existingWorktrees,
+    projectDirectory: selectedSourceDirectory,
+  });
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1131,6 +1154,13 @@ export function NewWorkspaceScreen({
     },
     enabled: pickerQueryEnabled,
     staleTime: 15_000,
+  });
+
+  const changeRequestContext = useChangeRequestContext({
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory,
+    pickerOpen: pickerQueryEnabled,
+    selectedItem,
   });
 
   const githubPrSearchQuery = useForgeSearchQuery({
@@ -1295,7 +1325,7 @@ export function NewWorkspaceScreen({
       if (!selectedProject) {
         throw new Error("Choose a project");
       }
-      if (!selectedSourceDirectory) {
+      if (!selectedSourceDirectory || !workingDirectory) {
         throw new Error("Choose a host for this project");
       }
       const connectedClient = withConnectedClient();
@@ -1323,7 +1353,7 @@ export function NewWorkspaceScreen({
         client: connectedClient,
         isolation: createsWorktree ? "worktree" : "local",
         project: selectedProject,
-        sourceDirectory: existingWorktreePath ?? selectedSourceDirectory,
+        sourceDirectory: workingDirectory,
         checkoutRequest,
         branchName: setup.getSnapshot().branch,
         metadata: setup.getSnapshot().metadata,
@@ -1343,7 +1373,6 @@ export function NewWorkspaceScreen({
       creationIdentity,
       creationResult,
       effectiveIsolation,
-      existingWorktreePath,
       mergeWorkspaces,
       queryClient,
       selectedItem,
@@ -1354,6 +1383,7 @@ export function NewWorkspaceScreen({
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
+      workingDirectory,
     ],
   );
 
@@ -1443,7 +1473,7 @@ export function NewWorkspaceScreen({
       setPendingAction("terminal");
       let outcome: SubmitOutcome = "background";
       await runCreateTerminalWorkspace({
-        cwd: selectedSourceDirectory ?? "",
+        cwd: workingDirectory ?? "",
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
@@ -1502,7 +1532,6 @@ export function NewWorkspaceScreen({
     launchTarget,
     queryClient,
     selectedServerId,
-    selectedSourceDirectory,
     selectedTerminalProfile,
     t,
     terminalPromptText,
@@ -1510,6 +1539,7 @@ export function NewWorkspaceScreen({
     leaveFullscreen,
     updateFormPreferences,
     withConnectedClient,
+    workingDirectory,
   ]);
 
   const agentControlsWithDisabled = useMemo(
@@ -1591,6 +1621,7 @@ export function NewWorkspaceScreen({
       actionFor: refActionFor,
       onActionChange: setup.chooseRefAction,
       canChooseAction: supportsRefActions,
+      changeRequestContext,
     },
     launch: {
       serverId: selectedServerId,
@@ -1627,7 +1658,7 @@ export function NewWorkspaceScreen({
       textReplacement={terminalTextReplacement}
       attachments={NO_TERMINAL_ATTACHMENTS}
       onChangeAttachments={noopChangeAttachments}
-      cwd={selectedSourceDirectory ?? ""}
+      cwd={workingDirectory ?? ""}
       clearDraft={noopClearDraft}
       autoFocus={terminalTakesPrompt}
       autoFocusKey={launchFocusKey}
@@ -1656,7 +1687,7 @@ export function NewWorkspaceScreen({
       onChangeAttachments={chatDraft.setAttachments}
       onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
       onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-      cwd={selectedSourceDirectory ?? ""}
+      cwd={workingDirectory ?? ""}
       clearDraft={handleClearDraft}
       autoFocus
       autoFocusKey={launchFocusKey}
@@ -1842,3 +1873,21 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 20,
   },
 }));
+
+/**
+ * The project's forge names its change requests: pull requests, or merge requests on GitLab.
+ * The forge is looked up once the ref picker opens or a change request is chosen.
+ */
+function useChangeRequestContext(input: {
+  serverId: string;
+  cwd: string | null;
+  pickerOpen: boolean;
+  selectedItem: PickerItem | null;
+}): "mr" | undefined {
+  const { forge } = useCheckoutPrStatusQuery({
+    serverId: input.serverId,
+    cwd: input.cwd ?? "",
+    enabled: input.pickerOpen || input.selectedItem?.kind === "github-pr",
+  });
+  return getForgePresentation(forge).changeRequestContext;
+}
