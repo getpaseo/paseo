@@ -45,16 +45,19 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
 }
 
 /**
- * A provider's models: search, the ones it reports, and the ones added by hand. Shown only while
- * the provider runs, so the caller decides whether it appears.
+ * A provider's models: search, the ones it reports, and the ones added by hand. The caller decides
+ * whether it appears and whether the provider's own models are listed.
  */
 export function ProviderModels({
   serverId,
   entry,
+  discovered,
   refresh,
 }: {
   serverId: string;
   entry: ProviderEntry;
+  /** List the models the provider reports, with search. Only a running provider reports them. */
+  discovered: boolean;
   refresh: (providers?: AgentProvider[]) => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -80,7 +83,8 @@ export function ProviderModels({
   });
   discoveredCacheRef.current = cache;
 
-  const q = query.trim();
+  // Search shows only beside the provider's own models; a query typed then must not hide custom ones.
+  const q = discovered ? query.trim() : "";
   const filteredDiscovered = useMemo(
     () => rankModels(discoveredModels, q, (m) => [m.label, m.id, m.description ?? ""]),
     [discoveredModels, q],
@@ -172,21 +176,25 @@ export function ProviderModels({
 
   return (
     <View testID="provider-models">
-      <View style={styles.searchRail}>
-        <SearchField
-          value={query}
-          onChangeText={setQuery}
-          placeholder={t("settings.providers.models.searchPlaceholder")}
-          clearAccessibilityLabel={t("sessions.actions.clearSearch")}
-          testID="provider-settings-search"
-        />
-      </View>
-      <SettingsSection
-        title={t("settings.providers.models.discovered")}
-        trailing={discoveredTrailing}
-      >
-        <View style={settingsStyles.card}>{discoveredBody}</View>
-      </SettingsSection>
+      {discovered ? (
+        <>
+          <View style={styles.searchRail}>
+            <SearchField
+              value={query}
+              onChangeText={setQuery}
+              placeholder={t("settings.providers.models.searchPlaceholder")}
+              clearAccessibilityLabel={t("sessions.actions.clearSearch")}
+              testID="provider-settings-search"
+            />
+          </View>
+          <SettingsSection
+            title={t("settings.providers.models.discovered")}
+            trailing={discoveredTrailing}
+          >
+            <View style={settingsStyles.card}>{discoveredBody}</View>
+          </SettingsSection>
+        </>
+      ) : null}
       <SettingsSection title={t("settings.providers.models.custom")} trailing={customTrailing}>
         <View style={settingsStyles.card}>{customBody}</View>
       </SettingsSection>

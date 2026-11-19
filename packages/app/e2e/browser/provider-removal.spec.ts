@@ -5,6 +5,7 @@ import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { getServerId } from "../support/helpers/server-id";
 import {
+  expectInstallOpensGuide,
   expectProviderInstalledInSettings,
   expectProviderNotOnHost,
   installAcpCatalogProvider,
@@ -19,6 +20,8 @@ import { copyPluginExample } from "../support/helpers/plugin-fixture";
 const CUSTOM_PROVIDER = {
   id: "junie",
   name: "Junie",
+  // The Add provider catalog's guide. The CLI is not installed where these tests run.
+  installGuide: "https://junie.jetbrains.com/docs/junie-cli-acp.html",
 } as const;
 
 const PLUGIN_PROVIDER = {
@@ -126,6 +129,9 @@ test.describe("provider removal", () => {
       await expectProviderSource(client, "custom");
 
       await openProviderDetail(page, CUSTOM_PROVIDER.name);
+      await test.step("the page points at the catalog's install guide", async () => {
+        await expectInstallOpensGuide(page, CUSTOM_PROVIDER.installGuide);
+      });
       await expect(page.getByTestId("provider-remove")).toBeVisible();
       await watchForMissingNotice(page);
       gate.holdNextServerMessage(CONFIG_RESPONSE);

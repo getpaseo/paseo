@@ -12,11 +12,17 @@ import {
 } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { readAcpProviderInstallGuide } from "@/hooks/use-acp-provider-catalog";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTimeAgo } from "@/hooks/use-time-ago";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
-import { readDetailPresence, readDetailSections, type DetailPresence } from "./detail-sections";
+import {
+  readDetailPresence,
+  readDetailSections,
+  readShownInstallation,
+  type DetailPresence,
+} from "./detail-sections";
 import { DiagnosticSheet } from "./diagnostic-sheet";
 import { useProviderConfigActions, type ProviderEntry } from "./provider-config";
 import { ProviderModels } from "./provider-models";
@@ -94,19 +100,29 @@ export function ProviderDetail({
   if (presence.kind !== "found") return <AbsentProvider presence={presence} />;
 
   const entry = presence.entry;
-  const sections = readDetailSections(entry, installation.state);
+  const shownInstallation = readShownInstallation({
+    entry,
+    installation: installation.state,
+    installGuide: readAcpProviderInstallGuide(provider),
+  });
+  const sections = readDetailSections(entry, shownInstallation);
 
   return (
     <View testID="provider-detail">
       {sections.error !== null ? <ProviderErrorAlert label={label} error={sections.error} /> : null}
       <EnabledCard serverId={serverId} entry={entry} />
       <ProviderInstallationSection
-        state={installation.state}
+        state={shownInstallation}
         updates={installation.updates}
         action={installation.action}
       />
       {sections.models ? (
-        <ProviderModels serverId={serverId} entry={entry} refresh={refresh} />
+        <ProviderModels
+          serverId={serverId}
+          entry={entry}
+          discovered={sections.models === "all"}
+          refresh={refresh}
+        />
       ) : null}
       <Troubleshooting
         serverId={serverId}

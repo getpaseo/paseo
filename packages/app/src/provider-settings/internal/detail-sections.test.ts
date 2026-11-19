@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { ProviderInstallationState } from "@/components/provider-installation-section";
-import { readDetailPresence, readDetailSections } from "./detail-sections";
+import { readDetailPresence, readDetailSections, readShownInstallation } from "./detail-sections";
 
 function entry(overrides: Partial<ProviderSnapshotEntry> = {}): ProviderSnapshotEntry {
   return {
@@ -22,41 +22,130 @@ const notInstalled: ProviderInstallationState = {
 };
 
 describe("provider detail sections", () => {
-  it("shows models for a provider that runs", () => {
-    expect(readDetailSections(entry(), unsupported)).toEqual({ error: null, models: true });
+  it("shows every model for a provider that runs", () => {
+    expect(readDetailSections(entry(), unsupported)).toEqual({ error: null, models: "all" });
   });
 
-  it("keeps models while the provider is probed again", () => {
-    expect(readDetailSections(entry({ status: "loading" }), unsupported).models).toBe(true);
+  it("keeps every model while the provider is probed again", () => {
+    expect(readDetailSections(entry({ status: "loading" }), unsupported).models).toBe("all");
   });
 
-  it("leads with the error and hides models when the provider fails", () => {
+  it("leads with the error and keeps custom models when the provider fails", () => {
     expect(
       readDetailSections(
         entry({ status: "error", error: "opencode exited with code 1" }),
         unsupported,
       ),
-    ).toEqual({ error: "opencode exited with code 1", models: false });
+    ).toEqual({ error: "opencode exited with code 1", models: "custom" });
   });
 
-  it("says nothing extra when Installation already says Not installed", () => {
+  it("says nothing extra and lists no models when Installation already says Not installed", () => {
     expect(readDetailSections(entry({ status: "unavailable" }), unsupported)).toEqual({
       error: null,
-      models: false,
+      models: null,
     });
     expect(
       readDetailSections(entry({ status: "error", error: "spawn ENOENT" }), notInstalled),
-    ).toEqual({ error: null, models: false });
+    ).toEqual({ error: null, models: null });
   });
 
   it("hides models and the error for a disabled provider", () => {
     expect(
       readDetailSections(entry({ enabled: false, status: "error", error: "boom" }), unsupported),
-    ).toEqual({ error: null, models: false });
+    ).toEqual({ error: null, models: null });
   });
 
   it("gives an error with no message an empty one, so the alert still shows", () => {
     expect(readDetailSections(entry({ status: "error" }), unsupported).error).toBe("");
+  });
+});
+
+describe("provider detail installation", () => {
+  const guide = "https://example.com/install";
+  const noContract: ProviderInstallationState = { status: "ready", installation: null };
+
+  it("says Not installed with the install guide when the host reports nothing about it", () => {
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: noContract,
+        installGuide: guide,
+      }),
+    ).toEqual({
+      status: "ready",
+      installation: { inspection: { status: "not_installed" }, installUrl: guide },
+    });
+  });
+
+  it("keeps the host's install link over the guide", () => {
+    const hosted: ProviderInstallationState = {
+      status: "ready",
+      installation: {
+        inspection: { status: "not_installed" },
+        installUrl: "https://host.example/install",
+        canUpdate: false,
+      },
+    };
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: hosted,
+        installGuide: guide,
+      }),
+    ).toEqual(hosted);
+  });
+
+  it("gives the host's Not installed the guide when the host has no link", () => {
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: notInstalled,
+        installGuide: guide,
+      }),
+    ).toEqual({
+      status: "ready",
+      installation: {
+        inspection: { status: "not_installed" },
+        canUpdate: false,
+        installUrl: guide,
+      },
+    });
+  });
+
+  it("adds nothing for an installed or disabled provider", () => {
+    expect(
+      readShownInstallation({ entry: entry(), installation: noContract, installGuide: guide }),
+    ).toEqual(noContract);
+    expect(
+      readShownInstallation({
+        entry: entry({ enabled: false, status: "unavailable" }),
+        installation: noContract,
+        installGuide: guide,
+      }),
+    ).toEqual(noContract);
+  });
+
+  it("says nothing it cannot back with a guide", () => {
+    expect(
+      readShownInstallation({
+        entry: entry({ status: "unavailable" }),
+        installation: noContract,
+        installGuide: null,
+      }),
+    ).toEqual(noContract);
+  });
+
+  it("leaves a host that cannot report installations, or is still checking, as it is", () => {
+    const checking: ProviderInstallationState = { status: "loading" };
+    for (const state of [unsupported, checking]) {
+      expect(
+        readShownInstallation({
+          entry: entry({ status: "unavailable" }),
+          installation: state,
+          installGuide: guide,
+        }),
+      ).toEqual(state);
+    }
   });
 });
 

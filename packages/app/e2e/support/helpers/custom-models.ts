@@ -26,6 +26,11 @@ export async function addCustomModel(page: Page, id: string): Promise<void> {
 
 export async function removeCustomModel(page: Page, id: string): Promise<void> {
   await searchModels(page, id);
+  await removeListedCustomModel(page, id);
+}
+
+/** Removes a custom model shown on the page without searching for it first. */
+export async function removeListedCustomModel(page: Page, id: string): Promise<void> {
   const remove = page.getByRole("button", { name: `Remove ${id}`, exact: true });
   await expect(remove).toBeInViewport({ ratio: 1 });
   await remove.click();

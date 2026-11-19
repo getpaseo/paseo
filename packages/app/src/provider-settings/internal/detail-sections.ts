@@ -4,8 +4,11 @@ import type { ProviderInstallationState } from "@/components/provider-installati
 export interface DetailSections {
   /** The failure the page leads with, or null. Empty when the provider gave no message. */
   error: string | null;
-  /** Models are listed only while the provider runs. */
-  models: boolean;
+  /**
+   * Which models the page lists. The provider reports its own only while it runs; custom models
+   * live in config, so they stay manageable while it fails.
+   */
+  models: "all" | "custom" | null;
 }
 
 /** Which of the detail's state-dependent parts show, so each fact is said once. */
@@ -20,7 +23,44 @@ export function readDetailSections(
   const failing = entry.enabled && entry.status === "error" && !notInstalled;
   return {
     error: failing ? (entry.error?.trim() ?? "") : null,
-    models: entry.enabled && (entry.status === "ready" || entry.status === "loading"),
+    models: readShownModels(entry, notInstalled),
+  };
+}
+
+function readShownModels(
+  entry: ProviderSnapshotEntry,
+  notInstalled: boolean,
+): DetailSections["models"] {
+  if (!entry.enabled || notInstalled) return null;
+  return entry.status === "error" ? "custom" : "all";
+}
+
+/**
+ * The installation the page shows. A provider added from the catalog has no installation the
+ * host can report, so when its CLI is missing the page says so with the catalog's install guide.
+ * The host's own install link wins over the guide.
+ */
+export function readShownInstallation(input: {
+  entry: ProviderSnapshotEntry;
+  installation: ProviderInstallationState;
+  /** The catalog's install guide for this provider, or null. */
+  installGuide: string | null;
+}): ProviderInstallationState {
+  const { entry, installation, installGuide } = input;
+  if (installation.status !== "ready" || !installGuide) return installation;
+  const reported = installation.installation;
+  if (reported?.installUrl) return installation;
+  const notInstalled =
+    reported?.inspection?.status === "not_installed" ||
+    (!reported?.inspection && entry.enabled && entry.status === "unavailable");
+  if (!notInstalled) return installation;
+  return {
+    status: "ready",
+    installation: {
+      ...reported,
+      inspection: { status: "not_installed" },
+      installUrl: installGuide,
+    },
   };
 }
 

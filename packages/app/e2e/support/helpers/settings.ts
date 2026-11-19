@@ -576,6 +576,29 @@ export async function expectProviderNotOnHost(page: Page): Promise<void> {
   });
 }
 
+/**
+ * The provider page says the provider's CLI is missing, and Install opens the given guide. The
+ * guide is served locally so the test never reaches the network.
+ */
+export async function expectInstallOpensGuide(page: Page, guideUrl: string): Promise<void> {
+  const installation = page.getByTestId("provider-installation");
+  await expect(installation.getByText("Not installed", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.context().route(guideUrl, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<title>Install guide</title>",
+    }),
+  );
+  const guide = page.waitForEvent("popup");
+  await installation.getByRole("button", { name: "Install", exact: true }).click();
+  const opened = await guide;
+  expect(opened.url()).toBe(guideUrl);
+  await opened.close();
+}
+
 export async function leaveProviderDetail(page: Page): Promise<void> {
   await page.getByTestId("provider-detail-back").click();
   await expect(page.getByTestId("provider-list")).toBeVisible();
