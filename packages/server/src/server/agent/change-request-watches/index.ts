@@ -102,7 +102,6 @@ export function createChangeRequestWatches(deps: Dependencies) {
         recipientId,
         source: { kind: "change-request-update", url },
         prompt: [`Paseo change request update for ${url}`, ...events].join("\n"),
-        idleOnly: true,
         unarchive: false,
       });
     }

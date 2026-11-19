@@ -3170,8 +3170,13 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
+    promptStart?: ForegroundPromptStart;
   }): Promise<string | null> {
-    const { agent, agentId, pendingRun, prompt, options } = params;
+    const { agent, agentId, pendingRun, prompt, options, promptStart } = params;
+    if (promptStart?.admit?.() === false) {
+      this.runs.settleForegroundRun(agentId, pendingRun.token);
+      return null;
+    }
     try {
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
@@ -3337,6 +3342,7 @@ export class AgentManager {
         pendingRun,
         prompt,
         options,
+        promptStart,
       });
       if (turnId === null) {
         const canceledEvent: AgentStreamEvent = {

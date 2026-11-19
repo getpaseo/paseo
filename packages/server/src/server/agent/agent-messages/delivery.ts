@@ -10,8 +10,6 @@ interface Message {
   prompt: AgentPromptInput;
   sessionMode?: string;
   unarchive?: boolean;
-  /** Wait for an idle turn and discard the message if shutdown starts before handoff. */
-  idleOnly?: true;
   clearPendingPermissions?: boolean;
   activeTurnBehavior?: "steer" | "interrupt";
   beforeDispatch?: () => void;
@@ -36,6 +34,8 @@ interface DispatchRequest {
   prompt: AgentPromptInput;
   activeTurnBehavior: "steer" | "interrupt";
   idleOnly: boolean;
+  /** Claim this exact prompt at provider admission. A withdrawn message invalidates the batch. */
+  admit(): boolean;
   sessionMode?: string;
   clearPendingPermissions: boolean;
   unarchive: boolean;
@@ -79,6 +79,8 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   let closed = false;
   let closing: Promise<void> | undefined;
 
+  const isWithdrawn = (message: Admitted): boolean => message.state === "withdrawn";
+
   function requestFor(recipientId: string, messages: Admitted[]): DispatchRequest {
     const prompts = messages.map(
       (message) =>
@@ -91,9 +93,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         );
     return {
       recipientId,
-      idleOnly:
-        messages.some((message) => message.idleOnly) ||
-        (!closed && messages[0]!.activeTurnBehavior !== "interrupt"),
+      idleOnly: !closed && messages[0]!.activeTurnBehavior !== "interrupt",
+      admit() {
+        if (messages.some(isWithdrawn)) return false;
+        for (const message of messages) message.state = "claimed";
+        return true;
+      },
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt,
       activeTurnBehavior: messages[0]!.activeTurnBehavior ?? "steer",
@@ -117,7 +122,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     }
     const entry = pending.get(recipientId);
     if (entry && removed) {
-      entry.messages = entry.messages.filter((message) => message.state !== "withdrawn");
+      entry.messages = entry.messages.filter((message) => !isWithdrawn(message));
       if (!entry.messages.length) {
         entry.cancel();
         pending.delete(recipientId);
@@ -126,37 +131,24 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     return removed;
   }
 
-  function readyToDispatch(recipientId: string, batch: Admitted[]): Admitted[] {
-    const queued = batch.filter((message) => message.state === "queued");
-    if (closed || !dependencies.hasPendingPermission?.(recipientId)) return queued;
-    const waiting = queued.filter((message) => message.idleOnly);
-    if (waiting.length) requeue(recipientId, waiting);
-    return queued.filter((message) => !message.idleOnly);
-  }
-
   function dispatch(recipientId: string, batch: Admitted[]): void {
     queueDispatch(recipientId, async () => {
-      let messages = readyToDispatch(recipientId, batch);
+      const messages = batch.filter((message) => message.state === "queued");
       if (!messages.length) return;
-      let request = requestFor(recipientId, messages);
-      for (const message of messages) message.state = "claimed";
+      const request = requestFor(recipientId, messages);
       try {
         for (const message of messages) message.beforeDispatch?.();
         let disposition: PromptDispatchDisposition;
         try {
           disposition = await dependencies.dispatch(request);
         } catch (error) {
-          if (!(error instanceof AgentTurnBusyError) || !closed) throw error;
-          // Shutdown may still dispatch peer messages. Idle-only messages never join a steer.
-          for (const message of messages) {
-            if (message.idleOnly) withdraw(message);
-          }
-          messages = messages.filter((message) => message.state !== "withdrawn");
-          if (!messages.length) return;
-          request = requestFor(recipientId, messages);
-          disposition = await dependencies.dispatch(request);
+          if (!(error instanceof AgentTurnBusyError) || !closed || messages.some(isWithdrawn))
+            throw error;
+          // Shutdown drains admitted messages before closing the recipients.
+          disposition = await dependencies.dispatch({ ...request, idleOnly: false });
         }
         for (const message of messages) {
+          message.state = "claimed";
           try {
             message.onDispatch?.(disposition);
           } catch (error) {
@@ -164,7 +156,13 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           }
           message.resolve(disposition);
         }
+        return undefined;
       } catch (error) {
+        if (messages.some(isWithdrawn)) {
+          requeue(recipientId, messages);
+          if (closed) flush(recipientId);
+          return;
+        }
         if (error instanceof AgentTurnBusyError && !closed) {
           requeue(recipientId, messages);
           return;
@@ -188,14 +186,16 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   function requeue(recipientId: string, messages: Admitted[]): void {
-    for (const message of messages) message.state = "queued";
+    const queued = messages.filter((message) => !isWithdrawn(message));
+    if (!queued.length) return;
+    for (const message of queued) message.state = "queued";
     const entry = pending.get(recipientId) ?? {
       messages: [],
       ready: true,
       cancel: () => {},
     };
     entry.cancel();
-    entry.messages.push(...messages);
+    entry.messages.push(...queued);
     entry.messages.sort((a, b) => a.sequence - b.sequence);
     entry.cancel = schedule(2000, () => flush(recipientId));
     pending.set(recipientId, entry);
@@ -232,9 +232,8 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     queueDispatch(recipientId, async () => {
       const waiting: Admitted[] = [];
       for (const message of messages) {
-        if (message.state === "withdrawn") continue;
+        if (isWithdrawn(message)) continue;
         if (
-          message.idleOnly ||
           message.outOfBandDeclined ||
           message.sessionMode !== undefined ||
           closed ||
@@ -244,17 +243,17 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           continue;
         }
         const request = requestFor(recipientId, [message]);
-        message.state = "claimed";
         try {
-          const accepted = await dependencies.tryRunOutOfBand!(request, () =>
-            message.beforeDispatch?.(),
-          );
+          const accepted = await dependencies.tryRunOutOfBand!(request, () => {
+            if (!request.admit()) throw new Error("Queued agent message was withdrawn");
+            message.beforeDispatch?.();
+          });
           if (!accepted) {
             message.outOfBandDeclined = true;
-            message.state = "queued";
             waiting.push(message);
             continue;
           }
+          message.state = "claimed";
           try {
             message.onDispatch?.("out_of_band");
           } catch (error) {
@@ -262,6 +261,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           }
           message.resolve("out_of_band");
         } catch (error) {
+          if (isWithdrawn(message)) continue;
           message.reject(error);
           dependencies.onError(error, request);
         }
@@ -393,9 +393,6 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       if (closing) return closing;
       closed = true;
       unsubscribe?.();
-      for (const recipientId of admitted.keys()) {
-        withdrawPending(recipientId, (message) => message.idleOnly === true);
-      }
       for (const recipientId of pending.keys()) flush(recipientId);
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
       closing = Promise.allSettled(

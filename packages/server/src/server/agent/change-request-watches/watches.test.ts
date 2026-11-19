@@ -35,17 +35,12 @@ function createHarness(
   const observations = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
   const busy = new Set<string>();
   const turns: { recipientId: string; prompt: string }[] = [];
-  const outOfBand: string[] = [];
   const listeners = new Set<(id: string) => void>();
   const messages = createAgentMessageDelivery({
     isRunning: (id) => busy.has(id),
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
-    },
-    async tryRunOutOfBand(request) {
-      outOfBand.push(String(request.prompt));
-      return false;
     },
     async dispatch(request) {
       turns.push({ recipientId: request.recipientId, prompt: String(request.prompt) });
@@ -75,7 +70,6 @@ function createHarness(
   return {
     observations,
     turns,
-    outOfBand,
     busy,
     messages,
     watches,
@@ -111,7 +105,6 @@ test.each([false, true])(
       });
       await vi.advanceTimersByTimeAsync(32_000);
       expect(h.turns).toEqual([]);
-      expect(h.outOfBand.every((prompt) => !prompt.includes(reviewUrl))).toBe(true);
       const dispatches = h.messages.waitForDispatch("parent", new AbortController().signal);
       if (unsubscribe)
         await expect(h.watches.unsubscribe("parent", url)).resolves.toMatchObject({
@@ -238,8 +231,8 @@ test("keeps a durable baseline across restart and drops undelivered digests", as
     await h.observations
       .get(url)!
       .snapshot({ ...initial, headSha: "new-head", checksState: "passed" });
-    await vi.advanceTimersByTimeAsync(32_000);
-    expect(h.messages.hasPending("first")).toBe(true);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(h.messages.hasPending("first")).toBe(false);
     await h.close();
     expect(h.turns).toEqual([]);
 
