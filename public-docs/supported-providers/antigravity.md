@@ -12,7 +12,7 @@ Run Antigravity in Paseo with your installed `agy` CLI and sign-in. This integra
 
 ## Getting started
 
-Install the Antigravity CLI (`agy`) on your daemon host, then run `agy` once to sign in. In Paseo, select **Antigravity**. The provider ships with Paseo, so you do not install a plugin.
+Install Antigravity CLI (`agy`) 1.5.0 or later on your daemon host, then run `agy` once to sign in. In Paseo, select **Antigravity**. The provider ships with Paseo, so you do not install a plugin.
 
 If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config.json`. Use `env` for provider-specific environment variables:
 
@@ -21,7 +21,7 @@ If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config
   "agents": {
     "providers": {
       "antigravity": {
-        "command": ["/absolute/path/to/agy"],
+        "command": ["/absolute/path/to/agy", "acp", "--disable-telemetry"],
         "env": { "EXAMPLE_VARIABLE": "value" }
       }
     }
@@ -29,14 +29,18 @@ If `agy` is outside your daemon's PATH, override its command in `~/.paseo/config
 }
 ```
 
-See [Custom providers](/docs/custom-providers) for command and environment overrides.
+If you already override the command, add `acp` to the command arguments. See [Custom providers](/docs/custom-providers) for command and environment overrides.
 
 ## Permissions
 
-**Full access** is the only permission mode. Antigravity cannot ask for permission when another app drives it, so Paseo starts `agy` with `--dangerously-skip-permissions`. Every tool call, including shell commands, runs without asking. Each session starts with a warning that explains this, including when you reopen a chat. Antigravity's own policy can still deny an action.
+Paseo connects to `agy acp` and shows the permission modes the CLI offers. In **Default**, Paseo shows approval requests for edits and commands that Antigravity policy requires you to approve. In **Accept edits**, Antigravity approves workspace edits and still asks about commands that require approval. **Plan** lets Antigravity plan before it acts.
 
-## Limitations
+**Full access** is the default. Paseo approves tool requests that offer a single **Allow once** action. Antigravity still enforces its own tool policy. Existing chats saved in **Full access** keep that mode, and scheduled runs can use it without a person to approve each tool call.
 
-- Paseo MCP tools and steering are unavailable. Your own `agy` MCP servers still work.
-- Attached images are passed as file references for the agent to read.
-- After a daemon restart, Antigravity remembers the conversation, but Paseo's transcript starts fresh because `agy` does not replay its history.
+Finish or stop the current turn before you switch to or from **Full access**.
+
+## Sessions and tools
+
+Paseo can import CLI sessions and restore conversation history when it reopens a chat. Antigravity publishes slash commands and accepts image attachments through ACP. It also receives the MCP servers configured for the agent.
+
+Send a follow-up after the current turn finishes, or interrupt the turn to change direction.
