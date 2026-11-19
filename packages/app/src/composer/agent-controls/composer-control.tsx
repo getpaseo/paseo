@@ -28,7 +28,7 @@ interface ComposerControlBase {
   title: string;
   icon: AgentControlIcon;
   /** Tints the icon; muted when absent. */
-  highlight?: "blue" | "green" | "yellow";
+  highlight?: "blue" | "green" | "purple" | "yellow";
   /** Defaults to the title, or to "title: choice" on an icon-only select. */
   tooltip?: string;
   /** Defaults to the tooltip. */
@@ -393,6 +393,7 @@ function ComposerControlSlot({
 const styles = StyleSheet.create((theme) => ({
   fieldIcon: { color: theme.colors.foregroundMuted },
   blue: { color: theme.colors.palette.blue[400] },
+  purple: { color: theme.colors.palette.purple[500] },
   green: { color: theme.colors.palette.green[400] },
   yellow: { color: theme.colors.palette.yellow[400] },
   tooltipText: {

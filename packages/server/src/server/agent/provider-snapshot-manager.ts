@@ -51,6 +51,7 @@ import {
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { convertLegacyClaudeUltracode, resolveAdapter } from "./option-controls.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -516,7 +517,13 @@ export class ProviderSnapshotManager {
     }
 
     return validateAgentConfigurationAgainstProvider({
-      input,
+      input: convertLegacyClaudeUltracode(
+        input,
+        resolveAdapter({
+          provider: input.provider,
+          extendsOf: (id) => this.generation.definitions[id]?.derivedFromProviderId,
+        }),
+      ),
       provider,
     });
   }
