@@ -137,7 +137,12 @@ import { submitAgentInput } from "@/composer/submit";
 import { ComposerRecall } from "@/composer/recall";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
-import { usePaneHost } from "@/panels/pane-context";
+import { useOptionalPaneTabId, usePaneHost } from "@/panels/pane-context";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import {
+  clearWorkspaceTabAutoFocusSuppression,
+  useIsWorkspaceTabAutoFocusSuppressed,
+} from "@/workspace-tabs/tab-navigation-focus";
 import { OverlayDismissalScope, useDismissOverlays } from "@/components/ui/overlay-dismissal";
 import type { PaneHost } from "@/panels/panel-manifest";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -1263,6 +1268,34 @@ export function Composer({ isPaneFocused, ...props }: ComposerProps) {
 
 type ComposerContentProps = Omit<ComposerProps, "isPaneFocused">;
 
+function useComposerTabAutoFocus(options: {
+  serverId: string;
+  workspaceId: string | null | undefined;
+  autoFocusKey: string | undefined;
+}): {
+  suppressTabAutoFocus: boolean;
+  clearTabAutoFocusSuppression: () => void;
+} {
+  const { serverId, workspaceId, autoFocusKey } = options;
+  const paneTabId = useOptionalPaneTabId();
+  const tabWorkspaceKey = useMemo(
+    () => (workspaceId ? buildWorkspaceTabPersistenceKey({ serverId, workspaceId }) : null),
+    [serverId, workspaceId],
+  );
+  const suppressTabAutoFocus = useIsWorkspaceTabAutoFocusSuppressed(tabWorkspaceKey, paneTabId);
+  const prevAutoFocusKeyRef = useRef(autoFocusKey);
+  useEffect(() => {
+    if (prevAutoFocusKeyRef.current !== autoFocusKey) {
+      prevAutoFocusKeyRef.current = autoFocusKey;
+      clearWorkspaceTabAutoFocusSuppression(tabWorkspaceKey);
+    }
+  }, [autoFocusKey, tabWorkspaceKey]);
+  const clearTabAutoFocusSuppression = useCallback(() => {
+    clearWorkspaceTabAutoFocusSuppression(tabWorkspaceKey);
+  }, [tabWorkspaceKey]);
+  return { suppressTabAutoFocus, clearTabAutoFocusSuppression };
+}
+
 const ComposerContent = memo(ComposerContentImpl);
 
 // oxlint-disable-next-line complexity
@@ -1344,6 +1377,11 @@ function ComposerContentImpl({
   const discGlyphSize = TOOLBAR_DISC_GLYPH_SIZES[controlSizing];
   const isDesktopWebBreakpoint = resolveIsDesktopWebBreakpoint(isCompactFormFactor);
   const { finePointer: hasFinePointer } = usePointerCapabilities();
+  const { suppressTabAutoFocus, clearTabAutoFocusSuppression } = useComposerTabAutoFocus({
+    serverId,
+    workspaceId,
+    autoFocusKey,
+  });
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const setUserInput = onChangeText;
@@ -2378,10 +2416,11 @@ function ComposerContentImpl({
     (focused: boolean) => {
       setIsMessageInputFocused(focused);
       if (focused) {
+        clearTabAutoFocusSuppression();
         onAttentionInputFocus?.();
       }
     },
-    [onAttentionInputFocus],
+    [clearTabAutoFocusSuppression, onAttentionInputFocus],
   );
 
   const handleLightboxClose = useCallback(() => {
@@ -2525,7 +2564,8 @@ function ComposerContentImpl({
   );
 
   // Focusing the composer on a touch screen raises the on-screen keyboard over the conversation.
-  const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint && hasFinePointer;
+  const messageInputAutoFocus =
+    autoFocus && !suppressTabAutoFocus && isDesktopWebBreakpoint && hasFinePointer;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
     () =>

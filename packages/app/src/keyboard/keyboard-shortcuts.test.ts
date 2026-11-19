@@ -241,6 +241,34 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on mac desktop via Cmd+Alt+ArrowLeft even in message input",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "message-input" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on mac desktop via Cmd+Alt+ArrowRight even in terminal",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "terminal" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
+      name: "matches tab relative navigation on mac via Cmd+ArrowLeft outside editable and terminal scopes",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, focusScope: "other" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1, preserveBrowsingFocus: true },
+    },
+    {
+      name: "matches tab relative navigation on mac via Cmd+ArrowRight outside editable and terminal scopes",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, focusScope: "other" },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1, preserveBrowsingFocus: true },
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -569,6 +597,36 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, focusScope: "editable" },
     },
     {
+      name: "keeps Cmd+ArrowLeft available for message input line-start caret movement",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps Cmd+ArrowRight available for generic editable line-end caret movement",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "editable" },
+    },
+    {
+      name: "keeps Cmd+ArrowLeft out of terminal focus on mac",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "terminal" },
+    },
+    {
+      name: "blocks Cmd+ArrowLeft tab switching while a floating overlay is open",
+      event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "other", overlayOpen: true },
+    },
+    {
+      name: "blocks Cmd+ArrowRight tab switching while a floating overlay is open",
+      event: { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+      context: { isMac: true, usesDesktopBindings: true, focusScope: "other", overlayOpen: true },
+    },
+    {
+      name: "does not bind Ctrl+ArrowRight to tab navigation on non-mac",
+      event: { key: "ArrowRight", code: "ArrowRight", ctrlKey: true },
+      context: { isMac: false, usesDesktopBindings: true, focusScope: "other" },
+    },
+    {
       name: "keeps space typing available in message input",
       event: { key: " ", code: "Space" },
       context: { focusScope: "message-input" },
@@ -747,6 +805,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["alt", "1-9"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
+        "workspace-tab-prev": ["alt", "shift", "["],
+        "workspace-tab-next": ["alt", "shift", "]"],
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
@@ -762,6 +822,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["mod", "1-9"],
         "workspace-tab-jump-index": ["mod", "alt", "1-9"],
+        "workspace-tab-prev": ["mod", "shift", "["],
+        "workspace-tab-next": ["mod", "shift", "]"],
         // Derived from `combo: "Cmd+W"`, so the token is `mod` where the row
         // used to be hand-authored as `meta`. This binding is mac-only and
         // `formatShortcut` renders both as ⌘, so the badge is unchanged — see
@@ -1479,5 +1541,241 @@ describe("shortcut capture completion", () => {
     expect(isShortcutCaptureComplete("show-shortcuts", [])).toBe(false);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+K"])).toBe(true);
     expect(isShortcutCaptureComplete("show-shortcuts", ["Ctrl+0"])).toBe(true);
+  });
+});
+
+describe("macOS tab relative navigation alias override compatibility", () => {
+  const macDesktop = { isMac: true, usesDesktopBindings: true };
+  const macWeb = { isMac: true, usesDesktopBindings: false };
+  const DESKTOP_PREV_TAB_ID = "workspace-tab-navigate-relative-cmd-shift-left-mac";
+  const DESKTOP_NEXT_TAB_ID = "workspace-tab-navigate-relative-cmd-shift-right-mac";
+  const WEB_PREV_TAB_ID = "workspace-tab-navigate-relative-alt-shift-left-mac-web";
+  const WEB_NEXT_TAB_ID = "workspace-tab-navigate-relative-alt-shift-right-mac-web";
+
+  it("disables macOS desktop arrow aliases when the primary tab shortcut row is cleared or rebound", () => {
+    expect(getBindingIdForAction("workspace-tab-prev", macDesktop)).toBe(DESKTOP_PREV_TAB_ID);
+    expect(getBindingIdForAction("workspace-tab-next", macDesktop)).toBe(DESKTOP_NEXT_TAB_ID);
+
+    const clearedBindings = buildEffectiveBindings({
+      [DESKTOP_PREV_TAB_ID]: UNASSIGNED_COMBO,
+      [DESKTOP_NEXT_TAB_ID]: UNASSIGNED_COMBO,
+    });
+    expect(
+      resolveShortcutKeysForAction(
+        "workspace-tab-prev",
+        { [DESKTOP_PREV_TAB_ID]: UNASSIGNED_COMBO },
+        macDesktop,
+      ),
+    ).toBeNull();
+    for (const event of [
+      { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event,
+          context: { ...macDesktop, focusScope: "other" },
+          bindings: clearedBindings,
+        }).match,
+      ).toBeNull();
+    }
+
+    const reboundOverrides: ShortcutOverrides = { [DESKTOP_PREV_TAB_ID]: "Ctrl+PageUp" };
+    const reboundBindings = buildEffectiveBindings(reboundOverrides);
+    expect(
+      resolveShortcutKeysForAction("workspace-tab-prev", reboundOverrides, macDesktop),
+    ).toEqual([["ctrl", "PageUp"]]);
+    expect(
+      resolveShortcut({
+        event: { key: "PageUp", code: "PageUp", ctrlKey: true },
+        context: { ...macDesktop, focusScope: "other" },
+        bindings: reboundBindings,
+      }).match?.action,
+    ).toBe("workspace.tab.navigate.relative");
+    for (const oldEvent of [
+      { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event: oldEvent,
+          context: { ...macDesktop, focusScope: "other" },
+          bindings: reboundBindings,
+        }).match,
+      ).toBeNull();
+    }
+  });
+
+  it("disables macOS web Cmd+Arrow aliases when the web tab shortcut row is cleared", () => {
+    expect(getBindingIdForAction("workspace-tab-prev", macWeb)).toBe(WEB_PREV_TAB_ID);
+    expect(getBindingIdForAction("workspace-tab-next", macWeb)).toBe(WEB_NEXT_TAB_ID);
+
+    const clearedBindings = buildEffectiveBindings({
+      [WEB_PREV_TAB_ID]: UNASSIGNED_COMBO,
+      [WEB_NEXT_TAB_ID]: UNASSIGNED_COMBO,
+    });
+    for (const event of [
+      { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+      { key: "ArrowLeft", code: "ArrowLeft", metaKey: true },
+      { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+      { key: "ArrowRight", code: "ArrowRight", metaKey: true },
+    ]) {
+      expect(
+        resolveShortcut({
+          event,
+          context: { ...macWeb, focusScope: "other" },
+          bindings: clearedBindings,
+        }).match,
+      ).toBeNull();
+    }
+  });
+
+  it("allows Cmd+ArrowLeft/Right from an empty message-input while blocking non-empty drafts and generic inputs", () => {
+    for (const platform of [macDesktop, macWeb]) {
+      for (const [key, expectedDelta] of [
+        ["ArrowLeft", -1],
+        ["ArrowRight", 1],
+      ] as const) {
+        const event = { key, code: key, metaKey: true };
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "message-input", messageInputEmpty: true },
+          }).match?.payload,
+        ).toStrictEqual({
+          delta: expectedDelta,
+          preserveBrowsingFocus: true,
+        });
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "message-input", messageInputEmpty: false },
+          }).match,
+        ).toBeNull();
+        expect(
+          resolveShortcut({
+            event,
+            context: { ...platform, focusScope: "editable", messageInputEmpty: true },
+          }).match,
+        ).toBeNull();
+      }
+    }
+
+    expect(
+      resolveShortcut({
+        event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "message-input", messageInputEmpty: true },
+      }).match,
+    ).toBeNull();
+  });
+
+  it("emits preserveBrowsingFocus only on default plain Cmd+Arrow bindings and strips it when overridden", () => {
+    const globalCases = [
+      {
+        event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "message-input" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+        context: { ...macDesktop, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "ArrowLeft", code: "ArrowLeft", metaKey: true, altKey: true },
+        context: { ...macDesktop, focusScope: "editable" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, altKey: true },
+        context: { ...macDesktop, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
+        context: { ...macWeb, focusScope: "message-input" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "\u2019", code: "BracketRight", altKey: true, shiftKey: true },
+        context: { ...macWeb, focusScope: "terminal" as const },
+        delta: 1 as const,
+      },
+      {
+        event: { key: "{", code: "BracketLeft", altKey: true, shiftKey: true },
+        context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" as const },
+        delta: -1 as const,
+      },
+      {
+        event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+        context: { isMac: false, usesDesktopBindings: false, focusScope: "message-input" as const },
+        delta: 1 as const,
+      },
+    ];
+
+    for (const testCase of globalCases) {
+      const match = resolveShortcut({
+        event: testCase.event,
+        context: testCase.context,
+      }).match;
+      expect(match?.action).toBe("workspace.tab.navigate.relative");
+      expect(match?.payload).toStrictEqual({ delta: testCase.delta });
+    }
+
+    for (const platform of [macDesktop, macWeb]) {
+      for (const [key, delta] of [
+        ["ArrowLeft", -1],
+        ["ArrowRight", 1],
+      ] as const) {
+        const match = resolveShortcut({
+          event: { key, code: key, metaKey: true },
+          context: { ...platform, focusScope: "other" },
+        }).match;
+        expect(match?.action).toBe("workspace.tab.navigate.relative");
+        expect(match?.payload).toStrictEqual({ delta, preserveBrowsingFocus: true });
+      }
+    }
+
+    const overriddenCases = [
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-left-mac-desktop",
+        platform: macDesktop,
+        delta: -1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-right-mac-desktop",
+        platform: macDesktop,
+        delta: 1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-left-mac-web",
+        platform: macWeb,
+        delta: -1 as const,
+      },
+      {
+        bindingId: "workspace-tab-navigate-relative-cmd-arrow-right-mac-web",
+        platform: macWeb,
+        delta: 1 as const,
+      },
+    ];
+
+    const altJ = { key: "\u2206", code: "KeyJ", altKey: true };
+    for (const { bindingId, platform, delta } of overriddenCases) {
+      const bindings = buildEffectiveBindings({ [bindingId]: "Alt+J" });
+      for (const focusScope of ["message-input", "editable", "other"] as const) {
+        const match = resolveShortcut({
+          event: altJ,
+          context: { ...platform, focusScope },
+          bindings,
+        }).match;
+        expect(match?.action).toBe("workspace.tab.navigate.relative");
+        expect(match?.payload).toStrictEqual({ delta });
+      }
+    }
   });
 });

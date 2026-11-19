@@ -107,9 +107,40 @@ describe("routeKeyboardShortcut — workspace.tab.navigate", () => {
         { action: "workspace.tab.navigate.relative", payload: { delta: -1 } },
         makeCtx(),
       ),
-    ).toEqual<ShortcutAction>({
+    ).toStrictEqual<ShortcutAction>({
       kind: "dispatch",
       action: { id: "workspace.tab.navigate-relative", scope: "workspace", delta: -1 },
+    });
+
+    expect(
+      routeKeyboardShortcut(
+        {
+          action: "workspace.tab.navigate.relative",
+          payload: { delta: 1, preserveBrowsingFocus: false },
+        },
+        makeCtx(),
+      ),
+    ).toStrictEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: { id: "workspace.tab.navigate-relative", scope: "workspace", delta: 1 },
+    });
+
+    expect(
+      routeKeyboardShortcut(
+        {
+          action: "workspace.tab.navigate.relative",
+          payload: { delta: 1, preserveBrowsingFocus: true },
+        },
+        makeCtx(),
+      ),
+    ).toStrictEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: {
+        id: "workspace.tab.navigate-relative",
+        scope: "workspace",
+        delta: 1,
+        preserveBrowsingFocus: true,
+      },
     });
   });
 

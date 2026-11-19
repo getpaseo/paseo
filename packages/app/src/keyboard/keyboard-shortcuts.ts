@@ -20,7 +20,9 @@ export interface KeyboardShortcutContext {
   isMac: boolean;
   usesDesktopBindings: boolean;
   focusScope: KeyboardFocusScope;
+  messageInputEmpty?: boolean;
   commandCenterOpen: boolean;
+  overlayOpen?: boolean;
 }
 
 export interface KeyboardShortcutInput {
@@ -73,17 +75,21 @@ interface ShortcutWhen {
   desktopBindings?: boolean;
   /** false = disabled when a text-editing surface is focused */
   editable?: false;
+  /** Allow firing from an empty chat composer even when `editable` is false. */
+  allowEmptyMessageInput?: true;
   /** false = disabled when terminal is focused */
   terminal?: false;
   /** false = disabled when command center is open */
   commandCenter?: false;
+  /** false = disabled when a floating overlay (menu, popover, dialog) is active */
+  overlay?: false;
   /** Allowed focus scope or scopes */
   focusScope?: KeyboardFocusScope | readonly KeyboardFocusScope[];
 }
 
 type ShortcutPayloadDef =
   | { type: "index" }
-  | { type: "delta"; delta: 1 | -1 }
+  | { type: "delta"; delta: 1 | -1; preserveBrowsingFocus?: boolean }
   | { type: "message-input"; kind: MessageInputKeyboardActionKind };
 
 interface ShortcutHelp {
@@ -103,6 +109,11 @@ interface ShortcutHelp {
 
 interface ShortcutBinding {
   id: string;
+  /**
+   * Secondary alias binding that stays active alongside the platform's primary
+   * combo, and disables itself when that primary binding is cleared or rebound.
+   */
+  aliasOf?: string;
   action: KeyboardActionId;
   combo: string;
   repeat?: false;
@@ -789,6 +800,86 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Next tab",
     },
   },
+  {
+    id: "workspace-tab-navigate-relative-cmd-alt-left-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowLeft",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: -1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-alt-right-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+Alt+ArrowRight",
+    when: { mac: true, desktopBindings: true, commandCenter: false },
+    payload: { type: "delta", delta: 1 },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-left-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowLeft",
+    when: {
+      mac: true,
+      desktopBindings: true,
+      commandCenter: false,
+      editable: false,
+      allowEmptyMessageInput: true,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: -1, preserveBrowsingFocus: true },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-desktop",
+    aliasOf: "workspace-tab-navigate-relative-cmd-shift-right-mac",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowRight",
+    when: {
+      mac: true,
+      desktopBindings: true,
+      commandCenter: false,
+      editable: false,
+      allowEmptyMessageInput: true,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: 1, preserveBrowsingFocus: true },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-left-mac-web",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-left-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowLeft",
+    when: {
+      mac: true,
+      desktopBindings: false,
+      commandCenter: false,
+      editable: false,
+      allowEmptyMessageInput: true,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: -1, preserveBrowsingFocus: true },
+  },
+  {
+    id: "workspace-tab-navigate-relative-cmd-arrow-right-mac-web",
+    aliasOf: "workspace-tab-navigate-relative-alt-shift-right-mac-web",
+    action: "workspace.tab.navigate.relative",
+    combo: "Cmd+ArrowRight",
+    when: {
+      mac: true,
+      desktopBindings: false,
+      commandCenter: false,
+      editable: false,
+      allowEmptyMessageInput: true,
+      terminal: false,
+      overlay: false,
+    },
+    payload: { type: "delta", delta: 1, preserveBrowsingFocus: true },
+  },
 
   // --- Pane management (mac only) ---
   {
@@ -1301,8 +1392,28 @@ export function isShortcutCaptureComplete(bindingId: string, combos: readonly st
   return binding?.payload?.type !== "index" || /(^|\+)(Digit|[1-9])$/.test(lastCombo);
 }
 
+function hasValidShortcutOverride(overrides: ShortcutOverrides, key: string): boolean {
+  if (!(key in overrides)) return false;
+  const value = overrides[key];
+  if (value === UNASSIGNED_COMBO) return true;
+  if (typeof value !== "string") return false;
+  try {
+    parseBindingChord(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
   return DEFAULT_BINDINGS.map(function (binding) {
+    if (
+      binding.aliasOf &&
+      !(binding.id in overrides) &&
+      hasValidShortcutOverride(overrides, binding.aliasOf)
+    ) {
+      return { ...binding, combo: "", parsedChord: [] };
+    }
     const override = overrides[binding.id];
     if (override === UNASSIGNED_COMBO) {
       return { ...binding, combo: "", parsedChord: [] };
@@ -1322,11 +1433,25 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
       lastCombo.repeat = false;
     }
     const when = withoutDefaultComboGuard(binding.when);
+    const payload = withoutDefaultComboPayload(binding.payload);
     if (!binding.help?.defaultDisplayKeys) {
-      return { ...binding, combo: override, parsedChord, when };
+      return {
+        ...binding,
+        combo: override,
+        parsedChord,
+        when,
+        ...(payload !== undefined ? { payload } : {}),
+      };
     }
     const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
-    return { ...binding, combo: override, parsedChord, when, help };
+    return {
+      ...binding,
+      combo: override,
+      parsedChord,
+      when,
+      ...(payload !== undefined ? { payload } : {}),
+      help,
+    };
   });
 }
 
@@ -1344,7 +1469,15 @@ export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShor
  */
 function withoutDefaultComboGuard(when: ShortcutWhen | undefined): ShortcutWhen | undefined {
   if (when?.editable !== false) return when;
-  const { editable: _editable, ...rest } = when;
+  const { editable: _editable, allowEmptyMessageInput: _allowEmptyMessageInput, ...rest } = when;
+  return rest;
+}
+
+function withoutDefaultComboPayload(
+  payload: ShortcutPayloadDef | undefined,
+): ShortcutPayloadDef | undefined {
+  if (payload?.type !== "delta" || !payload.preserveBrowsingFocus) return payload;
+  const { preserveBrowsingFocus: _preserveBrowsingFocus, ...rest } = payload;
   return rest;
 }
 
@@ -1422,14 +1555,18 @@ export function matchesKeyboardShortcutContext(
   if (when.mac !== undefined && when.mac !== context.isMac) return false;
   if (when.desktopBindings !== undefined && when.desktopBindings !== context.usesDesktopBindings)
     return false;
-  if (
-    when.editable === false &&
-    (context.focusScope === "message-input" || context.focusScope === "editable")
-  ) {
-    return false;
+  if (when.editable === false) {
+    if (context.focusScope === "editable") return false;
+    if (
+      context.focusScope === "message-input" &&
+      !(when.allowEmptyMessageInput && context.messageInputEmpty)
+    ) {
+      return false;
+    }
   }
   if (when.terminal === false && context.focusScope === "terminal") return false;
   if (when.commandCenter === false && context.commandCenterOpen) return false;
+  if (when.overlay === false && context.overlayOpen) return false;
   if (
     when.focusScope !== undefined &&
     !(typeof when.focusScope === "string"
@@ -1452,7 +1589,9 @@ function resolvePayload(
       return index ? { index } : null;
     }
     case "delta":
-      return { delta: def.delta };
+      return def.preserveBrowsingFocus
+        ? { delta: def.delta, preserveBrowsingFocus: true }
+        : { delta: def.delta };
     case "message-input":
       return { kind: def.kind };
     default:

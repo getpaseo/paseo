@@ -1,10 +1,16 @@
-import { resolveKeyboardFocusScope } from "../../focus-scope";
+import { isMessageInputTargetEmpty, resolveKeyboardFocusScope } from "../../focus-scope";
 import { setCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { keyBelongsToDomPopover } from "../dom-popover";
 import type { KeyboardSourceHandlers } from "./contract";
 export function attachDomKeyboardSource(handlers: KeyboardSourceHandlers): () => void {
   const down = (event: KeyboardEvent) => {
     if (document.visibilityState !== "visible" || keyBelongsToDomPopover(event)) return;
+    const focusScope = resolveKeyboardFocusScope({
+      target: event.target,
+      commandCenterOpen: handlers.commandCenterOpen(),
+    });
+    const messageInputEmpty =
+      focusScope === "message-input" ? isMessageInputTargetEmpty(event.target) : false;
     handlers.keyDown({
       event: {
         key: event.key,
@@ -18,10 +24,8 @@ export function attachDomKeyboardSource(handlers: KeyboardSourceHandlers): () =>
         preventDefault: () => event.preventDefault(),
         stopPropagation: () => event.stopImmediatePropagation(),
       },
-      focusScope: resolveKeyboardFocusScope({
-        target: event.target,
-        commandCenterOpen: handlers.commandCenterOpen(),
-      }),
+      focusScope,
+      messageInputEmpty,
       captureFocusRestore() {
         const target = event.target instanceof Element ? event.target : null;
         const editable = target?.closest("textarea, input, [contenteditable='true']");

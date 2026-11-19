@@ -79,3 +79,29 @@ export function resolveKeyboardFocusScope(input: {
 
   return commandCenterOpen ? "command-center" : "other";
 }
+
+function isEditableTextElementEmpty(element: Element): boolean | null {
+  const tag = element.tagName.toLowerCase();
+  if (tag === "textarea" || tag === "input") {
+    const value = (element as { value?: unknown }).value;
+    return typeof value === "string" ? value.length === 0 : false;
+  }
+  if ((element as HTMLElement).isContentEditable) {
+    return (element.textContent ?? "").length === 0;
+  }
+  return null;
+}
+
+export function isMessageInputTargetEmpty(target: EventTarget | null): boolean {
+  const candidates = getFocusCandidateElements(target);
+  for (const element of candidates) {
+    if (!element.closest("[data-testid='message-input-root']")) {
+      continue;
+    }
+    const direct = isEditableTextElementEmpty(element);
+    if (direct !== null) {
+      return direct;
+    }
+  }
+  return false;
+}

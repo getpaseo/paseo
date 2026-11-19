@@ -119,7 +119,10 @@ function isBrowserNativeNavigationPrefix(prefix: BrowserShortcutPrefix, isMac: b
     !prefix.control &&
     !prefix.alt &&
     !prefix.shift &&
-    (prefix.code === "BracketLeft" || prefix.code === "BracketRight")
+    (prefix.code === "BracketLeft" ||
+      prefix.code === "BracketRight" ||
+      prefix.code === "ArrowLeft" ||
+      prefix.code === "ArrowRight")
   );
 }
 
