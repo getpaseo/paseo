@@ -246,6 +246,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      repeatsUnreadFinish: false,
     });
 
     expect(unsubscribed.send).not.toHaveBeenCalled();
@@ -270,6 +271,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-1",
       provider: "claude",
       reason: "finished",
+      repeatsUnreadFinish: false,
     });
 
     expect(pushNotifications.sent).toEqual([
@@ -304,6 +306,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-2",
       provider: "claude",
       reason: "finished",
+      repeatsUnreadFinish: false,
     });
 
     expect(pushNotifications.sent).toHaveLength(1);
@@ -330,6 +333,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-X",
       provider: "claude",
       reason: "finished",
+      repeatsUnreadFinish: false,
     });
 
     expect(readAttentionRequiredMessage(electronWs).shouldNotify).toBe(true);
@@ -345,6 +349,7 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "finished",
+      repeatsUnreadFinish: false,
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
@@ -359,9 +364,58 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
       agentId: "agent-no-heartbeat",
       provider: "claude",
       reason: "error",
+      repeatsUnreadFinish: false,
     });
 
     expect(readAttentionRequiredMessage(ws).shouldNotify).toBe(false);
     expect(pushNotifications.sent).toEqual([]);
+  });
+  it("notifies once while an agent's finish stays unread", async () => {
+    const { server, pushNotifications } = createServer();
+    const broadcast = (repeatsUnreadFinish: boolean) =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        repeatsUnreadFinish,
+      });
+
+    await broadcast(false);
+    await broadcast(true);
+    await broadcast(true);
+    expect(pushNotifications.sent).toHaveLength(1);
+
+    // After the user reads the agent, its next finish is a new unread finish.
+    await broadcast(false);
+    expect(pushNotifications.sent).toHaveLength(2);
+  });
+
+  it("notifies a repeated finish when the user had the agent on screen for the first one", async () => {
+    const { server, pushNotifications } = createServer();
+    const activity = {
+      deviceType: "web" as const,
+      appVisible: true,
+      focusedAgentId: "agent-1" as string | null,
+      lastActivityAt: new Date(),
+    };
+    connectClient(server, activity);
+    const broadcast = (repeatsUnreadFinish: boolean) =>
+      asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+        agentId: "agent-1",
+        provider: "claude",
+        reason: "finished",
+        repeatsUnreadFinish,
+      });
+
+    await broadcast(false);
+    expect(pushNotifications.sent).toEqual([]);
+
+    // The user leaves; the agent keeps finishing turns it starts on its own.
+    activity.appVisible = false;
+    activity.focusedAgentId = null;
+    activity.lastActivityAt = new Date(Date.now() - 600_000);
+    await broadcast(true);
+    await broadcast(true);
+    expect(pushNotifications.sent).toHaveLength(1);
   });
 });

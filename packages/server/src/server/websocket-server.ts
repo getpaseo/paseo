@@ -98,6 +98,7 @@ import {
   computeNotificationPlan,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
+  type NotificationPlan,
 } from "./agent-attention-policy.js";
 import {
   buildAgentAttentionNotificationPayload,
@@ -599,6 +600,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
   private readonly pushNotificationSender: PushNotificationSender;
+  private readonly agentsToldOfUnreadFinish = new Set<string>();
   private readonly mcpBaseUrl: string | null;
   private speech!: SpeechService | null;
   private terminalManager!: TerminalManager | null;
@@ -2918,6 +2920,7 @@ export class VoiceAssistantWebSocketServer {
     agentId: string;
     provider: AgentProvider;
     reason: "finished" | "error" | "permission";
+    repeatsUnreadFinish: boolean;
   }): Promise<void> {
     const agent = this.agentManager.getAgent(params.agentId);
     if (!agent?.workspaceId) {
@@ -2956,12 +2959,15 @@ export class VoiceAssistantWebSocketServer {
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
-    const plan = computeNotificationPlan({
-      allStates,
-      focusTarget: { kind: "agent", id: params.agentId },
-      pushEligible: isPushEligibleAttentionReason(params.reason),
-      nowMs,
-    });
+    const plan = this.planOncePerUnreadFinish(
+      params,
+      computeNotificationPlan({
+        allStates,
+        focusTarget: { kind: "agent", id: params.agentId },
+        pushEligible: isPushEligibleAttentionReason(params.reason),
+        nowMs,
+      }),
+    );
 
     if (plan.shouldPush) {
       void this.pushNotificationSender.send(notification).catch((err) => {
@@ -3010,6 +3016,27 @@ export class VoiceAssistantWebSocketServer {
         this.sessions.get(ws)!.session.publishToSource(ws, message.message);
       else this.sendToClient(ws, message);
     }
+  }
+
+  // An agent can finish many times while its first finish is unread, for example when it
+  // reacts to each event of a background task. The user hears about an unread finish once.
+  // A finish that was not delivered, because the user had the agent on screen, does not count.
+  private planOncePerUnreadFinish(
+    params: { agentId: string; reason: string; repeatsUnreadFinish: boolean },
+    plan: NotificationPlan,
+  ): NotificationPlan {
+    if (params.reason !== "finished") {
+      return plan;
+    }
+    if (params.repeatsUnreadFinish && this.agentsToldOfUnreadFinish.has(params.agentId)) {
+      return { inAppRecipientIndex: null, shouldPush: false };
+    }
+    if (plan.shouldPush || plan.inAppRecipientIndex !== null) {
+      this.agentsToldOfUnreadFinish.add(params.agentId);
+    } else {
+      this.agentsToldOfUnreadFinish.delete(params.agentId);
+    }
+    return plan;
   }
 
   private async broadcastTerminalAttention(params: {

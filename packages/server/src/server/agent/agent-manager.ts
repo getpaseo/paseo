@@ -334,6 +334,8 @@ export type AgentAttentionCallback = (params: {
   agentId: string;
   provider: AgentProvider;
   reason: "finished" | "error" | "permission";
+  /** The agent finished again while its earlier finish is still unread. */
+  repeatsUnreadFinish: boolean;
 }) => void;
 
 export type AgentArchivedCallback = (agentId: string) => Promise<void> | void;
@@ -5876,11 +5878,16 @@ export class AgentManager {
       return;
     }
 
+    const finished = previousStatus === "running" && currentStatus === "idle";
     if (agent.attention.requiresAttention) {
+      // The unread finish stays the same; the notifier knows whether the user was told about it.
+      if (finished && agent.attention.attentionReason === "finished") {
+        this.broadcastAgentAttention(agent, "finished", { repeatsUnreadFinish: true });
+      }
       return;
     }
 
-    if (previousStatus === "running" && currentStatus === "idle") {
+    if (finished) {
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
@@ -6008,6 +6015,7 @@ export class AgentManager {
   private broadcastAgentAttention(
     agent: ManagedAgent,
     reason: "finished" | "error" | "permission",
+    options: { repeatsUnreadFinish: boolean } = { repeatsUnreadFinish: false },
   ): void {
     if (isDelegatedAgent(agent)) {
       return;
@@ -6017,6 +6025,7 @@ export class AgentManager {
       agentId: agent.id,
       provider: agent.provider,
       reason,
+      repeatsUnreadFinish: options.repeatsUnreadFinish,
     });
   }
 
