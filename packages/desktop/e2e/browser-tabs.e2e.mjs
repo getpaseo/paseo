@@ -338,6 +338,86 @@ async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
 }
 
+async function connectBrowserToolClient(daemonPort, callerAgentId) {
+  const transport = new StreamableHTTPClientTransport(
+    new URL(
+      `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
+    ),
+  );
+  return experimental_createMCPClient({ transport });
+}
+
+async function openBrowserWorkspace(page, workspaceKey) {
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click({ timeout: timeoutMs });
+  await expect(page.getByTestId(`workspace-deck-entry-${workspaceKey}`)).toBeVisible();
+}
+
+async function openSecondDesktopWindow(page) {
+  const nextWindow = page.context().waitForEvent("page", { timeout: timeoutMs });
+  await page.evaluate(() => window.paseoDesktop.window.openNew());
+  return nextWindow;
+}
+
+async function listBrowserHosts(client) {
+  const reply = await client.callTool({ name: "browser_list_hosts", args: {} });
+  assert(Array.isArray(reply.structuredContent?.browserHosts), JSON.stringify(reply));
+  return reply.structuredContent.browserHosts;
+}
+
+async function expectBrowserHostNameInCommandCenter(page, name) {
+  await page.getByTestId("sidebar-search").click();
+  const search = page.getByTestId("command-center-input");
+  await search.fill("Copy browser host name");
+  const action = page.getByRole("button", { name: /Copy browser host name/ });
+  await expect(action).toContainText(name);
+  await action.click();
+  await expect(search).toBeHidden();
+  await expect(page.getByText("Copied", { exact: true })).toBeVisible();
+}
+
+async function verifyBrowserHostRouting({ page, client, targetUrl, workspaceKey }) {
+  await openBrowserWorkspace(page, workspaceKey);
+  await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(1);
+  const [firstHost] = await listBrowserHosts(client);
+  await expectBrowserHostNameInCommandCenter(page, firstHost.label);
+  const secondWindow = await openSecondDesktopWindow(page);
+
+  try {
+    await openBrowserWorkspace(secondWindow, workspaceKey);
+    await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(2);
+    const secondHost = (await listBrowserHosts(client)).find(
+      (host) => host.browserHostId !== firstHost.browserHostId,
+    );
+    assert(secondHost?.label && secondHost.label !== firstHost.label, "Windows share a host label");
+    await expectBrowserHostNameInCommandCenter(secondWindow, secondHost.label);
+
+    const ambiguous = await client.callTool({ name: "browser_new_tab", args: { url: targetUrl } });
+    expect(ambiguous.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_host_ambiguous", browserHosts: [firstHost, secondHost] },
+    });
+    expect((await callBrowserTool(client, "browser_list_tabs")).tabs).toEqual([]);
+
+    const { browserId, browserHost } = await callBrowserTool(client, "browser_new_tab", {
+      url: targetUrl,
+      browserHostId: firstHost.browserHostId,
+    });
+    expect(browserHost).toEqual(firstHost);
+    // Only the tab's test ID carries the exact ID returned by the agent tool.
+    await expect(page.getByTestId(`workspace-tab-browser_${browserId}`)).toBeVisible();
+    await expect(secondWindow.getByTestId(`workspace-tab-browser_${browserId}`)).toHaveCount(0);
+    expect((await callBrowserTool(client, "browser_list_tabs")).tabs).toMatchObject([
+      { browserId, browserHost: firstHost, isActive: false },
+    ]);
+    await callBrowserTool(client, "browser_wait", { browserId, text: "Bridge target" });
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  } finally {
+    await secondWindow.close();
+  }
+
+  await expect.poll(() => listBrowserHosts(client)).toEqual([firstHost]);
+}
+
 async function waitForGuestSelector(client, browserId) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -366,6 +446,29 @@ async function waitForGuestActiveElement(client, browserId, elementId) {
     await delay(50);
   }
   return false;
+}
+
+// A wait whose condition never matches must say which condition expired, not blame the host.
+async function verifyExpiredWaitNamesItsCondition(client, targetUrl) {
+  const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
+  const browserId = created.browserId;
+  assert(typeof browserId === "string", "browser_new_tab returned no browserId for the wait page");
+  try {
+    await callBrowserTool(client, "browser_wait", { browserId, text: "Bridge target" });
+    // The page title is not body text, so this wait expires.
+    const response = await client.callTool({
+      name: "browser_wait",
+      args: { browserId, text: "Desktop browser target", timeoutMs: 1_000 },
+    });
+    const text = response.content?.[0]?.text;
+    assert(
+      response.structuredContent?.ok === false &&
+        text === "Timed out waiting for browser text: Desktop browser target",
+      `browser_wait did not name its expired condition: ${JSON.stringify(response.content)}`,
+    );
+  } finally {
+    await callBrowserTool(client, "browser_close_tab", { browserId });
+  }
 }
 
 // A page whose Content Security Policy omits 'unsafe-eval' refuses eval(); the tools must still work.
@@ -791,6 +894,7 @@ async function runRegression({
 
   await verifyReactFormFill((name, args) => callBrowserTool(client, name, args), targetUrl);
   await verifyEvaluateOnPageWithoutUnsafeEval(client, targetUrl);
+  await verifyExpiredWaitNamesItsCondition(client, targetUrl);
 
   const created = await callBrowserTool(client, "browser_new_tab", { url: targetUrl });
   const browserId = created.browserId;
@@ -1389,12 +1493,7 @@ async function main() {
       workspaceId: workspaceIds.at(-1),
       agentId: await createCallerAgent(daemonPort, workspaceIds.at(-1)),
     };
-    const transport = new StreamableHTTPClientTransport(
-      new URL(
-        `http://127.0.0.1:${daemonPort}/mcp/agents?callerAgentId=${encodeURIComponent(callerAgentId)}`,
-      ),
-    );
-    client = await experimental_createMCPClient({ transport });
+    client = await connectBrowserToolClient(daemonPort, callerAgentId);
     const report = await runRegression({
       page,
       client,
@@ -1406,11 +1505,23 @@ async function main() {
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();
+    const routingClient = await connectBrowserToolClient(daemonPort, typingAgent.agentId);
+    try {
+      await verifyBrowserHostRouting({
+        page,
+        client: routingClient,
+        targetUrl: target.url,
+        workspaceKey: `${status.serverId}:${typingAgent.workspaceId}`,
+      });
+    } finally {
+      await routingClient.close();
+    }
     writeJson(path.join(artifactDir, "result.json"), {
       ...report,
       settingsMemory,
       pluginLinks,
       adaptiveTheme,
+      browserHostRouting: "passed",
     });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,

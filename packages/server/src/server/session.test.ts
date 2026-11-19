@@ -6198,15 +6198,25 @@ const heartbeatBackgroundWork = {
   stopToken: "heartbeat-token",
 };
 
+const changeRequestBackgroundWork = {
+  id: "daemon:change-request-watch:https://github.com/owner/repo/pull/42",
+  kind: "monitor",
+  description: "owner/repo #42",
+  startedAt: heartbeatBackgroundWork.startedAt,
+  canStop: true,
+  stopToken: "watch-token",
+};
+
 test.each([
   { permissions: ["workspace.read"], canStop: false },
   { permissions: ["workspace.read", "automation.manage"], canStop: false },
   { permissions: ["workspace.read", "workspace.write"], canStop: false },
   { permissions: ["workspace.read", "hub.execute", "automation.manage"], canStop: true },
 ] satisfies Array<{ permissions: DaemonPermission[]; canStop: boolean }>)(
-  "filters dormant heartbeat controls for $permissions on list and update",
+  "filters dormant daemon controls for $permissions on list and update",
   async ({ permissions, canStop }) => {
     const messages: SessionOutboundMessage[] = [];
+    const inventory = [heartbeatBackgroundWork, changeRequestBackgroundWork];
     let listener: ((event: AgentManagerEvent) => void) | undefined;
     const record = createStoredAgentRecord({ id: "agent-a", cwd: "/tmp/repo" });
     const session = createSessionForTest({
@@ -6214,8 +6224,8 @@ test.each([
       permissions,
       agentManager: {
         getAgent: () => undefined,
-        getAgentBackgroundWorkSummary: () => ({ count: 1 }),
-        listAgentBackgroundWork: () => [heartbeatBackgroundWork],
+        getAgentBackgroundWorkSummary: () => ({ count: inventory.length }),
+        listAgentBackgroundWork: () => inventory,
         subscribe: (callback: (event: AgentManagerEvent) => void) => {
           listener = callback;
           return () => {};
@@ -6237,11 +6247,12 @@ test.each([
     listener({
       type: "background_work",
       agentId: record.id,
-      items: [heartbeatBackgroundWork],
+      items: inventory,
     });
 
-    const { canStop: _canStop, stopToken: _token, ...readOnly } = heartbeatBackgroundWork;
-    const items = [canStop ? heartbeatBackgroundWork : readOnly];
+    const items = canStop
+      ? inventory
+      : inventory.map(({ canStop: _canStop, stopToken: _token, ...item }) => item);
     expect(findByType(messages, "agent.background_work.list.response")?.payload).toEqual({
       requestId: "list-heartbeat",
       agentId: record.id,

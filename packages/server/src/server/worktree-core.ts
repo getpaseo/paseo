@@ -5,6 +5,7 @@ import { createNameId } from "mnemonic-id";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   createWorktree,
+  fetchFirstAvailableRef,
   resolveDefaultWorktreePath,
   slugify,
   validateBranchSlug,
@@ -76,7 +77,11 @@ async function createWorktreeCoreWithPriority(
       githubPrNumber: input.githubPrNumber,
       worktreeSlug: requestedWorktreeSlug,
     };
-  } else if (input.checkoutSource !== undefined || input.githubPrNumber !== undefined) {
+  } else if (
+    input.action !== "branch-off" &&
+    (input.checkoutSource !== undefined || input.githubPrNumber !== undefined)
+  ) {
+    // A change request with no action is checked out, as clients did before `action` existed.
     intentInput = {
       checkoutSource: input.checkoutSource,
       githubPrNumber: input.githubPrNumber,
@@ -88,6 +93,8 @@ async function createWorktreeCoreWithPriority(
     intentInput = {
       action: "branch-off",
       refName: input.refName,
+      checkoutSource: input.checkoutSource,
+      githubPrNumber: input.githubPrNumber,
       branchName: requestedBranchName,
       worktreeSlug,
     };
@@ -98,6 +105,8 @@ async function createWorktreeCoreWithPriority(
     forge: forge.forge,
     forgeService: forge.service,
     resolveDefaultBranch: (root) => resolveDefaultBranch(root, deps),
+    fetchRef: ({ repoRoot: cwd, sources, destination }) =>
+      fetchFirstAvailableRef({ cwd, sources, destination }),
   });
   let normalizedSlug: string;
 
@@ -182,7 +191,14 @@ function creationIntentFromRequest(
   original: WorktreeCreationIntent,
 ): WorktreeCreationIntent {
   if (request.kind === "branch-off") {
-    return { kind: request.kind, branchName: request.branch, baseBranch: request.baseRef };
+    // Plugins see the base; where a branch off a fork's change request starts stays Paseo's.
+    const startPoint = original.kind === "branch-off" ? original.startPoint : undefined;
+    return {
+      kind: request.kind,
+      branchName: request.branch,
+      baseBranch: request.baseRef,
+      ...(startPoint ? { startPoint } : {}),
+    };
   }
   if (request.kind === "checkout-branch") {
     return {

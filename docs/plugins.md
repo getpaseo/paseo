@@ -129,7 +129,7 @@ availability and a diagnostic after the daemon resolves the executable. Configur
 environment, or enablement overrides under `agents.providers.muse`. Omit `extends` to keep
 the bundled integration; an entry with `extends` shadows it with a custom provider. See
 [provider contributions](#contribute-a-provider) for the contract and
-[Muse Code](../public-docs/muse-code.md) for setup, per-agent options, and version limitations.
+[Muse Code](../public-docs/supported-providers/muse-code.md) for setup, per-agent options, and version limitations.
 
 ## Install from a registry
 
@@ -788,14 +788,15 @@ is the [New workspace items reference](../public-docs/plugins/reference.md#new-w
 
 The screen's choices that a plugin may change live in one plain store,
 `createNewWorkspaceSetup` (`packages/app/src/screens/new-workspace/setup-model.ts`): the base
-picker selection, the manual isolation, the branch name and the workspace metadata. The pickers and
+picker selection, the manual isolation, the chosen existing worktree, the Branch off or Check out
+action per ref list, the branch name and the workspace metadata. The pickers and
 the plugin commands write to it, so a command sees what an earlier command left. Project and host
 stay in the screen's hooks (`useNewWorkspaceHostSelector` reconciles them against each other), and
 they are read-only to plugins; a command that switched them would unmount the item that called it.
 
 The store is built in the render that creates the screen, with what the screen derives from its
 hooks (the lock, the project, whether the project can make worktrees, whether the host supports
-metadata), so a command is valid from a child's first effect, which runs before the screen's own
+metadata and ref actions, the project's git worktrees), so a command is valid from a child's first effect, which runs before the screen's own
 effects. `syncInputs` refreshes those inputs in a layout effect on every commit, and commands read
 them when they run, never from the render that built them. The pickers and the commands pick
 through the same `chooseBase` and `chooseIsolation`, so a plugin command has the effects of a

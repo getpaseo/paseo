@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentBackgroundWorkSummary } from "@getpaseo/protocol/messages";
 
 export interface AgentBackgroundWorkInput {
   id: string;
@@ -14,40 +15,54 @@ export interface AgentBackgroundWorkItem extends AgentBackgroundWorkInput {
   stopToken?: string;
 }
 
-export interface HeartbeatBackgroundWorkInput {
+export interface DaemonBackgroundWorkKey {
   agentId: string;
-  scheduleId: string;
-  name: string | null;
-  createdAt: string;
+  namespace: "heartbeat" | "change-request-watch";
+  id: string;
+}
+
+export interface DaemonBackgroundWorkInput extends DaemonBackgroundWorkKey {
+  kind: string;
+  description: string | null;
+  startedAt: string;
+  countsAsRunning?: boolean;
   stop: () => Promise<void>;
 }
 
-interface HeartbeatBackgroundWork {
+interface DaemonBackgroundWork {
   item: AgentBackgroundWorkItem;
-  stop: HeartbeatBackgroundWorkInput["stop"];
+  countsAsRunning: boolean;
+  stop: DaemonBackgroundWorkInput["stop"];
 }
 
 const HEARTBEAT_ID_PREFIX = "heartbeat:";
+const DAEMON_ID_PREFIX = "daemon:";
 const PROVIDER_ID_ESCAPE = "provider:";
 
-export function isHeartbeatBackgroundWorkItem(item: { id: string }): boolean {
-  return item.id.startsWith(HEARTBEAT_ID_PREFIX);
+export function isDaemonBackgroundWorkItem(item: { id: string }): boolean {
+  return item.id.startsWith(HEARTBEAT_ID_PREFIX) || item.id.startsWith(DAEMON_ID_PREFIX);
+}
+
+function daemonItemId({ namespace, id }: DaemonBackgroundWorkKey): string {
+  return namespace === "heartbeat"
+    ? HEARTBEAT_ID_PREFIX + id
+    : `${DAEMON_ID_PREFIX}${namespace}:${id}`;
 }
 
 function encodeProviderItemId(id: string): string {
   // Preserve existing wire IDs outside the reserved namespaces.
-  return id.startsWith(HEARTBEAT_ID_PREFIX) || id.startsWith(PROVIDER_ID_ESCAPE)
+  return isDaemonBackgroundWorkItem({ id }) || id.startsWith(PROVIDER_ID_ESCAPE)
     ? PROVIDER_ID_ESCAPE + id
     : id;
 }
 
 /**
  * Live inventory per agent. Providers replace their entire contribution with `apply`.
- * The scheduler publishes heartbeats individually and retains ownership across provider closure.
+ * Daemon services publish individual items that outlive provider sessions.
  */
 export class AgentBackgroundWorkStore {
   private readonly providerItems = new Map<string, AgentBackgroundWorkItem[]>();
-  private readonly heartbeats = new Map<string, Map<string, HeartbeatBackgroundWork>>();
+  private readonly daemonItems = new Map<string, Map<string, DaemonBackgroundWork>>();
 
   apply(
     agentId: string,
@@ -78,44 +93,40 @@ export class AgentBackgroundWorkStore {
     return this.list(agentId);
   }
 
-  setHeartbeat({
-    agentId,
-    scheduleId,
-    name,
-    createdAt,
-    stop,
-  }: HeartbeatBackgroundWorkInput): AgentBackgroundWorkItem[] | null {
-    const id = HEARTBEAT_ID_PREFIX + scheduleId;
-    const heartbeats = this.heartbeats.get(agentId) ?? new Map<string, HeartbeatBackgroundWork>();
-    const previous = heartbeats.get(id)?.item;
+  setDaemonBackgroundWork(input: DaemonBackgroundWorkInput): AgentBackgroundWorkItem[] | null {
+    const { agentId, kind, description, startedAt, countsAsRunning = true, stop } = input;
+    const id = daemonItemId(input);
+    const items = this.daemonItems.get(agentId) ?? new Map<string, DaemonBackgroundWork>();
+    const previous = items.get(id);
     const item: AgentBackgroundWorkItem = {
       id,
-      kind: "heartbeat",
-      description: name,
-      startedAt: createdAt,
+      kind,
+      description,
+      startedAt,
       canStop: true,
-      stopToken: previous?.stopToken ?? randomUUID(),
+      stopToken: previous?.item.stopToken ?? randomUUID(),
     };
-    heartbeats.set(id, { item, stop });
-    this.heartbeats.set(agentId, heartbeats);
-    return previous?.description === name && previous.startedAt === createdAt
+    items.set(id, { item, countsAsRunning, stop });
+    this.daemonItems.set(agentId, items);
+    return previous?.countsAsRunning === countsAsRunning && sameItems([previous.item], [item])
       ? null
       : this.list(agentId);
   }
 
-  removeHeartbeat(agentId: string, scheduleId: string): AgentBackgroundWorkItem[] | null {
-    const heartbeats = this.heartbeats.get(agentId);
-    if (!heartbeats?.delete(HEARTBEAT_ID_PREFIX + scheduleId)) return null;
-    if (heartbeats.size === 0) this.heartbeats.delete(agentId);
+  removeDaemonBackgroundWork(key: DaemonBackgroundWorkKey): AgentBackgroundWorkItem[] | null {
+    const { agentId } = key;
+    const items = this.daemonItems.get(agentId);
+    if (!items?.delete(daemonItemId(key))) return null;
+    if (items.size === 0) this.daemonItems.delete(agentId);
     return this.list(agentId);
   }
 
-  async stopHeartbeat(agentId: string, itemId: string, stopToken: string): Promise<void> {
-    const heartbeat = this.heartbeats.get(agentId)?.get(itemId);
-    if (!heartbeat || heartbeat.item.stopToken !== stopToken) {
+  async stopDaemon(agentId: string, itemId: string, stopToken: string): Promise<void> {
+    const work = this.daemonItems.get(agentId)?.get(itemId);
+    if (!work || work.item.stopToken !== stopToken) {
       throw new Error("Background work is no longer available to stop");
     }
-    await heartbeat.stop();
+    await work.stop();
   }
 
   authorizeProviderStop(agentId: string, itemId: string, stopToken: string): string {
@@ -128,18 +139,23 @@ export class AgentBackgroundWorkStore {
 
   list(agentId: string): AgentBackgroundWorkItem[] {
     const items = [...(this.providerItems.get(agentId) ?? [])];
-    for (const { item } of this.heartbeats.get(agentId)?.values() ?? []) {
+    for (const { item } of this.daemonItems.get(agentId)?.values() ?? []) {
       items.push(item);
     }
     return items;
   }
 
-  summary(agentId: string): { count: number } | undefined {
+  summary(agentId: string): AgentBackgroundWorkSummary | undefined {
     const items = this.providerItems.get(agentId);
-    const heartbeats = this.heartbeats.get(agentId);
-    return items || heartbeats
-      ? { count: (items?.length ?? 0) + (heartbeats?.size ?? 0) }
-      : undefined;
+    const daemonItems = this.daemonItems.get(agentId);
+    if (!items && !daemonItems) return undefined;
+
+    const count = (items?.length ?? 0) + (daemonItems?.size ?? 0);
+    let runningCount = items?.length ?? 0;
+    for (const work of daemonItems?.values() ?? []) {
+      if (work.countsAsRunning) runningCount++;
+    }
+    return runningCount === count ? { count } : { count, runningCount };
   }
 
   clear(agentId: string): AgentBackgroundWorkItem[] | null {

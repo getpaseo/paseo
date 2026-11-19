@@ -379,6 +379,10 @@ function getBranchUpstream(cwd: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+}
+
 function getGitConfigValue(cwd: string, key: string): string | null {
   const result = spawnSync("git", ["config", "--get", key], {
     cwd,
@@ -636,6 +640,36 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         branchName: "dev",
       });
       expect(branch).toBe("dev");
+    });
+
+    test("checks out a branch that only a remote other than origin has", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const upstreamDir = path.join(tempDir, "upstream.git");
+      execFileSync("git", ["clone", "--bare", repoDir, upstreamDir], { stdio: "pipe" });
+      execFileSync("git", [`--git-dir=${upstreamDir}`, "branch", "feature/upstream-only", "main"], {
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir, stdio: "pipe" });
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          refName: "feature/upstream-only",
+          paseoHome,
+        },
+        createCoreDeps(),
+      );
+
+      expect(result.worktree.branchName).toBe("feature/upstream-only");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe(
+        "upstream/feature/upstream-only",
+      );
     });
 
     test("checks out an explicit GitHub PR target", async () => {
@@ -1448,6 +1482,242 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           createCoreDeps(),
         ),
       ).rejects.toBeInstanceOf(UnknownBranchError);
+    });
+
+    test("branches off a same-repo pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The head branch has never been fetched, so creation has to fetch it.
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/daemon-shutdown-diagnostics"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(result.worktree.comparisonBaseRef).toBe(
+        "refs/remotes/origin/daemon-shutdown-diagnostics",
+      );
+      expect(git(repoDir, "branch", "--list", "daemon-shutdown-diagnostics")).toBe("");
+    });
+
+    test("branches off a same-repo pull request in a clone whose origin is a fork", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The layout a fork clone has: upstream is the base repository, origin is the fork, and
+      // the fork has an older branch with the pull request's branch name.
+      const forkDir = path.join(tempDir, "fork.git");
+      execFileSync("git", ["clone", "--bare", remoteDir, forkDir], { stdio: "pipe" });
+      execFileSync("git", [
+        `--git-dir=${forkDir}`,
+        "update-ref",
+        "refs/heads/daemon-shutdown-diagnostics",
+        "refs/heads/main",
+      ]);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "add", "origin", forkDir], { cwd: repoDir, stdio: "pipe" });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+          // As the GitHub service lists them: origin first, then upstream.
+          checkoutRefs: [
+            { remoteName: "origin", remoteRef: "refs/pull/1790/head" },
+            { remoteName: "upstream", remoteRef: "refs/pull/1790/head" },
+          ],
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
+        branchName: "follow-up",
+      });
+    });
+
+    test("branches off a fork pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The base repository's main moved on since this clone last fetched.
+      const baseRemoteDir = path.join(tempDir, "base.git");
+      const upstreamMain = execFileSync("git", [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@test.com",
+        `--git-dir=${baseRemoteDir}`,
+        "commit-tree",
+        "main^{tree}",
+        "-p",
+        "main",
+        "-m",
+        "upstream commit",
+      ])
+        .toString()
+        .trim();
+      execFileSync("git", [
+        `--git-dir=${baseRemoteDir}`,
+        "update-ref",
+        "refs/heads/main",
+        upstreamMain,
+      ]);
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+      // The fork's branch is not in this repository, so a pull request from the new branch goes
+      // into the fork pull request's base, compared as the remote has it now.
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/main",
+        startPoint: "refs/paseo/change-requests/526",
+        branchName: "follow-up",
+      });
+      expect(git(repoDir, "rev-parse", "refs/remotes/origin/main")).toBe(upstreamMain);
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/origin/main");
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect((await readPaseoWorktreeMetadata(result.worktree.worktreePath))?.baseRefName).toBe(
+        "main",
+      );
+      expect(git(repoDir, "branch", "--list", "therainisme/main")).toBe("");
+      expect(getGitConfigValue(repoDir, "remote.paseo-pr-526.url")).toBeNull();
+      // Base branch pickers list remote-tracking refs; the fork's head is not one of them.
+      expect(git(repoDir, "for-each-ref", "refs/remotes/paseo-pr-526")).toBe("");
+    });
+
+    test("branches off a fork pull request in a clone that calls the base repository upstream", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+          // As the GitHub service lists them: origin first, then upstream.
+          checkoutRefs: [
+            { remoteName: "origin", remoteRef: "refs/pull/526/head" },
+            { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+          ],
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      // The base comes from the remote that served the pull request.
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/main",
+        startPoint: "refs/paseo/change-requests/526",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/upstream/main");
     });
 
     test("creates the agent-create worktree input shape", async () => {

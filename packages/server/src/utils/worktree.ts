@@ -192,7 +192,13 @@ export interface WorktreeCheckoutRef {
 }
 
 export type WorktreeSource =
-  | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | {
+      kind: "branch-off";
+      baseBranch: string;
+      branchName: string;
+      /** Where the new branch starts when that is not `baseBranch`, such as a fork's head. */
+      startPoint?: string;
+    }
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-commit"; commit: string; baseRef: string }
@@ -1071,9 +1077,18 @@ async function resolveMetadataOwnedWorktree(
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
 
+interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
+  /** A bare repository or a worktree whose directory is gone; nothing can work there. */
+  unusable?: true;
+}
+
 function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  const entries: ParsedPaseoWorktreeInfo[] = [];
-  let current: ParsedPaseoWorktreeInfo | null = null;
+  return parseWorktreeEntries(output).map(({ unusable: _unusable, ...entry }) => entry);
+}
+
+function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
+  const entries: ParsedWorktreeEntry[] = [];
+  let current: ParsedWorktreeEntry | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -1093,6 +1108,8 @@ function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
     } else if (line.startsWith("HEAD ")) {
       current.head = line.slice("HEAD ".length).trim();
+    } else if (line === "bare" || line.startsWith("prunable")) {
+      current.unusable = true;
     } else if (line.trim().length === 0) {
       if (current.path) {
         entries.push(current);
@@ -1118,6 +1135,49 @@ async function resolveWorktreeCreatedAtIso(worktreePath: string): Promise<string
   } catch {
     return new Date(0).toISOString();
   }
+}
+
+/** One git worktree of a repository, whoever created it. */
+export interface GitWorktree {
+  path: string;
+  /** Null when HEAD is detached. */
+  branchName: string | null;
+  head: string | null;
+  createdAt: string;
+  /** Whether the `cwd` the list was asked for is inside this worktree. */
+  containsCwd: boolean;
+}
+
+/**
+ * Every usable worktree of the repository `cwd` is in. The main worktree comes first; the rest
+ * follow in no meaningful order.
+ * Unlike `listPaseoWorktrees`, ownership plays no part.
+ */
+export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWorktree[]> {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const { stdout: toplevel } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const cwdWorktree = await normalizePathForOwnership(toplevel.trim());
+  const worktrees: GitWorktree[] = [];
+  for (const entry of parseWorktreeEntries(stdout)) {
+    if (entry.unusable) continue;
+    // A locked worktree whose directory was deleted is neither prunable nor workable.
+    if (!(await pathExists(entry.path))) continue;
+    const path = await normalizePathForOwnership(entry.path);
+    worktrees.push({
+      path,
+      branchName: entry.branchName ?? null,
+      head: entry.head ?? null,
+      createdAt: await resolveWorktreeCreatedAtIso(path),
+      containsCwd: path === cwdWorktree,
+    });
+  }
+  return worktrees;
 }
 
 export async function listPaseoWorktrees({
@@ -1609,7 +1669,7 @@ async function resolveBranchOffWorktreeSourcePlan(
   const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
-  const base = branchExists ? branchName : resolvedBaseBranch;
+  const base = branchExists ? branchName : (source.startPoint ?? resolvedBaseBranch);
   await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
@@ -1675,10 +1735,10 @@ async function resolveWorktreeSourcePlan({
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
         source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-      await fetchWorktreeCheckoutRefs({
+      await fetchFirstAvailableRef({
         cwd,
-        localBranchName,
-        checkoutRefs: source.checkoutRefs ?? [
+        destination: `refs/heads/${localBranchName}`,
+        sources: source.checkoutRefs ?? [
           { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
         ],
       });
@@ -1777,23 +1837,23 @@ async function configureWorktreePushRemote(options: {
   }
 }
 
-async function fetchWorktreeCheckoutRefs(options: {
+/**
+ * Fetches the first of `sources` a remote serves into the local ref `destination`, and returns
+ * the name of that remote.
+ */
+export async function fetchFirstAvailableRef(options: {
   cwd: string;
-  localBranchName: string;
-  checkoutRefs: WorktreeCheckoutRef[];
-}): Promise<void> {
+  sources: WorktreeCheckoutRef[];
+  destination: string;
+}): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
-  for (const checkoutRef of options.checkoutRefs) {
+  for (const checkoutRef of options.sources) {
+    const remoteName = checkoutRef.remoteName ?? "origin";
     lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
-        "--force",
-      ],
+      ["fetch", remoteName, `+${checkoutRef.remoteRef}:${options.destination}`, "--force"],
       {
         cwd: options.cwd,
         timeout: 120_000,
@@ -1801,14 +1861,14 @@ async function fetchWorktreeCheckoutRefs(options: {
       },
     );
     if (lastResult.exitCode === 0) {
-      return;
+      return remoteName;
     }
   }
-  const attemptedRefs = options.checkoutRefs
+  const attemptedRefs = options.sources
     .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
     .join(", ");
   throw new Error(
-    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
+    `Unable to fetch change request refs into ${options.destination}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
 }
 
@@ -2007,9 +2067,38 @@ async function ensureLocalBranch(cwd: string, branchName: string): Promise<void>
       cwd,
       timeout: 120_000,
     });
+    return;
   } catch {
+    // Origin does not have it; another remote may.
+  }
+  const remoteBranch = await uniqueRemoteTrackingBranch(cwd, branchName);
+  if (!remoteBranch) {
     throw new UnknownBranchError({ branchName, cwd });
   }
+  // Tracks the remote it came from, as `git checkout <branch>` does for a branch on one remote.
+  await runGitCommand(["branch", "--track", branchName, remoteBranch], { cwd });
+}
+
+/** The one remote-tracking ref named `<remote>/<branchName>`, if exactly one remote has it. */
+async function uniqueRemoteTrackingBranch(cwd: string, branchName: string): Promise<string | null> {
+  const { stdout: remotes } = await runGitCommand(["remote"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const candidates: string[] = [];
+  for (const remote of remotes
+    .split("\n")
+    .map((name) => name.trim())
+    .filter(Boolean)) {
+    const ref = `refs/remotes/${remote}/${branchName}`;
+    try {
+      await runGitCommand(["show-ref", "--verify", "--quiet", ref], { cwd });
+      candidates.push(ref);
+    } catch {
+      // This remote does not have the branch.
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
