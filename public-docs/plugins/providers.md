@@ -492,6 +492,14 @@ Return `metadata` to add fields to the session request's `_meta`.
 If your plugin previously saved a different persistence format, return its native `sessionId`.
 Paseo gives its own saved session ID precedence and writes the ACP persistence format after opening.
 
+A `configure` transformer can inspect the agent's current choices with `catalog()` and pass a
+translated change to `apply(change)`. Applying a change this way uses the shared ACP configuration
+mapping and skips the transformers for that change.
+
+Set `acpOptions.loadReplayQuietPeriodMs` for an agent that streams history after its `session/load`
+response. Paseo waits for that interval without session updates before it publishes the session as
+ready. The wait is bounded at five times the interval.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:

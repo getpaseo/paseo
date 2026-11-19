@@ -375,6 +375,7 @@ class AcpRuntime {
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
   private commandWaiter: (() => void) | null = null;
+  private receivedInitialCommands = false;
   private messageSequence = 0;
   /**
    * Fallback ids for streamed chunks that carry no `messageId`, one per
@@ -387,10 +388,11 @@ class AcpRuntime {
     string
   >();
   /**
-   * Loaded history can arrive after session/load resolves. Treat updates as
-   * replay until the client sends the first prompt to this session.
+   * Replay updates count as history until the session reports ready.
+   * Once ready, suppress late replay rows until the first prompt.
    */
   private replayWindow: "replay" | "skip" | null = null;
+  private lastLoadUpdateAt = 0;
   private closing = false;
   private processFailed = false;
   private configTransaction = false;
@@ -533,6 +535,7 @@ class AcpRuntime {
         }),
       );
       await this.drainNotifications();
+      if (!this.options.options.acpOptions?.loadReplayQuietPeriodMs) this.replayWindow = null;
     } else {
       const newSession = await this.call(
         this.connection.newSession({
@@ -568,6 +571,11 @@ class AcpRuntime {
     if (this.options.options.acpOptions?.waitForInitialCommands) {
       await this.waitForInitialCommands();
     }
+    const quietPeriod = this.options.options.acpOptions?.loadReplayQuietPeriodMs;
+    if (this.replayWindow && quietPeriod && quietPeriod > 0) {
+      await this.waitForLoadReplay(quietPeriod);
+      this.replayWindow = "skip";
+    }
     return sessionCapabilities;
   }
 
@@ -599,10 +607,7 @@ class AcpRuntime {
       await active.settled;
     }
     const prompt = toAcpPrompt(input.prompt);
-    if (this.replayWindow) {
-      await this.drainNotifications();
-      this.replayWindow = null;
-    }
+    this.replayWindow = null;
     const turnId = `acp:${input.prompt.clientMessageId}`;
     this.fallbackChunkIds.clear();
     this.emit({
@@ -837,11 +842,17 @@ class AcpRuntime {
         (await transformer.configure?.(change, {
           sessionId: this.options.boundarySessionId,
           config: access,
+          catalog: () => toProviderCatalog(this.modes, this.configOptions),
+          apply: (nativeChange) => this.applyNativeConfigChange(nativeChange),
         })) === "handled"
       ) {
         return;
       }
     }
+    await this.applyNativeConfigChange(change);
+  }
+
+  private async applyNativeConfigChange(change: AcpConfigChange): Promise<void> {
     if (change.target === "mode" && this.modes && !modeOption(this.configOptions)) {
       if (!change.value) {
         throw new Error("ACP session does not expose mode configuration");
@@ -961,6 +972,7 @@ class AcpRuntime {
 
   private sessionUpdate(notification: SessionNotification): void {
     if (notification.sessionId !== this.nativeSessionId) return;
+    if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
     if (this.replayWindow === "skip") {
       const update = notification.update;
       if (
@@ -1094,8 +1106,8 @@ class AcpRuntime {
         argumentHint: command.input?.hint,
       }));
       this.emit({ type: "session.commands", sessionId: this.options.boundarySessionId, commands });
+      this.receivedInitialCommands = true;
       this.commandWaiter?.();
-      this.commandWaiter = null;
       return;
     }
     if (update.sessionUpdate === "current_mode_update") {
@@ -1263,16 +1275,28 @@ class AcpRuntime {
   }
 
   private waitForInitialCommands(): Promise<void> {
+    if (this.receivedInitialCommands) return Promise.resolve();
     const timeoutMs = this.options.options.acpOptions?.initialCommandsTimeoutMs ?? 1_000;
     const commands = new Promise<void>((resolve) => {
       this.commandWaiter = resolve;
     });
-    const timeout = new Promise<void>((resolve) => {
-      setTimeout(resolve, timeoutMs);
-    });
-    return Promise.race([commands, timeout]).finally(() => {
-      this.commandWaiter = null;
-    });
+    return withTimeout(commands, timeoutMs, "ACP agent did not publish initial commands")
+      .catch(() => undefined)
+      .finally(() => {
+        this.commandWaiter = null;
+      });
+  }
+
+  private async waitForLoadReplay(quietPeriod: number): Promise<void> {
+    const start = performance.now();
+    const deadline = start + 5 * quietPeriod;
+    while (!this.closing && !this.processFailed) {
+      const idleAt = Math.max(start, this.lastLoadUpdateAt) + quietPeriod;
+      const remaining = Math.min(deadline, idleAt) - performance.now();
+      if (remaining <= 0) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+      await this.notificationLane;
+    }
   }
 }
 

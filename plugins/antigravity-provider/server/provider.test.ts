@@ -47,7 +47,7 @@ it.each([true, false])(
       const { createInterface } = require("node:readline");
       const configOptions = [
         { id: "model", name: "Model", category: "model", type: "select", currentValue: "gemini-4-neon",
-          options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+          options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }, { value: "gemini-4-neon-high", name: "Gemini 4 Neon High" }] },
         { id: "thought_level", name: "Thinking", category: "thought_level", type: "select", currentValue: "low",
           options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] },
         { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "accept-edits",
@@ -151,6 +151,20 @@ it.each([true, false])(
           }),
         }),
       );
+      await connection.send({
+        type: "session.configure",
+        requestId: "native-model",
+        sessionId: "test",
+        changes: { model: "gemini-4-neon-high" },
+      });
+      await expect
+        .poll(() =>
+          events.find(
+            (event) =>
+              event.type === "session.config" && event.config.model === "gemini-4-neon-high",
+          ),
+        )
+        .toBeDefined();
       const requests = (await readFile(launch.env.CAPTURE, "utf8"))
         .trim()
         .split("\n")

@@ -50,6 +50,8 @@ export interface AcpOptions {
   workspaceOnlyCatalog?: boolean;
   waitForInitialCommands?: boolean;
   initialCommandsTimeoutMs?: number;
+  /** Allow delayed session/load updates before publishing the session as ready. */
+  loadReplayQuietPeriodMs?: number;
 }
 
 export interface AcpContext {
@@ -67,6 +69,8 @@ export interface AcpDiscoveryContext extends AcpContext {
 
 export interface AcpConfigureContext extends AcpContext {
   config: AcpConfigAccess;
+  catalog(): ProviderCatalog;
+  apply(change: AcpConfigChange): Promise<void>;
 }
 
 export type AcpConfigChange =

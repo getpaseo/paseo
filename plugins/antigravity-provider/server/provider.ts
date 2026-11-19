@@ -42,18 +42,27 @@ const antigravity: AcpTransformer = {
           : undefined,
     };
   },
-  async configure(change, { config }) {
+  async configure(change, { apply, catalog }) {
     // COMPAT(antigravityStreamJson): added in v0.16.2, remove after 2027-11-19.
     if (change.target === "mode" && change.value === "full-access") {
-      await config.set("mode", "default");
+      await apply({ target: "mode", value: "default" });
       return "handled";
     }
     if (change.target === "model" && change.value) {
       const legacyModel = /^(.*)-(xhigh|high|medium|low|minimal)$/.exec(change.value);
       if (legacyModel) {
-        await config.set("model", legacyModel[1]);
-        await config.set("thought_level", legacyModel[2]);
-        return "handled";
+        const { models } = catalog();
+        const [, model, effort] = legacyModel;
+        if (
+          !models.some((option) => option.id === change.value) &&
+          models.some((option) => option.id === model)
+        ) {
+          await apply({ target: "model", value: model });
+          if (catalog().thinkingOptions?.some((option) => option.id === effort)) {
+            await apply({ target: "thinking", value: effort });
+          }
+          return "handled";
+        }
       }
     }
     return "pass";
@@ -67,7 +76,7 @@ export function createAntigravityProvider(): ProviderRegistration {
     description: "Antigravity CLI on your host",
     icon: "icon.svg",
     command: ["agy", "acp", "--disable-telemetry"],
-    acpOptions: { waitForInitialCommands: true },
+    acpOptions: { waitForInitialCommands: true, loadReplayQuietPeriodMs: 200 },
     transformers: [antigravity],
   });
   return {
@@ -86,7 +95,7 @@ export function createAntigravityProvider(): ProviderRegistration {
         return {
           available: false,
           diagnostic:
-            "Antigravity ACP did not start. Install Antigravity 1.5.0 or later and check your CLI configuration.",
+            "Antigravity ACP did not start. Install Antigravity 1.5.0 or later. If you override the command, include the acp subcommand.",
         };
       }
     },

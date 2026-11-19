@@ -229,44 +229,62 @@ describe("runAcpProvider", () => {
   it.each(["replay", "skip"] as const)(
     "handles trailing load updates with %s history",
     async (history) => {
-      const { connector, instances } = connectorHarness({ capabilities: { loadSession: true } });
-      const connection = await runAcpProvider({ id: "load", label: "Load", connector }).connect({
-        versions: [1],
-        capabilities: ["prompt.message", "session.persistence"],
+      const sessionId = "connector-session";
+      const notifyUpdate = (runtime: ConnectorInstance, update: unknown) =>
+        runtime.notify("session/update", { sessionId, update });
+      const { connector, instances } = connectorHarness({
+        capabilities: { loadSession: true },
+        handleRequest(runtime, request) {
+          if (request.method !== "session/load") return false;
+          notifyUpdate(runtime, {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "help", description: "Help" }],
+          });
+          runtime.respond(request, { configOptions: [] });
+          setTimeout(() => {
+            notifyUpdate(runtime, {
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: "previous question" },
+            });
+            notifyUpdate(runtime, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "previous answer" },
+            });
+          }, 100);
+          return true;
+        },
       });
+      const connection = await runAcpProvider({
+        id: "load",
+        label: "Load",
+        connector,
+        acpOptions: {
+          waitForInitialCommands: true,
+          initialCommandsTimeoutMs: 10_000,
+          loadReplayQuietPeriodMs: 200,
+        },
+      }).connect({ versions: [1], capabilities: ["prompt.message", "session.persistence"] });
       const events: ProviderEvent[] = [];
       connection.onEvent((event) => events.push(event));
       try {
-        const input = {
+        await connection.send({
           ...openInput(),
           history,
-          persistence: { version: 1, data: { sessionId: "connector-session" } },
-        };
-        await connection.send(input);
+          persistence: { version: 1, data: { sessionId } },
+        });
         await waitForEvent(events, (event) => event.type === "session.ready");
-        const runtime = instances[1];
-        runtime.notify("session/update", {
-          sessionId: "connector-session",
-          update: {
-            sessionUpdate: "user_message_chunk",
-            content: { type: "text", text: "previous question" },
-          },
+        notifyUpdate(instances[1], {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "stale history outside the replay window" },
         });
-        runtime.notify("session/update", {
-          sessionId: "connector-session",
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: "previous answer" },
-          },
+        notifyUpdate(instances[1], {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "different", description: "Different" }],
         });
-        runtime.notify("session/update", {
-          sessionId: "connector-session",
-          update: {
-            sessionUpdate: "available_commands_update",
-            availableCommands: [{ name: "help", description: "Help" }],
-          },
-        });
-        await waitForEvent(events, (event) => event.type === "session.commands");
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.commands" && event.commands[0]?.name === "different",
+        );
         const items = events
           .filter((event) => event.type === "timeline.item")
           .map((event) => event.item);
