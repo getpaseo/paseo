@@ -1,5 +1,7 @@
 import { defineLanguageFacet, Language, StreamLanguage } from "@codemirror/language";
 import { dart } from "@codemirror/legacy-modes/mode/clike";
+import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { swift } from "@codemirror/legacy-modes/mode/swift";
 import { parser as jsParser } from "@lezer/javascript";
 import { parser as jsonParser } from "@lezer/json";
@@ -27,6 +29,8 @@ import { configureNesting, defaultNesting } from "./svelte/nesting.js";
 function language(parser: Parser): Language {
   return new Language(defineLanguageFacet(), parser);
 }
+
+const shellLanguage = StreamLanguage.define(shell);
 
 const languagesByExtension: Record<string, Language> = {
   // JavaScript/TypeScript
@@ -75,6 +79,12 @@ const languagesByExtension: Record<string, Language> = {
   yml: language(yamlParser),
   // Rust
   rs: language(rustParser),
+  // Shell
+  sh: shellLanguage,
+  bash: shellLanguage,
+  zsh: shellLanguage,
+  // Docker
+  dockerfile: StreamLanguage.define(dockerFile),
   // Swift
   swift: StreamLanguage.define(swift),
   // Dart
@@ -96,7 +106,8 @@ const languagesByExtension: Record<string, Language> = {
 };
 
 export function getLanguageForFile(filename: string): Language | null {
-  const ext = filename.split(".").pop()?.toLowerCase();
+  const basename = filename.split(/[\\/]/).pop();
+  const ext = basename?.split(".").pop()?.toLowerCase();
   if (!ext) return null;
   return languagesByExtension[ext] ?? null;
 }
