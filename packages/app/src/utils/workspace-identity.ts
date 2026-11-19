@@ -20,6 +20,11 @@ export function normalizeWorkspacePath(value: string | null | undefined): string
   if (withUnixSeparators === "/") {
     return withUnixSeparators;
   }
+  // A drive root keeps its separator: "E:" is drive-relative on Windows, and the
+  // daemon rejects it as a terminal cwd.
+  if (/^[A-Za-z]:\/+$/.test(withUnixSeparators)) {
+    return `${withUnixSeparators.slice(0, 2)}/`;
+  }
   const withoutTrailingSlash = withUnixSeparators.replace(/\/+$/, "");
   return withoutTrailingSlash.length > 0 ? withoutTrailingSlash : "/";
 }
