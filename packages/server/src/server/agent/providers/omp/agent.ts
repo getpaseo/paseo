@@ -1583,7 +1583,6 @@ export class OmpAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
           level:

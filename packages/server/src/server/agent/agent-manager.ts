@@ -608,9 +608,11 @@ function attachManagedTurnIdentity(
       return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
     }
     case "timeline": {
-      // Live provider items belong to the foreground turn that owns their dispatch.
-      // Provider history deliberately keeps absent IDs because it has no daemon turn identity.
-      const turnId = agent.activeForegroundTurnId ?? agent.activeTurnId ?? undefined;
+      // A notice with no open run is a display turn of its own.
+      const turnId =
+        agent.activeForegroundTurnId ??
+        agent.activeTurnId ??
+        (event.item.type === "notification" ? randomUUID() : undefined);
       return turnId ? { event: { ...event, turnId }, turnId } : { event, turnId };
     }
     default:
@@ -4824,6 +4826,10 @@ export class AgentManager {
           : this.backgroundWork.apply(agent.id, event.items);
       this.publishBackgroundWork(agent.id, items);
       return;
+    }
+    // Resolve notice membership before selecting the foreground run's waiters.
+    if (event.type === "timeline" && event.item.type === "notification") {
+      event = attachManagedTurnIdentity(agent, event, false).event;
     }
     const turnId = getAgentStreamEventTurnId(event);
     const matchingWaiters = this.runs.getMatchingWaiters(agent, turnId);
