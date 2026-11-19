@@ -1,7 +1,7 @@
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 
-export const WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES = 10;
-export const WORKSPACE_DECK_INACTIVE_TTL_MS = 10 * 60 * 1000;
+export const WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES = 3;
+export const WORKSPACE_DECK_INACTIVE_TTL_MS = 60 * 1000;
 
 export interface RetainedWorkspaceSelection {
   selection: ActiveWorkspaceSelection;
