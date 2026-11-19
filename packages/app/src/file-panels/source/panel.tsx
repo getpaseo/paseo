@@ -70,7 +70,8 @@ type TextFilePanelProps = PluginFilePanelProps & {
  * What the Markdown, HTML and Source panels share: a toolbar over the file's Source view and, when
  * the panel passes one, its Preview. Both views show the one read of the file and, while editing, the one editor buffer, so switching
  * between them neither re-reads nor loses edits. Each view stays mounted once shown, so switching
- * back also returns to where it was scrolled. Edits files up to 1 MiB on web; shows larger files
+ * back also returns to where it was scrolled. The exception is the HTML Preview on iOS: iOS
+ * replaces the WebView of a hidden view, so the page loads again from the top. Edits files up to 1 MiB on web; shows larger files
  * and every file on native read-only, and refuses files above the display budget before reading.
  */
 export function TextFilePanel(props: TextFilePanelProps) {
