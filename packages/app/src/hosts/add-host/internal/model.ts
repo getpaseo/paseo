@@ -4,6 +4,7 @@ export type AddHostMethod = "direct" | "ssh" | "link" | "scan";
 export interface AddHostOptions {
   method?: AddHostMethod;
   onAdded?: (serverId: string) => void;
+  onDismiss?: () => void;
 }
 
 export interface AddHostSession {
@@ -28,11 +29,13 @@ export function createAddHostFlow() {
         step.setState({ method });
       },
       close() {
-        if (store.getState().session === session) store.setState({ session: null });
+        if (store.getState().session !== session) return;
+        store.setState({ session: null });
+        options.onDismiss?.();
       },
       complete({ serverId }: { serverId: string }) {
         if (store.getState().session !== session) return;
-        session.close();
+        store.setState({ session: null });
         options.onAdded?.(serverId);
       },
     };
@@ -41,6 +44,7 @@ export function createAddHostFlow() {
   return {
     store,
     open(options: AddHostOptions = {}) {
+      store.getState().session?.close();
       store.setState({ session: createSession(options) });
     },
   };

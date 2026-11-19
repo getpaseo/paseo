@@ -46,4 +46,19 @@ describe("add host flow", () => {
     expect(flow.store.getState().session).toBe(session);
     expect(session.step.getState()).toEqual({ method: null });
   });
+
+  it("notifies dismissal for a replaced request and success only for the current request", () => {
+    const flow = createAddHostFlow();
+    const events: string[] = [];
+    const options = {
+      onDismiss: () => events.push("dismissed"),
+      onAdded: (serverId: string) => events.push(serverId),
+    };
+    flow.open(options);
+    const replaced = flow.store.getState().session!;
+    flow.open(options);
+    replaced.complete({ serverId: "stale" });
+    flow.store.getState().session!.complete({ serverId: "approved" });
+    expect(events).toEqual(["dismissed", "approved"]);
+  });
 });

@@ -4,6 +4,8 @@ import { getDesktopHost } from "@/desktop/host";
 import { listenToDesktopEvent } from "@/desktop/electron/events";
 import { useAddHost } from "@/hosts/add-host";
 import { useOpenProject } from "@/hooks/use-open-project";
+import { useDirectoryDemand } from "@/hooks/use-directory-demand";
+import { useToast } from "@/contexts/toast-context";
 import { useHostRegistryLoaded, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
@@ -28,37 +30,45 @@ function WorkspaceTargetResolver({
   onHandled: () => void;
 }) {
   const isConnected = useHostRuntimeIsConnected(target.serverId);
+  const hydrated = useSessionStore(
+    (state) => state.sessions[target.serverId]?.hasHydratedWorkspaces ?? false,
+  );
+  useDirectoryDemand(target.serverId);
   const workspaces = useSessionStore(
     (state) => state.sessions[target.serverId]?.workspaces ?? EMPTY_WORKSPACES,
   );
   const openProject = useOpenProject(target.serverId);
+  const toast = useToast();
   const attemptRef = useRef<string | null>(null);
   const action = resolveWorkspaceDeepLinkAction({
     target,
     hostExists: true,
+    directoryReady: isConnected && hydrated,
     workspaces: workspaces.values(),
   });
+  const workspaceId = action.kind === "open-workspace" ? action.workspaceId : null;
 
   useEffect(() => {
-    if (action.kind === "open-workspace") {
-      navigateToWorkspace({ serverId: target.serverId, workspaceId: action.workspaceId });
+    if (workspaceId) {
+      navigateToWorkspace({ serverId: target.serverId, workspaceId });
       onHandled();
       return;
     }
-    if (!isConnected) return;
-
+    if (action.kind !== "register-project") return;
     const attemptKey = `${target.serverId}\u0000${target.path}`;
     if (attemptRef.current === attemptKey) return;
     attemptRef.current = attemptKey;
-    let cancelled = false;
-    void openProject(target.path).then((result) => {
-      if (!cancelled && result.ok) onHandled();
-      return undefined;
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [action, isConnected, onHandled, openProject, target]);
+    void (async () => {
+      try {
+        const result = await openProject(target.path);
+        if (!result.ok) toast.error(result.error ?? "Could not open the linked project.");
+      } catch {
+        toast.error("Could not open the linked project.");
+      } finally {
+        onHandled();
+      }
+    })();
+  }, [action.kind, onHandled, openProject, target, toast, workspaceId]);
 
   return null;
 }
@@ -69,34 +79,37 @@ export function WorkspaceNavigationListener() {
   const hosts = useHosts();
   const hostRegistryLoaded = useHostRegistryLoaded();
   const [target, setTarget] = useState<WorkspaceDeepLinkTarget | null>(null);
-  const targetRef = useRef(target);
-  targetRef.current = target;
-  const requestedConnectionRef = useRef<string | null>(null);
-
-  const handleAddedHost = useCallback((serverId: string) => {
-    const pending = targetRef.current;
-    if (!pending) return;
-    if (serverId !== pending.serverId) {
-      console.warn("[WorkspaceNavigation] Connected host identity did not match the link target");
-      setTarget(null);
-    }
-  }, []);
-  const addRemoteSshHost = useAddHost({ method: "ssh", onAdded: handleAddedHost });
-  const handleTargetHandled = useCallback(() => setTarget(null), []);
+  const requestedConnectionRef = useRef<WorkspaceDeepLinkTarget | null>(null);
+  const toast = useToast();
+  const handleTargetHandled = useCallback(
+    () => setTarget((current) => (current === target ? null : current)),
+    [target],
+  );
+  const handleAddedHost = useCallback(
+    (serverId: string) => {
+      if (!target) return;
+      if (serverId !== target.serverId) {
+        toast.error("The connected host does not match the workspace link.");
+        handleTargetHandled();
+        return;
+      }
+      setTarget((current) => (current === target ? { ...target } : current));
+    },
+    [handleTargetHandled, target, toast],
+  );
+  const addRemoteSshHost = useAddHost({
+    method: "ssh",
+    onAdded: handleAddedHost,
+    onDismiss: handleTargetHandled,
+  });
+  const hostExists = !!target && hosts.some((host) => host.serverId === target.serverId);
 
   useEffect(() => {
     if (!hostRegistryLoaded || !target) return;
-    const hostExists = hosts.some((host) => host.serverId === target.serverId);
-    if (hostExists) {
-      requestedConnectionRef.current = null;
-      return;
-    }
-
-    const key = `${target.serverId}\u0000${target.path}`;
-    if (requestedConnectionRef.current === key) return;
-    requestedConnectionRef.current = key;
+    if (hostExists || requestedConnectionRef.current === target) return;
+    requestedConnectionRef.current = target;
     addRemoteSshHost();
-  }, [addRemoteSshHost, hostRegistryLoaded, hosts, target]);
+  }, [addRemoteSshHost, hostExists, hostRegistryLoaded, target]);
 
   useEffect(() => {
     const host = getDesktopHost();
@@ -108,8 +121,9 @@ export function WorkspaceNavigationListener() {
     const accept = (payload: OpenWorkspaceEventPayload | null) => {
       const next = readTarget(payload);
       if (next) {
-        requestedConnectionRef.current = null;
-        setTarget(next);
+        setTarget((current) =>
+          current?.serverId === next.serverId && current.path === next.path ? current : next,
+        );
       }
     };
 
@@ -120,7 +134,8 @@ export function WorkspaceNavigationListener() {
           return;
         }
         unlisten = dispose;
-        accept(await ready());
+        const pending = await ready();
+        if (!disposed) accept(pending);
         return undefined;
       })
       .catch(() => undefined);
@@ -131,6 +146,7 @@ export function WorkspaceNavigationListener() {
     };
   }, []);
 
-  if (!target || !hosts.some((host) => host.serverId === target.serverId)) return null;
+  if (!target || !hostRegistryLoaded || !hostExists || requestedConnectionRef.current === target)
+    return null;
   return <WorkspaceTargetResolver target={target} onHandled={handleTargetHandled} />;
 }

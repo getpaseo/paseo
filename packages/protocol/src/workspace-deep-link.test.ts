@@ -10,9 +10,15 @@ describe("workspace deep links", () => {
     expect(parseWorkspaceDeepLink(link)).toEqual(target);
   });
 
-  it("accepts absolute Windows paths without interpreting them locally", () => {
-    const target = { serverId: "srv_windows", path: "C:\\src\\paseo" };
-    expect(parseWorkspaceDeepLink(buildWorkspaceDeepLink(target))).toEqual(target);
+  it("rejects paths that require client or daemon normalization", () => {
+    for (const path of ["C:\\src\\paseo", "/tmp/../repo", "/tmp//repo", "/tmp/repo "]) {
+      expect(
+        parseWorkspaceDeepLink(
+          `paseo://h/srv_devbox/open-project?path=${encodeURIComponent(path)}`,
+        ),
+      ).toBeNull();
+    }
+    expect(parseWorkspaceDeepLink("paseo://h/srv_devbox/open-project?path=%2Ftmp%FF")).toBeNull();
   });
 
   it("rejects relative, oversized, and control-character paths", () => {

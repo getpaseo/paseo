@@ -3,15 +3,18 @@ import type { WorkspaceDeepLinkTarget } from "@getpaseo/protocol/workspace-deep-
 
 export type WorkspaceDeepLinkAction =
   | { kind: "connect-host" }
+  | { kind: "wait-for-directory" }
   | { kind: "open-workspace"; workspaceId: string }
   | { kind: "register-project" };
 
 export function resolveWorkspaceDeepLinkAction(input: {
   target: WorkspaceDeepLinkTarget;
   hostExists: boolean;
+  directoryReady: boolean;
   workspaces: Iterable<WorkspaceDescriptor>;
 }): WorkspaceDeepLinkAction {
   if (!input.hostExists) return { kind: "connect-host" };
+  if (!input.directoryReady) return { kind: "wait-for-directory" };
 
   for (const workspace of input.workspaces) {
     if (workspace.workspaceDirectory === input.target.path) {
