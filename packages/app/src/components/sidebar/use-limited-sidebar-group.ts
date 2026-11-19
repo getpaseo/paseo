@@ -31,3 +31,23 @@ export function useLimitedSidebarGroup<T extends SidebarGroupItem>({
     [expanded, items, policy, selection],
   );
 }
+
+/**
+ * A section's rows. Same limit as a project's rows, but the open workspace is only pulled above the
+ * limit while the route can select a row: outside a workspace route nothing highlights, so a row
+ * the limit hides must not reappear for a selection that cannot be shown.
+ */
+export function useSidebarSectionGroup<T extends SidebarGroupItem>({
+  items,
+  selection,
+  selectionEnabled,
+  expanded,
+  policy = PINNED_POLICY,
+}: LimitedSidebarGroupInput<T> & { selectionEnabled: boolean }) {
+  return useLimitedSidebarGroup({
+    items,
+    selection: selectionEnabled ? selection : null,
+    expanded,
+    policy,
+  });
+}

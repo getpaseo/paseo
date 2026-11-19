@@ -22,6 +22,7 @@ describe("migrateSidebarOrderState", () => {
       projectOrder: ["project-a"],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: { "project-a": ["host-a:main", "host-a:feature", "host-b:main"] },
+      workspaceSectionsByProject: {},
     });
   });
 
@@ -31,6 +32,75 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
+  });
+
+  it("normalizes project-scoped section layouts without duplicate workspace placement", () => {
+    const migrated = migrateSidebarOrderState({
+      workspaceSectionsByProject: {
+        "project-a": [
+          {
+            id: " finance ",
+            name: " Finance ",
+            workspaceKeys: ["host-a:one", "host-a:one", ""],
+          },
+          {
+            id: "research",
+            name: "Research",
+            workspaceKeys: ["host-a:one", "host-a:two"],
+          },
+        ],
+      },
+    });
+
+    expect(migrated).toMatchObject({
+      workspaceSectionsByProject: {
+        "project-a": [
+          { id: "finance", name: "Finance", workspaceKeys: ["host-a:one"] },
+          { id: "research", name: "Research", workspaceKeys: ["host-a:two"] },
+        ],
+      },
+    });
+  });
+});
+
+describe("sidebar section keys that end in whitespace", () => {
+  const PROJECT_KEY = "host:srv-1:/home/u/Reklamation ";
+
+  beforeEach(() => {
+    useSidebarOrderStore.setState({ workspaceSectionsByProject: {} });
+  });
+
+  it("stores a section under the project view key exactly as given", () => {
+    useSidebarOrderStore.getState().createWorkspaceSection(PROJECT_KEY, "Finance");
+
+    const sectionsByProject = useSidebarOrderStore.getState().workspaceSectionsByProject;
+    expect(Object.keys(sectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(sectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Finance" }]);
+  });
+
+  it("hydrates a persisted section under the project view key exactly as given", () => {
+    const migrated = migrateSidebarOrderState({
+      workspaceSectionsByProject: {
+        [PROJECT_KEY]: [{ id: "finance", name: "Finance", workspaceKeys: [] }],
+      },
+    });
+
+    expect(Object.keys(migrated.workspaceSectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(migrated.workspaceSectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Finance" }]);
+  });
+
+  it("keeps later section writes on the exact project view key", () => {
+    const store = useSidebarOrderStore.getState();
+    store.createWorkspaceSection(PROJECT_KEY, "Finance");
+    const sectionId =
+      useSidebarOrderStore.getState().workspaceSectionsByProject[PROJECT_KEY]?.[0]?.id;
+    expect(sectionId).toBeDefined();
+
+    useSidebarOrderStore.getState().renameWorkspaceSection(PROJECT_KEY, sectionId ?? "", "Renamed");
+
+    const sectionsByProject = useSidebarOrderStore.getState().workspaceSectionsByProject;
+    expect(Object.keys(sectionsByProject)).toEqual([PROJECT_KEY]);
+    expect(sectionsByProject[PROJECT_KEY]).toMatchObject([{ name: "Renamed" }]);
   });
 });
 
@@ -100,6 +170,7 @@ it("preserves project, pinned and ordinary workspace order", () => {
     projectOrder: ["b", "a"],
     pinnedWorkspaceOrder: ["h:y", "h:x"],
     workspaceOrderByProject: { a: ["h:old", "h:new"] },
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -114,6 +185,7 @@ it("preserves whitespace in current project and pin identities during upgrade", 
     projectOrder: ["project "],
     pinnedWorkspaceOrder: ["host:workspace "],
     workspaceOrderByProject: {},
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -128,6 +200,7 @@ it("retains a pre-beta manual order when upgrading", () => {
     projectOrder: ["project"],
     pinnedWorkspaceOrder: [],
     workspaceOrderByProject: { project: ["host:b", "host:a"] },
+    workspaceSectionsByProject: {},
   });
 });
 
@@ -136,6 +209,7 @@ it("starts with an empty manual order for beta users whose order was discarded",
     projectOrder: ["p"],
     pinnedWorkspaceOrder: ["h:a"],
     workspaceOrderByProject: {},
+    workspaceSectionsByProject: {},
   });
 });
 it("preserves spaces in saved workspace scopes and identities", () => {

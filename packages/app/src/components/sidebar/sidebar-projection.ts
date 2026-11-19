@@ -8,8 +8,10 @@ import {
 import type {
   SidebarProjectEntry,
   SidebarWorkspaceEntry,
+  SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import type { SidebarWorkspaceSection } from "@/stores/sidebar-order-store";
 import {
   resolveSidebarProjectIconTargets,
   type SidebarProjectIconTarget,
@@ -24,6 +26,7 @@ import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-lab
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
   workspaceGroups: SidebarWorkspaceGroup[];
+  projectSections: Map<string, SidebarProjectWorkspaceSection[]>;
   /**
    * The project icons this projection needs fetched, keyed by `projectViewKey` — one per project,
    * whatever the mode groups by. It sits here rather than beside `useProjectIcons` in the list
@@ -36,6 +39,13 @@ export interface SidebarProjection {
   shortcutModel: SidebarShortcutModel;
 }
 
+export interface SidebarProjectWorkspaceSection {
+  id: string | null;
+  name: string | null;
+  collapseKey: string;
+  workspaces: SidebarWorkspacePlacement[];
+}
+
 export interface SidebarProjectionInput {
   projects: SidebarProjectEntry[];
   pinnedKeys: PinnedSidebarKeys;
@@ -46,6 +56,13 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  collapsedWorkspaceSectionKeys: ReadonlySet<string>;
+  workspaceSectionsByProject: Readonly<Record<string, SidebarWorkspaceSection[]>>;
+  /**
+   * Sections order their own rows only while the sidebar is on manual sort. Every other sort order
+   * belongs to the project, so a section shows its workspaces in the order the project already has.
+   */
+  manualSort: boolean;
   t: TFunction;
 }
 
@@ -59,6 +76,11 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
     (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
   );
+  const projectSections = buildProjectSections({
+    projects: pinnedGroups.unpinnedProjects,
+    workspaceSectionsByProject: input.workspaceSectionsByProject,
+    manualSort: input.manualSort,
+  });
   // One switch decides both what the list groups by and what the keyboard shortcuts walk, so the
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent
   // fall-through to the project rows.
@@ -70,10 +92,14 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   }
   if (input.groupMode === "project") {
     sections.push(
-      ...pinnedGroups.unpinnedProjects.map((project) => ({
-        workspaces: project.workspaces,
-        collapsed: input.collapsedProjectKeys.has(project.viewKey),
-      })),
+      ...pinnedGroups.unpinnedProjects.flatMap((project) => {
+        const projectCollapsed = input.collapsedProjectKeys.has(project.viewKey);
+        return (projectSections.get(project.viewKey) ?? []).map((section) => ({
+          workspaces: section.workspaces,
+          collapsed:
+            projectCollapsed || input.collapsedWorkspaceSectionKeys.has(section.collapseKey),
+        }));
+      }),
     );
   } else {
     sections.push(
@@ -87,9 +113,63 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   return {
     pinnedGroups,
     workspaceGroups,
+    projectSections,
     projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
     shortcutModel: buildSidebarShortcutSections({ sections }),
   };
+}
+
+function buildProjectSections(input: {
+  projects: PinnedSidebarGroups["unpinnedProjects"];
+  workspaceSectionsByProject: Readonly<Record<string, SidebarWorkspaceSection[]>>;
+  manualSort: boolean;
+}): Map<string, SidebarProjectWorkspaceSection[]> {
+  const projectSections = new Map<string, SidebarProjectWorkspaceSection[]>();
+
+  for (const project of input.projects) {
+    const workspacesByKey = new Map(
+      project.workspaces.map((workspace) => [workspace.workspaceKey, workspace]),
+    );
+    const projectOrderByKey = new Map(
+      project.workspaces.map((workspace, index) => [workspace.workspaceKey, index]),
+    );
+    const assignedWorkspaceKeys = new Set<string>();
+    const sections = (input.workspaceSectionsByProject[project.viewKey] ?? []).map((section) => {
+      const sectionWorkspaceKeys = input.manualSort
+        ? section.workspaceKeys
+        : [...section.workspaceKeys].sort(
+            (left, right) =>
+              (projectOrderByKey.get(left) ?? Number.MAX_SAFE_INTEGER) -
+              (projectOrderByKey.get(right) ?? Number.MAX_SAFE_INTEGER),
+          );
+      const workspaces = sectionWorkspaceKeys.flatMap((workspaceKey) => {
+        const workspace = workspacesByKey.get(workspaceKey);
+        if (!workspace || assignedWorkspaceKeys.has(workspaceKey)) return [];
+        assignedWorkspaceKeys.add(workspaceKey);
+        return [workspace];
+      });
+      return {
+        id: section.id,
+        name: section.name,
+        collapseKey: `${project.viewKey}::${section.id}`,
+        workspaces,
+      };
+    });
+    const unsectionedWorkspaces = project.workspaces.filter(
+      (workspace) => !assignedWorkspaceKeys.has(workspace.workspaceKey),
+    );
+    projectSections.set(project.viewKey, [
+      ...sections,
+      {
+        id: null,
+        name: null,
+        collapseKey: `${project.viewKey}::unsectioned`,
+        workspaces: unsectionedWorkspaces,
+      },
+    ]);
+  }
+
+  return projectSections;
 }
 
 /** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
