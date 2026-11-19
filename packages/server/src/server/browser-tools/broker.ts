@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
@@ -7,11 +7,17 @@ import {
   type BrowserAutomationExecuteRequest,
   type BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
+import {
+  browserToolsFailure,
+  type BrowserHostTarget,
+  type BrowserToolsResponsePayload,
+} from "./errors.js";
 
 export interface BrowserHostClient {
   id: string;
   hostKind: string;
+  label?: string;
+  instanceId?: string;
   supportedCommands: readonly BrowserAutomationCommandName[];
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
@@ -23,10 +29,11 @@ export interface BrowserToolsExecuteInput {
   workspaceId?: string;
   requestId?: string;
   timeoutMs?: number;
+  browserHostId?: string;
 }
 
 interface PendingBrowserToolsRequest {
-  clientId: string;
+  host: RegisteredBrowserHost;
   rememberAffinity: boolean;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (payload: BrowserToolsResponsePayload) => void;
@@ -34,9 +41,14 @@ interface PendingBrowserToolsRequest {
 
 interface RegisteredBrowserHost {
   client: BrowserHostClient;
+  target: BrowserHostTarget;
   registeredAt: number;
   supportedCommands: ReadonlySet<BrowserAutomationCommandName>;
 }
+
+type HostSelection =
+  | { ok: true; value: RegisteredBrowserHost }
+  | { ok: false; payload: BrowserToolsResponsePayload };
 
 export interface BrowserToolsBrokerOptions {
   defaultTimeoutMs?: number;
@@ -51,7 +63,7 @@ export class BrowserToolsBroker {
   private readonly clients = new Map<string, RegisteredBrowserHost>();
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
-  private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
+  private readonly hostIdKey = randomBytes(32);
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -60,35 +72,36 @@ export class BrowserToolsBroker {
   }
 
   public registerClient(client: BrowserHostClient): () => void {
-    this.unregisterClient(client.id);
+    // The discovery ID must not allow another connection to claim this window.
+    const browserHostId = createHmac("sha256", this.hostIdKey)
+      .update(client.instanceId ? `instance:${client.instanceId}` : `connection:${client.id}`)
+      .digest("hex");
+    this.unregisterHost(browserHostId);
     const registeredAt = ++this.registrationSequence;
-    this.clients.set(client.id, {
+    const label = client.label?.trim() || `${client.hostKind} · Connection ${registeredAt}`;
+    const supportedCommands = new Set(client.supportedCommands);
+    this.clients.set(browserHostId, {
       client,
+      target: Object.freeze({
+        browserHostId,
+        label,
+        canOpenTabs: supportedCommands.has("new_tab"),
+      }),
       registeredAt,
-      supportedCommands: new Set(client.supportedCommands),
+      supportedCommands,
     });
-    return () => this.unregisterClient(client.id, registeredAt);
+    return () => this.unregisterHost(browserHostId, registeredAt);
   }
 
-  public unregisterClient(clientId: string, registeredAt?: number): void {
-    const current = this.clients.get(clientId);
+  private unregisterHost(browserHostId: string, registeredAt?: number): void {
+    const current = this.clients.get(browserHostId);
     if (!current || (registeredAt !== undefined && current.registeredAt !== registeredAt)) {
       return;
     }
-    this.clients.delete(clientId);
-
-    for (const [browserId, ownerClientId] of this.browserHostByBrowserId) {
-      if (ownerClientId !== clientId) {
-        continue;
-      }
-      this.browserHostByBrowserId.delete(browserId);
-      this.strandedBrowserHostByBrowserId.set(browserId, clientId);
-    }
+    this.clients.delete(browserHostId);
 
     for (const [requestId, pending] of this.pending) {
-      if (pending.clientId !== clientId) {
-        continue;
-      }
+      if (pending.host !== current) continue;
       this.pending.delete(requestId);
       clearTimeout(pending.timeout);
       pending.resolve(
@@ -108,6 +121,10 @@ export class BrowserToolsBroker {
 
   public getRegisteredClientCount(): number {
     return this.clients.size;
+  }
+
+  public listBrowserHosts(): BrowserHostTarget[] {
+    return Array.from(this.clients.values(), ({ target }) => target);
   }
 
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
@@ -137,7 +154,11 @@ export class BrowserToolsBroker {
       });
     }
 
-    const host = this.selectHostForCommand(request.data.command, requestId);
+    const command = request.data.command;
+    const host =
+      command.command === "new_tab"
+        ? this.selectHostForNewTab(requestId, input.browserHostId)
+        : this.selectHostForTab(command.args.browserId, requestId);
     if (!host.ok) {
       return host.payload;
     }
@@ -170,7 +191,7 @@ export class BrowserToolsBroker {
       }
 
       const pending = this.pending.get(requestId);
-      if (!pending || (clientIds && !clientIds.includes(pending.clientId))) {
+      if (!pending || (clientIds && !clientIds.includes(pending.host.client.id))) {
         return false;
       }
 
@@ -187,16 +208,16 @@ export class BrowserToolsBroker {
     }
 
     const pending = this.pending.get(parsed.data.payload.requestId);
-    if (!pending || (clientIds && !clientIds.includes(pending.clientId))) {
+    if (!pending || (clientIds && !clientIds.includes(pending.host.client.id))) {
       return false;
     }
 
     this.pending.delete(parsed.data.payload.requestId);
     clearTimeout(pending.timeout);
-    if (pending.rememberAffinity) {
-      this.rememberBrowserHostForPayload(pending.clientId, parsed.data.payload);
+    if (pending.rememberAffinity && parsed.data.payload.ok) {
+      this.rememberBrowserHostForPayload(pending.host.target.browserHostId, parsed.data.payload);
     }
-    pending.resolve(parsed.data.payload);
+    pending.resolve(attachBrowserHost(parsed.data.payload, pending.host.target));
     return true;
   }
 
@@ -249,7 +270,9 @@ export class BrowserToolsBroker {
     }
 
     for (const { host, payload } of hostResponses) {
-      this.rememberBrowserHostForPayload(host.client.id, payload);
+      if (payload.ok && this.clients.get(host.target.browserHostId) === host) {
+        this.rememberBrowserHostForPayload(host.target.browserHostId, payload);
+      }
     }
 
     return {
@@ -264,63 +287,60 @@ export class BrowserToolsBroker {
     };
   }
 
-  private selectHostForCommand(
-    command: BrowserAutomationCommand,
-    requestId: string,
-  ):
-    | { ok: true; value: RegisteredBrowserHost }
-    | { ok: false; payload: BrowserToolsResponsePayload } {
-    if (command.command === "new_tab") {
-      const host = this.selectMostRecentlyRegisteredHost();
-      return host
-        ? { ok: true, value: host }
-        : { ok: false, payload: this.noBrowserHostFailure(requestId) };
-    }
-
-    const browserId = getBrowserIdForCommand(command);
-    if (!browserId) {
-      const host = this.selectMostRecentlyRegisteredHost();
-      return host
-        ? { ok: true, value: host }
-        : { ok: false, payload: this.noBrowserHostFailure(requestId) };
-    }
-
-    const ownerClientId = this.browserHostByBrowserId.get(browserId);
-    if (ownerClientId) {
-      const host = this.clients.get(ownerClientId);
-      if (host) {
-        return { ok: true, value: host };
-      }
+  private selectHostForNewTab(requestId: string, browserHostId: string | undefined): HostSelection {
+    if (browserHostId !== undefined) {
+      const host = this.clients.get(browserHostId);
+      if (host) return { ok: true, value: host };
       return {
         ok: false,
-        payload: this.strandedBrowserTabFailure({ requestId, browserId }),
+        payload: browserToolsFailure({
+          requestId,
+          code: "browser_no_host",
+          message:
+            "The selected browser host is not connected. Call browser_list_hosts to choose a connected host.",
+        }),
       };
     }
 
-    const strandedOwnerClientId = this.strandedBrowserHostByBrowserId.get(browserId);
-    if (strandedOwnerClientId) {
-      const reconnectedHost = this.clients.get(strandedOwnerClientId);
-      if (reconnectedHost) {
-        this.strandedBrowserHostByBrowserId.delete(browserId);
-        this.browserHostByBrowserId.set(browserId, strandedOwnerClientId);
-        return { ok: true, value: reconnectedHost };
-      }
+    if (this.clients.size === 0)
+      return { ok: false, payload: this.noBrowserHostFailure(requestId) };
+    const eligible = Array.from(this.clients.values()).filter(({ target }) => target.canOpenTabs);
+    if (eligible.length === 1) return { ok: true, value: eligible[0] };
+    if (eligible.length === 0) {
       return {
         ok: false,
-        payload: this.strandedBrowserTabFailure({ requestId, browserId }),
+        payload: browserToolsFailure({
+          requestId,
+          code: "browser_unsupported",
+          message: "None of the connected browser hosts support opening tabs.",
+        }),
       };
     }
+    return {
+      ok: false,
+      payload: browserToolsFailure({
+        requestId,
+        code: "browser_host_ambiguous",
+        message: "Choose a browser host and retry with its browserHostId.",
+        browserHosts: eligible.map(({ target }) => target),
+      }),
+    };
+  }
 
-    if (this.clients.size === 1) {
-      const host = this.selectMostRecentlyRegisteredHost();
-      if (host) {
-        return { ok: true, value: host };
-      }
+  private selectHostForTab(browserId: string, requestId: string): HostSelection {
+    const browserHostId = this.browserHostByBrowserId.get(browserId);
+    if (browserHostId) {
+      const host = this.clients.get(browserHostId);
+      return host
+        ? { ok: true, value: host }
+        : { ok: false, payload: this.strandedBrowserTabFailure({ requestId, browserId }) };
     }
 
-    if (this.clients.size === 0) {
+    const firstHost = this.clients.values().next().value;
+    if (!firstHost) {
       return { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
+    if (this.clients.size === 1) return { ok: true, value: firstHost };
 
     return {
       ok: false,
@@ -330,14 +350,6 @@ export class BrowserToolsBroker {
         message: `Browser tab ${browserId} is not associated with a connected browser automation host. Call browser_list_tabs and use one of the returned browserId values.`,
       }),
     };
-  }
-
-  private selectMostRecentlyRegisteredHost(): RegisteredBrowserHost | null {
-    let selected: RegisteredBrowserHost | null = null;
-    for (const host of this.clients.values()) {
-      selected = host;
-    }
-    return selected;
   }
 
   private unsupportedCommandFailure(params: {
@@ -377,30 +389,23 @@ export class BrowserToolsBroker {
   }
 
   private rememberBrowserHostForPayload(
-    clientId: string,
-    payload: BrowserToolsResponsePayload,
+    browserHostId: string,
+    payload: Extract<BrowserAutomationExecuteResponse["payload"], { ok: true }>,
   ): void {
-    if (!payload.ok) {
-      return;
-    }
-
     if (payload.result.command === "list_tabs") {
       for (const tab of payload.result.tabs) {
-        this.browserHostByBrowserId.set(tab.browserId, clientId);
-        this.strandedBrowserHostByBrowserId.delete(tab.browserId);
+        this.browserHostByBrowserId.set(tab.browserId, browserHostId);
       }
       return;
     }
 
     if (payload.result.command === "close_tab") {
       this.browserHostByBrowserId.delete(payload.result.browserId);
-      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
       return;
     }
 
     if ("browserId" in payload.result) {
-      this.browserHostByBrowserId.set(payload.result.browserId, clientId);
-      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      this.browserHostByBrowserId.set(payload.result.browserId, browserHostId);
     }
   }
 
@@ -429,7 +434,7 @@ export class BrowserToolsBroker {
       }, timeoutMs);
 
       this.pending.set(request.requestId, {
-        clientId: client.id,
+        host,
         rememberAffinity: params.rememberAffinity ?? true,
         timeout,
         resolve,
@@ -458,11 +463,20 @@ export class BrowserToolsBroker {
   }
 }
 
-function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
-  if (command.command === "list_tabs" || command.command === "new_tab") {
-    return null;
+function attachBrowserHost(
+  payload: BrowserAutomationExecuteResponse["payload"],
+  target: BrowserHostTarget,
+): BrowserToolsResponsePayload {
+  if (!payload.ok) return payload;
+  const result = payload.result;
+  if (result.command === "new_tab") {
+    return { ...payload, result: { ...result, browserHost: target } };
   }
-  return command.args.browserId;
+  if (result.command === "list_tabs") {
+    const tabs = result.tabs.map((tab) => ({ ...tab, browserHost: target }));
+    return { ...payload, result: { ...result, tabs } };
+  }
+  return { ...payload, result };
 }
 
 function describeBrowserHost(host: RegisteredBrowserHost): string {
