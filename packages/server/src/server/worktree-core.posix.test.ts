@@ -1526,6 +1526,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.intent).toEqual({
         kind: "branch-off",
         baseBranch: "refs/remotes/origin/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
         branchName: "follow-up",
       });
       expect(result.worktree.branchName).toBe("follow-up");
@@ -1535,6 +1536,69 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         "refs/remotes/origin/daemon-shutdown-diagnostics",
       );
       expect(git(repoDir, "branch", "--list", "daemon-shutdown-diagnostics")).toBe("");
+    });
+
+    test("branches off a same-repo pull request in a clone whose origin is a fork", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The layout a fork clone has: upstream is the base repository, origin is the fork, and
+      // the fork has an older branch with the pull request's branch name.
+      const forkDir = path.join(tempDir, "fork.git");
+      execFileSync("git", ["clone", "--bare", remoteDir, forkDir], { stdio: "pipe" });
+      execFileSync("git", [
+        `--git-dir=${forkDir}`,
+        "update-ref",
+        "refs/heads/daemon-shutdown-diagnostics",
+        "refs/heads/main",
+      ]);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "add", "origin", forkDir], { cwd: repoDir, stdio: "pipe" });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+          // As the GitHub service lists them: origin first, then upstream.
+          checkoutRefs: [
+            { remoteName: "origin", remoteRef: "refs/pull/1790/head" },
+            { remoteName: "upstream", remoteRef: "refs/pull/1790/head" },
+          ],
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
+        branchName: "follow-up",
+      });
     });
 
     test("branches off a fork pull request's head without checking it out", async () => {

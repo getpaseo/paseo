@@ -353,6 +353,10 @@ export function createHostResolver(input: {
           async createWorkspace(args) {
             const isolation = z.enum(["local", "worktree"]).parse(args.isolation);
             const path = z.string().min(1).parse(args.path);
+            if (args.mode === "branch-off" && args.prNumber !== undefined) {
+              // As on the local host: branching off a pull request is the app's, not this tool's.
+              throw new Error("branch, prNumber, and forge require a checkout mode");
+            }
             const response = await client.createWorkspace({
               source:
                 isolation === "local"

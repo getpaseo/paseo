@@ -145,17 +145,18 @@ export async function resolveWorktreeCreationIntent(
 
 /**
  * Fetches a change request's head, so a new branch can start from it without checking the change
- * request out. A same-repository head lands where `git fetch` puts the branch and is the new
- * branch's base, so its pull request stacks on the change request. A fork's head is not a branch
- * of this repository, so the new branch starts from it and its base is the change request's base.
- * That head lands outside `refs/remotes`, which base branch pickers list.
+ * request out. The head lands outside `refs/remotes`, which base branch pickers list. The remote
+ * that serves the change request is the repository it merges into, which is `upstream` in a fork
+ * clone. The base comes from that remote: a same-repository change request's own branch, so its
+ * pull request stacks on the change request, or a fork's target branch, since the fork's branch is
+ * not in this repository.
  */
 async function fetchChangeRequestHead(params: {
   input: ResolveWorktreeCreationIntentInput;
   changeRequest: { number: number; forge?: string };
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
-}): Promise<{ baseBranch: string; startPoint?: string }> {
+}): Promise<{ baseBranch: string; startPoint: string }> {
   const { input, changeRequest, repoRoot, deps } = params;
   assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
   const checkout = await resolvePrCheckoutIntent({
@@ -164,30 +165,25 @@ async function fetchChangeRequestHead(params: {
     repoRoot,
     deps,
   });
-  if (checkout.trackOriginHead) {
-    const destination = `refs/remotes/origin/${checkout.headRef}`;
-    await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination });
-    return { baseBranch: destination };
-  }
   const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
-  const baseRemote = await deps.fetchRef({
+  const remote = await deps.fetchRef({
     repoRoot,
     sources: checkout.checkoutRefs,
     destination: startPoint,
   });
-  // The remote that serves the change request is the repository it merges into. Its base is
-  // compared as that remote has it, not as a local branch last pulled.
-  const baseBranch = `refs/remotes/${baseRemote}/${checkout.baseRefName}`;
+  const baseName = checkout.trackOriginHead ? checkout.headRef : checkout.baseRefName;
+  const baseBranch = `refs/remotes/${remote}/${baseName}`;
   try {
+    // Compared as the remote has it, not as a local branch last pulled.
     await deps.fetchRef({
       repoRoot,
-      sources: [{ remoteName: baseRemote, remoteRef: `refs/heads/${checkout.baseRefName}` }],
+      sources: [{ remoteName: remote, remoteRef: `refs/heads/${baseName}` }],
       destination: baseBranch,
     });
     return { baseBranch, startPoint };
   } catch {
     // Without the remote's copy, the base resolves as any base branch name does.
-    return { baseBranch: checkout.baseRefName, startPoint };
+    return { baseBranch: baseName, startPoint };
   }
 }
 

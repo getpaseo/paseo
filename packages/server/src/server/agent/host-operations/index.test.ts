@@ -218,3 +218,17 @@ test("a remote worktree without a mode or pull request branches off", async () =
     action: "branch-off",
   });
 });
+
+test("a remote worktree that branches off a pull request is refused, as on the local host", async () => {
+  const { client, socket } = await olderHost();
+
+  await expect(
+    resolverFor(client, null).use("srv_older", (host) =>
+      host.createWorkspace(
+        { isolation: "worktree", path: "/repo/older", mode: "branch-off", prNumber: 42 },
+        {} as never,
+      ),
+    ),
+  ).rejects.toThrow("branch, prNumber, and forge require a checkout mode");
+  expect(socket.requests.map((request) => request.type)).not.toContain("workspace.create.request");
+});
