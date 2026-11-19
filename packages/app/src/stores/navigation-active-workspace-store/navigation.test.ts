@@ -77,6 +77,16 @@ describe("workspace navigation", () => {
     expect(revealed).toEqual([null]);
   });
 
+  it("returns to the sidebar without revealing workspace content first", () => {
+    const surfaces: (string | undefined)[] = [];
+    const { deps, navigations } = createFakeDeps({
+      revealWorkspace: (_workspaceKey, surface) => surfaces.push(surface),
+    });
+    navigateToWorkspace({ serverId: "server", workspaceId: "workspace", surface: "sidebar" }, deps);
+    expect(surfaces).toEqual(["sidebar"]);
+    expect(navigations).toEqual(["/h/server/workspace/workspace"]);
+  });
+
   it("reveals an explicit target after opening instead of forcing center", () => {
     const workspace = { id: "workspace" } as WorkspaceDescriptor;
     const { deps, revealed } = createFakeDeps({
@@ -143,6 +153,22 @@ describe("workspace navigation", () => {
         pin: false,
       },
     ]);
+  });
+
+  it("carries a request for a tab through a deferred open", () => {
+    const { deps, deferredTabs } = createFakeDeps({ getSessionWorkspaces: () => new Map() });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        asTab: true,
+      },
+      deps,
+    );
+
+    expect(deferredTabs[0]).toMatchObject({ asTab: true });
   });
 
   it("defers an agent tab until a missing workspace is recovered", () => {

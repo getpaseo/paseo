@@ -6,6 +6,7 @@ import {
   stat as statFile,
   mkdtemp,
   copyFile,
+  utimes,
   realpath,
   access,
   rm,
@@ -40,7 +41,7 @@ import {
 } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
-import { readGitFileContents } from "./git-file-contents.js";
+import { readGitFileContents, readGitFileContentAtRef } from "./git-file-contents.js";
 import { unquoteGitPath } from "./git-quoted-path.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
@@ -152,8 +153,12 @@ function createShortstatCache(ttlMs: number) {
   });
 }
 
-function getPullRequestStatusCacheKey(cwd: string, headSha: string | null): string {
-  return `${resolve(cwd)}\u0000${headSha ?? ""}`;
+function getPullRequestStatusCacheKey(
+  cwd: string,
+  currentBranch: string | null,
+  headSha: string | null,
+): string {
+  return `${resolve(cwd)}\u0000${currentBranch ?? ""}\u0000${headSha ?? ""}`;
 }
 
 function rememberPullRequestStatus(cacheKey: string, status: PullRequestStatusResult): void {
@@ -613,22 +618,6 @@ async function listCheckoutFileChanges(
   return Array.from(byPath.values());
 }
 
-async function readGitFileContentAtRef(
-  cwd: string,
-  ref: string,
-  path: string,
-): Promise<string | null> {
-  try {
-    const { stdout } = await runGitCommand(["show", `${ref}:${path}`], {
-      cwd,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    return stdout;
-  } catch {
-    return null;
-  }
-}
-
 async function tryResolveMergeBase(cwd: string, baseRef: string): Promise<string | null> {
   try {
     const { stdout } = await runGitCommand(["merge-base", baseRef, "HEAD"], {
@@ -669,7 +658,12 @@ function normalizeNumstatPath(pathField: string): string {
 }
 
 // Parsed patches need a stable wire format regardless of terminal presentation settings.
-const GIT_PATCH_FORMAT_ARGS = ["--no-ext-diff", "--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
+export const GIT_PATCH_FORMAT_ARGS = [
+  "--no-ext-diff",
+  "--no-color",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+] as const;
 
 function buildGitDiffArgs(args: { ignoreWhitespace?: boolean; extra: string[] }): string[] {
   return [
@@ -906,6 +900,7 @@ export interface CheckoutStatusGitNonPaseo {
   isDirty: boolean;
   baseRef: string | null;
   baseRefExact?: string | null;
+  comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   // Remote-tracking ref for currentBranch, e.g. "refs/remotes/origin/main". Null when the
   // branch has no upstream or git could not resolve it. aheadOfOrigin/behindOfOrigin are
@@ -926,6 +921,7 @@ export interface CheckoutStatusGitPaseo {
   isDirty: boolean;
   baseRef: string;
   baseRefExact?: string | null;
+  comparisonBaseRef?: string | null;
   aheadBehind: AheadBehind | null;
   upstreamRef: string | null;
   aheadOfOrigin: number | null;
@@ -1422,12 +1418,17 @@ function resolveOperationBaseRef(input: {
   return input.storedBaseRef ?? input.requestedBaseRef ?? input.resolvedBaseRef;
 }
 
+// Untracked files count whatever `status.showUntrackedFiles` says: archive warns from this before
+// it removes a worktree, and a file nobody added yet is still work to lose.
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
-  const { stdout } = await getRunGitCommand(context)(["status", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-    logger: context?.logger,
-  });
+  const { stdout } = await getRunGitCommand(context)(
+    ["status", "--porcelain", "--untracked-files=normal"],
+    {
+      cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
+      logger: context?.logger,
+    },
+  );
   return stdout.trim().length > 0;
 }
 
@@ -1686,10 +1687,10 @@ export async function resolveRepositoryDefaultBranch(
     // A stale origin/HEAD must fall through to the available local branches.
   }
 
-  const { stdout } = await getRunGitCommand(context)(["branch", "--format=%(refname:short)"], {
-    cwd: repoRoot,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const { stdout } = await getRunGitCommand(context)(
+    ["branch", "--list", "--format=%(refname:short)", "main", "master"],
+    { cwd: repoRoot, envOverlay: READ_ONLY_GIT_ENV },
+  );
   const branches = new Set(
     stdout
       .split("\n")
@@ -1748,6 +1749,24 @@ function isQualifiedBranchRef(ref: string): boolean {
   return ref.startsWith("refs/heads/") || ref.startsWith("refs/remotes/");
 }
 
+async function resolveCommitComparisonRef(
+  cwd: string,
+  name: string,
+  context?: CheckoutContext,
+): Promise<string> {
+  await getRunGitCommand(context)(["rev-parse", "--verify", `${name}^{commit}`], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
+  const result = await getRunGitCommand(context)(["rev-parse", "--symbolic-full-name", name], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    logger: context?.logger,
+  });
+  return result.stdout.trim() || name;
+}
+
 async function resolveBestComparisonBaseRef(
   cwd: string,
   baseRef: string,
@@ -1774,11 +1793,17 @@ async function resolveBestComparisonBaseRef(
     return normalized.localName;
   }
 
-  const refName =
-    baseRef.startsWith("origin/") || baseRef.startsWith("refs/remotes/origin/")
-      ? normalized.originRef
-      : normalized.localName;
-  throw new Error(`Base branch not found locally or on origin: ${refName}`);
+  return resolveCommitComparisonRef(cwd, baseRef, context);
+}
+
+async function resolveQualifiedComparisonBaseRef(
+  cwd: string,
+  baseRef: string,
+  context: CheckoutContext,
+): Promise<string> {
+  const comparison = context.facts?.isGit ? context.facts.comparisonBaseRef : null;
+  const ref = comparison ?? (await resolveBestComparisonBaseRef(cwd, baseRef, context));
+  return resolveCommitComparisonRef(cwd, ref, context);
 }
 
 async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<string> {
@@ -1801,7 +1826,7 @@ async function resolveMostAheadBaseRef(cwd: string, baseRef: string): Promise<st
     return `origin/${normalizedBaseRef}`;
   }
   if (!hasLocal && !hasOrigin) {
-    throw new Error(`Base branch not found locally or on origin: ${normalizedBaseRef}`);
+    return resolveCommitComparisonRef(cwd, baseRef);
   }
 
   const { stdout } = await runGitCommand(
@@ -2239,8 +2264,8 @@ export async function getCheckoutSnapshotFacts(
   };
 }
 
-const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
-const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
+export const PER_FILE_DIFF_MAX_BYTES = 1024 * 1024; // 1MB
+export const TOTAL_DIFF_MAX_BYTES = 2 * 1024 * 1024; // 2MB
 const CHECKOUT_DIFF_FRAME_HEADROOM_BYTES = 1024 * 1024;
 // Temporary until diffs load lazily per file. The Paseo relay's 32 MiB frame limit is
 // binding: string frames are encrypted and base64-encoded. Reserve 1 MiB plaintext for
@@ -2301,7 +2326,7 @@ async function isLikelyBinaryFile(absolutePath: string): Promise<boolean> {
   }
 }
 
-async function inspectUntrackedFile(
+export async function inspectUntrackedFile(
   cwd: string,
   relativePath: string,
 ): Promise<{ stat: FileStat; truncated: boolean }> {
@@ -2399,6 +2424,10 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
+  // Ref-derived counts skip the current base branch; the diff consumer still needs its ref.
+  const comparisonBaseRef = baseRef
+    ? await resolveQualifiedComparisonBaseRef(cwd, baseRef, factsContext).catch(() => null)
+    : null;
   const aheadBehind =
     baseRef && currentBranch
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
@@ -2421,6 +2450,7 @@ export async function getCheckoutStatus(
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
+      comparisonBaseRef,
       aheadBehind,
       upstreamRef,
       aheadOfOrigin,
@@ -2440,6 +2470,7 @@ export async function getCheckoutStatus(
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,
+    comparisonBaseRef,
     aheadBehind,
     upstreamRef,
     aheadOfOrigin,
@@ -2804,6 +2835,7 @@ async function readCommitRenames(cwd: string, sha: string): Promise<ReadonlyMap<
  * binary-only (no textual hunks). Throws on git failure (e.g. an unknown sha),
  * which the caller maps to a typed checkout error.
  */
+// COMPAT(diffSubscription): added in v0.15.0, remove after 2027-05-06.
 export async function getCommitFileDiff({
   cwd,
   sha,
@@ -3570,6 +3602,21 @@ async function resolveCheckoutDiffRefs(
   if (compare.mode === "uncommitted") {
     return { baseRef: "HEAD", includeUntracked: true };
   }
+  const bestBaseRef = await resolveCheckoutDiffBase(cwd, compare, context);
+  if (!bestBaseRef) return null;
+  return {
+    baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
+    targetRef: compare.mode === "base" ? "HEAD" : undefined,
+    includeUntracked: compare.mode === "all",
+  };
+}
+
+export async function resolveCheckoutDiffBase(
+  cwd: string,
+  compare: CheckoutDiffCompare,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  if (compare.mode === "uncommitted") return "HEAD";
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
   const baseRef = resolveOperationBaseRef({
     storedBaseRef,
@@ -3579,17 +3626,12 @@ async function resolveCheckoutDiffRefs(
   if (!baseRef) {
     return null;
   }
-  const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
-  return {
-    baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
-    targetRef: compare.mode === "base" ? "HEAD" : undefined,
-    includeUntracked: compare.mode === "all",
-  };
+  return resolveBestComparisonBaseRef(cwd, baseRef);
 }
 
 // Git's working-tree diff ignores files absent from the index, even when they
 // exist in the comparison tree. Restore those entries only in a private index.
-async function prepareAllChangesIndex(cwd: string, baseRef: string) {
+export async function prepareAllChangesIndex(cwd: string, baseRef: string) {
   const untracked = await runGitCommand(["ls-files", "-z", "--others", "--exclude-standard"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
@@ -3612,21 +3654,49 @@ async function prepareAllChangesIndex(cwd: string, baseRef: string) {
     entries += result.stdout;
   }
   if (!entries) return null;
-  const directory = await mkdtemp(resolve(tmpdir(), "paseo-all-changes-"));
+  const snapshot = await snapshotComparisonIndex(cwd);
+  try {
+    await runGitCommand(["update-index", "-z", "--index-info"], {
+      cwd,
+      input: entries,
+      envOverlay: { ...READ_ONLY_GIT_ENV, GIT_INDEX_FILE: snapshot.indexFile },
+    });
+    return snapshot;
+  } catch (error) {
+    await snapshot.cleanup();
+    throw error;
+  }
+}
+
+// write-tree rewrites its index. A private snapshot prevents an index read from
+// invalidating the observation that requested it.
+//
+// Git re-reads a file whose stat matches its index entry only when the entry is
+// not older than the index file ("racy git"). A fresh copy would be newer than
+// every entry, so a same-size edit made in the tick the index was written would
+// read as unchanged. The copy takes the source's mtime, read before copying and
+// rounded down to the second, so it is never later than the source.
+export async function snapshotComparisonIndex(cwd: string) {
+  const directory = await mkdtemp(resolve(tmpdir(), "paseo-comparison-index-"));
   const indexFile = resolve(directory, "index");
   try {
     const index = await runGitCommand(["rev-parse", "--git-path", "index"], {
       cwd,
       envOverlay: READ_ONLY_GIT_ENV,
     });
-    const indexPath = resolveGitRevParsePath(cwd, index.stdout);
-    if (!indexPath) throw new Error("Git did not return an index path");
-    await copyFile(indexPath, indexFile);
-    await runGitCommand(["update-index", "-z", "--index-info"], {
-      cwd,
-      input: entries,
-      envOverlay: { ...READ_ONLY_GIT_ENV, GIT_INDEX_FILE: indexFile },
-    });
+    const source = resolveGitRevParsePath(cwd, index.stdout);
+    if (!source) throw new Error("Git did not return an index path");
+    try {
+      const { atime, mtimeMs } = await statFile(source);
+      await copyFile(source, indexFile);
+      await utimes(indexFile, atime, Math.floor(mtimeMs / 1000));
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+      await runGitCommand(["read-tree", "--empty"], {
+        cwd,
+        envOverlay: { ...READ_ONLY_GIT_ENV, GIT_INDEX_FILE: indexFile },
+      });
+    }
     return { indexFile, cleanup: () => rm(directory, { recursive: true, force: true }) };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
@@ -4371,8 +4441,11 @@ export async function getPullRequestStatus(
   options?: CheckoutReadCacheOptions,
   context?: CheckoutContext,
 ): Promise<PullRequestStatusResult> {
-  const headSha = await getCurrentHeadSha(cwd, context);
-  const cacheKey = getPullRequestStatusCacheKey(cwd, headSha);
+  const [headSha, head] = await Promise.all([
+    getCurrentHeadSha(cwd, context),
+    context?.facts?.isGit ? context.facts.currentBranch : getCurrentBranch(cwd, context),
+  ]);
+  const cacheKey = getPullRequestStatusCacheKey(cwd, head, headSha);
   if (!options?.force) {
     const cached = pullRequestStatusCache.get(cacheKey);
     if (cached) {
@@ -4385,7 +4458,7 @@ export async function getPullRequestStatus(
     }
   }
 
-  const lookup = getPullRequestStatusUncached(cwd, forgeService, options, context, headSha)
+  const lookup = getPullRequestStatusUncached(cwd, forgeService, head, options, context, headSha)
     .then((status) => {
       pullRequestStatusCache.set(cacheKey, status);
       rememberPullRequestStatus(cacheKey, status);
@@ -4411,6 +4484,7 @@ export async function getPullRequestStatus(
 async function getPullRequestStatusUncached(
   cwd: string,
   forgeService: ForgeService,
+  head: string | null,
   options?: CheckoutReadCacheOptions,
   context?: CheckoutContext,
   headSha?: string | null,
@@ -4420,18 +4494,16 @@ async function getPullRequestStatusUncached(
   if (!context?.facts?.isGit) {
     await requireGitRepo(cwd, context);
   }
-  const head = context?.facts?.isGit
-    ? context.facts.currentBranch
-    : await getCurrentBranch(cwd, context);
   if (!head) {
     return buildPullRequestStatusResult(null, "no_remote");
   }
   try {
     const resolvedLookupTarget = await resolvePullRequestStatusLookupTarget(cwd, head, context);
-    const lookupTarget =
-      headSha && !resolvedLookupTarget.headSha
-        ? { ...resolvedLookupTarget, headSha }
-        : resolvedLookupTarget;
+    const lookupTarget = {
+      ...resolvedLookupTarget,
+      ...(headSha && !resolvedLookupTarget.headSha ? { headSha } : {}),
+      ...(head !== resolvedLookupTarget.headRef ? { currentBranch: head } : {}),
+    };
     let status: CurrentPullRequestStatus | null;
     if (options?.force) {
       const reason = options.reason;

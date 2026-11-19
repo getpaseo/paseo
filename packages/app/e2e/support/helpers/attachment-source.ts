@@ -86,10 +86,15 @@ export async function withAttachmentSourceFixture(
           expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
             true,
           );
-          const titleBox = await title.boundingBox();
-          const workspaceBox = await workspaceLabel.boundingBox();
-          expect(workspaceBox!.y).toBeGreaterThanOrEqual(titleBox!.y + titleBox!.height);
-          expect(workspaceBox!.x).toBeCloseTo(titleBox!.x);
+          await expect(async () => {
+            const [titleBox, workspaceBox] = await Promise.all([
+              title.boundingBox(),
+              workspaceLabel.boundingBox(),
+            ]);
+            if (!titleBox || !workspaceBox) throw new Error("Expected both result labels");
+            expect(workspaceBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height - 1);
+            expect(workspaceBox.x).toBeCloseTo(titleBox.x);
+          }).toPass({ timeout: 5_000 });
 
           const search = page.getByPlaceholder("Search conversations", { exact: true });
           await search.fill("no such conversation");

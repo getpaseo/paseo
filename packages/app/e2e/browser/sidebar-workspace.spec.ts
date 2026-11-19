@@ -6,6 +6,7 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectOnlyWorkspaceHoverCardFor,
   expectWorkspaceHoverCardClosed,
   expectWorkspaceHoverCardOpen,
   expectWorkspaceHoverCardStaysOpen,
@@ -14,6 +15,7 @@ import {
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
   scrollWorkspaceList,
+  sweepPointerAcrossWorkspaceRows,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -78,6 +80,22 @@ async function openWorkspaceHoverCard(page: import("@playwright/test").Page, wor
   const hoverCard = page.getByRole("menu", { name: "Workspace scripts" });
   await expect(hoverCard).toBeVisible({ timeout: 30_000 });
   return hoverCard;
+}
+
+async function sortWorkspacesBySidebarOrder<T extends { workspaceId: string }>(
+  page: Page,
+  workspaces: T[],
+): Promise<T[]> {
+  const positioned = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const bounds = await page
+        .getByTestId(getWorkspaceRowTestId(workspace.workspaceId))
+        .boundingBox();
+      if (!bounds) throw new Error(`Could not measure the row of ${workspace.workspaceId}`);
+      return { workspace, y: bounds.y };
+    }),
+  );
+  return positioned.sort((left, right) => left.y - right.y).map(({ workspace }) => workspace);
 }
 
 interface PaseoOwnedWorktree {
@@ -427,6 +445,38 @@ test.describe("Sidebar workspace list", () => {
       await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
+    }
+  });
+
+  test("scanning up the workspace rows leaves only the resting row's hover card open", async ({
+    page,
+  }) => {
+    const workspaces = await Promise.all(
+      [1, 2, 3, 4, 5].map((index) =>
+        seedWorkspace({
+          repoPrefix: `sidebar-hover-scan-${index}-`,
+          title: `Hover scan ${index}`,
+        }),
+      ),
+    );
+
+    try {
+      await gotoAppShell(page);
+      for (const workspace of workspaces) {
+        await waitForSidebarWorkspace(page, workspace.workspaceId);
+      }
+      const rowsTopToBottom = await sortWorkspacesBySidebarOrder(page, workspaces);
+      const top = rowsTopToBottom[0]!;
+
+      for (let scan = 0; scan < 3; scan += 1) {
+        await sweepPointerAcrossWorkspaceRows(
+          page,
+          rowsTopToBottom.map((workspace) => workspace.workspaceId).toReversed(),
+        );
+        await expectOnlyWorkspaceHoverCardFor(page, top.workspaceName);
+      }
+    } finally {
+      await Promise.all(workspaces.map((workspace) => workspace.cleanup()));
     }
   });
 

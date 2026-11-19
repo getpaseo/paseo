@@ -2,7 +2,7 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 49
+order: 50
 category: Plugins
 ---
 
@@ -409,7 +409,7 @@ process, credential, and other machine-local work under `server/`. A plugin with
 ### Providers
 
 Follow [Build a provider plugin](/docs/plugins/providers) for direct and ACP implementations,
-session lifecycle, composer settings, timeline renderers, testing, and distribution.
+session lifecycle, option controls, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
 `@getpaseo/plugin/server/provider`. Its connection accepts inputs with `send()` and emits complete state
@@ -420,10 +420,12 @@ Use the single `session.prompt` input for messages, structured commands, steerin
 effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
 `session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
 
-Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
-provider-private options under `ProviderSessionConfig.providerOptions` on `session.open`.
-This record includes configured defaults and per-agent overrides; validate and apply it in your
-provider. See [Provider options](/docs/sdk/provider-options) for configuration and merge semantics.
+Provider options are one record, `ProviderSessionConfig.providerOptions` on `session.open`. It
+includes configured defaults and per-agent overrides; validate and apply it in your provider. Report
+`controls` in `session.config` for the top-level keys that get a toggle or select in the composer,
+with the values the session runs under `providerOptions`. A running-session change arrives as
+`session.configure` with `changes.providerOptions`. See [Provider options](/docs/sdk/provider-options)
+for configuration and merge semantics.
 Host tools arrive as MCP servers in the complete
 session config.
 
@@ -437,6 +439,64 @@ hooks only for a vendor's discovery, configuration, notification, or tool-call d
 It must resolve inside that directory to a regular file that follows the
 [SVG icon rules](#svg-rules). Paseo reads and validates the file when the plugin starts; the string
 is never inline SVG or a URL.
+
+#### Provider installation
+
+**Requires Paseo 0.17.** Older versions ignore `installation`.
+`ProviderRegistration.installation` fills the **Installation** section of the provider's settings.
+Every member is optional. Paseo hides the section when you declare neither `inspect` nor
+`installUrl`. [Report installation and updates](/docs/plugins/providers#report-installation-and-updates)
+has a complete example. Import the types from `@getpaseo/plugin/server/provider`.
+
+```ts
+interface ProviderInstallation {
+  installUrl?: string;
+  updateUrl?: string;
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+```
+
+| Member            | Called                                                       | Deadline | Answer kept                                      |
+| ----------------- | ------------------------------------------------------------ | -------- | ------------------------------------------------ |
+| `inspect`         | When the provider list or a provider's page shows            | 20 s     | 30 s                                             |
+| `checkForUpdates` | After `inspect` answers `installed`, or without `inspect`    | 25 s     | 1 hour for `current` or `available`, else 30 s   |
+| `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
+
+**Refresh** in the provider's settings skips the kept answers and clears a failed update. Paseo
+never calls these members before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
+
+`installUrl` and `updateUrl` are `http` or `https` pages that Paseo opens in the browser. The
+plugin fails to start when either is another kind of URL.
+
+The context:
+
+| Field              | Type                                      | Meaning                                                                                                                         |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | The launch a session would use, with `resolved`. Absent when the registration declares no `command`.                            |
+| `signal`           | `AbortSignal`                             | Aborts when Paseo stops waiting or the daemon stops.                                                                            |
+| `installedVersion` | `string \| undefined`                     | `checkForUpdates` only. The `version` `inspect` reported, as written. Absent when it reported none or you declare no `inspect`. |
+| `report`           | `(event: ProviderUpdateReport) => void`   | `update` only. Shows `{ type: "stdout" \| "stderr" \| "message", text }` to the user in order.                                  |
+
+`ProviderInstallationLaunch` is `{ command, args, env, resolved }`. With `resolved: true`, `command`
+is the executable's path. With `resolved: false`, Paseo did not find the executable and `command`
+is the configured name.
+
+Answers:
+
+| Type                   | Values                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderInspection`   | `{ status: "installed", version?: string }` or `{ status: "not_installed" }`                                                            |
+| `ProviderUpdateCheck`  | `{ status: "current" }`, `{ status: "available", versions?: string[], message?: string }`, or `{ status: "unknown", message?: string }` |
+| `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` or `{ status: "failed", message: string }`                                                  |
+
+Paseo shows `version`, `versions` and `message` as written and does not parse or sort them. It
+reuses a `current` or `available` answer for up to an hour while `inspect` reports the same
+`version`. It keeps the last 65,536 characters of `report` output. An answer that does not match these
+shapes is an error. **Update** appears once `inspect` reports the CLI installed and you declare
+`update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
+offers `updateUrl` on the same terms.
 
 ### Usage sources
 
@@ -549,10 +609,10 @@ window IDs across all accounts, so users must select the corrected window again.
 effective selection for cards, the sidebar, and toggles. The first edit snapshots those defaults;
 an explicit empty selection stays empty.
 
-Re-read the selected store in `fetch()` so the CLI's token rotations take effect. Never redeem
-refresh tokens or write credential stores: refreshing elsewhere can invalidate the CLI's copy,
-and rewriting parsed files can discard fields you do not model. If the store disappeared after
-discovery, throw; the card shows the error until the next discovery removes it.
+Re-read the selected store in `fetch()` so the CLI's token rotations take effect. If you discover
+a specific account, pass its identity in the input and verify it before returning usage.
+Throw if the store disappears or the login changes accounts. The next discovery updates the card.
+Only the CLI should redeem its refresh tokens or write its credential stores.
 
 Use `unavailable(problem)` to explain why an existing login cannot supply quota. It requires a
 problem; there is no zero-argument form. `expiresAt` is an ISO timestamp. A rejected login carries
@@ -602,10 +662,11 @@ hash. Codex prefers Codex CLI, OpenCode, Pi, then OMP and groups by the ChatGPT 
 metadata or JWT claims. Pi and OMP logins remain discoverable when expired. OMP requires
 `node:sqlite`.
 
-`usage.list_reports` discovers accounts when called without IDs. With IDs, it refreshes known
-accounts without rediscovering identity. If a store switches accounts, the existing card shows the
-new login's quota until the next discovery. Reports are cached for five minutes; `forceRefresh`
-bypasses that cache. Entries carry `id`, `account.label`, and `fetchedAt`. Failed accounts also carry optional
+`usage.list_reports` discovers accounts for the requested agent. A host-wide request discovers
+the defaults and revisits the agents whose usage Paseo has already queried. A request with report
+IDs fetches known reports using their existing discovery inputs. Reports are cached for five minutes.
+Set `forceRefresh` to bypass that cache. Entries carry `id`, `account.label`, and `fetchedAt`.
+Failed accounts also carry optional
 `loginErrors` entries with `harness` and each login's failed `report`. Clients gate the feature
 on `server_info.features.usageSources`. The older `provider.usage.list` RPC maps the same reports
 for 0.10 clients and renders problems into its `error` string.
@@ -633,6 +694,13 @@ Cleanup can be async. Release timers, watchers, sockets, and other resources cre
 ## Lifecycle hooks
 
 Register async handlers with `server.addHook(name, handler)`. See [Hooks](/docs/plugins/hooks) for names, payloads, ordering, errors, and complete examples.
+
+## Sidebar views
+
+`addSidebarView({ id, title, description?, Component })` registers an optional replacement for the
+sidebar content region. It returns cleanup. The user selects one view in Settings > Sidebar;
+registration does not activate it. See [Build a sidebar view](sidebar-views.md) for the props,
+ref-based queries and actions, device state and theme tokens.
 
 ## Screens and sidebar items
 
@@ -844,6 +912,60 @@ function hideAlerts() {
   removeAlerts = null;
 }
 ```
+
+### Workspace row badge items
+
+`addWorkspaceRowBadgeItem({ id, title, icon, Component })` adds an item to the line under each workspace
+title in the sidebar, after the row's own items (host, pull request, checks, services, labels).
+`title` and `icon` label the item's toggle in the sidebar's **Show** menu, in a separate plugin group
+below a separator. Items start visible.
+
+`Component` renders once per workspace row on the plugin's host and receives
+`PluginWorkspaceRowBadgeItemProps`: `theme`, `host`, `layout`, and `workspaceId`. Render
+`WorkspaceRowBadge` from `@getpaseo/plugin/client/ui`, or `null` when there is nothing to say about
+the workspace:
+
+| Prop                 | Meaning                                                                        |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `icon`               | Optional. Any [icon](#icons) form, drawn at the line's glyph size.             |
+| `label`              | Optional. A short word. A badge with neither `icon` nor `label` draws nothing. |
+| `tone`               | `"muted"` (default), `"success"`, `"warning"`, `"danger"`, or `"info"`.        |
+| `accessibilityLabel` | Defaults to `label`, then the item's `title`.                                  |
+
+The line adds no separator around your badges, and returning `null` leaves no gap. Render as many
+badges as you like. Every row
+renders the component, so share one query across rows instead of fetching per workspace: the
+plugin's React Query client is shared by all of its components on a host.
+
+```tsx
+import type { PluginWorkspaceRowBadgeItemProps } from "@getpaseo/plugin/client";
+import { useRpc } from "@getpaseo/plugin/client";
+import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
+import { useQuery } from "@tanstack/react-query";
+
+function ReviewState({ workspaceId }: PluginWorkspaceRowBadgeItemProps) {
+  const list = useRpc(reviewStates);
+  const { data } = useQuery({
+    queryKey: ["review-states"],
+    queryFn: () => list({}),
+    refetchInterval: 5000,
+  });
+  const state = data?.[workspaceId];
+  if (!state) return null;
+  return <WorkspaceRowBadge icon="Eye" label={state.label} tone="warning" />;
+}
+
+client.addWorkspaceRowBadgeItem({
+  id: "review",
+  title: "Review",
+  icon: "Eye",
+  Component: ReviewState,
+});
+```
+
+Apps older than this API have no `addWorkspaceRowBadgeItem`; check for it before calling.
+
+See the [workspace row badges example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/workspace-row-badges).
 
 ## Host UI
 
@@ -1216,9 +1338,12 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 
 The daemon stamps `pluginId` from the calling plugin session and rejects this RPC from non-plugin
 sessions. The row appears live, survives timeline refetches, and keeps only the latest value for the
-same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row. Daemons
-reject `data` over the limit rather than truncating it. Daemons that support this operation
-advertise `server_info.features.pluginTimelineItems`.
+same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row.
+
+`kind` starts with a lowercase letter and contains lowercase letters, numbers, or hyphens, the same
+rule `addTimelineRenderer` applies. Daemons reject any other `kind`. Daemons reject `data` over the
+limit rather than truncating it. Daemons that support this operation advertise
+`server_info.features.pluginTimelineItems`.
 
 ## Theme and layout
 
@@ -1268,6 +1393,12 @@ export default function contribute(client: PluginClientContext) {
       accent: "#cba6f7",
       mutedForeground: "#a6adc8",
       ring: "#6c7086",
+      sidebar: "#181825",
+      sidebarHover: "#313244",
+      sidebarSelected: "#45475a",
+      surface3: "#45475a",
+      surface4: "#585b70",
+      foregroundExtraMuted: "#7f849c",
     },
   });
   return () => {};
@@ -1278,16 +1409,29 @@ Every color is a hex string; anything else fails to load. Paseo expands the pale
 token set the built-in dark themes use, so a contributed theme covers panels, menus, diffs, status
 colors, and the terminal without listing them.
 
-| Color             | Becomes                                                           |
-| ----------------- | ----------------------------------------------------------------- |
-| `background`      | App, workspace, and terminal background                           |
-| `foreground`      | Primary text, terminal foreground and cursor                      |
-| `raised`          | Cards, popovers, and hovered rows                                 |
-| `control`         | Inputs, secondary fills, and the light-theme sidebar              |
-| `border`          | Borders and the highest raised-surface tint                       |
-| `accent`          | Buttons, selection, and focus. Optional; `foreground` if omitted. |
-| `mutedForeground` | Secondary text                                                    |
-| `ring`            | Focus rings, scrollbars, and terminal bright black                |
+| Color                  | Becomes                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `background`           | App, workspace, and terminal background                                        |
+| `foreground`           | Primary text, terminal foreground and cursor                                   |
+| `raised`               | Cards and popovers                                                             |
+| `control`              | Inputs, secondary fills, and the light-theme sidebar unless `sidebar` is set   |
+| `border`               | Borders                                                                        |
+| `accent`               | Buttons, selection, and focus. Optional; `foreground` if omitted.              |
+| `mutedForeground`      | Secondary text                                                                 |
+| `ring`                 | The keyboard focus outline on web, and terminal bright black                   |
+| `sidebar`              | Sidebar background. Optional; `background` in dark themes, `control` in light. |
+| `sidebarHover`         | Optional hovered sidebar row background.                                       |
+| `sidebarSelected`      | Optional selected sidebar row background.                                      |
+| `surface3`             | Optional neutral fill for message bubbles, secondary buttons, and chips.       |
+| `surface4`             | Optional stronger neutral fill for tracks and other states.                    |
+| `foregroundExtraMuted` | Optional tertiary text, including sidebar timestamps.                          |
+
+Each optional override is used exactly as given. Omitted state, fill, and tertiary colors are derived
+independently from the palette. When you override a color, choose it for readable contrast with the
+surfaces or text it accompanies.
+
+`sidebar` and the five overrides require Paseo 0.16.0 or later. Older apps reject a theme with an unknown color, and the
+plugin's other contributions fail to load with it, so raise `requirements.paseo` when you use any of them.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
@@ -1387,13 +1531,13 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-| Definition field               | Contract                                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                    |
-| `scope`                        | Required `"host"`. All authorized clients of that host share the document. No per-user, device-local, or cross-host synchronization. |
-| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                  |
-| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                            |
-| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.               |
+| Definition field               | Contract                                                                                                                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                           | Lowercase identifier matching `[a-z][a-z0-9_-]*`; unique within the installation.                                                                                                               |
+| `scope`                        | Required `"host"` or `"device"`. Host documents are shared by authorized clients. Device documents stay on this device, keyed by installation and settings ID; use them for layout preferences. |
+| `version`                      | Required positive integer describing the schema, independent of the write revision.                                                                                                             |
+| `schema`                       | Zod schema for JSON values. Supply defaults so parsing `{}` produces a complete document.                                                                                                       |
+| `migrate(values, fromVersion)` | Optional synchronous or asynchronous conversion from an older stored version. Its output must pass the current schema.                                                                          |
 
 Call `useSettings(preferences)` in any contributed component. It returns a discriminated state:
 
@@ -1563,6 +1707,8 @@ Agent snapshot fields:
 | `workspaceId`       | `string`                                                       |
 | `provider`          | `string`                                                       |
 | `status`            | `"initializing" \| "idle" \| "running" \| "error" \| "closed"` |
+| `backgroundWork`    | `{ count: number }`                                            |
+| `background`        | `boolean`                                                      |
 | `createdAt`         | ISO timestamp                                                  |
 | `updatedAt`         | ISO timestamp                                                  |
 | `lastActivityAt`    | ISO timestamp                                                  |
@@ -1575,6 +1721,27 @@ Agent snapshot fields:
 | `attentionReason`   | `"finished" \| "error" \| "permission" \| null`                |
 | `parentAgentId`     | `string \| null`                                               |
 | `labels`            | `Record<string, string>`                                       |
+
+`backgroundWork.count` is the number of shells and monitors the agent left running after its turn,
+and `0` when none are live. An agent can be `idle` with `attentionReason: "finished"` while that
+work still runs, so combine the fields the way your plugin needs:
+
+```tsx
+const busy = useAgent(
+  agentId,
+  (agent) => agent.status === "running" || agent.backgroundWork.count > 0,
+);
+if (busy === null) return null; // The agent is unavailable.
+```
+
+To list or stop the work itself, use
+[`paseo.agents.ref(id).backgroundWork`](/docs/sdk/reference#agent-handle).
+
+`background` is `true` for a [background agent](/docs/sdk/agents#run-a-helper-as-a-background-agent),
+a helper hidden from tabs, lists and attention. It is fixed when the agent is created. An agent in a
+background workspace reads `false` unless it was created as a background agent; read the
+workspace's own `background` for that. `backgroundWork` and `background` require Paseo 0.16.0 or
+later.
 
 Paseo owns tab focus, splitting, closing, persistence, query state, the API/RPC providers, and the render error boundary. A restored tab whose plugin, panel, context, workspace, or agent is unavailable stays open with an unavailable message instead of crashing the workspace.
 
@@ -1895,6 +2062,265 @@ header has no room for plugin buttons, so each one is a row of the workspace men
 icon and title; its menus and popovers open as pages of that sheet. Placement and overflow are host
 decisions.
 
+## Composer items
+
+`client.addComposerItem({ id, Component })` puts a component in the composer: the agent composer,
+the draft composer for a new agent, and the composer on the New workspace screen. `useComposer()`
+reads and changes what the composer configures, and `Toggle`, `Select` and `Action` from
+`@getpaseo/plugin/client/ui` draw the controls.
+
+```tsx
+import { useComposer, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Action, Select, Toggle } from "@getpaseo/plugin/client/ui";
+
+function ReviewFlag() {
+  const composer = useComposer();
+  return (
+    <Toggle
+      title="Needs review"
+      icon="Flag"
+      value={composer.agent.metadata["review.needsReview"] === true}
+      onValueChange={({ value }) =>
+        composer.setMetadata({ "review.needsReview": value ? true : null })
+      }
+    />
+  );
+}
+
+function Checklist() {
+  const composer = useComposer();
+  return (
+    <Action
+      title="Insert checklist"
+      icon="ListChecks"
+      onPress={() => composer.insertText("- [ ] Tests\n- [ ] Docs\n")}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addComposerItem({ id: "review-flag", Component: ReviewFlag });
+  client.addComposerItem({ id: "checklist", Component: Checklist });
+  return () => {};
+}
+```
+
+`useComposer()` returns the composer the item sits in:
+
+| Field or command                                    | Meaning                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context`                                           | `"agent"` for a running agent, `"draft"` for a new agent in a workspace, `"new-workspace"` for the New workspace screen.                                                                                                                                                                                  |
+| `prompt`, `setPrompt(text)`, `insertText(text)`     | The prompt. `insertText` replaces the selection or inserts at the cursor.                                                                                                                                                                                                                                 |
+| `focus(options?)`                                   | Puts the cursor in this composer, ready to type, and resolves when it is there. `selection: { start, end }` places the cursor or selects text, as offsets into `prompt` clamped to its length; omit it to keep the cursor where it is. See [focus a composer](#focus-a-composer).                         |
+| `attachments`, `addAttachment`, `removeAttachment`  | Items from [your own attachment sources](#add-a-composer-attachment-source). Attachments from other plugins and Paseo's own are not listed.                                                                                                                                                               |
+| `agent.provider`, `model`, `mode`, `thinking`       | What the agent runs with, or what the draft will create.                                                                                                                                                                                                                                                  |
+| `agent.options`                                     | The provider options in effect, defaults included. In a draft: the options the agent will be created with, including your changes.                                                                                                                                                                        |
+| `agent.metadata`                                    | The agent's [metadata](/docs/plugins/hooks#metadata). In New workspace, the first agent's.                                                                                                                                                                                                                |
+| `setProvider`, `setModel`, `setMode`, `setThinking` | Return promises. `setProvider` resets the model like the provider picker. It rejects on `context: "agent"`, which keeps its provider, and for a provider the host does not offer. `setModel` and `setThinking` pass the value on as given; on a running agent the provider's refusal rejects the promise. |
+| `setOptions(patch)`, `setMetadata(patch)`           | Top-level keys replace; `null` removes the key. Metadata set in a draft is sent when the agent is created and cleared once the prompt is sent.                                                                                                                                                            |
+
+The same call does the same thing in every composer; a plugin does not choose a composer's
+implementation. `setMetadata` on a running agent needs a host that supports metadata. On an older
+host the promise rejects with "Update the host to use metadata."
+
+`Toggle` takes `value` and `onValueChange({ value })`. `Select` takes `value`, `options` (`{ value, label,
+description? }`) and `onValueChange({ value })`. `Action` takes `onPress(event)`. All three take `title`,
+`icon` (a [Lucide name, SVG or component](#icons)) and `disabled`. A callback may return a promise:
+the control stays disabled until it settles, and Paseo shows a rejection to the user as an error
+toast, the way it does for its own controls. Paseo owns where each control sits: inline in the
+toolbar when the composer has room, and a row in the composer's overflow sheet when it does not,
+which is always the case on a phone. A `Select` opens its list in place of the sheet row. A
+`Component` that renders something other than these controls draws it where its item is placed; in
+the overflow sheet that is the sheet.
+
+Each command acts on the composer's state when it runs, not on the render that created your
+callback, so `await composer.setProvider("codex")` followed by `await composer.setModel("gpt")`
+changes both. A command's promise resolves once the change has taken effect, and `composer.agent`
+shows it on the next render.
+
+While the New workspace screen creates the workspace and its agent, the composer is locked. Your
+controls render disabled, `setPrompt` and `insertText` throw, and the agent commands reject with
+"The composer is locked while the agent is being created." `composer.agent.options` and
+`composer.agent.metadata` are frozen copies; change them through `setOptions` and `setMetadata`.
+
+Paseo measures what an item renders in the toolbar to decide what fits, so an item that renders
+nothing takes no room and adds no overflow button. On wide composers the item stays mounted while
+it is in the overflow, and the overflow sheet mounts a second instance while it is open, so keep
+effects safe to run twice. On a phone an item mounts only while the overflow sheet is open.
+
+The [composer controls example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/composer-controls)
+registers a `Select`, two `Toggle`s (one writes a provider option) and an `Action`, plus an
+Explorer panel and a Command Center item that reach a composer by reference.
+
+### Focus a composer
+
+`insertText` and `setPrompt` do not move the cursor. Call `focus()` after them so the user can keep
+typing:
+
+```tsx
+composer.insertText("- [ ] Tests\n");
+await composer.focus();
+```
+
+`await composer.focus({ selection: { start: 0, end: composer.prompt.length } })` selects the prompt.
+
+You do not need to know where the user is. On a running agent's composer, Paseo navigates to the
+agent's tab or workspace when it is not on screen, closes a phone's agent list or Explorer panel
+that covers it, and moves focus to the agent's pane, then focuses the input. When the input is
+already on screen and focused in its pane, `focus()` only puts the cursor there. Every composer also
+closes the sheets, menus, pickers and image previews it opened over itself first, such as the
+controls sheet that holds your items on a phone. A phone opens its keyboard.
+
+`focus()` rejects when the composer cannot take focus: the agent was archived, its composer did not
+come on screen within 15 seconds, or the input refused focus, as it does on a phone while dictation
+is running. When calls overlap, the latest one decides where the cursor goes and the earlier ones
+settle with it. A rejected promise returned from a button's `onPress` or a Command Center item's
+`onSelect` shows the user an error toast.
+
+Drafts and the New workspace composer are only reachable from an item inside them, so `focus()` does
+not navigate to them. It works while the composer is on screen, and rejects with "The composer is
+not on screen." when the user has already moved on. A locked composer accepts focus.
+
+### Reach a composer by reference
+
+A running agent has a composer whether or not its tab is open. `useComposers(selector)` in any plugin
+component, `composers(selector)` on every command context, and `client.composers(selector)` on the
+client context return the same `PluginComposer` that `useComposer()` gives an item, for an agent you
+name or for the focused one. Use `client.composers` in a callback that receives no context, such as a
+[pill's `onPress`](#composer-pills):
+
+```tsx
+import { useComposers, type PluginClientContext } from "@getpaseo/plugin/client";
+
+function InsertChecklist() {
+  const [focused] = useComposers({ focused: true });
+  return (
+    <Pressable disabled={!focused} onPress={() => focused?.insertText("- [ ] Tests\n")}>
+      <Text>Insert checklist</Text>
+    </Pressable>
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addWorkspacePanel({
+    id: "tools",
+    title: "Tools",
+    icon: "ListChecks",
+    locations: ["explorer"],
+    Component: InsertChecklist,
+  });
+  client.addCommandCenterItem({
+    id: "mark-for-review",
+    title: "Mark for review",
+    icon: "Flag",
+    context: "agent",
+    async onSelect({ agent, composers }) {
+      for (const composer of composers({ agentId: agent.id })) {
+        await composer.setMetadata({ "review.needsReview": true });
+      }
+    },
+  });
+  return () => {};
+}
+```
+
+| Selector            | Result                                                                                                                                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ agentId }`       | The composer of that agent on this host. Empty for an agent that is unknown or archived.                                                                                                                                                                                                     |
+| `{ focused: true }` | The composer of the agent the Command Center hands to agent items: the focused agent tab of the workspace on screen. Empty when the screen is not a workspace, such as a plugin screen or New workspace, or when the focused tab is not an agent. It follows focus as the user changes tabs. |
+
+The result is always an array, empty or with one composer, so the same code reads either selector.
+`useComposers` re-renders when a composer changes. A composer from `composers()` is the state at the
+call; call `composers()` again for the next state.
+
+The commands are those of [`useComposer()`](#composer-items), with these differences for a composer
+you reach from outside:
+
+- `insertText` inserts at the cursor while the agent's composer is on screen. While it is not, for
+  example when the user is in another workspace, it appends to the agent's saved prompt, and the text
+  is in the input when the user returns. `setPrompt` replaces the saved prompt the same way.
+- A running agent's composer is never locked.
+- `setProvider` rejects, as it does inside the agent's own composer.
+- `setModel` and `setThinking` send the value to the provider unchecked. A value the provider refuses
+  rejects with the provider's message. `model` and `thinking` read what the model picker
+  shows at that moment: until the provider's catalog loads that is the id the agent reports or was
+  created with, which may be an alias, and once it loads the catalog's own id.
+- `focus()` reveals the composer first, as [described above](#focus-a-composer).
+- Drafts and the New workspace screen are not addressable by reference. Only an item inside one
+  reaches its composer, through `useComposer()`.
+
+## New workspace items
+
+`client.addNewWorkspaceItem({ id, Component })` puts a field on the New workspace screen, beside
+the project, host and branch pickers. `useNewWorkspace()` reads and changes what the screen will
+create, and `Combobox`, `Select`, `Toggle` and `Action` from `@getpaseo/plugin/client/ui` draw the
+fields. On desktop an item is a badge in the setup row; on a phone it is a full-width field.
+
+```tsx
+import { useNewWorkspace, useRpc, type PluginClientContext } from "@getpaseo/plugin/client";
+import { Combobox } from "@getpaseo/plugin/client/ui";
+import { searchIssuesRpc } from "../shared/issues";
+
+function IssueField() {
+  const newWorkspace = useNewWorkspace();
+  const searchIssues = useRpc(searchIssuesRpc);
+  const issueId = newWorkspace.metadata["issues.id"];
+  return (
+    <Combobox
+      title="Issue"
+      icon="CircleDot"
+      value={typeof issueId === "string" ? { id: issueId, label: issueId } : null}
+      search={async ({ query }) => (await searchIssues({ query })).issues}
+      onSelect={async ({ item }) => {
+        await newWorkspace.setBranch(item.branch);
+        await newWorkspace.setMetadata({ "issues.id": item.id });
+      }}
+    />
+  );
+}
+
+export default function contribute(client: PluginClientContext) {
+  client.addNewWorkspaceItem({ id: "issue", Component: IssueField });
+  return () => {};
+}
+```
+
+`useNewWorkspace()` returns the setup the item sits in:
+
+| Field or command            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`, `project`           | The user's choices, `{ id, label }` and `{ id, name } \| null`. Read-only: an item cannot switch host or project.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `isolation`, `setIsolation` | `"local"` or `"worktree"`. **Existing worktree** reads `"local"`, since the workspace is a local one at the worktree's directory, and `setIsolation` leaves it. A project that cannot make worktrees reads `"local"`, and `setIsolation("worktree")` rejects.                                                                                                                                                                                                                                                                         |
+| `baseRef`, `setBaseRef`     | What a new worktree starts from: `{ type: "branch", name }`, `{ type: "change-request", number }`, or `null` until the default is known. A branch's `name` is the exact ref creation uses, such as `refs/remotes/origin/main`, so `setBaseRef(newWorkspace.baseRef)` changes nothing. `setBaseRef` takes any ref the Base picker offers, or a bare branch name, which Paseo resolves as it does anywhere else. The new worktree branches off it, and the Branches list switches to Branch off. It rejects while no project is chosen. |
+| `branch`, `setBranch`       | The name of the branch a new worktree is created on. `null` lets Paseo pick one. It is kept while isolation is local or the base is a change request, and it names the new branch of any worktree that cuts one, from the default base or a chosen branch. It does not apply to a worktree that checks out an existing branch or change request.                                                                                                                                                                                      |
+| `metadata`, `setMetadata`   | The created workspace's [metadata](/docs/plugins/hooks#metadata), not the first agent's. Top-level keys replace; `null` removes a key. Rejects on a host that does not support metadata with "Update the host to use metadata."                                                                                                                                                                                                                                                                                                       |
+
+Commands follow the [composer item](#composer-items) rules: each one acts on the screen's state
+when it runs, so `await newWorkspace.setBranch(name)` followed by `newWorkspace.setMetadata(patch)`
+changes both, and its promise resolves once the change has taken effect. A command works from your component's first effect, including a mount effect. Payloads are JSON values.
+Your items are mounted for one project on one host. When the user changes either, Paseo remounts them and clears `branch` and `metadata`, so state and `Combobox` results for the previous project do not carry over; an item that sets up in a mount effect sets up again for the new project. A command called after its project or host has been left, such as the end of a lookup the user abandoned by switching, rejects with "The New workspace screen moved to another project or host; this item belongs to the previous one." and changes nothing; the items mounted for the new project are not affected.
+`host`, `project`, `baseRef` and `metadata` are frozen. While the screen creates the workspace it is locked: your fields render
+disabled and every command rejects with "The New workspace screen is locked while the workspace is
+being created." A callback that returns a promise keeps the control disabled until it settles, and a
+rejection reaches the user as an error toast.
+
+`Combobox` is a field with a searchable list whose results come from your code:
+
+| Prop       | Meaning                                                                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `value`    | `{ id, label, description? } \| null`, what the field shows. It need not be among the search results, so it can show a choice made earlier.                                           |
+| `search`   | `({ query }) => Promise<Item[]>`. Called with `""` when the list opens and again, debounced, as the user types. Each `Item` is `{ id, label, description? }` plus any fields you add. |
+| `onSelect` | `({ item }) => void \| Promise<void>`. `item` is the object `search` returned.                                                                                                        |
+
+Paseo shows "Searching…" while a search runs, "Search failed" with the error message when it
+rejects, and an empty state for no results. It keeps the previous results while a newer search runs
+and ignores a search that a newer one replaced, so `search` needs no cancellation of its own.
+`Combobox` takes the same `title`, `icon` and `disabled` as the other controls, and draws as a row
+with a list in the composer's overflow sheet too.
+
+The [New workspace issues example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/new-workspace-issues)
+searches a fixed issue list from a daemon handler and sets the branch and metadata from the choice.
+
 ## Composer pills
 
 `client.addComposerPill({ id, workspaceId, agentId, button })` uses the same [button descriptor](#button-descriptor)
@@ -1918,6 +2344,31 @@ const pill = client.addComposerPill({
       kind: "action",
       onPress() {
         client.openPanel("review", { workspaceId, agentId });
+      },
+    },
+  },
+});
+```
+
+A pill's `onPress` receives no arguments. Reach its agent's composer with
+[`client.composers`](#reach-a-composer-by-reference):
+
+```tsx
+const pill = client.addComposerPill({
+  id: "hello",
+  workspaceId,
+  agentId,
+  button: {
+    title: "Add HELLO to the composer",
+    icon: "Hand",
+    label: "Hello",
+    behavior: {
+      kind: "action",
+      async onPress() {
+        for (const composer of client.composers({ agentId })) {
+          composer.insertText("HELLO");
+          await composer.focus();
+        }
       },
     },
   },

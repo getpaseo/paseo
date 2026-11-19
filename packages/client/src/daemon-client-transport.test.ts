@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, test, vi } from "vitest";
+import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
+import { exportPublicKey, generateKeyPair } from "@getpaseo/relay/e2ee";
+import { DaemonClient } from "./daemon-client.js";
+import { defaultWebSocketFactory } from "./daemon-client-websocket-transport.js";
 import {
   createEncryptedTransport,
   createWebSocketTransportFactory,
@@ -189,4 +193,104 @@ test("native drain capability survives WebSocket and encryption wrappers", async
     logger: { warn() {} },
   });
   expect(encrypted.supportsDrain).toBe(false);
+});
+
+interface ObservedSocket {
+  closeFrame: { code: number; reason: string } | null;
+}
+
+/** A daemon endpoint that accepts sockets and never answers, so every attempt times out. */
+async function silentDaemon() {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+  const sockets: ObservedSocket[] = [];
+  server.on("connection", (socket: ServerSocket) => {
+    const observed: ObservedSocket = { closeFrame: null };
+    sockets.push(observed);
+    socket.on("close", (code, reason) => {
+      observed.closeFrame = { code, reason: reason.toString() };
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing port");
+  return {
+    url: `ws://127.0.0.1:${address.port}/ws`,
+    sockets,
+    openSockets: () => sockets.filter((entry) => entry.closeFrame === null),
+    stop: () =>
+      new Promise<void>((resolve) => {
+        for (const client of server.clients) client.terminate();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+// Node's global WebSocket applies the WHATWG close rules Chromium and Electron apply:
+// close() accepts only 1000 or 3000-4999 and a reason of at most 123 UTF-8 bytes.
+describe("abandoned connections close their WebSocket", () => {
+  test.each([
+    { name: "direct", e2ee: false },
+    { name: "relay E2EE", e2ee: true },
+  ])(
+    "$name: a timed-out attempt sends a close frame before the client reconnects",
+    async ({ e2ee }) => {
+      const daemon = await silentDaemon();
+      const client = new DaemonClient({
+        url: daemon.url,
+        clientId: "cid_abandoned_close_test",
+        webSocketFactory: defaultWebSocketFactory,
+        connectTimeoutMs: 1_500,
+        reconnect: { enabled: true, baseDelayMs: 50, maxDelayMs: 50 },
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+        ...(e2ee
+          ? {
+              e2ee: {
+                enabled: true,
+                daemonPublicKeyB64: exportPublicKey(generateKeyPair().publicKey),
+              },
+            }
+          : {}),
+      });
+      try {
+        void client.connect().catch(() => {});
+        await vi.waitFor(() => expect(daemon.sockets.length).toBeGreaterThanOrEqual(2), {
+          timeout: 4_000,
+        });
+        const [abandoned] = daemon.sockets;
+        await vi.waitFor(() => expect(abandoned?.closeFrame).not.toBeNull(), { timeout: 500 });
+        expect(abandoned?.closeFrame?.reason).toBe("Connection timed out");
+
+        // The newest attempt may still be connecting; aborting it closes without a frame.
+        await client.close();
+        await vi.waitFor(() => expect(daemon.openSockets()).toEqual([]), { timeout: 500 });
+      } finally {
+        await client.close();
+        await daemon.stop();
+      }
+    },
+    10_000,
+  );
+
+  test("a code or reason the WebSocket API rejects still closes the socket", async () => {
+    const daemon = await silentDaemon();
+    try {
+      const transport = createWebSocketTransportFactory(defaultWebSocketFactory)({
+        url: daemon.url,
+      });
+      await new Promise<void>((resolve) => transport.onOpen(() => resolve()));
+      const reason = `Decryption failed: ${"é".repeat(100)}`;
+
+      expect(() => transport.close(1011, reason)).not.toThrow();
+
+      await vi.waitFor(() => expect(daemon.sockets[0]?.closeFrame).not.toBeNull(), {
+        timeout: 500,
+      });
+      const frame = daemon.sockets[0]?.closeFrame;
+      expect(frame?.code).toBe(1000);
+      expect(reason.startsWith(frame?.reason ?? "")).toBe(true);
+      expect(Buffer.byteLength(frame?.reason ?? "")).toBe(123);
+    } finally {
+      await daemon.stop();
+    }
+  });
 });

@@ -1,23 +1,16 @@
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { HostFilter } from "@/components/hosts/host-filter";
 import { useMemo, type ReactElement } from "react";
 import { UsageRefreshButton } from "./refresh-button";
 import { UsageOptions } from "./options";
-import type { UsageHost } from "./model";
+import { hasHostChoice, type UsageHostSelection } from "./hosts";
 import { useHostUsage } from "./queries";
 import type { UsageView } from "./types";
 
-/** The hosts to choose between, and which one is shown. */
-export interface UsageHostSelection {
-  hosts: UsageHost[];
-  serverId: string;
-  onSelect: (serverId: string) => void;
-}
-
 /**
- * The controls on the right of every usage title row: the host filter when there is more than one
- * host, Refresh all, and the Settings cog. A host that cannot report usage keeps only the host filter.
+ * The controls on the right of every usage title row: Refresh all and the Settings cog. A host
+ * that cannot report usage has none, unless there is another host to switch to: the host choice
+ * lives in the cog, so the cog stays.
  */
 export function UsageControls({
   view,
@@ -31,36 +24,19 @@ export function UsageControls({
   hostSelection?: UsageHostSelection;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
+  if (!hasUsageControls(view, hostSelection)) return null;
   return (
     <View style={styles.controls}>
-      {hasHostChoice(hostSelection) ? (
-        <HostFilter
-          hosts={hostSelection.hosts}
-          selectedHost={hostSelection.serverId}
-          onSelectHost={hostSelection.onSelect}
-          includeAllHost={false}
-          triggerTestID="usage-host-filter-trigger"
-          hostOptionTestID={usageHostOptionTestID}
-        />
-      ) : null}
-      {view.kind === "unavailable" ? null : (
-        <>
-          {view.kind === "off" ? null : <UsageRefreshButton busy={busy} onRefresh={onRefresh} />}
-          <UsageOptions serverId={serverId} />
-        </>
+      {view.kind === "off" || view.kind === "unavailable" ? null : (
+        <UsageRefreshButton busy={busy} onRefresh={onRefresh} />
       )}
+      <UsageOptions serverId={serverId} hostSelection={hostSelection} />
     </View>
   );
 }
 
-function hasHostChoice(
-  hostSelection: UsageHostSelection | undefined,
-): hostSelection is UsageHostSelection {
-  return hostSelection !== undefined && hostSelection.hosts.length > 1;
-}
-
-function usageHostOptionTestID(serverId: string): string {
-  return `usage-host-filter-item-${serverId}`;
+function hasUsageControls(view: UsageView, hostSelection: UsageHostSelection | undefined): boolean {
+  return view.kind !== "unavailable" || hasHostChoice(hostSelection);
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -73,8 +49,8 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * One host’s usage and title-row controls for the Usage modal.
- * Returns null when there is nothing to control, so headers leave no empty island.
+ * One host’s usage for the Usage modal, and its title-row controls: null when there is nothing to
+ * control, so the header leaves no empty island.
  */
 export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   view: UsageView;
@@ -82,18 +58,20 @@ export function useHostUsageWithControls(hostSelection: UsageHostSelection): {
   controls: ReactElement | null;
 } {
   const { view, refresh } = useHostUsage(hostSelection.serverId);
-  const hasControls = hasHostChoice(hostSelection) || view.kind !== "unavailable";
   const controls = useMemo(
     () =>
-      hasControls ? (
+      hasUsageControls(view, hostSelection) ? (
+        // Keyed by host, so state one host's controls hold, such as a failed setting change,
+        // never shows on another's.
         <UsageControls
+          key={hostSelection.serverId}
           serverId={hostSelection.serverId}
           view={view}
           onRefresh={refresh}
           hostSelection={hostSelection}
         />
       ) : null,
-    [hasControls, hostSelection, refresh, view],
+    [hostSelection, refresh, view],
   );
   return { view, refresh, controls };
 }

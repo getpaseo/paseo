@@ -21,9 +21,13 @@ function installed(): InstalledPlugin {
     cleanup: () => {},
     settingsScreens: [],
     surfaces: [],
+    sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
+    composerItems: [],
+    newWorkspaceItems: [],
     workspacePanels: [
       {
         id: "details",

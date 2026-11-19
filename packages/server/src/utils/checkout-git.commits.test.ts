@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCommitFileDiff, listCheckoutCommits } from "./checkout-git.js";
+import {
+  getCommitFileDiff,
+  listCheckoutCommits,
+  getCheckoutStatus,
+  getCheckoutDiff,
+} from "./checkout-git.js";
 import { writePaseoWorktreeMetadata } from "./worktree-metadata.js";
 
 const tempDirs: string[] = [];
@@ -392,4 +397,46 @@ describe("listCheckoutCommits", () => {
       { path: "README.md", additions: 1, deletions: 0, status: "modified" },
     ]);
   });
+});
+
+it("compares tag-based worktrees in status, history and legacy diff modes", async () => {
+  const { repoDir: mainRepoDir, tempDir } = initRepoOnMain();
+  const worktreesRoot = join(tempDir, "worktrees");
+  const repoDir = join(worktreesRoot, "repo-hash", "tag-feature");
+  mkdirSync(join(worktreesRoot, "repo-hash"), { recursive: true });
+  const context = { worktreesRoot };
+  git(["tag", "v1"], mainRepoDir);
+  git(["worktree", "add", "-b", "tag-feature", repoDir, "v1"], mainRepoDir);
+  await writePaseoWorktreeMetadata(repoDir, { baseRefName: "refs/tags/v1" });
+  commitFile(repoDir, "tag.txt", "committed\n", "tag feature");
+  writeFileSync(join(repoDir, "tag.txt"), "edited\n");
+  const status = await getCheckoutStatus(repoDir, context);
+  expect(status).toMatchObject({
+    isGit: true,
+    comparisonBaseRef: "refs/tags/v1",
+    aheadBehind: { ahead: 1, behind: 0 },
+  });
+  const history = await listCheckoutCommits({ cwd: repoDir, context });
+  expect(history.baseRef).toBe("refs/tags/v1");
+  expect(history.commits[0].subject).toBe("tag feature");
+  const committed = await getCheckoutDiff(repoDir, { mode: "base", baseRef: "refs/tags/v1" });
+  expect(committed.diff).toContain("+committed");
+  const all = await getCheckoutDiff(repoDir, { mode: "all", baseRef: "refs/tags/v1" });
+  expect(all.diff).toContain("+edited");
+});
+
+it("announces a usable comparison base while checked out on the base branch", async () => {
+  const cwd = makeTempDir();
+  git(["init", "-b", "main"], cwd);
+  git(["config", "user.name", "Test"], cwd);
+  git(["config", "user.email", "test@example.com"], cwd);
+  writeFileSync(join(cwd, "a.txt"), "before\n");
+  git(["add", "."], cwd);
+  commit(cwd, "base");
+  writeFileSync(join(cwd, "a.txt"), "after\n");
+  const status = await getCheckoutStatus(cwd);
+  expect(status).toMatchObject({ isGit: true, comparisonBaseRef: "refs/heads/main" });
+  if (!status.isGit || !status.comparisonBaseRef) throw new Error("Missing comparison base");
+  const all = await getCheckoutDiff(cwd, { mode: "all", baseRef: status.comparisonBaseRef });
+  expect(all.diff).toContain("+after");
 });

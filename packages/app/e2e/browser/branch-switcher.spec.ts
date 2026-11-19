@@ -27,15 +27,22 @@ async function holdBranchSuggestions(page: Page) {
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((message) => {
-      const envelope = JSON.parse(message.toString());
-      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_request")
-        requestCount++;
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_request")
+          requestCount++;
+      }
       server.send(message);
     });
     server.onMessage(async (message) => {
-      const envelope = JSON.parse(message.toString());
-      if (envelope.type === "session" && envelope.message?.type === "branch_suggestions_response") {
-        await gate;
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message);
+        if (
+          envelope.type === "session" &&
+          envelope.message?.type === "branch_suggestions_response"
+        ) {
+          await gate;
+        }
       }
       browser.send(message);
     });
@@ -118,11 +125,13 @@ async function renameWorkspaceViaSidebar(
   await expect(renameItem).toBeVisible({ timeout: 10_000 });
   await renameItem.click();
 
-  const modalPrefix = `sidebar-workspace-rename-modal-${serverId}:${input.workspaceId}`;
-  const renameInput = page.getByTestId(`${modalPrefix}-input`);
-  await expect(renameInput).toBeVisible({ timeout: 10_000 });
+  // Desktop-width sidebars rename in place.
+  const renameInput = page.getByTestId(
+    `sidebar-workspace-rename-input-${serverId}:${input.workspaceId}`,
+  );
+  await expect(renameInput).toBeFocused({ timeout: 10_000 });
   await renameInput.fill(input.title);
-  await page.getByTestId(`${modalPrefix}-submit`).click();
+  await renameInput.press("Enter");
   await expect(renameInput).toHaveCount(0, { timeout: 15_000 });
 }
 

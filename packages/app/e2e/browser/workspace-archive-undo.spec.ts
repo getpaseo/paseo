@@ -14,14 +14,21 @@ import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import { getWorkspaceTabTestIds } from "../support/helpers/workspace-tabs";
 import {
+  archivedToast,
   archiveFromRowButton,
   createGatedTeardown,
   expectDirectoryPresence,
   expectHostWorkspaceSettledActive,
+  holdNextArchiveRequest,
   outlastUndoWindow,
+  pressArchiveShortcut,
   pressUndoShortcut,
+  readSidebarListLayout,
+  recordLastRowBottomPerFrame,
+  resizeSidebarToMinimum,
   rowArchiveButton,
   rowKebab,
+  scrollSidebarListToEnd,
   undoButton,
   workspaceRow,
   workspaceTitleWidth,
@@ -84,7 +91,142 @@ test.describe("Workspace archive undo", () => {
       rowArchiveButton(page, worktree.workspaceId).boundingBox(),
       rowKebab(page, worktree.workspaceId).boundingBox(),
     ]);
-    expect(buttonBox && kebabBox && buttonBox.x + buttonBox.width <= kebabBox.x).toBe(true);
+    if (!buttonBox || !kebabBox) throw new Error("Row actions are not laid out");
+    expect(kebabBox.x - (buttonBox.x + buttonBox.width)).toBeGreaterThanOrEqual(8);
+  });
+
+  test("the archived toast sits over the sidebar above its footer, and only Undo presses", async ({
+    page,
+  }) => {
+    const worktree = await seedWorktree(page, "archive-toast-sidebar");
+
+    await archiveFromRowButton(page, worktree.workspaceId);
+
+    const [toastBox, footerBox] = await Promise.all([
+      page.getByTestId("workspace-archived-toast").boundingBox(),
+      page.getByTestId("sidebar-footer").boundingBox(),
+    ]);
+    if (!toastBox || !footerBox) throw new Error("Toast or footer is not laid out");
+    expect(toastBox.x).toBeGreaterThanOrEqual(footerBox.x);
+    expect(toastBox.x + toastBox.width).toBeLessThanOrEqual(footerBox.x + footerBox.width);
+    expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(footerBox.y);
+    expect(footerBox.y - (toastBox.y + toastBox.height)).toBeLessThanOrEqual(16);
+
+    await expect(page.getByTestId("app-toast-message")).toHaveCSS("cursor", "auto");
+    await expect(undoButton(page)).toHaveCSS("cursor", "pointer");
+
+    const [labelBox, shortcutBox] = await Promise.all([
+      undoButton(page).getByText("Undo", { exact: true }).boundingBox(),
+      undoButton(page).getByText(/Z$/).boundingBox(),
+    ]);
+    if (!labelBox || !shortcutBox) throw new Error("Undo button is not laid out");
+    expect(shortcutBox.x - (labelBox.x + labelBox.width)).toBeLessThanOrEqual(8.5);
+  });
+
+  test("a long list scrolls its last row clear of the toast, and settles back smoothly after it", async ({
+    page,
+  }) => {
+    await page.clock.install({ time: Date.now() });
+    const fillers: Array<{ path: string; cleanup: () => Promise<void> }> = [];
+    const fillerProjectIds: string[] = [];
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        const repo = await createTempGitRepo(`archive-toast-filler-${index}-`);
+        fillers.push(repo);
+        fillerProjectIds.push((await openProjectViaDaemon(client, repo.path)).projectId);
+      }
+      const worktree = await seedWorktree(page, "archive-toast-long-list");
+
+      const resting = await scrollSidebarListToEnd(page);
+      const restingEndGap = resting.listBottom - resting.rowBottoms.at(-1)!;
+      expect(restingEndGap).toBeLessThan(resting.rowHeight);
+
+      await archiveFromRowButton(page, worktree.workspaceId);
+      await page.mouse.move(0, 0);
+      const toastBox = await archivedToast(page).boundingBox();
+      if (!toastBox) throw new Error("Toast is not laid out");
+      // The list keeps its usual end gap, measured from the toast's top instead of its own bottom.
+      await expect
+        .poll(async () => {
+          const layout = await scrollSidebarListToEnd(page);
+          return Math.round(toastBox.y - layout.rowBottoms.at(-1)!);
+        })
+        .toBe(Math.round(restingEndGap));
+
+      const frames = recordLastRowBottomPerFrame(page, 40);
+      await outlastUndoWindow(page);
+      const bottoms = await frames;
+      await expect(archivedToast(page)).toHaveCount(0);
+
+      // Without scrolling again, the list ends just below its last row once more.
+      const settled = await readSidebarListLayout(page);
+      expect(settled.listBottom - settled.rowBottoms.at(-1)!).toBeCloseTo(restingEndGap, 0);
+      // The rows travel down by the toast's height over several frames, never in one jump.
+      const travel = bottoms.at(-1)! - bottoms[0]!;
+      expect(travel).toBeGreaterThan(toastBox.height);
+      const steps = bottoms.slice(1).map((bottom, index) => bottom - bottoms[index]!);
+      expect(Math.min(...steps)).toBeGreaterThanOrEqual(0);
+      expect(Math.max(...steps)).toBeLessThan(travel / 2);
+    } finally {
+      for (const projectId of fillerProjectIds) {
+        await client.removeProject(projectId).catch(() => undefined);
+      }
+      for (const repo of fillers) await repo.cleanup().catch(() => undefined);
+    }
+  });
+
+  test("an archive that fails after the sidebar was replaced still shows its error", async ({
+    page,
+  }) => {
+    const archive = await holdNextArchiveRequest(page);
+    const worktree = await seedWorktree(page, "archive-late-failure");
+
+    await archiveFromRowButton(page, worktree.workspaceId);
+    await archive.waitForHeld();
+    // Crossing the compact breakpoint swaps the sidebar, unmounting the toast's host.
+    await page.setViewportSize({ width: 400, height: 720 });
+    await expect(undoButton(page)).toHaveCount(0);
+
+    archive.releaseForUnknownWorkspace("workspace-the-daemon-never-had");
+
+    await expect(page.getByTestId("app-toast-message")).toHaveText(
+      "Workspace not found: workspace-the-daemon-never-had",
+    );
+  });
+
+  test("the archived toast keeps Undo inside the card at the narrowest sidebar", async ({
+    page,
+  }) => {
+    const worktree = await seedWorktree(page, "archive-toast-narrow");
+    await resizeSidebarToMinimum(page);
+
+    await archiveFromRowButton(page, worktree.workspaceId);
+
+    const [toastBox, undoBox] = await Promise.all([
+      page.getByTestId("workspace-archived-toast").boundingBox(),
+      undoButton(page).boundingBox(),
+    ]);
+    if (!toastBox || !undoBox) throw new Error("Toast is not laid out");
+    expect(undoBox.x + undoBox.width).toBeLessThanOrEqual(toastBox.x + toastBox.width);
+    expect(undoBox.y + undoBox.height).toBeLessThanOrEqual(toastBox.y + toastBox.height);
+  });
+
+  test("archiving by shortcut with the sidebar collapsed shows the toast over the app", async ({
+    page,
+  }) => {
+    const worktree = await seedWorktree(page, "archive-toast-collapsed");
+    await workspaceRow(page, worktree.workspaceId).click();
+    await page.keyboard.press("ControlOrMeta+b");
+    await expect(workspaceRow(page, worktree.workspaceId)).not.toBeInViewport();
+
+    page.once("dialog", (dialog) => void dialog.accept());
+    await pressArchiveShortcut(page);
+
+    const toast = page.getByTestId("workspace-archived-toast");
+    await expect(toast).toBeInViewport();
+    const toastBox = await toast.boundingBox();
+    if (!toastBox) throw new Error("Toast is not laid out");
+    expect(toastBox.y).toBeLessThan(page.viewportSize()!.height / 2);
   });
 
   test("Cmd/Ctrl+Z right after archiving keeps the worktree", async ({ page }) => {
@@ -112,6 +254,7 @@ test.describe("Workspace archive undo", () => {
 
     await expect(workspaceRow(page, worktree.workspaceId)).toBeVisible({ timeout: 30_000 });
     await expectDirectoryPresence(worktree.workspaceDirectory, true);
+    await expectHostWorkspaceSettledActive(client, worktree.workspaceId);
   });
 
   test("hovering Undo keeps the toast open past its deadline, and its close ends the undo", async ({

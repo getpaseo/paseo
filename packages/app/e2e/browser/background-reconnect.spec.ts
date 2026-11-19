@@ -5,6 +5,7 @@ import {
   type IsolatedHostDaemon,
 } from "../support/helpers/isolated-host-daemon";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
+import { setTabVisibility } from "../support/helpers/workspace-ui";
 
 const test = base.extend<{ reconnectHost: IsolatedHostDaemon }>({
   reconnectHost: async ({ e2eWorker }, provide) => {
@@ -35,17 +36,6 @@ async function captureHost({
 async function refocusConnectedTab(page: Page): Promise<void> {
   await setTabVisibility(page, "visible");
   await expect(page.getByText("Online", { exact: true })).toBeVisible();
-}
-
-async function setTabVisibility(page: Page, visibility: DocumentVisibilityState): Promise<void> {
-  await page.evaluate((state) => {
-    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
-    Object.defineProperty(document, "hidden", {
-      configurable: true,
-      get: () => state === "hidden",
-    });
-    document.dispatchEvent(new Event("visibilitychange"));
-  }, visibility);
 }
 
 async function openHostOverview(page: Page, daemon: IsolatedHostDaemon): Promise<void> {

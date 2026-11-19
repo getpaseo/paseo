@@ -1,7 +1,9 @@
-import type { OwnedSubscription, SubscriptionObserver } from "@getpaseo/client";
+import type { DiffState, OwnedSubscription, SubscriptionObserver } from "@getpaseo/client";
 import { QueryClient, QueryObserver, skipToken } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { MutableDaemonConfig, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import { deriveCheckoutDiffResult, type CheckoutDiffSnapshot } from "@/git/diff-snapshot";
+import { shareCheckoutDiff } from "@/git/diff-sharing";
 import { checkoutDiffQueryKey } from "@/git/query-keys";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
@@ -34,6 +36,7 @@ type RouterMessage =
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
 type RouterClient = Parameters<typeof mountServerDataPushRouter>[0]["client"];
+type DiffFile = SubscribeCheckoutDiffResponseMessage["payload"]["files"][number];
 
 const daemonConfig: MutableDaemonConfig = {
   relay: { enabled: false },
@@ -55,8 +58,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }>;
   unsubscribeCheckoutDiffCalls: string[];
-  subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
-  unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }>;
+  subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
+  unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }>;
 } {
   const handlers: Record<RouterMessageType, RouterHandler[]> = {
     providers_snapshot_update: [],
@@ -71,8 +74,8 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscriptionId: string;
   }> = [];
   const unsubscribeCheckoutDiffCalls: string[] = [];
-  const subscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
-  const unsubscribeTerminalCalls: Array<{ cwd: string; workspaceId?: string }> = [];
+  const subscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
+  const unsubscribeTerminalCalls: Array<{ cwd?: string; workspaceId?: string }> = [];
 
   function on<K extends RouterMessageType>(
     type: K,
@@ -144,10 +147,21 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
           ["status", "providers_snapshot_update"],
           () => {},
         ),
-      observeCheckoutDiff(cwd, compare) {
+      observeDiff(input) {
+        const cwd = input.cwd;
+        let mode: "uncommitted" | "base" | "all" = "uncommitted";
+        if (input.head.kind === "rev") mode = "base";
+        else if (input.mergeBase) mode = "all";
+        const compare = {
+          mode,
+          ...(input.base.kind === "rev" && input.base.rev !== "HEAD"
+            ? { baseRef: input.base.rev }
+            : {}),
+          ignoreWhitespace: input.ignoreWhitespace,
+        };
         const subscriptionId = `server-diff-${subscribeCheckoutDiffCalls.length + 1}`;
         subscribeCheckoutDiffCalls.push({ cwd, compare, subscriptionId });
-        const handle = observe(
+        const handle = observe<SubscribeCheckoutDiffResponseMessage["payload"]>(
           { subscriptionId, cwd, files: [], error: null, requestId: "subscribe-checkout-diff" },
           ["checkout_diff_update", "subscribe_checkout_diff_response"],
           () => unsubscribeCheckoutDiffCalls.push(subscriptionId),
@@ -155,9 +169,43 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
             "subscriptionId" in message.payload &&
             message.payload.subscriptionId === subscriptionId,
         );
-        if (!config.rejectCheckoutDiffSubscribe) return handle;
-        return {
+        const modern: OwnedSubscription<DiffState> = {
           ...handle,
+          ready: Promise.resolve({
+            phase: "ready",
+            revision: 1,
+            resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+            files: [],
+            diffTooLarge: false,
+            subscriptionId,
+          }),
+          subscribe: (observer) =>
+            handle.subscribe({
+              snapshot: (payload) =>
+                observer.snapshot({
+                  phase: "ready",
+                  revision: 1,
+                  resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+                  files: payload.files,
+                  diffTooLarge: payload.diffTooLarge === true,
+                  subscriptionId,
+                }),
+              update: (message) => {
+                if (message.type === "checkout_diff_update")
+                  observer.snapshot({
+                    phase: "ready",
+                    revision: 2,
+                    resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+                    files: message.payload.files,
+                    diffTooLarge: message.payload.diffTooLarge === true,
+                    subscriptionId,
+                  });
+              },
+            }),
+        };
+        if (!config.rejectCheckoutDiffSubscribe) return modern;
+        return {
+          ...modern,
           subscribe: (observer) => {
             queueMicrotask(() => observer.error?.(new Error("subscribe failed")));
             return () => {};
@@ -186,6 +234,49 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscribeTerminalCalls,
     unsubscribeTerminalCalls,
   };
+}
+
+/** Matches the real diff observation: nothing is delivered until the stream publishes. */
+type SubscribedDiffState = DiffState & { subscriptionId: string };
+
+function createDiffStreamClient() {
+  const subscriptions: Array<{ publish(state: DiffState): void }> = [];
+  const noSubscription = {
+    subscriptionId: "none",
+    ready: Promise.resolve(undefined as never),
+    subscribe: () => () => {},
+    release: async () => {},
+  };
+  const client: RouterClient = {
+    async getProvidersSnapshot() {
+      throw new Error("Unexpected snapshot pull");
+    },
+    observeEvents: () => noSubscription,
+    observeTerminals: () => noSubscription,
+    observeDiff() {
+      const observers = new Set<SubscriptionObserver<SubscribedDiffState>>();
+      let released = false;
+      const subscriptionId = `diff-${subscriptions.length + 1}`;
+      subscriptions.push({
+        publish: (state) => {
+          if (released) return;
+          for (const observer of observers) observer.snapshot({ ...state, subscriptionId });
+        },
+      });
+      return {
+        subscriptionId,
+        ready: new Promise<never>(() => {}),
+        subscribe: (observer: SubscriptionObserver<SubscribedDiffState>) => {
+          observers.add(observer);
+          return () => observers.delete(observer);
+        },
+        release: async () => {
+          released = true;
+        },
+      };
+    },
+  };
+  return { client, subscriptions, latest: () => subscriptions[subscriptions.length - 1]! };
 }
 
 function providerUpdate(generatedAt: string): ProvidersSnapshotUpdateMessage {
@@ -328,7 +419,7 @@ describe("server data push router", () => {
       const first = publish(files, "first");
       const same = publish(structuredClone(files), "reopen");
       expect(same.files).toBe(first.files);
-      expect(same.requestId).toBe("reopen");
+      expect(same.requestId).toBe("diff:1:ready");
       const changed = structuredClone(files);
       changed[0]!.hunks[0]!.lines[0]!.tokens![0]!.style = "variable";
       const next = publish(changed, "edit");
@@ -341,6 +432,160 @@ describe("server data push router", () => {
       unmount();
       queryClient.clear();
     }
+  });
+
+  describe("a diff reopened from a retained panel", () => {
+    const serverId = "server-1";
+    const cwd = "/repo";
+    const queryKey = checkoutDiffQueryKey(serverId, cwd, "uncommitted", undefined, false);
+
+    function diffFile(content: string): DiffFile {
+      return {
+        path: "README.md",
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 0,
+        hunks: [
+          {
+            oldStart: 1,
+            oldCount: 1,
+            newStart: 1,
+            newCount: 1,
+            lines: [{ type: "add", content, tokens: [{ text: content, style: null }] }],
+          },
+        ],
+      };
+    }
+
+    function loadingState(revision: number): DiffState {
+      return {
+        phase: "loading",
+        revision,
+        entries: [
+          {
+            path: "README.md",
+            oldPath: null,
+            change: "modified",
+            content: "text",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      };
+    }
+
+    function readyState(revision: number, files: DiffFile[]): DiffState {
+      return {
+        phase: "ready",
+        revision,
+        resolved: { baseSha: "", headSha: "", mergeBaseSha: "" },
+        files,
+        diffTooLarge: false,
+      };
+    }
+
+    function mountChangesPanel(fake: ReturnType<typeof createDiffStreamClient>) {
+      const queryClient = new QueryClient();
+      const route = (enabled: boolean) => ({
+        queryKey,
+        queryFn: skipToken as typeof skipToken,
+        gcTime: Infinity,
+        structuralSharing: shareCheckoutDiff,
+        meta: checkoutDiffPushRoute({
+          enabled,
+          serverId,
+          cwd,
+          subscriptionId: `checkoutDiff:${JSON.stringify(queryKey)}`,
+          compare: { mode: "uncommitted", ignoreWhitespace: false },
+        }),
+      });
+      const observer = new QueryObserver(queryClient, route(true));
+      const unsubscribeObserver = observer.subscribe(() => {});
+      const unmountRouter = mountServerDataPushRouter({
+        queryClient,
+        client: fake.client,
+        serverId,
+      });
+      return {
+        hide: () => observer.setOptions(route(false)),
+        show: () => observer.setOptions(route(true)),
+        // What the Changes pane renders from.
+        diff: () =>
+          deriveCheckoutDiffResult(
+            queryClient.getQueryData<CheckoutDiffSnapshot>(queryKey) ?? null,
+          ),
+        unmount: () => {
+          unsubscribeObserver();
+          unmountRouter();
+          queryClient.clear();
+        },
+      };
+    }
+
+    it("keeps the painted diff through the reload when the daemon returns the same content", () => {
+      const fake = createDiffStreamClient();
+      const panel = mountChangesPanel(fake);
+      try {
+        fake.latest().publish(readyState(1, [diffFile("same")]));
+        const painted = panel.diff().files;
+        expect(fake.subscriptions).toHaveLength(1);
+
+        panel.hide();
+        panel.show();
+        expect(fake.subscriptions).toHaveLength(2);
+
+        fake.latest().publish(loadingState(1));
+        expect(panel.diff()).toMatchObject({ isLoading: false, entries: null });
+        expect(panel.diff().files).toBe(painted);
+
+        fake.latest().publish(readyState(1, [diffFile("same")]));
+        expect(panel.diff().isLoading).toBe(false);
+        expect(panel.diff().files).toBe(painted);
+      } finally {
+        panel.unmount();
+      }
+    });
+
+    it("replaces the painted diff in one step when the daemon returns changed content", () => {
+      const fake = createDiffStreamClient();
+      const panel = mountChangesPanel(fake);
+      try {
+        fake.latest().publish(readyState(1, [diffFile("before")]));
+        const painted = panel.diff().files;
+
+        panel.hide();
+        panel.show();
+        fake.latest().publish(loadingState(1));
+        expect(panel.diff().isLoading).toBe(false);
+        expect(panel.diff().files).toBe(painted);
+
+        const changed = [diffFile("after")];
+        fake.latest().publish(readyState(1, changed));
+        expect(panel.diff().isLoading).toBe(false);
+        expect(panel.diff().files).toEqual(changed);
+      } finally {
+        panel.unmount();
+      }
+    });
+
+    it("reports loading with the announced entries when no content has been painted", () => {
+      const fake = createDiffStreamClient();
+      const panel = mountChangesPanel(fake);
+      try {
+        expect(panel.diff().isLoading).toBe(true);
+
+        fake.latest().publish(loadingState(1));
+        expect(panel.diff()).toMatchObject({ isLoading: true, files: [] });
+        expect(panel.diff().entries).toHaveLength(1);
+
+        fake.latest().publish(readyState(1, [diffFile("first")]));
+        expect(panel.diff()).toMatchObject({ isLoading: false, entries: null });
+        expect(panel.diff().files).toHaveLength(1);
+      } finally {
+        panel.unmount();
+      }
+    });
   });
 
   it("routes provider snapshot and daemon config payloads until detached", async () => {
@@ -430,7 +675,7 @@ describe("server data push router", () => {
       files: [],
       error: null,
       diffTooLarge: true,
-      requestId: "diff-1",
+      requestId: "diff:1:ready",
     });
 
     fake.emit({
@@ -449,7 +694,7 @@ describe("server data push router", () => {
       files: [],
       error: null,
       diffTooLarge: true,
-      requestId: `subscription:${serverSubscriptionId}`,
+      requestId: "diff:2:ready",
     });
 
     unsubscribeObserver();

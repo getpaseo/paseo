@@ -1,11 +1,15 @@
 import { createContext, useContext, useMemo, type ReactNode, type RefObject } from "react";
-import type { StreamViewportHandle } from "./strategy";
+import type { DisclosureTriggerEdge, StreamViewportHandle } from "./strategy";
 
 /**
- * Runs a disclosure's state change. Inside a timeline row, the row that owns the
- * trigger keeps its screen position through the change; elsewhere `apply` runs as is.
+ * Runs a disclosure's state change. Inside a timeline row, the trigger keeps its screen
+ * position through the change; elsewhere `apply` runs as is. A trigger below the content it
+ * opens passes `triggerEdge: "bottom"`.
  */
-export type DisclosureHold = (apply: () => void) => void;
+export type DisclosureHold = (
+  apply: () => void,
+  options?: { triggerEdge?: DisclosureTriggerEdge },
+) => void;
 
 const applyInPlace: DisclosureHold = (apply) => apply();
 
@@ -21,10 +25,10 @@ export function DisclosureRow({
   children: ReactNode;
 }) {
   const hold = useMemo<DisclosureHold>(
-    () => (apply) => {
+    () => (apply, options) => {
       const viewport = viewportRef.current;
       if (viewport) {
-        viewport.holdRow(rowId, apply);
+        viewport.holdRow(rowId, apply, options?.triggerEdge ?? "top");
       } else {
         apply();
       }

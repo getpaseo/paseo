@@ -386,8 +386,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     };
     const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
-      observe: (agentIds) => {
-        const observation = client.observeTimeline(agentIds);
+      canCheckFreshness: () =>
+        client.getLastServerInfoMessage()?.features?.timelineFreshnessCheck === true,
+      observe: (agentIds, cursors) => {
+        const observation = client.observeTimeline(agentIds, { cursors });
         observation.subscribe({
           snapshot: () => {},
           update: (message) => {

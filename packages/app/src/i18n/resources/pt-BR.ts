@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  pluginCombobox: {
+    searching: "Pesquisando…",
+    empty: "Nenhum resultado",
+    failed: "Falha na pesquisa: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
@@ -86,14 +91,23 @@ export const ptBR: TranslationResources = {
       close: "Fechar menu",
     },
     commandCenter: {
-      placeholder: "Buscar comandos, arquivos, espaços de trabalho e agentes...",
+      placeholder: "Pesquisar espaços de trabalho, arquivos e ações...",
+      placeholderWithoutFiles: "Pesquisar espaços de trabalho e ações...",
       filePlaceholder: "Pesquisar arquivos...",
+      workspacePlaceholder: "Pesquisar espaços de trabalho...",
+      actionPlaceholder: "Pesquisar ações...",
       searchingFiles: "Pesquisando arquivos...",
       noMatches: "Nenhuma correspondência",
       actions: "Ações",
       files: "Arquivos",
       workspaces: "Espaços de trabalho",
-      agents: "Agentes",
+      recentWorkspaces: "Espaços de trabalho recentes",
+      tabs: {
+        all: "Tudo",
+        workspaces: "Espaços de trabalho",
+        files: "Arquivos",
+        actions: "Ações",
+      },
       newAgent: "Novo agente",
       open: "Abrir {{name}}",
       openInSidePane: "Abrir {{name}} no painel lateral",
@@ -102,6 +116,7 @@ export const ptBR: TranslationResources = {
       home: "Início",
       groupByProject: "Agrupar por projeto",
       groupByStatus: "Agrupar por status",
+      copyBrowserHostName: "Copiar o nome do host do navegador",
       modelGroupLabel: "Modelo",
       modelSearchKeywords: "trocar modelo mudar modelo definir modelo selecionar modelo",
       thinkingGroupLabel: "Raciocínio",
@@ -257,7 +272,7 @@ export const ptBR: TranslationResources = {
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",
-      reconnecting: "Reconectando ao host",
+      reconnecting: "Reconectando",
       updating: "Atualizando mensagens",
       timelineSyncFailed: "Não foi possível atualizar o histórico do agente.",
       timelineSyncRetrying: "Tentando novamente…",
@@ -367,6 +382,11 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      insecureContext: "Abra o Paseo por HTTPS ou em localhost para usar o microfone.",
+      unsupported: "O ditado não está disponível neste navegador.",
+      noMicrophone: "Conecte um microfone e tente novamente.",
+      permissionDenied: "Permita o acesso ao microfone e tente novamente.",
+      startFailed: "Não foi possível iniciar o ditado. Tente novamente.",
       paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",
@@ -384,6 +404,7 @@ export const ptBR: TranslationResources = {
       otherPlaceholder: "Outro...",
     },
     backgroundWork: {
+      heartbeat: "Batimento",
       pillOne: "1 tarefa em segundo plano",
       pillMany: "{{count}} tarefas em segundo plano",
       notRunning: "Não está mais em execução",
@@ -474,8 +495,7 @@ export const ptBR: TranslationResources = {
         archivedTitle: "Workspace arquivado",
         restoreDescription:
           "Restaure {{workspaceName}} para voltar aos seus agentes. A worktree usará a branch {{branch}}.",
-        restoreWithoutBranchDescription:
-          "Restaure {{workspaceName}} para voltar aos seus agentes. Uma nova branch partirá da base salva ou da branch padrão do repositório.",
+        restoreWithoutBranchDescription: "Restaure {{workspaceName}} para voltar aos seus agentes.",
         unarchiveDescription:
           "{{workspaceName}} está arquivado. Desarquive-o para abri-lo novamente.",
         restoreAction: "Restaurar",
@@ -1198,6 +1218,8 @@ export const ptBR: TranslationResources = {
     title: "Novidades",
     installed: "Instalada",
     showMore: "Mostrar mais",
+    showAllChanges: "Mostrar todas as mudanças",
+    hideAllChanges: "Ocultar todas as mudanças",
     openWebsite: "Changelog completo",
     error: {
       title: "Não foi possível carregar o changelog",
@@ -1205,6 +1227,14 @@ export const ptBR: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Não foi possível carregar a visualização da barra lateral.",
+      useDefault: "Usar visualização padrão",
+      readFailed: "Não foi possível carregar sua preferência de visualização da barra lateral.",
+      agentUnavailable: "O agente não está mais disponível",
+      terminalUnavailable: "O terminal não está mais disponível",
+      projectUnavailable: "O projeto não está mais disponível",
+    },
     statusGroupAccessibility: "Grupo {{label}}",
     statusBucket: {
       needsInput: "Precisa de resposta",
@@ -1395,8 +1425,9 @@ export const ptBR: TranslationResources = {
     title: "Novo workspace",
     create: "Criar",
     isolation: {
-      local: "Local",
+      local: "Diretório do projeto",
       worktree: "Novo worktree",
+      existing: "Worktree existente",
       label: "Isolamento",
     },
     fields: {
@@ -1411,12 +1442,17 @@ export const ptBR: TranslationResources = {
       createWorktreeFailed: "Falha ao criar worktree",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
+      branchInProjectDirectory:
+        "{{branch}} está em uso no diretório do projeto. Escolha Diretório do projeto para trabalhar nela, ou crie uma branch a partir dela.",
+      branchInWorktree:
+        "{{branch}} está em uso em {{path}}. Escolha esse worktree em Worktree existente, ou crie uma branch a partir dela.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "Escolha de onde começar",
+      worktree: "Escolha o worktree em que trabalhar",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1424,8 +1460,31 @@ export const ptBR: TranslationResources = {
       intoBase: "em {{baseRef}}",
       searching: "Buscando...",
       noMatchingRefs: "Nenhuma ref correspondente.",
-      searchPlaceholder: "Buscar branches e PRs",
+      searchBranches: "Buscar branches",
+      searchPullRequests: "Buscar pull requests",
+      searchPullRequests_mr: "Buscar merge requests",
+      branches: "Branches",
+      pullRequests: "Pull requests",
+      pullRequests_mr: "Merge requests",
+      pullRequestsShort: "PRs",
+      pullRequestsShort_mr: "MRs",
+      branchOff: "Nova branch",
+      checkout: "Usar diretamente",
+      branchOffHint: "Cria uma branch nova a partir dela",
+      checkoutHint: "Trabalha diretamente nela",
+      base: "Base",
+      from: "de",
+      branch: "Branch",
+      pullRequest: "Pull request",
+      pullRequest_mr: "Merge request",
+      inProjectDirectory: "No diretório do projeto",
+      inWorktree: "Em um worktree",
       title: "Começar de",
+    },
+    worktreePicker: {
+      title: "Worktree",
+      searchPlaceholder: "Buscar worktrees",
+      empty: "Nenhum worktree correspondente.",
     },
     launch: {
       title: "What to launch",
@@ -1719,7 +1778,7 @@ export const ptBR: TranslationResources = {
         },
         providers: {
           label: "Provedores",
-          title: "Seus agentes",
+          title: "Seus provedores",
           description: "O Paseo usa as CLIs de agentes já instaladas neste computador",
         },
         projects: {
@@ -2027,6 +2086,7 @@ export const ptBR: TranslationResources = {
     hostUnavailable: "Host de download indisponível.",
     cancelled: "Download cancelado.",
     failed: "Falha ao baixar arquivo.",
+    httpFailed: "Falha ao baixar arquivo (HTTP {{status}}).",
     shareFile: "Compartilhar arquivo",
     shareFileNamed: "Compartilhar {{fileName}}",
   },
@@ -2220,6 +2280,7 @@ export const ptBR: TranslationResources = {
     turnOn: "Ativar",
 
     options: "Configurações",
+    host: "Host",
     refreshFailed: "Não foi possível atualizar o uso",
     noHosts: "Nenhum host conectado",
     agentError: "Não foi possível carregar o uso: {{reason}}",
@@ -2236,6 +2297,8 @@ export const ptBR: TranslationResources = {
     loginExpired: "O login expirou {{relativeTime}}. {{remedy}}",
     title: "Uso do plano",
     refresh: "Atualizar",
+    reorderCard: "Reordenar {{source}}",
+    showCard: "Mostrar {{source}}",
     refreshAll: "Atualizar tudo",
     refreshing: "Atualizando...",
     loading: "Carregando uso...",
@@ -2609,6 +2672,13 @@ export const ptBR: TranslationResources = {
         description: "Mostrar uma estrutura para navegar entre prompts",
       },
       sidebar: {
+        view: {
+          title: "Visualização da barra lateral",
+          label: "Visualização",
+          default: "Visualização padrão",
+          unavailable:
+            "A visualização selecionada está indisponível ou desativada. Exibindo a visualização padrão.",
+        },
         header: {
           title: "Cabeçalho",
           description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
@@ -2644,10 +2714,11 @@ export const ptBR: TranslationResources = {
       layout: {
         title: "Layout",
         contentWidth: "Largura do conteúdo",
-        contentWidthHint: "Largura máxima do chat e dos arquivos Markdown em telas largas",
-        contentWidthAccessibility: "Largura do conteúdo em pixels",
-        reset: "Redefinir",
-        resetAccessibility: "Redefinir a largura do conteúdo",
+        contentWidthHint: "Largura do chat, do campo de mensagem e das prévias de Markdown",
+        contentWidthDefault: "Padrão",
+        contentWidthWide: "Largo",
+        contentWidthFull: "Total",
+        contentWidthCustom: "Largura personalizada · {{width}} px",
       },
       syntax: {
         title: "Sintaxe",
@@ -2718,6 +2789,8 @@ export const ptBR: TranslationResources = {
         toggleFocusMode: "Alternar modo de foco",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
+        toggleModelPicker: "Abrir ou fechar o seletor de modelos",
+        cycleEffort: "Alternar o nível de esforço",
         cycleAgentMode: "Alternar modo do agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar/parar ditado",
@@ -3035,6 +3108,22 @@ export const ptBR: TranslationResources = {
     providers: {
       title: "Provedores",
       addProvider: "Adicionar provedor",
+      list: {
+        add: "Provedor",
+        updatingTo: "Atualizando para {{version}}...",
+      },
+      detail: {
+        backToProviders: "Voltar para provedores",
+        notOnHost: "Este provedor não está neste host",
+        enabled: "Ativado",
+        unavailableTitle: "{{name}} não está disponível",
+        troubleshooting: "Solução de problemas",
+        status: "Status do provedor",
+        checked: "Verificado {{time}}",
+        diagnosticReport: "Relatório de diagnóstico",
+        dangerZone: "Zona de perigo",
+        removeHint: "Exclui este provedor do config.json",
+      },
       providerDetails: "Detalhes do provedor {{name}}",
       enableProvider: "Ativar {{name}}",
       unavailable: "Conecte-se a este host para ver provedores",
@@ -3076,9 +3165,30 @@ export const ptBR: TranslationResources = {
         retrying: "Tentando novamente...",
         noSearchMatches: "Nenhum modelo corresponde à sua busca",
         noneDetected: "Nenhum modelo detectado",
+        noCustom: "Nenhum modelo personalizado",
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
+      },
+      installation: {
+        title: "Instalação",
+        version: "Versão",
+        installed: "Instalado",
+        notInstalled: "Não instalado",
+        install: "Instalar",
+        checking: "Verificando...",
+        failed: "Não foi possível verificar a instalação",
+        updates: "Atualizações",
+        upToDate: "Atualizado",
+        updateAvailable: "Atualização disponível",
+        updateInstructions: "Instruções de atualização",
+        update: "Atualizar",
+        updating: "Atualizando...",
+        updated: "Atualizado",
+        updateFailed: "Falha na atualização",
+        outputTruncated: "A saída anterior foi descartada.",
+        updatesFailed: "Não foi possível verificar atualizações",
+        installInstructions: "Instruções de instalação",
       },
       diagnostic: {
         title: "Diagnóstico",

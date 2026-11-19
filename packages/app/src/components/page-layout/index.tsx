@@ -1,5 +1,6 @@
+import { AppearanceText as Text } from "@/appearance/text";
 import { useMemo, type ReactNode } from "react";
-import { Platform, ScrollView, Text, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
@@ -18,6 +19,8 @@ interface PageLayoutProps {
   titleTestID?: string;
   /** Controls for the whole page: right of the title on desktop, in the back header on compact. */
   actions?: ReactNode;
+  /** `wide` for pages that lay content out in a grid, such as a gallery. Defaults to a reading column. */
+  width?: "default" | "wide";
   children: ReactNode;
 }
 
@@ -32,6 +35,7 @@ export function PageLayout({
   testID,
   titleTestID,
   actions,
+  width = "default",
   children,
 }: PageLayoutProps) {
   const isCompact = useIsCompactFormFactor();
@@ -53,7 +57,7 @@ export function PageLayout({
         contentContainerStyle={scrollContentStyle}
         testID={testID}
       >
-        <View style={styles.content}>
+        <View style={width === "wide" ? styles.contentWide : styles.content}>
           {showTitle ? (
             <View style={styles.titleRow} testID={titleTestID}>
               <Text style={styles.title} testID="page-title">
@@ -82,6 +86,13 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[6],
     width: "100%",
     maxWidth: 720,
+    alignSelf: "center",
+  },
+  contentWide: {
+    padding: theme.spacing[4],
+    paddingTop: theme.spacing[6],
+    width: "100%",
+    maxWidth: 1080,
     alignSelf: "center",
   },
   titleRow: {

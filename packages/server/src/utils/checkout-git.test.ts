@@ -30,6 +30,7 @@ import {
   getCheckoutShortstat,
   getPullRequestStatus,
   getCheckoutStatus,
+  getCheckoutWorktreeState,
   checkoutResolvedBranch,
   listBranchSuggestions,
   setCheckoutBaseBranch,
@@ -177,6 +178,7 @@ function createPullRequestStatus(overrides?: Partial<CurrentPullRequestStatus>) 
 
 interface RequestedPullRequestTarget {
   headRef: string;
+  currentBranch?: string;
   headSha?: string;
   headRepositoryOwner?: string;
 }
@@ -193,6 +195,7 @@ function createGitHubServiceRecordingPullRequestTargets(
   github.getCurrentPullRequestStatus = async (request) => {
     options.requestedTargets.push({
       headRef: request.headRef,
+      ...(request.currentBranch ? { currentBranch: request.currentBranch } : {}),
       ...(request.headSha ? { headSha: request.headSha } : {}),
       ...(request.headRepositoryOwner ? { headRepositoryOwner: request.headRepositoryOwner } : {}),
     });
@@ -570,6 +573,15 @@ describe("checkout git utilities", () => {
       .toString()
       .trim();
     expect(message).toBe("update file");
+  });
+
+  it("counts untracked files as dirty when the repository hides them from status", async () => {
+    execFileSync("git", ["config", "status.showUntrackedFiles", "no"], { cwd: repoDir });
+    writeFileSync(join(repoDir, "new-file.txt"), "not yet added\n");
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: repoDir }).toString()).toBe("");
+
+    expect((await getCheckoutStatus(repoDir)).isDirty).toBe(true);
+    expect((await getCheckoutWorktreeState(repoDir, {})).isDirty).toBe(true);
   });
 
   it("honors commit signing configuration", async () => {
@@ -3450,7 +3462,7 @@ const x = 1;
       { paseoHome },
     );
 
-    expect(requestedTargets).toEqual([factsTarget]);
+    expect(requestedTargets).toEqual([{ ...factsTarget, currentBranch: "tender-parrot" }]);
   });
 
   it("uses the tracked fork branch for PR worktree status lookup", async () => {
@@ -3480,7 +3492,11 @@ const x = 1;
     const status = await getPullRequestStatus(repoDir, github);
 
     expect(requestedTargets).toEqual([
-      expect.objectContaining({ headRef: "main", headRepositoryOwner: "chethanuk" }),
+      expect.objectContaining({
+        headRef: "main",
+        currentBranch: "chethanuk/main",
+        headRepositoryOwner: "chethanuk",
+      }),
     ]);
     expect(status.status?.number).toBe(345);
     expect(status.status?.headRefName).toBe("main");
@@ -3509,6 +3525,20 @@ const x = 1;
     expect(status.status?.headRefName).toBe("feature");
     expect(status.status?.isMerged).toBe(false);
     expect(status.status?.state).toBe("closed");
+  });
+
+  it("looks up PR status again when switching branches at the same commit", async () => {
+    execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoDir });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const forge = createGitHubServiceRecordingPullRequestTargets({ requestedTargets });
+
+    const feature = await getPullRequestStatus(repoDir, forge);
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+    const main = await getPullRequestStatus(repoDir, forge);
+
+    expect(feature.status?.headRefName).toBe("feature");
+    expect(main.status?.headRefName).toBe("main");
+    expect(requestedTargets.map(({ headRef }) => headRef)).toEqual(["feature", "main"]);
   });
 
   it("caches PR status results for duplicate lookups", async () => {

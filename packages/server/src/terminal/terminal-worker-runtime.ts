@@ -13,6 +13,7 @@ import {
 import { createRequire } from "node:module";
 import { access, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { ensurePrivateDirectory } from "../server/private-files.js";
 import { listTerminalWorkerRecords, terminalWorkerDirectory } from "./terminal-worker-record.js";
@@ -193,6 +194,28 @@ export function prepareTerminalWorkerRuntime(input: {
   return entry;
 }
 
+// Windows keeps a just-exited worker's files open for a moment, so a delete that fails with one
+// of these codes is retried for a short window. Each attempt is a single rm: rm's own maxRetries
+// repeats at every directory level, so a file that stays locked deep in node-pty would hold
+// daemon start and stop far past any window.
+const TRANSIENT_REMOVE_ERRORS = new Set(["EPERM", "EBUSY", "EACCES", "ENOTEMPTY"]);
+const TRANSIENT_REMOVE_WINDOW_MS = 3_000;
+const TRANSIENT_REMOVE_PAUSE_MS = 100;
+
+async function removeCopy(directory: string): Promise<void> {
+  const deadline = Date.now() + TRANSIENT_REMOVE_WINDOW_MS;
+  for (;;) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !TRANSIENT_REMOVE_ERRORS.has(code) || Date.now() >= deadline) throw error;
+      await delay(TRANSIENT_REMOVE_PAUSE_MS);
+    }
+  }
+}
+
 export interface PruneTerminalWorkerRuntimesResult {
   removed: string[];
   /** Copies that could not be deleted (a worker that just exited can still hold files on Windows). */
@@ -236,7 +259,7 @@ export async function pruneTerminalWorkerRuntimes(
     )
       continue;
     try {
-      await rm(directory, { recursive: true, force: true });
+      await removeCopy(directory);
       result.removed.push(directory);
     } catch (error) {
       result.failed.push({

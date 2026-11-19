@@ -392,8 +392,25 @@ describe("terminal-session-controller with terminals held by a newer Paseo", () 
     };
   }
 
+  test("reports incompatible workers to a legacy subscription without a request id", async () => {
+    const outboundMessages: SessionOutboundMessage[] = [];
+    const controller = createController({
+      terminalManager: incompatibleManager(),
+      emit: (message) => outboundMessages.push(message),
+      emitBinary: () => {},
+      hasBinaryChannel: () => true,
+      isPathWithinRoot: isSameOrDescendantPath,
+      sessionLogger: createLogger(),
+    });
+    await controller.dispatch({ type: "subscribe_terminals_request" });
+    expect(outboundMessages).toEqual([
+      { type: "status", payload: { status: "error", message: incompatible.message } },
+    ]);
+  });
+
   test.each([
     { type: "list_terminals_request" as const, requestId: "req-list" },
+    { type: "subscribe_terminals_request" as const, requestId: "req-observe" },
     { type: "list_terminals_request" as const, requestId: "req-list-cwd", cwd: "/work/repo" },
     {
       type: "create_terminal_request" as const,
@@ -505,8 +522,22 @@ describe("terminal-session-controller subdirectory aggregation", () => {
         payload: {
           cwd: rootCwd,
           terminals: [
-            { id: "root-term", name: "Terminal 1", workspaceId: "ws-test", activity: null },
-            { id: "subdir-term", name: "Mobile", workspaceId: "ws-test", activity: null },
+            {
+              id: "root-term",
+              name: "Terminal 1",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+            {
+              id: "subdir-term",
+              name: "Mobile",
+              workspaceId: "ws-test",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
           ],
         },
       },
@@ -576,6 +607,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: rootCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-root",
@@ -592,6 +625,8 @@ describe("terminal-session-controller subdirectory aggregation", () => {
               cwd: worktreeCwd,
               workspaceId: "ws-test",
               activity: null,
+              createdAt: null,
+              isScript: false,
             },
           ],
           requestId: "req-worktree",
@@ -677,7 +712,16 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
         type: "terminals_changed",
         payload: {
           cwd,
-          terminals: [{ id: "a", name: "A", workspaceId: "ws-a", activity: null }],
+          terminals: [
+            {
+              id: "a",
+              name: "A",
+              workspaceId: "ws-a",
+              activity: null,
+              createdAt: null,
+              isScript: false,
+            },
+          ],
         },
       },
     ]);

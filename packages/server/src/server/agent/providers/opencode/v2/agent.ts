@@ -1,7 +1,7 @@
 import { OpenCodeV2Session } from "./session.js";
 import { V2_CAPABILITIES } from "./capabilities.js";
 import {
-  features,
+  controls,
   permissionRules,
   applyResumeOverrides,
   requiresDedicatedV2Server,
@@ -17,7 +17,8 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
+  AgentResumeSessionOptions,
+  AgentDraftControls,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentSession,
@@ -131,6 +132,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const cwd = overrides?.cwd ?? handle.metadata?.cwd;
     if (typeof cwd !== "string")
@@ -151,7 +153,14 @@ export class OpenCodeV2AgentClient implements AgentClient {
         sessionID: handle.nativeHandle ?? handle.sessionId,
       });
       await applyResumeOverrides(connection.client, info, overrides);
-      return await this.attach(connection, info, config, launch, true);
+      return await this.attach(
+        connection,
+        info,
+        config,
+        launch,
+        true,
+        options?.purpose === "history",
+      );
     } catch (error) {
       await connection.release();
       throw error;
@@ -163,6 +172,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     config: AgentSessionConfig,
     launch: AgentLaunchContext | undefined,
     persist: boolean,
+    historyOnly = false,
   ) {
     const acquire = () =>
       this.runtime.acquire(
@@ -209,6 +219,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       bindChild,
       acquire,
       moved,
+      historyOnly,
     );
     try {
       await session.initialize(
@@ -222,8 +233,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       throw error;
     }
   }
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return features(config);
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls, options: config.providerOptions ?? {} };
   }
   async listCommands(config: AgentSessionConfig) {
     const connection = await this.runtime.acquire();

@@ -9,6 +9,23 @@ async function chooseLanguage(page: Page, language: string) {
   await page.getByRole("menuitemradio", { name: language }).click();
 }
 
+async function withPageScriptsHeld(page: Page, run: (release: () => void) => Promise<void>) {
+  let releaseScripts!: () => void;
+  const scriptsReleased = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  await page.route("**/*.js", async (route) => {
+    await scriptsReleased;
+    await route.continue();
+  });
+  try {
+    await run(releaseScripts);
+  } finally {
+    releaseScripts();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+}
+
 function describeAlternates(links: Element[]): string[] {
   return links.map((link) => `${link.getAttribute("hreflang")} ${link.getAttribute("href")}`);
 }
@@ -114,6 +131,7 @@ test("shows the language as an abbreviation and lists every language by name", a
 
 test("switches language from the keyboard", async ({ page }) => {
   await page.goto("/");
+  await expect(languageButton(page)).toBeEnabled();
   await languageButton(page).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menuitemradio", { name: "English" })).toBeFocused();
@@ -182,4 +200,16 @@ test("shows the changelog in Chinese", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "新增" }).first()).toBeVisible();
   await expect(page.getByRole("note")).toHaveCount(0);
+});
+
+test("waits for scripts before enabling the language menu", async ({ page }) => {
+  await withPageScriptsHeld(page, async (releaseScripts) => {
+    await page.goto("/docs/cli#running-agents", { waitUntil: "commit" });
+    await expect(languageButton(page)).toBeVisible();
+    await expect(languageButton(page)).toBeDisabled();
+
+    releaseScripts();
+    await languageButton(page).click();
+    await expect(page.getByRole("menuitemradio", { name: "English" })).toBeVisible();
+  });
 });
