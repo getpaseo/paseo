@@ -51,7 +51,7 @@ In the app, set **Isolation** to **New worktree**, then pick a branch or a pull 
 - **Branch off** starts a new branch from it. Branches use this by default.
 - **Check out** works on the branch itself. Pull requests use this by default.
 
-When you branch off a pull request, the new branch starts at the pull request's latest commit and has no upstream. A push does not go to the pull request's branch.
+When you branch off a pull request, the new branch starts at the pull request's latest commit and has no upstream. A push does not go to the pull request's branch. The workspace's base branch is the pull request's branch. For a pull request from a fork, it is the branch that the pull request merges into.
 
 Git keeps a branch in one worktree at a time. If you check out a branch that a worktree already has, Paseo selects that worktree under **Existing worktree** instead of making a copy.
 

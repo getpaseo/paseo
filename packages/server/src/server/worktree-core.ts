@@ -191,7 +191,14 @@ function creationIntentFromRequest(
   original: WorktreeCreationIntent,
 ): WorktreeCreationIntent {
   if (request.kind === "branch-off") {
-    return { kind: request.kind, branchName: request.branch, baseBranch: request.baseRef };
+    // Plugins see the base; where a branch off a fork's change request starts stays Paseo's.
+    const startPoint = original.kind === "branch-off" ? original.startPoint : undefined;
+    return {
+      kind: request.kind,
+      branchName: request.branch,
+      baseBranch: request.baseRef,
+      ...(startPoint ? { startPoint } : {}),
+    };
   }
   if (request.kind === "checkout-branch") {
     return {

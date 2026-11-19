@@ -1715,6 +1715,16 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         cwd: repoDir,
       });
       rmSync(removedPath, { recursive: true, force: true });
+      // Git reports a locked worktree as neither prunable nor gone after its directory is deleted.
+      const lockedRemovedPath = join(tempDir, "locked-removed");
+      execFileSync(
+        "git",
+        ["worktree", "add", "--lock", "-b", "feature/locked", lockedRemovedPath],
+        {
+          cwd: repoDir,
+        },
+      );
+      rmSync(lockedRemovedPath, { recursive: true, force: true });
 
       const fromProject = await listGitWorktrees({ cwd: repoDir });
       const fromPaseoWorktree = await listGitWorktrees({ cwd: paseoWorktree.worktreePath });

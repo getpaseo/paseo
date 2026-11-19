@@ -1535,16 +1535,24 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       );
 
       const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+      // The fork's branch is not in this repository, so a pull request from the new branch goes
+      // into the fork pull request's base.
       expect(result.intent).toEqual({
         kind: "branch-off",
-        baseBranch: "refs/remotes/paseo-pr-526/main",
+        baseBranch: "main",
+        startPoint: "refs/paseo/change-requests/526",
         branchName: "follow-up",
       });
       expect(result.worktree.branchName).toBe("follow-up");
       expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
       expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect((await readPaseoWorktreeMetadata(result.worktree.worktreePath))?.baseRefName).toBe(
+        "main",
+      );
       expect(git(repoDir, "branch", "--list", "therainisme/main")).toBe("");
       expect(getGitConfigValue(repoDir, "remote.paseo-pr-526.url")).toBeNull();
+      // Base branch pickers list remote-tracking refs; the fork's head is not one of them.
+      expect(git(repoDir, "for-each-ref", "refs/remotes/paseo-pr-526")).toBe("");
     });
 
     test("creates the agent-create worktree input shape", async () => {

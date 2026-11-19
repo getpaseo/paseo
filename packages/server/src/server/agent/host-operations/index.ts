@@ -361,10 +361,12 @@ export function createHostResolver(input: {
                       kind: "worktree",
                       cwd: path,
                       projectId: args.projectId as string | undefined,
+                      // A pull request with no mode is checked out, as it was before a pull request could be branched off.
                       action:
-                        args.mode === "checkout-branch" || args.mode === "checkout-pr"
-                          ? "checkout"
-                          : "branch-off",
+                        args.mode === "branch-off" ||
+                        (args.mode === undefined && args.prNumber === undefined)
+                          ? "branch-off"
+                          : "checkout",
                       baseBranch: args.baseBranch as string | undefined,
                       branchName: args.branchName as string | undefined,
                       refName: args.branch as string | undefined,

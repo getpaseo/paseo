@@ -192,7 +192,13 @@ export interface WorktreeCheckoutRef {
 }
 
 export type WorktreeSource =
-  | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | {
+      kind: "branch-off";
+      baseBranch: string;
+      branchName: string;
+      /** Where the new branch starts when that is not `baseBranch`, such as a fork's head. */
+      startPoint?: string;
+    }
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-commit"; commit: string; baseRef: string }
@@ -1160,6 +1166,8 @@ export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWor
   const worktrees: GitWorktree[] = [];
   for (const entry of parseWorktreeEntries(stdout)) {
     if (entry.unusable) continue;
+    // A locked worktree whose directory was deleted is neither prunable nor workable.
+    if (!(await pathExists(entry.path))) continue;
     const path = await normalizePathForOwnership(entry.path);
     worktrees.push({
       path,
@@ -1661,7 +1669,7 @@ async function resolveBranchOffWorktreeSourcePlan(
   const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
-  const base = branchExists ? branchName : resolvedBaseBranch;
+  const base = branchExists ? branchName : (source.startPoint ?? resolvedBaseBranch);
   await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);

@@ -49,7 +49,7 @@ worktree 默认存放在 `$PASEO_HOME/worktrees/` 下，按源检出路径的哈
 - **新建分支** 从它创建一个新分支。分支默认使用这个选项。
 - **检出** 直接在该分支上工作。Pull Request 默认使用这个选项。
 
-从 Pull Request 新建分支时，新分支从 Pull Request 的最新提交开始，并且没有上游分支。推送不会进入 Pull Request 的分支。
+从 Pull Request 新建分支时，新分支从 Pull Request 的最新提交开始，并且没有上游分支。推送不会进入 Pull Request 的分支。工作区的基础分支是 Pull Request 的分支。对于来自 fork 的 Pull Request，基础分支是该 Pull Request 要合并进的分支。
 
 Git 同一时间只允许一个 worktree 检出某个分支。如果你检出的分支已经在某个 worktree 中，Paseo 会在 **已有 worktree** 下选中那个 worktree，而不是再复制一份。
 

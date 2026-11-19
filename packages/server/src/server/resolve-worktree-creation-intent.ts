@@ -78,14 +78,19 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
+    const branchName = input.branchName ?? input.worktreeSlug ?? "worktree";
     const changeRequest = resolveInputChangeRequest(input);
-    const baseBranch = changeRequest
-      ? await fetchChangeRequestHead({ input, changeRequest, repoRoot, deps })
-      : input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps));
+    if (changeRequest) {
+      return {
+        kind: "branch-off",
+        ...(await fetchChangeRequestHead({ input, changeRequest, repoRoot, deps })),
+        branchName,
+      };
+    }
     return {
       kind: "branch-off",
-      baseBranch,
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      branchName,
     };
   }
 
@@ -139,17 +144,18 @@ export async function resolveWorktreeCreationIntent(
 }
 
 /**
- * Brings a change request's head into a remote-tracking ref, so a new branch can start from it
- * without checking the change request out. A same-repository head lands where `git fetch` puts
- * the branch; any other head lands under `paseo-pr-<number>`, the remote a checkout of the same
- * change request pushes to.
+ * Fetches a change request's head, so a new branch can start from it without checking the change
+ * request out. A same-repository head lands where `git fetch` puts the branch and is the new
+ * branch's base, so its pull request stacks on the change request. A fork's head is not a branch
+ * of this repository, so the new branch starts from it and its base is the change request's base.
+ * That head lands outside `refs/remotes`, which base branch pickers list.
  */
 async function fetchChangeRequestHead(params: {
   input: ResolveWorktreeCreationIntentInput;
   changeRequest: { number: number; forge?: string };
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
-}): Promise<string> {
+}): Promise<{ baseBranch: string; startPoint?: string }> {
   const { input, changeRequest, repoRoot, deps } = params;
   assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
   const checkout = await resolvePrCheckoutIntent({
@@ -158,12 +164,14 @@ async function fetchChangeRequestHead(params: {
     repoRoot,
     deps,
   });
-  const headBranch = checkout.headRef.startsWith("refs/") ? "head" : checkout.headRef;
-  const destination = checkout.trackOriginHead
-    ? `refs/remotes/origin/${headBranch}`
-    : `refs/remotes/paseo-pr-${changeRequest.number}/${headBranch}`;
-  await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination });
-  return destination;
+  if (checkout.trackOriginHead) {
+    const destination = `refs/remotes/origin/${checkout.headRef}`;
+    await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination });
+    return { baseBranch: destination };
+  }
+  const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
+  await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination: startPoint });
+  return { baseBranch: checkout.baseRefName, startPoint };
 }
 
 interface PrCheckoutIntentParams {
