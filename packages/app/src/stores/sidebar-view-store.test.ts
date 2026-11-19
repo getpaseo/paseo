@@ -30,6 +30,29 @@ function createMemoryStorage(entries: Record<string, string | null>): MemoryStor
 }
 
 describe("sidebar view store", () => {
+  it("retains activity-day grouping across migration and toggles", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "day",
+        workspaceSort: "lastPrompt",
+        projectFilters: ["project-a"],
+        hostFilters: ["host-a"],
+        labelFilter: { labels: ["Urgent"] },
+      }),
+    ).toMatchObject({
+      groupMode: "day",
+      workspaceSort: "lastPrompt",
+      projectFilters: ["project-a"],
+      hostFilters: ["host-a"],
+      labelFilter: { labels: ["urgent"] },
+    });
+    const store = useSidebarViewStore.getState();
+    store.setGroupMode("day");
+    store.setGroupMode("project");
+    store.setGroupMode("day");
+    expect(useSidebarViewStore.getState().groupMode).toBe("day");
+    store.setGroupMode("project");
+  });
   beforeEach(() => {
     useSidebarViewStore.setState({
       workspaceSort: "created",

@@ -115,6 +115,7 @@ export const ar: TranslationResources = {
       home: "بيت",
       groupByProject: "تجميع حسب المشروع",
       groupByStatus: "تجميع حسب الحالة",
+      groupByDay: "التجميع حسب يوم النشاط",
       modelGroupLabel: "النموذج",
       modelSearchKeywords: "تبديل النموذج تغيير النموذج تعيين النموذج اختيار النموذج",
       thinkingGroupLabel: "التفكير",
@@ -1216,6 +1217,11 @@ export const ar: TranslationResources = {
       working: "قيد العمل",
       done: "تم",
     },
+    dayBucket: {
+      today: "اليوم",
+      yesterday: "أمس",
+      older: "أقدم",
+    },
     display: {
       showBackground: "إظهار مساحات العمل في الخلفية",
       trigger: "تفضيلات العرض",
@@ -1231,6 +1237,7 @@ export const ar: TranslationResources = {
         label: "التجميع",
         project: "المشروع",
         status: "الحالة",
+        day: "يوم النشاط",
         labels: "التسميات",
       },
       titleSource: {
