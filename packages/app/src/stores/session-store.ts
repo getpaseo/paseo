@@ -1,4 +1,5 @@
 import equal from "fast-deep-equal";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -23,6 +24,7 @@ import {
 } from "@/composer/submission/model";
 import type { PendingPermission } from "@/types/shared";
 import type { ComposerAttachment } from "@/attachments/types";
+import { writeQueuedMessages } from "@/runtime/queued-message-storage";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
@@ -1930,6 +1932,12 @@ export const useSessionStore = create<SessionStore>()(
             },
           };
         });
+        const queuedMessages = get().sessions[serverId]?.queuedMessages;
+        if (queuedMessages) {
+          void writeQueuedMessages(AsyncStorage, serverId, queuedMessages).catch((error) => {
+            console.warn("[SessionStore] Failed to persist queued messages", error);
+          });
+        }
       },
 
       // Hydration
