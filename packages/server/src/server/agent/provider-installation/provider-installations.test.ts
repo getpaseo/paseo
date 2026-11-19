@@ -302,27 +302,31 @@ describe("provider installation", () => {
   });
 
   test("availability, discovery and the installed version never wait on an update check", async () => {
-    let checks = 0;
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
     const manager = managerWith({
       plugin: pluginProvider({
         async inspect() {
           return { status: "installed", version: "1.0.0" };
         },
-        checkForUpdates() {
-          checks += 1;
-          return new Promise(() => {});
+        async checkForUpdates() {
+          started.resolve();
+          await finish.promise;
+          return { status: "current" };
         },
       }),
     });
+    const updateCheck = manager.installations.checkForUpdates("installation-plugin");
     try {
-      void manager.installations.checkForUpdates("installation-plugin");
+      await started.promise;
       const entry = await manager.getProvider({ provider: "installation-plugin", wait: true });
       expect(entry.status).toBe("ready");
       await expect(manager.installations.inspect("installation-plugin")).resolves.toEqual({
         inspection: { status: "installed", version: "1.0.0" },
       });
-      expect(checks).toBe(1);
     } finally {
+      finish.resolve();
+      await updateCheck;
       manager.destroy();
     }
   });
