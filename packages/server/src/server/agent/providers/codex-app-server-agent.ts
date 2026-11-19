@@ -83,6 +83,7 @@ import { spawnProcess, type SpawnProcessOptions } from "../../../utils/spawn.js"
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import {
   buildCodexControls,
+  codexSpeedTiers,
   CodexServiceTierSchema,
   readCodexServiceTier,
   type CodexServiceTier,
@@ -202,6 +203,9 @@ const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
 const CODEX_CONTEXT_COMPACTION_TYPE = "contextCompaction";
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
   "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
+
+// Codex 0.156.0 first forwards Flex without a matching entry in the model catalog.
+const CODEX_UNADVERTISED_FLEX_MIN_VERSION: readonly [number, number, number] = [0, 156, 0];
 
 // Codex's experimental `goals` feature ships in 0.128.0+. Older binaries reject
 // `--enable goals` at launch, so we gate by version and silently skip the flag
@@ -3638,6 +3642,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   /** The tier the options ask for; `serviceTier` is what the current model can honor. */
   private requestedServiceTier: string | null = null;
   private speedModels: CodexModel[] = [];
+  private supportsUnadvertisedFlex = false;
   private planModeEnabled = false;
   // History read by rewind or an archived resume, held until streamHistory consumes it.
   private stagedHistory: CodexThreadHistory | null = null;
@@ -3789,7 +3794,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   get controls(): AgentOptionControl[] {
     return buildCodexControls({
-      serviceTiers: this.currentServiceTiers(),
+      serviceTiers: this.offeredServiceTiers(),
       planModeAvailable: this.hasPlanCollaborationMode(),
     });
   }
@@ -3855,6 +3860,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     try {
       const userAgent = toObjectRecord(initialized)?.userAgent;
       this.threadRollbackAvailable = codexServerHasThreadRollback(userAgent);
+      this.supportsUnadvertisedFlex =
+        typeof userAgent === "string" &&
+        codexVersionAtLeast(userAgent, CODEX_UNADVERTISED_FLEX_MIN_VERSION);
       this.supportsInstructionSnapshots =
         typeof userAgent === "string" && codexVersionAtLeast(userAgent, [0, 121, 0]);
       if (
@@ -4082,13 +4090,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resolvedCollaborationMode = this.resolveCollaborationMode();
   }
 
-  private currentServiceTiers(): CodexServiceTier[] {
+  /**
+   * The speeds this session offers: Flex, which Codex accepts whatever the model advertises, plus
+   * the tiers the catalog advertises for the selected model. The Speed control and the checks
+   * below all read this, so what the control offers is what the session will run.
+   */
+  private offeredServiceTiers(): CodexServiceTier[] {
     const selectedModel = this.config.model
       ? this.speedModels.find(
           (model) => model.id === this.config.model || model.model === this.config.model,
         )
       : (this.speedModels.find((model) => model.isDefault) ?? this.speedModels[0]);
-    return selectedModel?.serviceTiers ?? [];
+    return codexSpeedTiers(selectedModel?.serviceTiers ?? [], this.supportsUnadvertisedFlex);
   }
 
   /**
@@ -4111,9 +4124,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resolveServiceTier(requested: string | null): string | null {
-    // Until the model list arrives there is nothing to check the request against.
-    if (this.speedModels.length === 0 || requested === "default") return requested;
-    const tiers = this.currentServiceTiers();
+    if (requested === "default") return requested;
+    // Flex needs catalog support or a Codex version that can send it without a catalog entry.
+    if (this.speedModels.length === 0 && requested !== "flex") return requested;
+    const tiers = this.offeredServiceTiers();
     // `fast` names whichever tier the model calls Fast.
     if (requested === "fast" && !tiers.some((tier) => tier.id === "fast")) {
       return tiers.find((tier) => tier.name.toLowerCase() === "fast")?.id ?? null;
@@ -4920,7 +4934,8 @@ export class CodexAppServerAgentSession implements AgentSession {
   /**
    * A speed the new model does not offer turns into Normal and is reported, so choosing a model
    * that does offer it again does not bring the paid tier back. It is reported as Normal rather
-   * than removed so a configured default cannot fill the old speed back in.
+   * than removed so a configured default cannot fill the old speed back in. Flex survives model switches
+   * on Codex versions that support it independently of the catalog.
    */
   private dropUnavailableServiceTier(): void {
     const requested = this.requestedServiceTier;
@@ -4981,7 +4996,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private isServiceTierAvailable(tier: string | null): boolean {
     if (tier === null || tier === "default") return true;
-    const tiers = this.currentServiceTiers();
+    const tiers = this.offeredServiceTiers();
     const namesFast = tier === "fast" && tiers.some((entry) => entry.name.toLowerCase() === "fast");
     return namesFast || tiers.some((entry) => entry.id === tier);
   }
