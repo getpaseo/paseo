@@ -1,8 +1,23 @@
-import { expect, test } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { collectSessionTurnEvents } from "../test-utils/session-stream-adapter.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryFactory } from "./query.js";
+
+// The meter reads Claude Code's auto-compact window from its settings, so every session gets its
+// own config dir instead of the developer's ~/.claude.
+let configDir: string;
+let launchContext: { env: Record<string, string> };
+beforeEach(async () => {
+  configDir = await mkdtemp(join(tmpdir(), "claude-context-window-"));
+  launchContext = { env: { CLAUDE_CONFIG_DIR: configDir } };
+});
+afterEach(async () => {
+  await rm(configDir, { recursive: true, force: true });
+});
 
 // A query dependency that speaks the same stream interface as Claude Code.
 // Each request repeats init so a second turn exercises runtime-limit retention.
@@ -72,6 +87,7 @@ function contextQuery({
         model = value;
       },
       setPermissionMode: async () => undefined,
+      applyFlagSettings: async () => undefined,
       supportedModels: async () => [],
       supportedCommands: async () => [],
     }) as ReturnType<ClaudeQueryFactory>;
@@ -90,11 +106,14 @@ test.each([
       queryFactory: contextQuery({ runtimeModel: runtime, reportedLimit: 800_000 }),
       resolveBinary: async () => process.execPath,
     });
-    const session = await client.createSession({
-      provider: "claude",
-      cwd: process.cwd(),
-      model: selected,
-    });
+    const session = await client.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+        model: selected,
+      },
+      launchContext,
+    );
     try {
       const first = await collectSessionTurnEvents(session, "first turn");
       const live = first.filter((event) => event.type === "usage_updated");
@@ -143,11 +162,14 @@ test("completed turns use the active model's window after switching both ways", 
       ],
     }),
   });
-  const session = await client.createSession({
-    provider: "claude",
-    cwd: process.cwd(),
-    model: haiku,
-  });
+  const session = await client.createSession(
+    {
+      provider: "claude",
+      cwd: process.cwd(),
+      model: haiku,
+    },
+    launchContext,
+  );
   try {
     for (const [model, limit] of [
       [haiku, 200_000],
@@ -203,7 +225,10 @@ test.each([
       modelWindowsByTurn: [windows],
     }),
   });
-  const session = await client.createSession({ provider: "claude", cwd: process.cwd(), model });
+  const session = await client.createSession(
+    { provider: "claude", cwd: process.cwd(), model },
+    launchContext,
+  );
   try {
     const events = await collectSessionTurnEvents(session, "OK");
     expect(events).toContainEqual(
@@ -212,6 +237,45 @@ test.each([
         usage: expect.objectContaining({ contextWindowMaxTokens: expected }),
       }),
     );
+  } finally {
+    await session.close();
+  }
+});
+
+test("caps the context limit at Claude Code's auto-compact window and follows changes", async () => {
+  const opus = "claude-opus-5-5";
+  const settingsPath = join(configDir, "settings.json");
+  async function setOpusWindow(autoCompactWindow: number | "auto"): Promise<void> {
+    const settings = { modelSettings: { [opus]: { autoCompactWindow } } };
+    await writeFile(settingsPath, JSON.stringify(settings), "utf8");
+  }
+  async function turnLimits(prompt: string): Promise<Array<number | undefined>> {
+    const events = await collectSessionTurnEvents(session, prompt);
+    return events.flatMap((event) => {
+      if (event.type === "usage_updated") return [event.usage.contextWindowMaxTokens];
+      if (event.type === "turn_completed") return [event.usage?.contextWindowMaxTokens];
+      return [];
+    });
+  }
+
+  await setOpusWindow(300_000);
+  const client = new ClaudeAgentClient({
+    logger: createTestLogger(),
+    resolveBinary: async () => process.execPath,
+    queryFactory: contextQuery({ runtimeModel: opus, reportedLimit: 1_000_000 }),
+  });
+  const session = await client.createSession(
+    { provider: "claude", cwd: configDir, model: opus },
+    launchContext,
+  );
+  try {
+    expect(await turnLimits("first turn")).toEqual([300_000, 300_000, 300_000]);
+
+    await setOpusWindow(400_000);
+    expect(await turnLimits("after /autocompact 400k")).toEqual([400_000, 400_000, 400_000]);
+
+    await setOpusWindow("auto");
+    expect(await turnLimits("after /autocompact auto")).toEqual([1_000_000, 1_000_000, 1_000_000]);
   } finally {
     await session.close();
   }

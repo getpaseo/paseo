@@ -97,6 +97,11 @@ import {
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeConfigDir, claudeProjectDirSync, claudeTranscriptPath } from "./project-dir.js";
+import {
+  readClaudeAutoCompactWindows,
+  resolveClaudeAutoCompactWindow,
+  type ClaudeAutoCompactWindows,
+} from "./auto-compact-window.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -2163,6 +2168,7 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
 
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
+  private autoCompactWindow: number | undefined;
   private streamRequestInputUsage: StreamRequestInputUsage | undefined;
   private streamRequestOutputTokens: number | undefined;
   private compactedContextWindowUsedTokens: number | undefined;
@@ -2182,12 +2188,15 @@ class ClaudeContextUsageState {
     this.contextWindowMaxTokens = contextWindowMaxTokens;
   }
 
-  recordModelUsage(modelUsage: unknown, modelId: string | null | undefined): number | undefined {
+  setAutoCompactWindow(autoCompactWindow: number | undefined): void {
+    this.autoCompactWindow = autoCompactWindow;
+  }
+
+  recordModelUsage(modelUsage: unknown, modelId: string | null | undefined): void {
     const contextWindowMaxTokens = extractContextWindowSize(modelUsage, modelId);
     if (contextWindowMaxTokens !== undefined) {
       this.contextWindowMaxTokens = contextWindowMaxTokens;
     }
-    return this.contextWindowMaxTokens;
   }
 
   buildStreamUsageEvent(event: unknown): AgentStreamEvent | null {
@@ -2241,11 +2250,10 @@ class ClaudeContextUsageState {
         totalCostUsd: message.total_cost_usd,
       };
 
-      const modelContextWindowMaxTokens = this.recordModelUsage(message.modelUsage, modelId);
-      if (this.contextWindowMaxTokens !== undefined) {
-        usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
-      } else if (modelContextWindowMaxTokens !== undefined) {
-        usage.contextWindowMaxTokens = modelContextWindowMaxTokens;
+      this.recordModelUsage(message.modelUsage, modelId);
+      const contextWindowMaxTokens = this.maxTokens();
+      if (contextWindowMaxTokens !== undefined) {
+        usage.contextWindowMaxTokens = contextWindowMaxTokens;
       }
 
       const activeResultUsageTokens =
@@ -2261,6 +2269,17 @@ class ClaudeContextUsageState {
       this.compactedContextWindowUsedTokens = undefined;
       this.completedResultTurns += 1;
     }
+  }
+
+  /**
+   * Claude Code compacts at the smaller of the model window and its auto-compact window, so that
+   * is the space the session really has. Without a known model window there is nothing to cap.
+   */
+  private maxTokens(): number | undefined {
+    if (this.contextWindowMaxTokens === undefined || this.autoCompactWindow === undefined) {
+      return this.contextWindowMaxTokens;
+    }
+    return Math.min(this.contextWindowMaxTokens, this.autoCompactWindow);
   }
 
   private streamUsedTokens(): number | undefined {
@@ -2280,8 +2299,9 @@ class ClaudeContextUsageState {
     const usage: AgentUsage = {
       contextWindowUsedTokens,
     };
-    if (this.contextWindowMaxTokens !== undefined) {
-      usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
+    const contextWindowMaxTokens = this.maxTokens();
+    if (contextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = contextWindowMaxTokens;
     }
     return {
       type: "usage_updated",
@@ -2295,8 +2315,9 @@ class ClaudeContextUsageState {
     this.streamRequestOutputTokens = undefined;
     this.compactedContextWindowUsedTokens = postTokens;
     const usage: AgentUsage = {};
-    if (this.contextWindowMaxTokens !== undefined) {
-      usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
+    const contextWindowMaxTokens = this.maxTokens();
+    if (contextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = contextWindowMaxTokens;
     }
     if (postTokens !== undefined) {
       usage.contextWindowUsedTokens = postTokens;
@@ -2439,6 +2460,7 @@ class ClaudeAgentSession implements AgentSession {
    */
   private withheldErrorReply: AgentTimelineItem[] = [];
   private readonly contextUsage: ClaudeContextUsageState;
+  private autoCompactWindows: ClaudeAutoCompactWindows | null = null;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
@@ -2573,6 +2595,7 @@ class ClaudeAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     await this.ensureHistoryReady();
+    await this.refreshAutoCompactWindows();
     if (this.closed) {
       throw new Error("Claude session is closed");
     }
@@ -2876,6 +2899,7 @@ class ClaudeAgentSession implements AgentSession {
     );
     this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
     this.lastRuntimeModel = null;
+    this.applyAutoCompactWindow();
     this.cachedRuntimeInfo = null;
     // Model change affects persistence metadata, so invalidate cached handle.
     this.persistence = null;
@@ -3856,6 +3880,32 @@ class ClaudeAgentSession implements AgentSession {
       env: this.harnessEnvironment,
       sessionKey: this.usageSessionKey,
     };
+  }
+
+  /**
+   * Re-reads the auto-compact window before each turn, so a change made with /autocompact or in
+   * the settings files reaches the context meter without restarting the agent.
+   */
+  private async refreshAutoCompactWindows(): Promise<void> {
+    this.autoCompactWindows = await readClaudeAutoCompactWindows({
+      configDir: claudeConfigDir(this.harnessEnvironment),
+      cwd: this.config.cwd,
+      env: this.harnessEnvironment,
+      logger: this.logger,
+    });
+    this.applyAutoCompactWindow();
+  }
+
+  private applyAutoCompactWindow(): void {
+    if (!this.autoCompactWindows) {
+      return;
+    }
+    this.contextUsage.setAutoCompactWindow(
+      resolveClaudeAutoCompactWindow(
+        this.autoCompactWindows,
+        this.lastRuntimeModel ?? this.config.model,
+      ),
+    );
   }
 
   private buildSdkEnv() {
@@ -5424,6 +5474,7 @@ class ClaudeAgentSession implements AgentSession {
         this.lastOptionsModel = this.config.model ?? null;
       }
       this.lastRuntimeModel = message.model;
+      this.applyAutoCompactWindow();
       this.cachedRuntimeInfo = null;
     }
     return { threadStartedSessionId, notice };
