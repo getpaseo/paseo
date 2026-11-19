@@ -52,7 +52,7 @@ function openInput(
     type: "session.open",
     requestId: "open-1",
     sessionId: "session-1",
-    config: { cwd: "/repo", env: {}, mcpServers: {}, settings, persist: true },
+    config: { cwd: process.cwd(), env: {}, mcpServers: {}, settings, persist: true },
     history: "skip",
   };
 }
@@ -226,6 +226,148 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
+  it.each(["replay", "skip"] as const)(
+    "handles trailing load updates with %s history",
+    async (history) => {
+      const { connector, instances } = connectorHarness({ capabilities: { loadSession: true } });
+      const connection = await runAcpProvider({ id: "load", label: "Load", connector }).connect({
+        versions: [1],
+        capabilities: ["prompt.message", "session.persistence"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        const input = {
+          ...openInput(),
+          history,
+          persistence: { version: 1, data: { sessionId: "connector-session" } },
+        };
+        await connection.send(input);
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        const runtime = instances[1];
+        runtime.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "previous question" },
+          },
+        });
+        runtime.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "previous answer" },
+          },
+        });
+        runtime.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "help", description: "Help" }],
+          },
+        });
+        await waitForEvent(events, (event) => event.type === "session.commands");
+        const items = events
+          .filter((event) => event.type === "timeline.item")
+          .map((event) => event.item);
+        expect(items).toEqual(
+          history === "skip"
+            ? []
+            : [
+                expect.objectContaining({ type: "user_message", text: "previous question" }),
+                expect.objectContaining({ type: "assistant_message", text: "previous answer" }),
+              ],
+        );
+        expect(events.some((event) => event.type === "session.turn")).toBe(false);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
+
+  it("accepts a prompt as soon as the session reports ready", async () => {
+    const { connector } = connectorHarness();
+    const connection = await runAcpProvider({
+      id: "ready-acp",
+      label: "Ready ACP",
+      connector,
+    }).connect({ versions: [1], capabilities: ["prompt.message"] });
+    try {
+      const prompted = Promise.withResolvers<void>();
+      connection.onEvent((event) => {
+        if (event.type !== "session.ready") return;
+        void connection
+          .send({
+            type: "session.prompt",
+            sessionId: event.sessionId!,
+            prompt: {
+              clientMessageId: "first",
+              delivery: "auto",
+              input: { type: "message", content: [{ type: "text", text: "Hi" }] },
+            },
+          })
+          .then(prompted.resolve, prompted.reject);
+      });
+      await connection.send(openInput());
+      await prompted.promise;
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("uses config options for mode selection when the agent exposes no legacy modes", async () => {
+    const { connector } = connectorHarness({
+      configOptions: [
+        {
+          id: "permissions",
+          category: "mode",
+          name: "Permissions",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "edit", name: "Accept edits" },
+          ],
+        },
+      ],
+    });
+    const connection = await runAcpProvider({ id: "modes", label: "Modes", connector }).connect({
+      versions: [1],
+      capabilities: ["session.configure"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const input = openInput();
+      input.config.mode = "edit";
+      await connection.send(input);
+      expect(
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.config" || event.type === "request.failed",
+        ),
+      ).toMatchObject({
+        type: "session.config",
+        config: { mode: "edit", modes: [{ id: "default" }, { id: "edit" }], settings: [] },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.configure",
+        requestId: "default",
+        sessionId: input.sessionId,
+        changes: { mode: "default" },
+      });
+      expect(
+        await waitForEvent(
+          events,
+          (event) => event.type === "session.config" && event.config.mode === "default",
+        ),
+      ).toBeDefined();
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("spawns the daemon-resolved launch for probes, catalogues, listing, and sessions", async () => {
     const executable = await fakeAcp(`
 if (process.env.LAUNCH_TOKEN !== "resolved" || process.env.CLAUDECODE || process.env.PASEO_NODE_ENV) process.exit(1);
@@ -236,7 +378,7 @@ lines.on("line", (line) => {
   const message = JSON.parse(line);
   let result;
   if (message.method === "initialize") result = { protocolVersion: message.params.protocolVersion, agentCapabilities: { sessionCapabilities: { list: {} } } };
-  else if (message.method === "session/new") result = { sessionId: "native", configOptions: [{ id: "model", name: "Model", category: "model", type: "select", currentValue: "resolved", options: [{ value: "resolved", name: process.env.SESSION_TOKEN || "probe" }] }] };
+  else if (message.method === "session/new") result = { sessionId: "native", configOptions: [{ id: "model", name: "Model", category: "model", type: "select", currentValue: "resolved", options: [{ value: "resolved", name: require("node:fs").realpathSync(message.params.cwd) === process.cwd() ? (process.env.SESSION_TOKEN || "probe") : "wrong cwd" }] }] };
   else if (message.method === "session/list") result = { sessions: [] };
   else return;
   send({ jsonrpc: "2.0", id: message.id, result });
@@ -254,7 +396,11 @@ lines.on("line", (line) => {
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
     try {
-      await connection.send({ type: "catalog", requestId: "catalog" });
+      await connection.send({
+        type: "catalog",
+        requestId: "catalog",
+        cwd: path.dirname(executable),
+      });
       expect(await waitForEvent(events, (event) => event.type === "catalog")).toMatchObject({
         catalog: { models: [{ id: "resolved", label: "probe" }] },
       });
@@ -264,6 +410,7 @@ lines.on("line", (line) => {
       });
       const input = openInput();
       input.config.env = { SESSION_TOKEN: "session" };
+      input.config.cwd = path.dirname(executable);
       await connection.send(input);
       expect(await waitForEvent(events, (event) => event.type === "session.config")).toMatchObject({
         config: { models: [{ id: "resolved", label: "session" }] },

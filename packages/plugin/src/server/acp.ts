@@ -4,8 +4,10 @@ import type {
   ProviderCommand,
   ProviderConfigState,
   ProviderNotice,
+  ProviderPersistence,
   ProviderRegistration,
   ProviderTimelineItem,
+  ProviderToolCallDetail,
 } from "./provider.js";
 import { createAcpProviderConnection } from "./acp-internal/connection.js";
 
@@ -82,6 +84,7 @@ export interface AcpToolCallSnapshot {
   input: JsonValue;
   output: JsonValue;
   locations: readonly string[];
+  detail?: ProviderToolCallDetail;
 }
 
 export type AcpVendorUpdate =
@@ -91,6 +94,13 @@ export type AcpVendorUpdate =
   | { type: "notice"; notice: ProviderNotice };
 
 export interface AcpTransformer {
+  /** Decode an older saved session and supply extension metadata for session/new or session/load. */
+  sessionOpen?(context: {
+    persistence?: ProviderPersistence;
+    systemPrompt?: string;
+    agentMetadata: JsonValue;
+  }): { sessionId?: string; metadata?: Readonly<Record<string, JsonValue>> };
+
   discover?(
     catalog: ProviderCatalog,
     context: AcpDiscoveryContext,

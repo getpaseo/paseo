@@ -482,6 +482,16 @@ export const vendorEdits: AcpTransformer = {
 };
 ```
 
+Set `detail` on the returned tool call to supply a Paseo tool card when the ACP kind does not
+describe the operation. For example, an agent can report a new file as an ACP edit, while the
+plugin returns a `write` detail with the file path and contents.
+
+Use `sessionOpen` when an ACP agent needs extension metadata on `session/new` or `session/load`.
+The hook receives the system prompt and the agent capabilities' `_meta` from `initialize`.
+Return `metadata` to add fields to the session request's `_meta`.
+If your plugin previously saved a different persistence format, return its native `sessionId`.
+Paseo gives its own saved session ID precedence and writes the ACP persistence format after opening.
+
 ## Test and publish
 
 Test the provider against the real agent, not only mocked frames:
