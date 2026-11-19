@@ -1228,17 +1228,24 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   ]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
+    const gutter = isMobileBreakpoint ? 8 : 16;
+    const leftGutter = gutter + outlineInset;
+    // Balance the outline gutter using only the space the capped column has left over.
+    const rightGutter =
+      outlineInset > 0 && contentMaxWidth !== undefined
+        ? `clamp(${gutter}px, calc(100% - ${leftGutter + contentMaxWidth}px), ${leftGutter}px)`
+        : gutter;
     return {
       display: "flex",
       flexDirection: "column",
       minHeight: "100%",
       paddingTop: CONTENT_PADDING_TOP_PX,
       paddingBottom: 16,
-      paddingLeft: (isMobileBreakpoint ? 8 : 16) + outlineInset,
-      paddingRight: isMobileBreakpoint ? 8 : 16,
+      paddingLeft: leftGutter,
+      paddingRight: rightGutter,
       boxSizing: "border-box",
     };
-  }, [isMobileBreakpoint, outlineInset]);
+  }, [contentMaxWidth, isMobileBreakpoint, outlineInset]);
   const scrollContainerStyle = useMemo((): CSSProperties => {
     const overlayScrollbarEnabled = scrollEnabled && !isMobileBreakpoint;
     return {
