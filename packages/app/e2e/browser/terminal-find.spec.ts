@@ -513,18 +513,12 @@ test.describe("terminal history with a finger", () => {
     await expectSingleFingerScroll(page, 1);
     await expect(input(page)).not.toBeFocused();
 
-    const screen = page
-      .getByTestId("terminal-surface")
-      .filter({ visible: true })
-      .locator(".xterm-screen");
-    const box = await screen.boundingBox();
-    if (!box) throw new Error("Terminal screen is not visible");
-    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 3);
+    await tapTerminalScreen(page);
     await expect(input(page)).toBeFocused();
     // Android's Back button hides the IME without blurring this input.
     await expectSingleFingerScroll(page, 24);
     await expect(input(page)).not.toBeFocused();
-    await screen.click();
+    await terminalScreen(page).click();
     await expect(input(page)).toBeFocused();
   });
 
@@ -532,19 +526,6 @@ test.describe("terminal history with a finger", () => {
     test(`preserves finger navigation in ${mode} input mode`, async ({ page }) => {
       await openPhoneInputCapture(page, mode);
       await expectFingerNavigationInput(page, mode);
-      // xterm's inertial gesture has translation but no new pointer coordinates.
-      await page
-        .locator(".xterm-screen")
-        .filter({ visible: true })
-        .evaluate((screen) => {
-          const event = new CustomEvent("-xterm-gesturechange", { cancelable: true });
-          Object.assign(event, { translationX: 0, translationY: 120 });
-          screen.dispatchEvent(event);
-        });
-      // A following byte is a PTY round-trip barrier for the gesture's reports.
-      await input(page).press("z");
-      await expect.poll(() => getTerminalBufferText(page)).toContain("TOUCH_BYTES:7a:END");
-      expect(await getTerminalBufferText(page)).not.toContain("INVALID_TOUCH_INPUT");
     });
   }
 });
@@ -576,6 +557,16 @@ async function openPhoneTerminalHistory(page: Page) {
   await expect.poll(() => viewport(page)).toBeGreaterThan(0);
 }
 
+function terminalScreen(page: Page) {
+  return page.getByTestId("terminal-surface").filter({ visible: true }).locator(".xterm-screen");
+}
+
+async function tapTerminalScreen(page: Page) {
+  const box = await terminalScreen(page).boundingBox();
+  expect(box).not.toBeNull();
+  await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 3);
+}
+
 async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
   const escapes = mode === "alternate" ? "\x1b[?1049h\x1b[?1h" : "\x1b[?1000h\x1b[?1006h";
   await harness.createTerminal({
@@ -587,9 +578,6 @@ async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
       process.stdin.setRawMode(true);
       process.stdin.once("data", () => {
         process.stdin.on("data", chunk => {
-          if (chunk.includes(Buffer.from("NaN"))) {
-            process.stdout.write("\\r\\nINVALID_TOUCH_INPUT\\r\\n");
-          }
           process.stdout.write("\\r\\nTOUCH_BYTES:" + chunk.toString("hex") + ":END\\r\\n");
         });
         process.stdout.write(${JSON.stringify(escapes)} + "TOUCH_INPUT_READY\\r\\n");

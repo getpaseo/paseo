@@ -561,28 +561,25 @@ export default function TerminalEmulator({
   }, []);
 
   const touchFocusRef = useRef<TerminalTouchFocus | null>(null);
-  const focusTerminalFromPointer = useCallback(() => {
-    onFocus?.();
-    runtimeRef.current?.focus();
-  }, [onFocus]);
 
   const handleRootPointerDown = useCallback(
     (event: ReactPointerEvent) => {
+      onFocus?.();
       touchFocusRef.current = null;
-      if (event.pointerType === "touch") {
-        // Focusing before a touch becomes a tap opens the keyboard during a scroll.
-        if (event.isPrimary) {
-          touchFocusRef.current = {
-            pointerId: event.pointerId,
-            x: event.clientX,
-            y: event.clientY,
-          };
-        }
+      if (event.pointerType !== "touch") {
+        runtimeRef.current?.focus();
         return;
       }
-      focusTerminalFromPointer();
+      // Focusing before a touch becomes a tap opens the keyboard during a scroll.
+      if (event.isPrimary) {
+        touchFocusRef.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+        };
+      }
     },
-    [focusTerminalFromPointer],
+    [onFocus],
   );
 
   const handleRootPointerMove = useCallback((event: ReactPointerEvent) => {
@@ -595,14 +592,11 @@ export default function TerminalEmulator({
     }
   }, []);
 
-  const handleRootPointerUp = useCallback(
-    (event: ReactPointerEvent) => {
-      const touch = touchFocusRef.current;
-      touchFocusRef.current = null;
-      if (touch?.pointerId === event.pointerId) focusTerminalFromPointer();
-    },
-    [focusTerminalFromPointer],
-  );
+  const handleRootPointerUp = useCallback((event: ReactPointerEvent) => {
+    const touch = touchFocusRef.current;
+    touchFocusRef.current = null;
+    if (touch?.pointerId === event.pointerId) runtimeRef.current?.focus();
+  }, []);
 
   const handleRootPointerCancel = useCallback(() => {
     touchFocusRef.current = null;
