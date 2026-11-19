@@ -16,34 +16,37 @@ function metroBlocks(config: MetroExclusionsConfig, filePath: string): boolean {
   const patterns = Array.isArray(config.resolver.blockList)
     ? config.resolver.blockList
     : [config.resolver.blockList];
-  // Crawling checks native paths; watcher filtering also checks normalized paths.
-  return patterns.some(
-    (pattern) => pattern.test(filePath) || pattern.test(filePath.replaceAll("\\", "/")),
-  );
+  return patterns.some((pattern) => pattern.test(filePath));
 }
 
-test("Metro excludes replaced server build directories while retaining app dependencies", () => {
-  const config = requireMetroConfig("../metro.config.cjs") as MetroExclusionsConfig;
-  const serverDist = path.resolve(appDirectory, "../server/dist");
-  for (const excluded of [
-    serverDist,
-    path.join(serverDist, "server/builtin-plugins/kimi-usage-source"),
-    path.join(serverDist, "server/builtin-plugins/shared/index.js"),
-    path.join(appDirectory, "src/components/message.test.tsx"),
-  ]) {
-    expect(metroBlocks(config, excluded), excluded).toBe(true);
-  }
-  for (const included of [
-    path.join(appDirectory, "src/components/message.tsx"),
-    path.resolve(appDirectory, "../server/src/server/exports.ts"),
-    path.resolve(appDirectory, "../server/dist-extra/index.js"),
-    ...["client", "protocol", "relay"].map((name) =>
-      path.resolve(appDirectory, `../${name}/dist/index.js`),
-    ),
-  ]) {
-    expect(metroBlocks(config, included), included).toBe(false);
-  }
-});
+// On Windows, the crawler uses backslashes and the watcher normalizes them to slashes.
+test.each([path.win32.sep, path.posix.sep])(
+  "Metro excludes server output and retains app dependencies with %s separators",
+  (separator) => {
+    const config = requireMetroConfig("../metro.config.cjs") as MetroExclusionsConfig;
+    const serverDist = path.resolve(appDirectory, "../server/dist");
+    for (const excluded of [
+      serverDist,
+      path.join(serverDist, "server/builtin-plugins/kimi-usage-source"),
+      path.join(serverDist, "server/builtin-plugins/shared/index.js"),
+      path.join(appDirectory, "src/components/message.test.tsx"),
+    ]) {
+      const filePath = excluded.split(path.sep).join(separator);
+      expect(metroBlocks(config, filePath), filePath).toBe(true);
+    }
+    for (const included of [
+      path.join(appDirectory, "src/components/message.tsx"),
+      path.resolve(appDirectory, "../server/src/server/exports.ts"),
+      path.resolve(appDirectory, "../server/dist-extra/index.js"),
+      ...["client", "protocol", "relay"].map((name) =>
+        path.resolve(appDirectory, `../${name}/dist/index.js`),
+      ),
+    ]) {
+      const filePath = included.split(path.sep).join(separator);
+      expect(metroBlocks(config, filePath), filePath).toBe(false);
+    }
+  },
+);
 
 test("Metro preserves Expo's cache and native build exclusions", () => {
   const config = requireMetroConfig("../metro.config.cjs") as MetroExclusionsConfig;
