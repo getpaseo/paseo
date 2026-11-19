@@ -10258,3 +10258,69 @@ test("path archive of an archived exact child leaves its active parent untouched
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("detaching a hidden worker updates the workspace that showed its activity", async () => {
+  const updatedAt = "2026-03-30T16:00:00.000Z";
+  // ws-root <- ws-lead <- ws-hidden. The worker's activity shows on ws-lead, the nearest
+  // visible ancestor workspace, which is not the delegation root ws-root.
+  const workspaces = [
+    ["ws-root", false],
+    ["ws-lead", false],
+    ["ws-hidden", true],
+  ].map(([workspaceId, background]) =>
+    createPersistedWorkspaceRecord({
+      workspaceId: workspaceId as string,
+      projectId: "proj",
+      cwd: REPO_CWD,
+      kind: "directory",
+      displayName: workspaceId as string,
+      background: background as boolean,
+      createdAt: updatedAt,
+      updatedAt,
+    }),
+  );
+  const records = new Map(
+    [
+      makeStoredAgent({ id: "root", cwd: REPO_CWD, workspaceId: "ws-root", updatedAt }),
+      makeStoredAgent({
+        id: "lead",
+        cwd: REPO_CWD,
+        workspaceId: "ws-lead",
+        updatedAt,
+        labels: { "paseo.parent-agent-id": "root" },
+      }),
+      makeStoredAgent({
+        id: "worker",
+        cwd: REPO_CWD,
+        workspaceId: "ws-hidden",
+        updatedAt,
+        labels: { "paseo.parent-agent-id": "lead" },
+      }),
+    ].map((record) => [record.id, record]),
+  );
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      detachAgent: async () => ({
+        record: { ...records.get("worker")!, labels: {} },
+        live: false,
+        previousParentAgentId: "lead",
+      }),
+    },
+    agentStorage: { get: async (agentId: string) => records.get(agentId) ?? null },
+  });
+  session.workspaceRegistry.listAll = session.workspaceRegistry.listActive = async () => workspaces;
+  session.workspaceRegistry.get = async (id: string) =>
+    workspaces.find((workspace) => workspace.workspaceId === id) ?? null;
+  const updatedWorkspaceIds = new Set<string>();
+  session.emitWorkspaceUpdatesForWorkspaceIds = async (ids: Iterable<string>) => {
+    for (const id of ids) updatedWorkspaceIds.add(id);
+  };
+
+  await session.handleMessage({
+    type: "agent.detach.request",
+    agentId: "worker",
+    requestId: "detach-worker",
+  });
+
+  expect(updatedWorkspaceIds).toEqual(new Set(["ws-hidden", "ws-lead", "ws-root"]));
+});

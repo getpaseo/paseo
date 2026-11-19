@@ -95,7 +95,9 @@ function makeProject(overrides?: Partial<ProjectPlacementPayload>): ProjectPlace
 
 function buildHarness() {
   const emitted: SessionOutboundMessage[] = [];
-  const workspaceUpdates: string[] = [];
+  // One entry per workspace update call, holding every workspace id it batched.
+  const workspaceUpdates: string[][] = [];
+  const rollupWorkspaceIdByAgentId = new Map<string, string>();
   const loggedErrors: unknown[][] = [];
   const payloadById = new Map<string, AgentSnapshotPayload>();
   const queuedPayloadBuilds: Promise<AgentSnapshotPayload>[] = [];
@@ -134,9 +136,10 @@ function buildHarness() {
     isProviderVisibleToClient: (provider) => providerVisible(provider),
     buildProjectPlacementForWorkspaceId: async (workspaceId) =>
       projectByWorkspaceId.get(workspaceId) ?? null,
-    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
-      workspaceUpdates.push(workspaceId);
+    emitWorkspaceUpdatesForWorkspaceIds: async (workspaceIds) => {
+      workspaceUpdates.push(workspaceIds);
     },
+    resolveRollupWorkspaceId: async (agent) => rollupWorkspaceIdByAgentId.get(agent.id) ?? null,
     sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
       directorySync.sequenceAgentUpdate(
         payload,
@@ -163,6 +166,10 @@ function buildHarness() {
         projectByWorkspaceId.set(payload.workspaceId, project);
       }
       return payload;
+    },
+    // The agent sits in a background workspace; its activity shows on this visible workspace.
+    rollsUpTo(agentId: string, workspaceId: string) {
+      rollupWorkspaceIdByAgentId.set(agentId, workspaceId);
     },
     setProviderVisible(fn: (provider: string) => boolean) {
       providerVisible = fn;
@@ -353,7 +360,7 @@ describe("forwardLiveAgent", () => {
     expect(h.agentUpdates()).toEqual([
       { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
     ]);
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
   });
 
   test("never projects MCP credentials into ordinary client updates", async () => {
@@ -435,7 +442,21 @@ describe("forwardLiveAgent", () => {
     await h.service.forwardLiveAgent(h.managed("a"));
 
     expect(h.agentUpdates()).toEqual([]);
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
+  });
+
+  test("a hidden agent updates its own and its visible parent's workspace in one batch", async () => {
+    const h = buildHarness();
+    h.register(makeAgentPayload({ id: "worker", workspaceId: "hidden-ws" }));
+    h.rollsUpTo("worker", "parent-ws");
+
+    await h.service.forwardLiveAgent(h.managed("worker"));
+    await h.service.forwardStoredAgent({ ...h.stored("worker"), workspaceId: "hidden-ws" });
+
+    expect(h.workspaceUpdates).toEqual([
+      ["hidden-ws", "parent-ws"],
+      ["hidden-ws", "parent-ws"],
+    ]);
   });
 
   test("drops an upsert whose provider is not visible to the client", async () => {
@@ -449,7 +470,7 @@ describe("forwardLiveAgent", () => {
 
     expect(h.agentUpdates()).toEqual([]);
     // The workspace-update tail still fires regardless of visibility.
-    expect(h.workspaceUpdates).toEqual(["ws-1"]);
+    expect(h.workspaceUpdates).toEqual([["ws-1"]]);
   });
 
   test("swallows and logs a build error without throwing", async () => {
@@ -700,5 +721,5 @@ test("an idle session skips agent hydration while preserving workspace updates",
   await h.service.forwardLiveAgent(agent);
   expect(h.loggedErrors).toEqual([]);
   expect(h.agentUpdates()).toEqual([]);
-  expect(h.workspaceUpdates).toEqual([agent.workspaceId]);
+  expect(h.workspaceUpdates).toEqual([[agent.workspaceId]]);
 });

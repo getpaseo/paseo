@@ -7,7 +7,7 @@ import type {
 } from "../../messages.js";
 import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../../agent/agent-storage.js";
-import type { BackgroundVisibility } from "../../agent/directory.js";
+import type { BackgroundVisibility, RollupSource } from "../../agent/directory.js";
 import { resolveEffectiveThinkingOptionId, toAgentPayload } from "../../agent/agent-projections.js";
 
 type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
@@ -60,7 +60,9 @@ export interface AgentUpdatesServiceDeps {
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
-  emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
+  emitWorkspaceUpdatesForWorkspaceIds(workspaceIds: string[]): Promise<void>;
+  /** The visible workspace that shows this agent's activity when it has no row of its own. */
+  resolveRollupWorkspaceId(agent: RollupSource): Promise<string | null>;
   sequenceAgentUpdate<T extends AgentUpdatePayload>(
     payload: T,
     agent: AgentSnapshotPayload | null,
@@ -304,12 +306,18 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
   }
 
   async function emitAgentUpdate(
-    workspaceId: string | undefined,
+    agent: RollupSource,
     projectPayload?: () => AgentSnapshotPayload | Promise<AgentSnapshotPayload>,
   ): Promise<void> {
     try {
       if (projectPayload && hasSubscription()) await publishPayload(await projectPayload());
-      if (workspaceId) await deps.emitWorkspaceUpdateForWorkspaceId(workspaceId);
+      const { workspaceId } = agent;
+      if (workspaceId) {
+        const rollupWorkspaceId = await deps.resolveRollupWorkspaceId(agent);
+        await deps.emitWorkspaceUpdatesForWorkspaceIds(
+          rollupWorkspaceId ? [workspaceId, rollupWorkspaceId] : [workspaceId],
+        );
+      }
     } catch (error) {
       deps.logger.error({ err: error }, "Failed to emit agent update");
     }
@@ -332,21 +340,20 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
 
   function forwardLiveAgent(agent: ManagedAgent): Promise<void> {
     if (!hasSubscription()) {
-      const workspaceId = agent.workspaceId;
-      return workspaceId
-        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(workspaceId))
+      return agent.workspaceId
+        ? enqueueAgentUpdate(agent.id, () => emitAgentUpdate(agent))
         : Promise.resolve();
     }
     const payload = toAgentPayload(agent);
     return enqueueAgentUpdate(payload.id, () =>
-      emitAgentUpdate(payload.workspaceId, () => deps.enrichAgentPayload(payload)),
+      emitAgentUpdate(agent, () => deps.enrichAgentPayload(payload)),
     );
   }
 
   function forwardStoredAgent(record: StoredAgentRecord): Promise<void> {
     if (!hasSubscription() && !record.workspaceId) return Promise.resolve();
     return enqueueAgentUpdate(record.id, () =>
-      emitAgentUpdate(record.workspaceId, () => deps.buildStoredAgentPayload(record)),
+      emitAgentUpdate(record, () => deps.buildStoredAgentPayload(record)),
     );
   }
 

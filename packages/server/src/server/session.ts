@@ -1239,8 +1239,9 @@ export class Session {
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
         this.buildProjectPlacementForWorkspaceId(workspaceId),
-      emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
-        this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+      emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+        this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+      resolveRollupWorkspaceId: (agent) => this.agentDirectory.resolveRollupWorkspaceId(agent),
       sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence, includeBackground) =>
         this.directorySync.sequenceAgentUpdate(
           payload,
@@ -1328,6 +1329,7 @@ export class Session {
       workspaceLastUserMessageTimes: (workspaceIds) =>
         this.agentDirectory.workspaceLastUserMessageTimes(workspaceIds),
       listProviderSubagentActivity: async () => this.agentManager.listProviderSubagentActivity(),
+      listHiddenRunningRollups: () => this.agentDirectory.listHiddenRunningRollups(),
       listTerminalActivityContributions: () => this.listTerminalActivityContributions(),
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
@@ -3827,8 +3829,17 @@ export class Session {
     this.sessionLogger.info({ agentId, requestId }, "Detaching agent from parent");
 
     try {
+      // Detach drops the parent label, so find where the agent's activity rolled up first.
+      const attached =
+        this.agentManager.getAgent(agentId) ?? (await this.agentStorage.get(agentId));
+      const formerRollupWorkspaceId = attached
+        ? await this.agentDirectory.resolveRollupWorkspaceId(attached)
+        : null;
       const result = await detachAgentCommand({ agentManager: this.agentManager }, agentId);
       const affectedWorkspaceIds = new Set<string>();
+      if (formerRollupWorkspaceId) {
+        affectedWorkspaceIds.add(formerRollupWorkspaceId);
+      }
 
       if (!result.live) {
         const payload = await this.agentUpdates.emitStoredRecord(result.record);

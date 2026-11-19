@@ -138,3 +138,33 @@ test("scoped status queries retain cross-workspace parent context", async () => 
     (await directory.list({ workspaceIds: ["hidden"], includeBackground: true })).map((a) => a.id),
   ).not.toContain("parent");
 });
+
+test("a hidden agent's activity shows on its nearest ancestor outside a background workspace", async () => {
+  const base = { provider: "codex", cwd: home, createdAt: NOW, updatedAt: NOW };
+  const childOf = (parentId: string) => ({ "paseo.parent-agent-id": parentId });
+  await storage.upsert({ ...base, id: "parent", workspaceId: "open" });
+  await storage.upsert({ ...base, id: "worker", workspaceId: "hidden", labels: childOf("parent") });
+  await storage.upsert({ ...base, id: "nested", workspaceId: "hidden", labels: childOf("worker") });
+  await storage.upsert({ ...base, id: "row", workspaceId: "open", labels: childOf("parent") });
+  await storage.upsert({
+    ...base,
+    id: "helper",
+    workspaceId: "hidden",
+    background: true,
+    labels: childOf("parent"),
+  });
+  await storage.upsert({ ...base, id: "loop-a", workspaceId: "hidden", labels: childOf("loop-b") });
+  await storage.upsert({ ...base, id: "loop-b", workspaceId: "hidden", labels: childOf("loop-a") });
+  async function rollupOf(agentId: string): Promise<string | null> {
+    return directory.resolveRollupWorkspaceId((await storage.get(agentId))!);
+  }
+
+  // Structural only: an idle worker still resolves, so its finish can refresh the parent.
+  expect(await rollupOf("worker")).toBe("open");
+  expect(await rollupOf("nested")).toBe("open");
+  // A visible row of its own, an agent-level background agent, no parent, or a cycle: no rollup.
+  expect(await rollupOf("row")).toBeNull();
+  expect(await rollupOf("helper")).toBeNull();
+  expect(await rollupOf("in-background-workspace")).toBeNull();
+  expect(await rollupOf("loop-a")).toBeNull();
+});
