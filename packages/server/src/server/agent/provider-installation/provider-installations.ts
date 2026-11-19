@@ -197,7 +197,10 @@ export class ProviderInstallations {
     return operation.snapshot();
   }
 
-  /** The latest update of the provider since the daemon started, or null. */
+  /**
+   * The latest update of the provider since the daemon started, or null. A failed update stays
+   * until the next refresh of the provider's installation or update check.
+   */
   getUpdate(provider: AgentProvider): ProviderInstallationUpdate | null {
     return this.updates.get(provider)?.snapshot() ?? null;
   }
@@ -222,12 +225,17 @@ export class ProviderInstallations {
       controller.abort(new Error("The daemon is stopping"));
   }
 
-  /** The provider's inspection, or undefined when it declares no `inspect`. */
+  /**
+   * The provider's inspection, or undefined when it declares no `inspect`. A refresh also drops
+   * a failed update, so the provider's own state replaces it; a running update is kept.
+   */
   private readInspection(
     provider: AgentProvider,
     client: AgentClient,
     options: InspectProviderInstallationOptions,
   ): Promise<ProviderInstallationInspection> | undefined {
+    if (options.refresh && this.updates.get(provider)?.snapshot().operation.status === "failed")
+      this.updates.delete(provider);
     const installation = client.installation;
     const inspect = installation?.inspect;
     if (!installation || !inspect) return undefined;

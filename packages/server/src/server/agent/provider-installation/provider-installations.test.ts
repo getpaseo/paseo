@@ -714,6 +714,37 @@ describe("provider updates", () => {
     });
   });
 
+  test("a refresh drops a failed update and keeps a running one", async () => {
+    let finish!: () => void;
+    let attempt = 0;
+    const { installations } = updating(
+      async () => {
+        attempt += 1;
+        if (attempt === 1) return { status: "failed", message: "EACCES" };
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return { status: "succeeded" };
+      },
+      { inspect: async () => ({ status: "installed", version: "1.0.0" }) },
+    );
+    const failed = settled(installations);
+    installations.update("codex");
+    await failed;
+    await installations.inspect("codex");
+    expect(installations.getUpdate("codex")?.operation.status).toBe("failed");
+    await installations.inspect("codex", { refresh: true });
+    expect(installations.getUpdate("codex")).toBeNull();
+
+    const running = installations.update("codex");
+    await installations.inspect("codex", { refresh: true });
+    await installations.checkForUpdates("codex", { refresh: true });
+    expect(installations.getUpdate("codex")?.operation.id).toBe(running.operation.id);
+    const done = settled(installations);
+    finish();
+    await done;
+  });
+
   test("a second request while an update runs joins it instead of starting another", async () => {
     let finish!: () => void;
     const { installations, calls } = updating(async ({ report }) => {

@@ -537,7 +537,7 @@ deadline shows **Couldn't check for updates** with your message and never shows 
 time. Pass the updater's output to `report` unchanged; Paseo keeps the last 65,536 characters. Paseo adds no
 verification of its own, so the update does what your command does in a terminal. Return
 `succeeded` with a message that says when the new version takes effect, or `failed` with the reason.
-Without `update`, **Update instructions** opens `updateUrl` instead.
+A failed update shows until the user refreshes the provider. Without `update`, **Update instructions** opens `updateUrl` instead.
 
 **Update** and **Update instructions** appear whenever `inspect` reports the CLI installed. The
 check only says what it knows beside them, so declare `update` even when you cannot check.

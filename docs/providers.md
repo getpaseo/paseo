@@ -289,7 +289,8 @@ provider settings, with a 20 s deadline and a 30 s cache. `checkForUpdates` usua
 network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
 answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
 checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
-aborted only when the daemon stops.
+aborted only when the daemon stops. A failed update stays on the provider until the next refresh
+of its installation; a running one is never dropped.
 
 The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
 for a provider that declares `update`, or **Update instructions** for one that declares only

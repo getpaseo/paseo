@@ -464,7 +464,7 @@ interface ProviderInstallation {
 | `checkForUpdates` | After `inspect` answers `installed`, or without `inspect`    | 25 s     | 1 hour for `current` or `available`, else 30 s   |
 | `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
 
-**Refresh** in the provider's settings skips the kept answers. Paseo
+**Refresh** in the provider's settings skips the kept answers and clears a failed update. Paseo
 never calls these members before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
 
 `installUrl` and `updateUrl` are `http` or `https` pages that Paseo opens in the browser. The
