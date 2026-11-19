@@ -361,6 +361,31 @@ test("aborting a pending subscription stops its startup scan and rejects", async
   expect(callback).not.toHaveBeenCalled();
 }, 20_000);
 
+test.each([false, true])(
+  "closing waits for a starting subscription to finish (aborted: %s)",
+  async (abortBeforeClose) => {
+    const root = await createRoot();
+    const observer = createObserver();
+    const controller = new AbortController();
+    const reason = new Error("startup canceled");
+    const subscription = observer.subscribe(root, () => {}, { signal: controller.signal });
+    const rejected = subscription.then(
+      () => "subscribed",
+      (error: Error) => error.message,
+    );
+
+    if (abortBeforeClose) controller.abort(reason);
+    try {
+      await observer.close();
+      expect(await Promise.race([rejected, Promise.resolve("still starting")])).toBe(
+        abortBeforeClose ? reason.message : "File observer is closed",
+      );
+    } finally {
+      await rejected;
+    }
+  },
+);
+
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
   const observer = createObserver();

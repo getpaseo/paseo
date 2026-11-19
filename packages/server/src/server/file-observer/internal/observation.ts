@@ -45,6 +45,7 @@ class Observation implements ManagedObservation, ObservationHost {
   private readonly backend: ObservationBackend;
   private readonly pendingEvents = new Map<string, FileChange>();
   private flushTimer: NodeJS.Timeout | null = null;
+  private startup: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
 
   constructor(
@@ -65,6 +66,18 @@ class Observation implements ManagedObservation, ObservationHost {
   }
 
   async start(): Promise<void> {
+    this.startup = this.startBackend();
+    try {
+      await this.startup;
+    } catch (error) {
+      await this.close();
+      throw error;
+    } finally {
+      this.startup = null;
+    }
+  }
+
+  private async startBackend(): Promise<void> {
     const rootStats = await stat(this.root);
     if (!rootStats.isDirectory()) {
       throw new Error(`File observation requires a directory: ${this.root}`);
@@ -72,12 +85,7 @@ class Observation implements ManagedObservation, ObservationHost {
     // An aborted subscription can close the observation while the root is being read; the backend
     // must not start after its close has already finished.
     if (!this.isActive()) return;
-    try {
-      await this.backend.start();
-    } catch (error) {
-      await this.close();
-      throw error;
-    }
+    await this.backend.start();
   }
 
   subscription(): FileObserverSubscription {
@@ -107,8 +115,7 @@ class Observation implements ManagedObservation, ObservationHost {
     if (this.closePromise) return this.closePromise;
     this.status = "closed";
     this.cancelDelivery();
-    this.closePromise = this.backend.close().finally(this.input.onClosed);
-    return this.closePromise;
+    return this.beginClose();
   }
 
   getDiagnostics(): BackendDiagnostics & { pendingEventCount: number } {
@@ -149,12 +156,19 @@ class Observation implements ManagedObservation, ObservationHost {
     this.status = "failed";
     this.metrics.observerFailureCount += 1;
     this.cancelDelivery();
-    this.beginFailureClose();
+    this.beginClose();
     this.input.callback(error, []);
   }
 
-  private beginFailureClose(): void {
-    this.closePromise = this.backend.close().finally(this.input.onClosed);
+  private beginClose(): Promise<void> {
+    const startup = this.startup;
+    // The backend drains its own scan, but startup may still be reading the root.
+    // Wait for the raw startup work so its error handler can await close safely.
+    this.closePromise = this.backend
+      .close()
+      .finally(() => startup?.catch(() => undefined))
+      .finally(this.input.onClosed);
+    return this.closePromise;
   }
 
   private cancelDelivery(): void {

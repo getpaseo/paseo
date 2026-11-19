@@ -109,6 +109,7 @@ class FileObserverService implements FileObserver {
     });
     const { signal } = options;
     signal?.throwIfAborted();
+    state.observations.add(observation);
     const abort = () => void observation.close();
     signal?.addEventListener("abort", abort, { once: true });
     try {
@@ -124,7 +125,6 @@ class FileObserverService implements FileObserver {
       await observation.close();
       throw new Error("File observer is closed");
     }
-    state.observations.add(observation);
     return observation.subscription();
   }
 
