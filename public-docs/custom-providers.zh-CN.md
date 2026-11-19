@@ -16,7 +16,7 @@ nav: 自定义 Provider
 
 编辑文件后运行 `paseo reload`。Provider 的修改会应用到之后的启动，无需重启 daemon。
 
-Provider ID 必须是小写字母、数字和连字符（`/^[a-z][a-z0-9-]*$/`）。新的自定义 Provider 需要 `extends`（一个一等 Provider ID 或 `"acp"`）和 `label`。要覆盖内置的 Provider 插件，请使用它的 Provider ID 并省略 `extends`。对于 [Muse Code](/docs/muse-code)，在 `agents.providers.muse` 下设置命令或环境变量覆盖。
+Provider ID 必须是小写字母、数字和连字符（`/^[a-z][a-z0-9-]*$/`）。新的自定义 Provider 需要 `extends`（一个一等 Provider ID 或 `"acp"`）和 `label`。要覆盖内置的 Provider 插件，请使用它的 Provider ID 并省略 `extends`。对于 [Muse Code](/docs/supported-providers/muse-code)，在 `agents.providers.muse` 下设置命令或环境变量覆盖。
 
 下面的示例只是快速浏览。完整、最新的参考在 GitHub 上：[docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md)。
 

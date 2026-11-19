@@ -32,7 +32,7 @@ export type ShortcutAction =
   | { kind: "router-push"; route: string }
   | { kind: "open-project-picker" }
   | { kind: "callback"; name: ShortcutCallbackName }
-  | { kind: "command-center-toggle"; nextOpen: boolean; scope?: "files" }
+  | { kind: "command-center-toggle"; nextOpen: boolean; tab?: "files" }
   | { kind: "shortcuts-dialog-toggle"; nextOpen: boolean };
 
 const NONE: ShortcutAction = { kind: "none" };
@@ -85,6 +85,8 @@ const MESSAGE_INPUT_DISPATCH: Record<
   "dictation-confirm": { id: "message-input.dictation-confirm", scope: "message-input" },
   "voice-toggle": { id: "message-input.voice-toggle", scope: "message-input" },
   "voice-mute-toggle": { id: "message-input.voice-mute-toggle", scope: "message-input" },
+  "model-toggle": { id: "message-input.model-toggle", scope: "message-input" },
+  "effort-cycle": { id: "message-input.effort-cycle", scope: "message-input" },
   "mode-cycle": { id: "message-input.mode-cycle", scope: "message-input" },
 };
 
@@ -212,7 +214,7 @@ export function routeKeyboardShortcut(
       return { kind: "command-center-toggle", nextOpen: !ctx.commandCenterOpen };
     case "command-center.files":
       if (parseHostWorkspaceRouteFromPathname(ctx.pathname)) {
-        return { kind: "command-center-toggle", nextOpen: true, scope: "files" };
+        return { kind: "command-center-toggle", nextOpen: true, tab: "files" };
       }
       return dispatch({ id: "workspace.project.pick", scope: "workspace" });
     case "shortcuts.dialog.toggle":

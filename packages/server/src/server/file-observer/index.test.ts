@@ -193,10 +193,11 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  // Native recursive delivery can be coalesced before the backend's deletion audit.
-  // Assert eventual classification without imposing Vitest's one-second default.
+  // macOS FSEvents can replay the write above as a create after the subscription starts,
+  // so the delete is the latest event for the path, not the first. Native recursive delivery
+  // can also be coalesced before the backend's deletion audit, hence the longer timeout.
   await expect
-    .poll(() => events.find((event) => event.path === target)?.type, { timeout: 10_000 })
+    .poll(() => events.findLast((event) => event.path === target)?.type, { timeout: 10_000 })
     .toBe("delete");
   await subscription.unsubscribe();
 });
@@ -325,6 +326,39 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   await writeFile(join(root, "after-burst-close.txt"), "closed");
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(callback).toHaveBeenCalledTimes(callsAtClose);
+}, 20_000);
+
+test("aborting a pending subscription stops its startup scan and rejects", async () => {
+  const root = await createRoot();
+  // More directories than the Linux backend watches: a scan that keeps walking after the abort
+  // fails on the directory limit instead of rejecting with the abort reason.
+  await Promise.all(
+    Array.from({ length: 80 }, (_, outer) =>
+      Promise.all(
+        Array.from({ length: 70 }, (__, inner) =>
+          mkdir(join(root, `dir-${outer}`, `nested-${inner}`), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const observer = createObserver();
+  const controller = new AbortController();
+  const reason = new Error("setup deadline passed");
+  const callback = vi.fn();
+
+  const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort(reason);
+
+  await expect(subscription).rejects.toBe(reason);
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    pendingReconciliationWorkCount: 0,
+  });
+  await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(callback).not.toHaveBeenCalled();
 }, 20_000);
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {

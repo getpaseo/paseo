@@ -14,7 +14,7 @@ import type { InstalledPlugin } from "./types";
 /** `withUnistyles` mapping that hands a host the plugin theme. */
 export const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
-function renderNothing() {
+export function renderNothing() {
   return null;
 }
 

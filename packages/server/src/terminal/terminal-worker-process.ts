@@ -19,7 +19,7 @@ import {
   type TerminalWorkerRecord,
 } from "./terminal-worker-record.js";
 import { createTerminalWorkerRecordPublisher } from "./terminal-worker-record-publisher.js";
-import { resolveTerminalWorkerSocketPath } from "./terminal-worker-socket-path.js";
+import { listenOnTerminalWorkerSocket } from "./terminal-worker-socket-path.js";
 import {
   TERMINAL_WORKER_PROTOCOL_OVERRIDE_ENV,
   TERMINAL_WORKER_PROTOCOL_VERSION,
@@ -700,23 +700,25 @@ function runWorker(argv: string[]): void {
   }
 
   async function start(): Promise<void> {
-    const socketPath = resolveTerminalWorkerSocketPath({
+    const { socketPath, listener } = await listenOnTerminalWorkerSocket({
       paseoHome: args.paseoHome,
       workerPid: process.pid,
       recordId: args.recordId,
+      listen: (candidatePath) => {
+        if (process.platform !== "win32") {
+          rmSync(candidatePath, { force: true });
+        }
+        const listening = createServer(handleConnection);
+        return new Promise<Server>((resolve, reject) => {
+          listening.once("error", reject);
+          listening.listen(candidatePath, () => {
+            listening.off("error", reject);
+            resolve(listening);
+          });
+        });
+      },
     });
-    if (process.platform !== "win32") {
-      rmSync(socketPath, { force: true });
-    }
-    const listening = createServer(handleConnection);
-    await new Promise<void>((resolve, reject) => {
-      listening.once("error", reject);
-      listening.listen(socketPath, () => {
-        listening.off("error", reject);
-        resolve();
-      });
-    });
-    server = listening;
+    server = listener;
     if (process.platform !== "win32") {
       chmodSync(socketPath, PRIVATE_FILE_MODE);
     }

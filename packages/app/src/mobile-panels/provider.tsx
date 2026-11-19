@@ -13,6 +13,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { createStore, useStore } from "zustand";
 import { Keyboard, useWindowDimensions } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
 import {
@@ -73,7 +74,11 @@ interface FinishGestureInput {
 }
 
 const MobilePanelsContext = createContext<MobilePanelsRuntime | null>(null);
-const MobilePanelActiveContext = createContext<MobilePanelView>("agent");
+function createSettledPanelStore(panel: MobilePanelView) {
+  return createStore(() => panel);
+}
+
+const SettledPanelContext = createContext(createSettledPanelStore("agent"));
 
 /**
  * The left sidebar's width: the full window for the compact drawer, the saved sidebar width
@@ -113,7 +118,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const leftOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const leftCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const rightOpenGestureRef = useRef<GestureType | undefined>(undefined);
-  const [activePanel, setActivePanel] = useState(initialSelection.target);
+  const [settledPanel] = useState(() => createSettledPanelStore(initialSelection.target));
 
   const setOpenGestureBlocked = useCallback(
     (owner: symbol, blocked: boolean) => {
@@ -127,16 +132,19 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
     [openGesturesBlocked],
   );
 
-  const publishActivePanel = useCallback((panel: MobilePanelView, revision: number) => {
-    const selection = usePanelStore.getState().mobilePanel;
-    if (selection.revision !== revision || selection.target !== panel) {
-      return;
-    }
-    if (isNative && panel !== "agent") {
-      Keyboard.dismiss();
-    }
-    setActivePanel(panel);
-  }, []);
+  const publishActivePanel = useCallback(
+    (panel: MobilePanelView, revision: number) => {
+      const selection = usePanelStore.getState().mobilePanel;
+      if (selection.revision !== revision || selection.target !== panel) {
+        return;
+      }
+      if (isNative && panel !== "agent") {
+        Keyboard.dismiss();
+      }
+      settledPanel.setState(panel);
+    },
+    [settledPanel],
+  );
 
   useAnimatedReaction(
     () => ({ motionState: motionState.value, position: position.value }),
@@ -157,6 +165,11 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const animateTransition = useCallback(
     (transition: MobilePanelTransition) => {
       "worklet";
+      if (transition.immediateTarget) {
+        cancelAnimation(position);
+        position.value = getMobilePanelAnchor(transition.immediateTarget);
+        return;
+      }
       if (!transition.animationTarget) {
         return;
       }
@@ -170,25 +183,27 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   );
 
   const applySelection = useCallback(
-    (selection: MobilePanelSelection) => {
+    (selection: MobilePanelSelection, immediate: boolean) => {
       "worklet";
       const currentState = motionState.value;
       const transition = transitionMobilePanel(currentState, {
         type: "command",
         selection,
+        immediate,
       });
       if (transition.state === currentState) {
         return;
       }
       motionState.value = transition.state;
       animateTransition(transition);
+      if (immediate) scheduleOnRN(publishActivePanel, selection.target, selection.revision);
     },
-    [animateTransition, motionState],
+    [animateTransition, motionState, publishActivePanel],
   );
 
   useEffect(() => {
-    return subscribeMobilePanelSelection((selection) => {
-      scheduleOnUI(applySelection, selection);
+    return subscribeMobilePanelSelection((selection, immediate) => {
+      scheduleOnUI(applySelection, selection, immediate);
     });
   }, [applySelection]);
 
@@ -272,9 +287,7 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
 
   return (
     <MobilePanelsContext.Provider value={value}>
-      <MobilePanelActiveContext.Provider value={activePanel}>
-        {children}
-      </MobilePanelActiveContext.Provider>
+      <SettledPanelContext.Provider value={settledPanel}>{children}</SettledPanelContext.Provider>
     </MobilePanelsContext.Provider>
   );
 }
@@ -294,7 +307,7 @@ export function useLeftPanelWidth(): number {
 }
 
 export function useIsMobilePanelActive(panel: MobilePanelView): boolean {
-  return useContext(MobilePanelActiveContext) === panel;
+  return useStore(useContext(SettledPanelContext), (settledPanel) => settledPanel === panel);
 }
 
 export function useBlockMobilePanelOpenGestures(blocked: boolean): void {

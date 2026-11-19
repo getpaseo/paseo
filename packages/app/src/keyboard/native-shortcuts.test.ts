@@ -130,7 +130,7 @@ describe("hardware source adapter", () => {
   it.each([true, false])(
     "delivers hardware down/up and declared focus with mac=%s",
     async (isMac) => {
-      const { attachHardwareKeyboardSource } = await import("./internal/sources/native");
+      const { createHardwareKeyboardSource } = await import("./internal/sources/native");
       const { focusSurfaces } = await import("./internal/focus-surfaces");
       const actions: string[] = [];
       const releases: string[] = [];
@@ -148,23 +148,22 @@ describe("hardware source adapter", () => {
         },
         overlays: createOverlayRegistry(),
       });
-      const detach = attachHardwareKeyboardSource(
-        {
-          subscribe(handler) {
-            events.add(handler);
-            return () => {
-              events.delete(handler);
-            };
-          },
-          setOverlayKeys() {},
+      const detach = createHardwareKeyboardSource({
+        subscribe(handler) {
+          events.add(handler);
+          return () => {
+            events.delete(handler);
+          };
         },
-        {
-          keyDown: pipeline.keyDown,
-          keyUp: (event) => releases.push(event.key),
-          blur() {},
-          commandCenterOpen: () => false,
-        },
-      );
+        setOverlayKeys() {},
+        setClaimedShortcuts() {},
+      }).attach({
+        keyDown: pipeline.keyDown,
+        keyUp: (event) => releases.push(event.key),
+        blur() {},
+        commandCenterOpen: () => false,
+        subscribeCommandCenter: () => () => {},
+      });
       const down = {
         ...keyboardEvent("k", "KeyK", isMac),
         isComposing: false,
@@ -180,4 +179,94 @@ describe("hardware source adapter", () => {
       expect(events.size).toBe(0);
     },
   );
+
+  it("claims the Shift and Option shortcuts a focused text control would otherwise type", async () => {
+    const { createHardwareKeyboardSource } = await import("./internal/sources/native");
+    const { focusSurfaces } = await import("./internal/focus-surfaces");
+    let claimed: string[] = [];
+    const source = createHardwareKeyboardSource({
+      subscribe: () => () => {},
+      setOverlayKeys() {},
+      setClaimedShortcuts(shortcuts) {
+        claimed = shortcuts
+          .map(({ code, shift, alt }) => [alt && "Alt", shift && "Shift", code])
+          .map((parts) => parts.filter(Boolean).join("+"))
+          .sort();
+      },
+    });
+    source.publishPolicy({
+      bindings: buildEffectiveBindings({}),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: true,
+    });
+    let commandCenterOpen = false;
+    const commandCenterListeners = new Set<() => void>();
+    const detach = source.attach({
+      keyDown() {},
+      keyUp() {},
+      blur() {},
+      commandCenterOpen: () => commandCenterOpen,
+      subscribeCommandCenter(listener) {
+        commandCenterListeners.add(listener);
+        return () => commandCenterListeners.delete(listener);
+      },
+    });
+    const setCommandCenterOpen = (open: boolean) => {
+      commandCenterOpen = open;
+      for (const listener of commandCenterListeners) listener();
+    };
+    // iPad tab switching uses Cmd+Shift+[ / ], which no text control types.
+    expect(claimed).toEqual([]);
+
+    const releaseComposer = focusSurfaces.declare("message-input");
+    expect(claimed).toEqual(["Shift+Tab"]);
+    setCommandCenterOpen(true);
+    expect(claimed).toEqual([]);
+    setCommandCenterOpen(false);
+    expect(claimed).toEqual(["Shift+Tab"]);
+    releaseComposer();
+    expect(claimed).toEqual([]);
+
+    source.publishPolicy({
+      bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Alt+M" }),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: true,
+    });
+    const releaseRebound = focusSurfaces.declare("message-input");
+    expect(claimed).toEqual(["Alt+KeyM"]);
+    releaseRebound();
+
+    // A chord's later step is only a shortcut while the chord is in progress;
+    // claiming it always would stop the composer typing a capital A.
+    source.publishPolicy({
+      bindings: buildEffectiveBindings({ "message-input-mode-cycle-shift-tab": "Mod+J Shift+A" }),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: true,
+    });
+    const releaseChord = focusSurfaces.declare("message-input");
+    expect(claimed).toEqual([]);
+    releaseChord();
+
+    const releaseFinal = focusSurfaces.declare("message-input");
+    source.publishPolicy({
+      bindings: buildEffectiveBindings({}),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: false,
+    });
+    expect(claimed).toEqual([]);
+    source.publishPolicy({
+      bindings: buildEffectiveBindings({}),
+      isMac: true,
+      usesDesktopBindings: true,
+      enabled: true,
+    });
+    expect(claimed).toEqual(["Shift+Tab"]);
+    detach();
+    expect(claimed).toEqual([]);
+    releaseFinal();
+  });
 });

@@ -203,8 +203,8 @@ export function createHostResolver(input: {
   local: HostOperations;
   hosts: () => ToolHosts;
   callerAgentId?: string;
-  /** The destination can't see the caller, so its background defaults resolve before routing. */
-  caller: () => BackgroundCaller | null;
+  /** The destination can't see the caller, so its background and mode defaults resolve before routing. */
+  caller: () => (BackgroundCaller & { provider: string; currentModeId: string | null }) | null;
   lockedCwd?: string;
 }) {
   return {
@@ -222,6 +222,11 @@ export function createHostResolver(input: {
           async createAgent(args) {
             const parsed = remoteCreate.parse(args);
             const { provider, model } = resolveRequiredProviderModel(parsed.provider);
+            const caller = input.caller();
+            // Same-provider children inherit the caller's mode, as they would on the same host.
+            const modeId =
+              parsed.settings?.modeId ??
+              (caller?.provider === provider ? (caller.currentModeId ?? undefined) : undefined);
             const workspace = await client.findWorkspace(parsed.workspaceId);
             if (!workspace) throw new Error(`Workspace ${parsed.workspaceId} not found`);
             const labels = {
@@ -236,15 +241,13 @@ export function createHostResolver(input: {
                 model,
                 cwd: workspace.workspaceDirectory,
                 title: parsed.title,
-                modeId: parsed.settings?.modeId,
+                modeId,
                 thinkingOptionId: parsed.settings?.thinkingOptionId,
                 featureValues: parsed.settings?.features,
               },
               workspaceId: parsed.workspaceId,
               // Older hosts reject any background with a workspaceId, so a visible create omits it.
-              ...(inheritAgentBackground(parsed.background, input.caller())
-                ? { background: true }
-                : {}),
+              ...(inheritAgentBackground(parsed.background, caller) ? { background: true } : {}),
               labels,
               initialPrompt: parsed.initialPrompt,
               idempotencyKey: parsed.idempotencyKey,
@@ -295,7 +298,7 @@ export function createHostResolver(input: {
               status: agent.status,
               guidance:
                 receipt.deliveryStatus === "queued"
-                  ? "Queued for delivery after two quiet seconds. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
+                  ? "Queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested. You will get notified when the prompted agent finishes, errors, or needs permission unless notifyOnFinish is false."
                   : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
             });
           },

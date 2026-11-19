@@ -1,6 +1,17 @@
 import { expect, test } from "../support/fixtures";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
-import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
+import {
+  closeCommandCenter,
+  openCommandCenter,
+  openCommandCenterWithShortcut,
+} from "../support/helpers/command-center";
+import {
+  enterComposerFullscreen,
+  exitComposerFullscreen,
+  expectComposerVisible,
+  fillComposerDraft,
+  resizeComposerViewport,
+} from "../support/helpers/composer";
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
@@ -14,8 +25,18 @@ import {
 } from "../support/helpers/command-center-agent-controls";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  assertNewWorkspaceSidebarAndHeader,
+  connectNewWorkspaceDaemonClient,
+  openGlobalNewWorkspaceComposer,
+  selectNewWorkspaceProject,
+  selectWorkspaceIsolation,
+  submitNewWorkspacePrompt,
+} from "../support/helpers/new-workspace";
+import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { closeMobileAgentSidebar, openMobileAgentSidebar } from "../support/helpers/sidebar";
 import { buildSchedulesRoute } from "@/utils/host-routes";
 
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
@@ -30,7 +51,7 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
           providerPreferences: {
             mock: {
               model: "five-minute-stream",
-              mode: "load-test",
+              mode: "approval-test",
             },
           },
         } satisfies FormPreferences),
@@ -221,6 +242,94 @@ test.describe("Command Center agent controls", () => {
       await workspace.cleanup();
     }
   });
+
+  test("applies New workspace model and mode choices before the first message", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "command-center-new-workspace-controls-" });
+    await seedMockDraftPreferences(page);
+    const client = await connectNewWorkspaceDaemonClient();
+
+    try {
+      const backgroundAgent = await workspace.client.createAgent({
+        provider: "mock",
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Background agent",
+        model: "five-minute-stream",
+        modeId: "approval-test",
+      });
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: backgroundAgent.id,
+      });
+      await openGlobalNewWorkspaceComposer(page);
+      await selectNewWorkspaceProject(page, workspace);
+      await selectWorkspaceIsolation(page, "local");
+
+      await applyCommandCenterAgentControls(page, DRAFT_AGENT_CONTROL_CHOICES);
+      await closeCommandCenter(page);
+      await submitNewWorkspacePrompt(page, "Create with Command Center choices");
+      const created = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: workspace.workspaceId,
+        projectDisplayName: workspace.projectDisplayName,
+      });
+
+      await expectWorkspaceAgentConfiguration(
+        { client: workspace.client, workspaceId: created.workspaceId },
+        { provider: "mock", model: "ten-second-stream", modeId: "load-test" },
+      );
+      await expectWorkspaceAgentConfiguration(workspace, {
+        id: backgroundAgent.id,
+        provider: "mock",
+        model: "five-minute-stream",
+        modeId: "approval-test",
+      });
+    } finally {
+      await client.close().catch(() => undefined);
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps draft settings searchable from the compact sidebar and fullscreen editor", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "command-center-fullscreen-draft-" });
+    await seedMockDraftPreferences(page);
+
+    try {
+      await openDraftComposer(page, workspace.workspaceId);
+      await resizeComposerViewport(page, "portrait");
+      await applyCompactComposerSettings(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("applies compact sidebar and fullscreen settings to the running agent", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "command-center-fullscreen-agent-",
+      title: "Compact Command Center settings",
+      model: "five-minute-stream",
+      modeId: "approval-test",
+    });
+
+    try {
+      await resizeComposerViewport(page, "portrait");
+      await openAgentRoute(page, workspace);
+      await applyCompactComposerSettings(page);
+      await expectWorkspaceAgentConfiguration(workspace, {
+        id: workspace.agentId,
+        provider: "mock",
+        model: "ten-second-stream",
+        modeId: "load-test",
+      });
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 const DRAFT_AGENT_CONTROL_CHOICES = [
@@ -232,4 +341,23 @@ async function openDraftComposer(page: import("@playwright/test").Page, workspac
   await gotoWorkspace(page, workspaceId);
   await clickNewChat(page);
   await waitForDraftComposer(page);
+}
+
+async function applyCompactComposerSettings(page: import("@playwright/test").Page): Promise<void> {
+  const [model, mode] = DRAFT_AGENT_CONTROL_CHOICES;
+  await expectComposerVisible(page);
+  await openMobileAgentSidebar(page);
+  await openCommandCenter(page);
+  await chooseCommandCenterAgentControl({ page, ...mode });
+  await closeMobileAgentSidebar(page);
+
+  await fillComposerDraft(page, "First line\nSecond line\nThird line");
+  await enterComposerFullscreen(page);
+  await openCommandCenterWithShortcut(page);
+  await chooseCommandCenterAgentControl({ page, ...model });
+  await exitComposerFullscreen(page);
+
+  await openCommandCenterWithShortcut(page);
+  await expectCommandCenterAgentControlSelected({ page, ...model });
+  await expectCommandCenterAgentControlSelected({ page, ...mode });
 }
