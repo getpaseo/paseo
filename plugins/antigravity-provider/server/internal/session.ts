@@ -16,6 +16,7 @@ import { validateSelection } from "./catalog.js";
 import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
+import { getAntigravitySessionTitle, readAntigravityTranscript } from "./history.js";
 
 const persistenceSchema = z
   .object({ version: z.literal(1), data: z.object({ conversationId: z.string().min(1) }).strict() })
@@ -40,6 +41,7 @@ interface SessionOptions {
   launch: ProviderLaunch;
   catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
+  history?: "replay" | "skip";
   emit(event: ProviderEvent): void;
 }
 
@@ -56,6 +58,11 @@ export class Session {
     this.conversationId = options.persistence
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
+    const sessionEnv = { ...options.launch.env, ...this.config.env };
+    if (!this.config.title && this.conversationId) {
+      this.config.title =
+        getAntigravitySessionTitle(this.conversationId, undefined, sessionEnv) ?? undefined;
+    }
     this.firstMessage = this.conversationId === null;
     validateSelection(this.config, options.catalog());
   }
@@ -75,6 +82,9 @@ export class Session {
     this.publishFullAccessNotice();
     this.publishConfig();
     this.emit({ type: "session.commands", sessionId: this.options.id, commands: [] });
+    if (this.options.history === "replay" && this.conversationId) {
+      this.replayHistory();
+    }
     this.emit({ type: "session.ready", requestId, sessionId: this.options.id });
   }
 
@@ -365,6 +375,37 @@ export class Session {
       },
     });
   }
+  private replayHistory(): void {
+    if (!this.conversationId) return;
+    const sessionEnv = { ...this.options.launch.env, ...this.config.env };
+    const turns = readAntigravityTranscript(this.conversationId, undefined, sessionEnv);
+    for (const turn of turns) {
+      this.emit({
+        type: "session.turn",
+        sessionId: this.options.id,
+        turnId: turn.turnId,
+        state: "started",
+      });
+      for (const item of turn.items) {
+        this.item(item);
+      }
+      if (turn.usage) {
+        this.emit({
+          type: "session.usage",
+          sessionId: this.options.id,
+          turnId: turn.turnId,
+          usage: turn.usage,
+        });
+      }
+      this.emit({
+        type: "session.turn",
+        sessionId: this.options.id,
+        turnId: turn.turnId,
+        state: "completed",
+      });
+    }
+  }
+
   private item(item: ProviderTimelineItem): void {
     this.emit({ type: "timeline.item", sessionId: this.options.id, item });
   }
