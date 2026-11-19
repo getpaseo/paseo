@@ -15248,27 +15248,28 @@ test("lists and stops heartbeat background work across provider session closure"
   });
   const events: AgentManagerEvent[] = [];
   manager.subscribe((event) => events.push(event), { agentId: agent.id, replayState: false });
+  const heartbeatKey = { agentId: agent.id, namespace: "heartbeat", id: "schedule-1" } as const;
   const heartbeat = {
-    agentId: agent.id,
-    scheduleId: "schedule-1",
-    name: "Check build",
-    createdAt: "2026-10-06T10:00:00.000Z",
+    ...heartbeatKey,
+    kind: "heartbeat",
+    description: "Check build",
+    startedAt: "2026-10-06T10:00:00.000Z",
     stop: async () => {
       stopped.push("schedule-1");
-      manager.removeHeartbeatBackgroundWork(agent.id, "schedule-1");
+      manager.removeDaemonBackgroundWork(heartbeatKey);
     },
   };
   try {
-    manager.setHeartbeatBackgroundWork(heartbeat);
+    manager.setDaemonBackgroundWork(heartbeat);
     const [item] = manager.listAgentBackgroundWork(agent.id);
     expect(item).toMatchObject({
       kind: "heartbeat",
       description: "Check build",
-      startedAt: heartbeat.createdAt,
+      startedAt: heartbeat.startedAt,
       canStop: true,
       stopToken: expect.any(String),
     });
-    manager.setHeartbeatBackgroundWork({ ...heartbeat, name: "Check CI" });
+    manager.setDaemonBackgroundWork({ ...heartbeat, description: "Check CI" });
     const renamed = { ...item, description: "Check CI" };
 
     activeSession?.pushEvent({
@@ -15321,7 +15322,7 @@ test("lists and stops heartbeat background work across provider session closure"
     expect(manager.getAgentBackgroundWorkSummary(agent.id)).toBeUndefined();
     expect(events.at(-1)).toEqual({ type: "background_work", agentId: agent.id, items: [] });
 
-    manager.setHeartbeatBackgroundWork(heartbeat);
+    manager.setDaemonBackgroundWork(heartbeat);
     await expect(
       manager.stopAgentBackgroundWork({ ...stop, canManageAutomation: true }),
     ).rejects.toThrow();
@@ -15590,7 +15591,7 @@ test.each(["turn_completed", "turn_failed", "turn_canceled"] as const)(
   },
 );
 
-test("an idle-only prompt rejects a busy recipient before changing its mode", async () => {
+test("an idle-only prompt waits for idle and checks admission before handoff", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-queued-mode-"));
   class ModeSession extends SteeringTestSession {
     mode = "plan";
@@ -15653,6 +15654,24 @@ test("an idle-only prompt rejects a busy recipient before changing its mode", as
     await providerStarted;
     session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "active-turn-1" });
     await vi.waitFor(() => expect(manager.hasInFlightRun(agent.id)).toBe(false));
+
+    let queued = true;
+    const withdrawn = await sendPreparedPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      prompt: "withdrawn follow-up",
+      idleOnly: true,
+      admit: () => queued,
+      onDispatch: () => {
+        queued = false;
+      },
+      logger,
+    });
+    await expect(dispatchStarted(withdrawn)).rejects.toThrow("canceled before its turn started");
+    expect(session.startPrompts).toEqual(["other turn"]);
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+
     await sendPreparedPromptToAgent({
       agentManager: manager,
       agentStorage: storage,

@@ -24,7 +24,7 @@ import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import {
-  isHeartbeatBackgroundWorkItem,
+  isDaemonBackgroundWorkItem,
   type AgentBackgroundWorkItem,
 } from "./agent/background-work/index.js";
 import equal from "fast-deep-equal";
@@ -2295,7 +2295,7 @@ export class Session {
       return items;
     }
     return items.map((item) => {
-      if (!isHeartbeatBackgroundWorkItem(item)) return item;
+      if (!isDaemonBackgroundWorkItem(item)) return item;
       const { canStop: _canStop, stopToken: _stopToken, ...visible } = item;
       return visible;
     });
