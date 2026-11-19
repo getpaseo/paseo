@@ -201,9 +201,9 @@ async function waitForDesktopStatus(page) {
 }
 
 async function settleDesktopStartup(page) {
-  await expect(page.getByRole("button", { name: /^Desktop browser workspace 1\b/ })).toBeVisible({
-    timeout: timeoutMs,
-  });
+  await expect(
+    page.getByRole("button", { name: "Desktop browser workspace 1", exact: true }),
+  ).toBeVisible({ timeout: timeoutMs });
   // The dev launcher supplies its package directory as an open-project request.
   // Before the local host connects, that request opens the connection prompt.
   // Finish startup before exercising the unrelated Settings/browser workflows.
@@ -347,16 +347,15 @@ async function connectBrowserToolClient(daemonPort, callerAgentId) {
   return experimental_createMCPClient({ transport });
 }
 
-async function openBrowserWorkspace(page) {
-  await page.getByRole("button", { name: /^Desktop browser workspace 1\b/ }).click();
+async function openBrowserWorkspace(page, workspaceKey) {
+  await page.getByTestId(`sidebar-workspace-row-${workspaceKey}`).click({ timeout: timeoutMs });
+  await expect(page.getByTestId(`workspace-deck-entry-${workspaceKey}`)).toBeVisible();
 }
 
 async function openSecondDesktopWindow(page) {
   const nextWindow = page.context().waitForEvent("page", { timeout: timeoutMs });
   await page.evaluate(() => window.paseoDesktop.window.openNew());
-  const secondWindow = await nextWindow;
-  await settleDesktopStartup(secondWindow);
-  return secondWindow;
+  return nextWindow;
 }
 
 async function listBrowserHosts(client) {
@@ -376,15 +375,15 @@ async function expectBrowserHostNameInCommandCenter(page, name) {
   await expect(page.getByText("Copied", { exact: true })).toBeVisible();
 }
 
-async function verifyBrowserHostRouting({ page, client, targetUrl }) {
-  await openBrowserWorkspace(page);
+async function verifyBrowserHostRouting({ page, client, targetUrl, workspaceKey }) {
+  await openBrowserWorkspace(page, workspaceKey);
   await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(1);
   const [firstHost] = await listBrowserHosts(client);
   await expectBrowserHostNameInCommandCenter(page, firstHost.label);
   const secondWindow = await openSecondDesktopWindow(page);
 
   try {
-    await openBrowserWorkspace(secondWindow);
+    await openBrowserWorkspace(secondWindow, workspaceKey);
     await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(2);
     const secondHost = (await listBrowserHosts(client)).find(
       (host) => host.browserHostId !== firstHost.browserHostId,
@@ -1453,13 +1452,6 @@ async function main() {
     const status = await waitForDesktopStatus(page);
     await settleDesktopStartup(page);
 
-    if (process.env.PASEO_DESKTOP_BROWSER_HOSTS_ONLY === "1") {
-      client = await connectBrowserToolClient(daemonPort, await createCallerAgent(daemonPort));
-      await verifyBrowserHostRouting({ page, client, targetUrl: target.url });
-      console.log("Browser host discovery, window labels, and explicit routing passed.");
-      return;
-    }
-
     const checkPluginLinks = () =>
       runPluginLinksRegression({
         page,
@@ -1513,11 +1505,23 @@ async function main() {
       artifactDir,
     });
     const pluginLinks = await checkPluginLinks();
+    const routingClient = await connectBrowserToolClient(daemonPort, typingAgent.agentId);
+    try {
+      await verifyBrowserHostRouting({
+        page,
+        client: routingClient,
+        targetUrl: target.url,
+        workspaceKey: `${status.serverId}:${typingAgent.workspaceId}`,
+      });
+    } finally {
+      await routingClient.close();
+    }
     writeJson(path.join(artifactDir, "result.json"), {
       ...report,
       settingsMemory,
       pluginLinks,
       adaptiveTheme,
+      browserHostRouting: "passed",
     });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
