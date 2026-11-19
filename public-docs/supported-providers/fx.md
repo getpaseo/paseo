@@ -14,7 +14,7 @@ Run fx, the coding agent from Vercel Labs, in Paseo with your existing fx instal
 
 1. [Install fx](https://fx.sh/docs/getting-started/installation) on your daemon host.
 2. [Connect fx to a model provider](https://fx.sh/docs/getting-started/authentication), for example with `fx login`.
-3. In Paseo, open **Settings → Hosts → your host → Providers**, find **fx** in the catalog, and choose **Add**.
+3. In Paseo, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find **fx**, and choose **Add**.
 
 Paseo launches `fx acp` and uses your fx credentials and settings. Until fx has credentials, the provider reports the sign-in message from fx.
 
