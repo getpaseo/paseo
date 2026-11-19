@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { PiCliRuntime } from "./pi/cli-runtime.js";
+import { createPiRuntime } from "./pi/agent.js";
 
 interface SpawnResult {
   code: number | null;
@@ -178,11 +179,14 @@ async function runPiRuntimeFixture(params: { command: string; cwd: string }): Pr
   }
 }
 
+function pathEnvKey(): string {
+  return process.platform === "win32"
+    ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
+    : "PATH";
+}
+
 function withPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
-  const pathKey =
-    process.platform === "win32"
-      ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
-      : "PATH";
+  const pathKey = pathEnvKey();
   const previousPath = process.env[pathKey];
   process.env[pathKey] = previousPath ? `${dir}${path.delimiter}${previousPath}` : dir;
 
@@ -282,4 +286,40 @@ describe.runIf(process.platform === "win32")("Windows provider launch parity", (
       expect(result.stdout.trim()).toBe("ARGV_OK");
     },
   );
+
+  test("pi launches the resolved shim when the child cannot resolve the bare name (#6235)", async () => {
+    const args = ["--mode", "rpc"];
+    const fixture = makeFixture("pi", args, "piRuntime");
+
+    await withPathEntry(fixture.root, async () => {
+      // The fixture shim must be what resolution picks, otherwise this test could
+      // pass by launching a real Pi from the machine's PATH.
+      expect((await findExecutable("pi"))?.toLowerCase()).toBe(fixture.shim.toLowerCase());
+
+      // The child runs from a directory without a shim: cmd.exe searches the
+      // current directory for an extensionless command before PATH, so a cwd that
+      // contains `pi.cmd` would resolve the bare name and hide the bug.
+      const emptyCwd = mkdtempSync(path.join(tmpdir(), "paseo pi launch cwd "));
+      tempDirs.push(emptyCwd);
+      const runtime = createPiRuntime(pino({ level: "silent" }), undefined, 10_000);
+      // The daemon child in #6235 cannot resolve the npm shim by name: its shell
+      // searches a PATH without the shim directory. Resolution still finds the
+      // shim on the daemon's PATH, so the launch has to use that path instead of
+      // the bare name.
+      const pathKey = pathEnvKey();
+      const session = await runtime.startSession({
+        cwd: emptyCwd,
+        env: { [pathKey]: "" },
+      });
+
+      try {
+        await expect(session.getState()).resolves.toMatchObject({
+          sessionId: "pi-session-1",
+          thinkingLevel: "medium",
+        });
+      } finally {
+        await session.close();
+      }
+    });
+  });
 });
