@@ -396,19 +396,20 @@ const DirectoryCheckpointSchema = z.strictObject({
   agents: DirectoryCursorSchema.optional(),
 });
 
-// Old checkpoints could describe a baseline that an overlapping refresh had discarded.
-// Revalidate directory contents once without evicting cached rows or timelines.
+// Version 1 could retain cursors after another tab evicted the rows they described.
+// Keep cached rows and timelines, but request fresh directory snapshots once.
 const StoredDirectoryCheckpointSchema = z.strictObject({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   cursors: DirectoryCheckpointSchema,
 });
 
 function serializeDirectoryCheckpoint(cursors: DirectoryCheckpoint) {
-  return { version: 1 as const, cursors };
+  return { version: 2 as const, cursors };
 }
 
-function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint {
-  return parseStoredPayload(StoredDirectoryCheckpointSchema, payload).cursors;
+function deserializeDirectoryCheckpoint(payload: string): DirectoryCheckpoint | undefined {
+  const stored = parseStoredPayload(StoredDirectoryCheckpointSchema, payload);
+  return stored.version === 2 ? stored.cursors : undefined;
 }
 
 function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | null {
@@ -1050,7 +1051,15 @@ export class ReplicaCache {
       for (const entity of invalidEntities) delete result.checkpoint[entity];
     }
     if (invalidRows.length > 0) {
-      await this.repairInvalidDirectoryRows(serverId, invalidRows, result.checkpoint);
+      const checkpointRow = rows.find(
+        (row) => row.kind === "checkpoint" && row.id === REPLICA_SINGLETON_ROW_ID,
+      );
+      await this.repairInvalidDirectoryRows(
+        serverId,
+        invalidRows,
+        result.checkpoint,
+        checkpointRow,
+      );
     }
     return result;
   }
@@ -1109,10 +1118,7 @@ export class ReplicaCache {
     const invalidEntity = directoryEntityForRow(row);
     if (!invalidEntity) {
       const changes = { upserts: [], deletes: [row] } satisfies ReplicaRowChanges;
-      await this.queueOperation(async () => {
-        await this.rowStore.apply(changes);
-        this.applyStoredChanges(changes);
-      });
+      await this.applyRepair(changes, [row]);
       return;
     }
 
@@ -1143,16 +1149,14 @@ export class ReplicaCache {
             ]
           : [],
     };
-    await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
-    });
+    await this.applyRepair(changes, checkpointRow ? [row, checkpointRow] : [row]);
   }
 
   private async repairInvalidDirectoryRows(
     serverId: string,
     invalidRows: ReplicaRow[],
     checkpoint: DirectoryCheckpoint | undefined,
+    checkpointRow: ReplicaRow | undefined,
   ): Promise<void> {
     const checkpointWasInvalid = invalidRows.some((row) => row.kind === "checkpoint");
     const changes: ReplicaRowChanges = {
@@ -1169,9 +1173,15 @@ export class ReplicaCache {
             ]
           : [],
     };
+    const expectedRows =
+      checkpointRow && !checkpointWasInvalid ? [...invalidRows, checkpointRow] : invalidRows;
+    await this.applyRepair(changes, expectedRows);
+  }
+
+  private async applyRepair(changes: ReplicaRowChanges, expectedRows: ReplicaRow[]): Promise<void> {
     await this.queueOperation(async () => {
-      await this.rowStore.apply(changes);
-      this.applyStoredChanges(changes);
+      const accepted = await this.rowStore.apply(changes, { expectedRows });
+      this.applyStoredChanges(accepted ?? changes);
     });
   }
 
@@ -1311,12 +1321,21 @@ export class ReplicaCache {
           await this.ensureStoredIndex();
           const changes = this.materializePendingChanges(pending);
           const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
-          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
-            await this.rowStore.apply(boundedChanges);
-            this.applyStoredChanges(boundedChanges);
+          const baselines = new Set(
+            [...pending.baselines].filter((serverId) => !evicted.has(serverId)),
+          );
+          if (
+            baselines.size > 0 ||
+            boundedChanges.upserts.length > 0 ||
+            boundedChanges.deletes.length > 0
+          ) {
+            const accepted = await this.rowStore.apply(boundedChanges, {
+              directoryBaselines: baselines,
+            });
+            this.applyStoredChanges(accepted ?? boundedChanges);
           }
-          for (const serverId of pending.baselines) {
-            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
+          for (const serverId of baselines) {
+            this.invalidatedHosts.delete(serverId);
           }
         } catch {
           this.restorePendingChanges(pending);
