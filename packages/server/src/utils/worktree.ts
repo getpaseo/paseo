@@ -1071,9 +1071,18 @@ async function resolveMetadataOwnedWorktree(
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
 
+interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
+  /** A bare repository or a worktree whose directory is gone; nothing can work there. */
+  unusable?: true;
+}
+
 function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  const entries: ParsedPaseoWorktreeInfo[] = [];
-  let current: ParsedPaseoWorktreeInfo | null = null;
+  return parseWorktreeEntries(output).map(({ unusable: _unusable, ...entry }) => entry);
+}
+
+function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
+  const entries: ParsedWorktreeEntry[] = [];
+  let current: ParsedWorktreeEntry | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -1093,6 +1102,8 @@ function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
     } else if (line.startsWith("HEAD ")) {
       current.head = line.slice("HEAD ".length).trim();
+    } else if (line === "bare" || line.startsWith("prunable")) {
+      current.unusable = true;
     } else if (line.trim().length === 0) {
       if (current.path) {
         entries.push(current);
@@ -1118,6 +1129,47 @@ async function resolveWorktreeCreatedAtIso(worktreePath: string): Promise<string
   } catch {
     return new Date(0).toISOString();
   }
+}
+
+/** One git worktree of a repository, whoever created it. */
+export interface GitWorktree {
+  path: string;
+  /** Null when HEAD is detached. */
+  branchName: string | null;
+  head: string | null;
+  createdAt: string;
+  /** Whether the `cwd` the list was asked for is inside this worktree. */
+  containsCwd: boolean;
+}
+
+/**
+ * Every usable worktree of the repository `cwd` is in. The main worktree comes first; the rest
+ * follow in no meaningful order.
+ * Unlike `listPaseoWorktrees`, ownership plays no part.
+ */
+export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWorktree[]> {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const { stdout: toplevel } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const cwdWorktree = await normalizePathForOwnership(toplevel.trim());
+  const worktrees: GitWorktree[] = [];
+  for (const entry of parseWorktreeEntries(stdout)) {
+    if (entry.unusable) continue;
+    const path = await normalizePathForOwnership(entry.path);
+    worktrees.push({
+      path,
+      branchName: entry.branchName ?? null,
+      head: entry.head ?? null,
+      createdAt: await resolveWorktreeCreatedAtIso(path),
+      containsCwd: path === cwdWorktree,
+    });
+  }
+  return worktrees;
 }
 
 export async function listPaseoWorktrees({
@@ -1675,10 +1727,10 @@ async function resolveWorktreeSourcePlan({
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
         source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-      await fetchWorktreeCheckoutRefs({
+      await fetchFirstAvailableRef({
         cwd,
-        localBranchName,
-        checkoutRefs: source.checkoutRefs ?? [
+        destination: `refs/heads/${localBranchName}`,
+        sources: source.checkoutRefs ?? [
           { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
         ],
       });
@@ -1777,21 +1829,22 @@ async function configureWorktreePushRemote(options: {
   }
 }
 
-async function fetchWorktreeCheckoutRefs(options: {
+/** Fetches the first of `sources` a remote serves into the local ref `destination`. */
+export async function fetchFirstAvailableRef(options: {
   cwd: string;
-  localBranchName: string;
-  checkoutRefs: WorktreeCheckoutRef[];
+  sources: WorktreeCheckoutRef[];
+  destination: string;
 }): Promise<void> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
-  for (const checkoutRef of options.checkoutRefs) {
+  for (const checkoutRef of options.sources) {
     lastResult = await runGitCommand(
       [
         "fetch",
         checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
+        `+${checkoutRef.remoteRef}:${options.destination}`,
         "--force",
       ],
       {
@@ -1804,11 +1857,11 @@ async function fetchWorktreeCheckoutRefs(options: {
       return;
     }
   }
-  const attemptedRefs = options.checkoutRefs
+  const attemptedRefs = options.sources
     .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
     .join(", ");
   throw new Error(
-    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
+    `Unable to fetch change request refs into ${options.destination}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
 }
 

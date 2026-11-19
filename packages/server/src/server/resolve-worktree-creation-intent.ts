@@ -1,5 +1,5 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
-import type { WorktreeSource } from "../utils/worktree.js";
+import type { WorktreeCheckoutRef, WorktreeSource } from "../utils/worktree.js";
 
 export type WorktreeCreationIntent = Exclude<
   WorktreeSource,
@@ -29,6 +29,14 @@ export interface ResolveWorktreeCreationIntentDeps {
   forge: string;
   forgeService: ForgeService;
   resolveDefaultBranch: (repoRoot: string) => Promise<string>;
+  /** Fetches the first ref a remote serves into a local ref. */
+  fetchRef: (input: FetchRefInput) => Promise<void>;
+}
+
+export interface FetchRefInput {
+  repoRoot: string;
+  sources: WorktreeCheckoutRef[];
+  destination: string;
 }
 
 export class MissingCheckoutTargetError extends Error {
@@ -70,9 +78,13 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
+    const changeRequest = resolveInputChangeRequest(input);
+    const baseBranch = changeRequest
+      ? await fetchChangeRequestHead({ input, changeRequest, repoRoot, deps })
+      : input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps));
     return {
       kind: "branch-off",
-      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      baseBranch,
       branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
     };
   }
@@ -126,6 +138,34 @@ export async function resolveWorktreeCreationIntent(
   };
 }
 
+/**
+ * Brings a change request's head into a remote-tracking ref, so a new branch can start from it
+ * without checking the change request out. A same-repository head lands where `git fetch` puts
+ * the branch; any other head lands under `paseo-pr-<number>`, the remote a checkout of the same
+ * change request pushes to.
+ */
+async function fetchChangeRequestHead(params: {
+  input: ResolveWorktreeCreationIntentInput;
+  changeRequest: { number: number; forge?: string };
+  repoRoot: string;
+  deps: ResolveWorktreeCreationIntentDeps;
+}): Promise<string> {
+  const { input, changeRequest, repoRoot, deps } = params;
+  assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
+  const checkout = await resolvePrCheckoutIntent({
+    refName: input.refName,
+    changeRequestNumber: changeRequest.number,
+    repoRoot,
+    deps,
+  });
+  const headBranch = checkout.headRef.startsWith("refs/") ? "head" : checkout.headRef;
+  const destination = checkout.trackOriginHead
+    ? `refs/remotes/origin/${headBranch}`
+    : `refs/remotes/paseo-pr-${changeRequest.number}/${headBranch}`;
+  await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination });
+  return destination;
+}
+
 interface PrCheckoutIntentParams {
   refName?: string;
   changeRequestNumber: number;
@@ -163,9 +203,11 @@ function assertCheckoutSourceMatchesResolvedForge(
   }
 }
 
-async function resolvePrCheckoutIntent(
-  params: PrCheckoutIntentParams,
-): Promise<Extract<WorktreeCreationIntent, { kind: "checkout-change-request" }>> {
+async function resolvePrCheckoutIntent(params: PrCheckoutIntentParams): Promise<
+  Extract<WorktreeCreationIntent, { kind: "checkout-change-request" }> & {
+    checkoutRefs: WorktreeCheckoutRef[];
+  }
+> {
   const { deps } = params;
   const service = deps.forgeService;
   const checkoutTarget = await resolvePrCheckoutTarget(params);

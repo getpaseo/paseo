@@ -379,6 +379,10 @@ function getBranchUpstream(cwd: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+}
+
 function getGitConfigValue(cwd: string, key: string): string | null {
   const result = spawnSync("git", ["config", "--get", key], {
     cwd,
@@ -1448,6 +1452,99 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           createCoreDeps(),
         ),
       ).rejects.toBeInstanceOf(UnknownBranchError);
+    });
+
+    test("branches off a same-repo pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The head branch has never been fetched, so creation has to fetch it.
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/daemon-shutdown-diagnostics"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/daemon-shutdown-diagnostics",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(result.worktree.comparisonBaseRef).toBe(
+        "refs/remotes/origin/daemon-shutdown-diagnostics",
+      );
+      expect(git(repoDir, "branch", "--list", "daemon-shutdown-diagnostics")).toBe("");
+    });
+
+    test("branches off a fork pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/paseo-pr-526/main",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(git(repoDir, "branch", "--list", "therainisme/main")).toBe("");
+      expect(getGitConfigValue(repoDir, "remote.paseo-pr-526.url")).toBeNull();
     });
 
     test("creates the agent-create worktree input shape", async () => {
