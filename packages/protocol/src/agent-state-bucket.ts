@@ -16,7 +16,6 @@ export function isAgentRunning(input: {
   status: AgentLifecycleStatus | null | undefined;
   backgroundWork?: AgentBackgroundWorkSummary | null;
 }): boolean {
-  // COMPAT(backgroundWorkRunningCount): added in v0.17.0, revisit once the host floor is v0.17.0.
   const { status, backgroundWork } = input;
   return status === "running" || (backgroundWork?.runningCount ?? backgroundWork?.count ?? 0) > 0;
 }
