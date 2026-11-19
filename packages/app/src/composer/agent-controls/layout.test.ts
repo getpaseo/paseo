@@ -251,7 +251,7 @@ describe("composer control layout", () => {
       controlSize: 36,
       glyphs: {
         icon: { size: 20, strokeWidth: 1.5, tone: "foreground" },
-        label: { size: 20, strokeWidth: 1.5, tone: "foreground" },
+        label: { size: 20, strokeWidth: 1.5, tone: "muted" },
       },
       controlGap: 0,
       labelPadding: 8,

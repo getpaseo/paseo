@@ -481,14 +481,41 @@ const brokerErrorCases = [
       ok: false,
       error: {
         code: "browser_timeout",
-        message: "Browser automation timed out after 15000ms.",
+        message:
+          "The browser host did not respond within 15000ms. Try again or check the browser host.",
         retryable: true,
       },
     },
     content: [
       {
         type: "text",
-        text: "The browser did not respond before the timeout. Try again or check the browser host.",
+        text: "The browser host did not respond within 15000ms. Try again or check the browser host.",
+      },
+    ],
+    context: {
+      agentId: "agent-1",
+      cwd: "/repo",
+      workspaceId: "wks_workspace_a",
+      browserId: BROWSER_ID,
+    },
+  },
+  {
+    name: "expired wait conditions",
+    toolName: "browser_wait",
+    input: { browserId: BROWSER_ID, text: "Example Domain" },
+    payload: {
+      requestId: "req-wait",
+      ok: false,
+      error: {
+        code: "browser_timeout",
+        message: "Timed out waiting for browser text: Example Domain",
+        retryable: true,
+      },
+    },
+    content: [
+      {
+        type: "text",
+        text: "Timed out waiting for browser text: Example Domain",
       },
     ],
     context: {
@@ -897,7 +924,7 @@ describe("registerBrowserTools", () => {
     expect(response.content).toEqual([
       {
         type: "text",
-        text: 'The browser did not respond before the timeout. Try again or check the browser host.\nHandled browser dialog: dismissed beforeunload "Leave site?".',
+        text: 'Timed out waiting for browser URL: /next\nHandled browser dialog: dismissed beforeunload "Leave site?".',
       },
     ]);
     expect(response.structuredContent).toEqual({

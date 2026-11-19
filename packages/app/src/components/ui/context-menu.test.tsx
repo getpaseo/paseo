@@ -42,7 +42,7 @@ vi.mock("@/components/ui/press-highlight", () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ContextMenuTrigger", () => {
-  it("preserves a static trigger style so the native press highlight can inherit its corners", () => {
+  it("preserves a static trigger style for the native pressable", () => {
     vi.stubGlobal("React", React);
     const rowStyle = [{ borderRadius: 8 }, { backgroundColor: "#111" }];
 

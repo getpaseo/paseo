@@ -22,6 +22,17 @@ describe("createForgeShorthand", () => {
     expect(gitlab.resolve("g/sub/q#3")).toBe("https://gitlab.com/g/sub/q/-/issues/3");
   });
 
+  it("links numbers to the repository the daemon says owns them, but keeps explicit references", () => {
+    const fork = createForgeShorthand({
+      forge: "github",
+      remoteUrl: "git@github.com-work:fork-owner/repo.git",
+      forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+    })!;
+
+    expect(fork.resolve("#123")).toBe("https://github.com/main-owner/repo/issues/123");
+    expect(fork.resolve("acme/tools#4")).toBe("https://github.com/acme/tools/issues/4");
+  });
+
   it("only recognizes the sigils the forge declares", () => {
     expect(matches(github, "see #1 and !2")).toEqual(["#1"]);
     expect(github.resolve("!2")).toBeNull();

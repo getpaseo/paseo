@@ -227,6 +227,20 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+[",
+      event: { key: "{", code: "BracketLeft", metaKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
+    },
+    {
+      name: "matches tab relative navigation on macOS desktop via Cmd+Shift+]",
+      event: { key: "}", code: "BracketRight", metaKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: 1 },
+    },
+    {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
@@ -322,6 +336,27 @@ describe("keyboard-shortcuts", () => {
       context: { isMac: true, focusScope: "message-input" },
       action: "message-input.action",
       payload: { kind: "dictation-toggle" },
+    },
+    {
+      name: "toggles the model picker from the composer",
+      event: { key: "/", code: "Slash", metaKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "model-toggle" },
+    },
+    {
+      name: "toggles the model picker while its search field has focus",
+      event: { key: "/", code: "Slash", metaKey: true },
+      context: { isMac: true, focusScope: "editable" },
+      action: "message-input.action",
+      payload: { kind: "model-toggle" },
+    },
+    {
+      name: "cycles effort with the shifted slash character",
+      event: { key: "?", code: "Slash", metaKey: true, shiftKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "effort-cycle" },
     },
     {
       name: "routes Shift+Tab to cycle agent mode from the message input",
@@ -478,6 +513,11 @@ describe("keyboard-shortcuts", () => {
       name: "does not close tab with Ctrl+W on non-mac desktop when terminal is focused",
       event: { key: "w", code: "KeyW", ctrlKey: true },
       context: { isMac: false, usesDesktopBindings: true, focusScope: "terminal" },
+    },
+    {
+      name: "does not switch tabs with Alt+Shift+] on mac desktop (Cmd+Shift+] only)",
+      event: { key: "’", code: "BracketRight", altKey: true, shiftKey: true },
+      context: { isMac: true, usesDesktopBindings: true },
     },
     {
       name: "does not match Ctrl+T on mac (Cmd only)",
@@ -732,6 +772,8 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
         "cycle-agent-mode": ["shift", "Tab"],
+        "toggle-model-picker": ["mod", "/"],
+        "cycle-effort": ["mod", "shift", "/"],
       },
     },
     {
@@ -1304,6 +1346,17 @@ describe("unassigned shortcuts", () => {
 
       expect(findRow(sections, "workspace-tab-new")).not.toBeNull();
       expect(getBindingIdForAction("workspace-tab-new", desktopNonMac)).toBe(TAB_NEW_BINDING);
+    });
+
+    it("advertises Cmd+Shift+brackets for tab navigation on macOS desktop", () => {
+      const desktopMac = { isMac: true, usesDesktopBindings: true };
+
+      expect(getDefaultKeysForAction("workspace-tab-prev", desktopMac)).toEqual([
+        ["mod", "shift", "["],
+      ]);
+      expect(getDefaultKeysForAction("workspace-tab-next", desktopMac)).toEqual([
+        ["mod", "shift", "]"],
+      ]);
     });
 
     it("still lists the default keys when nothing is overridden", () => {

@@ -305,3 +305,22 @@ describe("mobile panel ownership", () => {
     });
   });
 });
+
+it("lands an explicit destination while the sidebar is suspended without a slide", () => {
+  const state = createMobilePanelMotionState({ target: "agent-list", revision: 1 });
+  const result = transitionMobilePanel(state, {
+    type: "command",
+    selection: { target: "agent", revision: 2 },
+    immediate: true,
+  });
+  expect(result).toEqual({
+    immediateTarget: "agent",
+    state: {
+      target: "agent",
+      revision: 2,
+      gesture: null,
+      motionTarget: "agent",
+      settledTarget: "agent",
+    },
+  });
+});

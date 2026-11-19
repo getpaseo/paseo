@@ -109,18 +109,18 @@ export async function expectReconnectingToastVisible(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting to host" });
+  const toast = page.getByRole("alert").filter({ hasText: "Reconnecting" });
   await expect(toast).toBeVisible({
     timeout: options?.timeout ?? 30_000,
   });
-  await expect(toast).toHaveText("Reconnecting to host");
+  await expect(toast).toHaveText("Reconnecting");
 }
 
 export async function expectReconnectingToastGone(
   page: Page,
   options?: { timeout?: number },
 ): Promise<void> {
-  await expect(page.getByRole("alert").filter({ hasText: "Reconnecting to host" })).toHaveCount(0, {
+  await expect(page.getByRole("alert").filter({ hasText: "Reconnecting" })).toHaveCount(0, {
     timeout: options?.timeout ?? 30_000,
   });
 }

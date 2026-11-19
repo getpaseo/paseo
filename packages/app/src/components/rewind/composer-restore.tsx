@@ -8,7 +8,7 @@ interface RewindComposerRestoreContextValue {
 interface RewindComposerRestoreProviderProps {
   textSource: ComposerTextSource;
   setText: (text: string) => void;
-  onRewindComplete: () => void;
+  onRewindComplete: (restoredComposerText: boolean) => void;
   children: ReactNode;
 }
 
@@ -37,10 +37,11 @@ export function RewindComposerRestoreProvider({
         currentText: currentText,
         rewoundText,
       });
-      if (nextText !== currentText) {
+      const restoredComposerText = nextText !== currentText;
+      if (restoredComposerText) {
         setText(nextText);
       }
-      onRewindComplete();
+      onRewindComplete(restoredComposerText);
     },
     [onRewindComplete, setText, textSource],
   );
