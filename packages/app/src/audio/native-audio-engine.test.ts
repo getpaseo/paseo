@@ -7,7 +7,10 @@ import { createNativeAudioEngine, type NativeAudioEngineDeps } from "./native-au
 // `toggleRecording(true)` / `startDictation()` return false while no engine exists.
 // Session handling follows iOS: recording activates the OS audio session, stopping does not
 // deactivate it, and `releaseAudioSession()` deactivates it only while nothing is recording.
-function fakeTwoWayAudio({ captureAvailable = true } = {}) {
+function fakeTwoWayAudio({
+  captureAvailable = true,
+  permissionRequestError,
+}: { captureAvailable?: boolean; permissionRequestError?: Error } = {}) {
   let engine: { recording: boolean; sessionActive: boolean } | null = null;
   const calls = { initialize: 0, tearDown: 0 };
   const native: NativeAudioEngineDeps["native"] = {
@@ -39,9 +42,10 @@ function fakeTwoWayAudio({ captureAvailable = true } = {}) {
     resumePlayback() {},
     stopPlayback() {},
     async getMicrophonePermissionsAsync() {
-      return { granted: true };
+      return { granted: !permissionRequestError };
     },
     async requestMicrophonePermissionsAsync() {
+      if (permissionRequestError) throw permissionRequestError;
       return { granted: true };
     },
     addExpoTwoWayAudioEventListener() {
@@ -165,5 +169,20 @@ test("a failed native recording start rejects with a platform-neutral error", as
   });
 
   await expect(engine.startCapture()).rejects.toThrow(/^Microphone capture could not start\.$/);
+  await engine.destroy();
+});
+
+test("a failed native permission request retains the permission reason and original error", async () => {
+  const permissionRequestError = new Error("The current activity is not available.");
+  const fake = fakeTwoWayAudio({ permissionRequestError });
+  const engine = createNativeAudioEngine(deps(fake.native), recordingCallbacks, {
+    captureMode: "dictation",
+  });
+
+  await expect(engine.startCapture()).rejects.toMatchObject({
+    reason: "permissionDenied",
+    cause: permissionRequestError,
+  });
+  expect(fake.hasEngine()).toBe(false);
   await engine.destroy();
 });

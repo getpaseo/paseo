@@ -170,16 +170,20 @@ export function createNativeAudioEngine(
   }
 
   async function ensureMicrophonePermission(): Promise<void> {
-    let permission = await native.getMicrophonePermissionsAsync().catch(() => null);
-    if (!permission?.granted) {
-      permission = await native.requestMicrophonePermissionsAsync();
+    const permission = await native.getMicrophonePermissionsAsync().catch(() => null);
+    if (permission?.granted) return;
+
+    let cause: unknown;
+    try {
+      if ((await native.requestMicrophonePermissionsAsync()).granted) return;
+    } catch (error) {
+      cause = error;
     }
-    if (!permission?.granted) {
-      throw new AudioCaptureStartError(
-        "permissionDenied",
-        "Allow microphone access in system settings and try again.",
-      );
-    }
+    throw new AudioCaptureStartError(
+      "permissionDenied",
+      "Allow microphone access in system settings and try again.",
+      { cause },
+    );
   }
 
   function releaseNativeEngine(): void {
