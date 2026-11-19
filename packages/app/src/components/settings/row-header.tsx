@@ -192,7 +192,7 @@ function RowHintLine({
       {status === "busy" ? (
         <ThemedLoadingSpinner size={14} uniProps={mutedIconColorMapping} />
       ) : (
-        <View style={styles.errorDot} />
+        <View style={styles.errorDot} testID="settings-row-error-dot" />
       )}
       <Text style={textStyle} numberOfLines={1}>
         {hint}

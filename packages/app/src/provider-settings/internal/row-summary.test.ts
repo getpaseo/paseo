@@ -91,6 +91,38 @@ describe("provider row summary", () => {
     });
   });
 
+  it("reads the provider's own state once Refresh drops a failed update", () => {
+    const failed = update({
+      status: "failed",
+      id: "u1",
+      startedAt: "2026-11-14T10:00:00Z",
+      finishedAt: "2026-11-14T10:01:00Z",
+      message: "npm exited with code 1",
+    });
+    const stillFailed = { current: failed, starting: false, startError: null, start: () => {} };
+    // A fresh inspection alone leaves the failure: reopening without Refresh still shows it.
+    expect(readRowSummary(entry(), installed("2.1.400", { action: stillFailed }))).toEqual({
+      kind: "failing",
+      message: "npm exited with code 1",
+    });
+
+    // Refresh drops the failed update, so the row has no current update to report.
+    const cleared = { current: null, starting: false, startError: null, start: () => {} };
+    expect(readRowSummary(entry(), installed("2.1.400", { action: cleared }))).toEqual({
+      kind: "ready",
+      version: "2.1.400",
+      models: 2,
+    });
+    const pending = installed("2.1.321", {
+      updates: { status: "ready", updateCheck: { status: "available", versions: ["2.1.400"] } },
+      action: cleared,
+    });
+    expect(readRowSummary(entry(), pending)).toEqual({
+      kind: "updateAvailable",
+      version: "2.1.321",
+    });
+  });
+
   it("reports the provider's error", () => {
     expect(
       readRowSummary(entry({ status: "error", error: " opencode exited with code 1 " }), oldHost),
