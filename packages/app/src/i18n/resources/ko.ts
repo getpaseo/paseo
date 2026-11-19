@@ -378,6 +378,9 @@ export const ko: TranslationResources = {
       details: "세부 정보",
     },
     dictation: {
+      insecureContext: "마이크를 사용하려면 HTTPS 또는 localhost에서 Paseo를 여세요.",
+      unsupported: "이 브라우저에서는 받아쓰기를 사용할 수 없습니다.",
+      noMicrophone: "마이크를 연결한 후 다시 시도하세요.",
       permissionDenied: "마이크 접근을 허용한 후 다시 시도하세요.",
       startFailed: "받아쓰기를 시작할 수 없습니다. 다시 시도하세요.",
       paused: "마이크가 중단되었습니다. 재개를 기다리는 중…",

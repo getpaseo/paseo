@@ -5,7 +5,7 @@ import type {
   AudioPlaybackSource,
 } from "./audio-engine-types";
 
-import { MicrophonePermissionError } from "./audio-engine-types";
+import { AudioCaptureStartError } from "./audio-engine-types";
 import { createNativeEngineLease, type NativeEngineLease } from "./native-engine-lease";
 import { createPlaybackQueue } from "./playback";
 import { playPcm16 } from "./pcm";
@@ -175,7 +175,10 @@ export function createNativeAudioEngine(
       permission = await native.requestMicrophonePermissionsAsync();
     }
     if (!permission?.granted) {
-      throw new MicrophonePermissionError();
+      throw new AudioCaptureStartError(
+        "permissionDenied",
+        "Allow microphone access in system settings and try again.",
+      );
     }
   }
 

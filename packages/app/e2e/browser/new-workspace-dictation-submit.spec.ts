@@ -17,6 +17,8 @@ import {
 } from "../support/helpers/composer";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
+test.use({ channel: "chromium", launchOptions: { args: ["--use-fake-device-for-media-stream"] } });
+
 type WebSocketMessage = string | Buffer;
 
 const TRANSCRIPT = "Keep this spoken prompt visible while creating the workspace";
@@ -249,6 +251,59 @@ test("dictation shortcut leaves retained fullscreen and exposes recording contro
     await expect(
       page.getByText("Realtime voice is disabled in this test.", { exact: true }),
     ).toBeVisible();
+    await expect(composerLocator(page)).toHaveValue(draft);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+async function controlMicrophonePermission(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const { targetInfo } = await cdp.send("Target.getTargetInfo");
+  const origin = new URL(page.url()).origin;
+  return async (setting: "denied" | "granted") => {
+    await cdp.send("Browser.setPermission", {
+      permission: { name: "microphone" },
+      setting,
+      origin,
+      browserContextId: targetInfo.browserContextId,
+    });
+  };
+}
+
+function startDictationByMic(page: Page) {
+  return page.getByRole("button", { name: "Start dictation", exact: true }).click();
+}
+
+function expectDictationPermissionError(page: Page) {
+  return expect(page.getByTestId("message-input-root").getByRole("alert")).toHaveText(
+    "Allow microphone access and try again.",
+  );
+}
+
+test("keeps the draft and retries from the mic after access is restored", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-permission-",
+    title: "Dictation permission",
+  });
+  const draft = "Keep my draft";
+  await installDictationFailureHarness(page);
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await fillComposerDraft(page, draft);
+
+    const setMicrophonePermission = await controlMicrophonePermission(page);
+    await setMicrophonePermission("denied");
+    await startDictationByMic(page);
+    await expectDictationPermissionError(page);
+    await expect(composerLocator(page)).toHaveValue(draft);
+
+    await setMicrophonePermission("granted");
+    await startDictationByMic(page);
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toBeVisible();
+    await expect(page.getByText("Allow microphone access and try again.")).toHaveCount(0);
+    await page.getByRole("button", { name: "Cancel dictation", exact: true }).click();
     await expect(composerLocator(page)).toHaveValue(draft);
   } finally {
     await agent.cleanup();

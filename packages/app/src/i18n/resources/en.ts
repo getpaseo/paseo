@@ -376,6 +376,9 @@ export const en = {
       details: "Details",
     },
     dictation: {
+      insecureContext: "Open Paseo over HTTPS or localhost to use the microphone.",
+      unsupported: "Dictation is unavailable in this browser.",
+      noMicrophone: "Connect a microphone and try again.",
       permissionDenied: "Allow microphone access and try again.",
       startFailed: "Could not start dictation. Try again.",
       paused: "Microphone interrupted. Waiting to resume…",

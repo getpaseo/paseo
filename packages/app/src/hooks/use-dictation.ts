@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { MicrophonePermissionError } from "@/audio";
+import { AudioCaptureStartError, type AudioCaptureStartFailure } from "@/audio";
 import { DictationStreamSender } from "@/dictation/dictation-stream-sender";
 import { useDictationAudioSource } from "@/hooks/use-dictation-audio-source";
 import { generateMessageId } from "@/types/stream";
@@ -11,7 +11,6 @@ import {
   PCM_DICTATION_FORMAT,
   toError,
   type DictationStatus,
-  type DictationStartError,
   type UseDictationOptions,
   type UseDictationResult,
 } from "./use-dictation.shared";
@@ -34,7 +33,8 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
   const [partialTranscript, setPartialTranscript] = useState("");
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [startError, setStartError] = useState<DictationStartError | null>(null);
+  const [startError, setStartError] = useState<AudioCaptureStartFailure | null>(null);
+  const clearStartError = useCallback(() => setStartError(null), []);
   const [status, setStatus] = useState<DictationStatus>("idle");
   const latestPartialTranscriptRef = useRef("");
 
@@ -275,8 +275,10 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     setStatus("recording");
     clearStreamingState();
 
+    let captureStarted = false;
     try {
       await audio.start();
+      captureStarted = true;
       isRecordingRef.current = true;
       setIsRecording(true);
       if (enableDuration) {
@@ -291,13 +293,12 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
       isRecordingRef.current = false;
       setIsRecording(false);
       setStatus("idle");
-      console.error("[useDictation] Failed to start dictation", err);
-      const failure = toError(err);
-      setStartError(
-        failure instanceof MicrophonePermissionError || failure.name === "NotAllowedError"
-          ? "permissionDenied"
-          : "startFailed",
-      );
+      if (captureStarted) {
+        reportError(err, "Failed to start dictation stream");
+      } else {
+        console.error("[useDictation] Failed to start dictation capture", err);
+        setStartError(err instanceof AudioCaptureStartError ? err.reason : "startFailed");
+      }
     } finally {
       actionGateRef.current.starting = false;
     }
@@ -307,6 +308,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     clearStreamingState,
     client,
     enableDuration,
+    reportError,
     startDurationTracking,
     startNewStream,
     stopDurationTracking,
@@ -472,6 +474,7 @@ export function useDictation(options: UseDictationOptions): UseDictationResult {
     duration,
     error,
     startError,
+    clearStartError,
     status: status === "recording" && audio.isPaused ? "paused" : status,
     startDictation,
     cancelDictation,

@@ -31,9 +31,20 @@ export interface AudioEngineOptions {
   captureMode?: "conversation" | "dictation";
 }
 
-export class MicrophonePermissionError extends Error {
-  constructor() {
-    super("Allow microphone access in system settings and try again.");
-    this.name = "MicrophonePermissionError";
+export type AudioCaptureStartFailure =
+  | "permissionDenied"
+  | "insecureContext"
+  | "unsupported"
+  | "noMicrophone"
+  | "startFailed";
+
+export class AudioCaptureStartError extends Error {
+  constructor(
+    readonly reason: AudioCaptureStartFailure,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "AudioCaptureStartError";
   }
 }
