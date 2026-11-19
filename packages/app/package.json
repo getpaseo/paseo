@@ -4,6 +4,12 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "generate:settings-search": "node scripts/generate-settings-search-source.mjs",
+    "pretypecheck": "npm run generate:settings-search",
+    "pretest": "npm run generate:settings-search",
+    "pretest:e2e": "npm run generate:settings-search",
+    "prestart:expo": "npm run generate:settings-search",
+    "prebuild:web": "npm run generate:settings-search",
     "start": "npm run start:expo",
     "start:expo": "cross-env APP_VARIANT=development expo start",
     "reset-project": "node ./scripts/reset-project.js",

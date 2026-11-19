@@ -2317,6 +2317,7 @@ export const ar: TranslationResources = {
   },
   settings: {
     title: "إعدادات",
+    searchResults: "نتائج البحث",
     loading: "جارٍ تحميل الإعدادات...",
     groups: {
       app: "برنامج",

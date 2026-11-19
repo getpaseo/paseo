@@ -2331,6 +2331,7 @@ export const fr: TranslationResources = {
   },
   settings: {
     title: "Paramètres",
+    searchResults: "Résultats de recherche",
     loading: "Chargement des paramètres…",
     groups: {
       app: "Application",

@@ -59,6 +59,30 @@ export interface KeyboardShortcutHelpSection {
   rows: KeyboardShortcutHelpRow[];
 }
 
+/**
+ * Returns the translated labels and notes rendered by the shortcut settings page on every
+ * supported platform. Keeping this derived from the help-section builder prevents the settings
+ * index from drifting when a shortcut is added or moved.
+ */
+export function getKeyboardShortcutSearchText(translate: (key: string) => string): string {
+  const keys = new Set<string>();
+  for (const input of [
+    { isMac: true, usesDesktopBindings: true },
+    { isMac: true, usesDesktopBindings: false },
+    { isMac: false, usesDesktopBindings: true },
+    { isMac: false, usesDesktopBindings: false },
+  ]) {
+    for (const section of buildKeyboardShortcutHelpSections(input)) {
+      keys.add(section.titleKey);
+      for (const row of section.rows) {
+        keys.add(row.labelKey);
+        if (row.noteKey) keys.add(row.noteKey);
+      }
+    }
+  }
+  return Array.from(keys, translate).join(" ");
+}
+
 // --- Binding definition types ---
 
 interface KeyboardShortcutPlatformContext {

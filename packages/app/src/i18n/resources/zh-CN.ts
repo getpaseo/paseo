@@ -2258,6 +2258,7 @@ export const zhCN: TranslationResources = {
   },
   settings: {
     title: "设置",
+    searchResults: "搜索结果",
     loading: "正在加载设置...",
     groups: {
       app: "应用",

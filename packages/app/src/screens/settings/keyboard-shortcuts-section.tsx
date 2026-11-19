@@ -24,12 +24,13 @@ import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-over
 import {
   buildKeyboardShortcutHelpSections,
   getBindingIdForAction,
-  normalizeCapturedShortcutCombo,
-  isShortcutCaptureComplete,
   getDefaultKeysForAction,
+  isShortcutCaptureComplete,
+  normalizeCapturedShortcutCombo,
   resolveShortcutKeysForAction,
   type KeyboardShortcutHelpRow,
 } from "@/keyboard/keyboard-shortcuts";
+import { filterShortcutHelpSections } from "@/keyboard/shortcut-help-search";
 import {
   comboStringToShortcutKeys,
   heldModifiersFromEvent,
@@ -333,7 +334,7 @@ function ShortcutRow({
   );
 }
 
-export function KeyboardShortcutsSection() {
+export function KeyboardShortcutsSection({ searchQuery = "" }: { searchQuery?: string }) {
   const { t } = useTranslation();
   const hardwareKeyboardPresent = useHardwareKeyboardPresent();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
@@ -345,8 +346,15 @@ export function KeyboardShortcutsSection() {
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
   const isFocused = useIsFocused();
-  const isMac = getShortcutOs() === "mac";
+  const shortcutOs = getShortcutOs();
+  const isMac = shortcutOs === "mac";
   const sections = buildKeyboardShortcutHelpSections({ isMac, usesDesktopBindings });
+  const visibleSections = filterShortcutHelpSections({
+    sections,
+    query: searchQuery,
+    translate: t,
+    shortcutOs,
+  });
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -443,7 +451,7 @@ export function KeyboardShortcutsSection() {
 
   return (
     <>
-      {sections.map(function (section, sectionIndex) {
+      {visibleSections.map(function (section, sectionIndex) {
         return (
           <SettingsSection
             key={section.id}
