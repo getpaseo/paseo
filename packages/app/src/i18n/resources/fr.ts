@@ -2735,11 +2735,11 @@ export const fr: TranslationResources = {
       layout: {
         title: "Mise en page",
         contentWidth: "Largeur du contenu",
-        contentWidthHint:
-          "Largeur maximale de la discussion et des fichiers Markdown sur les grands écrans",
-        contentWidthAccessibility: "Largeur du contenu en pixels",
-        reset: "Réinitialiser",
-        resetAccessibility: "Réinitialiser la largeur du contenu",
+        contentWidthHint: "Largeur du chat, de la zone de saisie et des aperçus Markdown",
+        contentWidthDefault: "Par défaut",
+        contentWidthWide: "Large",
+        contentWidthFull: "Pleine largeur",
+        contentWidthCustom: "Largeur personnalisée · {{width}} px",
       },
       syntax: {
         title: "Syntaxe",

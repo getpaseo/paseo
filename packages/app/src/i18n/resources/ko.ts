@@ -2690,10 +2690,11 @@ export const ko: TranslationResources = {
       layout: {
         title: "레이아웃",
         contentWidth: "콘텐츠 너비",
-        contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",
-        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
-        reset: "재설정",
-        resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
+        contentWidthHint: "채팅, 메시지 입력란, Markdown 미리보기의 너비",
+        contentWidthDefault: "기본",
+        contentWidthWide: "넓게",
+        contentWidthFull: "전체",
+        contentWidthCustom: "사용자 지정 너비 · {{width}} px",
       },
       syntax: {
         title: "구문",

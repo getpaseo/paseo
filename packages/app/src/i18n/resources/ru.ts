@@ -2722,10 +2722,11 @@ export const ru: TranslationResources = {
       layout: {
         title: "Макет",
         contentWidth: "Ширина содержимого",
-        contentWidthHint: "Максимальная ширина чата и файлов Markdown на широких экранах",
-        contentWidthAccessibility: "Ширина содержимого в пикселях",
-        reset: "Сбросить",
-        resetAccessibility: "Сбросить ширину содержимого",
+        contentWidthHint: "Ширина чата, поля ввода и предпросмотра Markdown",
+        contentWidthDefault: "По умолчанию",
+        contentWidthWide: "Широкий",
+        contentWidthFull: "На всю ширину",
+        contentWidthCustom: "Своя ширина · {{width}} пкс",
       },
       syntax: {
         title: "Синтаксис",

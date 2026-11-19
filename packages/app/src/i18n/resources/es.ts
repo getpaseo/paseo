@@ -2734,10 +2734,11 @@ export const es: TranslationResources = {
       layout: {
         title: "Diseño",
         contentWidth: "Ancho del contenido",
-        contentWidthHint: "Ancho máximo del chat y de los archivos Markdown en pantallas anchas",
-        contentWidthAccessibility: "Ancho del contenido en píxeles",
-        reset: "Restablecer",
-        resetAccessibility: "Restablecer el ancho del contenido",
+        contentWidthHint: "Ancho del chat, el campo de mensaje y las vistas previas de Markdown",
+        contentWidthDefault: "Predeterminado",
+        contentWidthWide: "Ancho",
+        contentWidthFull: "Completo",
+        contentWidthCustom: "Ancho personalizado · {{width}} px",
       },
       syntax: {
         title: "Sintaxis",

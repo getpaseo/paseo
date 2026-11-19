@@ -11,3 +11,7 @@ export interface ChatOutlineRailProps {
 export function ChatOutlineRail(_props: ChatOutlineRailProps): null {
   return null;
 }
+
+export function useChatOutlineRailLayout(_enabled: boolean) {
+  return { onLayout: undefined, inset: 0 };
+}

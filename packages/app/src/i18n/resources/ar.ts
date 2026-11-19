@@ -2711,10 +2711,11 @@ export const ar: TranslationResources = {
       layout: {
         title: "التخطيط",
         contentWidth: "عرض المحتوى",
-        contentWidthHint: "أقصى عرض للمحادثة وملفات Markdown على الشاشات العريضة",
-        contentWidthAccessibility: "عرض المحتوى بالبكسل",
-        reset: "إعادة تعيين",
-        resetAccessibility: "إعادة عرض المحتوى إلى الافتراضي",
+        contentWidthHint: "عرض المحادثة ومحرر الرسائل ومعاينات Markdown",
+        contentWidthDefault: "افتراضي",
+        contentWidthWide: "عريض",
+        contentWidthFull: "كامل",
+        contentWidthCustom: "عرض مخصص · {{width}} بكسل",
       },
       syntax: {
         title: "بناء الجملة",

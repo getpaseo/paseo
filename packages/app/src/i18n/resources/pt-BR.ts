@@ -2714,10 +2714,11 @@ export const ptBR: TranslationResources = {
       layout: {
         title: "Layout",
         contentWidth: "Largura do conteúdo",
-        contentWidthHint: "Largura máxima do chat e dos arquivos Markdown em telas largas",
-        contentWidthAccessibility: "Largura do conteúdo em pixels",
-        reset: "Redefinir",
-        resetAccessibility: "Redefinir a largura do conteúdo",
+        contentWidthHint: "Largura do chat, do campo de mensagem e das prévias de Markdown",
+        contentWidthDefault: "Padrão",
+        contentWidthWide: "Largo",
+        contentWidthFull: "Total",
+        contentWidthCustom: "Largura personalizada · {{width}} px",
       },
       syntax: {
         title: "Sintaxe",
