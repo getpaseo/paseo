@@ -174,6 +174,7 @@ export interface DraftAgentControlsProps {
 }
 
 interface AgentControlsProps {
+  showToolbar: boolean;
   agentId: string;
   serverId: string;
   onDropdownClose?: () => void;
@@ -993,6 +994,7 @@ function useAgentOptionControls(
 }
 
 export const AgentControls = memo(function AgentControls({
+  showToolbar,
   agentId,
   serverId,
   onDropdownClose,
@@ -1252,37 +1254,42 @@ export const AgentControls = memo(function AgentControls({
   return (
     <ComposerModelProvider value={composer}>
       {commandCenterRegistration}
-      {profileEditor.element}
-      <ControlledAgentControls
-        provider={agent.provider}
-        modelSelectorProviders={agentModelSelectorProviders}
-        modelOptions={modelOptions}
-        selectedModelId={modelSelection.activeModelId ?? undefined}
-        onSelectModel={handleSelectModel}
-        agentProfiles={agentProfiles}
-        onApplyAgentProfile={agentProfiles?.applyProfile}
-        onEditAgentProfiles={handleEditAgentProfiles}
-        onCreateAgentProfile={profileActions.create}
-        onEditAgentProfile={profileActions.edit}
-        thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
-        selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
-        onSelectThinkingOption={handleSelectThinkingOption}
-        optionControls={agentOptionControls}
-        isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
-        onModelSelectorOpen={handleModelSelectorOpen}
-        onRetryModelProvider={handleRetryModelProvider}
-        isRetryingModelProvider={snapshotIsRefreshing}
-        onDropdownClose={onDropdownClose}
-        disabled={!client}
-        modeControl={modeControl}
-        modelSelectorServerId={serverId}
-        isCompactLayout={isCompactLayout}
-      />
+      {showToolbar ? (
+        <>
+          {profileEditor.element}
+          <ControlledAgentControls
+            provider={agent.provider}
+            modelSelectorProviders={agentModelSelectorProviders}
+            modelOptions={modelOptions}
+            selectedModelId={modelSelection.activeModelId ?? undefined}
+            onSelectModel={handleSelectModel}
+            agentProfiles={agentProfiles}
+            onApplyAgentProfile={agentProfiles?.applyProfile}
+            onEditAgentProfiles={handleEditAgentProfiles}
+            onCreateAgentProfile={profileActions.create}
+            onEditAgentProfile={profileActions.edit}
+            thinkingOptions={thinkingOptions.length > 0 ? thinkingOptions : undefined}
+            selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
+            onSelectThinkingOption={handleSelectThinkingOption}
+            optionControls={agentOptionControls}
+            isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+            onModelSelectorOpen={handleModelSelectorOpen}
+            onRetryModelProvider={handleRetryModelProvider}
+            isRetryingModelProvider={snapshotIsRefreshing}
+            onDropdownClose={onDropdownClose}
+            disabled={!client}
+            modeControl={modeControl}
+            modelSelectorServerId={serverId}
+            isCompactLayout={isCompactLayout}
+          />
+        </>
+      ) : null}
     </ComposerModelProvider>
   );
 });
 
 export function DraftAgentControls({
+  showToolbar,
   draftId,
   serverId,
   providerDefinitions,
@@ -1315,7 +1322,7 @@ export function DraftAgentControls({
   context = "draft",
   metadata,
   onSetMetadata,
-}: DraftAgentControlsProps & { draftId: string; serverId: string }) {
+}: DraftAgentControlsProps & { draftId: string; serverId: string; showToolbar: boolean }) {
   const mappedThinkingOptions = useMemo<AgentControlOption[]>(() => {
     return toThinkingControlOptions(thinkingOptions);
   }, [thinkingOptions]);
@@ -1469,33 +1476,37 @@ export function DraftAgentControls({
           enabled={!disabled}
           controls={commandCenterControls}
         />
-        {profileEditor.element}
-        <ControlledAgentControls
-          provider={selectedProvider ?? ""}
-          modelSelectorProviders={modelSelectorProviders}
-          modelOptions={modelOptions}
-          selectedModelId={selectedModel}
-          onSelectModel={onSelectModel}
-          onSelectProviderAndModel={onSelectProviderAndModel}
-          isModelLoading={isAllModelsLoading}
-          agentProfiles={agentProfiles}
-          onApplyAgentProfile={agentProfiles?.applyProfile}
-          onEditAgentProfiles={handleEditAgentProfiles}
-          onCreateAgentProfile={profileActions.create}
-          onEditAgentProfile={profileActions.edit}
-          thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
-          selectedThinkingOptionId={effectiveSelectedThinkingOption}
-          onSelectThinkingOption={onSelectThinkingOption}
-          optionControls={optionControls}
-          onDropdownClose={onDropdownClose}
-          onModelSelectorOpen={onModelSelectorOpen}
-          onRetryModelProvider={onRetryModelProvider}
-          isRetryingModelProvider={isRetryingModelProvider}
-          disabled={disabled}
-          modeControl={modeControl}
-          modelSelectorServerId={modelSelectorServerId}
-          isCompactLayout={isCompactLayout}
-        />
+        {showToolbar ? (
+          <>
+            {profileEditor.element}
+            <ControlledAgentControls
+              provider={selectedProvider ?? ""}
+              modelSelectorProviders={modelSelectorProviders}
+              modelOptions={modelOptions}
+              selectedModelId={selectedModel}
+              onSelectModel={onSelectModel}
+              onSelectProviderAndModel={onSelectProviderAndModel}
+              isModelLoading={isAllModelsLoading}
+              agentProfiles={agentProfiles}
+              onApplyAgentProfile={agentProfiles?.applyProfile}
+              onEditAgentProfiles={handleEditAgentProfiles}
+              onCreateAgentProfile={profileActions.create}
+              onEditAgentProfile={profileActions.edit}
+              thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
+              selectedThinkingOptionId={effectiveSelectedThinkingOption}
+              onSelectThinkingOption={onSelectThinkingOption}
+              optionControls={optionControls}
+              onDropdownClose={onDropdownClose}
+              onModelSelectorOpen={onModelSelectorOpen}
+              onRetryModelProvider={onRetryModelProvider}
+              isRetryingModelProvider={isRetryingModelProvider}
+              disabled={disabled}
+              modeControl={modeControl}
+              modelSelectorServerId={modelSelectorServerId}
+              isCompactLayout={isCompactLayout}
+            />
+          </>
+        ) : null}
       </ComposerModelProvider>
     </ComposerAgentProvider>
   );

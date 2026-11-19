@@ -1,6 +1,16 @@
 import { expect, test } from "../support/fixtures";
 import type { FormPreferences } from "@/create-agent-preferences/preferences";
-import { closeCommandCenter, openCommandCenter } from "../support/helpers/command-center";
+import {
+  closeCommandCenter,
+  openCommandCenter,
+  openCommandCenterWithShortcut,
+} from "../support/helpers/command-center";
+import {
+  enterComposerFullscreen,
+  exitComposerFullscreen,
+  fillComposerDraft,
+  resizeComposerViewport,
+} from "../support/helpers/composer";
 import {
   applyCommandCenterAgentControls,
   chooseCommandCenterAgentControl,
@@ -277,6 +287,27 @@ test.describe("Command Center agent controls", () => {
       });
     } finally {
       await client.close().catch(() => undefined);
+      await workspace.cleanup();
+    }
+  });
+
+  test("keeps draft settings searchable in the compact fullscreen editor", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "command-center-fullscreen-draft-" });
+    await seedMockDraftPreferences(page);
+    const model = DRAFT_AGENT_CONTROL_CHOICES[0];
+
+    try {
+      await openDraftComposer(page, workspace.workspaceId);
+      await resizeComposerViewport(page, "portrait");
+      await fillComposerDraft(page, "First line\nSecond line\nThird line");
+      await enterComposerFullscreen(page);
+
+      await openCommandCenterWithShortcut(page);
+      await chooseCommandCenterAgentControl({ page, ...model });
+      await exitComposerFullscreen(page);
+      await openCommandCenterWithShortcut(page);
+      await expectCommandCenterAgentControlSelected({ page, ...model });
+    } finally {
       await workspace.cleanup();
     }
   });
