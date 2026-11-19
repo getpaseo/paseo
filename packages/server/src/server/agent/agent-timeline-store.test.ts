@@ -92,6 +92,44 @@ describe("whole-turn byte budget", () => {
       /timeline item exceeds the response size limit/i,
     );
   });
+
+  it("stops when one tool call spans the page and a smaller limit cannot shrink it", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    const tool = (status: "running" | "completed") =>
+      ({
+        type: "tool_call",
+        callId: "background",
+        name: "shell",
+        status,
+        error: null,
+        detail: { type: "shell", command: "sleep 600" },
+      }) as AgentTimelineItem;
+    store.append("agent", tool("running"), { turnId: "one-turn" });
+    for (let index = 1; index <= 8; index++) {
+      store.append(
+        "agent",
+        { type: "assistant_message", messageId: `item-${index}`, text: "€".repeat(180) },
+        { turnId: "one-turn" },
+      );
+    }
+    store.append("agent", tool("completed"), { turnId: "one-turn" });
+
+    let selects = 0;
+    expect(() =>
+      selectTimelineResponseWithinFrameBudget({
+        wholeTurns: true,
+        limit: 40,
+        maxBytes: 1300,
+        select: ({ wholeTurns, limit }) => {
+          selects++;
+          const { rows, ...page } = store.fetch("agent", { direction: "tail", wholeTurns, limit });
+          return { type: "fetch_agent_timeline_response", payload: { ...page, entries: rows } };
+        },
+      }),
+    ).toThrow(/one item spans more than the response size limit/i);
+    expect(selects).toBe(3);
+  });
 });
 
 describe("InMemoryAgentTimelineStore", () => {

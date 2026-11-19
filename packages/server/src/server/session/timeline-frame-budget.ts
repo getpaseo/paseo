@@ -37,15 +37,24 @@ export function selectTimelineResponseWithinFrameBudget<T extends TimelineRespon
   // Preserve whole-turn pages that fit and the existing explicit full-read contract.
   if (wholeTurns !== true || limit === 0 || fitsFrameBudget(requested, maxBytes)) return requested;
 
+  let previousCount = Infinity;
   for (;;) {
     // Reselect using the original direction and cursor; slicing the old response
     // would keep the wrong fences and hide the skipped entries from scrollback.
     const page = select({ wholeTurns: false, limit });
     if (fitsFrameBudget(page, maxBytes)) return page;
-    const currentLimit = limit ?? page.payload.entries.length;
-    if (currentLimit <= 1) {
+    const count = page.payload.entries.length;
+    // A tail page must start at the first row of the source span it lands in.
+    // When one item's updates span the page, a smaller limit returns the same rows.
+    if (count >= previousCount) {
+      throw new Error(
+        "One item spans more than the response size limit, so the timeline page cannot shrink.",
+      );
+    }
+    if (count <= 1) {
       throw new Error("A timeline item exceeds the response size limit.");
     }
-    limit = Math.floor(currentLimit / 2);
+    previousCount = count;
+    limit = Math.floor(Math.min(limit ?? count, count) / 2);
   }
 }
