@@ -1,3 +1,4 @@
+import { useWorkspaceRowPress } from "../../../modules/paseo-press-feedback";
 import { PressHighlight as Pressable } from "@/components/ui/press-highlight";
 import {
   memo,
@@ -848,13 +849,11 @@ function StatusWorkspaceRowInnerContent({
   const startDragPress = dragInteraction?.handlePressIn;
   const moveDragPress = dragInteraction?.handleTouchMove;
   const endDragPress = dragInteraction?.handlePressOut;
-  const handlePress = useCallback(() => {
-    if (didLongPressRef?.current) {
-      didLongPressRef.current = false;
-      return;
-    }
-    onPress();
-  }, [didLongPressRef, onPress]);
+  const { onPress: handlePress, feedback } = useWorkspaceRowPress({
+    didLongPressRef,
+    onPress,
+    selected,
+  });
 
   return (
     <SidebarWorkspaceRowFrame
@@ -967,6 +966,7 @@ function StatusWorkspaceRowInnerContent({
                   />
                 ) : null}
               </SidebarWorkspaceRowContent>
+              {feedback}
             </SidebarWorkspaceContextMenu>
           </View>
         );
