@@ -8,6 +8,7 @@ import {
   type ControlSize,
 } from "@/components/ui/control-geometry";
 import { useContainedControlSize } from "@/components/ui/control-size";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 
 type SegmentedControlIconRenderer = (props: { color: string; size: number }) => ReactNode;
@@ -18,6 +19,8 @@ export interface SegmentedControlOption<T extends string> {
   icon?: SegmentedControlIconRenderer;
   disabled?: boolean;
   testID?: string;
+  /** Shown below the segment while the pointer is over it. */
+  tooltip?: string;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -136,7 +139,7 @@ function SegmentItem<T extends string>({
     () => ({ selected: isSelected, disabled: option.disabled }),
     [isSelected, option.disabled],
   );
-  return (
+  const segment = (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
@@ -159,6 +162,15 @@ function SegmentItem<T extends string>({
         </Text>
       )}
     </Pressable>
+  );
+  if (!option.tooltip) return segment;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{segment}</TooltipTrigger>
+      <TooltipContent side="bottom" offset={8}>
+        <Text style={styles.tooltipText}>{option.tooltip}</Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -219,6 +231,10 @@ const styles = StyleSheet.create((theme) => {
     },
     labelSelected: {
       color: theme.colors.foreground,
+    },
+    tooltipText: {
+      fontSize: theme.fontSize.base,
+      color: theme.colors.popoverForeground,
     },
   };
 });
