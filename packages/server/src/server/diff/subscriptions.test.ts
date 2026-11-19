@@ -1365,7 +1365,7 @@ test.skipIf(process.platform !== "linux")(
 );
 
 test.skipIf(process.platform !== "linux")(
-  "a running comparison keeps following its ref after metadata observation overflows",
+  "a running comparison follows its ref after watcher overflow beside an invalid revision expression",
   async () => {
     const fixture = await createObservedWorktreeDiff("diff-runtime-overflow-");
     const overflow = await mkdtemp(join(tmpdir(), "diff-runtime-refs-"));
@@ -1385,12 +1385,22 @@ test.skipIf(process.platform !== "linux")(
         );
       }
       const subscription = await fixture.subscriptions.subscribe(
-        { ...fixture.compare, base: { kind: "rev", rev: "refs/heads/selected" }, highlight: false },
+        { ...fixture.compare, base: { kind: "rev", rev: "selected" }, highlight: false },
         async (frame) => {
           frames.push(frame);
         },
       );
-      await subscription.start();
+      const invalidFrames: DiffFrame[] = [];
+      const invalid = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: "selected@{upstream}" }, highlight: false },
+        async (frame) => {
+          invalidFrames.push(frame);
+        },
+      );
+      await Promise.all([subscription.start(), invalid.start()]);
+      expect(invalidFrames.findLast((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        error: { code: "REF_NOT_FOUND" },
+      });
       expect(fixture.subscriptions.getMetrics()).toMatchObject({
         metadataObservers: 1,
         fallbackTargets: 0,
@@ -1399,7 +1409,7 @@ test.skipIf(process.platform !== "linux")(
       await rename(overflow, join(fixture.cwd, ".git", "refs", "heads", "overflow"));
       await expect
         .poll(() => fixture.subscriptions.getMetrics(), { timeout: 10000 })
-        .toMatchObject({ metadataObservers: 0, fallbackTargets: 1 });
+        .toMatchObject({ metadataObservers: 0, fallbackTargets: 2 });
       await expect
         .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
         .toMatchObject({ revision: 2, error: null });
@@ -1410,7 +1420,7 @@ test.skipIf(process.platform !== "linux")(
           timeout: 12000,
         })
         .toMatchObject({ revision: 3, baseSha: moved });
-      await subscription.release();
+      await Promise.all([subscription.release(), invalid.release()]);
       expect(fixture.subscriptions.getMetrics()).toMatchObject({
         metadataObservers: 0,
         fallbackTargets: 0,

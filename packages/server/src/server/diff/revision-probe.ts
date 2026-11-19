@@ -34,11 +34,11 @@ async function readRevisions(
   };
   const names: string[] = [];
   for (const ref of refs) {
-    if (!ref.includes("\n")) {
+    if (/^[\w./-]+$/.test(ref)) {
       names.push(ref);
       continue;
     }
-    // Revision expressions can contain a newline even though ref names cannot.
+    // Git can abort a whole batch when one revision expression fails to resolve.
     try {
       const output = await git(["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], {
         ...options,
