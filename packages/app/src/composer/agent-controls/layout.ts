@@ -1,6 +1,7 @@
 import {
   TOOLBAR_CONTROL_GAPS,
-  TOOLBAR_CONTROL_SIZES,
+  TOOLBAR_DISC_SIZES,
+  TOOLBAR_LABEL_PADDING,
   toolbarGlyphsFor,
   type ControlSizing,
   type ToolbarGlyphs,
@@ -26,10 +27,15 @@ export interface ComposerControlPresence {
   hasThinking: boolean;
   hasMode: boolean;
   features: readonly ComposerFeatureControlPresence[];
+  /** The plugin items' measured width in the toolbar row; 0 when none of them renders anything. */
+  pluginItemsWidth: number;
   fontScale: number;
 }
 
-export type ComposerFeatureControlPresence = { type: "toggle" } | { type: "select"; label: string };
+export type ComposerFeatureControlPresence =
+  | { type: "toggle" }
+  /** `label` is what the toolbar trigger draws; null for an icon-only trigger. */
+  | { type: "select"; label: string | null };
 
 export interface ComposerControlPresentation {
   showCarets: boolean;
@@ -48,25 +54,19 @@ export interface ComposerToolbarGeometry {
   glyphs: ToolbarGlyphs;
   controlGap: number;
   iconLabelGap: number;
-  /** A labelled control's padding on each side, as far as it takes room in the row. */
+  /** A labelled control's padding on each side. */
   labelPadding: number;
   caretSize: number;
 }
 
-/**
- * The toolbar's measurements under a control sizing; see `resolveControlSizing`. Touch-sized a
- * control lays out at the width of what it paints (`toolbarSlot`, `toolbarContentSlot`), so an
- * icon-only control takes its glyph's width and a picker's padding takes no room.
- */
+/** The toolbar's measurements under a control sizing; see `resolveControlSizing`. */
 export function composerToolbarGeometry(sizing: ControlSizing): ComposerToolbarGeometry {
-  const glyphs = toolbarGlyphsFor(sizing);
-  const isTouch = sizing === "touch";
   return {
-    controlSize: isTouch ? glyphs.icon.size : TOOLBAR_CONTROL_SIZES.pointer,
-    glyphs,
+    controlSize: TOOLBAR_DISC_SIZES[sizing],
+    glyphs: toolbarGlyphsFor(sizing),
     controlGap: TOOLBAR_CONTROL_GAPS[sizing],
     iconLabelGap: 4,
-    labelPadding: isTouch ? 0 : 8,
+    labelPadding: TOOLBAR_LABEL_PADDING,
     caretSize: 14,
   };
 }
@@ -100,7 +100,7 @@ function resolveFeatureControlWidth(
   fontScale: number,
   geometry: ComposerToolbarGeometry,
 ): number {
-  if (feature.type === "toggle") return geometry.controlSize;
+  if (feature.type === "toggle" || feature.label === null) return geometry.controlSize;
   return (
     geometry.controlSize +
     geometry.iconLabelGap +
@@ -119,7 +119,9 @@ function resolveCondensedFloor(
   if (controls.hasModel) widths.push(chrome + 60 * fontScale);
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(chrome + 96 * fontScale);
-  if (controls.features.length > 0) widths.push(geometry.controlSize);
+  if (controls.features.length > 0 || controls.pluginItemsWidth > 0) {
+    widths.push(geometry.controlSize);
+  }
   return sumControlWidths(widths, geometry);
 }
 
@@ -137,6 +139,7 @@ function resolveFullFloor(
   for (const feature of controls.features) {
     widths.push(resolveFeatureControlWidth(feature, fontScale, geometry));
   }
+  if (controls.pluginItemsWidth > 0) widths.push(controls.pluginItemsWidth);
   return sumControlWidths(widths, geometry);
 }
 
@@ -152,7 +155,9 @@ function resolveTightFloor(
   }
   if (controls.hasThinking) widths.push(geometry.controlSize);
   if (controls.hasMode) widths.push(geometry.controlSize);
-  if (controls.features.length > 0) widths.push(geometry.controlSize);
+  if (controls.features.length > 0 || controls.pluginItemsWidth > 0) {
+    widths.push(geometry.controlSize);
+  }
   return sumControlWidths(widths, geometry);
 }
 

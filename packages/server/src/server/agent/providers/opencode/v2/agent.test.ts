@@ -17,6 +17,54 @@ function terminalEvents(events: AgentStreamEvent[]) {
 }
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("reopening replaces and removes plugin instructions", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const created = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: ["first"],
+    });
+    expect(harness.instructions.get("paseo")).toBe("first");
+    const handle = created.describePersistence()!;
+    await created.close();
+    const resumed = await client.resumeSession(handle, {
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: ["changed"],
+    });
+    expect(harness.instructions.get("paseo")).toBe("changed");
+    await resumed.close();
+    const cleared = await client.resumeSession(handle, {
+      cwd: "/tmp/project",
+      pluginAppendSystemPrompt: undefined,
+    });
+    expect(harness.instructions.has("paseo")).toBe(false);
+    await cleared.close();
+  });
+
+  test("opening history does not change an existing session instruction", async () => {
+    const harness = new V2Harness();
+    harness.instructions.set("paseo", "Existing plugin instruction");
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.resumeSession(
+      { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } },
+      { cwd: "/tmp/project" },
+      undefined,
+      { purpose: "history" },
+    );
+    try {
+      expect(harness.instructions.get("paseo")).toBe("Existing plugin instruction");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("refreshes the existing location before reading a forced catalog", async () => {
     const harness = new V2Harness();
     const refreshed: string[] = [];
@@ -37,6 +85,78 @@ describe("OpenCode v2 session lifecycle", () => {
     expect(refreshed).toEqual(["/tmp/project"]);
     await client.shutdown();
   });
+  test("rejects a live auto_accept the creation schema would reject", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+
+    await expect(session.applyOptions?.({ auto_accept: "yes" })).rejects.toThrow(/auto_accept/);
+    await expect(session.applyOptions?.({ auto_accept: true })).resolves.toBeUndefined();
+    await session.close();
+  });
+
+  test("a rejected auto_accept leaves the running session asking for permission", async () => {
+    const harness = new V2Harness();
+    const permissions = [
+      { id: "approval", sessionID: "session", action: "shell", resources: ["pwd"] },
+    ];
+    harness.api.permission.list = async () => permissions;
+    const replies: string[] = [];
+    harness.api.permission.reply = async (input) => {
+      replies.push(input.requestID);
+      throw new Error("upstream refused");
+    };
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    try {
+      await expect(session.applyOptions?.({ auto_accept: true })).rejects.toThrow(
+        "upstream refused",
+      );
+
+      const next = {
+        id: "next",
+        sessionID: "session",
+        action: "shell",
+        resources: ["ls"],
+      };
+      permissions.push(next);
+      harness.push({ id: "asked", created: 2, type: "permission.asked", data: next });
+
+      const pendingIds = () => session.getPendingPermissions().map(({ id }) => id);
+      await expect.poll(pendingIds).toContain("next");
+      expect(replies).not.toContain("next");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("rejects a live permission change the running session cannot apply", async () => {
+    const harness = new V2Harness();
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      providerOptions: { permission: "allow" },
+    });
+
+    await expect(session.applyOptions?.({ permission: "deny" })).rejects.toThrow(
+      /permission.*cannot change on a running session/,
+    );
+    await expect(
+      session.applyOptions?.({ permission: "allow", auto_accept: true }),
+    ).resolves.toBeUndefined();
+    await session.close();
+  });
+
   test("completes from execution events without a long-lived HTTP wait", async () => {
     const harness = new V2Harness();
     harness.prompt = async (input) => {

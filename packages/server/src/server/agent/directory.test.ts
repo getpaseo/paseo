@@ -55,7 +55,8 @@ beforeEach(async () => {
     projectLive: () => {
       throw new Error("No live agents in this suite");
     },
-    projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+    projectStored: (record) =>
+      buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
     isProviderVisible: () => true,
     isStoredProviderAvailable: () => true,
   });

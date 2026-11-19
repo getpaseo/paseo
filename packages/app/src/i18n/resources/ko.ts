@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  pluginCombobox: {
+    searching: "검색 중…",
+    empty: "결과 없음",
+    failed: "검색 실패: {{message}}",
+  },
   paneFind: {
     connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
     historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
@@ -85,14 +90,23 @@ export const ko: TranslationResources = {
       close: "메뉴 닫기",
     },
     commandCenter: {
-      placeholder: "명령, 파일, 워크스페이스 및 에이전트 검색...",
+      placeholder: "워크스페이스, 파일 및 작업 검색...",
+      placeholderWithoutFiles: "워크스페이스 및 작업 검색...",
       filePlaceholder: "파일 검색...",
+      workspacePlaceholder: "워크스페이스 검색...",
+      actionPlaceholder: "작업 검색...",
       searchingFiles: "파일 검색 중...",
       noMatches: "일치 항목 없음",
       actions: "작업",
       files: "파일",
       workspaces: "워크스페이스",
-      agents: "에이전트",
+      recentWorkspaces: "최근 워크스페이스",
+      tabs: {
+        all: "전체",
+        workspaces: "워크스페이스",
+        files: "파일",
+        actions: "작업",
+      },
       newAgent: "새 에이전트",
       open: "{{name}} 열기",
       openInSidePane: "사이드 패널에서 {{name}} 열기",
@@ -101,6 +115,7 @@ export const ko: TranslationResources = {
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
       groupByStatus: "상태별 그룹화",
+      copyBrowserHostName: "브라우저 호스트 이름 복사",
       modelGroupLabel: "모델",
       modelSearchKeywords: "모델 전환 모델 변경 모델 설정 모델 선택",
       thinkingGroupLabel: "추론",
@@ -256,7 +271,7 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "호스트에 다시 연결하는 중",
+      reconnecting: "다시 연결하는 중",
       updating: "메시지 업데이트 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
@@ -364,6 +379,11 @@ export const ko: TranslationResources = {
       details: "세부 정보",
     },
     dictation: {
+      insecureContext: "마이크를 사용하려면 HTTPS 또는 localhost에서 Paseo를 여세요.",
+      unsupported: "이 브라우저에서는 받아쓰기를 사용할 수 없습니다.",
+      noMicrophone: "마이크를 연결한 후 다시 시도하세요.",
+      permissionDenied: "마이크 접근을 허용한 후 다시 시도하세요.",
+      startFailed: "받아쓰기를 시작할 수 없습니다. 다시 시도하세요.",
       paused: "마이크가 중단되었습니다. 재개를 기다리는 중…",
       start: "음성 받아쓰기 시작",
       cancel: "받아쓰기 취소",
@@ -381,6 +401,7 @@ export const ko: TranslationResources = {
       otherPlaceholder: "기타...",
     },
     backgroundWork: {
+      heartbeat: "하트비트",
       pillOne: "백그라운드 작업 1개",
       pillMany: "백그라운드 작업 {{count}}개",
       notRunning: "더 이상 실행 중이 아님",
@@ -471,8 +492,7 @@ export const ko: TranslationResources = {
         archivedTitle: "워크스페이스가 보관되었습니다",
         restoreDescription:
           "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 워크트리는 {{branch}} 브랜치를 사용합니다.",
-        restoreWithoutBranchDescription:
-          "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다. 저장된 기반 브랜치 또는 저장소 기본 브랜치에서 새 브랜치를 만듭니다.",
+        restoreWithoutBranchDescription: "{{workspaceName}}를 복원하여 에이전트로 돌아갑니다.",
         unarchiveDescription: "{{workspaceName}}가 보관되었습니다. 다시 열려면 보관을 취소하세요.",
         restoreAction: "복원",
         unarchiveAction: "보관 취소",
@@ -1179,6 +1199,8 @@ export const ko: TranslationResources = {
     title: "새로운 소식",
     installed: "설치됨",
     showMore: "더 보기",
+    showAllChanges: "모든 변경 사항 보기",
+    hideAllChanges: "모든 변경 사항 숨기기",
     openWebsite: "전체 변경 내역",
     error: {
       title: "변경 내역을 불러오지 못했습니다",
@@ -1186,6 +1208,14 @@ export const ko: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "사이드바 보기를 불러오지 못했습니다.",
+      useDefault: "기본 보기 사용",
+      readFailed: "사이드바 보기 설정을 불러오지 못했습니다.",
+      agentUnavailable: "에이전트를 더 이상 사용할 수 없습니다",
+      terminalUnavailable: "터미널을 더 이상 사용할 수 없습니다",
+      projectUnavailable: "프로젝트를 더 이상 사용할 수 없습니다",
+    },
     statusGroupAccessibility: "{{label}} 그룹",
     statusBucket: {
       needsInput: "입력 필요",
@@ -1376,8 +1406,9 @@ export const ko: TranslationResources = {
     title: "새 워크스페이스",
     create: "생성",
     isolation: {
-      local: "로컬",
+      local: "프로젝트 디렉터리",
       worktree: "새 워크트리",
+      existing: "기존 워크트리",
       label: "격리",
     },
     fields: {
@@ -1392,12 +1423,17 @@ export const ko: TranslationResources = {
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",
+      branchInProjectDirectory:
+        "{{branch}} 브랜치는 프로젝트 디렉터리에 체크아웃되어 있습니다. 거기서 작업하려면 프로젝트 디렉터리를 선택하거나, 새 브랜치를 만드세요.",
+      branchInWorktree:
+        "{{branch}} 브랜치는 {{path}}에 체크아웃되어 있습니다. 기존 워크트리에서 그 워크트리를 선택하거나, 새 브랜치를 만드세요.",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "시작 위치를 선택하세요",
+      worktree: "작업할 워크트리를 선택하세요",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1405,8 +1441,31 @@ export const ko: TranslationResources = {
       intoBase: "{{baseRef}}(으)로",
       searching: "검색 중...",
       noMatchingRefs: "일치하는 ref가 없습니다.",
-      searchPlaceholder: "브랜치와 PR 검색",
+      searchBranches: "브랜치 검색",
+      searchPullRequests: "풀 리퀘스트 검색",
+      searchPullRequests_mr: "머지 리퀘스트 검색",
+      branches: "브랜치",
+      pullRequests: "풀 리퀘스트",
+      pullRequests_mr: "머지 리퀘스트",
+      pullRequestsShort: "PR",
+      pullRequestsShort_mr: "MR",
+      branchOff: "새 브랜치",
+      checkout: "체크아웃",
+      branchOffHint: "여기서 새 브랜치를 만듭니다",
+      checkoutHint: "바로 작업합니다",
+      base: "기준",
+      from: "기준",
+      branch: "브랜치",
+      pullRequest: "풀 리퀘스트",
+      pullRequest_mr: "머지 리퀘스트",
+      inProjectDirectory: "프로젝트 디렉터리에 있음",
+      inWorktree: "워크트리에 있음",
       title: "시작 위치",
+    },
+    worktreePicker: {
+      title: "워크트리",
+      searchPlaceholder: "워크트리 검색",
+      empty: "일치하는 워크트리가 없습니다.",
     },
     launch: {
       title: "What to launch",
@@ -1698,7 +1757,7 @@ export const ko: TranslationResources = {
         },
         providers: {
           label: "제공자",
-          title: "에이전트",
+          title: "제공자",
           description: "Paseo는 이 컴퓨터에 이미 설치된 에이전트 CLI를 사용합니다",
         },
         projects: {
@@ -2004,6 +2063,7 @@ export const ko: TranslationResources = {
     hostUnavailable: "다운로드 호스트를 사용할 수 없습니다.",
     cancelled: "다운로드가 취소되었습니다.",
     failed: "파일을 다운로드하지 못했습니다.",
+    httpFailed: "파일을 다운로드하지 못했습니다 (HTTP {{status}}).",
     shareFile: "파일 공유",
     shareFileNamed: "{{fileName}} 공유",
   },
@@ -2197,6 +2257,7 @@ export const ko: TranslationResources = {
     turnOn: "켜기",
 
     options: "설정",
+    host: "호스트",
     refreshFailed: "사용량을 새로 고칠 수 없습니다",
     noHosts: "연결된 호스트가 없습니다",
     agentError: "사용량을 불러올 수 없습니다: {{reason}}",
@@ -2213,6 +2274,8 @@ export const ko: TranslationResources = {
     loginExpired: "로그인이 {{relativeTime}}에 만료되었습니다. {{remedy}}",
     title: "플랜 사용량",
     refresh: "새로 고침",
+    reorderCard: "{{source}} 순서 변경",
+    showCard: "{{source}} 표시",
     refreshAll: "모두 새로 고침",
     refreshing: "새로 고치는 중...",
     loading: "사용량 불러오는 중...",
@@ -2585,6 +2648,13 @@ export const ko: TranslationResources = {
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
       },
       sidebar: {
+        view: {
+          title: "사이드바 보기",
+          label: "보기",
+          default: "기본 보기",
+          unavailable:
+            "선택한 보기를 사용할 수 없거나 비활성화되어 있습니다. 기본 보기를 표시합니다.",
+        },
         header: {
           title: "헤더",
           description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
@@ -2620,10 +2690,11 @@ export const ko: TranslationResources = {
       layout: {
         title: "레이아웃",
         contentWidth: "콘텐츠 너비",
-        contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",
-        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
-        reset: "재설정",
-        resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
+        contentWidthHint: "채팅, 메시지 입력란, Markdown 미리보기의 너비",
+        contentWidthDefault: "기본",
+        contentWidthWide: "넓게",
+        contentWidthFull: "전체",
+        contentWidthCustom: "사용자 지정 너비 · {{width}} px",
       },
       syntax: {
         title: "구문",
@@ -2693,6 +2764,8 @@ export const ko: TranslationResources = {
         toggleFocusMode: "집중 모드 토글",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
+        toggleModelPicker: "모델 선택기 열기 또는 닫기",
+        cycleEffort: "추론 강도 순환",
         cycleAgentMode: "에이전트 모드 전환",
         toggleVoiceMode: "음성 모드 토글",
         startStopDictation: "받아쓰기 시작/중지",
@@ -3007,6 +3080,22 @@ export const ko: TranslationResources = {
     providers: {
       title: "프로바이더",
       addProvider: "프로바이더 추가",
+      list: {
+        add: "프로바이더",
+        updatingTo: "{{version}}(으)로 업데이트 중...",
+      },
+      detail: {
+        backToProviders: "프로바이더로 돌아가기",
+        notOnHost: "이 호스트에 없는 프로바이더입니다",
+        enabled: "사용",
+        unavailableTitle: "{{name}}을(를) 사용할 수 없습니다",
+        troubleshooting: "문제 해결",
+        status: "프로바이더 상태",
+        checked: "{{time}} 확인됨",
+        diagnosticReport: "진단 보고서",
+        dangerZone: "위험 구역",
+        removeHint: "config.json에서 이 프로바이더를 삭제합니다",
+      },
       providerDetails: "{{name}} 프로바이더 세부 정보",
       enableProvider: "{{name}} 활성화",
       unavailable: "프로바이더를 보려면 이 호스트에 연결하세요",
@@ -3049,9 +3138,30 @@ export const ko: TranslationResources = {
         retrying: "다시 시도 중...",
         noSearchMatches: "검색과 일치하는 모델이 없습니다",
         noneDetected: "감지된 모델이 없습니다",
+        noCustom: "사용자 지정 모델 없음",
         discovered: "발견됨",
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",
+      },
+      installation: {
+        title: "설치",
+        version: "버전",
+        installed: "설치됨",
+        notInstalled: "설치되지 않음",
+        install: "설치",
+        checking: "확인 중...",
+        failed: "설치를 확인할 수 없습니다",
+        updates: "업데이트",
+        upToDate: "최신 상태",
+        updateAvailable: "업데이트 가능",
+        updateInstructions: "업데이트 안내",
+        update: "업데이트",
+        updating: "업데이트 중...",
+        updated: "업데이트됨",
+        updateFailed: "업데이트 실패",
+        outputTruncated: "이전 출력이 삭제되었습니다.",
+        updatesFailed: "업데이트를 확인할 수 없습니다",
+        installInstructions: "설치 안내",
       },
       diagnostic: {
         title: "진단",

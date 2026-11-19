@@ -97,3 +97,16 @@ describe("WorkspaceScriptRuntimeStore", () => {
     ]);
   });
 });
+
+it("notifies terminal metadata consumers when script ownership changes", () => {
+  const store = new WorkspaceScriptRuntimeStore();
+  const observed: string[][] = [];
+  const release = store.subscribe(() =>
+    observed.push(store.listForWorkspace("workspace-101").map((entry) => entry.terminalId)),
+  );
+  store.set(createEntry());
+  store.remove({ workspaceId: "workspace-101", scriptName: "web" });
+  release();
+  store.set(createEntry());
+  expect(observed).toEqual([["terminal-1"], []]);
+});

@@ -79,6 +79,12 @@ async function previewExplorerResize(page: Page, distance: number) {
   return { ...measurement, width: after };
 }
 
+async function expectCleanChangesLoaded(page: Page): Promise<void> {
+  await expect(
+    page.getByTestId("changes-tree-panel").getByText("No changes to display", { exact: true }),
+  ).toBeVisible();
+}
+
 async function expectExplorerWidthSurvivesReload(page: Page, width: number): Promise<void> {
   await page.reload();
   const explorer = page.getByTestId("workspace-explorer-sidebar");
@@ -100,6 +106,7 @@ test("Explorer drag previews without rerendering panes or rewriting the shared s
   await runWorkspaceActionFromCommandCenter(page, "Split pane right");
   await page.getByTestId("workspace-explorer-toggle").first().click();
   await expect(page.getByTestId("workspace-explorer-sidebar")).toBeVisible();
+  await expectCleanChangesLoaded(page);
   // Verify that direct pane renders are being counted before resetting them.
   expect(
     await page.evaluate(() =>

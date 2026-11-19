@@ -608,8 +608,11 @@ it("folds work before a plugin-rendered reply and leaves the reply visible", () 
     display: "collapseTurns",
     isTurnActive: false,
   });
-  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "probe-plugin/reply/0"]);
-  expect([...result.turns.turnsByHostId.keys()]).toEqual(["prompt"]);
+  expect(result.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "turn-summary:prompt",
+    "probe-plugin/reply/0",
+  ]);
   expect(pluginData(result.tail)).toEqual([{ text: "$$x^2$$", phase: "complete" }]);
 });
 
@@ -636,12 +639,14 @@ it("keeps streaming replies native, then folds work without losing manual expans
   const completed = { ...input, tail: [...work, reply], head: [], isTurnActive: false };
   expect(present(completed).tail.map((item) => item.id)).toEqual([
     "prompt",
+    "turn-summary:prompt",
     "probe-plugin/reply/0",
   ]);
   const expandedTurnHostIds = new Set(["prompt"]);
   const opened = present({ ...completed, expandedTurnHostIds });
   expect(opened.tail.map((item) => item.id)).toEqual([
     "prompt",
+    "turn-summary:prompt",
     "tool-one",
     "probe-plugin/reply/0",
   ]);
@@ -649,6 +654,7 @@ it("keeps streaming replies native, then folds work without losing manual expans
   expect(present({ ...completed, expandedTurnHostIds }).tail).toEqual(opened.tail);
   expect(present(completed).tail.map((item) => item.id)).toEqual([
     "prompt",
+    "turn-summary:prompt",
     "probe-plugin/reply/0",
   ]);
 });
@@ -675,7 +681,7 @@ it.each(["full", "collapseToolCalls"] as const)(
       "tool-one",
       "probe-plugin/reply/0",
     ]);
-    expect(result.turns.turnsByHostId.size).toBe(0);
+    expect(result.turns.summaryRowsByHostId.size).toBe(0);
   },
 );
 
@@ -697,7 +703,13 @@ it("opening a turn reveals individual calls rather than another tool group", () 
     isTurnActive: false,
     expandedTurnHostIds: new Set(["prompt"]),
   });
-  expect(result.tail.map((item) => item.id)).toEqual(tail.map((item) => item.id));
+  expect(result.tail.map((item) => item.id)).toEqual([
+    "prompt",
+    "turn-summary:prompt",
+    "tool-one",
+    "tool-two",
+    "reply",
+  ]);
   expect(result.groupsByHostId.size).toBe(0);
   expect(result.readingRowReplacements.get("tool-two")).toBeUndefined();
 });
@@ -739,7 +751,7 @@ it.each(["collapseToolCalls", "collapseTurns"] as const)(
         { kind: "assistant_message", id: "reply", text: "Done", timestamp },
       ],
     });
-    // Both the original partial group and its replacement resolve directly to the turn.
+    // Both the original partial group and its replacement resolve directly to the turn's host.
     expect(folded.readingRowReplacements.get(calls[1]!.id)).toBe("prompt");
     expect(anchor.getRowId(folded.readingRowReplacements)).toBe("prompt");
     const opened = present({ ...input, tail: calls, display: "full" });
@@ -788,7 +800,7 @@ it("does not reopen the previous turn while a new run waits for its first row", 
     isTurnActive: true,
     activeTurnId: "new",
   });
-  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "turn-summary:prompt", "reply"]);
 });
 
 // A sent prompt counts as activity before the daemon opens its turn, so the only known turn is
@@ -810,7 +822,7 @@ it("keeps the previous turn folded while a sent prompt waits for its turn to ope
     isTurnActive: true,
     activeTurnId: null,
   });
-  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "reply"]);
+  expect(result.tail.map((item) => item.id)).toEqual(["prompt", "turn-summary:prompt", "reply"]);
 });
 
 it("groups reasoning with tools unless Expand thinking is enabled, including setting changes", () => {
@@ -867,7 +879,13 @@ it.each([false, true])(
     const closed = present(input);
     expect(closed.tail.some((item) => item.id === "thought")).toBe(false);
     const opened = present({ ...input, expandedTurnHostIds: new Set(["prompt"]) });
-    expect(opened.tail).toEqual(tail);
+    expect(opened.tail.map((item) => item.id)).toEqual([
+      "prompt",
+      "turn-summary:prompt",
+      "thought",
+      "tool-one",
+      "reply",
+    ]);
     expect(opened.turns.nestedItemIds.has("thought")).toBe(true);
     expect(opened.groupsByHostId.size).toBe(0);
   },

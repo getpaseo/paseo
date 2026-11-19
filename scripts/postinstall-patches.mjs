@@ -48,6 +48,10 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/@legendapp/list",
     patchPrefix: "@legendapp+list+",
   },
+  // Native sidebar lists. Besides gesture sessions and panel-gesture arbitration, the drop gives
+  // each moved cell a fresh transform host. Reanimated re-applies a view's last animated
+  // transform to every React commit, so a reused host painted one frame of new order plus old
+  // drag translate (upstream computerjazz/react-native-draggable-flatlist#621, open).
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
@@ -62,7 +66,8 @@ const patchedPackages = [
   // Exports BottomSheetModalInternalProvider so a subtree can host its own sheets on the shared
   // modal stack (see packages/app/src/components/ui/isolated-bottom-sheet-modal/host-scope.tsx), and
   // keeps a dismissing modal's status through its final onChange(-1), so a modal with
-  // enableDismissOnClose=false that unmounts while presented still leaves the portal.
+  // enableDismissOnClose=false that unmounts while presented still leaves the portal, and removes
+  // the portal of a modal that unmounts before its opening animation starts.
   // Dimensions subscription cleanup: https://github.com/gorhom/react-native-bottom-sheet/issues/2734
   // and https://github.com/gorhom/react-native-bottom-sheet/pull/2751. Remove the useAnimatedLayout
   // hunks once an installed release includes the cleanup; retain the other local hunks.
@@ -80,6 +85,12 @@ const patchedPackages = [
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
     patchPrefix: "@mattermost+react-native-paste-input+",
+  },
+  // Backport of https://github.com/mermaid-js/mermaid/pull/8459 (lexer half): a flowchart label
+  // with an "@" parses. The patch header has the details. Remove when the app uses mermaid 12.
+  {
+    nodeModulesPath: "node_modules/mermaid",
+    patchPrefix: "mermaid+",
   },
   {
     nodeModulesPath: "packages/server/node_modules/@opencode-ai/sdk",

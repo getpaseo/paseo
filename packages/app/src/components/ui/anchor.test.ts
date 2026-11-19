@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computePosition, fitSurfaceWidth, getTransformOrigin, type Rect } from "./anchor";
+import {
+  computePosition,
+  fitSurfaceWidth,
+  getTransformOrigin,
+  holdSurfaceEdge,
+  surfaceFrameStyles,
+  type Rect,
+} from "./anchor";
 
 const DISPLAY: Rect = { x: 0, y: 0, width: 1000, height: 800 };
 const TRIGGER: Rect = { x: 100, y: 100, width: 40, height: 20 };
@@ -75,6 +82,46 @@ describe("computePosition", () => {
       alignment: "end",
     });
     expect(result.x).toBe(108);
+  });
+});
+
+/**
+ * Where a surface's edges land when its content has resized but it has not been placed again,
+ * the frame native paints before the next placement arrives. Resolves the frame styles the way
+ * layout does: a top-held surface grows down from its top, a bottom-held one up from the
+ * holder's bottom.
+ */
+function edgesBeforeReplacement(placedHeight: number, paintedHeight: number) {
+  const placed = position({ placement: "top", triggerRect: { ...TRIGGER, y: 400 } });
+  const { holder, surface } = surfaceFrameStyles(holdSurfaceEdge(placed, placedHeight));
+  const bottom =
+    typeof surface.bottom === "number"
+      ? Number(holder.height) - surface.bottom
+      : Number(surface.top) + paintedHeight;
+  return { top: bottom - paintedHeight, bottom };
+}
+
+describe("surfaceFrameStyles", () => {
+  it("keeps a surface above its trigger off the trigger when its content grows", () => {
+    // Trigger top 400, offset 4: the surface ends at 396 however tall it becomes.
+    expect(edgesBeforeReplacement(CONTENT.height, CONTENT.height)).toEqual({
+      top: 296,
+      bottom: 396,
+    });
+    expect(edgesBeforeReplacement(CONTENT.height, 260)).toEqual({ top: 136, bottom: 396 });
+  });
+
+  it("keeps a surface above its trigger against the trigger when its content shrinks", () => {
+    expect(edgesBeforeReplacement(CONTENT.height, 40)).toEqual({ top: 356, bottom: 396 });
+  });
+
+  it("holds a surface below its trigger by its top edge", () => {
+    const { surface } = surfaceFrameStyles(holdSurfaceEdge(position(), CONTENT.height));
+    expect(surface).toMatchObject({ position: "absolute", top: 124, left: 100 });
+  });
+
+  it("waits off-screen until it is placed", () => {
+    expect(surfaceFrameStyles(null).surface).toMatchObject({ top: -9999, left: -9999 });
   });
 });
 

@@ -4,6 +4,7 @@ import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { fetchAgentTimelineOnce } from "@/timeline/fetch-agent-timeline-once";
 import {
   normalizeProjectDescriptor,
@@ -480,6 +481,26 @@ export class DirectorySync {
       this.persistCheckpoint();
     }
     return page;
+  }
+
+  /**
+   * Captures these chats' lifecycle before a subscribe. The returned function keeps the agent rows
+   * its answer carries, which is what a timeline fetch would have delivered for each of them.
+   */
+  captureSubscribedAgents(
+    agentIds: string[],
+  ): (agents: Record<string, AgentSnapshotPayload>) => void {
+    const tokens = new Map(agentIds.map((id) => [id, this.agents.captureTimeline(id)]));
+    return (agents) => {
+      let accepted = false;
+      for (const [agentId, agent] of Object.entries(agents)) {
+        const token = tokens.get(agentId);
+        if (token && this.agents.submitTimelineAgent(token, agent)) accepted = true;
+      }
+      if (!accepted) return;
+      this.revision += 1;
+      this.persistCheckpoint();
+    };
   }
 
   async refreshAgents(

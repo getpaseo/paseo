@@ -265,6 +265,9 @@ export function createWorkerTerminalManager(
     };
 
     const session: TerminalSession = {
+      get createdAt() {
+        return record.state.createdAt;
+      },
       get id() {
         return record.info.id;
       },
@@ -370,6 +373,10 @@ export function createWorkerTerminalManager(
         for (const listener of Array.from(record.titleChangeListeners)) {
           listener(manualTitle);
         }
+        emitTerminalsChanged({
+          cwd: record.info.cwd,
+          terminals: listTerminalItemsForCwd(record.info.cwd),
+        });
       },
       getExitInfo(): TerminalExitInfo | null {
         return record.exitInfo;

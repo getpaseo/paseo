@@ -3,6 +3,7 @@ import React, { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { View } from "react-native";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { disclosureAnchor } from "./native-disclosure-hold";
 
 // The native chat timeline runs on the patched LegendList (patches/@legendapp+list+3.7.1.patch).
 // A disclosure hold keeps only the held row in place: `shouldRestorePosition` accepts no other row.
@@ -39,6 +40,7 @@ function wait(ms: number): Promise<void> {
 }
 
 const LIST_STYLE = { flex: 1 };
+const ESTIMATED_LIST_SIZE = { width: 300, height: VIEWPORT_HEIGHT };
 const rowStyles = new Map<number, { height: number }>();
 
 function rowStyle(height: number) {
@@ -88,6 +90,10 @@ function keyExtractor(item: Row) {
   return item.id;
 }
 
+function estimateRowSize(item: Row) {
+  return item.height;
+}
+
 function mountList(heldRowId: string) {
   const listRef = React.createRef<LegendListRef>();
   const maintainVisibleContentPosition = holdOnly(heldRowId);
@@ -130,7 +136,16 @@ function mountList(heldRowId: string) {
     return position - state.scroll;
   };
   const rowSize = (rowId: string) => listRef.current?.getState().sizes.get(rowId);
-  return { render, scrollTo, heldRowTop, rowSize };
+  const rowBottom = (rowId: string) => {
+    const state = listRef.current?.getState();
+    const position = state?.positionByKey(rowId);
+    const size = state?.sizes.get(rowId);
+    if (state === undefined || position === undefined || size === undefined) {
+      throw new Error(`Row ${rowId} is not laid out`);
+    }
+    return position + size - state.scroll;
+  };
+  return { render, scrollTo, heldRowTop, rowSize, rowBottom };
 }
 
 it("anchors a data change on a held row whose top is above the viewport", async () => {
@@ -171,6 +186,72 @@ it("anchors a size change on a held row whose top is above the viewport", async 
   expect(list.heldRowTop()).toBe(-20);
 });
 
+// A long message's show more sits under the text it opens, on the bottom edge of its row. The
+// strategy anchors the row below it, whose top is that bottom edge.
+const bottomTriggerRows: Row[] = Array.from({ length: 10 }, (_, index) => ({
+  id: `row-${index}`,
+  height: index === 3 ? 60 : 40,
+}));
+
+function mountBottomTriggerHold(rowId: string) {
+  const anchor = disclosureAnchor(bottomTriggerRows, rowId, "bottom");
+  if (anchor.kind !== "row") throw new Error(`Row ${rowId} has no row below it`);
+  return mountList(anchor.rowId);
+}
+
+it("keeps the bottom of a row whose trigger sits under its growing content", async () => {
+  const list = mountBottomTriggerHold("row-3");
+  list.render(bottomTriggerRows);
+  await wait(150);
+  await list.scrollTo(100);
+  const triggerBottom = list.rowBottom("row-3");
+  expect(triggerBottom).toBe(80);
+
+  act(() => growRow("row-3", 260));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(triggerBottom);
+
+  act(() => growRow("row-3", 60));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(triggerBottom);
+});
+
+it("keeps the bottom of a bottom-trigger row whose top is above the viewport", async () => {
+  const list = mountBottomTriggerHold("row-3");
+  list.render(bottomTriggerRows);
+  await wait(150);
+  await list.scrollTo(140);
+  const triggerBottom = list.rowBottom("row-3");
+  expect(triggerBottom).toBe(40);
+
+  act(() => growRow("row-3", 260));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(triggerBottom);
+
+  act(() => growRow("row-3", 60));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(triggerBottom);
+});
+
+it("keeps the bottom of a bottom-trigger row that ends below the viewport", async () => {
+  // In the app the row ends with the message's timestamp under the trigger, so a trigger near the
+  // bottom of the viewport has its row's bottom, and the row below, out of view.
+  const list = mountBottomTriggerHold("row-3");
+  list.render(bottomTriggerRows);
+  await wait(150);
+  await list.scrollTo(40);
+  const rowBottom = list.rowBottom("row-3");
+  expect(rowBottom).toBe(140);
+
+  act(() => growRow("row-3", 260));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(rowBottom);
+
+  act(() => growRow("row-3", 60));
+  await wait(150);
+  expect(list.rowBottom("row-3")).toBe(rowBottom);
+});
+
 it("keeps measured row sizes while the list is not laid out", async () => {
   // A hidden retained tab is display: none. Its rows still render, and a row measured there
   // reports 0 x 0. When the tab shows again, a row whose frame did not change gets no new layout
@@ -187,4 +268,50 @@ it("keeps measured row sizes while the list is not laid out", async () => {
   await wait(150);
 
   expect(rows.map((row) => list.rowSize(row.id))).toEqual([40, 40, 40]);
+});
+
+it("expands the draw distance of a placed end-anchored list without moving its bottom row", async () => {
+  const rows: Row[] = Array.from({ length: 99 }, (_, index) => ({
+    id: `row-${index}`,
+    height: index % 2 === 0 ? 20 : 60,
+  }));
+  const lastRow = { id: "last-row", height: 180 };
+  rows.push(lastRow);
+  const listRef = React.createRef<LegendListRef>();
+
+  function render(drawDistance: number) {
+    act(() => {
+      root.render(
+        <LegendList
+          ref={listRef}
+          data={rows}
+          renderItem={renderRow}
+          keyExtractor={keyExtractor}
+          estimatedListSize={ESTIMATED_LIST_SIZE}
+          recycleItems={false}
+          getEstimatedItemSize={estimateRowSize}
+          drawDistance={drawDistance}
+          alignItemsAtEnd
+          initialScrollAtEnd
+          style={LIST_STYLE}
+        />,
+      );
+    });
+  }
+
+  render(50);
+  await wait(300);
+  const initial = listRef.current?.getState();
+  const lastRowTop = initial?.positionByKey(lastRow.id);
+  expect(initial?.sizes.get(lastRow.id)).toBe(lastRow.height);
+  expect(initial?.sizes.size).toBeLessThan(8);
+  expect(initial?.scroll).toBe(Number(lastRowTop) + lastRow.height - VIEWPORT_HEIGHT);
+
+  render(1000);
+  await wait(150);
+
+  const expanded = listRef.current?.getState();
+  expect(expanded?.sizes.size).toBeGreaterThan(20);
+  expect(expanded?.scroll).toBe(initial?.scroll);
+  expect(expanded?.positionByKey(lastRow.id)).toBe(lastRowTop);
 });

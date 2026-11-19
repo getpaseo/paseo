@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
+import { WorkspaceRenameModal } from "@/workspace-rename";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";

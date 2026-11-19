@@ -427,7 +427,11 @@ export async function holdOlderHistoryPages(
   const loader = page.getByTestId("load-older-history-spinner");
   return {
     async expectRequestedPages(count) {
-      await gate.waitForRequestCount(count);
+      await expect
+        .poll(() => gate.getRequestCount(), {
+          message: `older history requests ${count} page(s)`,
+        })
+        .toBeGreaterThanOrEqual(count);
       expect(gate.getRequestCount()).toBe(count);
     },
     async expectSettledWithRequestedPages(count) {
@@ -575,8 +579,10 @@ export async function expectFoldedTurnAtReadingPosition(page: Page, prompt: stri
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const promptRow = timeline.locator("[data-history-row-id]").filter({ hasText: prompt });
   await expect(promptRow).toBeVisible({ timeout: 15_000 });
-  // The host row carries the folded turn's summary line.
-  await expect(promptRow.getByTestId("turn-summary")).toBeVisible();
+  // The folded turn's summary line is the row under its prompt.
+  const hostId = await promptRow.getAttribute("data-history-row-id");
+  const summaryRow = timeline.locator(`[data-history-row-id="turn-summary:${hostId}"]`);
+  await expect(summaryRow.getByTestId("turn-summary")).toBeVisible();
   await expect
     .poll(
       async () => {

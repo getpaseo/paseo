@@ -122,9 +122,13 @@ export class PluginRegistry {
           cleanup: () => undefined,
           surfaces: [],
           settingsScreens: [],
+          sidebarViews: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
+          workspaceRowBadgeItems: [],
           filePanels: [],
+          composerItems: [],
+          newWorkspaceItems: [],
           workspacePanels: [],
           commandCenterItems: [],
           clientSlashCommands: [],
@@ -277,6 +281,12 @@ export function usePluginCatalogStatus(serverId: string): PluginCatalogStatus {
     () => pluginRegistry.getCatalogStatus(serverId),
     () => pluginRegistry.getCatalogStatus(serverId),
   );
+}
+
+/** Why the app could not run the plugin's client bundle, updated when the host's catalog changes. */
+export function usePluginEvaluationError(serverId: string, pluginId: string): string | undefined {
+  const read = () => pluginRegistry.getEvaluationError(serverId, pluginId);
+  return useSyncExternalStore(pluginRegistry.subscribe, read, read);
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {

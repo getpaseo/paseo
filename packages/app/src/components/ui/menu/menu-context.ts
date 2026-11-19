@@ -11,6 +11,7 @@ import {
   type MenuPath,
 } from "./menu-navigation";
 import type { Rect } from "../anchor";
+import { useDismissibleOverlay } from "../overlay-dismissal";
 
 /**
  * How a menu draws itself once it is open.
@@ -117,6 +118,7 @@ export function useMenuState({
 
   const [isOpen, setIsOpenState] = useControllableOpenState({ open, defaultOpen, onOpenChange });
   useDismissKeyboardOnOpen(isOpen);
+  useDismissibleOverlay(isOpen, () => setOpen(false));
 
   // A menu always reopens on its root page, against a freshly measured anchor. Keeping either
   // would reopen the surface three levels deep, or at the coordinates of the last right click.

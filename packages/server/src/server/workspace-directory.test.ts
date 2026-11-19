@@ -337,6 +337,15 @@ describe("WorkspaceDirectory", () => {
     });
     await expect(workspace.workspaceStatus()).resolves.toBe("running");
   });
+  test("keeps the workspace idle when root and delegated agents only have passive background work", async () => {
+    const workspace = new WorkspaceStatus();
+    const backgroundWork = { count: 1, runningCount: 0 };
+    workspace.hasRootAgent({ id: "parent-agent", status: "idle", backgroundWork });
+    workspace.hasDelegatedAgent({ id: "child-agent", status: "idle", backgroundWork });
+
+    await expect(workspace.workspaceStatus()).resolves.toBe("done");
+  });
+
   test("uses root agent activity, not delegated child activity, for workspace status", async () => {
     const workspace = new WorkspaceStatus();
 
@@ -949,7 +958,8 @@ test("scoped descriptor builds allocate independently of archived history", asyn
       projectLive: async () => {
         throw new Error("Unexpected live projection");
       },
-      projectStored: (record) => buildStoredAgentPayload(record, ["codex"]),
+      projectStored: (record) =>
+        buildStoredAgentPayload(record, ["codex"], (_provider, own) => own ?? {}),
       isProviderVisible: () => true,
       isStoredProviderAvailable: () => true,
     });

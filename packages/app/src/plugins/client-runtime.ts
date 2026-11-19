@@ -1,6 +1,5 @@
 import { createPlayAudio, type AudioEngine } from "@/audio";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { createPluginHosts } from "./hosts";
+import { getPluginClientApi } from "./client-state/api";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import { subscribePluginRpc } from "@getpaseo/plugin/client/host";
 import {
@@ -27,7 +26,7 @@ export function createPluginClientRuntime(
     ...capabilities,
     i18n: installation.i18n,
     playAudio: createPlayAudio(audio, installation.lifetime.signal),
-    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
+    hosts: getPluginClientApi(installation).hosts,
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },

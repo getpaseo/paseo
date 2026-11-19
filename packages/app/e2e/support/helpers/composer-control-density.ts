@@ -54,12 +54,127 @@ export async function expectNoCollapsedComposerToolbarFrame(page: Page): Promise
   expect(collapsed, `collapsed toolbar frames: ${JSON.stringify(collapsed)}`).toEqual([]);
 }
 
+/** One painted frame of the composer's trailing controls: the slot and what sits beside it. */
+export interface TrailingActionFrame {
+  atMs: number;
+  /** Every trailing action on screen, as `label` or `label (disabled)`. */
+  actions: string[];
+  slotX: number | null;
+  micX: number | null;
+  ringX: number | null;
+  ringWidth: number | null;
+}
+
+declare global {
+  interface Window {
+    __trailingActionFrames?: TrailingActionFrame[];
+    __trailingActionStop?: () => void;
+  }
+}
+
+const TRAILING_ACTION_LABELS = [
+  "Enable Voice mode",
+  "Send message",
+  "Queue message",
+  "Send and interrupt",
+  "Send and steer",
+  "Interrupt agent",
+  "Stop agent",
+];
+
+/**
+ * Records every painted frame of the visible composer's trailing controls. Takes one sample before
+ * the first paint, so input that lands right after this resolves still has a frame to compare to.
+ */
+export async function recordTrailingActionFrames(page: Page): Promise<void> {
+  await page.evaluate((labels) => {
+    const frames: TrailingActionFrame[] = [];
+    window.__trailingActionFrames = frames;
+    const start = performance.now();
+    const visibleRoot = () =>
+      Array.from(document.querySelectorAll('[data-testid="message-input-root"]')).find(
+        (root) => root.getClientRects().length > 0,
+      );
+    const sample = () => {
+      const root = visibleRoot();
+      const control = (selector: string) =>
+        Array.from(root?.querySelectorAll(selector) ?? []).find(
+          (node) => node.getClientRects().length > 0,
+        );
+      const actions = labels.flatMap((label) => {
+        const node = control(`[aria-label="${label}"]`);
+        if (!node) return [];
+        return [node.getAttribute("aria-disabled") === "true" ? `${label} (disabled)` : label];
+      });
+      const slot = labels.map((label) => control(`[aria-label="${label}"]`)).find(Boolean);
+      const mic = control('[aria-label="Start dictation"]');
+      const ring = control('[aria-label^="Context window"]');
+      frames.push({
+        atMs: Math.round(performance.now() - start),
+        actions,
+        slotX: slot ? slot.getBoundingClientRect().x : null,
+        micX: mic ? mic.getBoundingClientRect().x : null,
+        ringX: ring ? ring.getBoundingClientRect().x : null,
+        ringWidth: ring ? ring.getBoundingClientRect().width : null,
+      });
+    };
+    sample();
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      sample();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    window.__trailingActionStop = () => {
+      running = false;
+    };
+  }, TRAILING_ACTION_LABELS);
+}
+
+export async function readTrailingActionFrames(page: Page): Promise<TrailingActionFrame[]> {
+  return page.evaluate(() => {
+    window.__trailingActionStop?.();
+    return window.__trailingActionFrames ?? [];
+  });
+}
+
+/**
+ * Every frame of the span shows exactly one trailing action, in the one slot, moving straight from
+ * `from` to `to`, with the mic and context ring where they started.
+ */
+export function expectTrailingActionSwap(
+  frames: TrailingActionFrame[],
+  expected: { from: string; to: string },
+): void {
+  expect(frames.length).toBeGreaterThan(1);
+  const [first] = frames;
+  const wrongFrames = frames.filter(
+    (frame) =>
+      frame.actions.length !== 1 ||
+      frame.slotX !== first.slotX ||
+      frame.micX !== first.micX ||
+      frame.ringX !== first.ringX ||
+      frame.ringWidth !== first.ringWidth,
+  );
+  expect(wrongFrames, `frames that moved or showed the wrong action`).toEqual([]);
+  const sequence = frames
+    .map((frame) => frame.actions[0])
+    .filter((action, index, all) => action !== all[index - 1]);
+  expect(sequence).toEqual([expected.from, expected.to]);
+}
+
 /** What the folded model control's labels show, read from the DOM. */
 export interface ModelTriggerLabelState {
   thinkingShown: boolean;
   modelShown: boolean;
   modelText: string;
   modelTruncated: boolean;
+  /**
+   * The model label shows what its box fits right now: the full text when it fits, otherwise a
+   * truncation that fits. False while the control has yet to catch up with a reflow.
+   */
+  modelFitsBox: boolean;
 }
 
 declare global {
@@ -84,12 +199,18 @@ function readModelTriggerLabelStateInPage(): ModelTriggerLabelState {
   };
   const modelShown = model !== undefined && shown(model);
   const modelText = model?.textContent ?? "";
+  const overflows = (node: Element) => node.scrollWidth > node.clientWidth;
+  const modelOverflows = model !== undefined && overflows(model);
+  // The label's box is sized by an invisible copy of the full text, its first child, so the box
+  // follows a reflow at once while the shown text waits for the control's next layout event.
+  const fullTextSizer = model?.parentElement?.parentElement?.firstElementChild;
+  const fullTextFits = fullTextSizer ? !overflows(fullTextSizer) : true;
   return {
     modelShown,
     modelText,
     thinkingShown: modelShown && thinking !== undefined,
-    modelTruncated:
-      model !== undefined && (modelText.endsWith("…") || model.scrollWidth > model.clientWidth),
+    modelTruncated: modelText.endsWith("…") || modelOverflows,
+    modelFitsBox: !modelOverflows && modelText.endsWith("…") !== fullTextFits,
   };
 }
 
@@ -107,13 +228,26 @@ export async function recordModelTriggerFramesFromLoad(page: Page): Promise<void
   })()`);
 }
 
-/** The model control's labels once two reads 100ms apart agree. */
+/**
+ * The model control's labels once it has caught up with its width: two reads 100ms apart agree
+ * and the model label shows what its box fits. A resize reflows the page at once, but the control
+ * chooses its labels again only when its layout events arrive, and on a slow runner that takes
+ * longer than 100ms. Until then the label can be clipped by the browser beside the thinking
+ * label, or truncated in a box that has since widened.
+ */
 export async function readSettledModelTriggerLabels(page: Page): Promise<ModelTriggerLabelState> {
+  const deadline = Date.now() + 10_000;
   let previous = await page.evaluate(readModelTriggerLabelStateInPage);
   for (;;) {
     await page.waitForTimeout(100);
     const next = await page.evaluate(readModelTriggerLabelStateInPage);
-    if (JSON.stringify(next) === JSON.stringify(previous)) return next;
+    const agrees = JSON.stringify(next) === JSON.stringify(previous);
+    if (agrees && next.modelFitsBox) return next;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the model control never settled on a label that fits its box: ${JSON.stringify(next)}`,
+      );
+    }
     previous = next;
   }
 }

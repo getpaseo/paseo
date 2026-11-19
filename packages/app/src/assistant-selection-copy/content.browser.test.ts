@@ -759,6 +759,56 @@ describe("assistant selection copy inside highlighted code", () => {
       "```typescript\nconst answer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
     );
   });
+
+  it("keeps line breaks when a quote selection ends partway through code", () => {
+    const message = mountHighlighted();
+    const quote = document.createElement("div");
+    quote.setAttribute("data-paseo-markdown-tag", "blockquote");
+    quote.textContent = "Quoted context";
+    message.querySelector('[data-paseo-markdown-tag="pre"]')!.before(quote);
+
+    const content = copyBetween(
+      [tokenText(message, "Quoted context"), 0],
+      [tokenText(message, " (answer)"), 9],
+    );
+
+    expect(content?.plainText).toBe(
+      "> Quoted context\n\n```typescript\nconst answer = 1;\n  if (answer)\n```",
+    );
+  });
+
+  it("keeps indented code lines inside their list item", () => {
+    const host = document.createElement("div");
+    host.innerHTML = [
+      '<div data-testid="assistant-message">',
+      '<div data-paseo-markdown-tag="ol" data-paseo-markdown-list-start="1">',
+      '<div data-paseo-markdown-tag="li">',
+      '<div data-paseo-markdown-ignore="true" data-paseo-markdown-list-marker="true">1.</div>',
+      '<div><div data-paseo-markdown-tag="p"><span>Item text</span></div>',
+      highlightedCodeBlock("typescript"),
+      "</div></div></div></div>",
+    ].join("");
+    document.body.append(host);
+
+    const content = copyBetween([tokenText(host, "1."), 0], [tokenText(host, " (answer)"), 9]);
+
+    expect(content?.plainText).toBe(
+      "1. Item text\n\n    ```typescript\n    const answer = 1;\n      if (answer)\n    ```",
+    );
+  });
+
+  it("keeps line breaks when a selection starts partway through code", () => {
+    const message = mountHighlighted();
+
+    const content = copyBetween(
+      [tokenText(message, " answer"), 1],
+      [tokenText(message, "After the block."), "After the block.".length],
+    );
+
+    expect(content?.plainText).toBe(
+      "```typescript\nanswer = 1;\n  if (answer) {\n    doThing();\n```\n\nAfter the block.",
+    );
+  });
 });
 
 describe("semantic library output", () => {
@@ -799,6 +849,94 @@ it("copies a selection inside semantic inline code without Markdown escaping", (
   expect(createAssistantSelectionClipboardContent(selectText(code, 0, 11))?.plainText).toBe(
     "apply_patch",
   );
+});
+
+it("keeps intraword underscores in prose unescaped", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Set max_retries and snake_case before the call.</p>";
+  const paragraph = fixtureElement(message, "p");
+  expect(createAssistantSelectionClipboardContent(selectNodeContents(paragraph))?.plainText).toBe(
+    "Set max_retries and snake_case before the call.",
+  );
+});
+
+it("copies literal paired underscores raw in text/plain and escaped in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>literal _word_ stays literal</p>";
+  const paragraph = fixtureElement(message, "p");
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(paragraph));
+  expect(content?.plainText).toBe("literal _word_ stays literal");
+  expect(content?.html).toContain("literal _word_ stays literal");
+});
+
+it("copies a path the renderer recognized as text, and an authored link as a link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>See <a href="src/index.ts" data-paseo-markdown-recognized-link="true">src/index.ts</a> and <a href="https://example.test/doc">the doc</a>.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("See src/index.ts and [the doc](https://example.test/doc).");
+  expect(content?.html).not.toContain('href="src/index.ts"');
+});
+
+it("copies a recognized inline-code path without its link", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Edited <a href="src/app.tsx" data-paseo-markdown-recognized-link="true"><code>src/app.tsx</code></a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Edited `src/app.tsx` today.");
+  expect(content?.html).not.toContain('href="src/app.tsx"');
+});
+
+it("copies a recognized web link as its text in text/plain and as a link in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Fixed in <a href="https://github.com/o/r/issues/12" data-paseo-markdown-recognized-link="true">#12</a> today.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Fixed in #12 today.");
+  expect(content?.html).toContain('<a href="https://github.com/o/r/issues/12">#12</a>');
+});
+
+it("copies a recognized Windows drive path as text in both clipboard flavors", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    '<p>Open <a href="C:%5Crepo%5Csrc%5Cx.ts" data-paseo-markdown-recognized-link="true">C:\\repo\\src\\x.ts</a> now.</p>';
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open C:\\repo\\src\\x.ts now.");
+  expect(content?.html).not.toContain("<a ");
+});
+
+it("keeps literal angle brackets around a URL in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Open &lt;http://localhost:3000&gt; before the call.</p>";
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toBe("Open <http://localhost:3000> before the call.");
+  expect(content?.html).toContain("<p>Open &lt;http://localhost:3000&gt; before the call.</p>");
+});
+
+it("keeps a heading marker split across inline elements literal in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML = "<p>Use <strong>C#</strong> for the service layer.</p>";
+  const paragraph = fixtureElement(message, "p");
+  const range = document.createRange();
+  range.setStart(textNode(fixtureElement(message, "strong")), 1);
+  range.setEnd(paragraph.lastChild!, paragraph.lastChild!.textContent!.length);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const content = createAssistantSelectionClipboardContent(selection);
+  expect(content?.plainText).toBe("# for the service layer.");
+  expect(content?.html).toContain("<p># for the service layer.</p>");
+});
+
+it("keeps table cell pipes escaped in text/plain table syntax and literal in text/html", () => {
+  const message = mountFixture();
+  message.innerHTML =
+    "<table><thead><tr><th>Header | label</th></tr></thead><tbody><tr><td>Value | detail</td></tr></tbody></table>";
+  const content = createAssistantSelectionClipboardContent(selectNodeContents(message));
+  expect(content?.plainText).toContain("Header \\| label");
+  expect(content?.plainText).toContain("Value \\| detail");
+  expect(content?.html).toContain("<th>Header | label</th>");
+  expect(content?.html).toContain("<td>Value | detail</td>");
 });
 
 it("copies a workspace image path instead of its temporary display URL", () => {

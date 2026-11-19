@@ -1,20 +1,34 @@
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage, SessionCronSummary } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentBackgroundWorkInput } from "../../background-work/index.js";
 import { parseClaudeCodeVersion } from "./model-manifest.js";
 import { toBackgroundWorkInputs, type ClaudeBackgroundTask } from "./background-work.js";
 
+const SESSION_CRON_TOOLS = new Set(["CronCreate", "CronDelete", "ScheduleWakeup"]);
+
 /** Process-local background ownership. Completion delivery can follow an empty roster. */
 export class ClaudeRuntimeSafety {
   private inventoryState: "unknown" | "supported" | "retired" = "unknown";
+  // Background work starts inside a turn, and init only arrives with a turn. A process that
+  // has neither been sent a prompt nor reported init (a resumed chat that only answered
+  // control requests) owns no background work.
+  private turnSeen = false;
   private liveTasks: readonly ClaudeBackgroundTask[] = [];
   private published: AgentBackgroundWorkInput[] | undefined;
   private readonly awaitingNotifications = new Set<string>();
   private readonly monitorTools = new Set<string>();
   private readonly toolInputs = new Map<string, { description?: string; command?: string }>();
   private readonly taskTools = new Map<string, string>();
+  // Session-only crons and wakeups live in the process and die with it. Only the Stop hook
+  // lists them, and Claude runs it only for turns that complete. A cron tool call makes the
+  // count unknown until the next Stop, so an interrupted or failed turn keeps the runtime.
+  private sessionCrons = 0;
+  private sessionCronsUnknown = false;
 
   reset(): void {
+    this.sessionCrons = 0;
+    this.sessionCronsUnknown = false;
     this.inventoryState = "unknown";
+    this.turnSeen = false;
     this.liveTasks = [];
     this.published = undefined;
     this.awaitingNotifications.clear();
@@ -26,6 +40,18 @@ export class ClaudeRuntimeSafety {
   retire(): void {
     this.reset();
     this.inventoryState = "retired";
+  }
+
+  /** Called before a prompt is written to this process. */
+  notePromptSent(): void {
+    this.turnSeen = true;
+  }
+
+  /** Called with the session crons of each main-thread Stop hook. Older CLIs omit them. */
+  observeStop(sessionCrons: readonly SessionCronSummary[] | undefined): void {
+    if (this.inventoryState === "retired") return;
+    this.sessionCronsUnknown = false;
+    if (sessionCrons) this.sessionCrons = sessionCrons.length;
   }
 
   /** Returns a full replacement only when the visible inventory changes. */
@@ -44,6 +70,8 @@ export class ClaudeRuntimeSafety {
     if (message.type === "assistant") {
       let relevant = false;
       for (const block of message.message.content) {
+        if (block.type === "tool_use" && SESSION_CRON_TOOLS.has(block.name))
+          this.sessionCronsUnknown = true;
         if (block.type === "tool_use" && (block.name === "Monitor" || block.name === "Bash")) {
           if (block.name === "Monitor") relevant = this.observeMonitor(block.id) || relevant;
           relevant = this.observeInput(block.id, block.input) || relevant;
@@ -93,6 +121,7 @@ export class ClaudeRuntimeSafety {
       );
     }
     if (message.subtype === "init") {
+      this.turnSeen = true;
       const version = parseClaudeCodeVersion(message.claude_code_version ?? "");
       if (
         version &&
@@ -115,8 +144,11 @@ export class ClaudeRuntimeSafety {
   }
 
   canStopRuntime(): boolean {
+    if (this.inventoryState === "unknown" && !this.turnSeen) return true;
     return (
       this.inventoryState === "supported" &&
+      this.sessionCrons === 0 &&
+      !this.sessionCronsUnknown &&
       this.liveTasks.length === 0 &&
       this.awaitingNotifications.size === 0
     );

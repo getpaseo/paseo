@@ -18,6 +18,13 @@ export function DiffStat({ add, remove }: { add: string; remove: string }) {
   );
 }
 
+/** The text caret of an input that has focus. */
+export function Caret({ className }: { className: string }) {
+  return (
+    <span className={`inline-block h-[14px] w-px translate-y-[2px] bg-mock-fg ${className}`} />
+  );
+}
+
 export type DotTone = "success" | "danger" | "warning" | "running" | "idle";
 
 const DOT_TONE: Record<DotTone, string> = {
