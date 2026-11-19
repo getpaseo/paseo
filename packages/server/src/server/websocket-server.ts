@@ -2750,6 +2750,7 @@ export class VoiceAssistantWebSocketServer {
       activeConnection.connectionLogger.warn(
         {
           requestType: message.message.type,
+          ...getPluginRpcLogFields(message.message),
           durationMs: Math.round(durationMs),
           inflightRequests: activeConnection.session.getRuntimeMetrics().inflightRequests,
         },
@@ -3352,6 +3353,19 @@ function stringifyCloseReason(reason: unknown): string | null {
   }
   const text = String(reason);
   return text.length > 0 ? text : null;
+}
+
+/** Every plugin RPC shares one request type; name the plugin and method so a slow one can be found. */
+function getPluginRpcLogFields(
+  message: Extract<WSInboundMessage, { type: "session" }>["message"],
+): { pluginId: string; method: string } | null {
+  if (
+    message.type === "plugin.rpc.invoke.request" ||
+    message.type === "plugin.rpc.subscribe.request"
+  ) {
+    return { pluginId: message.pluginId, method: message.method };
+  }
+  return null;
 }
 
 function getControlRpcLogInfo(

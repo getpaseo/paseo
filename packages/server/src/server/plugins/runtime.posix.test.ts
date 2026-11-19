@@ -1047,6 +1047,27 @@ export default function contribute(server: any) { server.registerProvider(provid
     await rejection;
   });
 
+  it("names the plugin method when an RPC times out", async () => {
+    const directory = await createPlugin(
+      "silent",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("silent", [], ["overview"]);
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("silent", directory);
+    vi.useFakeTimers();
+    try {
+      const rejection = expect(runtime.invoke("silent", "overview", {})).rejects.toThrow(
+        "Plugin RPC timed out: silent.overview",
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+      await runtime.stopPluginById("silent");
+    }
+  });
+
   it("waits for asynchronous plugin cleanup before stopping", async () => {
     const cleanupFile = path.join(tmpdir(), `paseo-plugin-cleanup-${Date.now()}`);
     const directory = await createPlugin(
