@@ -1,9 +1,11 @@
 import type { Logger } from "pino";
 import type {
   AgentClient,
+  AgentClientInstallation,
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
   AgentPersistenceHandle,
   FetchCatalogOptions,
   ProviderRefreshContext,
@@ -22,6 +24,13 @@ import type { OpenCodeV2AgentClient } from "./v2/agent.js";
 import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
 import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 import { selectOpenCodeService } from "./v2/service-selection.js";
+import { createCliInstallation } from "../cli-installation.js";
+
+const OPENCODE_INSTALL_URL = "https://opencode.ai/docs/";
+// Agents share a long-lived OpenCode server, and this client keeps the protocol it chose for the
+// version it found. Neither changes until the daemon restarts.
+const OPENCODE_UPDATED =
+  "OpenCode is updated. Restart the Paseo daemon to use the new version; agents keep the running OpenCode server until then.";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
 const MINIMUM_V2: readonly [number, number] = [0, 10];
@@ -59,6 +68,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
   private legacySelected = false;
   private readonly legacy: OpenCodeAgentClient;
+  readonly installation: AgentClientInstallation;
   constructor(
     private readonly logger: Logger,
     private readonly settings?: ProviderRuntimeSettings,
@@ -68,6 +78,20 @@ export class OpenCodeRuntimeClient implements AgentClient {
     this.capabilities = this.legacy.capabilities;
     this.resolveCreateConfig = this.legacy.resolveCreateConfig;
     this.isCreateConfigUnattended = this.legacy.isCreateConfigUnattended;
+    // OpenCode's update source depends on its channel and install method, which only the binary
+    // knows, so it has no update check here.
+    this.installation = createCliInstallation({
+      name: "OpenCode",
+      defaultBinary: "opencode",
+      runtimeSettings: settings,
+      installUrl: OPENCODE_INSTALL_URL,
+      versionLabel: (output) =>
+        output
+          .split("\n")[0]
+          ?.trim()
+          .replace(/^opencode\s+/i, "") || undefined,
+      update: { args: ["upgrade"], successMessage: OPENCODE_UPDATED },
+    });
   }
   private selectService() {
     return selectOpenCodeService({
@@ -149,9 +173,10 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
     const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {

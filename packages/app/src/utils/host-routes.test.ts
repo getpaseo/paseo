@@ -17,6 +17,7 @@ import {
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
   normalizeProjectSettingsRouteId,
+  buildProviderSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -196,6 +197,14 @@ describe("projects settings routes", () => {
 
   it("keeps route ids opaque", () => {
     expect(normalizeProjectSettingsRouteId("project%2F1")).toBe("project%2F1");
+  });
+});
+
+describe("provider settings routes", () => {
+  it("buildProviderSettingsRoute addresses one provider on a host", () => {
+    expect(buildProviderSettingsRoute("host a", "acp/gemini")).toBe(
+      "/settings/hosts/host%20a/providers/acp%2Fgemini",
+    );
   });
 });
 

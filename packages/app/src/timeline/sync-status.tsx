@@ -17,7 +17,7 @@ export function TimelineSyncStatus({
 }: {
   sync: AgentScreenReadySyncState | null;
   toast: ToastState | null;
-  onDismiss: () => void;
+  onDismiss: (id: number) => void;
 }) {
   const { t } = useTranslation();
   let state: "reconnecting" | "updating" | null = null;

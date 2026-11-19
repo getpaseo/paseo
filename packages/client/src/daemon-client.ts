@@ -68,6 +68,7 @@ import type {
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
+  CheckoutWorktree,
   ParsedDiffFile,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
@@ -118,6 +119,8 @@ import type {
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
+  ProviderInstallationInspectResponseMessage,
+  ProviderInstallationCheckUpdatesResponseMessage,
   UsageReportEntry,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
@@ -483,7 +486,7 @@ export interface SendMessageOptions {
   sourceAgentServerId?: string;
   sessionMode?: string;
   messageId?: string;
-  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
+  /** Agent sources wait for turn end unless interrupt is explicit. Human sources default to interrupt. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
@@ -630,6 +633,13 @@ type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+type ProviderInstallationInspectPayload = ProviderInstallationInspectResponseMessage["payload"];
+type ProviderInstallationCheckUpdatesPayload =
+  ProviderInstallationCheckUpdatesResponseMessage["payload"];
+type ProviderInstallationUpdatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "provider.installation.update.response" }
+>["payload"];
 interface UsageListReportsPayload {
   requestId: string;
   reports: UsageReportEntry[];
@@ -1023,6 +1033,7 @@ interface WaitHandle<T> {
 interface WaitOptions {
   skipQueue?: boolean;
   requestId?: string;
+  requestType?: SessionInboundMessage["type"];
 }
 
 interface CorrelatedResponseIdentity {
@@ -2359,7 +2370,7 @@ export class DaemonClient {
         return { kind: "ok", value };
       },
       timeout,
-      { ...params.options, requestId: params.requestId },
+      { ...params.options, requestId: params.requestId, requestType: params.message.type },
     );
 
     // The response deadline still applies while the transport waits for drain.
@@ -5132,6 +5143,23 @@ export class DaemonClient {
     return { baseRef: payload.baseRef, commits: payload.commits };
   }
 
+  /** Every git worktree of the repository `cwd` is in, whoever created it. */
+  async listCheckoutWorktrees(cwd: string, requestId?: string): Promise<CheckoutWorktree[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.worktrees.list.response">({
+        requestId,
+        message: {
+          type: "checkout.worktrees.list.request",
+          cwd,
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return payload.worktrees;
+  }
+
   async getCommitFileDiff(
     cwd: string,
     sha: string,
@@ -6223,6 +6251,70 @@ export class DaemonClient {
       responseType: "provider_diagnostic_response",
       timeout: 180000,
     });
+  }
+
+  /** Install and update links plus installed state. Requires `features.providerInstallation`. */
+  async inspectProviderInstallation(
+    provider: AgentProvider,
+    options?: { refresh?: boolean; requestId?: string },
+  ): Promise<ProviderInstallationInspectPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.installation.inspect.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "provider.installation.inspect.request",
+        provider,
+        ...(options?.refresh ? { refresh: true } : {}),
+      },
+      timeout: 60_000,
+    });
+  }
+
+  /** Whether the provider reports a newer version. Requires `features.providerInstallation`. */
+  async checkProviderUpdates(
+    provider: AgentProvider,
+    options?: { refresh?: boolean; requestId?: string },
+  ): Promise<ProviderInstallationCheckUpdatesPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.installation.check_updates.response">(
+      {
+        requestId: options?.requestId,
+        message: {
+          type: "provider.installation.check_updates.request",
+          provider,
+          ...(options?.refresh ? { refresh: true } : {}),
+        },
+        timeout: 60_000,
+      },
+    );
+  }
+
+  /** Starts the provider's update, or joins the running one. Follow it with `observeProviderUpdates`. */
+  async updateProvider(
+    provider: AgentProvider,
+    options?: { requestId?: string },
+  ): Promise<ProviderInstallationUpdatePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"provider.installation.update.response">({
+      requestId: options?.requestId,
+      message: { type: "provider.installation.update.request", provider },
+      timeout: 60_000,
+    });
+  }
+
+  /**
+   * The provider's latest update, then `provider.installation.update.progress` as updates start,
+   * report output and settle, and `provider.installation.update.cleared` when a refresh drops a
+   * failed update. Survives reconnects: each new snapshot replaces the previous one.
+   */
+  observeProviderUpdates(
+    provider: AgentProvider,
+    options?: { signal?: AbortSignal },
+  ): OwnedSubscription<
+    CorrelatedResponsePayload<"provider.installation.update.subscribe.response">
+  > {
+    return this.observe(
+      "provider.installation.update.subscribe.response",
+      { type: "provider.installation.update.subscribe.request", provider },
+      options,
+    );
   }
 
   async listProviderUsage(options?: { requestId?: string }): Promise<ProviderUsageListPayload> {
@@ -8107,7 +8199,9 @@ export class DaemonClient {
   ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
     const timeoutError = new DaemonConnectionError(
-      `Timeout waiting for message (${timeout}ms)`,
+      options?.requestType
+        ? `No response to ${options.requestType} after ${timeout}ms`
+        : `Timeout waiting for message (${timeout}ms)`,
       "DAEMON_REQUEST_TIMEOUT",
     );
 

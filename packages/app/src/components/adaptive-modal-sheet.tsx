@@ -438,11 +438,13 @@ export function SheetHeaderSubtitle({ text, testID }: { text: string; testID?: s
 export function SheetHeaderView({
   header,
   onClose,
+  showCloseButton = true,
   testID,
   closeTestID,
 }: {
   header: SheetHeader;
   onClose: () => void;
+  showCloseButton?: boolean;
   testID?: string;
   closeTestID?: string;
 }) {
@@ -474,12 +476,14 @@ export function SheetHeaderView({
           </View>
           <View style={styles.headerTrailing}>
             {header.actions}
-            <SheetHeaderIconButton
-              icon={X}
-              label={t("common.actions.close")}
-              onPress={onClose}
-              testID={closeTestID}
-            />
+            {showCloseButton ? (
+              <SheetHeaderIconButton
+                icon={X}
+                label={t("common.actions.close")}
+                onPress={onClose}
+                testID={closeTestID}
+              />
+            ) : null}
           </View>
         </View>
       </IconButtonChromeProvider>
@@ -567,6 +571,12 @@ export interface AdaptiveModalSheetProps {
    * corner, and the compact sheet closes from its handle.
    */
   header?: SheetHeader;
+  /**
+   * Leave out the header's close button when `header.back` is the only way out, as for a sheet
+   * that stands in for a page of the surface beneath it. Escape stays available while the sheet
+   * permits dismissal.
+   */
+  showCloseButton?: boolean;
   visible: boolean;
   onClose: () => void;
   /** Return false to prevent user-driven dismissal while an owner-managed operation is pending. */
@@ -599,6 +609,7 @@ export interface AdaptiveModalSheetProps {
  */
 function CompactSheetBody({
   header,
+  showCloseButton,
   onClose,
   testID,
   footer,
@@ -609,6 +620,7 @@ function CompactSheetBody({
   children,
 }: {
   header?: SheetHeader;
+  showCloseButton: boolean;
   onClose: () => void;
   testID?: string;
   footer: ReactNode;
@@ -638,7 +650,14 @@ function CompactSheetBody({
   );
   return (
     <SheetVisibleFrame footer={footerView}>
-      {header ? <SheetHeaderView header={header} onClose={onClose} testID={testID} /> : null}
+      {header ? (
+        <SheetHeaderView
+          header={header}
+          onClose={onClose}
+          showCloseButton={showCloseButton}
+          testID={testID}
+        />
+      ) : null}
       <View style={[styles.compactStaticContent, bodyStyle]}>
         {scrollable ? (
           <ScrollView
@@ -665,6 +684,7 @@ function CompactSheetBody({
 
 export function AdaptiveModalSheet({
   header,
+  showCloseButton = true,
   visible,
   onClose,
   canClose = ALWAYS_CAN_CLOSE,
@@ -798,6 +818,7 @@ export function AdaptiveModalSheet({
         <OverlayLayerProvider layer={modalLayer}>
           <CompactSheetBody
             header={header}
+            showCloseButton={showCloseButton}
             onClose={requestClose}
             testID={testID}
             footer={footerView}
@@ -817,7 +838,9 @@ export function AdaptiveModalSheet({
     desktopHeight == null ? styles.desktopStaticContent : styles.compactStaticContent;
   const cardInner = (
     <OverlayLayerProvider layer={modalLayer}>
-      {header ? <SheetHeaderView header={header} onClose={requestClose} /> : null}
+      {header ? (
+        <SheetHeaderView header={header} onClose={requestClose} showCloseButton={showCloseButton} />
+      ) : null}
       <View style={[scrollable ? styles.desktopScrollContainer : desktopStaticStyle, bodyStyle]}>
         {scrollable ? (
           <ScrollView

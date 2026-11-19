@@ -124,6 +124,18 @@
       "metaTitle": "Antigravity 开源移动端与桌面端应用",
       "metaDescription": "通过 Paseo 运行你已安装的 Antigravity CLI。在手机或桌面端观察 Agent 工作并审查改动。自托管，代码留在你的机器上。"
     },
+    "fx": {
+      "title": "fx 的开源应用",
+      "subtitle": "在你的机器上运行 Vercel Labs 的 fx，从手机或桌面端操控。",
+      "metaTitle": "fx 开源移动端与桌面端应用",
+      "metaDescription": "Vercel Labs 编程 Agent fx 的开源移动端与桌面端应用。运行你已安装的 fx CLI，随时随地观察 Agent 工作并审查改动。自托管。"
+    },
+    "hoplite": {
+      "title": "Hoplite 的开源应用",
+      "subtitle": "从手机或桌面端操控 Hoplite 的云端编程 Agent，与你的其他 Agent 并列使用。",
+      "metaTitle": "Hoplite 开源移动端与桌面端应用",
+      "metaDescription": "Hoplite 的开源移动端与桌面端应用。通过你已安装的 Hoplite CLI 启动 Hoplite 的云端编程 Agent，随时随地观察它工作并审查改动。"
+    },
     "copilot": {
       "title": "GitHub Copilot 的开源应用",
       "subtitle": "从手机或桌面端操控 GitHub Copilot。同一个账号，同一台机器，不必坐在桌前也能交付。",
@@ -333,7 +345,7 @@
     "metaTitle": "支持的 Agent – Paseo 可运行的所有编程 Agent",
     "metaDescription": "在手机上运行 Claude Code、Codex、OpenCode、Pi、OMP、Cursor、Muse Code、Antigravity 以及数十个其他编程 Agent。自托管，代码留在你的机器上。",
     "title": "支持的 Agent",
-    "intro": "Paseo 原生支持许多 Agent，可以运行任何 <acp>ACP Agent</acp>，你还可以通过<plugins>插件</plugins>实现新的 Provider。"
+    "intro": "Paseo 原生支持许多 Agent，还可以运行任何 <acp>ACP Agent</acp>，你也可以通过<plugins>插件</plugins>添加新的 Provider。"
   },
   "landing": {
     "socialProof": {

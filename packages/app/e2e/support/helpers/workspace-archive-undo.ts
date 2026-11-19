@@ -175,13 +175,19 @@ export interface SidebarListLayout {
   rowHeight: number;
 }
 
+const SIDEBAR_LIST = "sidebar-project-workspace-list-scroll";
+
 /** Scrolls the sidebar's workspace list to its end and reads where its rows sit. */
 export async function scrollSidebarListToEnd(page: Page): Promise<SidebarListLayout> {
-  const list = page.getByTestId("sidebar-project-workspace-list-scroll");
-  await list.evaluate((element) => {
+  await page.getByTestId(SIDEBAR_LIST).evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
-  return list.evaluate((element) => {
+  return readSidebarListLayout(page);
+}
+
+/** Reads where the sidebar list's rows sit, without scrolling it. */
+export async function readSidebarListLayout(page: Page): Promise<SidebarListLayout> {
+  return page.getByTestId(SIDEBAR_LIST).evaluate((element) => {
     const visible = element.getBoundingClientRect();
     const rows = Array.from(
       element.querySelectorAll<HTMLElement>(
@@ -196,4 +202,27 @@ export async function scrollSidebarListToEnd(page: Page): Promise<SidebarListLay
       rowHeight: Math.min(...rows.map((row) => row.height)),
     };
   });
+}
+
+/**
+ * Starts recording the bottom edge of the sidebar list's last row once per painted frame.
+ * Resolves with one value per frame after `frameCount` frames.
+ */
+export function recordLastRowBottomPerFrame(page: Page, frameCount: number): Promise<number[]> {
+  return page.getByTestId(SIDEBAR_LIST).evaluate(
+    (element, count) =>
+      new Promise<number[]>((resolve) => {
+        const bottoms: number[] = [];
+        const sample = () => {
+          const rows = element.querySelectorAll<HTMLElement>(
+            '[data-testid^="sidebar-workspace-row-"],[data-testid^="sidebar-project-row-"]',
+          );
+          bottoms.push(Math.max(...Array.from(rows, (row) => row.getBoundingClientRect().bottom)));
+          if (bottoms.length >= count) resolve(bottoms);
+          else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }),
+    frameCount,
+  );
 }

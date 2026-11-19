@@ -156,13 +156,23 @@ keeps following.
 
 Following resumes only for a gesture that ends within 1 px of the end, either when the finger lifts
 or when momentum stops. A release past the end counts: iOS bounces back to the end, and lines that
-land during the bounce must keep scrolling in. A release anywhere short of the end stays detached
-with the scroll-to-bottom pill, so the rows the user let go of never move.
+land during the bounce must keep scrolling in. A release short of the end stays detached with the scroll-to-bottom pill unless you submitted
+another prompt during that gesture. That submit requests the end after the gesture finishes;
+a new drag after submitting takes ownership again. Rewind and tail-fetch completions do not
+override a scroll away because they can arrive after the action that requested them.
 
 ### Draw distance
 
-`drawDistance` is 2000 px on each side of the viewport. A fling over rows that were never measured
-blanks the viewport until LegendList renders and measures them. Twelve flings over a chat with a
+The native timeline starts with one window-height of draw distance, up to 2000 px. This keeps
+nearby rows ready for a fling during placement. Once the chat is placed, history is visible, and
+the sidebar has settled, the timeline schedules expansion to 2000 px through two frame callbacks.
+The callbacks leave time for the reveal to paint. Verify the actual reveal on the device.
+A drag cancels a pending expansion and uses the existing buffer as the window moves. Expansion
+resumes when the gesture settles, including momentum. In an Android emulator capture, expanding
+the full buffer during the first fling changed the measured content height and returned the chat
+to the end mid-fling.
+A fling over rows that were never measured blanks the viewport
+until LegendList renders and measures them. Twelve flings over a chat with a
 15,000 px turn expanded, Android emulator, dev build:
 
 | List                          | Blank viewport             | Janky frames | p50 / p90 / p99  |
@@ -177,9 +187,8 @@ With every turn collapsed, flinging from a cold open into history did not blank 
 
 ### LegendList patch
 
-`patches/@legendapp+list+3.7.1.patch` carries twelve changes for the timeline. Its header lists
-them by purpose, and
-[legend-list #593](https://github.com/LegendApp/legend-list/issues/593) reports each upstream.
+`patches/@legendapp+list+3.7.1.patch` lists its changes by purpose.
+[legend-list #593](https://github.com/LegendApp/legend-list/issues/593) reports the first twelve.
 Drop a hunk when the installed LegendList ships its fix.
 
 ### Scroll view corrections

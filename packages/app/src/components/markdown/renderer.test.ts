@@ -13,7 +13,7 @@ import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
-import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
+import { isRecognizedLink, prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
 
 it("recognizes complete known commands in inline code", () => {
@@ -36,6 +36,13 @@ it("resolves authored root-relative links only when the target is a known comman
   expect(matchCommandLink("/code-review/file", "markdown", names)).toBeNull();
   expect(matchCommandLink("/code-review", "text", names)).toBeNull();
   expect(matchCommandLink("https://example.com/code-review", "markdown", names)).toBeNull();
+});
+
+it("treats only a parsed path or code span as a link the author did not write", () => {
+  expect(isRecognizedLink({ sourceType: "text" })).toBe(true);
+  expect(isRecognizedLink({ sourceType: "inline-code" })).toBe(true);
+  expect(isRecognizedLink({ sourceType: "markdown" })).toBe(false);
+  expect(isRecognizedLink({})).toBe(false);
 });
 
 describe("shared Markdown source adaptation", () => {
@@ -562,6 +569,34 @@ describe("bare URL sentence punctuation", () => {
       expect(tree.children?.[0]?.children?.[0]?.attributes?.url).toBe("https://example.com/a.");
     },
   );
+
+  it.each([
+    ["https://a.com、https://b.com！", ["https://a.com", "、", "https://b.com", "！"]],
+    ["https://a.com（说明）以及", ["https://a.com", "（说明）以及"]],
+    ["看这里：https://example.com/foo，还有", ["看这里：", "https://example.com/foo", "，还有"]],
+    ["（https://example.com/a）", ["（", "https://example.com/a", "）"]],
+    ["见【https://example.com/a】。", ["见【", "https://example.com/a", "】。"]],
+    ["“https://example.com/a”…", ["“", "https://example.com/a", "”…"]],
+    [
+      "见https://zh.wikipedia.org/wiki/人工智能。",
+      ["见", "https://zh.wikipedia.org/wiki/人工智能", "。"],
+    ],
+  ])("ends a bare URL at CJK and typographic punctuation: %s", async (source, expected) => {
+    const prepared = prepareMarkdownSource(source);
+    const tree = recognizeTextLinks(
+      await parseMarkdown(prepared.render(), { latexMath: false }),
+      prepared.linkRecognition.text,
+      prepared.linkRecognition.inlineCode,
+    );
+    const parts = (tree.children?.[0]?.children ?? []).map((node) =>
+      node.type === "Link" ? String(node.attributes?.url) : String(node.content),
+    );
+    expect(parts).toEqual(expected);
+    expect(toNativeLinkRecognition(prepared.linkRecognition).text).toMatchObject({
+      isDisabled: false,
+      isDefault: false,
+    });
+  });
 });
 
 it("requires workspace context for relative inline paths and escapes literal regex characters", () => {
