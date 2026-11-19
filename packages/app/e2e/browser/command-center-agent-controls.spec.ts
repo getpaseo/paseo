@@ -14,6 +14,15 @@ import {
 } from "../support/helpers/command-center-agent-controls";
 import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  assertNewWorkspaceSidebarAndHeader,
+  connectNewWorkspaceDaemonClient,
+  openGlobalNewWorkspaceComposer,
+  selectNewWorkspaceProject,
+  selectWorkspaceIsolation,
+  submitNewWorkspacePrompt,
+} from "../support/helpers/new-workspace";
+import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { buildSchedulesRoute } from "@/utils/host-routes";
@@ -30,7 +39,7 @@ async function seedMockDraftPreferences(page: import("@playwright/test").Page): 
           providerPreferences: {
             mock: {
               model: "five-minute-stream",
-              mode: "load-test",
+              mode: "approval-test",
             },
           },
         } satisfies FormPreferences),
@@ -218,6 +227,56 @@ test.describe("Command Center agent controls", () => {
         modeId: "load-test",
       });
     } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("applies New workspace model and mode choices before the first message", async ({
+    page,
+  }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "command-center-new-workspace-controls-" });
+    await seedMockDraftPreferences(page);
+    const client = await connectNewWorkspaceDaemonClient();
+
+    try {
+      const backgroundAgent = await workspace.client.createAgent({
+        provider: "mock",
+        cwd: workspace.repoPath,
+        workspaceId: workspace.workspaceId,
+        title: "Background agent",
+        model: "five-minute-stream",
+        modeId: "approval-test",
+      });
+      await openAgentRoute(page, {
+        workspaceId: workspace.workspaceId,
+        agentId: backgroundAgent.id,
+      });
+      await openGlobalNewWorkspaceComposer(page);
+      await selectNewWorkspaceProject(page, workspace);
+      await selectWorkspaceIsolation(page, "local");
+
+      await applyCommandCenterAgentControls(page, DRAFT_AGENT_CONTROL_CHOICES);
+      await closeCommandCenter(page);
+      await submitNewWorkspacePrompt(page, "Create with Command Center choices");
+      const created = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: workspace.workspaceId,
+        projectDisplayName: workspace.projectDisplayName,
+      });
+
+      await expectWorkspaceAgentConfiguration(
+        { client: workspace.client, workspaceId: created.workspaceId },
+        { provider: "mock", model: "ten-second-stream", modeId: "load-test" },
+      );
+      await expectWorkspaceAgentConfiguration(workspace, {
+        id: backgroundAgent.id,
+        provider: "mock",
+        model: "five-minute-stream",
+        modeId: "approval-test",
+      });
+    } finally {
+      await client.close().catch(() => undefined);
       await workspace.cleanup();
     }
   });
