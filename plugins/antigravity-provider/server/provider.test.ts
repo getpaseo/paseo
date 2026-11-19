@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createAntigravityProvider } from "./provider.js";
 
 const directories: string[] = [];
@@ -189,25 +189,27 @@ describe("installation", () => {
   const signal = new AbortController().signal;
 
   it("reports the version agy prints and links its install docs", async () => {
-    const installation = provider.installation!;
+    // A real `agy acp --version` starts the ACP server, so the fake refuses it.
+    const { launch } = await launchAgent(`
+      const args = process.argv.slice(2);
+      if (args.includes("acp")) process.exit(1);
+      if (args[0] === "--version") console.log("Antigravity CLI 1.6.2");
+    `);
+    const installation = createAntigravityProvider().installation!;
     expect(installation.installUrl).toBe("https://antigravity.google/docs/getting-started?tab=cli");
     expect(installation.update).toBeUndefined();
-    const launch = {
-      command: process.execPath,
-      args: [fake],
-      env: { AGY_TEST_VERSION: "1.2.14" },
-      resolved: true,
-    };
-    await expect(installation.inspect!({ launch, signal })).resolves.toEqual({
+    await expect(
+      installation.inspect!({ launch: { ...launch, resolved: true }, signal }),
+    ).resolves.toEqual({
       status: "installed",
-      version: "1.2.14",
+      version: "1.6.2",
     });
   });
 
   it("is not installed when the executable does not resolve", async () => {
-    const launch = { command: "agy", args: [], env: {}, resolved: false };
-    await expect(provider.installation!.inspect!({ launch, signal })).resolves.toEqual({
-      status: "not_installed",
-    });
+    const launch = { command: "agy", args: ["acp"], env: {}, resolved: false };
+    await expect(
+      createAntigravityProvider().installation!.inspect!({ launch, signal }),
+    ).resolves.toEqual({ status: "not_installed" });
   });
 });
