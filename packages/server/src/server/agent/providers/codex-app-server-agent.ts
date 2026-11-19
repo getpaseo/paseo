@@ -7834,7 +7834,7 @@ function readCodexVersionLabel(output: string): string | undefined {
 
 type InstalledCodex =
   | { status: "not_installed" }
-  | { status: "installed"; version: string | undefined; executablePath: string };
+  | { status: "installed"; version: string | undefined };
 
 /**
  * The release Codex's own updater offers: the Homebrew cask for cask installs, which lags
@@ -7863,13 +7863,15 @@ export class CodexAppServerAgentClient implements AgentClient {
         ? { status: "installed", version: installed.version }
         : installed;
     },
-    checkForUpdates: async ({ signal }) => {
-      const installed = await this.readInstalledCodex(signal);
-      if (installed.status === "not_installed")
-        return { status: "unknown", message: "Codex is not installed" };
+    checkForUpdates: async ({ installedVersion, signal }) => {
+      const installed = await this.resolveInstalledCommand();
+      if (!installed) return { status: "unknown", message: "Codex is not installed" };
       const lookup = this.deps.lookupLatestRelease ?? lookupLatestCodexRelease;
-      const latest = await lookup({ executablePath: installed.executablePath, signal });
-      return compareWithLatestRelease({ installed: installed.version, latest });
+      const latest = await lookup({
+        executablePath: await resolveExecutablePath(installed.executable),
+        signal,
+      });
+      return compareWithLatestRelease({ installed: installedVersion, latest });
     },
     // `codex update` picks the updater for the install method: npm, bun, pnpm, Homebrew or the
     // standalone installer, and exits non-zero with a reason when it cannot tell.
@@ -7908,7 +7910,6 @@ export class CodexAppServerAgentClient implements AgentClient {
     return {
       status: "installed",
       version: readCodexVersionLabel(output),
-      executablePath: await resolveExecutablePath(installed.executable),
     };
   }
 

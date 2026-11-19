@@ -274,9 +274,10 @@ Declare only what the vendor offers:
 
 - `installUrl` and `updateUrl` link the vendor's own install and update docs.
 - `inspect` reports the version the CLI prints. Versions are opaque: Paseo shows them as written
-  and never parses or compares them.
-- `checkForUpdates` asks the source the CLI's own updater reads, such as the vendor's release
-  endpoint or the CLI's `update --check`. Leave it out when that source is inside the binary or
+  and never parses them.
+- `checkForUpdates` receives the version `inspect` reported as `installedVersion` and asks the
+  source the CLI's own updater reads, such as the vendor's release endpoint or the CLI's
+  `update --check`. Do not read the version again. Leave it out when that source is inside the binary or
   depends on how the CLI was installed, which is why Copilot and OpenCode have no check. Do not
   build a release lookup of your own.
 - `update` runs the CLI's own update command and passes its output through, using
@@ -285,10 +286,10 @@ Declare only what the vendor offers:
 
 The three calls are separate because they cost differently. `inspect` runs whenever someone opens
 provider settings, with a 20 s deadline and a 30 s cache. `checkForUpdates` usually reaches the
-network, so the app asks only after `inspect` reports the CLI installed, and a conclusive answer
-holds for an hour while `inspect` reports the same version string. Report every part of the version
-the check compares, such as Muse's build, or a CLI updated outside Paseo keeps its stale answer. `update` runs for minutes, streams output, and is aborted only when the daemon
-stops.
+network. Paseo calls it only after `inspect` reports the CLI installed, and keeps a conclusive
+answer for an hour while `inspect` reports the same version, so a CLI updated outside Paseo is
+checked again once the 30 s inspection expires. `update` runs for minutes, streams output, and is
+aborted only when the daemon stops.
 
 The update check only informs. Once `inspect` reports the CLI installed, the app offers **Update**
 for a provider that declares `update`, or **Update instructions** for one that declares only

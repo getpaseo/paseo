@@ -33,17 +33,21 @@ export const readMuseChannelRelease: ReadMuseChannelRelease = async ({ channel, 
  * replaces any build that differs from the channel's, so a different build is an update.
  */
 export async function checkMuseForUpdates(input: {
-  /** The build `muse --version` prints in parentheses, such as `1.4.18-R8587.1`. */
-  installedBuild: string | null;
+  /**
+   * The version inspection reported: the build `muse --version` prints in parentheses, such as
+   * `1.4.18-R8587.1`, or its bare `x.y.z` when it prints no build.
+   */
+  installedVersion: string | undefined;
   env: Record<string, string> | undefined;
   readChannelRelease: ReadMuseChannelRelease;
   signal: AbortSignal;
 }): Promise<ProviderUpdateCheck> {
-  if (!input.installedBuild)
+  const build = input.installedVersion;
+  if (!build || /^\d+\.\d+\.\d+$/.test(build))
     return { status: "unknown", message: "This Muse Code does not report its build" };
   const channel = input.env?.MUSE_CHANNEL || DEFAULT_CHANNEL;
   const release = await input.readChannelRelease({ channel, signal: input.signal });
-  if (release.version === input.installedBuild) return { status: "current" };
+  if (release.version === build) return { status: "current" };
   return {
     status: "available",
     versions: [release.version],

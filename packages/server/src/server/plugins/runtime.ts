@@ -14,6 +14,7 @@ import {
   type ProviderUpdateReport,
   type ProviderUpdateResult,
   type ProviderInstallationContext,
+  type ProviderUpdateCheckContext,
   type ProviderStatus,
   type ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
@@ -494,7 +495,7 @@ export class PluginRuntime {
   async checkProviderUpdates(
     pluginId: string,
     providerId: string,
-    context: ProviderInstallationContext,
+    context: ProviderUpdateCheckContext,
   ): Promise<ProviderUpdateCheck> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
@@ -505,7 +506,7 @@ export class PluginRuntime {
           type: "provider.installation.check_updates",
           requestId: randomUUID(),
           providerId,
-          request: { launch: context.launch },
+          request: { launch: context.launch, installedVersion: context.installedVersion },
         },
         { signal: context.signal },
       ),

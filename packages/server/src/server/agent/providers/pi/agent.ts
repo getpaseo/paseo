@@ -2608,9 +2608,9 @@ export class PiRpcAgentClient implements AgentClient {
       runtimeSettings: options.runtimeSettings,
       installUrl: PI_INSTALL_URL,
       updateUrl: PI_INSTALL_URL,
-      checkForUpdates: async ({ cli, version, signal }) =>
+      checkForUpdates: async ({ cli, installedVersion, signal }) =>
         compareWithLatestRelease({
-          installed: version,
+          installed: installedVersion,
           latest: await lookup({ executablePath: cli.command, signal }),
         }),
       // `--self` updates Pi itself and leaves installed Pi packages alone.

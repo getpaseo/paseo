@@ -55,13 +55,16 @@ export type PluginProcessRequest =
       request: ProviderStatusRequest;
     }
   | {
-      type:
-        | "provider.installation.inspect"
-        | "provider.installation.check_updates"
-        | "provider.installation.update";
+      type: "provider.installation.inspect" | "provider.installation.update";
       requestId: string;
       providerId: string;
       request: { launch?: ProviderInstallationLaunch };
+    }
+  | {
+      type: "provider.installation.check_updates";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch; installedVersion?: string };
     }
   | { type: "provider.installation.cancel"; requestId: string }
   | {
@@ -175,6 +178,10 @@ const usageSourceMetadataSchema = z
     icon: z.string().optional(),
   })
   .strict();
+const ProviderInstallationLaunchSchema = ProviderLaunchSchema.extend({
+  resolved: z.boolean(),
+}).strict();
+
 const providerConnectRequestSchema = z
   .object({
     launch: ProviderLaunchSchema.optional(),
@@ -222,16 +229,21 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
-        type: z.enum([
-          "provider.installation.inspect",
-          "provider.installation.check_updates",
-          "provider.installation.update",
-        ]),
+        type: z.enum(["provider.installation.inspect", "provider.installation.update"]),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z.object({ launch: ProviderInstallationLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.check_updates"),
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         request: z
           .object({
-            launch: ProviderLaunchSchema.extend({ resolved: z.boolean() }).strict().optional(),
+            launch: ProviderInstallationLaunchSchema.optional(),
+            installedVersion: z.string().optional(),
           })
           .strict(),
       })

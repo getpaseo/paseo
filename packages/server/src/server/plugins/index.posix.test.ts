@@ -401,11 +401,11 @@ describe("PluginService", () => {
             if (!launch.resolved) return { status: "not_installed" };
             return { status: "installed", version: launch.command + " " + launch.env.VERSION };
           },
-          async checkForUpdates({ launch, signal }) {
+          async checkForUpdates({ launch, installedVersion, signal }) {
             if (launch.env.HANG === "yes")
               return await new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted"))));
             if (launch.env.FEED === "down") throw new Error("feed down");
-            return { status: "available", versions: [launch.env.VERSION, "nightly"], message: launch.env.NOTE };
+            return { status: "available", versions: [installedVersion, "nightly"], message: launch.env.NOTE };
           },
         },
         async connect() { throw new Error("not connected by this test"); },
@@ -446,6 +446,7 @@ describe("PluginService", () => {
         await expect(
           installation.checkForUpdates!({
             launch: { ...launch, env: { ...launch.env, NOTE: " Restart \n" }, resolved: true },
+            installedVersion: " 1.0 (beta)\n",
             signal,
           }),
         ).resolves.toEqual({

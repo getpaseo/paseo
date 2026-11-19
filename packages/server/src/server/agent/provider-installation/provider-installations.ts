@@ -59,6 +59,8 @@ interface ProviderCallResult {
 
 interface ProviderCall<T extends ProviderCallResult> {
   name: string;
+  /** A cached result is reused only for the same key. */
+  key?: string;
   /** Validates the provider's answer; throws when it breaks the contract. */
   parse(value: unknown): T;
   timeoutMs: number;
@@ -69,6 +71,7 @@ interface ProviderCall<T extends ProviderCallResult> {
 }
 
 interface CachedRead<T> {
+  key: string | undefined;
   promise: Promise<T>;
   settledAt: number | null;
   cacheMs: number;
@@ -78,8 +81,8 @@ interface CachedRead<T> {
  * Calls provider installation callbacks for every provider, built-in or plugin, through
  * `AgentClient.installation`. Owns deadlines, in-flight sharing and result caching. Results are
  * keyed by client, so a provider configuration change, which replaces the client, starts fresh.
- * Inspection and update checks are cached separately so the installed version never waits on an
- * update check.
+ * An update check first reads the inspection and passes its version to the provider, so the
+ * installed version never waits on an update check.
  */
 export class ProviderInstallations {
   private readonly logger: Logger;
@@ -101,11 +104,6 @@ export class ProviderInstallations {
   private readonly updateChecks = new WeakMap<
     AgentClient,
     CachedRead<ProviderInstallationUpdateCheck>
-  >();
-  /** The installed version each cached update check answered for, compared as an opaque string. */
-  private readonly checkedVersions = new WeakMap<
-    CachedRead<ProviderInstallationUpdateCheck>,
-    string | null
   >();
 
   constructor(options: ProviderInstallationsOptions) {
@@ -132,17 +130,8 @@ export class ProviderInstallations {
     if (installation.installUrl) result.installUrl = installation.installUrl;
     if (installation.updateUrl) result.updateUrl = installation.updateUrl;
     if (installation.update) result.canUpdate = true;
-    const inspect = installation.inspect;
-    if (inspect) {
-      result.inspection = await this.read(provider, client, this.inspections, options, {
-        name: "inspect",
-        parse: (value) => ProviderInspectionSchema.parse(value),
-        timeoutMs: this.inspectTimeoutMs,
-        cacheMs: () => this.inspectCacheMs,
-        run: (context) => inspect.call(installation, context),
-        failed: (message) => ({ status: "error" as const, message }),
-      });
-    }
+    const inspection = await this.readInspection(provider, client, options);
+    if (inspection) result.inspection = inspection;
     return result;
   }
 
@@ -158,24 +147,16 @@ export class ProviderInstallations {
     const installation = client.installation;
     const checkForUpdates = installation?.checkForUpdates;
     if (!installation || !checkForUpdates) return null;
-    // A cached check answers only for the version it was computed against, so a CLI updated
-    // outside Paseo is not offered the update it already has. The version comes from an
-    // inspection that is cached or already running; a check never starts one or waits for one
-    // when it asks the provider itself.
-    const knownVersion = this.knownInstalledVersion(client);
-    const cached = this.updateChecks.get(client);
-    if (cached && knownVersion && !options.refresh && this.isFresh(cached)) {
-      const version = await knownVersion;
-      // Another request may already have replaced the stale entry; share its check.
-      if (
-        version !== undefined &&
-        this.checkedVersions.get(cached) !== version &&
-        this.updateChecks.get(client) === cached
-      )
-        this.updateChecks.delete(client);
-    }
-    const check = this.read(provider, client, this.updateChecks, options, {
+    // The provider compares the version the inspection reported, so a cached answer holds only
+    // while the inspection still reports that version.
+    const inspection = await this.readInspection(provider, client, options);
+    if (inspection?.status === "not_installed")
+      return { status: "unknown", message: "Not installed" };
+    if (inspection?.status === "error") return { status: "error", message: inspection.message };
+    const installedVersion = inspection?.version;
+    return this.read(provider, client, this.updateChecks, options, {
       name: "update check",
+      key: installedVersion,
       parse: (value) => ProviderUpdateCheckSchema.parse(value),
       timeoutMs: this.updateCheckTimeoutMs,
       // Inconclusive answers are retried soon; a conclusive one holds for the long cache.
@@ -183,13 +164,9 @@ export class ProviderInstallations {
         result.status === "current" || result.status === "available"
           ? this.updateCheckCacheMs
           : this.inspectCacheMs,
-      run: (context) => checkForUpdates.call(installation, context),
+      run: (context) => checkForUpdates.call(installation, { ...context, installedVersion }),
       failed: (message) => ({ status: "error" as const, message }),
     });
-    const entry = this.updateChecks.get(client);
-    if (entry && knownVersion && !this.checkedVersions.has(entry))
-      void this.recordCheckedVersion(entry, knownVersion);
-    return check;
   }
 
   /**
@@ -245,29 +222,23 @@ export class ProviderInstallations {
       controller.abort(new Error("The daemon is stopping"));
   }
 
-  /**
-   * The installed version from an inspection that is fresh or still running, or undefined when
-   * there is none. Resolves to undefined when the inspection failed, which says nothing about
-   * the version.
-   */
-  private knownInstalledVersion(
+  /** The provider's inspection, or undefined when it declares no `inspect`. */
+  private readInspection(
+    provider: AgentProvider,
     client: AgentClient,
-  ): Promise<string | null | undefined> | undefined {
-    const read = this.inspections.get(client);
-    if (!read || (read.settledAt !== null && !this.isFresh(read))) return undefined;
-    return read.promise.then((inspection) => {
-      if (inspection.status === "error") return undefined;
-      return inspection.status === "installed" ? (inspection.version ?? null) : null;
+    options: InspectProviderInstallationOptions,
+  ): Promise<ProviderInstallationInspection> | undefined {
+    const installation = client.installation;
+    const inspect = installation?.inspect;
+    if (!installation || !inspect) return undefined;
+    return this.read(provider, client, this.inspections, options, {
+      name: "inspect",
+      parse: (value) => ProviderInspectionSchema.parse(value),
+      timeoutMs: this.inspectTimeoutMs,
+      cacheMs: () => this.inspectCacheMs,
+      run: (context) => inspect.call(installation, context),
+      failed: (message) => ({ status: "error" as const, message }),
     });
-  }
-
-  private async recordCheckedVersion(
-    entry: CachedRead<ProviderInstallationUpdateCheck>,
-    knownVersion: Promise<string | null | undefined>,
-  ): Promise<void> {
-    const version = await knownVersion;
-    if (version !== undefined && !this.checkedVersions.has(entry))
-      this.checkedVersions.set(entry, version);
   }
 
   private async runUpdate(
@@ -329,7 +300,11 @@ export class ProviderInstallations {
     call: ProviderCall<T>,
   ): Promise<T> {
     const existing = cache.get(client);
-    if (existing && (existing.settledAt === null || (!options.refresh && this.isFresh(existing)))) {
+    if (
+      existing &&
+      existing.key === call.key &&
+      (existing.settledAt === null || (!options.refresh && this.isFresh(existing)))
+    ) {
       return existing.promise;
     }
     // invoke settles asynchronously, after `read` is initialized.
@@ -338,7 +313,7 @@ export class ProviderInstallations {
       read.cacheMs = call.cacheMs(result);
       return result;
     });
-    const read: CachedRead<T> = { promise, settledAt: null, cacheMs: 0 };
+    const read: CachedRead<T> = { key: call.key, promise, settledAt: null, cacheMs: 0 };
     cache.set(client, read);
     return read.promise;
   }

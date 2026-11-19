@@ -56,6 +56,7 @@ describe("Hoplite installation", () => {
     const check = (release: string) =>
       createHopliteInstallation(latest(release)).checkForUpdates!({
         launch: hoplite.launch,
+        installedVersion: "3.4.0",
         signal,
       });
     await expect(check("3.5.1")).resolves.toEqual({ status: "available", versions: ["3.5.1"] });
@@ -65,13 +66,24 @@ describe("Hoplite installation", () => {
       status: "unknown",
       message: "Unrecognized release <html>",
     });
+    await expect(
+      createHopliteInstallation(latest("3.5.1")).checkForUpdates!({
+        launch: hoplite.launch,
+        installedVersion: "hoplite (dev build)",
+        signal,
+      }),
+    ).resolves.toEqual({ status: "unknown", message: "The installed version is not readable" });
   });
 
   it("does not check when the user turned Hoplite's update check off", async () => {
     const hoplite = await fakeHoplite("3.4.0");
     const launch = { ...hoplite.launch, env: { HOPLITE_NO_UPDATE_CHECK: "1" } };
     await expect(
-      createHopliteInstallation(latest("3.5.1")).checkForUpdates!({ launch, signal }),
+      createHopliteInstallation(latest("3.5.1")).checkForUpdates!({
+        launch,
+        installedVersion: "3.4.0",
+        signal,
+      }),
     ).resolves.toEqual({
       status: "unknown",
       message: "HOPLITE_NO_UPDATE_CHECK turns update checks off",

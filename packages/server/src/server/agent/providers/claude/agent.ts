@@ -1636,17 +1636,16 @@ export class ClaudeAgentClient implements AgentClient {
         ? { status: "installed", version: probe.version }
         : { status: "installed" };
     },
-    checkForUpdates: async ({ signal }) => {
-      const probe = await readClaudeCodeVersion(this.runtimeSettings, signal);
-      if (probe.status === "not_installed")
-        return { status: "unknown", message: "Claude Code is not installed" };
-      if (!probe.version)
+    checkForUpdates: async ({ installedVersion, signal }) => {
+      if (!installedVersion)
         return { status: "unknown", message: "The configured command does not report its version" };
+      const installed = await resolveInstalledClaude(this.runtimeSettings);
+      if (!installed) return { status: "unknown", message: "Claude Code is not installed" };
       const latest = await this.lookupLatestRelease({
-        executablePath: probe.executablePath,
+        executablePath: await resolveExecutablePath(installed.executable),
         signal,
       });
-      return compareWithLatestRelease({ installed: probe.version, latest });
+      return compareWithLatestRelease({ installed: installedVersion, latest });
     },
     // `claude update` updates native installs itself and package-manager installs through the
     // package manager.
@@ -2009,7 +2008,7 @@ const CLAUDE_UPDATE_URL = "https://code.claude.com/docs/en/setup#update-claude-c
 type ClaudeCodeVersionRead =
   | { status: "not_installed" }
   /** `version` is null when the configured command is a wrapper that does not report Claude Code's version. */
-  | { status: "installed"; version: string | null; executablePath: string };
+  | { status: "installed"; version: string | null };
 
 const CLAUDE_UPDATE_CHANNELS = new Set(["latest", "stable", "rc"]);
 
@@ -2096,7 +2095,6 @@ async function readClaudeCodeVersion(
   return {
     status: "installed",
     version: version ? version.join(".") : null,
-    executablePath: await resolveExecutablePath(executable),
   };
 }
 

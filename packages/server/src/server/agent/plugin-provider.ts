@@ -36,6 +36,7 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentClientInstallation,
+  AgentClientUpdateCheckContext,
   AgentClientUpdateContext,
   AgentCreateSessionOptions,
   AgentLaunchContext,
@@ -199,12 +200,12 @@ class ProviderRuntime {
     return await inspect.call(this.registration.installation, { launch, signal });
   }
 
-  async checkForUpdates(signal: AbortSignal): Promise<ProviderUpdateCheck> {
+  async checkForUpdates(context: AgentClientUpdateCheckContext): Promise<ProviderUpdateCheck> {
     const checkForUpdates = this.registration.installation?.checkForUpdates;
     if (!checkForUpdates) throw new Error("Provider does not check for updates");
     const launch = await this.resolveEffectiveLaunch();
-    signal.throwIfAborted();
-    return await checkForUpdates.call(this.registration.installation, { launch, signal });
+    context.signal.throwIfAborted();
+    return await checkForUpdates.call(this.registration.installation, { ...context, launch });
   }
 
   async update(context: AgentClientUpdateContext): Promise<ProviderUpdateResult> {
@@ -1024,7 +1025,7 @@ class PluginAgentClient implements AgentClient {
           ? ({ signal }) => this.runtime.inspectInstallation(signal)
           : undefined,
         checkForUpdates: installation.checkForUpdates
-          ? ({ signal }) => this.runtime.checkForUpdates(signal)
+          ? (context) => this.runtime.checkForUpdates(context)
           : undefined,
         update: installation.update ? (context) => this.runtime.update(context) : undefined,
       };

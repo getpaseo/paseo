@@ -31,7 +31,8 @@ export interface CliInstallationOptions {
   /** Asks the source the CLI's own updater asks. Left out when that source is not known. */
   checkForUpdates?(input: {
     cli: InstalledCli;
-    version: string | undefined;
+    /** The version `inspect` reported. */
+    installedVersion: string | undefined;
     signal: AbortSignal;
   }): Promise<ProviderUpdateCheck>;
   /** The CLI's own update command. Left out when the CLI cannot update itself. */
@@ -91,10 +92,10 @@ export function createCliInstallation(options: CliInstallationOptions): AgentCli
 
   const checkForUpdates = options.checkForUpdates;
   if (checkForUpdates) {
-    installation.checkForUpdates = async ({ signal }) => {
+    installation.checkForUpdates = async ({ installedVersion, signal }) => {
       const cli = await resolveCli();
       if (!cli) return { status: "unknown", message: `${name} is not installed` };
-      return checkForUpdates({ cli, version: await readVersion(cli, signal), signal });
+      return checkForUpdates({ cli, installedVersion, signal });
     };
   }
 

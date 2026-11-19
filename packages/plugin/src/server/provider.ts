@@ -52,17 +52,27 @@ export interface ProviderInstallation {
   /** Report whether the provider is installed and which version. Runs only when a user asks. */
   inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
   /**
-   * Report whether a newer version is available. The provider decides how to find out and what
-   * counts as newer; Paseo shows the result as written. Return `unknown` when it cannot tell.
-   * Runs only when a user asks, never before a session.
+   * Report whether a newer version than `installedVersion` is available. The provider decides how
+   * to find out and what counts as newer; Paseo shows the result as written. Return `unknown` when
+   * it cannot tell. Runs only when a user asks, never before a session, and only after `inspect`
+   * reports the provider installed. Paseo reuses the answer while `inspect` reports the same
+   * version.
    */
-  checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
   /**
    * Update the provider, usually by running its CLI's own updater. Paseo shows everything passed
    * to `report` while it runs, then the returned message. A throw is a failure with its message.
    * Runs only when a user asks. Paseo sets no deadline; `signal` aborts when the daemon stops.
    */
   update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface ProviderUpdateCheckContext extends ProviderInstallationContext {
+  /**
+   * The version `inspect` reported, as written. Absent when `inspect` reported none or the
+   * provider declares no `inspect`.
+   */
+  installedVersion?: string;
 }
 
 export interface ProviderUpdateContext extends ProviderInstallationContext {
@@ -97,7 +107,7 @@ export interface ProviderInstallationLaunch extends ProviderLaunch {
 }
 
 export const ProviderInspectionSchema = z.discriminatedUnion("status", [
-  /** `version` is shown as written; Paseo does not parse or compare it. */
+  /** `version` is shown as written and passed to `checkForUpdates`; Paseo does not parse it. */
   z.object({ status: z.literal("installed"), version: z.string().optional() }).strip(),
   z.object({ status: z.literal("not_installed") }).strip(),
 ]);

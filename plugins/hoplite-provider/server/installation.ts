@@ -66,11 +66,10 @@ export function createHopliteInstallation(
       const version = await readVersion(launch, signal);
       return version ? { status: "installed", version } : { status: "installed" };
     },
-    async checkForUpdates({ launch, signal }): Promise<ProviderUpdateCheck> {
-      if (!launch?.resolved) return { status: "unknown", message: "Hoplite is not installed" };
-      if (launch.env.HOPLITE_NO_UPDATE_CHECK === "1")
+    async checkForUpdates({ launch, installedVersion, signal }): Promise<ProviderUpdateCheck> {
+      if (launch?.env.HOPLITE_NO_UPDATE_CHECK === "1")
         return { status: "unknown", message: "HOPLITE_NO_UPDATE_CHECK turns update checks off" };
-      const installed = parseRelease((await readVersion(launch, signal)) ?? "");
+      const installed = parseRelease(installedVersion ?? "");
       if (!installed)
         return { status: "unknown", message: "The installed version is not readable" };
       const latestText = (await latestRelease(signal)).trim();

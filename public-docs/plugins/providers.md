@@ -442,8 +442,8 @@ optional, so declare only what your CLI supports:
 | `checkForUpdates` | **Up to date**, **Update available**, or **Couldn't check for updates** | You can ask the release source your CLI's updater uses |
 | `update`          | **Update** while installed, then the updater's output                   | The CLI updates itself with a command                  |
 
-This `example-agent` prints its version, checks for a release with
-`self-update --check --json`, and updates with `self-update`:
+This `example-agent` prints its version, asks `self-update --check --json` for the release its
+updater installs, and updates with `self-update`:
 
 ```ts
 import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
@@ -471,16 +471,15 @@ export const installation: ProviderInstallation = {
     return { status: "installed", version: await run(launch, ["--version"], signal) };
   },
 
-  async checkForUpdates({ launch, signal }) {
-    if (!launch?.resolved) return { status: "unknown", message: "example-agent is not installed" };
-    // Asks the release source `example-agent self-update` installs from.
-    const answer = JSON.parse(await run(launch, ["self-update", "--check", "--json"], signal)) as {
-      latest: string;
-      updateAvailable: boolean;
-    };
-    return answer.updateAvailable
-      ? { status: "available", versions: [answer.latest] }
-      : { status: "current" };
+  async checkForUpdates({ launch, installedVersion, signal }) {
+    if (!launch) return { status: "unknown" };
+    // Prints `{"latest":"1.5.0"}`; `self-update` installs any release that differs.
+    const { latest } = JSON.parse(
+      await run(launch, ["self-update", "--check", "--json"], signal),
+    ) as { latest: string };
+    return latest === installedVersion
+      ? { status: "current" }
+      : { status: "available", versions: [latest] };
   },
 
   async update({ launch, signal, report }) {
@@ -522,12 +521,14 @@ export function createProvider(): ProviderRegistration {
 
 Each callback receives the launch a session would use. When `launch.resolved` is `false`, Paseo did
 not find the executable and `command` is the configured name, so report `not_installed` without
-running it. `launch` is absent when the registration declares no `command`. For an ACP provider,
+running it. `launch` is absent when the registration declares no `command`. `checkForUpdates` runs
+only after `inspect` reports the CLI installed, and receives the `version` it reported as
+`installedVersion`, so compare that instead of reading the version again. For an ACP provider,
 spread `runAcpProvider()` into the registration and add `installation` beside it. Run version and
 update probes with the launch's arguments before your session subcommand, such as `hoplite
 --version` for a provider that runs `hoplite acp`.
 
-Paseo treats versions as text. It shows `version` and `versions` as written and never compares
+Paseo treats versions as text. It shows `version` and `versions` as written and never parses
 them, so your check decides what counts as newer. Ask the source your CLI's own updater asks, and
 leave `checkForUpdates` out when you cannot. A check that returns `unknown`, throws, or misses its
 deadline shows **Couldn't check for updates** with your message and never shows **Up to date**.
@@ -541,9 +542,9 @@ Without `update`, **Update instructions** opens `updateUrl` instead.
 **Update** and **Update instructions** appear whenever `inspect` reports the CLI installed. The
 check only says what it knows beside them, so declare `update` even when you cannot check.
 
-Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It calls
-`checkForUpdates` after `inspect` reports the CLI installed and keeps a `current` or `available`
-answer for an hour. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
+Paseo calls `inspect` when the settings open and keeps the answer for 30 seconds. It keeps a
+`current` or `available` answer from `checkForUpdates` for an hour while `inspect` reports the same
+version, so a CLI updated outside Paseo is checked again once the inspection expires. `inspect` must answer within 20 seconds and `checkForUpdates` within 25.
 `update` has no deadline. `signal` aborts when Paseo stops waiting or the daemon stops.
 See the [`installation` reference](/docs/plugins/reference#provider-installation) for every field.
 

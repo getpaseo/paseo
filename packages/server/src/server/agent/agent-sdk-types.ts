@@ -833,9 +833,15 @@ export interface AgentClientInstallation {
   installUrl?: string;
   updateUrl?: string;
   inspect?(context: AgentClientInstallationContext): Promise<ProviderInspection>;
-  checkForUpdates?(context: AgentClientInstallationContext): Promise<ProviderUpdateCheck>;
+  /** See `ProviderInstallation.checkForUpdates` in the plugin contract. */
+  checkForUpdates?(context: AgentClientUpdateCheckContext): Promise<ProviderUpdateCheck>;
   /** Runs the provider's updater. See `ProviderInstallation.update` in the plugin contract. */
   update?(context: AgentClientUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface AgentClientUpdateCheckContext extends AgentClientInstallationContext {
+  /** The version `inspect` reported, as written. Absent when it reported none or there is no `inspect`. */
+  installedVersion?: string;
 }
 
 export interface AgentClientUpdateContext extends AgentClientInstallationContext {

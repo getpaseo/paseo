@@ -181,7 +181,7 @@ test("installation links to the Muse guide and reports the installed version", a
     }),
   ).resolves.toEqual({ status: "not_installed" });
 });
-test("installation reports the build its update check compares", async () => {
+test("installation reports the build as the installed version", async () => {
   const provider = registration();
   const launch = {
     command: process.execPath,
@@ -204,28 +204,20 @@ test("update check compares the installed build with the launcher's channel", as
     },
   });
   const signal = new AbortController().signal;
-  const check = (env: Record<string, string>) =>
+  const check = (installedVersion: string, env: Record<string, string> = {}) =>
     provider.installation?.checkForUpdates?.({
-      launch: {
-        command: process.execPath,
-        args: [fileURLToPath(new URL("./fake-muse.mjs", import.meta.url))],
-        env,
-        resolved: true,
-      },
+      launch: { command: "muse", args: [], env, resolved: true },
+      installedVersion,
       signal,
     });
 
-  await expect(check({ MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8587.1)" })).resolves.toEqual({
-    status: "current",
-  });
-  await expect(
-    check({ MUSE_TEST_VERSION: "1.4.18 (1.4.18-R8587.1)", MUSE_CHANNEL: "muse-beta" }),
-  ).resolves.toEqual({
+  await expect(check("1.4.18-R8587.1")).resolves.toEqual({ status: "current" });
+  await expect(check("1.4.18-R8587.1", { MUSE_CHANNEL: "muse-beta" })).resolves.toEqual({
     status: "available",
     versions: ["1.5.0-R9000.2"],
     message: "Faster startup",
   });
-  await expect(check({ MUSE_TEST_VERSION: "1.4.1" })).resolves.toEqual({
+  await expect(check("1.4.1")).resolves.toEqual({
     status: "unknown",
     message: "This Muse Code does not report its build",
   });

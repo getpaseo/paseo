@@ -443,12 +443,16 @@ describe("ProviderInstallations", () => {
     expect(calls()).toBe(2);
   });
 
-  test("keeps update checks and inspection in separate caches", async () => {
+  test("an update check asks with the version the inspection reported, inspecting once", async () => {
+    let inspections = 0;
+    const versions: (string | undefined)[] = [];
     const client = builtinClient({
       async inspect() {
-        return { status: "installed", version: "1.0.0" };
+        inspections += 1;
+        return { status: "installed", version: OPAQUE_VERSION };
       },
-      async checkForUpdates() {
+      async checkForUpdates({ installedVersion }) {
+        versions.push(installedVersion);
         return { status: "current" };
       },
     });
@@ -456,10 +460,22 @@ describe("ProviderInstallations", () => {
       logger: createTestLogger(),
       resolveClient: () => client,
     });
-    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
-    await expect(installations.inspect("codex")).resolves.toEqual({
-      inspection: { status: "installed", version: "1.0.0" },
-    });
+    // The app sends both together; the check joins the inspection instead of starting another.
+    await expect(
+      Promise.all([installations.inspect("codex"), installations.checkForUpdates("codex")]),
+    ).resolves.toEqual([
+      { inspection: { status: "installed", version: OPAQUE_VERSION } },
+      { status: "current" },
+    ]);
+    expect(inspections).toBe(1);
+    expect(versions).toEqual([OPAQUE_VERSION]);
+
+    await Promise.all([
+      installations.inspect("codex", { refresh: true }),
+      installations.checkForUpdates("codex", { refresh: true }),
+    ]);
+    expect(inspections).toBe(2);
+    expect(versions).toEqual([OPAQUE_VERSION, OPAQUE_VERSION]);
   });
 
   test("asks for updates again once the installed version changes", async () => {
@@ -468,13 +484,11 @@ describe("ProviderInstallations", () => {
     let checks = 0;
     const client = builtinClient({
       async inspect() {
-        // The app sends inspect and check together; the check must not answer first.
-        await new Promise((resolve) => setTimeout(resolve, 20));
         return { status: "installed", version: installed };
       },
-      async checkForUpdates() {
+      async checkForUpdates({ installedVersion }) {
         checks += 1;
-        return installed === "1.0.0"
+        return installedVersion === "1.0.0"
           ? { status: "available", versions: ["2.0.0"] }
           : { status: "current" };
       },
@@ -486,46 +500,42 @@ describe("ProviderInstallations", () => {
       updateCheckCacheMs: 3_600_000,
       now: () => time,
     });
-    const together = () =>
-      Promise.all([installations.inspect("codex"), installations.checkForUpdates("codex")]);
-    await expect(together()).resolves.toEqual([
-      { inspection: { status: "installed", version: "1.0.0" } },
-      { status: "available", versions: ["2.0.0"] },
-    ]);
+    const check = () => installations.checkForUpdates("codex");
+    await expect(check()).resolves.toEqual({ status: "available", versions: ["2.0.0"] });
 
-    // The CLI updated itself outside Paseo.
+    // The CLI updated itself outside Paseo; the cached inspection still reports 1.0.0.
     installed = "2.0.0";
+    time = 29_000;
+    await expect(check()).resolves.toEqual({ status: "available", versions: ["2.0.0"] });
+    expect(checks).toBe(1);
+
+    // Once the inspection is read again, the check answers for the new version.
     time = 31_000;
-    await expect(together()).resolves.toEqual([
-      { inspection: { status: "installed", version: "2.0.0" } },
-      { status: "current" },
-    ]);
+    await expect(check()).resolves.toEqual({ status: "current" });
     expect(checks).toBe(2);
 
     // Two clients reopening together after another change share one new check.
     installed = "3.0.0";
     time = 93_000;
-    await Promise.all([together(), together()]);
+    await Promise.all([check(), check()]);
     expect(checks).toBe(3);
 
     // The same version again keeps the long-cached answer.
     time = 124_000;
-    await together();
+    await check();
     expect(checks).toBe(3);
   });
 
-  test("an update check never starts an inspection or waits on one to ask the provider", async () => {
-    let inspections = 0;
-    let finishInspection: () => void = () => {};
+  test("an update check reports a missing or unreadable installation without asking", async () => {
+    let installed = false;
+    let checks = 0;
     const client = builtinClient({
       async inspect() {
-        inspections += 1;
-        await new Promise<void>((resolve) => {
-          finishInspection = resolve;
-        });
-        return { status: "installed", version: "1.0.0" };
+        if (installed) throw new Error(OPAQUE_MESSAGE);
+        return { status: "not_installed" };
       },
       async checkForUpdates() {
+        checks += 1;
         return { status: "current" };
       },
     });
@@ -533,15 +543,26 @@ describe("ProviderInstallations", () => {
       logger: createTestLogger(),
       resolveClient: () => client,
     });
-    await expect(installations.checkForUpdates("codex")).resolves.toEqual({ status: "current" });
-    expect(inspections).toBe(0);
-
-    const inspection = installations.inspect("codex");
-    await expect(installations.checkForUpdates("codex", { refresh: true })).resolves.toEqual({
-      status: "current",
+    await expect(installations.checkForUpdates("codex")).resolves.toEqual({
+      status: "unknown",
+      message: "Not installed",
     });
-    finishInspection();
-    await inspection;
+    installed = true;
+    await expect(installations.checkForUpdates("codex", { refresh: true })).resolves.toEqual({
+      status: "error",
+      message: OPAQUE_MESSAGE,
+    });
+    expect(checks).toBe(0);
+  });
+
+  test("a provider without inspect is asked with no installed version", async () => {
+    const versions: (string | undefined)[] = [];
+    const { installations } = countingUpdates(async ({ installedVersion }) => {
+      versions.push(installedVersion);
+      return { status: "current" };
+    });
+    await installations.checkForUpdates("codex");
+    expect(versions).toEqual([undefined]);
   });
 
   test("aborts a slow update check and reports it as an error", async () => {

@@ -453,7 +453,7 @@ interface ProviderInstallation {
   installUrl?: string;
   updateUrl?: string;
   inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
-  checkForUpdates?(context: ProviderInstallationContext): Promise<ProviderUpdateCheck>;
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
   update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
 }
 ```
@@ -461,22 +461,23 @@ interface ProviderInstallation {
 | Member            | Called                                                       | Deadline | Answer kept                                      |
 | ----------------- | ------------------------------------------------------------ | -------- | ------------------------------------------------ |
 | `inspect`         | When provider settings open                                  | 20 s     | 30 s                                             |
-| `checkForUpdates` | After `inspect` answers `installed`                          | 25 s     | 1 hour for `current` or `available`, else 30 s   |
+| `checkForUpdates` | After `inspect` answers `installed`, or without `inspect`    | 25 s     | 1 hour for `current` or `available`, else 30 s   |
 | `update`          | When the user selects **Update**, one at a time per provider | None     | Paseo reads both answers again after `succeeded` |
 
-**Refresh** in the provider's settings skips the kept answers. Paseo never calls these members
-before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
+**Refresh** in the provider's settings skips the kept answers. Paseo
+never calls these members before a session or on a schedule. A deadline or a throw becomes an error that shows the message.
 
 `installUrl` and `updateUrl` are `http` or `https` pages that Paseo opens in the browser. The
 plugin fails to start when either is another kind of URL.
 
 The context:
 
-| Field    | Type                                      | Meaning                                                                                              |
-| -------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `launch` | `ProviderInstallationLaunch \| undefined` | The launch a session would use, with `resolved`. Absent when the registration declares no `command`. |
-| `signal` | `AbortSignal`                             | Aborts when Paseo stops waiting or the daemon stops.                                                 |
-| `report` | `(event: ProviderUpdateReport) => void`   | `update` only. Shows `{ type: "stdout" \| "stderr" \| "message", text }` to the user in order.       |
+| Field              | Type                                      | Meaning                                                                                                                         |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `launch`           | `ProviderInstallationLaunch \| undefined` | The launch a session would use, with `resolved`. Absent when the registration declares no `command`.                            |
+| `signal`           | `AbortSignal`                             | Aborts when Paseo stops waiting or the daemon stops.                                                                            |
+| `installedVersion` | `string \| undefined`                     | `checkForUpdates` only. The `version` `inspect` reported, as written. Absent when it reported none or you declare no `inspect`. |
+| `report`           | `(event: ProviderUpdateReport) => void`   | `update` only. Shows `{ type: "stdout" \| "stderr" \| "message", text }` to the user in order.                                  |
 
 `ProviderInstallationLaunch` is `{ command, args, env, resolved }`. With `resolved: true`, `command`
 is the executable's path. With `resolved: false`, Paseo did not find the executable and `command`
@@ -490,9 +491,9 @@ Answers:
 | `ProviderUpdateCheck`  | `{ status: "current" }`, `{ status: "available", versions?: string[], message?: string }`, or `{ status: "unknown", message?: string }` |
 | `ProviderUpdateResult` | `{ status: "succeeded", message?: string }` or `{ status: "failed", message: string }`                                                  |
 
-Paseo shows `version`, `versions` and `message` as written and does not parse, sort or compare
-them. It reuses a `current` or `available` answer for up to an hour while `inspect` reports the
-same `version`, so include in `version` everything `checkForUpdates` compares. It keeps the last 65,536 characters of `report` output. An answer that does not match these
+Paseo shows `version`, `versions` and `message` as written and does not parse or sort them. It
+reuses a `current` or `available` answer for up to an hour while `inspect` reports the same
+`version`. It keeps the last 65,536 characters of `report` output. An answer that does not match these
 shapes is an error. **Update** appears once `inspect` reports the CLI installed and you declare
 `update`, whatever `checkForUpdates` answers and whether you declare it; without `update`, Paseo
 offers `updateUrl` on the same terms.

@@ -74,8 +74,12 @@ function releases(latest: string) {
   return { lookup, lookups };
 }
 
-function check(client: AgentClient) {
-  return client.installation?.checkForUpdates?.({ signal: new AbortController().signal });
+/** Checks the way the daemon does: with the version the inspection reported. */
+async function check(client: AgentClient) {
+  const signal = new AbortController().signal;
+  const inspection = await client.installation?.inspect?.({ signal });
+  const installedVersion = inspection?.status === "installed" ? inspection.version : undefined;
+  return client.installation?.checkForUpdates?.({ installedVersion, signal });
 }
 
 const providers = [

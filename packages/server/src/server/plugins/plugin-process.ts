@@ -267,6 +267,10 @@ export function createPluginWorker(options: {
     const controller = new AbortController();
     installationRequests.set(message.requestId, controller);
     const context = { launch: message.request.launch, signal: controller.signal };
+    const installedVersion =
+      message.type === "provider.installation.check_updates"
+        ? message.request.installedVersion
+        : undefined;
     void (async () => {
       const installation = providers.get(message.providerId)?.installation;
       if (message.type === "provider.installation.update") {
@@ -297,7 +301,9 @@ export function createPluginWorker(options: {
       }
       if (!installation?.checkForUpdates)
         throw new Error(`Provider has no checkForUpdates capability: ${message.providerId}`);
-      return ProviderUpdateCheckSchema.parse(await installation.checkForUpdates(context));
+      return ProviderUpdateCheckSchema.parse(
+        await installation.checkForUpdates({ ...context, installedVersion }),
+      );
     })()
       .then(
         (output) => send({ type: "result", requestId: message.requestId, output }),

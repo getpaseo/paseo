@@ -421,7 +421,7 @@ test("provider update checks reach the client: versions unchanged, failures inco
     });
     await expect(client.checkProviderUpdates("muse")).resolves.toMatchObject({
       error: null,
-      updateCheck: { status: "unknown", message: "Muse Code is not installed" },
+      updateCheck: { status: "unknown", message: "Not installed" },
     });
   } finally {
     await client.close();
