@@ -119,7 +119,12 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         url: BrowserHttpUrlInputSchema.optional().describe(
           "An HTTP or HTTPS URL. A URL without a scheme uses HTTP.",
         ),
-        browserHostId: z.uuid().optional().describe("Destination ID from browser_list_hosts."),
+        browserHostId: z
+          .string()
+          .min(1)
+          .max(128)
+          .optional()
+          .describe("Destination ID from browser_list_hosts."),
       },
     },
     async ({ url, browserHostId }) => {

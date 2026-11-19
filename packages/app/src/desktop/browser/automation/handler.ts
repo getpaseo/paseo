@@ -78,6 +78,7 @@ export function getDesktopBrowserHostRegistration(): BrowserHostRegistration | n
   return {
     hostKind: "desktop app",
     label: desktop.browserHostLabel,
+    instanceId: desktop.browserHostInstanceId,
     supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
   };
 }

@@ -10,7 +10,7 @@ log.initialize({ spyRendererConsole: true });
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
@@ -670,7 +670,6 @@ function getWorkAreasPrimaryFirst(): Electron.Rectangle[] {
   return [primary, ...others].map((display) => display.workArea);
 }
 
-const browserHostLabels = new WeakMap<BrowserWindow, string>();
 const browserHostComputerName =
   hostname()
     .replace(/\.local$/i, "")
@@ -719,13 +718,13 @@ async function createWindow(
       additionalArguments: [
         windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE),
         `--paseo-browser-host-label=${browserHostLabel}`,
+        `--paseo-browser-host-instance-id=${randomUUID()}`,
       ],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
     },
   });
-  browserHostLabels.set(mainWindow, browserHostLabel);
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
   const webContentsId = mainWindow.webContents.id;
@@ -976,7 +975,6 @@ async function bootstrap(): Promise<void> {
 
   await applyAppIcon();
   setupApplicationMenu({
-    getBrowserHostLabel: (win) => browserHostLabels.get(win),
     onNewWindow: () => {
       void desktopWindowOwner.openAdditional().catch((error) => {
         log.error("[window] failed to create window from menu", error);

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
@@ -17,6 +17,7 @@ export interface BrowserHostClient {
   id: string;
   hostKind: string;
   label?: string;
+  instanceId?: string;
   supportedCommands: readonly BrowserAutomationCommandName[];
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
@@ -62,7 +63,7 @@ export class BrowserToolsBroker {
   private readonly clients = new Map<string, RegisteredBrowserHost>();
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
-  private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
+  private readonly hostIdKey = randomBytes(32);
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -71,42 +72,36 @@ export class BrowserToolsBroker {
   }
 
   public registerClient(client: BrowserHostClient): () => void {
-    this.unregisterClient(client.id);
+    // The discovery ID must not allow another connection to claim this window.
+    const browserHostId = createHmac("sha256", this.hostIdKey)
+      .update(client.instanceId ? `instance:${client.instanceId}` : `connection:${client.id}`)
+      .digest("hex");
+    this.unregisterHost(browserHostId);
     const registeredAt = ++this.registrationSequence;
     const label = client.label?.trim() || `${client.hostKind} · Connection ${registeredAt}`;
     const supportedCommands = new Set(client.supportedCommands);
-    this.clients.set(client.id, {
+    this.clients.set(browserHostId, {
       client,
       target: Object.freeze({
-        browserHostId: randomUUID(),
+        browserHostId,
         label,
         canOpenTabs: supportedCommands.has("new_tab"),
       }),
       registeredAt,
       supportedCommands,
     });
-    return () => this.unregisterClient(client.id, registeredAt);
+    return () => this.unregisterHost(browserHostId, registeredAt);
   }
 
-  public unregisterClient(clientId: string, registeredAt?: number): void {
-    const current = this.clients.get(clientId);
+  private unregisterHost(browserHostId: string, registeredAt?: number): void {
+    const current = this.clients.get(browserHostId);
     if (!current || (registeredAt !== undefined && current.registeredAt !== registeredAt)) {
       return;
     }
-    this.clients.delete(clientId);
-
-    for (const [browserId, ownerClientId] of this.browserHostByBrowserId) {
-      if (ownerClientId !== clientId) {
-        continue;
-      }
-      this.browserHostByBrowserId.delete(browserId);
-      this.strandedBrowserHostByBrowserId.set(browserId, clientId);
-    }
+    this.clients.delete(browserHostId);
 
     for (const [requestId, pending] of this.pending) {
-      if (pending.host.client.id !== clientId) {
-        continue;
-      }
+      if (pending.host !== current) continue;
       this.pending.delete(requestId);
       clearTimeout(pending.timeout);
       pending.resolve(
@@ -220,7 +215,7 @@ export class BrowserToolsBroker {
     this.pending.delete(parsed.data.payload.requestId);
     clearTimeout(pending.timeout);
     if (pending.rememberAffinity && parsed.data.payload.ok) {
-      this.rememberBrowserHostForPayload(pending.host.client.id, parsed.data.payload);
+      this.rememberBrowserHostForPayload(pending.host.target.browserHostId, parsed.data.payload);
     }
     pending.resolve(attachBrowserHost(parsed.data.payload, pending.host.target));
     return true;
@@ -275,8 +270,8 @@ export class BrowserToolsBroker {
     }
 
     for (const { host, payload } of hostResponses) {
-      if (payload.ok && this.clients.get(host.client.id) === host) {
-        this.rememberBrowserHostForPayload(host.client.id, payload);
+      if (payload.ok && this.clients.get(host.target.browserHostId) === host) {
+        this.rememberBrowserHostForPayload(host.target.browserHostId, payload);
       }
     }
 
@@ -293,9 +288,8 @@ export class BrowserToolsBroker {
   }
 
   private selectHostForNewTab(requestId: string, browserHostId: string | undefined): HostSelection {
-    const hosts = Array.from(this.clients.values());
     if (browserHostId !== undefined) {
-      const host = hosts.find(({ target }) => target.browserHostId === browserHostId);
+      const host = this.clients.get(browserHostId);
       if (host) return { ok: true, value: host };
       return {
         ok: false,
@@ -308,8 +302,9 @@ export class BrowserToolsBroker {
       };
     }
 
-    if (hosts.length === 0) return { ok: false, payload: this.noBrowserHostFailure(requestId) };
-    const eligible = hosts.filter(({ target }) => target.canOpenTabs);
+    if (this.clients.size === 0)
+      return { ok: false, payload: this.noBrowserHostFailure(requestId) };
+    const eligible = Array.from(this.clients.values()).filter(({ target }) => target.canOpenTabs);
     if (eligible.length === 1) return { ok: true, value: eligible[0] };
     if (eligible.length === 0) {
       return {
@@ -333,30 +328,12 @@ export class BrowserToolsBroker {
   }
 
   private selectHostForTab(browserId: string, requestId: string): HostSelection {
-    const ownerClientId = this.browserHostByBrowserId.get(browserId);
-    if (ownerClientId) {
-      const host = this.clients.get(ownerClientId);
-      if (host) {
-        return { ok: true, value: host };
-      }
-      return {
-        ok: false,
-        payload: this.strandedBrowserTabFailure({ requestId, browserId }),
-      };
-    }
-
-    const strandedOwnerClientId = this.strandedBrowserHostByBrowserId.get(browserId);
-    if (strandedOwnerClientId) {
-      const reconnectedHost = this.clients.get(strandedOwnerClientId);
-      if (reconnectedHost) {
-        this.strandedBrowserHostByBrowserId.delete(browserId);
-        this.browserHostByBrowserId.set(browserId, strandedOwnerClientId);
-        return { ok: true, value: reconnectedHost };
-      }
-      return {
-        ok: false,
-        payload: this.strandedBrowserTabFailure({ requestId, browserId }),
-      };
+    const browserHostId = this.browserHostByBrowserId.get(browserId);
+    if (browserHostId) {
+      const host = this.clients.get(browserHostId);
+      return host
+        ? { ok: true, value: host }
+        : { ok: false, payload: this.strandedBrowserTabFailure({ requestId, browserId }) };
     }
 
     const firstHost = this.clients.values().next().value;
@@ -412,26 +389,23 @@ export class BrowserToolsBroker {
   }
 
   private rememberBrowserHostForPayload(
-    clientId: string,
+    browserHostId: string,
     payload: Extract<BrowserAutomationExecuteResponse["payload"], { ok: true }>,
   ): void {
     if (payload.result.command === "list_tabs") {
       for (const tab of payload.result.tabs) {
-        this.browserHostByBrowserId.set(tab.browserId, clientId);
-        this.strandedBrowserHostByBrowserId.delete(tab.browserId);
+        this.browserHostByBrowserId.set(tab.browserId, browserHostId);
       }
       return;
     }
 
     if (payload.result.command === "close_tab") {
       this.browserHostByBrowserId.delete(payload.result.browserId);
-      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
       return;
     }
 
     if ("browserId" in payload.result) {
-      this.browserHostByBrowserId.set(payload.result.browserId, clientId);
-      this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      this.browserHostByBrowserId.set(payload.result.browserId, browserHostId);
     }
   }
 

@@ -32,6 +32,7 @@ export const BrowserAutomationHostCapabilitySchema = z
     }),
     hostKind: z.string().min(1).default("browser host"),
     label: z.string().min(1).max(160).optional(),
+    instanceId: z.uuid().optional(),
   })
   .passthrough();
 

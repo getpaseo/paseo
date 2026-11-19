@@ -3494,6 +3494,7 @@ export const BrowserHostRegisterRequestSchema = z.object({
   requestId: z.string(),
   hostKind: z.string().min(1),
   label: z.string().min(1).max(160).optional(),
+  instanceId: z.uuid().optional(),
   supportedCommands: z.array(z.enum(BROWSER_AUTOMATION_COMMAND_NAMES)).min(1),
 });
 export const BrowserHostRegisterResponseSchema = z.object({

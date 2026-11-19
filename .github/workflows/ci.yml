@@ -378,6 +378,7 @@ jobs:
         run: npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
         env:
           PASEO_DESKTOP_BROWSER_HOSTS_ONLY: "1"
+          PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR: ${{ runner.temp }}/desktop-browser-e2e/host-selection
 
       - name: Upload desktop browser diagnostics
         uses: actions/upload-artifact@v4

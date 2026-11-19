@@ -26,7 +26,7 @@ nav: 工具参考
 | `browser_close_tab`  | `browserId`                | 关闭标签页并清理它的 webview。                                 |
 | `browser_resize`     | `browserId, width, height` | 调整标签页视口大小，用手机或平板的尺寸检查布局。               |
 
-如果只有一个宿主支持打开标签页，可以省略 `browserHostId`。如果有多个，请传入 `browser_list_hosts` 返回的 ID。在 Paseo Desktop 中打开 **Window → Browser host**，即可查看或复制 Agent 看到的名称。宿主重新连接后，请重新列出宿主以获取当前 ID。
+如果只有一个宿主支持打开标签页，可以省略 `browserHostId`。如果有多个，请传入 `browser_list_hosts` 返回的 ID。在 Paseo Desktop 的命令中心搜索 **复制浏览器宿主名称**。结果会显示 Agent 看到的名称，选择该结果即可复制名称。如果选定的宿主不可用，请重新列出宿主。
 
 ## 读取页面 {#reading-the-page}
 

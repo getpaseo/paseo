@@ -135,7 +135,7 @@ describe("browser automation protocol integration", () => {
     ).toBeUndefined();
   });
 
-  test("browser host registration accepts a label and remains valid without one", () => {
+  test("browser host registration accepts window identity and remains valid without it", () => {
     const request = {
       type: "browser.host.register.request",
       requestId: "register-browser",
@@ -143,8 +143,13 @@ describe("browser automation protocol integration", () => {
       supportedCommands: ["new_tab"],
     };
     const label = "MacBook Pro · Window 2";
+    const instanceId = "33333333-3333-4333-8333-333333333333";
     expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
-    expect(SessionInboundMessageSchema.parse({ ...request, label })).toEqual({ ...request, label });
+    expect(SessionInboundMessageSchema.parse({ ...request, label, instanceId })).toEqual({
+      ...request,
+      label,
+      instanceId,
+    });
   });
 
   test("daemon to browser host execute request is an outbound session message", () => {

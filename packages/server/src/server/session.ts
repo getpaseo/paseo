@@ -1408,6 +1408,7 @@ export class Session {
             requestId: uuidv4(),
             hostKind: host.data.hostKind,
             label: host.data.label,
+            instanceId: host.data.instanceId,
             supportedCommands: host.data.supportedCommands,
           };
           void this.delivery
@@ -2573,6 +2574,7 @@ export class Session {
         id: owner.id,
         hostKind: request.hostKind,
         label: request.label,
+        instanceId: request.instanceId,
         supportedCommands: request.supportedCommands,
         sendBrowserAutomationRequest: (message) => owner.emit(message),
       });

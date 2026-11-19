@@ -15,6 +15,7 @@ class FakeBrowserHostClient implements BrowserHostClient {
   public readonly receivedRequests: BrowserAutomationExecuteRequest[] = [];
   public readonly hostKind: string;
   public readonly label?: string;
+  public readonly instanceId?: string;
   public readonly supportedCommands: readonly BrowserAutomationCommandName[];
 
   public constructor(
@@ -23,10 +24,12 @@ class FakeBrowserHostClient implements BrowserHostClient {
       hostKind?: string;
       supportedCommands?: readonly BrowserAutomationCommandName[];
       label?: string;
+      instanceId?: string;
     } = {},
   ) {
     this.hostKind = options.hostKind ?? "desktop app";
     this.label = options.label;
+    this.instanceId = options.instanceId;
     this.supportedCommands = options.supportedCommands ?? [...BROWSER_AUTOMATION_COMMAND_NAMES];
   }
 
@@ -362,7 +365,7 @@ describe("BrowserToolsBroker", () => {
     });
     expect(inventoryHost.receivedRequests).toEqual([]);
 
-    broker.registerClient(formerHost);
+    broker.registerClient(new FakeBrowserHostClient("reconnected", { label: previous.label }));
     const reconnected = broker.listBrowserHosts().find(({ label }) => label === previous.label);
     expect(reconnected).toBeDefined();
     expect(reconnected?.browserHostId).not.toBe(previous.browserHostId);
@@ -370,6 +373,47 @@ describe("BrowserToolsBroker", () => {
       broker.execute({ ...input, browserHostId: previous.browserHostId }),
     ).resolves.toMatchObject({ ok: false, error: { code: "browser_no_host" } });
     expect(formerHost.receivedRequests).toEqual([]);
+  });
+
+  test("a reconnect replaces the old connection for the same browser host", async () => {
+    const broker = createBroker();
+    const identity = {
+      instanceId: "33333333-3333-4333-8333-333333333333",
+      label: "Desktop · Window 1",
+    };
+    const oldConnection = new FakeBrowserHostClient("old", identity);
+    const releaseOld = broker.registerClient(oldConnection);
+    const [target] = broker.listBrowserHosts();
+    const pending = broker.execute({ command: { command: "new_tab", args: {} } });
+
+    const newConnection = new FakeBrowserHostClient("new", identity);
+    broker.registerClient(newConnection);
+    expect(broker.listBrowserHosts()).toEqual([target]);
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host" },
+    });
+    releaseOld();
+
+    const creation = broker.execute({
+      command: { command: "new_tab", args: {} },
+      browserHostId: target.browserHostId,
+    });
+    newConnection.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "new_tab",
+        browserId: BROWSER_ID,
+        workspaceId: "workspace-1",
+        url: "https://example.com",
+      },
+    });
+    await expect(creation).resolves.toMatchObject({
+      ok: true,
+      result: { browserHost: target },
+    });
+    expect(oldConnection.receivedRequests).toHaveLength(1);
   });
 
   test("list tabs aggregates all hosts and seeds browser id affinity", async () => {

@@ -365,20 +365,22 @@ async function listBrowserHosts(client) {
   return reply.structuredContent.browserHosts;
 }
 
-async function readBrowserHostMenuLabel(inspectorPort) {
-  return evaluateDesktopWindow(
-    inspectorPort,
-    `return process.mainModule.require('electron').Menu.getApplicationMenu().items
-      .find(item => item.label === 'Window').submenu.items
-      .find(item => item.label === 'Browser host')?.submenu.items[0].label;`,
-  );
+async function expectBrowserHostNameInCommandCenter(page, name) {
+  await page.getByTestId("sidebar-search").click();
+  const search = page.getByTestId("command-center-input");
+  await search.fill("Copy browser host name");
+  const action = page.getByRole("button", { name: /Copy browser host name/ });
+  await expect(action).toContainText(name);
+  await action.click();
+  await expect(search).toBeHidden();
+  await expect(page.getByText("Copied", { exact: true })).toBeVisible();
 }
 
-async function verifyBrowserHostRouting({ page, client, targetUrl, inspectorPort, artifactDir }) {
+async function verifyBrowserHostRouting({ page, client, targetUrl }) {
   await openBrowserWorkspace(page);
   await expect.poll(async () => (await listBrowserHosts(client)).length).toBe(1);
   const [firstHost] = await listBrowserHosts(client);
-  await expect.poll(() => readBrowserHostMenuLabel(inspectorPort)).toBe(firstHost.label);
+  await expectBrowserHostNameInCommandCenter(page, firstHost.label);
   const secondWindow = await openSecondDesktopWindow(page);
 
   try {
@@ -388,7 +390,7 @@ async function verifyBrowserHostRouting({ page, client, targetUrl, inspectorPort
       (host) => host.browserHostId !== firstHost.browserHostId,
     );
     assert(secondHost?.label && secondHost.label !== firstHost.label, "Windows share a host label");
-    await expect.poll(() => readBrowserHostMenuLabel(inspectorPort)).toBe(secondHost.label);
+    await expectBrowserHostNameInCommandCenter(secondWindow, secondHost.label);
 
     const ambiguous = await client.callTool({ name: "browser_new_tab", args: { url: targetUrl } });
     expect(ambiguous.structuredContent).toMatchObject({
@@ -409,7 +411,6 @@ async function verifyBrowserHostRouting({ page, client, targetUrl, inspectorPort
       { browserId, browserHost: firstHost, isActive: false },
     ]);
     await callBrowserTool(client, "browser_wait", { browserId, text: "Bridge target" });
-    await page.screenshot({ path: path.join(artifactDir, "selected-browser-host.png") });
     await callBrowserTool(client, "browser_close_tab", { browserId });
   } finally {
     await secondWindow.close();
@@ -1454,13 +1455,7 @@ async function main() {
 
     if (process.env.PASEO_DESKTOP_BROWSER_HOSTS_ONLY === "1") {
       client = await connectBrowserToolClient(daemonPort, await createCallerAgent(daemonPort));
-      await verifyBrowserHostRouting({
-        page,
-        client,
-        targetUrl: target.url,
-        inspectorPort,
-        artifactDir,
-      });
+      await verifyBrowserHostRouting({ page, client, targetUrl: target.url });
       console.log("Browser host discovery, window labels, and explicit routing passed.");
       return;
     }

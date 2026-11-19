@@ -1,4 +1,4 @@
-import { app, clipboard, Menu, BrowserWindow, ipcMain } from "electron";
+import { app, Menu, BrowserWindow, ipcMain } from "electron";
 import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
@@ -8,7 +8,6 @@ interface ShowContextMenuInput {
 
 interface ApplicationMenuOptions {
   onNewWindow: () => void;
-  getBrowserHostLabel: (win: BrowserWindow) => string | undefined;
 }
 
 function withBrowserWindow(
@@ -68,7 +67,6 @@ export function reloadActiveBrowserOrWindow({
 function buildApplicationMenuTemplate(
   options: ApplicationMenuOptions,
   capturing: boolean,
-  browserHostLabel: string | undefined,
 ): Electron.MenuItemConstructorOptions[] {
   const isMac = process.platform === "darwin";
   const zoomEnabled = !capturing;
@@ -173,21 +171,6 @@ function buildApplicationMenuTemplate(
     {
       label: "Window",
       submenu: [
-        ...(browserHostLabel
-          ? [
-              {
-                label: "Browser host",
-                submenu: [
-                  { label: browserHostLabel, enabled: false },
-                  {
-                    label: "Copy name",
-                    click: () => clipboard.writeText(browserHostLabel),
-                  },
-                ],
-              },
-              { type: "separator" as const },
-            ]
-          : []),
         { role: "minimize" },
         { role: "zoom" },
         ...(isMac
@@ -200,16 +183,11 @@ function buildApplicationMenuTemplate(
 
 let applicationMenuOptions: ApplicationMenuOptions | null = null;
 let capturingShortcut = false;
-let currentBrowserHostLabel: string | undefined;
 
 function rebuildApplicationMenu(): void {
   if (!applicationMenuOptions) return;
   const menu = Menu.buildFromTemplate(
-    buildApplicationMenuTemplate(
-      applicationMenuOptions,
-      capturingShortcut,
-      currentBrowserHostLabel,
-    ),
+    buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut),
   );
   Menu.setApplicationMenu(menu);
 }
@@ -217,17 +195,6 @@ function rebuildApplicationMenu(): void {
 export function setupApplicationMenu(options: ApplicationMenuOptions): void {
   applicationMenuOptions = options;
   rebuildApplicationMenu();
-  app.on("browser-window-focus", (_event, win) => {
-    const label = options.getBrowserHostLabel(win);
-    if (label === currentBrowserHostLabel) return;
-    currentBrowserHostLabel = label;
-    rebuildApplicationMenu();
-  });
-  app.on("window-all-closed", () => {
-    if (currentBrowserHostLabel === undefined) return;
-    currentBrowserHostLabel = undefined;
-    rebuildApplicationMenu();
-  });
 
   ipcMain.handle("paseo:menu:showContextMenu", (event, input?: ShowContextMenuInput) => {
     const win = BrowserWindow.fromWebContents(event.sender);

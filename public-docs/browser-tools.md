@@ -28,7 +28,7 @@ Arguments marked `?` are optional.
 | `browser_close_tab`  | `browserId`                | Close a tab and clean up its webview.                                      |
 | `browser_resize`     | `browserId, width, height` | Resize the tab's viewport — check a layout at phone or tablet dimensions.  |
 
-With one host that can open tabs, omit `browserHostId`. With several, pass an ID from `browser_list_hosts`. In Paseo Desktop, open **Window → Browser host** to see or copy the name that the agent sees. If a host reconnects, list hosts again to get its current ID.
+With one host that can open tabs, omit `browserHostId`. With several, pass an ID from `browser_list_hosts`. In Paseo Desktop, search for **Copy browser host name** in the Command Center. The result shows the same name the agent sees. Select it to copy the name. If the selected host is unavailable, list hosts again.
 
 ## Reading the page
 
