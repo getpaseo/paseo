@@ -1,3 +1,5 @@
+import { promptSubmissionError, waitForProviderPromptAdmission } from "../prompt-admission.js";
+import { AgentTurnStartCanceledError } from "../../agent-sdk-types.js";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -1297,67 +1299,74 @@ export class PiRpcAgentSession implements AgentSession {
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("Pi session is closed");
-    if (this.activeTurnId !== turnId) return { turnId };
+    if (this.activeTurnId !== turnId) throw new AgentTurnStartCanceledError();
     this.activeNoTurnPromptText = payload.text;
     const shouldProbeForNoTurnPrompt = this.parseSlashCommandInput(payload.text) !== null;
 
-    void (async () => {
-      try {
-        if (this.compactionPromise) {
-          // Pi RPC rejects prompts until the manual compaction request settles.
-          await this.compactionPromise.catch(() => undefined);
-          const turnCanceled =
-            this.closed || this.activeTurnId !== turnId || this.interruptingTurn?.turnId === turnId;
-          if (turnCanceled) {
+    let submitted = false;
+    await waitForProviderPromptAdmission({
+      turnId,
+      subscribe: this.subscribe.bind(this),
+      submit: async (accepted) => {
+        try {
+          if (this.compactionPromise) {
+            // Pi RPC rejects prompts until the manual compaction request settles.
+            await this.compactionPromise.catch(() => undefined);
+            const turnCanceled =
+              this.closed ||
+              this.activeTurnId !== turnId ||
+              this.interruptingTurn?.turnId === turnId;
+            if (turnCanceled) throw new AgentTurnStartCanceledError();
+          }
+          submitted = true;
+          const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+          accepted();
+          this.activePromptRequestId = ack.requestId ?? null;
+          const correlatedResult = ack.requestId
+            ? this.pendingPromptResults.get(ack.requestId)
+            : undefined;
+          if (ack.requestId) {
+            this.pendingPromptResults.delete(ack.requestId);
+          }
+          const agentInvoked = correlatedResult ?? ack.agentInvoked;
+          if (agentInvoked === false) {
+            await this.completeNoTurnPrompt(turnId);
             return;
           }
-        }
-        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
-        this.activePromptRequestId = ack.requestId ?? null;
-        const correlatedResult = ack.requestId
-          ? this.pendingPromptResults.get(ack.requestId)
-          : undefined;
-        if (ack.requestId) {
-          this.pendingPromptResults.delete(ack.requestId);
-        }
-        const agentInvoked = correlatedResult ?? ack.agentInvoked;
-        if (agentInvoked === false) {
-          await this.completeNoTurnPrompt(turnId);
-          return;
-        }
-        if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
-          await this.completePromptIfHandledWithoutTurn(turnId);
-        }
-      } catch (error) {
-        if (this.activeTurnId !== turnId) {
-          return;
-        }
-        this.usagePoller.stopTurn();
-        this.activeTurnId = null;
-        this.activeClientMessageId = null;
-        this.activeTurnStarted = false;
-        this.activeTurnStartedEmitted = false;
-        this.pendingSettledMessages = null;
-        this.activeAssistantMessageId = null;
-        this.pendingSteerSubmissions.length = 0;
-        this.clearNoTurnBuffers();
-        if (isPiRequestAbortError(error)) {
+          if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
+            await this.completePromptIfHandledWithoutTurn(turnId);
+          }
+        } catch (error) {
+          const failure = promptSubmissionError(error, submitted);
+          if (this.activeTurnId !== turnId) throw failure;
+          this.usagePoller.stopTurn();
+          this.activeTurnId = null;
+          this.activeClientMessageId = null;
+          this.activeTurnStarted = false;
+          this.activeTurnStartedEmitted = false;
+          this.pendingSettledMessages = null;
+          this.activeAssistantMessageId = null;
+          this.pendingSteerSubmissions.length = 0;
+          this.clearNoTurnBuffers();
+          if (error instanceof AgentTurnStartCanceledError || isPiRequestAbortError(error)) {
+            this.emit({
+              type: "turn_canceled",
+              provider: this.provider,
+              turnId,
+              reason: toDiagnosticErrorMessage(error),
+            });
+            throw failure;
+          }
           this.emit({
-            type: "turn_canceled",
+            type: "turn_failed",
             provider: this.provider,
             turnId,
-            reason: toDiagnosticErrorMessage(error),
+            error: toDiagnosticErrorMessage(error),
           });
-          return;
+          throw failure;
         }
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: toDiagnosticErrorMessage(error),
-        });
-      }
-    })();
+      },
+    });
 
     return { turnId };
   }

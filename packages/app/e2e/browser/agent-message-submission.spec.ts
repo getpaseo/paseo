@@ -1,3 +1,4 @@
+import { withDirectoryPlugin } from "../support/helpers/plugin-timeline";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test as baseTest } from "../support/fixtures";
 import {
@@ -83,6 +84,7 @@ interface DraftCreateScenario {
 }
 
 interface RejectionScenario {
+  agent: Awaited<ReturnType<typeof seedMockAgentWorkspace>>;
   errorMessage: string;
 }
 
@@ -139,13 +141,13 @@ const test = baseTest.extend<{
     const agent = await seedMockAgentWorkspace({
       repoPrefix: `message-rejection-${testInfo.workerIndex}-`,
       title: "Message rejection regression",
-      model: "ten-second-stream",
+      model: "one-minute-stream",
       featureValues: { mockPromptRejections: 1 },
     });
     await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
     await expectComposerVisible(page);
     await expectAgentIdle(page);
-    await provide({ errorMessage });
+    await provide({ errorMessage, agent });
     await agent.cleanup();
   },
   unrelatedRunningScenario: async ({ page }, provide, testInfo) => {
@@ -1213,15 +1215,156 @@ test.describe("Agent message submission", () => {
     await toasts.expectNeverShown("agent-updating-toast");
   });
 
+  for (const width of [1280, 390]) {
+    test(`outbox retries a definite failure with its original identity at width ${width}`, async ({
+      page,
+      unrelatedRunningScenario,
+    }, testInfo) => {
+      const { agent, gate } = unrelatedRunningScenario;
+      await page.setViewportSize({ width, height: 844 });
+      await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+      await expectComposerVisible(page);
+      await fillComposerDraft(page, "Retry this original saved message");
+      await page.getByRole("button", { name: "Send message", exact: true }).click();
+      const first = await gate.waitForRequest();
+      gate.reject({ outcome: "not_submitted" });
+      await expect(
+        page.getByText("Not delivered. Retry this saved message.", { exact: true }),
+      ).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath(`outbox-failed-${width}.png`) });
+      await page.getByRole("button", { name: "Retry delivery", exact: true }).click();
+      const second = await gate.waitForRequest(2);
+      expect(first.messageId).toBeTruthy();
+      expect(second.messageId).toBe(first.messageId);
+      gate.accept(1);
+      await expect(page.getByRole("button", { name: "Retry delivery", exact: true })).toHaveCount(
+        0,
+      );
+      await expect(
+        page.getByTestId("user-message").filter({ hasText: "Retry this original saved message" }),
+      ).toHaveCount(1);
+      await page.screenshot({ path: testInfo.outputPath(`outbox-retry-${width}.png`) });
+    });
+  }
+  test("outbox checks uncertain delivery without submitting another prompt", async ({
+    page,
+    unrelatedRunningScenario,
+  }) => {
+    const { gate } = unrelatedRunningScenario;
+    await fillComposerDraft(page, "Check this uncertain delivery");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await gate.waitForRequest();
+    gate.reject({ outcome: "unknown" });
+    await expect(
+      page.getByText("Delivery is unconfirmed. Check status before taking another action.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Check delivery status", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Check delivery status", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(
+      "Check this uncertain delivery",
+    );
+    await expect(
+      page.getByText("Delivery is unconfirmed. Check status before taking another action.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(gate.requestCount()).toBe(1);
+    await expect(page.getByRole("button", { name: "Retry delivery", exact: true })).toHaveCount(0);
+  });
+
   test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,
-  }) => {
+  }, testInfo) => {
     const prompt = "Restore this rejected submission.";
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
     await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-before-jump.png") });
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    const highlighted = page.getByTestId("user-message-highlight");
+    await expect(highlighted).toHaveCount(1);
+    await expect(highlighted).toContainText(prompt);
+    await expect(highlighted).toBeInViewport();
+    await expect(
+      page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
+    ).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("message-delivery-recovery.png") });
     await retryRestoredSubmission(page, prompt);
+    await expect(highlighted).toHaveCount(0);
+  });
+  test("Find message reports a hidden target instead of claiming a successful reveal", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "This failed message is hidden by a plugin.";
+    await withDirectoryPlugin({
+      pluginId: "hide-submitted-message",
+      source: `export default function contribute(client) {
+        client.addTimelineTransformer({ id: "hide", query: { itemType: "user_message" }, transform: () => ({ items: [] }) });
+        return () => {};
+      }`,
+      run: async () => {
+        await submitMessageThatWillBeRejected(page, prompt);
+        await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+        await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
+        await page.getByRole("button", { name: "Find message", exact: true }).click();
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Delivery is still unconfirmed" }),
+        ).toBeVisible();
+        await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
+        await expectComposerDraft(page, prompt);
+      },
+    });
+  });
+
+  test("finds a cached failed message offline without losing the draft", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "Keep this failed draft while locating it offline.";
+    await submitMessageThatWillBeRejected(page, prompt);
+    await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(prompt);
+    await expectComposerDraft(page, prompt);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  });
+
+  test("keeps a failed message location after a later queued send succeeds", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const failedPrompt = "Locate this earlier rejected message.";
+    const queuedPrompt = "This later queued message succeeds.";
+    await submitMessageThatWillBeRejected(page, failedPrompt);
+    await expectRejectedSubmissionRestored(page, { prompt: failedPrompt, ...rejectionScenario });
+    await rejectionScenario.agent.client.sendAgentMessage(
+      rejectionScenario.agent.agentId,
+      "Keep an unrelated turn active.",
+    );
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: "Keep an unrelated turn active." }),
+    ).toBeVisible();
+    await queueMessage(page, queuedPrompt);
+    await page.getByRole("button", { name: "Send queued message now" }).click();
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: queuedPrompt }),
+    ).toHaveAttribute("aria-busy", "false");
+    await expect(
+      page.getByRole("alert").filter({ hasText: rejectionScenario.errorMessage }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    const highlighted = page.getByTestId("user-message-highlight");
+    await expect(highlighted).toHaveCount(1);
+    await expect(highlighted).toContainText(failedPrompt);
+    await expect(highlighted).not.toContainText(queuedPrompt);
   });
 
   test("restores an ambiguous Steer failure without retrying or interrupting", async ({
@@ -1419,6 +1562,13 @@ test.describe("Agent message submission", () => {
     ).toBeVisible();
     await unrelatedRunningScenario.gate.disconnect();
     await expectFailedSubmissionRestored(page, prompt);
+    const viewMessage = page.getByRole("button", { name: "Find message", exact: true });
+    await viewMessage.click();
+    await expect(page.getByTestId("view-submitted-message-error")).toHaveText(
+      "Could not refresh the conversation. Delivery is still unconfirmed. Reconnect and try finding the message again.",
+    );
+    await expect(page.getByTestId("user-message-highlight")).toHaveCount(0);
+    await expect(viewMessage).toBeEnabled();
   });
 
   test("keeps a submitted prompt before its response when canonical history arrives", async ({
@@ -1477,5 +1627,25 @@ test.describe("Agent message submission", () => {
 
   test("uses untracked optimistic rows for an old host", async ({ page }, testInfo) => {
     await expectOldHostSubmissionBehavior(page, testInfo);
+  });
+});
+
+test.describe("compact message recovery", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  test("compact Find message reveals the failed prompt and retains the draft", async ({
+    page,
+    rejectionScenario,
+  }) => {
+    const prompt = "Recover this prompt in the compact layout.";
+    await attachImageFromMenu(page, IMAGE);
+    await expectAttachmentPill(page, "composer-image-attachment-pill");
+    await fillComposerDraft(page, prompt);
+    // Compact editors use Enter for a newline; send through the visible control.
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await page.getByRole("button", { name: "Find message", exact: true }).click();
+    await expect(page.getByTestId("user-message-highlight")).toContainText(prompt);
+    await expect(page.getByTestId("user-message-highlight")).toBeInViewport();
+    await expectComposerDraft(page, prompt);
   });
 });

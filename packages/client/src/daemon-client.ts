@@ -1080,6 +1080,19 @@ export type PluginCatalogEntry = Omit<PluginCatalogResponseEntry, "clientBundle"
   clientBundle: string;
 };
 
+export class AgentMessageSendError extends Error {
+  readonly deliveryOutcome: "not_submitted" | "rejected" | "unknown";
+  constructor(input: {
+    message: string;
+    deliveryOutcome: "not_submitted" | "rejected" | "unknown";
+    cause?: unknown;
+  }) {
+    super(input.message, { cause: input.cause });
+    this.deliveryOutcome = input.deliveryOutcome;
+    this.name = "AgentMessageSendError";
+  }
+}
+
 export class DaemonConnectionError extends Error {
   readonly serverId?: string;
   readonly outcome?: "unknown";
@@ -4249,13 +4262,19 @@ export class DaemonClient {
       options.sourceAgentId &&
       this.lastServerInfoMessage?.features?.agentMessageProvenance !== true
     ) {
-      throw new Error("Update the Paseo host to send messages with agent provenance.");
+      throw new AgentMessageSendError({
+        message: "Update the Paseo host to send messages with agent provenance.",
+        deliveryOutcome: "not_submitted",
+      });
     }
     if (
       options.sourceAgentServerId &&
       this.lastServerInfoMessage?.features?.agentMessageBatching !== true
     ) {
-      throw new Error("Update the Paseo host to send messages with a qualified agent address.");
+      throw new AgentMessageSendError({
+        message: "Update the Paseo host to send messages with a qualified agent address.",
+        deliveryOutcome: "not_submitted",
+      });
     }
     const requestId = this.createRequestId();
     const messageId = options.messageId ?? crypto.randomUUID();
@@ -4287,9 +4306,38 @@ export class DaemonClient {
       },
     });
     if (!payload.accepted) {
-      throw new Error(payload.error ?? "sendAgentMessage rejected");
+      throw new AgentMessageSendError({
+        message: payload.error ?? "sendAgentMessage rejected",
+        deliveryOutcome: payload.deliveryOutcome ?? "unknown",
+      });
     }
     return payload.deliveryStatus ? { deliveryStatus: payload.deliveryStatus } : {};
+  }
+
+  async getAgentMessageDeliveryStatus(
+    input: SendMessageOptions & { agentId: string; text: string; messageId: string },
+  ) {
+    if (this.getLastServerInfoMessage()?.features?.messageDeliveryStatus !== true)
+      throw new Error("Update the Paseo host to check message delivery status.");
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      ...input,
+      type: "agent.message.get_delivery_status.request",
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.message.get_delivery_status.response" &&
+        msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error || payload.status === null)
+      throw new Error(payload.error ?? "Could not check message delivery");
+    return { status: payload.status, failure: payload.failure };
   }
 
   async sendMessage(

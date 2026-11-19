@@ -39,6 +39,7 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { applyMetadataPatch } from "@/composer/draft/metadata";
 import { hasDraftContent } from "@/composer/draft/input-draft-core";
+import { getOutboxImageIds, hydrateOutbox } from "@/composer/outbox/store";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
 
@@ -172,6 +173,14 @@ async function runAttachmentGc(): Promise<void> {
   }
   for (const id of collectRetainedAttachmentIds()) {
     referencedIds.add(id);
+  }
+  try {
+    await hydrateOutbox();
+    for (const id of getOutboxImageIds()) referencedIds.add(id);
+  } catch (error) {
+    // An unreadable outbox must not cause its attachments to be swept.
+    console.warn("[DraftStore] Skipping attachment GC while outbox is unreadable", error);
+    return;
   }
 
   const pendingByDraftId = useCreateFlowStore.getState().pendingByDraftId;

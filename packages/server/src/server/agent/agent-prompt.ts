@@ -1,3 +1,4 @@
+import { messageFingerprint } from "../message-receipts/fingerprint.js";
 import { prepareAgentMessage, type AgentPromptSource } from "./agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -374,7 +375,16 @@ export async function sendPromptToAgent(
     ...params,
     prompt: delivery.prompt,
     runOptions: delivery.messageId
-      ? { ...params.runOptions, clientMessageId: delivery.messageId }
+      ? {
+          ...params.runOptions,
+          clientMessageId: delivery.messageId,
+          submittedMessages: [
+            {
+              clientMessageId: delivery.messageId,
+              promptFingerprint: messageFingerprint(params.prompt),
+            },
+          ],
+        }
       : params.runOptions,
   });
 }

@@ -131,6 +131,20 @@ export const ko: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "기기에 저장되었습니다. 호스트 또는 에이전트를 기다리는 중입니다.",
+      sending: "전송 중…",
+      needsReview: "전송 결과가 확인되지 않았습니다. 먼저 상태를 확인하세요.",
+      retry: "전송 다시 시도",
+      discard: "저장된 메시지 삭제",
+      attachmentMessage: "첨부 파일이 있는 메시지",
+
+      failed: "전송되지 않았습니다. 이 메시지를 다시 시도하세요.",
+      inFlight: "호스트가 처리 중입니다. 자동으로 확인 중…",
+      checking: "전송 확인 중…",
+      check: "전송 상태 확인",
+    },
+    viewMessage: "메시지 찾기",
     placeholders: {
       desktop: "에이전트에게 메시지를 보내거나 @files 태그, /commands, /skills를 사용하세요",
       mobile: "메시지, @files, /commands",
@@ -193,6 +207,10 @@ export const ko: TranslationResources = {
       removeReview: "리뷰 첨부 제거",
     },
     errors: {
+      messageLookupFailed:
+        "대화를 새로 고칠 수 없습니다. 전달 여부는 아직 확인되지 않았습니다. 다시 연결한 후 메시지를 찾아보세요.",
+      messageNotFound:
+        "사용 가능한 기록에서 이 메시지를 찾을 수 없습니다. 전달 여부는 아직 확인되지 않았습니다.",
       failedToSend: "메시지를 보내지 못했습니다",
       failedToCreateAgent: "에이전트를 생성하지 못했습니다",
       noHostSelected: "선택된 호스트가 없습니다",

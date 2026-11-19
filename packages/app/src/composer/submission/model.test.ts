@@ -113,8 +113,20 @@ describe("message submission transactions", () => {
   it("does not create duplicate transaction identity", () => {
     const sending = beginMessageSubmission([], { clientMessageId: "client-1" });
 
-    expect(() => beginMessageSubmission(sending, { clientMessageId: "client-1" })).toThrow(
-      "Message submission already exists",
-    );
+    expect(beginMessageSubmission(sending, { clientMessageId: "client-1" })).toEqual([
+      { ...sending[0], pendingAttempts: 2 },
+    ]);
   });
+});
+
+it("does not let replaying a pre-retry row acknowledge the new attempt", () => {
+  const started = beginMessageSubmission([], {
+    clientMessageId: "same-id",
+    existingTimelineRow: true,
+  });
+  const replayed = observeMessageSubmissionCanonical(started, ["same-id"]);
+  expect(replayed[0]?.providerAcknowledged).toBe(false);
+  const rejected = rejectMessageSubmission(replayed, "same-id");
+  expect(rejected.outcome).toBe("rejected");
+  expect(rejected.submissions).toEqual([]);
 });

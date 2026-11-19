@@ -132,6 +132,20 @@ export const ja: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "この端末に保存済みです。ホストまたはエージェントの準備を待っています。",
+      sending: "送信中…",
+      needsReview: "配信は未確認です。操作する前に状態を確認してください。",
+      retry: "送信を再試行",
+      discard: "保存したメッセージを破棄",
+      attachmentMessage: "添付ファイル付きメッセージ",
+
+      failed: "未配信です。このメッセージを再試行できます。",
+      inFlight: "ホストが処理中です。自動確認しています…",
+      checking: "配信を確認中…",
+      check: "配信状態を確認",
+    },
+    viewMessage: "メッセージを探す",
     placeholders: {
       desktop: "エージェントにメッセージ、@ファイル、/コマンドや/スキルを入力",
       mobile: "メッセージ、@ファイル、/コマンド",
@@ -194,6 +208,10 @@ export const ja: TranslationResources = {
       removeReview: "レビュー添付ファイルを削除",
     },
     errors: {
+      messageLookupFailed:
+        "会話を更新できませんでした。配信はまだ確認できていません。再接続してメッセージをもう一度探してください。",
+      messageNotFound:
+        "利用可能な履歴でこのメッセージを見つけられませんでした。配信はまだ確認できていません。",
       failedToSend: "メッセージの送信に失敗しました",
       failedToCreateAgent: "エージェントの作成に失敗しました",
       noHostSelected: "ホストが選択されていません",

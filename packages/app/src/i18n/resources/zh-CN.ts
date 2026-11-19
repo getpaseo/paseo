@@ -131,6 +131,20 @@ export const zhCN: TranslationResources = {
     },
   },
   composer: {
+    outbox: {
+      pending: "已保存在此设备，等待主机或代理就绪。",
+      sending: "发送中…",
+      needsReview: "发送结果未确认，请先检查状态。",
+      retry: "重试发送",
+      discard: "丢弃已保存的消息",
+      attachmentMessage: "带附件的消息",
+
+      failed: "未发送。可重试此消息。",
+      inFlight: "主机仍在处理此消息，正在自动检查…",
+      checking: "正在检查发送状态…",
+      check: "检查发送状态",
+    },
+    viewMessage: "查找消息",
     placeholders: {
       desktop: "给 Agent 发消息，标记 @files，或使用 /commands 和 /skills",
       mobile: "发消息，@files，/commands",
@@ -193,6 +207,8 @@ export const zhCN: TranslationResources = {
       removeReview: "移除 review 附件",
     },
     errors: {
+      messageLookupFailed: "无法刷新对话。仍无法确认是否已送达。请重新连接后再次查找消息。",
+      messageNotFound: "在可用历史记录中未找到此消息。仍无法确认是否已送达。",
       failedToSend: "发送消息失败",
       failedToCreateAgent: "创建 Agent 失败",
       noHostSelected: "未选择 Host",

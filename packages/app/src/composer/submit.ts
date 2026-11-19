@@ -1,3 +1,4 @@
+import { ComposerMessageSubmissionError } from "@/composer/submission/error";
 import { i18n } from "@/i18n/i18next";
 
 export type AgentInputSubmitResult = "noop" | "queued" | "submitted" | "failed";
@@ -16,7 +17,7 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   setUserInput: (text: string) => void;
   setAttachments: (attachments: TAttachment[]) => void;
-  setSendError: (message: string | null) => void;
+  setSendError: (message: string | null, clientMessageId?: string) => void;
   setIsProcessing: (isProcessing: boolean) => void;
   onSubmitError?: (error: unknown) => void;
   failedToSendMessage?: string;
@@ -70,11 +71,15 @@ export async function submitAgentInput<TAttachment>(
       input.setUserInput(trimmedMessage);
       input.setAttachments(attachments);
     }
-    input.setSendError(
+    const errorMessage =
       error instanceof Error
         ? error.message
-        : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
-    );
+        : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend"));
+    if (error instanceof ComposerMessageSubmissionError) {
+      input.setSendError(errorMessage, error.clientMessageId);
+    } else {
+      input.setSendError(errorMessage);
+    }
     input.setIsProcessing(false);
     return "failed";
   }

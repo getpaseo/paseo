@@ -111,6 +111,7 @@ interface UserMessageProps {
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   isPending?: boolean;
+  isHighlighted?: boolean;
   disableOuterSpacing?: boolean;
 }
 
@@ -304,6 +305,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     ...(isWeb ? { userSelect: "text" as const } : {}),
   },
+  highlightedBubble: {
+    outlineStyle: "solid",
+    outlineWidth: theme.borderWidth[2],
+    outlineColor: theme.colors.accent,
+  },
   content: {
     alignItems: "flex-end",
     maxWidth: "100%",
@@ -411,6 +417,7 @@ export const UserMessage = memo(function UserMessage({
   isFirstInGroup = true,
   isLastInGroup = true,
   isPending = false,
+  isHighlighted = false,
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
@@ -468,6 +475,10 @@ export const UserMessage = memo(function UserMessage({
     ],
     [hasText],
   );
+  const bubbleStyle = useMemo(
+    () => [userMessageStylesheet.bubble, isHighlighted && userMessageStylesheet.highlightedBubble],
+    [isHighlighted],
+  );
   const trailingRowStyle = useMemo(
     () => [
       userMessageStylesheet.trailingRow,
@@ -486,7 +497,7 @@ export const UserMessage = memo(function UserMessage({
         onPointerLeave={handlePointerLeave}
       >
         {sender ? <MessageSender sender={sender} serverId={serverId} /> : null}
-        <View style={userMessageStylesheet.bubble}>
+        <View style={bubbleStyle} testID={isHighlighted ? "user-message-highlight" : undefined}>
           <MessagePreview itemId={itemId}>
             {hasImages ? (
               <View style={imagePreviewContainerStyle}>

@@ -631,3 +631,38 @@ describe("terminal collection protocol compatibility", () => {
     ).toMatchObject({ payload: { terminals: [{ isScript: true, createdAt: null }] } });
   });
 });
+
+test("message delivery outcomes are optional and receipt status is an explicit read request", () => {
+  const legacy = {
+    type: "send_agent_message_response",
+    payload: { requestId: "r", agentId: "agent", accepted: false, error: "failed" },
+  };
+  expect(SessionOutboundMessageSchema.parse(legacy)).toEqual(legacy);
+  expect(
+    SessionOutboundMessageSchema.parse({
+      ...legacy,
+      payload: { ...legacy.payload, deliveryOutcome: "not_submitted" },
+    }),
+  ).toMatchObject({ payload: { deliveryOutcome: "not_submitted" } });
+  expect(
+    SessionInboundMessageSchema.parse({
+      type: "agent.message.get_delivery_status.request",
+      requestId: "read",
+      agentId: "agent",
+      messageId: "stable",
+      text: "hello",
+    }),
+  ).toMatchObject({ type: "agent.message.get_delivery_status.request", messageId: "stable" });
+  expect(
+    SessionOutboundMessageSchema.parse({
+      type: "agent.message.get_delivery_status.response",
+      payload: {
+        requestId: "read",
+        agentId: "agent",
+        messageId: "stable",
+        status: "in_flight",
+        error: null,
+      },
+    }),
+  ).toMatchObject({ payload: { status: "in_flight" } });
+});

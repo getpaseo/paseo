@@ -54,6 +54,8 @@ $PASEO_HOME/
 ├── paseo.pid                            # Daemon PID lock file
 ├── local-credential                     # Per-run local client credential (mode 0600)
 ├── daemon.log                           # Default log file (path configurable)
+├── message-acceptance/                  # Durable acknowledgement evidence; see docs/hub.md
+│   └── {fingerprint}.json               # Agent/message IDs and a prompt hash; no prompt text
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
@@ -602,12 +604,12 @@ can't read, and write them back on every save. A value that isn't a JSON array i
 
 ### Draft Store
 
-**AsyncStorage key:** `paseo-drafts` (version 2)
+**AsyncStorage key:** `paseo-drafts` (version 5)
 
 ```typescript
 {
   drafts: Record<draftKey, {
-    input: { text: string, images: AttachmentMetadata[] },
+    input: { text: string, attachments: UserComposerAttachment[] },
     lifecycle: "active" | "abandoned" | "sent",
     updatedAt: number,     // epoch ms
     version: number        // optimistic concurrency
@@ -615,6 +617,18 @@ can't read, and write them back on every save. A value that isn't a JSON array i
   createModalDraft: DraftRecord | null
 }
 ```
+
+### Message outbox
+
+**AsyncStorage key:** `paseo-message-outbox-v1`
+
+Chat sends are saved on the device before transport submission. Each item keeps its
+original message ID, host and agent IDs, text, local image metadata, and normalized agent
+attachments. Connected sends start immediately; pending items send after reconnect. The app persists `sending` before transport
+submission; after an app restart, that state becomes `needs_review` and requires an explicit retry.
+The host's delivery receipt uses the same message ID to prevent a retry from starting a second
+turn. An ambiguous host receipt stays visible for review. Attachment garbage collection retains
+images referenced by outbox items.
 
 ### Attachment Store (Web)
 

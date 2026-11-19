@@ -107,6 +107,7 @@ import {
 
 import {
   getAgentStreamEventTurnId,
+  AgentTurnStartCanceledError,
   type AgentPermissionAction,
   type AgentCapabilityFlags,
   type AgentClient,
@@ -2641,7 +2642,7 @@ class ClaudeAgentSession implements AgentSession {
       if (cancelIssued) {
         // Stopped while Claude was still starting up: withdrawn by never sending it.
         if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
-        return { turnId };
+        throw new AgentTurnStartCanceledError();
       }
       if (!this.input) {
         throw new Error("Claude session input stream not initialized");
@@ -2662,8 +2663,13 @@ class ClaudeAgentSession implements AgentSession {
       }, 0);
     } catch (error) {
       if (sdkUserMessageId) this.unstartedMessageUuids.delete(sdkUserMessageId);
+      if (error instanceof AgentTurnStartCanceledError) throw error;
       this.finishForegroundTurn(
         this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
+      );
+      throw Object.assign(
+        new Error(error instanceof Error ? error.message : String(error), { cause: error }),
+        { deliveryOutcome: "not_submitted" as const },
       );
     }
 

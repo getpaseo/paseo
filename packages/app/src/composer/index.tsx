@@ -1,3 +1,6 @@
+import { KeyboardController } from "react-native-keyboard-controller";
+import { Button } from "@/components/ui/button";
+import { useMutation } from "@tanstack/react-query";
 import {
   useComposerEditingSession,
   useComposerFullscreen,
@@ -56,6 +59,7 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
+  Trash2,
 } from "lucide-react-native";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT } from "@/constants/layout";
@@ -154,6 +158,18 @@ import type {
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
+import {
+  createPendingOutboxItem,
+  discardOutboxItem,
+  updateOutboxItem,
+  enqueueOutboxItem,
+  hydrateOutbox,
+  useOutboxStore,
+  type OutboxItem,
+} from "@/composer/outbox/store";
+import { deliverOutboxItem } from "@/composer/outbox/delivery";
+import { generateMessageId } from "@/types/stream";
 import { ComposerInputProvider, type ComposerInput } from "@/composer/session";
 import type { ComposerFocusOptions } from "@/composer/model";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -737,6 +753,114 @@ function QueuedMessageRow({
   );
 }
 
+function OutboxRow({
+  item,
+  client,
+  connected,
+  t,
+  onFindMessage,
+}: {
+  item: OutboxItem;
+  onFindMessage?: (id: string) => Promise<boolean>;
+  client: ReturnType<typeof useHostRuntimeClient>;
+  connected: boolean;
+  t: TFunction;
+}) {
+  const retry = useCallback(() => {
+    if (client) void deliverOutboxItem({ item, client });
+  }, [client, item]);
+  const discard = useCallback(() => {
+    void discardOutboxItem(item.id);
+  }, [item.id]);
+  const findMessage = useMutation({
+    networkMode: "always",
+    mutationFn: async () => {
+      if (!onFindMessage) return;
+      let found: boolean;
+      try {
+        found = await onFindMessage(item.id);
+      } catch (cause) {
+        throw new Error(t("composer.errors.messageLookupFailed"), { cause });
+      }
+      if (!found) throw new Error(t("composer.errors.messageNotFound"));
+    },
+    onError: (error) =>
+      updateOutboxItem(item.id, (current) => ({ ...current, error: error.message })),
+  });
+  const { mutate: findSavedMessage } = findMessage;
+  const find = useCallback(() => findSavedMessage(), [findSavedMessage]);
+  const status = t(
+    (
+      {
+        pending: "composer.outbox.pending",
+        sending: "composer.outbox.sending",
+        failed: "composer.outbox.failed",
+        in_flight: "composer.outbox.inFlight",
+        checking: "composer.outbox.checking",
+        needs_review: "composer.outbox.needsReview",
+      } as const
+    )[item.status],
+  );
+  return (
+    <View style={styles.queueItem}>
+      <View style={styles.outboxDescription}>
+        <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+          {item.text || t("composer.outbox.attachmentMessage")}
+        </Text>
+        <Text
+          style={
+            item.status === "needs_review" || item.status === "failed"
+              ? styles.sendErrorText
+              : styles.outboxStatus
+          }
+        >
+          {status}
+        </Text>
+        {onFindMessage && (item.status === "needs_review" || item.status === "in_flight") ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={findMessage.isPending}
+            onPress={find}
+            style={styles.viewMessageButton}
+          >
+            {t("composer.viewMessage")}
+          </Button>
+        ) : null}
+        {item.error ? <Text style={styles.sendErrorText}>{item.error}</Text> : null}
+      </View>
+      <View style={styles.queueActions}>
+        {(item.status === "needs_review" ||
+          item.status === "in_flight" ||
+          item.status === "failed") &&
+        connected &&
+        client ? (
+          <Pressable
+            onPress={retry}
+            style={[styles.queueActionButton, styles.queueSendButton]}
+            accessibilityRole="button"
+            accessibilityLabel={t(
+              item.status === "failed" ? "composer.outbox.retry" : "composer.outbox.check",
+            )}
+          >
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          </Pressable>
+        ) : null}
+        {item.status !== "sending" && item.status !== "checking" ? (
+          <Pressable
+            onPress={discard}
+            style={styles.queueActionButton}
+            accessibilityRole="button"
+            accessibilityLabel={t("composer.outbox.discard")}
+          >
+            <ThemedTrash2 size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 interface ImageAttachmentPillProps {
   attachment: Extract<ComposerAttachment, { kind: "image" }>;
   index: number;
@@ -988,6 +1112,7 @@ interface ComposerProps {
   commandDraft?: DraftCommandTarget;
   /** Called when a message is about to be sent (any path: keyboard, dictation, queued). */
   onMessageSent?: () => void;
+  onViewSubmittedMessage?: (clientMessageId: string) => Promise<boolean>;
   onComposerHeightChange?: (height: number) => void;
   onAttentionInputFocus?: () => void;
   onAttentionPromptSend?: () => void;
@@ -1310,6 +1435,7 @@ function ComposerContentImpl({
   onFocusInput,
   commandDraft,
   onMessageSent,
+  onViewSubmittedMessage,
   onComposerHeightChange,
   onAttentionInputFocus,
   onAttentionPromptSend,
@@ -1347,6 +1473,11 @@ function ComposerContentImpl({
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
+  const outboxItems = useOutboxStore(
+    useShallow((state) =>
+      state.items.filter((item) => item.serverId === serverId && item.agentId === agentId),
+    ),
+  );
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
@@ -1423,7 +1554,49 @@ function ComposerContentImpl({
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
   const editingSession = useComposerEditingSession(inputMode, providedEditingSession);
   const isFullscreen = useComposerFullscreen(editingSession);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendErrorState] = useState<{
+    message: string;
+    clientMessageId: string | null;
+  } | null>(null);
+  const messageLocationVersion = useRef(0);
+  const viewSubmittedMessage = useMutation({
+    networkMode: "always",
+    mutationFn: async () => {
+      if (!sendError?.clientMessageId || !onViewSubmittedMessage) return;
+      const version = messageLocationVersion.current;
+      // The native dock translates the timeline while the keyboard is visible.
+      if (isNative) await KeyboardController.dismiss();
+      if (version !== messageLocationVersion.current) return;
+      let found: boolean;
+      try {
+        found = await onViewSubmittedMessage(sendError.clientMessageId);
+      } catch (cause) {
+        throw new Error(t("composer.errors.messageLookupFailed"), { cause });
+      }
+      if (!found) throw new Error(t("composer.errors.messageNotFound"));
+    },
+  });
+  const { reset: resetMessageLocation, mutate: locateSubmittedMessage } = viewSubmittedMessage;
+  const setSendError = useCallback(
+    (message: string | null, clientMessageId?: string) => {
+      messageLocationVersion.current += 1;
+      resetMessageLocation();
+      setSendErrorState(
+        message === null ? null : { message, clientMessageId: clientMessageId ?? null },
+      );
+    },
+    [resetMessageLocation],
+  );
+  useEffect(() => {
+    void hydrateOutbox().catch((error) => {
+      console.warn("[Outbox] Could not load saved messages", error);
+      setSendError(t("composer.errors.failedToSend"));
+    });
+  }, [t, setSendError]);
+  const handleViewSubmittedMessage = useCallback(() => {
+    editingSession.setFullscreen(false);
+    locateSubmittedMessage();
+  }, [editingSession, locateSubmittedMessage]);
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
@@ -1578,6 +1751,7 @@ function ComposerContentImpl({
       blurOnSubmit,
       clearDraft,
       onClientSlashCommand,
+      setSendError,
       resetSuppression,
       setSelectedAttachments,
       replaceUserInput,
@@ -1602,7 +1776,14 @@ function ComposerContentImpl({
       });
       return true;
     },
-    [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],
+    [
+      blurOnSubmit,
+      clearDraft,
+      replaceUserInput,
+      resetSuppression,
+      setSelectedAttachments,
+      setSendError,
+    ],
   );
 
   const { pickImages } = useImageAttachmentPicker();
@@ -1688,7 +1869,8 @@ function ComposerContentImpl({
 
   useEffect(() => {
     agentIdRef.current = agentId;
-  }, [agentId]);
+    setSendError(null);
+  }, [agentId, serverId, setSendError]);
 
   useEffect(() => {
     sendAgentMessageRef.current = async (
@@ -1796,7 +1978,7 @@ function ComposerContentImpl({
         allowEmptySubmit,
         forceSend,
         submitBehavior,
-        isAgentRunning,
+        isAgentRunning: isConnected && isAgentRunning,
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
@@ -1807,7 +1989,40 @@ function ComposerContentImpl({
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
-          await submitMessage(submitText, submitAttachments);
+          if (inputMode !== "chat" || onSubmitMessage) {
+            await submitMessage(submitText, submitAttachments);
+            return;
+          }
+          const payload = splitComposerAttachmentsForSubmit(submitAttachments, {
+            format: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments: supportsForgeSearch,
+            }),
+          });
+          const item = createPendingOutboxItem({
+            id: generateMessageId(),
+            serverId,
+            agentId,
+            text: submitText,
+            images: payload.images,
+            attachments: payload.attachments,
+            sendBehavior: appSettings.sendBehavior,
+            activeTurnBehavior: appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+            activeTurnId:
+              appSettings.sendBehavior === "steer"
+                ? (selectAgentTurnPresentation(
+                    useSessionStore.getState().sessions[serverId],
+                    agentId,
+                  ).turnId ?? undefined)
+                : undefined,
+          });
+          await enqueueOutboxItem(item);
+          onMessageSent?.();
+          if (isConnected && client) {
+            await deliverOutboxItem({ item, client });
+            if (!useOutboxStore.getState().items.some((pending) => pending.id === item.id)) {
+              onAttentionPromptSend?.();
+            }
+          }
         },
         clearDraft,
         setUserInput: replaceUserInput,
@@ -1827,12 +2042,23 @@ function ComposerContentImpl({
       });
     },
     [
+      setSendError,
       allowEmptySubmit,
       beginSubmit,
       clearDraft,
       completeSubmit,
       hasExternalContent,
+      isConnected,
+      appSettings.sendBehavior,
+      client,
+      inputMode,
+      onSubmitMessage,
+      onMessageSent,
+      onAttentionPromptSend,
+      supportsForgeSearch,
       isAgentRunning,
+      serverId,
+      agentId,
       queueMessage,
       setSelectedAttachments,
       replaceUserInput,
@@ -2089,10 +2315,10 @@ function ComposerContentImpl({
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
-        setSendError(result.errorMessage);
+        setSendError(result.errorMessage, result.clientMessageId);
       }
     },
-    [agentId, queueWriter, submitMessage, t],
+    [agentId, queueWriter, submitMessage, t, setSendError],
   );
 
   const handleQueue = useCallback(
@@ -2501,6 +2727,36 @@ function ComposerContentImpl({
     [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
   );
 
+  const revealOutboxMessage = useCallback(
+    async (id: string) => {
+      if (!onViewSubmittedMessage) return false;
+      const version = messageLocationVersion.current;
+      editingSession.setFullscreen(false);
+      if (isNative) await KeyboardController.dismiss();
+      if (version !== messageLocationVersion.current) return true;
+      return onViewSubmittedMessage(id);
+    },
+    [editingSession, onViewSubmittedMessage],
+  );
+
+  const outboxList = useMemo(() => {
+    if (outboxItems.length === 0) return null;
+    return (
+      <View style={styles.queueTrack}>
+        {outboxItems.map((item) => (
+          <OutboxRow
+            key={item.id}
+            item={item}
+            client={client}
+            connected={isConnected}
+            t={t}
+            onFindMessage={onViewSubmittedMessage ? revealOutboxMessage : undefined}
+          />
+        ))}
+      </View>
+    );
+  }, [client, isConnected, outboxItems, t, onViewSubmittedMessage, revealOutboxMessage]);
+
   const autocompleteConfiguration = useMemo(
     () => ({
       setUserInput: replaceUserInput,
@@ -2546,11 +2802,33 @@ function ComposerContentImpl({
   const sendErrorNode = useMemo(
     () =>
       sendError ? (
-        <Text accessibilityRole="alert" style={styles.sendErrorText}>
-          {sendError}
-        </Text>
+        <View>
+          <Text accessibilityRole="alert" style={styles.sendErrorText}>
+            {sendError.message}
+          </Text>
+          {sendError.clientMessageId && onViewSubmittedMessage ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={viewSubmittedMessage.isPending}
+              style={styles.viewMessageButton}
+              onPress={handleViewSubmittedMessage}
+            >
+              {t("composer.viewMessage")}
+            </Button>
+          ) : null}
+          {viewSubmittedMessage.error ? (
+            <Text
+              accessibilityRole="alert"
+              style={styles.sendErrorText}
+              testID="view-submitted-message-error"
+            >
+              {viewSubmittedMessage.error.message}
+            </Text>
+          ) : null}
+        </View>
       ) : null,
-    [sendError],
+    [sendError, onViewSubmittedMessage, viewSubmittedMessage, handleViewSubmittedMessage, t],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
     ? t("composer.github.searching")
@@ -2578,6 +2856,7 @@ function ComposerContentImpl({
         <View style={inputAreaContainerStyle}>
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
+            {isFullscreen ? null : outboxList}
             {!isFullscreen && sendErrorNode}
 
             <ComposerAutocompleteBinding
@@ -2817,6 +3096,14 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
   },
+  outboxDescription: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  outboxStatus: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
   queueActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -2833,6 +3120,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   queueSendButton: {
     backgroundColor: theme.colors.accent,
   },
+  viewMessageButton: { alignSelf: "flex-start", paddingHorizontal: 0 },
   sendErrorText: {
     color: theme.colors.palette.red[500],
     fontSize: theme.fontSize.base,
@@ -2849,6 +3137,7 @@ const ThemedPaperclip = withUnistyles(Paperclip);
 const ThemedImageIcon = withUnistyles(ImageIcon);
 const ThemedClipboardPaste = withUnistyles(ClipboardPaste);
 const ThemedFileText = withUnistyles(FileText);
+const ThemedTrash2 = withUnistyles(Trash2);
 const iconForegroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const iconForegroundMutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const iconAccentForegroundMapping = (theme: Theme) => ({ color: theme.colors.accentForeground });

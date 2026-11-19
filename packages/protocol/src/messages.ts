@@ -1521,6 +1521,11 @@ export const SendAgentMessageRequestSchema = z.object({
   attachments: AgentAttachmentsSchema,
 });
 
+export const GetAgentMessageDeliveryStatusRequestSchema = SendAgentMessageRequestSchema.extend({
+  type: z.literal("agent.message.get_delivery_status.request"),
+  messageId: z.string(),
+});
+
 export const WaitForFinishRequestSchema = z.object({
   type: z.literal("wait_for_finish_request"),
   requestId: z.string(),
@@ -3568,6 +3573,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceArchiveUndoRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
+  GetAgentMessageDeliveryStatusRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
   DaemonGetPairingOfferRequestSchema,
@@ -4134,6 +4140,7 @@ export const ServerInfoStatusPayloadSchema = z
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
         agentMessageBatching: z.boolean().optional(),
+        messageDeliveryStatus: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -5472,6 +5479,22 @@ export const WorkspaceMarkUnreadResponseSchema = z.object({
   }),
 });
 
+export const MessageDeliveryFailureOutcomeSchema = z.enum(["not_submitted", "rejected", "unknown"]);
+
+export const GetAgentMessageDeliveryStatusResponseSchema = z.object({
+  type: z.literal("agent.message.get_delivery_status.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    messageId: z.string(),
+    status: z.enum(["accepted", "rejected", "in_flight", "unknown"]).nullable(),
+    failure: z
+      .object({ outcome: z.enum(["not_submitted", "rejected"]), message: z.string() })
+      .optional(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SendAgentMessageResponseMessageSchema = z.object({
   type: z.literal("send_agent_message_response"),
   payload: z.object({
@@ -5480,6 +5503,7 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     accepted: z.boolean(),
     deliveryStatus: z.literal("queued").optional(),
     error: z.string().nullable(),
+    deliveryOutcome: MessageDeliveryFailureOutcomeSchema.optional(),
   }),
 });
 
@@ -7566,6 +7590,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   WorkspaceMarkUnreadResponseSchema,
   SendAgentMessageResponseMessageSchema,
+  GetAgentMessageDeliveryStatusResponseSchema,
   SetVoiceModeResponseMessageSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,

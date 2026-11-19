@@ -129,6 +129,20 @@ export const en = {
     },
   },
   composer: {
+    outbox: {
+      pending: "Saved on this device. Waiting for the host or agent to be ready.",
+      sending: "Sending…",
+      needsReview: "Delivery is unconfirmed. Check status before taking another action.",
+      retry: "Retry delivery",
+      discard: "Discard saved message",
+      attachmentMessage: "Message with attachments",
+
+      failed: "Not delivered. Retry this saved message.",
+      inFlight: "The host is still processing this message. Checking automatically…",
+      checking: "Checking delivery…",
+      check: "Check delivery status",
+    },
+    viewMessage: "Find message",
     placeholders: {
       desktop: "Message the agent, tag @files, or use /commands and /skills",
       mobile: "Message, @files, /commands",
@@ -191,6 +205,10 @@ export const en = {
       removeReview: "Remove review attachment",
     },
     errors: {
+      messageLookupFailed:
+        "Could not refresh the conversation. Delivery is still unconfirmed. Reconnect and try finding the message again.",
+      messageNotFound:
+        "Could not find this message in the available history. Delivery is still unconfirmed.",
       failedToSend: "Failed to send message",
       failedToCreateAgent: "Failed to create agent",
       noHostSelected: "No host selected",

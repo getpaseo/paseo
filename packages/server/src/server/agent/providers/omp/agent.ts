@@ -1,3 +1,5 @@
+import { promptSubmissionError, waitForProviderPromptAdmission } from "../prompt-admission.js";
+import { AgentTurnStartCanceledError } from "../../agent-sdk-types.js";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
@@ -885,7 +887,7 @@ export class OmpAgentSession implements AgentSession {
     this.clearNoTurnBuffers();
     const payload = await convertPromptInput(prompt, { model: this.state.model });
     if (this.closed) throw new Error("OMP session is closed");
-    if (this.activeTurnId !== turnId) return { turnId };
+    if (this.activeTurnId !== turnId) throw new AgentTurnStartCanceledError();
     this.rememberClientMessage(options?.clientMessageId ?? null, payload.text);
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
@@ -894,55 +896,63 @@ export class OmpAgentSession implements AgentSession {
       this.emit({ type: "turn_started", provider: this.provider, turnId });
     }
 
-    void (async () => {
-      try {
-        if (this.runtimeDead) await this.replaceRuntime(this.currentModeId ?? "full");
-        if (this.closed) throw new Error("OMP session is closed");
-        const ack = await this.runtimeSession.prompt({
-          message: payload.text,
-          images: payload.images,
-          streamingBehavior,
-        });
-        this.activePromptRequestId = ack.requestId ?? null;
-        const correlatedResult = ack.requestId
-          ? this.pendingPromptResults.get(ack.requestId)
-          : undefined;
-        if (ack.requestId) {
-          this.pendingPromptResults.delete(ack.requestId);
-        }
-        this.activePromptAgentInvoked = correlatedResult?.agentInvoked ?? ack.agentInvoked ?? null;
-        this.activePromptError = correlatedResult?.error ?? null;
-        if (correlatedResult?.agentInvoked === false) {
-          this.scheduleNoTurnPromptCompletion(turnId);
-          return;
-        }
-        if (correlatedResult?.agentInvoked !== true && ack.agentInvoked === false) {
-          await this.completeNoTurnPrompt(turnId);
-          return;
-        }
-      } catch (error) {
-        if (this.activeTurnId !== turnId) {
-          return;
-        }
-        this.usagePoller.stopTurn();
-        this.resetActiveTurn({ terminalizeWork: true });
-        if (isOmpRequestAbortError(error)) {
+    let submitted = false;
+    await waitForProviderPromptAdmission({
+      turnId,
+      subscribe: this.subscribe.bind(this),
+      submit: async (accepted) => {
+        try {
+          if (this.runtimeDead) await this.replaceRuntime(this.currentModeId ?? "full");
+          if (this.closed) throw new Error("OMP session is closed");
+          submitted = true;
+          const ack = await this.runtimeSession.prompt({
+            message: payload.text,
+            images: payload.images,
+            streamingBehavior,
+          });
+          accepted();
+          this.activePromptRequestId = ack.requestId ?? null;
+          const correlatedResult = ack.requestId
+            ? this.pendingPromptResults.get(ack.requestId)
+            : undefined;
+          if (ack.requestId) {
+            this.pendingPromptResults.delete(ack.requestId);
+          }
+          this.activePromptAgentInvoked =
+            correlatedResult?.agentInvoked ?? ack.agentInvoked ?? null;
+          this.activePromptError = correlatedResult?.error ?? null;
+          if (correlatedResult?.agentInvoked === false) {
+            this.scheduleNoTurnPromptCompletion(turnId);
+            return;
+          }
+          if (correlatedResult?.agentInvoked !== true && ack.agentInvoked === false) {
+            await this.completeNoTurnPrompt(turnId);
+            return;
+          }
+        } catch (error) {
+          const failure = promptSubmissionError(error, submitted);
+          if (this.activeTurnId !== turnId) throw failure;
+          this.usagePoller.stopTurn();
+          this.resetActiveTurn({ terminalizeWork: true });
+          if (isOmpRequestAbortError(error)) {
+            this.emit({
+              type: "turn_canceled",
+              provider: this.provider,
+              turnId,
+              reason: toDiagnosticErrorMessage(error),
+            });
+            throw failure;
+          }
           this.emit({
-            type: "turn_canceled",
+            type: "turn_failed",
             provider: this.provider,
             turnId,
-            reason: toDiagnosticErrorMessage(error),
+            error: toDiagnosticErrorMessage(error),
           });
-          return;
+          throw failure;
         }
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: toDiagnosticErrorMessage(error),
-        });
-      }
-    })();
+      },
+    });
 
     return { turnId };
   }

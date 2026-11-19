@@ -11,6 +11,17 @@ function appendUntrackedSubmission(serverId: string, agentId: string, message: U
   if (!session) return;
   const tail = session.agentStreamTail.get(agentId) ?? [];
   const head = session.agentStreamHead.get(agentId) ?? [];
+  if (
+    [...tail, ...head].some(
+      (item) =>
+        item.kind === "user_message" &&
+        (item.id === message.id ||
+          (message.clientMessageId !== undefined &&
+            item.clientMessageId === message.clientMessageId)),
+    )
+  ) {
+    throw new Error("Update the Paseo host to retry a message with its original identity.");
+  }
   useSessionStore
     .getState()
     .setAgentStreamState(serverId, agentId, appendSubmittedUserMessage({ tail, head, message }));
@@ -54,6 +65,8 @@ export function createMessageSubmissionWriter(serverId: string): MessageSubmissi
     return createUntrackedMessageSubmissionWriter(serverId);
   }
   return {
+    release: (agentId, clientMessageId) =>
+      useSessionStore.getState().releaseAgentMessageSubmission(serverId, agentId, clientMessageId),
     begin: (agentId, message) =>
       useSessionStore.getState().beginAgentMessageSubmission(serverId, agentId, message),
     accept: (agentId, clientMessageId) =>

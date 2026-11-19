@@ -129,6 +129,8 @@ import {
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore, type LeftSidebarPresentation } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
+import { hydrateOutbox, useOutboxStore } from "@/composer/outbox/store";
+import { drainPendingOutbox } from "@/composer/outbox/delivery";
 import { getNextThemePreference, ICON_STROKE_WIDTH } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { WorkspaceLayoutModePublisher } from "@/workspace-tabs/layout-mode-publisher";
@@ -178,10 +180,39 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
 
   return (
     <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
+      <OutboxDrain serverId={daemon.serverId} client={client} />
       <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
       <PluginCatalogSync serverId={daemon.serverId} client={client} />
     </SessionProvider>
   );
+}
+
+function OutboxDrain({
+  serverId,
+  client,
+}: {
+  serverId: string;
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
+}) {
+  const connected = useHostRuntimeIsConnected(serverId);
+  const hasPending = useOutboxStore((state) =>
+    state.items.some(
+      (item) =>
+        item.serverId === serverId && (item.status === "pending" || item.status === "in_flight"),
+    ),
+  );
+  useEffect(() => {
+    if (!connected) return;
+    const drain = (checkUnknown = true) =>
+      void hydrateOutbox()
+        .then(() => drainPendingOutbox({ serverId, client, checkUnknown }))
+        .catch((error) => console.warn("[Outbox] Could not resume pending messages", error));
+    drain();
+    if (!hasPending) return;
+    const timer = setInterval(() => drain(false), 2000);
+    return () => clearInterval(timer);
+  }, [client, connected, hasPending, serverId]);
+  return null;
 }
 
 function LegacyFavoriteProfileMigrationBootstrap({

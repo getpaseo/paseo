@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { AgentRunState } from "./agent-run-state.js";
+import { AgentRunState, ForegroundPromptStart } from "./agent-run-state.js";
 
 function track(promise: Promise<void>): { readonly resolved: boolean } {
   const state = { resolved: false };
@@ -49,3 +49,17 @@ describe("waitForForegroundStart", () => {
     await expect(runs.waitForForegroundStart("agent")).resolves.toBeUndefined();
   });
 });
+
+for (const deliveryOutcome of ["unknown", "not_submitted", "rejected"] as const) {
+  test(`retains ${deliveryOutcome} provider evidence through the sender start waiter`, async () => {
+    const runs = new AgentRunState();
+    const run = runs.createPendingRun("agent");
+    const sender = new ForegroundPromptStart("agent");
+    sender.bind(run);
+    const cause = Object.assign(new Error("Native admission failed"), { deliveryOutcome });
+    const rejected = expect(sender.started).rejects.toBe(cause);
+    runs.settleForegroundStart(run, { status: "failed", error: cause.message, cause });
+    runs.settleForegroundRun("agent", run.token);
+    await rejected;
+  });
+}

@@ -9,6 +9,7 @@ interface SendAgentMessageRequest {
   text: unknown;
   attachments: unknown;
   agentId: string;
+  messageId?: string;
   /** Absent when the client sends into an idle agent. */
   activeTurnBehavior?: string;
 }
@@ -34,6 +35,7 @@ function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | n
       text: request.text,
       attachments: request.attachments,
       agentId: request.agentId,
+      messageId: typeof request.messageId === "string" ? request.messageId : undefined,
       activeTurnBehavior:
         typeof request.activeTurnBehavior === "string" ? request.activeTurnBehavior : undefined,
     };
@@ -86,6 +88,28 @@ export async function gateNextAgentMessage(page: Page) {
       }
       serverSocket.send(heldMessage);
       heldMessages[index] = null;
+    },
+    reject(input: { index?: number; outcome: "not_submitted" | "rejected" | "unknown" }) {
+      const index = input.index ?? 0;
+      const request = requests[index];
+      if (!browserSocket || !heldMessages[index] || !request)
+        throw new Error("No held message to reject");
+      heldMessages[index] = null;
+      browserSocket.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "send_agent_message_response",
+            payload: {
+              requestId: request.requestId,
+              agentId: request.agentId,
+              accepted: false,
+              error: "Submission failed in recovery test",
+              deliveryOutcome: input.outcome,
+            },
+          },
+        }),
+      );
     },
     async disconnect(): Promise<void> {
       if (!browserSocket) throw new Error("No browser daemon socket to disconnect");
