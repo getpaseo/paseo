@@ -1837,24 +1837,23 @@ async function configureWorktreePushRemote(options: {
   }
 }
 
-/** Fetches the first of `sources` a remote serves into the local ref `destination`. */
+/**
+ * Fetches the first of `sources` a remote serves into the local ref `destination`, and returns
+ * the name of that remote.
+ */
 export async function fetchFirstAvailableRef(options: {
   cwd: string;
   sources: WorktreeCheckoutRef[];
   destination: string;
-}): Promise<void> {
+}): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
   for (const checkoutRef of options.sources) {
+    const remoteName = checkoutRef.remoteName ?? "origin";
     lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:${options.destination}`,
-        "--force",
-      ],
+      ["fetch", remoteName, `+${checkoutRef.remoteRef}:${options.destination}`, "--force"],
       {
         cwd: options.cwd,
         timeout: 120_000,
@@ -1862,7 +1861,7 @@ export async function fetchFirstAvailableRef(options: {
       },
     );
     if (lastResult.exitCode === 0) {
-      return;
+      return remoteName;
     }
   }
   const attemptedRefs = options.sources
@@ -2068,9 +2067,38 @@ async function ensureLocalBranch(cwd: string, branchName: string): Promise<void>
       cwd,
       timeout: 120_000,
     });
+    return;
   } catch {
+    // Origin does not have it; another remote may.
+  }
+  const remoteBranch = await uniqueRemoteTrackingBranch(cwd, branchName);
+  if (!remoteBranch) {
     throw new UnknownBranchError({ branchName, cwd });
   }
+  // Tracks the remote it came from, as `git checkout <branch>` does for a branch on one remote.
+  await runGitCommand(["branch", "--track", branchName, remoteBranch], { cwd });
+}
+
+/** The one remote-tracking ref named `<remote>/<branchName>`, if exactly one remote has it. */
+async function uniqueRemoteTrackingBranch(cwd: string, branchName: string): Promise<string | null> {
+  const { stdout: remotes } = await runGitCommand(["remote"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const candidates: string[] = [];
+  for (const remote of remotes
+    .split("\n")
+    .map((name) => name.trim())
+    .filter(Boolean)) {
+    const ref = `refs/remotes/${remote}/${branchName}`;
+    try {
+      await runGitCommand(["show-ref", "--verify", "--quiet", ref], { cwd });
+      candidates.push(ref);
+    } catch {
+      // This remote does not have the branch.
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {

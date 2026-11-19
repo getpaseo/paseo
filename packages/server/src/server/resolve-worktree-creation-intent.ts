@@ -29,8 +29,8 @@ export interface ResolveWorktreeCreationIntentDeps {
   forge: string;
   forgeService: ForgeService;
   resolveDefaultBranch: (repoRoot: string) => Promise<string>;
-  /** Fetches the first ref a remote serves into a local ref. */
-  fetchRef: (input: FetchRefInput) => Promise<void>;
+  /** Fetches the first ref a remote serves into a local ref, and returns that remote's name. */
+  fetchRef: (input: FetchRefInput) => Promise<string>;
 }
 
 export interface FetchRefInput {
@@ -148,8 +148,7 @@ export async function resolveWorktreeCreationIntent(
  * request out. A same-repository head lands where `git fetch` puts the branch and is the new
  * branch's base, so its pull request stacks on the change request. A fork's head is not a branch
  * of this repository, so the new branch starts from it and its base is the change request's base.
- * That head lands outside `refs/remotes`, which base branch pickers list, and the base branch is
- * fetched from origin.
+ * That head lands outside `refs/remotes`, which base branch pickers list.
  */
 async function fetchChangeRequestHead(params: {
   input: ResolveWorktreeCreationIntentInput;
@@ -171,15 +170,25 @@ async function fetchChangeRequestHead(params: {
     return { baseBranch: destination };
   }
   const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
-  await deps.fetchRef({ repoRoot, sources: checkout.checkoutRefs, destination: startPoint });
-  // The base is compared as the remote has it, not as a local branch last pulled.
-  const baseBranch = `refs/remotes/origin/${checkout.baseRefName}`;
-  await deps.fetchRef({
+  const baseRemote = await deps.fetchRef({
     repoRoot,
-    sources: [{ remoteName: "origin", remoteRef: `refs/heads/${checkout.baseRefName}` }],
-    destination: baseBranch,
+    sources: checkout.checkoutRefs,
+    destination: startPoint,
   });
-  return { baseBranch, startPoint };
+  // The remote that serves the change request is the repository it merges into. Its base is
+  // compared as that remote has it, not as a local branch last pulled.
+  const baseBranch = `refs/remotes/${baseRemote}/${checkout.baseRefName}`;
+  try {
+    await deps.fetchRef({
+      repoRoot,
+      sources: [{ remoteName: baseRemote, remoteRef: `refs/heads/${checkout.baseRefName}` }],
+      destination: baseBranch,
+    });
+    return { baseBranch, startPoint };
+  } catch {
+    // Without the remote's copy, the base resolves as any base branch name does.
+    return { baseBranch: checkout.baseRefName, startPoint };
+  }
 }
 
 interface PrCheckoutIntentParams {

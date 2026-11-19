@@ -88,7 +88,7 @@ function createResolverHarness(overrides?: {
     forgeService,
     headRefLookups,
     resolveDefaultBranch: async () => "main",
-    fetchRef: async () => {},
+    fetchRef: async () => "origin",
   };
 }
 
