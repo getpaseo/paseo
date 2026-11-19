@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { openSettingsFromCompactSidebar, openSettingsSection } from "../support/helpers/settings";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
@@ -12,6 +13,24 @@ async function closeMenuSheet(page: Page): Promise<void> {
   await backdrop.click({ position: { x: 12, y: 12 } });
   await expect(backdrop).not.toBeVisible({ timeout: 10_000 });
 }
+
+test("workspace grouping and sort are accessible in compact Sidebar settings", async ({ page }) => {
+  await gotoAppShell(page);
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  await openSettingsFromCompactSidebar(page);
+  await openSettingsSection(page, "sidebar");
+
+  await expect(page.getByRole("button", { name: "Grouping: Project" })).toBeInViewport();
+  await page.getByRole("button", { name: "Workspace sort: Created" }).tap();
+  await page.getByRole("menuitem", { name: "Manual", exact: true }).tap();
+  await expect(page.getByRole("button", { name: "Workspace sort: Manual" })).toBeInViewport();
+  await page.getByRole("button", { name: "Grouping: Project" }).tap();
+  await page.getByRole("menuitem", { name: "Status", exact: true }).tap();
+  await expect(page.getByRole("button", { name: "Workspace sort: Manual" })).toBeDisabled();
+  await page.getByRole("button", { name: "Grouping: Status" }).tap();
+  await page.getByRole("menuitem", { name: "Project", exact: true }).tap();
+  await expect(page.getByRole("button", { name: "Workspace sort: Manual" })).toBeEnabled();
+});
 
 test("project and workspace kebabs open action sheets on compact layouts", async ({ page }) => {
   const seeded = await seedWorkspace({ repoPrefix: "sidebar-mobile-menu-sheet-" });

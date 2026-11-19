@@ -6,6 +6,7 @@ import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { buildSeededHost } from "../support/helpers/daemon-registry";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { leaveSettings, openSidebarNavSettings } from "../support/helpers/sidebar-nav-settings";
 
 test("published old daemon keeps workspace navigation and gates sorting", async ({ page }) => {
   test.setTimeout(180_000);
@@ -22,6 +23,16 @@ test("published old daemon keeps workspace navigation and gates sorting", async 
       expect(second.workspace).toBeTruthy();
       await openPublishedHost(page, daemon, project.workspaceId);
       await openWorkspace(page, daemon.serverId, second.workspace!.id);
+      await openSidebarNavSettings(page);
+      await expect(
+        page.getByText("Update hosts to sort workspaces", { exact: false }),
+      ).toBeVisible();
+      await page.getByRole("button", { name: "Workspace sort: Last prompt" }).click();
+      await expect(page.getByRole("menuitem", { name: "Created", exact: true })).toBeDisabled();
+      await expect(page.getByRole("menuitem", { name: "Last prompt", exact: true })).toBeDisabled();
+      await expect(page.getByRole("menuitem", { name: "Manual", exact: true })).toBeEnabled();
+      await page.keyboard.press("Escape");
+      await leaveSettings(page);
       await expectSortingRequiresHostUpdate(page);
       await selectSidebarStatusGrouping(page);
       await expectStatusHasNoSorting(page);
