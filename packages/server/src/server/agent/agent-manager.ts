@@ -5877,6 +5877,9 @@ export class AgentManager {
     }
 
     if (previousStatus === "running" && currentStatus === "idle") {
+      if (!isDelegatedAgent(agent) && this.hasPendingCompletionWork(agent.id)) {
+        return;
+      }
       agent.attention = {
         requiresAttention: true,
         attentionReason: "finished",
@@ -5884,6 +5887,18 @@ export class AgentManager {
       };
       this.broadcastAgentAttention(agent, "finished");
     }
+  }
+
+  private hasPendingCompletionWork(agentId: string): boolean {
+    if ((this.getAgentBackgroundWorkSummary(agentId)?.count ?? 0) > 0) {
+      return true;
+    }
+    for (const child of this.agents.values()) {
+      if (isAgentBusy(child.lifecycle) && getParentAgentIdFromLabels(child.labels) === agentId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // The failed state is only shown while error attention is unread, so every new failure raises

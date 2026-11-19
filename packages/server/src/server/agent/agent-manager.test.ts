@@ -9542,6 +9542,81 @@ test("onAgentAttention is not called for delegated child agents", async () => {
   expect(attentionCalls).toEqual([]);
 });
 
+test("skips finished attention on intermediate parent turns while work is active", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pending-work-attention-"));
+  const config = { provider: "codex", cwd: workdir } as const;
+  const client = new SessionRecordingAgentClient();
+  const onAgentAttention = vi.fn();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    onAgentAttention,
+  });
+  const parent = await manager.createAgent(config, undefined, { workspaceId: undefined });
+  const [parentSession] = client.sessions;
+  const childSession = new HeldRuntimeInfoSession(config);
+  vi.spyOn(client, "createSession").mockResolvedValueOnce(childSession);
+  const creatingChild = manager.createAgent(config, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId: undefined,
+  });
+  onTestFinished(async () => {
+    childSession.finishRuntimeInfo();
+    await manager.closeAgent((await creatingChild).id);
+    await manager.closeAgent(parent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  async function expectQuietParentTurn() {
+    await manager.runAgent(parent.id, "Intermediate update");
+    expect(manager.getAgent(parent.id)).toMatchObject({
+      lifecycle: "idle",
+      attention: { requiresAttention: false },
+    });
+    expect(onAgentAttention).not.toHaveBeenCalled();
+  }
+
+  await childSession.waitForRuntimeInfo();
+  await expectQuietParentTurn();
+
+  childSession.finishRuntimeInfo();
+  const child = await creatingChild;
+  const childRunning = waitForAgentLifecycle(manager, child.id, "running");
+  const turn = { provider: "codex", turnId: "child-turn" } as const;
+  childSession.pushEvent({ ...turn, type: "turn_started" });
+  await childRunning;
+  await expectQuietParentTurn();
+
+  const childIdle = waitForAgentLifecycle(manager, child.id, "idle");
+  childSession.pushEvent({ ...turn, type: "turn_completed" });
+  await childIdle;
+  parentSession.pushEvent({
+    type: "background_work",
+    provider: "codex",
+    items: [{ id: "shell-1", kind: "shell", description: "Background command" }],
+  });
+  await vi.waitFor(() =>
+    expect(manager.getAgentBackgroundWorkSummary(parent.id)).toEqual({ count: 1 }),
+  );
+  await expectQuietParentTurn();
+
+  parentSession.pushEvent({ type: "background_work", provider: "codex", items: [] });
+  await vi.waitFor(() =>
+    expect(manager.getAgentBackgroundWorkSummary(parent.id)).toEqual({ count: 0 }),
+  );
+  expect(onAgentAttention).not.toHaveBeenCalled();
+  await manager.runAgent(parent.id, "Final reply");
+  expect(manager.getAgent(parent.id)?.attention).toMatchObject({
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+  expect(onAgentAttention.mock.calls).toEqual([
+    [{ agentId: parent.id, provider: "codex", reason: "finished" }],
+  ]);
+});
+
 test("clearAgentAttention on errored agent stays cleared until a new error transition", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-error-"));
   const storagePath = join(workdir, "agents");
