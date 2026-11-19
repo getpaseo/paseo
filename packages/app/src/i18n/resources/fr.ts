@@ -116,6 +116,7 @@ export const fr: TranslationResources = {
       home: "Accueil",
       groupByProject: "Grouper par projet",
       groupByStatus: "Grouper par statut",
+      copyBrowserHostName: "Copier le nom de l’hôte du navigateur",
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle model",
@@ -382,6 +383,11 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      insecureContext: "Ouvrez Paseo via HTTPS ou sur localhost pour utiliser le microphone.",
+      unsupported: "La dictée est indisponible dans ce navigateur.",
+      noMicrophone: "Connectez un microphone, puis réessayez.",
+      permissionDenied: "Autorisez l’accès au microphone, puis réessayez.",
+      startFailed: "Impossible de lancer la dictée. Réessayez.",
       paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",
@@ -399,6 +405,7 @@ export const fr: TranslationResources = {
       otherPlaceholder: "Autre…",
     },
     backgroundWork: {
+      heartbeat: "Battement périodique",
       pillOne: "1 tâche en arrière-plan",
       pillMany: "{{count}} tâches en arrière-plan",
       notRunning: "N’est plus en cours",
@@ -2774,6 +2781,8 @@ export const fr: TranslationResources = {
         toggleFocusMode: "Activer/désactiver le mode focus",
         cycleTheme: "Parcourir les thèmes",
         focusMessageInput: "Aller à la zone de saisie",
+        toggleModelPicker: "Ouvrir ou fermer le sélecteur de modèle",
+        cycleEffort: "Parcourir les niveaux d’effort",
         cycleAgentMode: "Parcourir les modes de l’agent",
         toggleVoiceMode: "Activer/désactiver le mode vocal",
         startStopDictation: "Démarrer/arrêter la dictée",

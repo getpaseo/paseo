@@ -1,5 +1,5 @@
 import { test, expect, beforeEach, afterEach } from "vitest";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
@@ -164,3 +164,165 @@ test("keeps the socket usable after rejecting an oversized structured diff", asy
     rmSync(cwd, { recursive: true, force: true });
   }
 }, 120000);
+
+test.skipIf(process.platform !== "linux")(
+  "Changes opens and follows Git updates when metadata exceeds the watcher limit",
+  async () => {
+    const cwd = tmpCwd();
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    try {
+      initGitRepo(cwd);
+      commitFile(cwd, "tracked.txt", "base\n");
+      const head = git("rev-parse", "HEAD");
+      git("switch", "-c", "topic");
+      commitFile(cwd, "next.txt", "next\n");
+      const next = git("rev-parse", "HEAD");
+      git("reset", "--hard", head);
+      execFileSync("git", ["update-ref", "--stdin"], {
+        cwd,
+        input: Array.from(
+          { length: 5010 },
+          (_, i) => `create refs/heads/overflow-${i}/branch ${head}\n`,
+        ).join(""),
+      });
+      writeFileSync(path.join(cwd, "tracked.txt"), "edit\n");
+
+      const changes = ctx.client.observeDiff({
+        cwd,
+        base: { kind: "rev", rev: "main" },
+        head: { kind: "worktree" },
+        mergeBase: true,
+      });
+      let current: import("@getpaseo/client").DiffState | undefined;
+      const unsubscribe = changes.subscribe({
+        snapshot: (state) => {
+          current = state;
+        },
+        update: () => {},
+      });
+      try {
+        await expect
+          .poll(() => current, { timeout: 12000 })
+          .toMatchObject({
+            phase: "ready",
+            files: [{ path: "tracked.txt" }],
+          });
+        const legacy = ctx.client.observeCheckoutDiff(cwd, { mode: "all", baseRef: "main" });
+        try {
+          expect(await legacy.ready).toMatchObject({
+            error: null,
+            files: [{ path: "tracked.txt" }],
+          });
+        } finally {
+          await legacy.release();
+        }
+        expect(
+          await ctx.client.getCheckoutDiff(cwd, { mode: "all", baseRef: "main" }),
+        ).toMatchObject({ error: null, files: [{ path: "tracked.txt" }] });
+
+        writeFileSync(path.join(cwd, "working.txt"), "untracked\n");
+        await expect
+          .poll(() => current, { timeout: 3000 })
+          .toMatchObject({
+            phase: "ready",
+            files: [{ path: "tracked.txt" }, { path: "working.txt" }],
+          });
+
+        const staged = ctx.client.observeDiff({
+          cwd,
+          base: { kind: "rev", rev: head },
+          head: { kind: "index" },
+        });
+        const pinned = ctx.client.observeDiff({
+          cwd,
+          base: { kind: "empty" },
+          head: { kind: "rev", rev: head },
+        });
+        const selected = ctx.client.observeDiff({
+          cwd,
+          base: { kind: "rev", rev: head },
+          head: { kind: "rev", rev: "main" },
+        });
+        let stagedState: typeof current;
+        let pinnedState: typeof current;
+        let selectedState: typeof current;
+        const stopStaged = staged.subscribe({
+          snapshot: (state) => {
+            stagedState = state;
+          },
+          update: () => {},
+        });
+        const stopPinned = pinned.subscribe({
+          snapshot: (state) => {
+            pinnedState = state;
+          },
+          update: () => {},
+        });
+        const stopSelected = selected.subscribe({
+          snapshot: (state) => {
+            selectedState = state;
+          },
+          update: () => {},
+        });
+        try {
+          await expect.poll(() => stagedState).toMatchObject({ phase: "ready", files: [] });
+          await expect
+            .poll(() => pinnedState)
+            .toMatchObject({
+              phase: "ready",
+              files: [{ path: "tracked.txt", status: "ok" }],
+            });
+          await expect.poll(() => selectedState).toMatchObject({ phase: "ready", files: [] });
+          git("add", "tracked.txt");
+          writeFileSync(path.join(cwd, ".git", "info", "attributes"), "tracked.txt -diff\n");
+          git("update-ref", "refs/heads/main", next);
+          await expect
+            .poll(() => selectedState, { timeout: 17000 })
+            .toMatchObject({
+              phase: "ready",
+              files: [{ path: "next.txt" }],
+              resolved: { headSha: next },
+            });
+          await expect
+            .poll(() => stagedState)
+            .toMatchObject({
+              phase: "ready",
+              files: [{ path: "tracked.txt" }],
+            });
+          await expect
+            .poll(() => pinnedState)
+            .toMatchObject({
+              phase: "ready",
+              files: [{ path: "tracked.txt", status: "binary" }],
+            });
+          git("symbolic-ref", "HEAD", "refs/heads/main");
+          await expect
+            .poll(() => current, { timeout: 17000 })
+            .toMatchObject({
+              phase: "ready",
+              resolved: { mergeBaseSha: next },
+              files: [{ path: "next.txt" }, { path: "tracked.txt" }, { path: "working.txt" }],
+            });
+          expect(
+            await ctx.client.readDiff({
+              cwd,
+              base: { kind: "rev", rev: "missing-branch" },
+              head: { kind: "worktree" },
+            }),
+          ).toMatchObject({ phase: "error", error: { code: "REF_NOT_FOUND" } });
+        } finally {
+          stopStaged();
+          stopPinned();
+          stopSelected();
+          await Promise.all([staged.release(), pinned.release(), selected.release()]);
+        }
+      } finally {
+        unsubscribe();
+        await changes.release();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  },
+  45000,
+);

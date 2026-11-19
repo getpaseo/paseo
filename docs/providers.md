@@ -19,8 +19,8 @@ provider icon map. You do not need a core manifest entry or provider factory.
 
 | Provider    | Transport                                  | Setup and limitations                                            |
 | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
-| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
+| Antigravity | ACP over the installed `agy acp` CLI       | [Antigravity](../public-docs/supported-providers/antigravity.md) |
+| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/supported-providers/muse-code.md)     |
 
 ## Provider-native session options
 
@@ -50,8 +50,8 @@ or without a control.
   reject. A key the running session cannot apply (one the provider reads only when it opens) is
   rejected too, so a stored option always describes what runs. Claude reads most options when it
   starts its query, and replacing a started query would end its background work, so after the
-  first prompt only Fast can change. Codex fixes its approval policy and sandbox when the thread
-  starts, so it applies only `service_tier` and `plan_mode` live. A session with no
+  first prompt only Fast and Ultracode can change. Codex fixes its approval policy and sandbox
+  when the thread starts, so it applies only `service_tier` and `plan_mode` live. A session with no
   `applyOptions` rejects every patch; the daemon enforces this. The provider returns the options
   it ended up with when they differ from the request. The daemon stores the patch and that
   result in one step after the call resolves. Throwing rejects the whole patch and none of it is

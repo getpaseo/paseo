@@ -41,16 +41,24 @@ savePersistedConfig(home, {
   },
 });
 const main = path.join(root, "main.cjs");
+const updatedMain = path.join(root, "updated-main.cjs");
 const managerPath = path.join(repo, "packages/desktop/dist/daemon/daemon-manager.js");
+const desktopMain = (setup) =>
+  `const { app } = require("electron"); ${setup} app.setPath("userData", ${JSON.stringify(path.join(root, "user-data"))}); app.whenReady().then(() => { global.lifecycle = require(${JSON.stringify(managerPath)}); });`;
+await writeFile(main, desktopMain(""));
+// An unpackaged Desktop reads its version from packages/desktop/package.json. This entry
+// reports a newer version, standing in for the Desktop an update installs.
 await writeFile(
-  main,
-  `const { app } = require("electron"); app.setPath("userData", ${JSON.stringify(path.join(root, "user-data"))}); app.whenReady().then(() => { global.lifecycle = require(${JSON.stringify(managerPath)}); });`,
+  updatedMain,
+  desktopMain(
+    `const fs = require("node:fs"); const path = require("node:path"); const readFileSync = fs.readFileSync; fs.readFileSync = (file, ...rest) => typeof file === "string" && path.relative(${JSON.stringify(path.join(repo, "packages/desktop"))}, file) === "package.json" ? JSON.stringify({ version: "999.0.0" }) : readFileSync(file, ...rest);`,
+  ),
 );
 let desktop;
 let captured;
-async function openDesktop() {
+async function openDesktop(entry = main) {
   desktop = await electron.launch({
-    args: ["--no-sandbox", "--ozone-platform=headless", main],
+    args: ["--no-sandbox", "--ozone-platform=headless", entry],
     env: {
       ...env,
       PASEO_LISTEN: "127.0.0.1:1",
@@ -78,27 +86,31 @@ async function command(name, args) {
   );
 }
 try {
-  // Simulate a legacy independent launch that carries the old Desktop flag.
+  // A daemon the user started through the CLI, which Desktop must never stop on its own.
+  // Older bundled CLIs exported PASEO_DESKTOP_MANAGED, and the CLI launch must not record it.
   const launch = await startDaemonInstance({
     home,
     command: process.execPath,
     args: [path.join(repo, "packages/server/dist/scripts/supervisor-entrypoint.js")],
-    env,
+    env: { ...env, PASEO_DESKTOP_MANAGED: "1" },
     mode: "deployment",
-    desktopManaged: true,
     timeoutMs: 30_000,
   });
   captured = launch.instance;
   await openDesktop();
   const attached = await command("start_desktop_daemon");
   assert.equal(attached.pid, captured.pid);
-  assert.equal(attached.desktopManaged, true);
+  assert.equal(attached.desktopManaged, false);
   assert.equal(attached.ownedByDesktop, false);
   for (const reason of ["quit", "settings", "app_update", "host_remove", "version_mismatch"]) {
     const status = await command("stop_desktop_daemon", { reason });
     assert.equal(status.pid, captured.pid, `${reason} stopped an attached daemon`);
     process.kill(captured.pid, 0);
   }
+  await closeDesktop();
+  await openDesktop(updatedMain);
+  const afterUpdate = await command("start_desktop_daemon");
+  assert.equal(afterUpdate.pid, captured.pid, "a newer Desktop replaced a daemon the user started");
   const restarted = await command("restart_desktop_daemon");
   assert.equal(restarted.pid, captured.pid);
   await assert.rejects(
@@ -134,18 +146,37 @@ try {
   desktop = null;
   process.kill(captured.pid, 0);
   await openDesktop();
-  assert.equal((await command("start_desktop_daemon")).ownedByDesktop, false);
-  await command("stop_desktop_daemon", { reason: "quit" });
+  // The next session attaches to the daemon Desktop launched before it quit.
+  const survivor = await command("start_desktop_daemon");
+  assert.equal(survivor.pid, captured.pid);
+  assert.equal(survivor.desktopManaged, true);
+  assert.equal(survivor.ownedByDesktop, false);
+  for (const reason of ["quit", "settings", "host_remove"]) {
+    await command("stop_desktop_daemon", { reason });
+    process.kill(captured.pid, 0);
+  }
+  // With management off, Desktop leaves the daemon running through an update.
+  await command("patch_desktop_settings", { daemon: { manageBuiltInDaemon: false } });
+  await command("stop_desktop_daemon", { reason: "app_update" });
   process.kill(captured.pid, 0);
-  await command("stop_desktop_daemon", {
-    reason: "manual_ipc",
-    pid: captured.pid,
-    startedAt: captured.startedAt,
-  });
+  await command("patch_desktop_settings", { daemon: { manageBuiltInDaemon: true } });
+  // Installing an update stops it, so the updated Desktop starts its own daemon.
+  const beforeInstall = await command("stop_desktop_daemon", { reason: "app_update" });
+  assert.equal(beforeInstall.status, "stopped", "app_update left Desktop's daemon running");
   captured = null;
   const next = await command("start_desktop_daemon");
   captured = await readDaemonInstance(home);
   assert.equal(next.ownedByDesktop, true);
+  await closeDesktop();
+  process.kill(captured.pid, 0);
+  // A newer Desktop replaces the daemon an older Desktop launched and kept running.
+  const outdated = captured;
+  await openDesktop(updatedMain);
+  const replaced = await command("start_desktop_daemon");
+  captured = await readDaemonInstance(home);
+  assert.notEqual(replaced.pid, outdated.pid, "a newer Desktop kept the outdated daemon");
+  assert.equal(replaced.ownedByDesktop, true);
+  assert.throws(() => process.kill(outdated.pid, 0), "the outdated daemon is still running");
   await command("stop_desktop_daemon", { reason: "quit" });
   assert.equal(await readDaemonInstance(home), null);
   captured = null;
@@ -195,7 +226,7 @@ try {
     );
   }
   console.log(
-    "PASS: attached legacy daemon survives automatic actions; explicit captured stop, owned launch, managed settings, worker restart, and next-session attachment.",
+    "PASS: a user-started daemon survives automatic actions and updates; explicit captured stop, owned launch, managed settings, worker restart, next-session attachment, and update replacement of an earlier session's daemon.",
   );
 } finally {
   await closeDesktop();

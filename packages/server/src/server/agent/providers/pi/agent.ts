@@ -2074,7 +2074,6 @@ export class PiRpcAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
           level: toNotificationLevel(event.notifyType),
