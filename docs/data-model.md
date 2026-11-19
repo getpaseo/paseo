@@ -497,6 +497,11 @@ Array of workspace records. A workspace is a specific working directory within a
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
 
+A pinned workspace can have a host-local rank. The registry commits a drag in one write so a restart
+cannot load half of the new order. Pins without a rank come first by pin timestamp. A filtered drag
+replaces only the slots held by the submitted pins. The first drag can import the client's old
+device order for pins outside those slots. Once the host has a ranked order, it ignores that import.
+
 ### Workspace label catalog
 
 **Path:** `$PASEO_HOME/projects/workspace-labels.json`
