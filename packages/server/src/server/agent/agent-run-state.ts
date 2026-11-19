@@ -356,10 +356,7 @@ export class ForegroundPromptStart {
   private run: PendingForegroundRun | null = null;
   private done = false;
 
-  constructor(
-    private readonly agentId: string,
-    readonly canStart: () => boolean = () => true,
-  ) {
+  constructor(private readonly agentId: string) {
     this.started = new Promise<void>((resolve, reject) => {
       this.resolveStarted = resolve;
       this.rejectStarted = reject;

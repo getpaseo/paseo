@@ -865,3 +865,53 @@ test("a command with an explicit mode waits for turn end without an out-of-band 
   expect(parseAgentMessages(String(dispatched[0]!.prompt))![0]!.text).toBe("/handled");
   await delivery.close();
 });
+
+test("shutdown keeps a peer report and drops idle-only content when an in-flight batch finds a busy turn", async () => {
+  const clock = createClock();
+  const entered = Promise.withResolvers<void>();
+  const failure = Promise.withResolvers<void>();
+  const attempts: { prompt: AgentPromptInput; idleOnly: boolean }[] = [];
+  const delivery = createAgentMessageDelivery({
+    schedule: clock.schedule,
+    async dispatch(batch) {
+      attempts.push(batch);
+      if (attempts.length === 1) {
+        entered.resolve();
+        await failure.promise;
+        throw new AgentTurnBusyError("parent already has a turn");
+      }
+      return "steered";
+    },
+    onError(error) {
+      throw error;
+    },
+  });
+  const peer = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "Child report",
+    source: { kind: "agent-message", agentId: "child" },
+  });
+  const update = delivery.enqueue({
+    recipientId: "parent",
+    prompt: "PR digest",
+    source: { kind: "change-request-update", url: "https://github.com/owner/repo/pull/1" },
+    idleOnly: true,
+    unarchive: false,
+  });
+  clock.advance(2_000);
+  await entered.promise;
+  const closing = delivery.close();
+  failure.resolve();
+  await closing;
+  await expect(peer.dispatched).resolves.toBe("steered");
+  await expect(update.dispatched).rejects.toMatchObject({ name: "AbortError" });
+  expect(
+    attempts.map(({ idleOnly, prompt }) => [
+      idleOnly,
+      parseAgentMessages(String(prompt))?.map(({ text }) => text),
+    ]),
+  ).toEqual([
+    [true, ["Child report", "PR digest"]],
+    [false, ["Child report"]],
+  ]);
+});

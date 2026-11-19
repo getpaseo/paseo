@@ -3,13 +3,14 @@ import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import { createChangeRequestWatches } from "./index.js";
-import { waitForAgentRunStart } from "../agent-prompt.js";
+import { createAgentMessageDelivery, parseAgentMessages } from "../agent-messages/index.js";
 import type {
   ChangeRequestSnapshot,
   ChangeRequestSource,
 } from "../../../services/change-request-source.js";
 
 const url = "https://github.com/owner/repo/pull/42";
+const reviewUrl = url + "#pullrequestreview-1";
 const initial: ChangeRequestSnapshot = {
   state: "open",
   headSha: "aaa",
@@ -27,321 +28,235 @@ async function createTestHome() {
   return mkdtemp(join(artifacts, "pr-watches-"));
 }
 
-test("shares one observation and restores a busy recipient's unsent digest", async () => {
-  const home = await createTestHome();
-  vi.useFakeTimers();
-  let listener: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
-  let observations = 0;
-  const delivered: [string, string][] = [];
+function createHarness(
+  home: string,
+  { isActive = async (_id: string) => true, observationFails = false } = {},
+) {
+  const observations = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
   const busy = new Set<string>();
-  const source: ChangeRequestSource = {
-    resolve: () => url,
-    observe(_url, callbacks) {
-      observations++;
-      listener = callbacks;
-      queueMicrotask(() => void callbacks.snapshot(initial));
-      return () => {
-        listener = undefined;
-      };
+  const turns: { recipientId: string; prompt: string }[] = [];
+  const outOfBand: string[] = [];
+  const listeners = new Set<(id: string) => void>();
+  const messages = createAgentMessageDelivery({
+    isRunning: (id) => busy.has(id),
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
-  };
-  const create = () =>
-    createChangeRequestWatches({
-      source,
-      paseoHome: home,
-      isActive: async () => true,
-      deliver: async (agentId, digest) => {
-        if (busy.has(agentId)) return false;
-        delivered.push([agentId, digest.text]);
-        return true;
-      },
-      logger: pino({ enabled: false }),
-    });
-  let watches = create();
-  try {
-    await watches.start();
-    await expect(watches.subscribe("first", url)).resolves.toMatchObject({
-      url,
-      state: "open",
-      subscribed: true,
-    });
-    await watches.subscribe("first", url);
-    expect(observations).toBe(1);
-
-    const failing = {
-      ...initial,
-      checksState: "failed" as const,
-      checks: [
-        {
-          id: "1",
-          name: "build",
-          state: "failed" as const,
-          url: "https://github.com/owner/repo/actions/runs/1",
-        },
-      ],
-    };
-    await listener!.snapshot(failing);
-    await vi.advanceTimersByTimeAsync(15_000);
-    await expect(watches.subscribe("second", url)).resolves.toMatchObject({
-      checks: failing.checks,
-    });
-    await listener!.snapshot({
-      ...failing,
-      activity: [{ id: "comment-101", kind: "comment", url: url + "#issuecomment-101" }],
-    });
-    busy.add("second");
-    await vi.advanceTimersByTimeAsync(15_000);
-    await watches.flush();
-    expect(delivered).toEqual([["first", expect.stringContaining("build")]]);
-    expect(delivered[0]?.[1]).toContain("#issuecomment-101");
-    expect(delivered[0]?.[1]).toContain(failing.checks[0]!.url);
-
-    await watches.close();
-    watches = create();
-    await watches.start();
-    busy.clear();
-    await watches.flush();
-    expect(delivered[1]).toEqual(["second", expect.stringContaining("#issuecomment-101")]);
-    expect(delivered[1]?.[1]).not.toContain("build");
-  } finally {
-    await watches.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("withdraws an unsent update without blocking another PR or stopping another recipient", async () => {
-  const home = await createTestHome();
-  vi.useFakeTimers();
-  const observers = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
-  const attempt = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
-  const delivered: string[] = [];
+    async tryRunOutOfBand(request) {
+      outOfBand.push(String(request.prompt));
+      return false;
+    },
+    async dispatch(request) {
+      turns.push({ recipientId: request.recipientId, prompt: String(request.prompt) });
+      return "turn_started";
+    },
+    onError(error) {
+      throw error;
+    },
+  });
   const watches = createChangeRequestWatches({
     source: {
       resolve: (input) => input,
       observe(address, callbacks) {
-        observers.set(address, callbacks);
-        queueMicrotask(() => void callbacks.snapshot(initial));
-        return () => observers.delete(address);
+        observations.set(address, callbacks);
+        queueMicrotask(() => {
+          if (observationFails) callbacks.error(new Error("Forge unavailable"));
+          else void callbacks.snapshot(initial);
+        });
+        return () => observations.delete(address);
       },
     },
     paseoHome: home,
-    isActive: async () => true,
-    async deliver(agent, digest) {
-      if (agent === "first") {
-        attempt.resolve();
-        await release.promise;
-      }
-      if (!digest.isPending()) return false;
-      delivered.push(agent);
-      return true;
-    },
     logger: pino({ enabled: false }),
+    isActive,
+    messages: () => messages,
   });
-  try {
-    await watches.start();
-    await watches.subscribe("first", url);
-    await watches.subscribe("second", url);
-    await observers.get(url)!.snapshot({ ...initial, state: "merged" });
-    expect(observers.has(url)).toBe(false);
-    await vi.advanceTimersByTimeAsync(30_000);
-    await attempt.promise;
+  return {
+    observations,
+    turns,
+    outOfBand,
+    busy,
+    messages,
+    watches,
+    idle(id: string) {
+      busy.delete(id);
+      for (const listener of listeners) listener(id);
+    },
+    async close() {
+      await watches.close();
+      await messages.close();
+    },
+  };
+}
 
-    const other = "https://github.com/owner/repo/pull/43";
-    await expect(watches.subscribe("third", other)).resolves.toMatchObject({ subscribed: true });
-    await expect(watches.unsubscribe("first", url)).resolves.toMatchObject({ removed: true });
-    release.resolve();
-    await watches.flush();
-    expect(delivered).toEqual(["second"]);
-    await expect(watches.unsubscribe("second", url)).resolves.toMatchObject({ removed: false });
-    await watches.archive("third");
-    expect(observers.size).toBe(0);
+test.each([false, true])(
+  "shares the next turn with a child report when unsubscribe is %s",
+  async (unsubscribe) => {
+    vi.useFakeTimers();
+    const home = await createTestHome();
+    const h = createHarness(home);
+    try {
+      await h.watches.start();
+      await h.watches.subscribe("parent", url);
+      h.busy.add("parent");
+      const report = h.messages.enqueue({
+        recipientId: "parent",
+        source: { kind: "agent-message", agentId: "child" },
+        prompt: "Child report",
+      });
+      await h.observations.get(url)!.snapshot({
+        ...initial,
+        activity: [{ id: "review", kind: "review", url: reviewUrl }],
+      });
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(h.turns).toEqual([]);
+      expect(h.outOfBand.every((prompt) => !prompt.includes(reviewUrl))).toBe(true);
+      const dispatches = h.messages.waitForDispatch("parent", new AbortController().signal);
+      if (unsubscribe)
+        await expect(h.watches.unsubscribe("parent", url)).resolves.toMatchObject({
+          removed: true,
+        });
+      h.idle("parent");
+      await report.dispatched;
+      await dispatches;
+      expect(h.turns).toHaveLength(1);
+      const delivered = parseAgentMessages(h.turns[0]!.prompt);
+      expect(delivered).toEqual([
+        expect.objectContaining({
+          source: { kind: "agent-message", agentId: "child" },
+          text: "Child report",
+        }),
+        ...(!unsubscribe
+          ? [
+              expect.objectContaining({
+                source: { kind: "change-request-update", url },
+                text: expect.stringContaining(reviewUrl),
+              }),
+            ]
+          : []),
+      ]);
+    } finally {
+      await h.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("shares one observation and preserves a fixed digest window for a later subscriber", async () => {
+  vi.useFakeTimers();
+  const home = await createTestHome();
+  const h = createHarness(home);
+  try {
+    await h.watches.start();
+    await h.watches.subscribe("first", url);
+    await h.watches.subscribe("first", url);
+    const observer = h.observations.get(url)!;
+    const checkUrl = "https://github.com/owner/repo/actions/runs/1";
+    const failing = {
+      ...initial,
+      checksState: "failed" as const,
+      checks: [{ id: "1", name: "build", state: "failed" as const, url: checkUrl }],
+    };
+    await observer.snapshot(failing);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(h.watches.subscribe("second", url)).resolves.toMatchObject({
+      checks: failing.checks,
+    });
+    expect(h.observations.get(url)).toBe(observer);
+    await observer.snapshot({
+      ...failing,
+      activity: [{ id: "101", kind: "comment", url: url + "#issuecomment-101" }],
+    });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(h.messages.hasPending("first")).toBe(false);
+    await vi.advanceTimersByTimeAsync(2_001);
+    expect(h.turns).toHaveLength(2);
+    expect(h.turns.find(({ recipientId }) => recipientId === "first")?.prompt).toContain(checkUrl);
+    expect(h.turns.find(({ recipientId }) => recipientId === "second")?.prompt).not.toContain(
+      checkUrl,
+    );
+    expect(h.turns.every(({ prompt }) => prompt.includes("#issuecomment-101"))).toBe(true);
   } finally {
-    release.resolve();
-    await watches.close();
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("can withdraw a terminal digest after its observation has stopped", async () => {
+  vi.useFakeTimers();
+  const home = await createTestHome();
+  const h = createHarness(home);
+  try {
+    await h.watches.start();
+    await h.watches.subscribe("first", url);
+    await h.watches.subscribe("second", url);
+    h.busy.add("first");
+    await h.observations.get(url)!.snapshot({ ...initial, state: "merged" });
+    expect(h.observations.has(url)).toBe(false);
+    await vi.advanceTimersByTimeAsync(32_000);
+    await expect(h.watches.unsubscribe("first", url)).resolves.toMatchObject({ removed: true });
+    h.idle("first");
+    expect(h.turns).toEqual([
+      { recipientId: "second", prompt: expect.stringContaining("Change request merged.") },
+    ]);
+    await expect(h.watches.unsubscribe("second", url)).resolves.toMatchObject({ removed: false });
+  } finally {
+    await h.close();
     await rm(home, { recursive: true, force: true });
   }
 });
 
 test("retains the current observation as the last subscriber leaves and a new one joins", async () => {
   const home = await createTestHome();
-  let observer: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
-  const watches = createChangeRequestWatches({
-    source: {
-      resolve: (input) => input,
-      observe(_address, callbacks) {
-        observer = callbacks;
-        queueMicrotask(() => void callbacks.snapshot(initial));
-        return () => {
-          observer = undefined;
-        };
-      },
-    },
-    paseoHome: home,
-    isActive: async () => true,
-    deliver: async () => true,
-    logger: pino({ enabled: false }),
-  });
+  const h = createHarness(home);
   try {
-    await watches.start();
-    await watches.subscribe("first", url);
-    await observer!.snapshot({ ...initial, headSha: "new-head" });
+    await h.watches.start();
+    await h.watches.subscribe("first", url);
+    const observer = h.observations.get(url)!;
+    await observer.snapshot({ ...initial, headSha: "new-head" });
     const [, joined] = await Promise.all([
-      watches.unsubscribe("first", url),
-      watches.subscribe("second", url),
+      h.watches.unsubscribe("first", url),
+      h.watches.subscribe("second", url),
     ]);
     expect(joined).toMatchObject({ subscribed: true, headSha: "new-head" });
-    expect(observer).toBeDefined();
+    expect(h.observations.get(url)).toBe(observer);
   } finally {
-    await watches.close();
+    await h.close();
     await rm(home, { recursive: true, force: true });
   }
 });
 
-test("records an admitted update acknowledged during provider shutdown", async () => {
-  const home = await createTestHome();
+test("keeps a durable baseline across restart and drops undelivered digests", async () => {
   vi.useFakeTimers();
-  let observer: Parameters<ChangeRequestSource["observe"]>[1] | undefined;
-  const starting = Promise.withResolvers<void>();
-  const accepted = Promise.withResolvers<void>();
-  const deliveries: string[] = [];
-  const create = () =>
-    createChangeRequestWatches({
-      source: {
-        resolve: (input) => input,
-        observe(_address, callbacks) {
-          observer = callbacks;
-          queueMicrotask(() => void callbacks.snapshot(initial));
-          return () => {
-            observer = undefined;
-          };
-        },
-      },
-      paseoHome: home,
-      isActive: async () => true,
-      async deliver(_agent, digest) {
-        starting.resolve();
-        await waitForAgentRunStart(accepted.promise, digest.signal);
-        deliveries.push(digest.id);
-        return true;
-      },
-      logger: pino({ enabled: false }),
-    });
-  let watches = create();
-  try {
-    await watches.start();
-    await watches.subscribe("first", url);
-    await observer!.snapshot({ ...initial, state: "merged" });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await starting.promise;
-
-    // The daemon freezes observation and new admission, then tears down providers.
-    watches.stop();
-    accepted.resolve();
-    await watches.close();
-
-    watches = create();
-    await watches.start();
-    await watches.flush();
-    expect(deliveries).toHaveLength(1);
-  } finally {
-    accepted.resolve();
-    await watches.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("returns the durable baseline while a restored observation is failing", async () => {
   const home = await createTestHome();
-  let failing = false;
-  const create = () =>
-    createChangeRequestWatches({
-      source: {
-        resolve: (input) => input,
-        observe(_address, callbacks) {
-          queueMicrotask(() => {
-            if (failing) callbacks.error(new Error("GitHub unavailable"));
-            else void callbacks.snapshot(initial);
-          });
-          return () => {};
-        },
-      },
-      paseoHome: home,
-      isActive: async () => true,
-      deliver: async () => true,
-      logger: pino({ enabled: false }),
-    });
-  let watches = create();
+  let h = createHarness(home);
   try {
-    await watches.start();
-    await watches.subscribe("first", url);
-    await watches.close();
-    failing = true;
-    watches = create();
-    await watches.start();
+    await h.watches.start();
+    await h.watches.subscribe("first", url);
+    h.busy.add("first");
+    await h.observations
+      .get(url)!
+      .snapshot({ ...initial, headSha: "new-head", checksState: "passed" });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.messages.hasPending("first")).toBe(true);
+    await h.close();
+    expect(h.turns).toEqual([]);
+
+    h = createHarness(home, { observationFails: true });
+    await h.watches.start();
     const result = await Promise.race([
-      watches.subscribe("first", url),
-      new Promise((resolve) => setTimeout(() => resolve("subscribe still pending"), 100)),
+      h.watches.subscribe("first", url),
+      Promise.resolve().then(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+        return "subscribe still pending";
+      }),
     ]);
-    expect(result).toMatchObject({ headSha: initial.headSha, subscribed: true, stale: true });
+    expect(result).toMatchObject({ headSha: "new-head", subscribed: true, stale: true });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toEqual([]);
   } finally {
-    await watches.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("sends all due digests in one turn when an agent becomes idle", async () => {
-  const home = await createTestHome();
-  vi.useFakeTimers();
-  const observers = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
-  let busy = true;
-  const deliveries: string[] = [];
-  const watches = createChangeRequestWatches({
-    source: {
-      resolve: (input) => input,
-      observe(address, callbacks) {
-        observers.set(address, callbacks);
-        queueMicrotask(() => void callbacks.snapshot(initial));
-        return () => observers.delete(address);
-      },
-    },
-    paseoHome: home,
-    isActive: async () => true,
-    async deliver(_agent, digest) {
-      if (busy) return false;
-      deliveries.push(digest.text);
-      return true;
-    },
-    logger: pino({ enabled: false }),
-  });
-  try {
-    const second = "https://github.com/owner/repo/pull/43";
-    await watches.start();
-    await watches.subscribe("first", url);
-    await watches.subscribe("first", second);
-    for (const [address, id] of [
-      [url, "1"],
-      [second, "2"],
-      [url, "3"],
-    ]) {
-      await observers.get(address)!.snapshot({
-        ...initial,
-        activity: [{ id, kind: "comment", url: address + "#issuecomment-" + id }],
-      });
-      await vi.advanceTimersByTimeAsync(31_000);
-    }
-    busy = false;
-    watches.agentIdle("first");
-    await watches.flush();
-    expect(deliveries).toHaveLength(1);
-    expect(deliveries[0]).toContain(url + "#issuecomment-1");
-    expect(deliveries[0]?.match(/issuecomment-\d/g)).toEqual([
-      "issuecomment-1",
-      "issuecomment-2",
-      "issuecomment-3",
-    ]);
-  } finally {
-    await watches.close();
+    await h.close();
     await rm(home, { recursive: true, force: true });
   }
 });
@@ -350,39 +265,27 @@ test("recovers active watches even when pruning archived watchers cannot be writ
   const home = await createTestHome();
   const file = join(home, "change-request-watches.json");
   const backup = join(home, "saved-watches.json");
-  const create = (isActive: (id: string) => Promise<boolean>) =>
-    createChangeRequestWatches({
-      source: {
-        resolve: (input) => input,
-        observe(_address, callbacks) {
-          queueMicrotask(() => void callbacks.snapshot(initial));
-          return () => {};
-        },
-      },
-      paseoHome: home,
-      isActive,
-      deliver: async () => true,
-      logger: pino({ enabled: false }),
-    });
-  let watches = create(async () => true);
+  let h = createHarness(home);
   try {
-    await watches.start();
-    await watches.subscribe("archived", url);
-    await watches.subscribe("active", url);
-    await watches.close();
+    await h.watches.start();
+    await h.watches.subscribe("archived", url);
+    await h.watches.subscribe("active", url);
+    await h.close();
     const stored = await readFile(file, "utf8");
-    watches = create(async (id) => {
-      if (id !== "archived") return true;
-      await rename(file, backup);
-      await mkdir(file);
-      return false;
+    h = createHarness(home, {
+      async isActive(id) {
+        if (id !== "archived") return true;
+        await rename(file, backup);
+        await mkdir(file);
+        return false;
+      },
     });
-    await watches.start();
-    await expect(watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
-    await expect(watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
+    await h.watches.start();
+    await expect(h.watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
+    await expect(h.watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
     expect(await readFile(backup, "utf8")).toBe(stored);
   } finally {
-    await watches.close();
+    await h.close();
     await rm(home, { recursive: true, force: true });
   }
 });

@@ -1,13 +1,6 @@
 import { unarchiveWorkspaceAgents } from "./workspace-archive-service.js";
 import { createRestartRecovery } from "./agent/restart-recovery/index.js";
-import {
-  AgentTurnBusyError,
-  sendPreparedPromptToAgent,
-  sendPromptToAgent,
-  unarchiveAgentState,
-  waitForAgentRunStart,
-} from "./agent/agent-prompt.js";
-import { formatChangeRequestUpdate } from "./agent/agent-messages/index.js";
+import { sendPromptToAgent, unarchiveAgentState } from "./agent/agent-prompt.js";
 import { createChangeRequestWatches } from "./agent/change-request-watches/index.js";
 import { createIdleRuntimeCleanup } from "./agent/idle-runtime-cleanup/index.js";
 import {
@@ -1485,40 +1478,11 @@ export async function createPaseoDaemon(
       const record = await agentStorage.get(agentId);
       return record ? !record.archivedAt : Boolean(agentManager.getAgent(agentId));
     },
-    deliver: async (agentId, digest) => {
-      await restartRecovery.waitForResume(agentId, digest.signal);
-      if (!digest.isPending()) return false;
-      if (agentManager.hasInFlightRun(agentId) || agentManager.hasPendingPermissions(agentId))
-        return false;
-      try {
-        const dispatch = await sendPreparedPromptToAgent({
-          agentId,
-          agentManager,
-          agentStorage,
-          prompt: formatChangeRequestUpdate(digest.id, digest.text),
-          idleOnly: true,
-          unarchive: false,
-          runOptions: { clientMessageId: digest.id },
-          canStart: digest.isPending,
-          logger,
-        });
-        if (dispatch.disposition === "turn_started") {
-          await waitForAgentRunStart(dispatch.started, digest.signal);
-        }
-        return true;
-      } catch (error) {
-        if (error instanceof AgentTurnBusyError) return false;
-        throw error;
-      }
+    messages: () => {
+      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
+      return wsServer.agentMessages;
     },
   });
-  const unsubscribeChangeRequestDelivery = agentManager.subscribe(
-    (event) => {
-      if (event.type !== "agent_state" || agentManager.hasInFlightRun(event.agent.id)) return;
-      changeRequestWatches.agentIdle(event.agent.id);
-    },
-    { replayState: false },
-  );
 
   agentManager.setAgentArchivedCallback(async (agentId) => {
     await changeRequestWatches
@@ -2055,8 +2019,7 @@ export async function createPaseoDaemon(
     await idleRuntimeCleanup.close();
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
-    unsubscribeChangeRequestDelivery();
-    changeRequestWatches.stop();
+    await changeRequestWatches.close();
     await finishSubscriptions.close();
     await wsServer?.agentMessages.close();
     agentManager.prepareForShutdown();
@@ -2071,7 +2034,6 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
-    await changeRequestWatches.close();
     await pluginRuntime.stopAllPlugins();
     try {
       if (keepTerminals) {
