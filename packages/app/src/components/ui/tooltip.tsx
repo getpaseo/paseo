@@ -262,11 +262,11 @@ export function Tooltip({
   const opensOnPress = isNative || isCompact;
   const enabled = active && (opensOnPress ? enabledOnMobile : enabledOnDesktop);
 
-  // Remove the portal in the inactive commit, before the retained chat freezes.
-  // Closing also prevents the tooltip from returning when its panel is shown again.
+  // Close when disabled (including when a retained panel goes inactive) so the portal unmounts
+  // immediately and does not reappear when the tooltip is re-enabled.
   useEffect(() => {
-    if (!active && isOpen) setIsOpen(false);
-  }, [active, isOpen, setIsOpen]);
+    if (!enabled && isOpen) setIsOpen(false);
+  }, [enabled, isOpen, setIsOpen]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
