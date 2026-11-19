@@ -225,6 +225,7 @@ export function SearchInput({
 export interface ComboboxItemProps {
   label: string;
   description?: string;
+  descriptionLayout?: ComboboxOption["descriptionLayout"];
   kind?: "directory" | "file";
   leadingSlot?: ReactNode;
   trailingSlot?: ReactNode;
@@ -241,6 +242,7 @@ export interface ComboboxItemProps {
 export function ComboboxItem({
   label,
   description,
+  descriptionLayout,
   kind,
   leadingSlot,
   trailingSlot,
@@ -281,8 +283,11 @@ export function ComboboxItem({
   );
 
   const itemContentStyle = useMemo(
-    () => [styles.comboboxItemContent, description && styles.comboboxItemContentInline],
-    [description],
+    () => [
+      styles.comboboxItemContent,
+      description && descriptionLayout !== "stacked" && styles.comboboxItemContentInline,
+    ],
+    [description, descriptionLayout],
   );
 
   return (
@@ -344,6 +349,7 @@ function OptionRow({ option, selected, active, onSelect, renderOption }: OptionR
     <ComboboxItem
       label={option.label}
       description={option.description}
+      descriptionLayout={option.descriptionLayout}
       kind={option.kind}
       selected={selected}
       active={active}

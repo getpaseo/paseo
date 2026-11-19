@@ -2,6 +2,8 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { expectComposerVisible } from "./composer";
 import { clickNewChat } from "./launcher";
+import { getE2EDaemonPort } from "./daemon-port";
+import { TEST_HOST_LABEL } from "./daemon-registry";
 import { connectNewWorkspaceDaemonClient, loadSessionMessageReaders } from "./new-workspace";
 import { copyPluginFixture } from "./plugin-fixture";
 import { seedWorkspace } from "./seed-client";
@@ -16,28 +18,30 @@ const SNAPSHOT_TEXT = "[User] Example context\n[Assistant] Example response";
 const EXPECTED_REMOTE_ATTACHMENT = {
   type: "text",
   mimeType: "text/plain",
-  title: "Sample Example conversation",
+  title: expect.stringMatching(/^a1b2c3d4 Example conversation/),
   text: SNAPSHOT_TEXT,
   contextKind: "chat_history",
   externalResource: {
     provider: PLUGIN_ID,
     providerLabel: "Conversation context · Secondary",
     resourceType: "conversation",
-    id: "sample",
-    identifier: "Sample",
-    title: RESULT_TITLE,
+    id: "agent_a1b2c3d4-1a2b-3c4d-5e6f-123456789abc",
+    identifier: "a1b2c3d4",
+    title: expect.stringMatching(/^Example conversation/),
     url: "https://example.invalid/conversation",
   },
 };
 
 interface AttachmentSourceActions {
   openShortcut(): Promise<void>;
+  expectPickerLabels(viewport: "desktop" | "compact"): Promise<void>;
   attachDefaultResult(): Promise<void>;
   expectAttachmentInDraft(): Promise<void>;
 }
 
 export async function observeCrossHostAttachmentTraffic(page: Page, sourcePort: number) {
   const frames = await loadSessionMessageReaders();
+  const destinationPort = getE2EDaemonPort();
   let searchRequestCount = 0;
   let submittedAttachment: unknown = null;
 
@@ -54,6 +58,7 @@ export async function observeCrossHostAttachmentTraffic(page: Page, sourcePort: 
         searchRequestCount += 1;
       }
 
+      if (socketPort !== destinationPort) return;
       let attachments: unknown;
       if (message?.type === "workspace.create.request") {
         attachments = message.agent?.attachments;
@@ -147,6 +152,44 @@ export async function withAttachmentSourceFixture(
           await expect(
             page.getByPlaceholder("Search conversations", { exact: true }),
           ).toBeVisible();
+        }),
+      expectPickerLabels: (viewport) =>
+        test.step("show the title, workspace, and source host", async () => {
+          const result = page.getByRole("button", { name: new RegExp(`^${RESULT_TITLE}`) });
+          const title = result.getByText(RESULT_TITLE);
+          const workspaceLabel = result.getByText("Example workspace", { exact: true });
+          const host = page.getByTestId("plugin-attachment-source-host");
+          await expect(result).toBeVisible();
+          await expect(result).not.toContainText("a1b2c3d4");
+          await expect(host).toHaveText(TEST_HOST_LABEL);
+          await expect(host).toBeVisible();
+          await expect(workspaceLabel).toBeVisible();
+          expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+            true,
+          );
+          await expect(async () => {
+            const [titleBox, workspaceBox] = await Promise.all([
+              title.boundingBox(),
+              workspaceLabel.boundingBox(),
+            ]);
+            if (!titleBox || !workspaceBox) throw new Error("Expected both result labels");
+            expect(workspaceBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height - 1);
+            expect(workspaceBox.x).toBeCloseTo(titleBox.x);
+          }).toPass({ timeout: 5_000 });
+
+          const search = page.getByPlaceholder("Search conversations", { exact: true });
+          await search.fill("no such conversation");
+          await expect(result).toHaveCount(0);
+          await search.fill("a1b2c3d4");
+          await expect(result).toBeVisible();
+          await search.clear();
+
+          const screenshotPath = info.outputPath(`attachment-source-picker-${viewport}.png`);
+          await page.screenshot({ path: screenshotPath, animations: "disabled" });
+          await info.attach(`attachment-source-picker-${viewport}`, {
+            path: screenshotPath,
+            contentType: "image/png",
+          });
         }),
       attachDefaultResult: () =>
         test.step("select the default result without typing a query", async () => {

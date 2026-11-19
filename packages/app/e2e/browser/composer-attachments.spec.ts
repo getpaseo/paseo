@@ -68,6 +68,7 @@ test.describe("Composer attachments", () => {
   }, info) => {
     await withAttachmentSourceFixture(page, info, async (context) => {
       await context.openShortcut();
+      await context.expectPickerLabels("desktop");
       await context.attachDefaultResult();
       await context.expectAttachmentInDraft();
     });
@@ -148,8 +149,10 @@ test.describe("Composer attachments", () => {
 
       await approveRemoteSearch.click();
       await expect(page.getByPlaceholder("Search conversations")).toBeVisible();
-      const result = page.getByRole("button", { name: /Example conversation/ });
+      const result = page.getByRole("button", { name: /^Example conversation/ });
       await expect(result).toBeVisible({ timeout: 30_000 });
+      await expect(result).toContainText("Example workspace");
+      await expect(page.getByTestId("plugin-attachment-source-host")).toHaveText("Secondary");
       await traffic.expectSearchStarted();
       await result.click();
       await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
@@ -178,6 +181,17 @@ test.describe("Composer attachments", () => {
       throw journeyError;
     }
     if (errors.length) throw new AggregateError(errors, "Cross-host attachment cleanup failed");
+  });
+
+  test("compact agent attachment picker keeps the workspace and source host visible", async ({
+    page,
+  }, info) => {
+    await withAttachmentSourceFixture(page, info, async (context) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await context.openShortcut();
+      await context.expectPickerLabels("compact");
+      await context.attachDefaultResult();
+    });
   });
 
   test("failed attachment source setup releases its workspace", async ({ page }, info) => {
