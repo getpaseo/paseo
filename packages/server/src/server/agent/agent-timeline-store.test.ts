@@ -152,6 +152,44 @@ describe("whole-turn byte budget", () => {
   });
 });
 
+describe("whole-turn byte budget across turns", () => {
+  it("pages back from an oversized turn into the turn before it without repeating rows", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent", { epoch: "current" });
+    store.append("agent", { type: "user_message", text: "first", messageId: "u1" });
+    for (let index = 1; index <= 5; index++)
+      store.append("agent", { type: "assistant_message", messageId: `a${index}`, text: "ok" });
+    store.append("agent", { type: "user_message", text: "second", messageId: "u2" });
+    for (let index = 1; index <= 8; index++)
+      store.append("agent", {
+        type: "assistant_message",
+        messageId: `b${index}`,
+        text: "x".repeat(400),
+      });
+
+    const fetch = (direction: "tail" | "before", cursor?: { epoch: string; seq: number }) =>
+      selectTimelineResponseWithinFrameBudget({
+        wholeTurns: true,
+        limit: 4,
+        maxBytes: 2500,
+        select: ({ wholeTurns, limit }) => {
+          const { rows, ...page } = store.fetch("agent", { direction, cursor, wholeTurns, limit });
+          return { type: "fetch_agent_timeline_response", payload: { ...page, entries: rows } };
+        },
+      }).payload;
+
+    let page = fetch("tail");
+    const seen = page.entries.map((row) => row.seqStart);
+    while (page.hasOlder) {
+      const cursor = page.startSeq!;
+      page = fetch("before", { epoch: "current", seq: cursor });
+      expect(page.endSeq).toBe(cursor - 1);
+      seen.unshift(...page.entries.map((row) => row.seqStart));
+    }
+    expect(seen).toEqual(Array.from({ length: 15 }, (_, index) => index + 1));
+  });
+});
+
 describe("InMemoryAgentTimelineStore", () => {
   it("resets stale forward cursors to complete available turns", () => {
     const store = new InMemoryAgentTimelineStore();
