@@ -2646,10 +2646,11 @@ export const zhCN: TranslationResources = {
       layout: {
         title: "布局",
         contentWidth: "内容宽度",
-        contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",
-        contentWidthAccessibility: "内容宽度（像素）",
-        reset: "重置",
-        resetAccessibility: "将内容宽度重置为默认值",
+        contentWidthHint: "聊天、消息输入框和 Markdown 预览的宽度",
+        contentWidthDefault: "默认",
+        contentWidthWide: "宽版",
+        contentWidthFull: "全宽",
+        contentWidthCustom: "自定义宽度 · {{width}} px",
       },
       syntax: {
         title: "语法",

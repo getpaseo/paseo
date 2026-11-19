@@ -2700,10 +2700,11 @@ export const ja: TranslationResources = {
       layout: {
         title: "レイアウト",
         contentWidth: "コンテンツ幅",
-        contentWidthHint: "ワイド画面でのチャットと Markdown ファイルの最大幅",
-        contentWidthAccessibility: "コンテンツ幅 (ピクセル)",
-        reset: "リセット",
-        resetAccessibility: "コンテンツ幅をデフォルトに戻す",
+        contentWidthHint: "チャット、入力欄、Markdown プレビューの幅",
+        contentWidthDefault: "標準",
+        contentWidthWide: "ワイド",
+        contentWidthFull: "全幅",
+        contentWidthCustom: "カスタム幅 · {{width}} px",
       },
       syntax: {
         title: "構文ハイライト",

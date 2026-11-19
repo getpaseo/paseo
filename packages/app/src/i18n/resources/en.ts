@@ -2806,10 +2806,11 @@ export const en = {
       layout: {
         title: "Layout",
         contentWidth: "Content width",
-        contentWidthHint: "Max width of chat and Markdown files on wide screens",
-        contentWidthAccessibility: "Content width in pixels",
-        reset: "Reset",
-        resetAccessibility: "Reset content width to default",
+        contentWidthHint: "Width of chat, composer, and Markdown previews",
+        contentWidthDefault: "Default",
+        contentWidthWide: "Wide",
+        contentWidthFull: "Full",
+        contentWidthCustom: "Custom width · {{width}} px",
       },
       syntax: {
         title: "Syntax",
