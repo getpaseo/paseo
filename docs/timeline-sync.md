@@ -68,8 +68,8 @@ projected items. Backward pages and prompt-jump windows also include whole turns
 all currently available rows of an active run. A large run can exceed the target. For a paged
 request whose complete-turn reply cannot fit the wire message limit, the daemon falls back to
 item pages with continuation cursors so the rest remains reachable. A tail page starts at the first row of
-the source span it reaches, so when one item's updates span more than the limit, no smaller page
-exists and the request fails with an error. Local history mounting uses
+the source span it reaches. When one item's updates span the turn up to its last row and more than
+the limit, no smaller tail page exists and the request fails with an error. Local history mounting uses
 turn boundaries so revealing older rows does not change the collapse state of a turn already
 displayed.
 

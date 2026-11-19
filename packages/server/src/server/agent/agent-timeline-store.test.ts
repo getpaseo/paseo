@@ -93,19 +93,19 @@ describe("whole-turn byte budget", () => {
     );
   });
 
-  it("stops when one tool call spans the page and a smaller limit cannot shrink it", () => {
+  function spannedTurn(trailing: number) {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent", { epoch: "current" });
-    const tool = (status: "running" | "completed") =>
+    const tool = (callId: string, status: "running" | "completed") =>
       ({
         type: "tool_call",
-        callId: "background",
+        callId,
         name: "shell",
         status,
         error: null,
         detail: { type: "shell", command: "sleep 600" },
       }) as AgentTimelineItem;
-    store.append("agent", tool("running"), { turnId: "one-turn" });
+    store.append("agent", tool("background", "running"), { turnId: "one-turn" });
     for (let index = 1; index <= 8; index++) {
       store.append(
         "agent",
@@ -113,10 +113,12 @@ describe("whole-turn byte budget", () => {
         { turnId: "one-turn" },
       );
     }
-    store.append("agent", tool("completed"), { turnId: "one-turn" });
-
+    store.append("agent", tool("background", "completed"), { turnId: "one-turn" });
+    for (let index = 1; index <= trailing; index++) {
+      store.append("agent", tool(`after-${index}`, "completed"), { turnId: "one-turn" });
+    }
     let selects = 0;
-    expect(() =>
+    const tail = () =>
       selectTimelineResponseWithinFrameBudget({
         wholeTurns: true,
         limit: 40,
@@ -126,9 +128,27 @@ describe("whole-turn byte budget", () => {
           const { rows, ...page } = store.fetch("agent", { direction: "tail", wholeTurns, limit });
           return { type: "fetch_agent_timeline_response", payload: { ...page, entries: rows } };
         },
-      }),
-    ).toThrow(/one item spans more than the response size limit/i);
-    expect(selects).toBe(3);
+      }).payload;
+    return { tail, selects: () => selects };
+  }
+
+  it("reports when one tool call spans the turn to its last row", () => {
+    const turn = spannedTurn(0);
+    expect(turn.tail).toThrow(/one item spans more than the response size limit/i);
+    expect(turn.selects()).toBe(5);
+  });
+
+  it("reaches the rows after a tool call that spans most of the turn", () => {
+    for (const trailing of [1, 3, 7]) {
+      const page = spannedTurn(trailing).tail();
+      expect(page.hasOlder).toBe(true);
+      expect(page.entries.length).toBeGreaterThan(0);
+      expect(
+        page.entries.every(
+          (row) => row.item.type === "tool_call" && row.item.callId.startsWith("after-"),
+        ),
+      ).toBe(true);
+    }
   });
 });
 
