@@ -413,6 +413,16 @@ test.each([false, true])(
   },
 );
 
+test("a failed root lookup releases the observation", async () => {
+  const root = await createRoot();
+  const observer = createObserver();
+
+  await expect(observer.subscribe(join(root, "missing"), () => {})).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(observer.getDiagnostics().activeObservationCount).toBe(0);
+});
+
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
   const observer = createObserver();
