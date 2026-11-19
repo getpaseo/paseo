@@ -33,7 +33,7 @@ import type {
   PluginProviderMetadata,
   PluginUsageSourceMetadata,
 } from "./plugin-process-protocol.js";
-import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
+import { isResolvedCommand, PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import {
   BufferedPluginSubscription,
   type PluginRuntimeSubscription,
@@ -436,6 +436,20 @@ export class PluginRuntime {
         request,
       }),
     );
+  }
+
+  async resolveProviderCommand(
+    pluginId: string,
+    providerId: string,
+  ): Promise<readonly [string, ...string[]] | undefined> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.resolve_command",
+      requestId: randomUUID(),
+      providerId,
+    });
+    return isResolvedCommand(output) ? output : undefined;
   }
 
   async connectProvider(

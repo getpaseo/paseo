@@ -1,0 +1,1 @@
+{ "id": "zcode-provider", "requirements": { "paseo": ">=0.14.1-beta.1" } }
