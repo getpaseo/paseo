@@ -7,6 +7,7 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
+import { readPreviewScroll, rememberElementScroll } from "../../preview-scroll-memory";
 import type { SourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
@@ -16,6 +17,8 @@ interface FileSourceViewProps {
   navigationRevision: number;
   presentation: Exclude<SourcePresentation, "unsupported">;
   theme: EditorVisualTheme;
+  /** Where this tab's scroll offset is remembered across remounts. */
+  scrollKey?: string;
 }
 
 const languageCompartment = new Compartment();
@@ -29,6 +32,7 @@ export function FileSourceView({
   navigationRevision,
   presentation,
   theme,
+  scrollKey,
 }: FileSourceViewProps) {
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
@@ -60,11 +64,15 @@ export function FileSourceView({
     });
     viewRef.current = view;
     setReady(true);
+    const offset = scrollKey ? readPreviewScroll(scrollKey) : 0;
+    if (offset > 0) view.scrollDOM.scrollTop = offset;
+    const stopRemembering = scrollKey ? rememberElementScroll(view.scrollDOM, scrollKey) : null;
     return () => {
+      stopRemembering?.();
       view.destroy();
       viewRef.current = null;
     };
-  }, [find]);
+  }, [find, scrollKey]);
 
   useEffect(() => {
     const view = viewRef.current;

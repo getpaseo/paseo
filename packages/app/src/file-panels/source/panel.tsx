@@ -22,6 +22,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { formatFileSize } from "@/utils/format-file-size";
 import type { Theme } from "@/styles/theme";
 import { FilePanelLoading } from "../loading";
+import { previewScrollKey } from "../preview-scroll-memory";
 import type { FileConflictAlertState } from "./conflict-alert";
 import { FileEditorModel, getFileConflictCallout } from "./editor/model";
 import { FileEditorView } from "./editor/view";
@@ -148,6 +149,7 @@ function ReadonlyTextFile({
           location={sourceLocation}
           navigationRevision={revision}
           presentation={presentation}
+          scrollKey={previewScrollKey({ workspaceId, path: params.path, view: "source" })}
         />
       )}
     </View>
@@ -248,6 +250,7 @@ function EditableTextFile({
           vimEnabled={settings.vimKeybindings}
           onCursorChange={setCursor}
           onVimModeChange={setVimMode}
+          scrollKey={previewScrollKey({ workspaceId, path: params.path, view: "source" })}
         />
       )}
     </View>

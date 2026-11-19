@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { StyleSheet } from "react-native-unistyles";
 import { WebView } from "react-native-webview";
 import { withPreviewCsp } from "./html-preview-csp";
 import { htmlPreviewNavigationKind } from "./html-preview-navigation";
+import { PREVIEW_SCROLL_MARKER, withPreviewScrollBridge } from "./html-preview-scroll";
+import { readPreviewScroll, writePreviewScroll } from "./preview-scroll-memory";
 
 // A preview is a viewer, not a browser. Only the document Paseo hands the WebView
 // loads; navigations the page attempts afterwards are refused, so a link, a
@@ -32,8 +34,18 @@ const ORIGIN_WHITELIST = ["*"];
 // would arrive with no injected policy and a clean slate to egress from.
 const BASE_URL = "about:blank";
 
-export function FileHtmlPreview({ html, testID }: { html: string; testID?: string }) {
-  const document = useMemo(() => withPreviewCsp(html), [html]);
+export function FileHtmlPreview({
+  html,
+  testID,
+  scrollKey,
+}: {
+  html: string;
+  testID?: string;
+  /** Where this tab's scroll offset is remembered; omit it to keep the frame stateless. */
+  scrollKey?: string;
+}) {
+  const webViewRef = useRef<WebView | null>(null);
+  const document = useMemo(() => withPreviewScrollBridge(withPreviewCsp(html)), [html]);
   const source = useMemo(() => ({ html: document, baseUrl: BASE_URL }), [document]);
   // Latched per document rather than once for the lifetime of the WebView: the
   // file pane re-renders with new content on every live-file refresh, and each of
@@ -51,13 +63,52 @@ export function FileHtmlPreview({ html, testID }: { html: string; testID?: strin
     [document],
   );
 
+  const restoreScroll = useCallback(() => {
+    if (!scrollKey) return;
+    const offset = readPreviewScroll(scrollKey);
+    if (offset <= 0) return;
+    webViewRef.current?.injectJavaScript(
+      `window.postMessage(${JSON.stringify({ [PREVIEW_SCROLL_MARKER]: "restore", y: offset })}, "*"); true;`,
+    );
+  }, [scrollKey]);
+
+  useEffect(() => {
+    if (!scrollKey) return;
+    window.addEventListener("focus", restoreScroll);
+    return () => window.removeEventListener("focus", restoreScroll);
+  }, [restoreScroll, scrollKey]);
+
+  const handleMessage = useCallback(
+    (event: { nativeEvent: { data: string } }) => {
+      if (!scrollKey) return;
+      let message: unknown;
+      try {
+        message = JSON.parse(event.nativeEvent.data);
+      } catch {
+        return;
+      }
+      if (!message || typeof message !== "object") return;
+      const payload = message as Record<string, unknown>;
+      if (payload[PREVIEW_SCROLL_MARKER] === "ask") {
+        restoreScroll();
+        return;
+      }
+      if (payload[PREVIEW_SCROLL_MARKER] === "pos" && typeof payload.y === "number") {
+        writePreviewScroll(scrollKey, payload.y);
+      }
+    },
+    [restoreScroll, scrollKey],
+  );
+
   return (
     <WebView
+      ref={webViewRef}
       testID={testID}
       style={styles.webview}
       source={source}
       originWhitelist={ORIGIN_WHITELIST}
       onShouldStartLoadWithRequest={allowOnlyInitialDocument}
+      onMessage={scrollKey ? handleMessage : undefined}
       setSupportMultipleWindows={false}
       javaScriptCanOpenWindowsAutomatically={false}
       domStorageEnabled={false}

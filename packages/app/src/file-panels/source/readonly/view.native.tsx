@@ -1,11 +1,19 @@
-import { memo, useEffect, useRef, useState } from "react";
-import { FlatList, Text, View, type ListRenderItem } from "react-native";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FlatList,
+  Text,
+  View,
+  type ListRenderItem,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { FilePanelLoading } from "../../loading";
+import { readPreviewScroll, writePreviewScroll } from "../../preview-scroll-memory";
 import type { SourcePresentation } from "./presentation";
 import { buildSourceLines } from "./source-lines";
 
@@ -16,6 +24,8 @@ interface FileSourceViewProps {
   navigationRevision: number;
   presentation: Exclude<SourcePresentation, "unsupported">;
   theme: EditorVisualTheme;
+  /** Where this tab's scroll offset is remembered across remounts. */
+  scrollKey?: string;
 }
 
 /** Lines past the opening line highlighted before the rest of a large file. */
@@ -32,9 +42,20 @@ export function FileSourceView({
   location,
   navigationRevision,
   presentation,
+  scrollKey,
 }: FileSourceViewProps) {
   const listRef = useRef<FlatList<HighlightToken[]>>(null);
   const [lines, setLines] = useState<HighlightToken[][] | null>(null);
+  const initialOffset = useMemo(
+    () => (scrollKey ? { x: 0, y: readPreviewScroll(scrollKey) } : undefined),
+    [scrollKey],
+  );
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (scrollKey) writePreviewScroll(scrollKey, event.nativeEvent.contentOffset.y);
+    },
+    [scrollKey],
+  );
   // Navigating within the file does not rebuild its lines; a new build starts at the latest line.
   const openingLine = useRef(location.lineStart);
   useEffect(() => {
@@ -63,6 +84,9 @@ export function FileSourceView({
       windowSize={9}
       getItemLayout={sourceLineLayout}
       renderItem={renderSourceLine}
+      contentOffset={initialOffset}
+      onScroll={handleScroll}
+      scrollEventThrottle={64}
     />
   );
 }

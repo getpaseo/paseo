@@ -1,6 +1,13 @@
 import { useWorkspace, useFileUrl, type PluginFilePanelProps } from "@getpaseo/plugin/client";
-import { useCallback, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import {
+  ScrollView,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import { useSessionStore } from "@/stores/session-store";
@@ -8,6 +15,7 @@ import { FileHtmlPreview } from "./html-preview";
 import { FilePanelLoading } from "./loading";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { TextFilePanel, type TextFilePreviewProps } from "./source/panel";
+import { previewScrollKey, readPreviewScroll, writePreviewScroll } from "./preview-scroll-memory";
 import type { RenderingFilePanel, SourceFilePanel } from "./catalog";
 
 /** Source: the text file panel with no Preview, for text files no other built-in panel claims. */
@@ -30,10 +38,41 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
   const client = useSessionStore((state) => state.sessions[host.id]?.client ?? null);
   const workspaceRoot = useWorkspace(workspaceId, (workspace) => workspace.directory);
   const [rendered, setRendered] = useState(false);
-  const handleLayout = useCallback(() => setRendered(true), []);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollKey = previewScrollKey({ workspaceId, path: params.path, view: "preview" });
+  const restoredRef = useRef(false);
+
+  // The rendered document lays out once; from then on edits keep the content. The
+  // first layout is also where a remembered offset is applied: before it there is no
+  // scrollable height to scroll to.
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      setRendered(true);
+      if (restoredRef.current) return;
+      const offset = readPreviewScroll(scrollKey);
+      if (offset <= 0 || event.nativeEvent.layout.height < offset) return;
+      restoredRef.current = true;
+      scrollRef.current?.scrollTo({ y: offset, animated: false });
+    },
+    [scrollKey],
+  );
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      writePreviewScroll(scrollKey, event.nativeEvent.contentOffset.y);
+    },
+    [scrollKey],
+  );
+
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.container} showsVerticalScrollIndicator>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        showsVerticalScrollIndicator
+        onScroll={handleScroll}
+        scrollEventThrottle={64}
+      >
         <View onLayout={handleLayout}>
           <FileMarkdownPreview
             source={text}
@@ -50,10 +89,14 @@ function MarkdownPreview({ text, params, workspaceId, host }: TextFilePreviewPro
 }
 
 /** The page owns its scrolling, so there is no ScrollView around it. */
-function HtmlPreview({ text }: TextFilePreviewProps) {
+function HtmlPreview({ text, params, workspaceId }: TextFilePreviewProps) {
   return (
     <View style={styles.container}>
-      <FileHtmlPreview html={text} testID="file-html-preview" />
+      <FileHtmlPreview
+        html={text}
+        testID="file-html-preview"
+        scrollKey={previewScrollKey({ workspaceId, path: params.path, view: "preview" })}
+      />
     </View>
   );
 }

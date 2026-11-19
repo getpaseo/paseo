@@ -23,6 +23,8 @@ export function FileEditorView(_props: {
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
   onReady(): void;
+  /** Where this tab's scroll offset is remembered; the native view has no editor to scroll. */
+  scrollKey?: string;
 }) {
   return (
     <View style={styles.container}>

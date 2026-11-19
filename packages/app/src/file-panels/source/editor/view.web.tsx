@@ -6,6 +6,7 @@ import { getLanguageForFile } from "@getpaseo/highlight";
 import { getCM, vim } from "@replit/codemirror-vim";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
+import { readPreviewScroll, rememberElementScroll } from "../../preview-scroll-memory";
 import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
 
 interface FileEditorViewProps {
@@ -19,6 +20,8 @@ interface FileEditorViewProps {
   onVimModeChange(mode: string | null): void;
   /** The editor shows the file's content. */
   onReady(): void;
+  /** Where this tab's scroll offset is remembered across remounts. */
+  scrollKey?: string;
 }
 
 const languageCompartment = new Compartment();
@@ -44,6 +47,7 @@ export function FileEditorView({
   onCursorChange,
   onVimModeChange,
   onReady,
+  scrollKey,
 }: FileEditorViewProps) {
   const [find] = useState(() => new FileFindModel());
   const hostRef = useRef<HTMLDivElement>(null);
@@ -94,11 +98,15 @@ export function FileEditorView({
     viewRef.current = view;
     onCursorChangeRef.current({ line: 1, column: 1 });
     values.onReady();
+    const offset = scrollKey ? readPreviewScroll(scrollKey) : 0;
+    if (offset > 0) view.scrollDOM.scrollTop = offset;
+    const stopRemembering = scrollKey ? rememberElementScroll(view.scrollDOM, scrollKey) : null;
     return () => {
+      stopRemembering?.();
       view.destroy();
       viewRef.current = null;
     };
-  }, [find]);
+  }, [find, scrollKey]);
 
   useEffect(() => {
     const view = viewRef.current;
