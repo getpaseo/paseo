@@ -8,6 +8,7 @@ import {
 import {
   enterComposerFullscreen,
   exitComposerFullscreen,
+  expectComposerVisible,
   fillComposerDraft,
   resizeComposerViewport,
 } from "../support/helpers/composer";
@@ -297,25 +298,34 @@ test.describe("Command Center agent controls", () => {
   }) => {
     const workspace = await seedWorkspace({ repoPrefix: "command-center-fullscreen-draft-" });
     await seedMockDraftPreferences(page);
-    const [model, mode] = DRAFT_AGENT_CONTROL_CHOICES;
 
     try {
       await openDraftComposer(page, workspace.workspaceId);
       await resizeComposerViewport(page, "portrait");
-      await openMobileAgentSidebar(page);
-      await openCommandCenter(page);
-      await chooseCommandCenterAgentControl({ page, ...mode });
-      await closeMobileAgentSidebar(page);
+      await applyCompactComposerSettings(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 
-      await fillComposerDraft(page, "First line\nSecond line\nThird line");
-      await enterComposerFullscreen(page);
+  test("applies compact sidebar and fullscreen settings to the running agent", async ({ page }) => {
+    const workspace = await seedMockAgentWorkspace({
+      repoPrefix: "command-center-fullscreen-agent-",
+      title: "Compact Command Center settings",
+      model: "five-minute-stream",
+      modeId: "approval-test",
+    });
 
-      await openCommandCenterWithShortcut(page);
-      await chooseCommandCenterAgentControl({ page, ...model });
-      await exitComposerFullscreen(page);
-      await openCommandCenterWithShortcut(page);
-      await expectCommandCenterAgentControlSelected({ page, ...model });
-      await expectCommandCenterAgentControlSelected({ page, ...mode });
+    try {
+      await resizeComposerViewport(page, "portrait");
+      await openAgentRoute(page, workspace);
+      await applyCompactComposerSettings(page);
+      await expectWorkspaceAgentConfiguration(workspace, {
+        id: workspace.agentId,
+        provider: "mock",
+        model: "ten-second-stream",
+        modeId: "load-test",
+      });
     } finally {
       await workspace.cleanup();
     }
@@ -331,4 +341,23 @@ async function openDraftComposer(page: import("@playwright/test").Page, workspac
   await gotoWorkspace(page, workspaceId);
   await clickNewChat(page);
   await waitForDraftComposer(page);
+}
+
+async function applyCompactComposerSettings(page: import("@playwright/test").Page): Promise<void> {
+  const [model, mode] = DRAFT_AGENT_CONTROL_CHOICES;
+  await expectComposerVisible(page);
+  await openMobileAgentSidebar(page);
+  await openCommandCenter(page);
+  await chooseCommandCenterAgentControl({ page, ...mode });
+  await closeMobileAgentSidebar(page);
+
+  await fillComposerDraft(page, "First line\nSecond line\nThird line");
+  await enterComposerFullscreen(page);
+  await openCommandCenterWithShortcut(page);
+  await chooseCommandCenterAgentControl({ page, ...model });
+  await exitComposerFullscreen(page);
+
+  await openCommandCenterWithShortcut(page);
+  await expectCommandCenterAgentControlSelected({ page, ...model });
+  await expectCommandCenterAgentControlSelected({ page, ...mode });
 }
