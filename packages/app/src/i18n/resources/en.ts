@@ -775,6 +775,8 @@ export const en = {
         importSession: "Import session",
         copyPath: "Copy workspace path",
         copyBranchName: "Copy branch name",
+        pin: "Pin workspace",
+        unpin: "Unpin workspace",
         showSetup: "Show setup",
       },
       toasts: {
