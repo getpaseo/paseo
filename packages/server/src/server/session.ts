@@ -1117,6 +1117,7 @@ export class Session {
     });
     this.usageSession = new UsageSession({
       isEnabled: () => daemonConfigStore.get().usage?.enabled !== false,
+      keepsLaterReport: () => this.supports(CLIENT_CAPS.usageRetainedReports),
       emit: (msg) => this.emit(msg),
       runtime: pluginRuntime,
       logger: this.sessionLogger,

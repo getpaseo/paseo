@@ -55,6 +55,10 @@ export const CLIENT_CAPS = {
   // Sources without it never receive agent-level background agents in inclusive lists or
   // update subscriptions, because older apps auto-open a tab for every replicated root agent.
   backgroundAgents: "background_agents",
+  // COMPAT(usageRetainedReports): added in v0.16.0, remove gate after 2027-05-13 once client floor >= v0.16.0.
+  // The daemon streams an expired usage report before its refetch only to clients that keep the
+  // later copy; older clients would list it twice.
+  usageRetainedReports: "usage_retained_reports",
   browserHost: "browser_host",
 } as const;
 

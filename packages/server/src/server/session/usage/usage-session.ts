@@ -10,6 +10,8 @@ export interface UsageSessionOptions {
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
   isEnabled: () => boolean;
+  /** Whether the client keeps the later copy of a report streamed twice. */
+  keepsLaterReport: () => boolean;
   logger: pino.Logger;
 }
 
@@ -26,6 +28,7 @@ export class UsageSession {
         forceRefresh: msg.forceRefresh,
         reportIds: msg.reportIds,
         agentId: msg.agentId,
+        streamExpired: this.options.keepsLaterReport(),
         onReport: (report) =>
           this.options.emit({
             type: "usage.list_reports.update",
