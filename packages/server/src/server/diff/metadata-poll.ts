@@ -26,6 +26,7 @@ export function pollDiffMetadata(
   root: string,
   revisions: ReadonlySet<RevisionWatch>,
   changed: (paths: string[]) => void,
+  probeFailed: (error: unknown, cwd: string) => void,
 ) {
   let closed = false;
   let delay = FIRST_DELAY_MS;
@@ -50,7 +51,7 @@ export function pollDiffMetadata(
     const paths = metadataFiles.filter((_, index) => current[index] !== previous[index]);
     if (paths.length) changed(paths);
     previous = current;
-    const refsChanged = await checkDiffRevisions(revisions);
+    const refsChanged = await checkDiffRevisions(root, revisions, probeFailed);
     if (closed) return;
     delay = paths.length || refsChanged ? FIRST_DELAY_MS : Math.min(delay * 2, MAX_DELAY_MS);
     schedule();

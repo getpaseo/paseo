@@ -11,7 +11,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { RevisionWatch } from "./revision-probe.js";
 import { pollDiffMetadata } from "./metadata-poll.js";
 
-export interface DiffDependencies extends Omit<RevisionWatch, "changed"> {
+export interface DiffDependencies extends Omit<RevisionWatch, "changed" | "gitDirectory"> {
   movingRevision: boolean;
   index: boolean;
   worktree: boolean;
@@ -72,7 +72,9 @@ export class DiffDependencyObserver {
         metadata.push(
           await this.observeMetadata(
             root,
-            root === commonRoot ? { ...input, changed: () => changed("endpoints") } : null,
+            root === commonRoot
+              ? { ...input, gitDirectory: worktreeRoot, changed: () => changed("endpoints") }
+              : null,
             (paths) => {
               if (
                 hasMutableEndpoints &&
@@ -154,7 +156,12 @@ export class DiffDependencyObserver {
           { err: error, root },
           "Diff metadata watcher failed; using degraded polling",
         );
-        observation.poll = pollDiffMetadata(root, observation.revisions, notify);
+        let reported = false;
+        observation.poll = pollDiffMetadata(root, observation.revisions, notify, (err, cwd) => {
+          if (reported) return;
+          reported = true;
+          this.logger?.warn({ err, root, cwd }, "Failed to probe revisions for Changes");
+        });
       }
       return observation.poll;
     };

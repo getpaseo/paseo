@@ -1347,8 +1347,8 @@ test.skipIf(process.platform !== "linux")(
         getGitCommandMetrics().submissions.filter((command) => command.priority === "background"),
       ).toEqual([
         {
-          args: ["cat-file", "-z", "--batch-check=%(objectname)"],
-          cwd: fixture.cwd,
+          args: ["cat-file", "--batch-check=%(objectname)"],
+          cwd: join(fixture.cwd, ".git"),
           priority: "background",
         },
       ]);
@@ -1418,6 +1418,75 @@ test.skipIf(process.platform !== "linux")(
     } finally {
       await fixture.close();
       await rm(overflow, { recursive: true, force: true });
+    }
+  },
+  35000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "an unreachable worktree leaves shared revision probes available to other comparisons",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-shared-ref-");
+    const removed = await mkdtemp(join(tmpdir(), "diff-removed-worktree-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const frames: DiffFrame[] = [];
+    const ref = "refs/heads/selected";
+    try {
+      const head = git("rev-parse", "HEAD");
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git(
+        "-c",
+        "commit.gpgsign=false",
+        "commit-tree",
+        empty,
+        "-p",
+        head,
+        "-m",
+        "next",
+      );
+      git("worktree", "add", "--detach", removed, head);
+      execFileSync("git", ["update-ref", "--stdin"], {
+        cwd: fixture.cwd,
+        input: [
+          `create ${ref} ${head}`,
+          ...Array.from({ length: 5010 }, (_, i) => `create refs/heads/overflow-${i}/ref ${head}`),
+          "",
+        ].join("\n"),
+      });
+      const compare = {
+        base: { kind: "empty" },
+        head: { kind: "rev", rev: ref },
+        highlight: false,
+      } as const;
+      const unavailable = await fixture.subscriptions.subscribe(
+        { ...compare, cwd: removed },
+        async () => {},
+      );
+      const remaining = await fixture.subscriptions.subscribe(
+        { ...compare, cwd: fixture.cwd },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await Promise.all([unavailable.start(), remaining.start()]);
+      expect(frames.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+        revision: 1,
+        headSha: head,
+      });
+
+      git("worktree", "remove", removed);
+      git("update-ref", ref, moved);
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 12000,
+        })
+        .toMatchObject({ revision: 2, headSha: moved });
+      await unavailable.release();
+      await remaining.release();
+    } finally {
+      await fixture.close();
+      await rm(removed, { recursive: true, force: true });
     }
   },
   35000,
