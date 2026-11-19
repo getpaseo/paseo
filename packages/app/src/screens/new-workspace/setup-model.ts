@@ -226,6 +226,8 @@ export function createNewWorkspaceSetup(
         const refName = name.trim();
         if (!current.project) throw new Error("Choose a project first.");
         if (!refName) throw new Error("A base branch needs a name.");
+        // A base is what a new worktree starts from, so the worktree branches off it.
+        update({ refActions: { ...state.refActions, branch: "branch-off" } });
         chooseBase({
           kind: "branch",
           name: branchNameFromRef(refName),

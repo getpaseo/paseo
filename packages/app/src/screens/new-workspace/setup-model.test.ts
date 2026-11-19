@@ -95,6 +95,22 @@ describe("New workspace setup commands", () => {
     expect(setup.getSnapshot().manualIsolation).toBe("worktree");
   });
 
+  it("branches off a plugin's base ref, even after the user switched branches to check out", async () => {
+    const setup = createNewWorkspaceSetup(
+      { ...READY, worktrees: [PROJECT_DIRECTORY] },
+      recordingEffects().effects,
+    );
+    setup.chooseRefAction("branch", "checkout");
+
+    await commandsOf(setup).setBaseRef({ type: "branch", name: "refs/remotes/origin/main" });
+
+    expect(setup.refActionFor("branch")).toBe("branch-off");
+    expect(setup.checkoutRequestFor(setup.getSnapshot().pickerSelection.selectedItem)).toEqual({
+      action: "branch-off",
+      refName: "refs/remotes/origin/main",
+    });
+  });
+
   it("shows a base ref's short name and keeps the exact ref for creation", async () => {
     const setup = createNewWorkspaceSetup(READY, recordingEffects().effects);
 
