@@ -20,6 +20,13 @@ input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
 
+## Picker trigger tooltips
+
+Pass picker hints through `ComboboxTrigger`'s `tooltip` prop and render the
+`Combobox` outside the trigger. React focus events bubble through portals.
+Wrapping the picker with `TooltipTrigger` makes focus in its search field
+look like focus on the button when a shortcut opens the picker.
+
 ## Popover width contract
 
 Combobox desktop popovers are never narrower than their trigger, and they grow

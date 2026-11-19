@@ -363,14 +363,16 @@ test.describe("Composer model and effort shortcuts", () => {
       await expectComposerVisible(page);
       await expect(thinkingControl(page, "High")).toBeVisible();
 
+      await test.step("Focus model search without opening its tooltip", async () => {
+        await toggleModelPickerFromComposer(page);
+        await expect(page.getByPlaceholder(/Search (all )?models/)).toBeFocused();
+        await expect(page.getByRole("tooltip").filter({ hasText: "Change model" })).toBeHidden();
+        await expectModelPickerClosesFromSearch(page);
+      });
+
       await test.step("Show both shortcuts in the toolbar tooltips", async () => {
         await expectShortcutHint(page, modelControl(page), "Change model");
         await expectShortcutHint(page, thinkingControl(page, "High"), "Thinking mode");
-      });
-
-      await test.step("Toggle the picker with its search field focused", async () => {
-        await toggleModelPickerFromComposer(page);
-        await expectModelPickerClosesFromSearch(page);
       });
 
       await test.step("Wrap from High to Low and advance to Medium", async () => {
