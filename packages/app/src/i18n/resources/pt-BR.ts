@@ -381,6 +381,8 @@ export const ptBR: TranslationResources = {
       details: "Detalhes",
     },
     dictation: {
+      permissionDenied: "Permita o acesso ao microfone e tente novamente.",
+      startFailed: "Não foi possível iniciar o ditado. Tente novamente.",
       paused: "Microfone interrompido. Aguardando para retomar…",
       start: "Iniciar ditado por voz",
       cancel: "Cancelar ditado",

@@ -377,6 +377,8 @@ export const zhCN: TranslationResources = {
       details: "详情",
     },
     dictation: {
+      permissionDenied: "请允许访问麦克风，然后重试。",
+      startFailed: "无法开始听写。请重试。",
       paused: "麦克风已中断，正在等待恢复…",
       start: "开始语音听写",
       cancel: "取消听写",

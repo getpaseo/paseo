@@ -1624,6 +1624,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       volume: dictationVolume,
       duration: dictationDuration,
       error: dictationError,
+      startError: dictationStartError,
       status: dictationStatus,
       startDictation,
       cancelDictation,
@@ -2224,39 +2225,46 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
     const toolbar = useMemo(
       () => (
-        <View style={buttonRowStyle}>
-          {/* Toolbar left: attachment button + agent controls */}
-          <View style={styles.leftButtonGroup}>
-            <AttachmentDropdown
-              visible={mode.showAttachments}
-              isConnected={isConnected}
-              disabled={disabled}
-              attachButtonStyle={attachButtonStyle}
-              renderAttachButtonIcon={renderAttachButtonIcon}
-              attachmentMenuItems={attachmentMenuItems}
-              addAttachmentLabel={t("composer.input.addAttachment")}
-            />
-            {leftContent}
-          </View>
+        <>
+          {mode.showVoice && !showOverlay && dictationStartError ? (
+            <Text accessibilityRole="alert" style={styles.dictationStartError}>
+              {t(`message.dictation.${dictationStartError}`)}
+            </Text>
+          ) : null}
+          <View style={buttonRowStyle}>
+            {/* Toolbar left: attachment button + agent controls */}
+            <View style={styles.leftButtonGroup}>
+              <AttachmentDropdown
+                visible={mode.showAttachments}
+                isConnected={isConnected}
+                disabled={disabled}
+                attachButtonStyle={attachButtonStyle}
+                renderAttachButtonIcon={renderAttachButtonIcon}
+                attachmentMenuItems={attachmentMenuItems}
+                addAttachmentLabel={t("composer.input.addAttachment")}
+              />
+              {leftContent}
+            </View>
 
-          {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
-          <View style={styles.rightButtonGroup}>
-            {beforeVoiceContent}
-            <VoiceButtonTooltip
-              visible={mode.showVoice}
-              onVoicePress={handleVoicePress}
-              isDictationStartEnabled={isDictationStartEnabled}
-              voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-              voiceButtonStyle={voiceButtonStyle}
-              renderVoiceButtonIcon={renderVoiceButtonIcon}
-              voiceTooltipText={voiceTooltipText}
-              isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-              voiceMuteToggleKeys={voiceMuteToggleKeys}
-              dictationToggleKeys={dictationToggleKeys}
-            />
-            <View style={styles.trailingDisc}>{sendButton}</View>
+            {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
+            <View style={styles.rightButtonGroup}>
+              {beforeVoiceContent}
+              <VoiceButtonTooltip
+                visible={mode.showVoice}
+                onVoicePress={handleVoicePress}
+                isDictationStartEnabled={isDictationStartEnabled}
+                voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+                voiceButtonStyle={voiceButtonStyle}
+                renderVoiceButtonIcon={renderVoiceButtonIcon}
+                voiceTooltipText={voiceTooltipText}
+                isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+                voiceMuteToggleKeys={voiceMuteToggleKeys}
+                dictationToggleKeys={dictationToggleKeys}
+              />
+              <View style={styles.trailingDisc}>{sendButton}</View>
+            </View>
           </View>
-        </View>
+        </>
       ),
       [
         buttonRowStyle,
@@ -2270,6 +2278,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         leftContent,
         beforeVoiceContent,
         mode.showVoice,
+        showOverlay,
+        dictationStartError,
         handleVoicePress,
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
@@ -2470,6 +2480,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  dictationStartError: {
+    alignSelf: "flex-end",
+    textAlign: "right",
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   leftButtonGroup: {
     minWidth: 0,

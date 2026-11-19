@@ -382,6 +382,8 @@ export const fr: TranslationResources = {
       details: "Détails",
     },
     dictation: {
+      permissionDenied: "Autorisez l’accès au microphone, puis réessayez.",
+      startFailed: "Impossible de lancer la dictée. Réessayez.",
       paused: "Microphone interrompu. En attente de reprise…",
       start: "Démarrer la dictée vocale",
       cancel: "Annuler la dictée",

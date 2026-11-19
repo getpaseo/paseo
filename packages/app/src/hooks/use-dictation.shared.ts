@@ -2,6 +2,8 @@ import { i18n } from "@/i18n/i18next";
 
 export type DictationStatus = "idle" | "recording" | "paused" | "uploading" | "failed";
 
+export type DictationStartError = "permissionDenied" | "startFailed";
+
 export interface UseDictationOptions {
   client: import("@getpaseo/client/internal/daemon-client").DaemonClient | null;
   onTranscript: (text: string, meta: { requestId: string }) => void;
@@ -21,6 +23,7 @@ export interface UseDictationResult {
   volume: number;
   duration: number;
   error: string | null;
+  startError: DictationStartError | null;
   status: DictationStatus;
   startDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;

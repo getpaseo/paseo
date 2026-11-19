@@ -377,6 +377,8 @@ export const ar: TranslationResources = {
       details: "تفاصيل",
     },
     dictation: {
+      permissionDenied: "اسمح بالوصول إلى الميكروفون وحاول مرة أخرى.",
+      startFailed: "تعذر بدء الإملاء. حاول مرة أخرى.",
       paused: "تمت مقاطعة الميكروفون. في انتظار الاستئناف…",
       start: "بدء الإملاء الصوتي",
       cancel: "إلغاء الإملاء",

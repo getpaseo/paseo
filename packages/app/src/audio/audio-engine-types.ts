@@ -3,7 +3,6 @@ export interface AudioEngineCallbacks {
   onVolumeLevel(level: number): void;
   onInterruption?(): void;
   onCaptureAvailabilityChange?(available: boolean): void;
-  onError?(error: Error): void;
 }
 
 export interface AudioPlaybackSource {
@@ -30,4 +29,11 @@ export interface AudioEngine {
 export interface AudioEngineOptions {
   traceLabel?: string;
   captureMode?: "conversation" | "dictation";
+}
+
+export class MicrophonePermissionError extends Error {
+  constructor() {
+    super("Allow microphone access in system settings and try again.");
+    this.name = "MicrophonePermissionError";
+  }
 }

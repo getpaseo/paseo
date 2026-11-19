@@ -382,6 +382,8 @@ export const ja: TranslationResources = {
       details: "詳細",
     },
     dictation: {
+      permissionDenied: "マイクへのアクセスを許可して、もう一度お試しください。",
+      startFailed: "音声入力を開始できませんでした。もう一度お試しください。",
       paused: "マイクが中断されました。再開を待っています…",
       start: "音声入力を開始",
       cancel: "音声入力をキャンセル",

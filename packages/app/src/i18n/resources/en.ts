@@ -376,6 +376,8 @@ export const en = {
       details: "Details",
     },
     dictation: {
+      permissionDenied: "Allow microphone access and try again.",
+      startFailed: "Could not start dictation. Try again.",
       paused: "Microphone interrupted. Waiting to resume…",
       start: "Start voice dictation",
       cancel: "Cancel dictation",

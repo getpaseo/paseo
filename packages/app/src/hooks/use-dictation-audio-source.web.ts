@@ -431,15 +431,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
 
   return useMemo(
     () => ({
-      start: async () => {
-        try {
-          await start();
-        } catch (err) {
-          const normalized = err instanceof Error ? err : new Error(String(err));
-          onErrorRef.current?.(normalized);
-          throw normalized;
-        }
-      },
+      start,
       stop,
       volume,
       isPaused: false,

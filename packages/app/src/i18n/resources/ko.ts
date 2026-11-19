@@ -378,6 +378,8 @@ export const ko: TranslationResources = {
       details: "세부 정보",
     },
     dictation: {
+      permissionDenied: "마이크 접근을 허용한 후 다시 시도하세요.",
+      startFailed: "받아쓰기를 시작할 수 없습니다. 다시 시도하세요.",
       paused: "마이크가 중단되었습니다. 재개를 기다리는 중…",
       start: "음성 받아쓰기 시작",
       cancel: "받아쓰기 취소",
