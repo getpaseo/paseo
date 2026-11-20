@@ -5623,4 +5623,132 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("waits for process exit and emits terminal events once across overlapping interrupts", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-overlap-interrupt-"));
+    temporaryDirectories.push(dir);
+    const scriptPath = path.join(dir, "slow-exit-acp.mjs");
+    const pidFile = path.join(dir, "child.pid");
+    await writeFile(
+      scriptPath,
+      [
+        `import { writeFileSync } from "node:fs";`,
+        `import { createInterface } from "node:readline";`,
+        `writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+        `process.on("SIGTERM", () => { setTimeout(() => process.exit(0), 250); });`,
+        `const write = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");`,
+        `let prompts = 0;`,
+        `createInterface({ input: process.stdin }).on("line", (line) => {`,
+        `  if (!line.trim()) return;`,
+        `  const msg = JSON.parse(line);`,
+        `  if (msg.method === "initialize") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/new") {`,
+        `    write({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "slow-session" } });`,
+        `    return;`,
+        `  }`,
+        `  if (msg.method === "session/prompt") {`,
+        `    prompts += 1;`,
+        `    if (prompts === 1) {`,
+        `      write({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "slow-session", update: { sessionUpdate: "tool_call", toolCallId: "slow-bg", name: "run_command", title: "Job", status: "in_progress" } } });`,
+        `      write({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });`,
+        `    }`,
+        `  }`,
+        `});`,
+      ].join("\n"),
+      "utf8",
+    );
+    const registration = runAcpProvider({
+      id: "deferred-overlap-interrupt",
+      label: "Deferred Overlap Interrupt",
+      command: [process.execPath, scriptPath],
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 1_500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "slow-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "slow-bg",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // Start a hung steer so the session is actively awaiting a steer response.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "slow-steer",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "steer" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === "slow-steer",
+      );
+
+      const childPid = Number((await readFile(pidFile, "utf8")).trim());
+      const startedAt = Date.now();
+      await Promise.all([
+        connection.send({
+          type: "session.interrupt",
+          requestId: "int-1",
+          sessionId: "session-1",
+        }),
+        connection.send({
+          type: "session.interrupt",
+          requestId: "int-2",
+          sessionId: "session-1",
+        }),
+      ]);
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "int-1",
+      );
+      await waitForEvent(
+        events,
+        (event) => event.type === "request.completed" && event.requestId === "int-2",
+      );
+
+      // Both interrupts waited for the 250ms SIGTERM exit, and process is now dead.
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+      expect(() => process.kill(childPid, 0)).toThrow();
+
+      // Canceled turn and session.closed were each emitted exactly once.
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:slow-turn" &&
+            event.state === "canceled",
+        ),
+      ).toHaveLength(1);
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
+    } finally {
+      await connection.close();
+    }
+  });
 });

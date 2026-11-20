@@ -229,8 +229,7 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
       const session = requireSession(state, input.sessionId);
       const retired = await session.runtime.interrupt();
       state.emit({ type: "request.completed", requestId: input.requestId });
-      if (retired) {
-        state.sessions.delete(input.sessionId);
+      if (retired && state.sessions.delete(input.sessionId)) {
         state.emit({ type: "session.closed", sessionId: input.sessionId });
       }
       return;
@@ -447,6 +446,8 @@ class AcpRuntime {
   private replayWindow: "replay" | "skip" | null = null;
   private lastLoadUpdateAt = 0;
   private closing = false;
+  private closePromise: Promise<void> | null = null;
+  private deferredRetirement: Promise<boolean> | null = null;
   private processFailed = false;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
@@ -779,16 +780,15 @@ class AcpRuntime {
   }
 
   async interrupt(): Promise<boolean> {
+    if (this.deferredRetirement) return this.deferredRetirement;
     const active = this.activePrompt;
     const deferredTurnId = active?.deferred ? active.turnId : null;
-    if (active) {
-      active.cancelling = true;
-      if (deferredTurnId) {
-        // Record open tools owned by Stop before writing session/cancel so any failure
-        // update arriving during cancel preserves their canceled state.
-        for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
-      }
+    if (active && deferredTurnId) {
+      const retirement = this.retireDeferredTurn(active, deferredTurnId);
+      this.deferredRetirement = retirement;
+      return retirement;
     }
+    if (active) active.cancelling = true;
     try {
       await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
     } finally {
@@ -797,18 +797,29 @@ class AcpRuntime {
         this.finishTurnPermissions(active.turnId);
       }
     }
-    if (deferredTurnId) {
-      // ACP v1 has no response or end boundary for session/cancel once session/prompt
-      // already returned. Close the process first while the turn still appears running,
-      // then emit the canceled turn synchronously before request.completed and session.closed
-      // so queued work and config changes immediately observe the retired session.
-      await this.close();
-      this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
-        suppressTrailingToolEcho: true,
-      });
-      return true;
-    }
     return false;
+  }
+
+  private async retireDeferredTurn(active: ActivePrompt, deferredTurnId: string): Promise<boolean> {
+    active.cancelling = true;
+    // Record open tools owned by Stop before writing session/cancel so any failure
+    // update arriving during cancel preserves their canceled state.
+    for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
+    try {
+      await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+    } finally {
+      // An agent may wait for its outstanding permission replies before ending the prompt.
+      this.finishTurnPermissions(active.turnId);
+    }
+    // ACP v1 has no response or end boundary for session/cancel once session/prompt
+    // already returned. Close the process first while the turn still appears running,
+    // then emit the canceled turn synchronously before request.completed and session.closed
+    // so queued work and config changes immediately observe the retired session.
+    await this.close();
+    this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
+      suppressTrailingToolEcho: true,
+    });
+    return true;
   }
 
   listSessions(cwd?: string) {
@@ -937,9 +948,14 @@ class AcpRuntime {
     await this.close();
   }
 
-  async close(): Promise<void> {
-    if (this.closing) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closing = true;
+    this.closePromise = this.closeInternal();
+    return this.closePromise;
+  }
+
+  private async closeInternal(): Promise<void> {
     this.settlePendingWork();
     await this.closeConnector();
     const child = this.child;
