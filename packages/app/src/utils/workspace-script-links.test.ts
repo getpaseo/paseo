@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import type {
+  WorkspaceLaunchEndpointPayload,
+  WorkspaceScriptPayload,
+} from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
-import { resolveWorkspaceScriptLink } from "./workspace-script-links";
+import {
+  resolveWorkspaceLaunchEndpointLink,
+  resolveWorkspaceScriptLink,
+} from "./workspace-script-links";
 
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
@@ -15,6 +21,16 @@ const runningService: WorkspaceScriptPayload = {
   health: "healthy",
   exitCode: null,
   terminalId: null,
+};
+
+const runningLaunchEndpoint: WorkspaceLaunchEndpointPayload = {
+  id: "dev:p0",
+  port: 4100,
+  hostname: "launch-dev-p0--feature--paseo.localhost",
+  localProxyUrl: "http://launch-dev-p0--feature--paseo.localhost:6767",
+  publicProxyUrl: null,
+  proxyUrl: "http://launch-dev-p0--feature--paseo.localhost:6767",
+  health: "healthy",
 };
 
 function resolveLink(
@@ -200,5 +216,69 @@ describe("resolveWorkspaceScriptLink", () => {
       primary: null,
       targets: [],
     });
+  });
+});
+
+describe("resolveWorkspaceLaunchEndpointLink", () => {
+  it("uses the remote daemon host instead of a .localhost proxy", () => {
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: runningLaunchEndpoint,
+        activeConnection: {
+          type: "directTcp",
+          endpoint: "mac-mini.tail123.ts.net:6767",
+          display: "remote",
+        },
+      }),
+    ).toEqual({
+      primary: {
+        kind: "direct",
+        label: "mac-mini.tail123.ts.net:4100",
+        url: "http://mac-mini.tail123.ts.net:4100",
+      },
+      targets: [
+        {
+          kind: "direct",
+          label: "mac-mini.tail123.ts.net:4100",
+          url: "http://mac-mini.tail123.ts.net:4100",
+        },
+      ],
+    });
+  });
+
+  it.each<ActiveConnection>([
+    { type: "relay", endpoint: "relay.paseo.sh:443", display: "relay" },
+    { type: "remoteSsh", endpoint: "user@remote-host", display: "SSH" },
+  ])("offers only public launch routes over $type", (activeConnection) => {
+    expect(
+      resolveWorkspaceLaunchEndpointLink({ endpoint: runningLaunchEndpoint, activeConnection }),
+    ).toEqual({ primary: null, targets: [] });
+    const publicProxyUrl = "https://dev.services.example.com";
+    const publicTarget = { kind: "public", label: "dev.services.example.com", url: publicProxyUrl };
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: { ...runningLaunchEndpoint, publicProxyUrl },
+        activeConnection,
+      }),
+    ).toEqual({ primary: publicTarget, targets: [publicTarget] });
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: { ...runningLaunchEndpoint, publicProxyUrl: "http://dev.localhost:6767" },
+        activeConnection,
+      }),
+    ).toEqual({ primary: null, targets: [] });
+  });
+
+  it("does not offer browser routes for TCP listeners", () => {
+    expect(
+      resolveWorkspaceLaunchEndpointLink({
+        endpoint: { ...runningLaunchEndpoint, protocol: "tcp" },
+        activeConnection: {
+          type: "directTcp",
+          endpoint: "mac-mini.tail123.ts.net:6767",
+          display: "remote",
+        },
+      }),
+    ).toEqual({ primary: null, targets: [] });
   });
 });

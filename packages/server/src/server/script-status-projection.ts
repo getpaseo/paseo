@@ -6,7 +6,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
 import { readPaseoConfigOrLastKnown } from "../utils/paseo-config-file.js";
-import { getScriptConfigs, isServiceScript } from "../utils/worktree.js";
+import { getScriptConfigs, getWorkspaceLaunchConfigs, isServiceScript } from "../utils/worktree.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import type { ScriptHealthEntry, ScriptHealthState } from "./script-health-monitor.js";
 import type {
@@ -31,6 +31,7 @@ interface BuildWorkspaceScriptPayloadsOptions {
     projectSlug: string;
     currentBranch: string | null;
   };
+  suppressedScriptNames?: ReadonlySet<string>;
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }
 
@@ -220,6 +221,9 @@ export function buildWorkspaceScriptPayloads(
   const projectSlug = options.gitMetadata?.projectSlug ?? deriveProjectSlug(workspaceDirectory);
   const branchName = options.gitMetadata?.currentBranch ?? null;
   const scriptConfigs = getScriptConfigs(options.paseoConfig);
+  for (const scriptName of options.suppressedScriptNames ?? []) {
+    scriptConfigs.delete(scriptName);
+  }
   const runtimeEntries = new Map(
     options.runtimeStore
       .listForWorkspace(workspaceId)
@@ -247,7 +251,11 @@ export function buildWorkspaceScriptPayloads(
   }
 
   for (const runtimeEntry of runtimeEntries.values()) {
-    if (scriptConfigs.has(runtimeEntry.scriptName) || runtimeEntry.lifecycle !== "running") {
+    if (
+      scriptConfigs.has(runtimeEntry.scriptName) ||
+      options.suppressedScriptNames?.has(runtimeEntry.scriptName) ||
+      runtimeEntry.lifecycle !== "running"
+    ) {
       continue;
     }
     const serviceState =
@@ -279,7 +287,8 @@ export function createScriptStatusEmitter({
   runtimeStore,
   daemonPort,
   serviceProxyPublicBaseUrl,
-  resolveWorkspaceDirectory,
+  resolveWorkspaceConfig,
+  emitWorkspaceSnapshot,
   logger,
 }: {
   sessions: () => SessionEmitter[];
@@ -287,15 +296,28 @@ export function createScriptStatusEmitter({
   runtimeStore: WorkspaceScriptRuntimeStore;
   daemonPort: number | null | (() => number | null);
   serviceProxyPublicBaseUrl?: string | null;
-  resolveWorkspaceDirectory: (workspaceId: string) => string | null | Promise<string | null>;
+  resolveWorkspaceConfig: (
+    workspaceId: string,
+  ) =>
+    | { workspaceDirectory: string; projectConfigDirectory?: string }
+    | null
+    | Promise<{ workspaceDirectory: string; projectConfigDirectory?: string } | null>;
+  /** Refreshes launch endpoint state, which is carried by workspace descriptors. */
+  emitWorkspaceSnapshot?: (workspaceId: string) => Promise<void>;
   logger: Logger;
 }): (workspaceId: string, scripts: ScriptHealthEntry[]) => Promise<void> {
   return async (workspaceId, scripts) => {
     try {
-      const workspaceDirectory = await resolveWorkspaceDirectory(workspaceId);
-      if (!workspaceDirectory) {
+      const workspaceConfig = await resolveWorkspaceConfig(workspaceId);
+      if (!workspaceConfig) {
         return;
       }
+
+      const { workspaceDirectory } = workspaceConfig;
+      const projectConfigDirectory =
+        workspaceConfig.projectConfigDirectory ?? workspaceConfig.workspaceDirectory;
+      const projectConfig = await readPaseoConfigForProjection(projectConfigDirectory, logger);
+      const suppressedScriptNames = new Set(getWorkspaceLaunchConfigs(projectConfig).keys());
 
       const resolvedDaemonPort = resolveDaemonPort(daemonPort);
       const scriptHealthByHostname = new Map(
@@ -306,6 +328,7 @@ export function createScriptStatusEmitter({
         workspaceId,
         workspaceDirectory,
         paseoConfig: await readPaseoConfigForProjection(workspaceDirectory, logger),
+        suppressedScriptNames,
         serviceProxy,
         runtimeStore,
         daemonPort: resolvedDaemonPort,
@@ -320,6 +343,15 @@ export function createScriptStatusEmitter({
 
       for (const session of sessions()) {
         session.emit(message);
+      }
+
+      try {
+        await emitWorkspaceSnapshot?.(workspaceId);
+      } catch (error) {
+        logger.warn(
+          { err: error, workspaceId },
+          "Failed to emit workspace update after script health changed",
+        );
       }
     } catch (error) {
       logger.warn({ err: error, workspaceId }, "Failed to project workspace script status");
