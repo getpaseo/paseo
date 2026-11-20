@@ -17,6 +17,27 @@ export interface WorkspaceArchiveTarget {
   workspaceId: string;
 }
 
+const pendingArchiveAttempts = new Set<string>();
+
+/** Runs one archive attempt per workspace, including its checkout check and confirmation. */
+export async function runWorkspaceArchiveAttempt(input: {
+  workspace: WorkspaceArchiveTarget;
+  confirm?: () => Promise<boolean>;
+  archive: () => Promise<void>;
+}): Promise<void> {
+  const { serverId, workspaceId } = input.workspace;
+  const key = JSON.stringify([serverId, workspaceId]);
+  if (pendingArchiveAttempts.has(key)) return;
+
+  pendingArchiveAttempts.add(key);
+  try {
+    if (input.confirm && !(await input.confirm())) return;
+    await input.archive();
+  } finally {
+    pendingArchiveAttempts.delete(key);
+  }
+}
+
 interface WorkspaceArchiveClient {
   archiveWorkspace: (workspaceId: string) => Promise<{ error: string | null; canceled?: boolean }>;
 }
