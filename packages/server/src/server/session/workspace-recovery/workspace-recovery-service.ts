@@ -5,12 +5,17 @@ import { resolveRepositoryDefaultBranch } from "../../../utils/checkout-git.js";
 import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import {
+  adoptPluginWorktree,
   createWorktree,
   isPaseoOwnedWorktreeCwd,
+  listGitWorktreePaths,
   mapWorkspaceCwdToWorktree,
   rollbackCreatedPaseoWorktree,
   type WorktreeSource,
 } from "../../../utils/worktree.js";
+import { validateWorktreePath } from "../../../utils/worktree-path.js";
+import type { PluginWorktreeManagerRuntime } from "../../plugins/runtime.js";
+import type { PluginWorktreeRestoreTarget } from "@getpaseo/plugin/server";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
 import {
   resolveWorkspaceDisplayName,
@@ -64,6 +69,7 @@ type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavail
 export function createWorkspaceRecoveryService(deps: {
   paseoHome: string;
   worktreesRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "restoreWorktree" | "removeWorktree">;
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
@@ -195,17 +201,17 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     let recreatedWorktreePath: string;
+    let restoredByPluginId: string | null = null;
     try {
-      const result = await createWorktree({
-        cwd: sourceRepoRoot,
-        worktreeSlug: basename(previousWorktreePath),
+      const restored = await recreateWorktreeCheckout({
+        workspace,
+        sourceRepoRoot,
         source,
-
-        paseoHome: deps.paseoHome,
-        worktreesRoot: deps.worktreesRoot,
-        ...(hasRecordedWorktreePath ? { worktreePath: previousWorktreePath } : {}),
+        previousWorktreePath,
+        hasRecordedWorktreePath,
       });
-      recreatedWorktreePath = result.worktreePath;
+      recreatedWorktreePath = restored.worktreePath;
+      restoredByPluginId = restored.pluginId;
     } catch (error) {
       throw toWorktreeRequestError(error);
     }
@@ -236,13 +242,83 @@ export function createWorkspaceRecoveryService(deps: {
           teardownCwds: [],
           paseoHome: deps.paseoHome,
           worktreesBaseRoot: deps.worktreesRoot,
+          worktreeManagers: deps.worktreeManagers,
+          managedByPluginId: restoredByPluginId,
+          removeReason: "rollback",
         },
         error,
       );
     }
   }
 
+  async function recreateWorktreeCheckout(options: {
+    workspace: PersistedWorkspaceRecord;
+    sourceRepoRoot: string;
+    source: Extract<WorktreeSource, { kind: "restore" | "restore-commit" | "restore-from-base" }>;
+    previousWorktreePath: string;
+    hasRecordedWorktreePath: boolean;
+  }): Promise<{ worktreePath: string; pluginId: string | null }> {
+    const { workspace, sourceRepoRoot, source, previousWorktreePath, hasRecordedWorktreePath } =
+      options;
+    const managerPluginId = workspace.worktreeManagerPluginId;
+    if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
+      const existingWorktreePaths = await listGitWorktreePaths(sourceRepoRoot);
+      const managed = await deps.worktreeManagers.restoreWorktree(
+        {
+          repoRoot: sourceRepoRoot,
+          path: previousWorktreePath,
+          target: restoreTargetFromWorktreeSource(source),
+          baseRef: workspace.baseBranch,
+        },
+        { preferredPluginId: managerPluginId },
+      );
+      if (managed) {
+        const validatedPath = await validateWorktreePath({
+          candidate: managed.path,
+          repoPath: sourceRepoRoot,
+          allowExistingPath: true,
+        });
+        if (!createRealpathAwarePathMatcher(previousWorktreePath)(validatedPath)) {
+          throw new WorktreeRequestError({
+            code: "unknown",
+            message: `Plugin ${managed.pluginId} restored worktree to ${validatedPath}, expected ${previousWorktreePath}`,
+          });
+        }
+        const adopted = await adoptPluginWorktree({
+          cwd: sourceRepoRoot,
+          source,
+          worktreePath: validatedPath,
+          managedByPluginId: managed.pluginId,
+          existingWorktreePaths,
+        });
+        return { worktreePath: adopted.worktreePath, pluginId: managed.pluginId };
+      }
+    }
+
+    const result = await createWorktree({
+      cwd: sourceRepoRoot,
+      worktreeSlug: basename(previousWorktreePath),
+      source,
+      paseoHome: deps.paseoHome,
+      worktreesRoot: deps.worktreesRoot,
+      ...(hasRecordedWorktreePath ? { worktreePath: previousWorktreePath } : {}),
+    });
+    return { worktreePath: result.worktreePath, pluginId: null };
+  }
+
   return { inspect, restore };
+}
+
+function restoreTargetFromWorktreeSource(
+  source: Extract<WorktreeSource, { kind: "restore" | "restore-commit" | "restore-from-base" }>,
+): PluginWorktreeRestoreTarget {
+  if (source.kind === "restore") {
+    return { type: "branch", branch: source.branchName };
+  }
+  if (source.kind === "restore-commit") {
+    return { type: "commit", commit: source.commit };
+  }
+  return { type: "from-base", branch: source.branchName, baseRef: source.baseRef };
 }
 
 async function resolveRecoveryBase(repoRoot: string, recordedBase: string | null): Promise<string> {

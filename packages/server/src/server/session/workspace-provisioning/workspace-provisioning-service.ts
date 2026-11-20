@@ -52,6 +52,7 @@ export interface CreateWorktreeWorkspaceInput {
   worktreeRoot: string;
   branch: string | null;
   baseBranch: string | null;
+  worktreeManagerPluginId?: string | null;
   title: string | null;
   metadata?: Record<string, JsonValue>;
   expectsInitialAgent?: boolean;
@@ -320,6 +321,7 @@ export function createWorkspaceProvisioningService(deps: {
         baseBranch: input.baseBranch,
         mainRepoRoot: repoRoot,
       }),
+      worktreeManagerPluginId: input.worktreeManagerPluginId ?? null,
       title: input.title,
       metadata: input.metadata,
       createdAt: timestamp,

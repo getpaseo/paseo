@@ -542,6 +542,83 @@ export default function contribute(server: PluginServerContext) {
 
 来源图标是一个文件路径，规则与 Provider 图标相同。
 
+## worktree 管理器 {#worktree-managers}
+
+**需要 Paseo 0.16**。在服务端入口 `index.server.ts` 中调用 `server.registerWorktreeManager()`，可将 Git worktree 的创建、移除和恢复委托给 Worktrunk 等外部工具，而无需由 Paseo 直接运行 `git worktree add` 和 `git worktree remove`。
+
+```ts
+import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerWorktreeManager({
+    async create(request, { signal }) {
+      if (request.kind !== "branch-off") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          request.repoRoot,
+          "switch",
+          "--create",
+          request.branch,
+          "--base",
+          request.startPoint ?? request.baseRef,
+          "--no-cd",
+          "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path } = JSON.parse(stdout) as { path: string };
+      return { type: "created", path };
+    },
+    async remove({ path, force }, { signal }) {
+      await execCommand(
+        "wt",
+        [
+          "-C",
+          path,
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          "--yes",
+          ...(force ? ["--force"] : []),
+          path,
+        ],
+        { signal },
+      );
+      return { type: "removed" };
+    },
+    async restore({ repoRoot, path, target }, { signal }) {
+      if (target.type !== "branch") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot,
+          "switch",
+          target.branch,
+          "--path",
+          path,
+          "--no-cd",
+          "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path: restoredPath } = JSON.parse(stdout) as { path: string };
+      return { type: "restored", path: restoredPath };
+    },
+  });
+}
+```
+
+- **Create**：在所有 `worktree.create.before` 钩子之后、`worktree.create.after` 之前运行，超时为 120 秒。返回 `{ type: "created", path }` 表示接管创建，返回 `undefined` 表示放弃并交由下一个管理器或 Paseo 内置 Git 检出处理。Paseo 会验证 `path` 是同一仓库下新建且安全的命名分支 Git worktree，随后写入基准元数据并生成 `paseo.json`。由管理器创建的 worktree 会跳过首个 Agent 的分支自动重命名。
+- **Remove**：可选。在工作区归档和创建回滚时运行，位于 Paseo 执行 `paseo.json` 清理并保存 `refs/paseo/kept-commits/<sha>` 之后。删除目录后返回 `{ type: "removed" }`，或返回 `undefined` 回退到 Git。Paseo 会将移除路由到创建该 worktree 的插件；若该插件已停用或移除，则回退到内置 Git。
+- **Restore**：可选。在取消归档且 worktree 目录已被删除时运行，接收必须恢复到的原路径 `path` 以及目标 `target`（`branch`、`commit` 或 `from-base`）。返回 `{ type: "restored", path }`，或返回 `undefined` 回退到 Git。
+
+完整插件见 [worktrunk 示例](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk)。
+
 ## 入口与清理 {#entry-point-and-cleanup}
 
 每个存在的入口都默认导出一个贡献函数，并返回清理函数。客户端入口接收 `PluginClientContext`；服务端入口接收 `PluginServerContext`。客户端注册方法返回幂等的移除函数，但标题栏按钮和 Composer 标签除外，它们返回 `{ update, remove }` 句柄。入口的清理函数会在 Paseo 移除剩余的注册之前运行。

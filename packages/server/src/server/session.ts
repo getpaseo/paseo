@@ -529,6 +529,9 @@ export interface SessionOptions {
     wait: import("./plugins/lifecycle/index.js").PluginLifecycle["wait"];
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
+    createWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["createWorktree"];
+    removeWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["removeWorktree"];
+    restoreWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["restoreWorktree"];
     listPlugins(): Promise<import("@getpaseo/protocol/messages").PluginListItem[]>;
     getLogs(pluginId: string): import("@getpaseo/protocol/messages").PluginLogEntry[];
     installDirectory(input: {
@@ -1034,6 +1037,7 @@ export class Session {
     this.workspaceRecovery = createWorkspaceRecoveryService({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      worktreeManagers: this.pluginRuntime,
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       getProject: (projectId) => this.projectRegistry.get(projectId),
       isDirectory: (path) => this.filesystem.isDirectory(path),
@@ -1254,6 +1258,7 @@ export class Session {
     this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
+      worktreeManagers: this.pluginRuntime,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       github: this.github,
@@ -5780,6 +5785,7 @@ export class Session {
       {
         paseoHome: this.paseoHome,
         paseoWorktreesBaseRoot: this.worktreesRoot,
+        worktreeManagers: this.pluginRuntime,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
         agentManager: this.agentManager,
@@ -6550,6 +6556,7 @@ export class Session {
   ): Promise<CreatePaseoWorktreeResult> {
     const result = await createPaseoWorktree(input, {
       lifecycle: this.pluginRuntime,
+      worktreeManagers: this.pluginRuntime,
       github: this.github,
       ...(options?.resolveDefaultBranch
         ? { resolveDefaultBranch: options.resolveDefaultBranch }
@@ -6580,6 +6587,7 @@ export class Session {
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        worktreeManagerPluginId: workspace.worktreeManagerPluginId,
       }));
   }
 
@@ -8128,6 +8136,7 @@ export class Session {
             {
               paseoHome: this.paseoHome,
               paseoWorktreesBaseRoot: this.worktreesRoot,
+              worktreeManagers: this.pluginRuntime,
               github: this.github,
               workspaceGitService: this.workspaceGitService,
               agentManager: this.agentManager,

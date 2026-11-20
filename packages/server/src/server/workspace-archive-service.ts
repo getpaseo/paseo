@@ -22,16 +22,20 @@ import type {
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 import { WorkspaceAutomationBlockedError } from "./workspace-automation-gate.js";
+import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 
 export type ActiveWorkspaceRef = Pick<
   PersistedWorkspaceRecord,
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
->;
+> & {
+  worktreeManagerPluginId?: string | null;
+};
 
 export interface ArchiveDependencies {
   paseoHome?: string;
   // Base directory that may hold worktrees across repositories.
   paseoWorktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot" | "invalidateWorktrees">;
   agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
@@ -119,6 +123,7 @@ interface BackingDirectory {
   registryProven: boolean;
   mainRepoRoot: string | null;
   paseoWorktreesRoot: string | null;
+  worktreeManagerPluginId: string | null;
 }
 
 interface ArchiveTarget {
@@ -313,6 +318,7 @@ async function resolveWorkspaceBackingDirectory(
   workspace: ActiveWorkspaceRef,
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
+  const worktreeManagerPluginId = workspace.worktreeManagerPluginId ?? null;
   if (workspace.isPaseoOwnedWorktree === false) {
     return {
       path: resolve(workspace.worktreeRoot ?? workspace.cwd),
@@ -321,6 +327,7 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: false,
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
     };
   }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
@@ -331,6 +338,7 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: true,
       mainRepoRoot: workspace.mainRepoRoot,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
     };
   }
   if (workspace.kind !== "worktree") {
@@ -341,6 +349,7 @@ async function resolveWorkspaceBackingDirectory(
       registryProven: false,
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
+      worktreeManagerPluginId,
     };
   }
 
@@ -350,7 +359,11 @@ async function resolveWorkspaceBackingDirectory(
     workspace.worktreeRoot ?? workspace.cwd,
     dependencies,
   );
-  return { ...backing, mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot };
+  return {
+    ...backing,
+    mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot,
+    worktreeManagerPluginId: worktreeManagerPluginId ?? backing.worktreeManagerPluginId,
+  };
 }
 
 async function resolveBackingDirectory(
@@ -369,6 +382,7 @@ async function resolveBackingDirectory(
     registryProven: false,
     mainRepoRoot: ownership.repoRoot ?? null,
     paseoWorktreesRoot: ownership.worktreeRoot ?? null,
+    worktreeManagerPluginId: null,
   };
 }
 
@@ -501,6 +515,9 @@ async function maybeRemoveDirectory(
       paseoHome: dependencies.paseoHome,
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
       registryProven: backing.registryProven,
+      worktreeManagers: dependencies.worktreeManagers,
+      managedByPluginId: backing.worktreeManagerPluginId,
+      removeReason: "archive",
     });
     dependencies.workspaceGitService.invalidateWorktrees();
     dependencies.github.invalidate({ cwd: backing.path });

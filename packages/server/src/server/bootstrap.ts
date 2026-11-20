@@ -1160,6 +1160,7 @@ export async function createPaseoDaemon(
         worktreeRoot: workspace.worktreeRoot,
         isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree,
         mainRepoRoot: workspace.mainRepoRoot,
+        worktreeManagerPluginId: workspace.worktreeManagerPluginId,
       }));
   };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
@@ -1218,6 +1219,7 @@ export async function createPaseoDaemon(
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
     paseoWorktreesBaseRoot: config.worktreesRoot,
+    worktreeManagers: pluginRuntime,
     daemonConfigStore,
     workspaceGitService,
     github,
@@ -1246,6 +1248,7 @@ export async function createPaseoDaemon(
         createPaseoWorktree: async (workflowInput, workflowOptions) => {
           return createRegisteredPaseoWorktree(workflowInput, {
             lifecycle: pluginRuntime,
+            worktreeManagers: pluginRuntime,
             github,
             ...(workflowOptions?.resolveDefaultBranch
               ? {
@@ -1306,6 +1309,7 @@ export async function createPaseoDaemon(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
+        worktreeManagers: pluginRuntime,
         github,
         workspaceGitService,
         agentManager,
@@ -1330,6 +1334,7 @@ export async function createPaseoDaemon(
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    worktreeManagers: pluginRuntime,
     agentManager,
     agentStorage,
     github,
@@ -1428,6 +1433,7 @@ export async function createPaseoDaemon(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
+        worktreeManagers: pluginRuntime,
         github,
         workspaceGitService,
         agentManager,
@@ -1577,6 +1583,7 @@ export async function createPaseoDaemon(
     daemonConfigStore,
     github,
     workspaceGitService,
+    worktreeManagers: pluginRuntime,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: (workspaceId, archivedAt) =>

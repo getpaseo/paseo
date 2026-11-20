@@ -1,5 +1,6 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
+import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -63,6 +64,7 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "wait" | "before">;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree" | "removeWorktree">;
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
 }
@@ -114,6 +116,7 @@ async function createPaseoWorktreeWithPriority(
       worktreeRoot: createdWorktree.worktree.worktreePath,
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: createdWorktree.worktree.comparisonBaseRef,
+      worktreeManagerPluginId: createdWorktree.worktree.managedByPluginId ?? null,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       metadata: input.metadata,
       expectsInitialAgent: Boolean(input.firstAgentContext),
@@ -152,6 +155,9 @@ async function createPaseoWorktreeWithPriority(
         teardownCwds: [],
         paseoHome: input.paseoHome,
         worktreesBaseRoot: input.worktreesRoot,
+        worktreeManagers: deps.worktreeManagers,
+        managedByPluginId: createdWorktree.worktree.managedByPluginId ?? null,
+        removeReason: "rollback",
       },
       error,
     );
@@ -284,6 +290,10 @@ async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
 }): Promise<void> {
   const { createdWorktree, input } = options;
   if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+    return;
+  }
+  // A worktree manager plugin owns branch and directory naming, so skip silent renames.
+  if (createdWorktree.worktree.managedByPluginId) {
     return;
   }
   // A branch the caller named is their choice; only a placeholder slug is replaced.

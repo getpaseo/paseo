@@ -692,6 +692,98 @@ for 0.10 clients and renders problems into its `error` string.
 
 The source icon is a file path with the same rules as a provider icon.
 
+## Worktree managers {#worktree-managers}
+
+**Requires Paseo 0.16.** Register a worktree manager from `index.server.ts` with
+`server.registerWorktreeManager()` when an external tool such as Worktrunk should own creating,
+removing, and restoring Git worktrees instead of Paseo running `git worktree add` and
+`git worktree remove` directly.
+
+```ts
+import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  return server.registerWorktreeManager({
+    async create(request, { signal }) {
+      if (request.kind !== "branch-off") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          request.repoRoot,
+          "switch",
+          "--create",
+          request.branch,
+          "--base",
+          request.startPoint ?? request.baseRef,
+          "--no-cd",
+          "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path } = JSON.parse(stdout) as { path: string };
+      return { type: "created", path };
+    },
+    async remove({ path, force }, { signal }) {
+      await execCommand(
+        "wt",
+        [
+          "-C",
+          path,
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          "--yes",
+          ...(force ? ["--force"] : []),
+          path,
+        ],
+        { signal },
+      );
+      return { type: "removed" };
+    },
+    async restore({ repoRoot, path, target }, { signal }) {
+      if (target.type !== "branch") return;
+      const { stdout } = await execCommand(
+        "wt",
+        [
+          "-C",
+          repoRoot,
+          "switch",
+          target.branch,
+          "--path",
+          path,
+          "--no-cd",
+          "--yes",
+          "--format=json",
+        ],
+        { signal },
+      );
+      const { path: restoredPath } = JSON.parse(stdout) as { path: string };
+      return { type: "restored", path: restoredPath };
+    },
+  });
+}
+```
+
+- **Create** runs after all `worktree.create.before` hooks and before `worktree.create.after`, with a
+  120-second timeout. Return `{ type: "created", path }` to claim creation, or `undefined` to decline
+  so the next manager or Paseo's built-in Git checkout runs. Paseo verifies that `path` is a safe,
+  newly created Git worktree of the same repository on a named branch, then writes comparison-base
+  metadata and seeds `paseo.json`. First-agent branch auto-rename is skipped for manager-created
+  worktrees.
+- **Remove** is optional and runs on workspace archive and creation rollback, after Paseo runs
+  `paseo.json` teardown and saves `refs/paseo/kept-commits/<sha>` for restore. Return
+  `{ type: "removed" }` after removing the directory, or `undefined` to fall back to Git. Paseo
+  routes removal to the plugin that created the worktree, falling back to Git when that plugin is
+  disabled or uninstalled.
+- **Restore** is optional and runs when unarchiving a workspace whose worktree directory was deleted.
+  It receives the recorded `path` that the recreated worktree must occupy and `target`
+  (`branch`, `commit`, or `from-base`). Return `{ type: "restored", path }` or `undefined` to fall
+  back to Git.
+
+See the complete [worktrunk example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/worktrunk).
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries

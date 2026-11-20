@@ -17,10 +17,12 @@ import type {
 } from "../messages.js";
 import type { AgentManager, AgentSubscriber, SubscribeOptions } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
+import type { PluginWorktreeManagerRuntime } from "../plugins/runtime.js";
 
 interface CreateAgentLifecycleDispatchDependencies {
   paseoHome: string;
   worktreesRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   github: ForgeService;
@@ -184,6 +186,7 @@ export class CreateAgentLifecycleDispatch {
       {
         paseoHome: this.dependencies.paseoHome,
         paseoWorktreesBaseRoot: this.dependencies.worktreesRoot,
+        worktreeManagers: this.dependencies.worktreeManagers,
         github: this.dependencies.github,
         workspaceGitService: this.dependencies.workspaceGitService,
         agentManager: this.dependencies.agentManager,

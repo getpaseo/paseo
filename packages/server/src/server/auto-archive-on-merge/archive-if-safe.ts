@@ -16,10 +16,12 @@ import type { ForgeService } from "../../services/forge-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
 import type { WorkspaceArchiveContext } from "../workspace-registry.js";
+import type { PluginWorktreeManagerRuntime } from "../plugins/runtime.js";
 
 export interface AutoArchiveArchiveOptions {
   paseoHome: string;
   paseoWorktreesBaseRoot?: string;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: ForgeService;
@@ -99,6 +101,7 @@ export async function archiveIfSafe(input: {
       {
         paseoHome: options.paseoHome,
         paseoWorktreesBaseRoot: options.paseoWorktreesBaseRoot,
+        worktreeManagers: options.worktreeManagers,
         github: options.github,
         workspaceGitService: options.workspaceGitService,
         agentManager: options.agentManager,

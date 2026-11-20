@@ -139,6 +139,7 @@ export interface PaseoToolHostDependencies {
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot" | "invalidateWorktrees"
   >;
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
+  worktreeManagers?: ArchiveDependencies["worktreeManagers"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
@@ -3409,6 +3410,7 @@ function archiveWorktreeDependencies(
   return {
     paseoHome: options.paseoHome,
     paseoWorktreesBaseRoot: options.worktreesRoot,
+    worktreeManagers: options.worktreeManagers,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,

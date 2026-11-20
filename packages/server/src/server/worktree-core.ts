@@ -1,16 +1,20 @@
 import type { PluginWorktreeCreateRequest } from "@getpaseo/plugin/server";
 import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
+import type { PluginWorktreeManagerRuntime } from "./plugins/runtime.js";
 import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
+  adoptPluginWorktree,
   createWorktree,
   fetchFirstAvailableRef,
+  listGitWorktreePaths,
   resolveDefaultWorktreePath,
   slugify,
   validateBranchSlug,
   type CreatedWorktree,
 } from "../utils/worktree.js";
+import { validateWorktreePath } from "../utils/worktree-path.js";
 import {
   resolveWorktreeCreationIntent,
   type ResolveWorktreeCreationIntentInput,
@@ -36,6 +40,7 @@ export interface CreateWorktreeCoreInput {
 
 export interface CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "before">;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree">;
   github: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -149,6 +154,31 @@ async function createWorktreeCoreWithPriority(
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
 
+  const existingWorktreePaths = deps.worktreeManagers
+    ? await listGitWorktreePaths(repoRoot)
+    : undefined;
+  const managed = await deps.worktreeManagers?.createWorktree(transformed);
+  if (managed) {
+    const validatedPath = await validateWorktreePath({
+      candidate: managed.path,
+      repoPath: repoRoot,
+      allowExistingPath: true,
+    });
+    const adopted = await adoptPluginWorktree({
+      cwd: repoRoot,
+      source: intent,
+      worktreePath: validatedPath,
+      managedByPluginId: managed.pluginId,
+      existingWorktreePaths,
+    });
+    return {
+      worktree: adopted,
+      intent,
+      repoRoot,
+      created: true,
+    };
+  }
+
   return {
     worktree: await createWorktree({
       cwd: repoRoot,
@@ -174,6 +204,7 @@ function describeCreationRequest(
       kind: intent.kind,
       branch: intent.branchName,
       baseRef: intent.baseBranch,
+      ...(intent.startPoint ? { startPoint: intent.startPoint } : {}),
     };
   if (intent.kind === "checkout-branch")
     return { ...placement, kind: intent.kind, branch: intent.branchName };
