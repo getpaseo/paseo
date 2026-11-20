@@ -4905,4 +4905,219 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("settles on the reply timer when reply usage arrives before the final background tool completes", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-u1",
+            name: "run_command",
+            title: "Job 1",
+            status: "in_progress",
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-u2",
+            name: "run_command",
+            title: "Job 2",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-usage-before-tool",
+      label: "Deferred Usage Before Tool",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "usage-first-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run jobs" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-u2",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Job 1 finishes, reply + usage_update arrive while Job 2 is still running.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-u1", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("All done."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 300, size: 1000 },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Still running because Job 2 has not completed yet.
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:usage-first-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Job 2 completes -> should settle via settleDelayMs, not quietLimitMs.
+      const startedAt = Date.now();
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-u2", status: "completed" },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:usage-first-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("defers the turn when a running tool completes immediately after end_turn in the same batch", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-race",
+            name: "run_command",
+            title: "Fast background job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        // Completion arrives right after end_turn in the same wire batch.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "bg-race",
+            status: "completed",
+          },
+        });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-post-end-turn-race",
+      label: "Deferred Post End Turn Race",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "race-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run fast bg job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-race" &&
+          event.item.status === "completed",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      // Turn must still be open waiting for the post-tool reply.
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:race-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Post-tool reply + usage_update arrive and settle the deferred turn.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Background job finished."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 250, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:race-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "assistant_message" &&
+            event.item.text === "Background job finished.",
+        ),
+      ).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
 });

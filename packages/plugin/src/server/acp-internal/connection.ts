@@ -389,8 +389,6 @@ type DeferredTurnOutcome =
   | { type: "fail"; error: { message: string } };
 
 interface DeferredTurnState {
-  replyOpen: boolean;
-  replySettled: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   resolve(outcome: DeferredTurnOutcome): void;
 }
@@ -401,6 +399,10 @@ interface ActivePrompt {
   cancelling: boolean;
   wirePromptsInFlight: number;
   wirePromptLane: Promise<void>;
+  endTurnWireSeq: number | null;
+  crossedEndTurn: boolean;
+  replyOpen: boolean;
+  replySettled: boolean;
   deferred: DeferredTurnState | null;
 }
 
@@ -449,6 +451,8 @@ class AcpRuntime {
   private stagedTransformerConfig: ProviderConfigState | null = null;
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
+  private incomingWireSeq = 0;
+  private readonly sessionUpdateWireSeqs: number[] = [];
   private autoAccept = false;
   private activePrompt: ActivePrompt | null = null;
   private lastUsage: ProviderUsage = {};
@@ -517,12 +521,18 @@ class AcpRuntime {
     this.transformers = options.options.transformers ?? [];
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
-      sessionUpdate: (notification) =>
-        this.enqueueNotification(() => this.sessionUpdate(notification)),
+      sessionUpdate: (notification) => {
+        const wireSeq = this.sessionUpdateWireSeqs.shift() ?? ++this.incomingWireSeq;
+        return this.enqueueNotification(() => this.sessionUpdate(notification, wireSeq));
+      },
     };
     this.connection = new ClientSideConnection(
       () => client,
-      routeVendorNotifications(stream, (method, params) => this.vendorNotification(method, params)),
+      routeIncomingMessages(
+        stream,
+        (method, params) => this.vendorNotification(method, params),
+        (message) => this.observeWireMessage(message),
+      ),
     );
     if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
     child?.on("error", (error) => {
@@ -714,6 +724,10 @@ class AcpRuntime {
       cancelling: false,
       wirePromptsInFlight: 1,
       wirePromptLane: Promise.resolve(),
+      endTurnWireSeq: null,
+      crossedEndTurn: false,
+      replyOpen: false,
+      replySettled: false,
       deferred: null,
     };
     // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
@@ -1176,7 +1190,35 @@ class AcpRuntime {
     });
   }
 
-  private sessionUpdate(notification: SessionNotification): void {
+  private observeWireMessage(message: unknown): void {
+    if (typeof message !== "object" || message === null) return;
+    const record = message as Record<string, unknown>;
+    if (record.method === "session/update") {
+      this.sessionUpdateWireSeqs.push(++this.incomingWireSeq);
+      return;
+    }
+    if (
+      !("method" in record) &&
+      "id" in record &&
+      typeof record.result === "object" &&
+      record.result !== null &&
+      (record.result as Record<string, unknown>).stopReason === "end_turn" &&
+      this.activePrompt &&
+      !this.activePrompt.deferred &&
+      this.activePrompt.endTurnWireSeq === null
+    ) {
+      this.activePrompt.endTurnWireSeq = ++this.incomingWireSeq;
+    }
+  }
+
+  private isPostEndTurn(active: ActivePrompt, wireSeq: number): boolean {
+    return (
+      active.deferred !== null ||
+      (active.endTurnWireSeq !== null && wireSeq > active.endTurnWireSeq)
+    );
+  }
+
+  private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
     if (notification.sessionId !== this.nativeSessionId) return;
     if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
     if (this.replayWindow === "skip") {
@@ -1187,7 +1229,7 @@ class AcpRuntime {
         update.sessionUpdate === "current_mode_update" ||
         update.sessionUpdate === "usage_update"
       ) {
-        this.reduceStateUpdate(update);
+        this.reduceStateUpdate(update, wireSeq);
       }
       return;
     }
@@ -1198,10 +1240,10 @@ class AcpRuntime {
       this.reduceUserMessageChunk(notification.update);
       return;
     }
-    this.reduceUpdate(notification.update);
+    this.reduceUpdate(notification.update, wireSeq);
   }
 
-  private reduceUpdate(update: SessionUpdate): void {
+  private reduceUpdate(update: SessionUpdate, wireSeq: number): void {
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk" ||
@@ -1235,25 +1277,16 @@ class AcpRuntime {
             : {}),
         },
       });
-      if (this.activePrompt?.deferred) {
-        if (
-          update.sessionUpdate === "agent_message_chunk" &&
-          this.activePrompt.wirePromptsInFlight === 0
-        ) {
-          this.activePrompt.deferred.replyOpen = true;
-        }
-        this.activePrompt.deferred.replySettled = false;
-        this.scheduleDeferredSettle();
-      }
+      this.noteDeferredChunk(update.sessionUpdate, wireSeq);
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
       if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
-      this.reduceToolCall(update);
+      this.reduceToolCall(update, wireSeq);
       return;
     }
     if (update.sessionUpdate === "plan") this.fallbackChunkIds.clear();
-    this.reduceStateUpdate(update);
+    this.reduceStateUpdate(update, wireSeq);
   }
 
   // Historical user messages arrive only as replayed chunks; a live prompt
@@ -1297,7 +1330,7 @@ class AcpRuntime {
     return id;
   }
 
-  private reduceStateUpdate(update: SessionUpdate): void {
+  private reduceStateUpdate(update: SessionUpdate, wireSeq: number): void {
     if (update.sessionUpdate === "plan") {
       this.emit({
         type: "timeline.item",
@@ -1354,7 +1387,7 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
-      this.noteDeferredUsageUpdate();
+      this.noteDeferredUsageUpdate(wireSeq);
       return;
     }
     if (update.sessionUpdate === "compaction_update") {
@@ -1414,6 +1447,7 @@ class AcpRuntime {
 
   private reduceToolCall(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
+    wireSeq: number,
   ): void {
     if (
       update.sessionUpdate === "tool_call_update" &&
@@ -1446,10 +1480,14 @@ class AcpRuntime {
     });
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
-    if (this.activePrompt?.deferred && wasOpenQualifying !== isOpenQualifying) {
-      if (isOpenQualifying) this.activePrompt.deferred.replyOpen = false;
-      this.activePrompt.deferred.replySettled = false;
-      this.scheduleDeferredSettle();
+    const active = this.activePrompt;
+    if (active && this.isPostEndTurn(active, wireSeq) && wasOpenQualifying !== isOpenQualifying) {
+      if (wasOpenQualifying) active.crossedEndTurn = true;
+      if (isOpenQualifying) {
+        active.replyOpen = false;
+        active.replySettled = false;
+      }
+      if (active.deferred) this.scheduleDeferredSettle();
     }
   }
 
@@ -1588,8 +1626,8 @@ class AcpRuntime {
     }
     const prompt = toAcpPrompt(input.prompt);
     active.wirePromptsInFlight += 1;
-    deferred.replyOpen = false;
-    deferred.replySettled = false;
+    active.replyOpen = false;
+    active.replySettled = false;
     this.scheduleDeferredSettle();
     this.replayWindow = null;
     this.fallbackChunkIds.clear();
@@ -1682,7 +1720,8 @@ class AcpRuntime {
   private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
     this.fallbackChunkIds.clear();
     const outcome = await new Promise<DeferredTurnOutcome>((resolve) => {
-      active.deferred = { replyOpen: false, replySettled: false, timer: null, resolve };
+      active.deferred = { timer: null, resolve };
+      this.scheduleDeferredSettle();
     });
     if (this.closing) return;
     if (outcome.type === "fail") {
@@ -1726,7 +1765,7 @@ class AcpRuntime {
   private shouldDeferTurn(active: ActivePrompt): boolean {
     if (!this.options.options.acpOptions?.deferTurnOnRunningTools) return false;
     if (active.cancelling || this.closing || this.processFailed) return false;
-    return this.hasQualifyingOpenTools();
+    return this.hasQualifyingOpenTools() || active.crossedEndTurn;
   }
 
   private finishDeferredTurn(active: ActivePrompt, outcome: DeferredTurnOutcome): void {
@@ -1737,14 +1776,26 @@ class AcpRuntime {
     deferred.resolve(outcome);
   }
 
-  private noteDeferredUsageUpdate(): void {
+  private noteDeferredChunk(
+    kind: "agent_message_chunk" | "agent_thought_chunk",
+    wireSeq: number,
+  ): void {
     const active = this.activePrompt;
-    const deferred = active?.deferred;
-    if (!active || !deferred || active.wirePromptsInFlight > 0 || !deferred.replyOpen) return;
-    deferred.replyOpen = false;
-    if (this.hasDeferredBlockers()) return;
-    deferred.replySettled = true;
-    this.scheduleDeferredSettle();
+    if (!active || !this.isPostEndTurn(active, wireSeq)) return;
+    const inWireSteer = active.deferred !== null && active.wirePromptsInFlight > 0;
+    if (kind === "agent_message_chunk" && !inWireSteer) active.replyOpen = true;
+    active.replySettled = false;
+    if (active.deferred) this.scheduleDeferredSettle();
+  }
+
+  private noteDeferredUsageUpdate(wireSeq: number): void {
+    const active = this.activePrompt;
+    if (!active || !this.isPostEndTurn(active, wireSeq)) return;
+    const inWireSteer = active.deferred !== null && active.wirePromptsInFlight > 0;
+    if (inWireSteer || !active.replyOpen) return;
+    active.replyOpen = false;
+    active.replySettled = true;
+    if (active.deferred) this.scheduleDeferredSettle();
   }
 
   private scheduleDeferredSettle(): void {
@@ -1757,7 +1808,7 @@ class AcpRuntime {
       deferred.timer = null;
     }
     if (this.hasDeferredBlockers()) return;
-    const delayMs = deferred.replySettled
+    const delayMs = active.replySettled
       ? (config.settleDelayMs ?? DEFAULT_DEFERRED_SETTLE_DELAY_MS)
       : (config.quietLimitMs ?? DEFAULT_DEFERRED_QUIET_LIMIT_MS);
     deferred.timer = setTimeout(() => {
@@ -1810,9 +1861,10 @@ class AcpRuntime {
   }
 }
 
-function routeVendorNotifications(
+function routeIncomingMessages(
   stream: Stream,
-  receive: (method: string, params: unknown) => void,
+  receiveVendor: (method: string, params: unknown) => void,
+  observeWire: (message: unknown) => void,
 ): Stream {
   const clientMethods = new Set<string>(Object.values(CLIENT_METHODS));
   return {
@@ -1824,11 +1876,14 @@ function routeVendorNotifications(
             // The SDK dispatches extensions asynchronously and can resolve a later response first.
             // Run synchronous vendor transforms in wire order, inside the configuration transaction.
             try {
-              receive(message.method, message.params);
+              receiveVendor(message.method, message.params);
             } catch (error) {
               console.error("Error handling ACP vendor notification", error);
             }
-          } else controller.enqueue(message);
+          } else {
+            observeWire(message);
+            controller.enqueue(message);
+          }
         },
       }),
     ),
