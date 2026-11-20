@@ -82,6 +82,16 @@ const patchedPackages = [
     patchPrefix: "react-native-svg+",
     cwd: "packages/app",
   },
+  // Reconcile ResponderEventPlugin trackedTouchCount with nativeEvent.touches.length so an
+  // unmatched touch start (e.g. Modal dismiss while touching or double ACTION_DOWN in
+  // ReactRootView/ReactModalHostView) self-heals instead of leaving trackedTouchCount > 0 for
+  // the rest of the session. Remove once upstream React/React Native reconciles trackedTouchCount.
+  {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  // Keep Android PasteTextInput aligned with RN AndroidTextInput (omit iOS-only
+  // onSelectionChangeShouldSetResponder), plus ref/eventCount/trailing-newline fixes.
   {
     nodeModulesPath: "node_modules/@mattermost/react-native-paste-input",
     patchPrefix: "@mattermost+react-native-paste-input+",
