@@ -6,6 +6,7 @@ import { describe, expect, test } from "vitest";
 import {
   areEquivalentPaths,
   createPathEquivalenceMatcher,
+  expandTilde,
   getRealpathAwareRelativePath,
   isPathInsideRoot,
 } from "./path.js";
@@ -96,4 +97,24 @@ describe("path equivalence", () => {
       }
     },
   );
+});
+
+describe("expandTilde", () => {
+  test("expands ASCII and full-width tilde with POSIX or Windows separators", () => {
+    const previousHome = process.env.HOME;
+    process.env.HOME = "/tmp/paseo-tilde-home";
+    try {
+      expect(expandTilde("~")).toBe("/tmp/paseo-tilde-home");
+      expect(expandTilde("~/projects/paseo")).toBe("/tmp/paseo-tilde-home/projects/paseo");
+      expect(expandTilde("~\\projects\\paseo")).toBe("/tmp/paseo-tilde-home\\projects\\paseo");
+      expect(expandTilde("～")).toBe("/tmp/paseo-tilde-home");
+      expect(expandTilde("～/projects/paseo")).toBe("/tmp/paseo-tilde-home/projects/paseo");
+      expect(expandTilde("～\\projects\\paseo")).toBe("/tmp/paseo-tilde-home\\projects\\paseo");
+      expect(expandTilde("~other/projects")).toBe("~other/projects");
+      expect(expandTilde("～other/projects")).toBe("～other/projects");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
 });

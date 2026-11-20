@@ -3,15 +3,20 @@ import { realpathSync } from "node:fs";
 import nodePath from "node:path";
 
 /**
- * Expand tilde in path to home directory
+ * Expand tilde (ASCII `~` or full-width `～`) in path to home directory
  */
 export function expandTilde(path: string): string {
-  if (path.startsWith("~/")) {
-    const homeDir = process.env.HOME || os.homedir();
-    return path.replace("~", homeDir);
+  const first = path[0];
+  if (first !== "~" && first !== "\uFF5E") {
+    return path;
   }
-  if (path === "~") {
+  const second = path[1];
+  if (second === undefined) {
     return process.env.HOME || os.homedir();
+  }
+  if (second === "/" || second === "\\") {
+    const homeDir = process.env.HOME || os.homedir();
+    return `${homeDir}${path.slice(1)}`;
   }
   return path;
 }

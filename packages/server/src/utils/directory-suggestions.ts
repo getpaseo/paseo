@@ -36,6 +36,10 @@ export interface SearchDirectoryEntriesOptions {
   // Absolute paths that discovery never walks into. A path the caller types explicitly still
   // resolves, and browsing inside one lists a single level at a time.
   excludedDiscoveryPaths?: readonly string[];
+  // Lowercase directory name suffixes (e.g. ".app", ".photoslibrary") skipped during discovery.
+  // Explicit typed paths still resolve and browse normally.
+  excludedDiscoverySuffixes?: readonly string[];
+  signal?: AbortSignal;
 }
 
 interface QueryPlan {
@@ -61,6 +65,7 @@ interface RawChildEntry {
 interface WalkStart {
   visiblePath: string;
   resolvedPath: string;
+  relativePath: string;
 }
 
 interface WalkChildrenOptions {
@@ -72,6 +77,7 @@ interface WalkChildrenOptions {
 
 interface TraversedEntry extends ChildEntry {
   visiblePath: string;
+  relativePath: string;
   depth: number;
 }
 
@@ -95,6 +101,7 @@ interface DirectoryListCacheEntry {
   modifiedAtMs: number;
   changedAtMs: number;
   entries: RawChildEntry[];
+  directoryEntries: RawChildEntry[];
 }
 
 interface GitIgnoredPathsCacheEntry {
@@ -106,8 +113,8 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
-const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
-const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
+const DIRECTORY_LIST_CACHE_TTL_MS = 30_000;
+const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 25_000;
 const GIT_IGNORED_PATHS_CACHE_TTL_MS = 8_000;
 const GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES = 256;
 // Windows does not reliably update directory mtime/ctime when children change,
@@ -159,6 +166,16 @@ export const WORKSPACE_SEARCH_HIDDEN_DIRECTORIES = [
   ".paseo",
   ".vscode",
 ] as const;
+export const MACOS_EXCLUDED_DISCOVERY_SUFFIXES = [
+  ".app",
+  ".bundle",
+  ".framework",
+  ".kext",
+  ".photoslibrary",
+  ".xcarchive",
+  ".xcodeproj",
+  ".xcworkspace",
+] as const;
 const IGNORED_DIRECTORY_NAMES = new Set([
   "node_modules",
   "venv",
@@ -184,28 +201,45 @@ const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
-  const root = await resolveDirectory(options.root);
-  if (!root) return [];
-
-  const gitIgnoredPaths = options.respectGitIgnore
-    ? await loadGitIgnoredPaths(root)
-    : new Set<string>();
-  const excludedDiscoveryPaths = await resolveExistingPaths(options.excludedDiscoveryPaths ?? []);
-  const input = buildSearchInput(options, root, gitIgnoredPaths, excludedDiscoveryPaths);
+  const input = await prepareSearchInput(options);
   if (!input) return [];
 
-  const exact =
-    input.plan.browseExactPath ||
-    (input.plan.isPathQuery && (input.matchMode === "suffix" || resolvesTypedPath(input)))
-      ? await findExactEntry(input)
-      : null;
+  const exact = shouldResolveExactEntry(input) ? await findExactEntry(input) : null;
+  if (input.signal?.aborted) return [];
   if (exact && input.limit === 1) return [exact];
 
   const ranked = await searchCandidates(input);
+  if (input.signal?.aborted) return [];
   const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
     : results;
+}
+
+async function prepareSearchInput(
+  options: SearchDirectoryEntriesOptions,
+): Promise<SearchInput | null> {
+  if (options.signal?.aborted) return null;
+  if (!options.query.trim() && (options.blankQueryBehavior ?? "none") !== "children") {
+    return null;
+  }
+  const root = await resolveDirectory(options.root);
+  if (!root || options.signal?.aborted) return null;
+
+  const gitIgnoredPaths = options.respectGitIgnore
+    ? await loadGitIgnoredPaths(root)
+    : new Set<string>();
+  if (options.signal?.aborted) return null;
+  const excludedDiscoveryPaths = await resolveExistingPaths(options.excludedDiscoveryPaths ?? []);
+  if (options.signal?.aborted) return null;
+  return buildSearchInput(options, root, gitIgnoredPaths, excludedDiscoveryPaths);
+}
+
+function shouldResolveExactEntry(input: SearchInput): boolean {
+  return Boolean(
+    input.plan.browseExactPath ||
+    (input.plan.isPathQuery && (input.matchMode === "suffix" || resolvesTypedPath(input))),
+  );
 }
 
 async function searchCandidates(input: SearchInput): Promise<RankedEntry[]> {
@@ -214,11 +248,14 @@ async function searchCandidates(input: SearchInput): Promise<RankedEntry[]> {
   if (browsesRoot || browsesAbsoluteParent) return searchChildren(input);
   if (!resolvesTypedPath(input) || !input.plan.parentPart) return searchTree(input);
 
-  // A typed parent such as `~/Developer/pas` anchors the walk under `~/Developer`. A parent that
-  // does not exist falls back to matching the typed path against the whole tree.
+  // A typed parent such as `~/Developer/pas` anchors the walk under `~/Developer`. A trailing
+  // separator such as `~/Developer/` browses direct children instead of walking nested subtrees.
+  // A parent that does not exist falls back to matching the typed path against the whole tree.
   const typedParent = await resolveTypedParent(input);
   if (!typedParent) return searchTree(input);
-  if (isInsideExcludedPath(typedParent.resolvedPath, input)) return searchChildren(input);
+  if (!input.plan.searchTerm || isInsideExcludedPath(typedParent.resolvedPath, input)) {
+    return searchChildren(input);
+  }
   return searchTree(input, typedParent);
 }
 
@@ -233,7 +270,9 @@ async function resolveTypedParent(input: SearchInput): Promise<WalkStart | null>
   const resolvedPath = await realpath(visiblePath).catch(() => null);
   if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
   const info = await stat(resolvedPath).catch(() => null);
-  return info?.isDirectory() ? { visiblePath, resolvedPath } : null;
+  if (!info?.isDirectory()) return null;
+  const relative = normalizeRelativePath(input.root, visiblePath);
+  return { visiblePath, resolvedPath, relativePath: relative === "." ? "" : relative };
 }
 
 async function resolveExistingPaths(paths: readonly string[]): Promise<Set<string>> {
@@ -266,6 +305,7 @@ function buildSearchInput(
   return {
     root,
     plan,
+    rankQuery: (plan.isPathQuery ? plan.normalizedQuery : plan.searchTerm).toLowerCase(),
     includeDirectories,
     includeFiles,
     matchMode: options.matchMode ?? "fuzzy",
@@ -278,6 +318,10 @@ function buildSearchInput(
     confidentResultScanThreshold: options.confidentResultScanThreshold,
     gitIgnoredPaths,
     excludedDiscoveryPaths,
+    excludedDiscoverySuffixes: (options.excludedDiscoverySuffixes ?? []).map((suffix) =>
+      suffix.toLowerCase(),
+    ),
+    signal: options.signal,
   };
 }
 
@@ -302,6 +346,7 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
 interface SearchInput {
   root: string;
   plan: QueryPlan;
+  rankQuery: string;
   includeDirectories: boolean;
   includeFiles: boolean;
   matchMode: DirectorySuggestionMatchMode;
@@ -314,44 +359,54 @@ interface SearchInput {
   confidentResultScanThreshold: number | undefined;
   gitIgnoredPaths: Set<string>;
   excludedDiscoveryPaths: Set<string>;
+  excludedDiscoverySuffixes: readonly string[];
+  signal: AbortSignal | undefined;
 }
 
 async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
+  if (input.signal?.aborted) return [];
   const visibleParent = path.resolve(input.root, input.plan.parentPart || ".");
   const parent = await realpath(visibleParent).catch(() => null);
   if (!parent || !isPathInsideRoot(input.root, parent)) return [];
   if (isGitIgnoredPath(parent, input)) return [];
   // Browsing inside an excluded path is explicit: the caller typed it, so list what is there.
   const discoveryInput = isInsideExcludedPath(parent, input)
-    ? { ...input, excludedDiscoveryPaths: new Set<string>() }
+    ? { ...input, excludedDiscoveryPaths: new Set<string>(), excludedDiscoverySuffixes: [] }
     : input;
+  const parentRelative = normalizeRelativePath(input.root, visibleParent);
+  const relativePrefix = parentRelative === "." ? "" : `${parentRelative}/`;
   const ranked: RankedEntry[] = [];
-  for await (const entry of readChildren(parent)) {
+  for await (const entry of readChildren(parent, discoveryInput)) {
+    if (input.signal?.aborted) return [];
     if (!isPathInsideRoot(input.root, entry.resolvedPath) || !shouldDiscover(entry, discoveryInput))
       continue;
     const candidate: TraversedEntry = {
       ...entry,
       visiblePath: path.join(visibleParent, entry.name),
+      relativePath: `${relativePrefix}${entry.name}`,
       depth: 1,
     };
-    if (shouldSuggest(candidate, input)) ranked.push(rank(candidate, input));
+    const match = rankCandidate(candidate, input);
+    if (match) ranked.push(match);
   }
   return ranked;
 }
 
 async function searchTree(
   input: SearchInput,
-  start: WalkStart = { visiblePath: input.root, resolvedPath: input.root },
+  start: WalkStart = { visiblePath: input.root, resolvedPath: input.root, relativePath: "" },
 ): Promise<RankedEntry[]> {
-  if (!(input.maxEntriesScanned > 0)) return [];
+  if (!(input.maxEntriesScanned > 0) || input.signal?.aborted) return [];
   const visited = new Set<string>([start.resolvedPath]);
   const branches = walkChildren({ parent: start, depth: 1, input, visited });
   const ranked: RankedEntry[] = [];
   let scanned = 0;
   const threshold = input.confidentResultScanThreshold;
-  for await (const entry of roundRobin(branches)) {
+  for await (const entry of roundRobin(branches, input.signal)) {
+    if (input.signal?.aborted) return [];
     scanned += 1;
-    if (shouldSuggest(entry, input)) ranked.push(rank(entry, input));
+    const match = rankCandidate(entry, input);
+    if (match) ranked.push(match);
     if (
       scanned >= input.maxEntriesScanned ||
       (threshold &&
@@ -368,15 +423,20 @@ async function* walkBranch(
   input: SearchInput,
   visited: Set<string>,
 ): AsyncGenerator<TraversedEntry> {
+  if (input.signal?.aborted) return;
   yield entry;
   if (
+    input.signal?.aborted ||
     entry.kind !== "directory" ||
     visited.has(entry.resolvedPath) ||
     entry.depth >= input.maxDepth
   )
     return;
   visited.add(entry.resolvedPath);
-  yield* roundRobin(walkChildren({ parent: entry, depth: entry.depth + 1, input, visited }));
+  yield* roundRobin(
+    walkChildren({ parent: entry, depth: entry.depth + 1, input, visited }),
+    input.signal,
+  );
 }
 
 // Create a child's path and iterator only when its branch gets a turn. Eagerly constructing every
@@ -387,21 +447,33 @@ async function* walkChildren({
   input,
   visited,
 }: WalkChildrenOptions): AsyncGenerator<AsyncGenerator<TraversedEntry>> {
-  for await (const child of readChildren(parent.resolvedPath)) {
+  const relativePrefix = parent.relativePath ? `${parent.relativePath}/` : "";
+  for await (const child of readChildren(parent.resolvedPath, input)) {
+    if (input.signal?.aborted) return;
     if (!staysInsideRoot(child, input.root) || !shouldDiscover(child, input)) continue;
     yield walkBranch(
-      { ...child, visiblePath: path.join(parent.visiblePath, child.name), depth },
+      {
+        ...child,
+        visiblePath: path.join(parent.visiblePath, child.name),
+        relativePath: `${relativePrefix}${child.name}`,
+        depth,
+      },
       input,
       visited,
     );
   }
 }
 
-async function* roundRobin<T>(branches: AsyncIterable<AsyncGenerator<T>>): AsyncGenerator<T> {
+async function* roundRobin<T>(
+  branches: AsyncIterable<AsyncGenerator<T>>,
+  signal?: AbortSignal,
+): AsyncGenerator<T> {
   let active: AsyncIterable<AsyncGenerator<T>> | Array<AsyncGenerator<T>> = branches;
   while (true) {
+    if (signal?.aborted) return;
     const nextRound: Array<AsyncGenerator<T>> = [];
     for await (const branch of active) {
+      if (signal?.aborted) return;
       const next = await branch.next();
       if (!next.done) {
         nextRound.push(branch);
@@ -419,6 +491,12 @@ function staysInsideRoot(entry: ChildEntry, root: string): boolean {
   return !entry.viaSymlink || isPathInsideRoot(root, entry.resolvedPath);
 }
 
+function hasExcludedDiscoverySuffix(name: string, input: SearchInput): boolean {
+  if (input.excludedDiscoverySuffixes.length === 0) return false;
+  const lower = name.toLowerCase();
+  return input.excludedDiscoverySuffixes.some((suffix) => lower.endsWith(suffix));
+}
+
 function shouldDiscover(entry: ChildEntry, input: SearchInput): boolean {
   if (isNewlyGitIgnored(entry, input)) return false;
   if (isNewlyExcluded(entry, input)) return false;
@@ -426,6 +504,7 @@ function shouldDiscover(entry: ChildEntry, input: SearchInput): boolean {
     return input.includeFiles && !entry.name.startsWith(".");
   }
   if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return false;
+  if (hasExcludedDiscoverySuffix(entry.name, input)) return false;
   if (!entry.name.startsWith(".")) return true;
   return input.hiddenDirectoryNames.has(entry.name);
 }
@@ -462,37 +541,34 @@ function isGitIgnoredPath(absolutePath: string, input: SearchInput): boolean {
   return false;
 }
 
-function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
-  if (entry.name.startsWith(".")) return false;
-  if (entry.kind === "directory" && !input.includeDirectories) return false;
-  if (entry.kind === "file" && !input.includeFiles) return false;
-  if (!input.plan.normalizedQuery) return true;
-  if (input.matchMode === "suffix")
-    return suffixMatches(entry.visiblePath, input.root, input.plan.normalizedQuery);
-  return rank(entry, input).matchTier !== NO_MATCH_TIER;
+function rankCandidate(entry: TraversedEntry, input: SearchInput): RankedEntry | null {
+  if (entry.name.startsWith(".")) return null;
+  if (entry.kind === "directory" && !input.includeDirectories) return null;
+  if (entry.kind === "file" && !input.includeFiles) return null;
+  if (!input.plan.normalizedQuery) return rank(entry, input);
+  if (input.matchMode === "suffix") {
+    return suffixMatches(entry.relativePath, input.plan.normalizedQuery)
+      ? rank(entry, input)
+      : null;
+  }
+  const ranked = rank(entry, input);
+  return ranked.matchTier !== NO_MATCH_TIER ? ranked : null;
 }
 
 function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
-  const relativePath = normalizeRelativePath(input.root, entry.visiblePath);
+  const relativePath = entry.relativePath || ".";
   const lowerPath = relativePath.toLowerCase();
-  const query = getRankQuery(input);
+  const query = input.rankQuery;
   const segments = lowerPath === "." ? [] : lowerPath.split("/");
-  const pathScore = query ? scorePathMatch(query, relativePath) : null;
   const rankFields = input.plan.isPathQuery
-    ? rankPathMatch(pathScore)
-    : rankTextMatch({ query, lowerPath, pathFormat: input.pathFormat, pathScore, segments });
+    ? rankPathMatch(query ? scorePathMatch(query, relativePath) : null)
+    : rankTextMatch({ query, relativePath, lowerPath, pathFormat: input.pathFormat, segments });
   return {
     path: entry.visiblePath,
     kind: entry.kind,
     ...rankFields,
     depth: relativePath === "." ? 0 : segments.length,
   };
-}
-
-function getRankQuery(input: SearchInput): string {
-  return (
-    input.plan.isPathQuery ? input.plan.normalizedQuery : input.plan.searchTerm
-  ).toLowerCase();
 }
 
 function rankPathMatch(pathScore: MatchScore | null): RankFields {
@@ -506,14 +582,12 @@ function rankPathMatch(pathScore: MatchScore | null): RankFields {
 
 function rankTextMatch(input: {
   query: string;
+  relativePath: string;
   lowerPath: string;
   pathFormat: DirectorySuggestionPathFormat;
-  pathScore: MatchScore | null;
   segments: string[];
 }): RankFields {
-  const { query, lowerPath, pathFormat, pathScore, segments } = input;
-  const offset = lowerPath.indexOf(query);
-  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
+  const { query, relativePath, lowerPath, pathFormat, segments } = input;
   if (!query) {
     return {
       matchTier: 3,
@@ -522,6 +596,8 @@ function rankTextMatch(input: {
       fuzzyScore: NO_FUZZY_SCORE,
     };
   }
+  const offset = lowerPath.indexOf(query);
+  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
   const segmentRank = rankSegmentMatch({ query, segments, offset, fuzzyScore });
   if (segmentRank) return segmentRank;
   if (pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0) {
@@ -540,6 +616,7 @@ function rankTextMatch(input: {
       fuzzyScore,
     };
   }
+  const pathScore = scorePathMatch(query, relativePath);
   return {
     matchTier: pathScore ? Math.min(pathScore.tier, 4) : NO_MATCH_TIER,
     segmentIndex: NO_SEGMENT_INDEX,
@@ -635,13 +712,10 @@ function hasConfidentResult(entries: RankedEntry[], query: string): boolean {
   );
 }
 
-function suffixMatches(visiblePath: string, root: string, query: string): boolean {
+function suffixMatches(relativePath: string, query: string): boolean {
   const querySegments = query.toLowerCase().split("/").filter(Boolean);
   if (querySegments.length === 0) return false;
-  const pathSegments = normalizeRelativePath(root, visiblePath)
-    .toLowerCase()
-    .split("/")
-    .filter(Boolean);
+  const pathSegments = relativePath.toLowerCase().split("/").filter(Boolean);
   const offset = pathSegments.length - querySegments.length;
   return (
     offset >= 0 && querySegments.every((segment, index) => pathSegments[offset + index] === segment)
@@ -691,7 +765,9 @@ function normalizeQueryInput(input: {
   configuredRoot: string;
   aliases: string[];
 }): { typed: string; normalized: string; rooted: boolean; isAbsolute: boolean } | null {
-  const typed = input.query.trim().replace(/\\/g, "/");
+  const rawTyped = input.query.trim().replace(/\\/g, "/");
+  const typed =
+    rawTyped === "\uFF5E" || rawTyped.startsWith("\uFF5E/") ? `~${rawTyped.slice(1)}` : rawTyped;
   let normalized = typed;
   let rooted = false;
   let isAbsolute = false;
@@ -738,39 +814,75 @@ async function resolveDirectory(inputPath: string): Promise<string | null> {
   return info?.isDirectory() ? resolved : null;
 }
 
-async function* readChildren(directory: string): AsyncGenerator<ChildEntry> {
-  const directoryInfo = await stat(directory).catch(() => null);
-  if (!directoryInfo?.isDirectory()) return;
+function compareRawChildNames(left: RawChildEntry, right: RawChildEntry): number {
+  if (left.name === right.name) return 0;
+  return left.name < right.name ? -1 : 1;
+}
 
+function shouldSkipRawEntry(entry: RawChildEntry, input: SearchInput): boolean {
+  if (entry.kind === "file") {
+    return !input.includeFiles || entry.name.startsWith(".");
+  }
+  if (entry.name.startsWith(".") && !input.hiddenDirectoryNames.has(entry.name)) {
+    return true;
+  }
+  if (entry.kind === "directory" || !input.includeFiles) {
+    if (IGNORED_DIRECTORY_NAMES.has(entry.name) || hasExcludedDiscoverySuffix(entry.name, input)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function loadRawDirectoryEntries(
+  directory: string,
+  directoryInfo: Stats,
+  signal: AbortSignal | undefined,
+): Promise<{ entries: RawChildEntry[]; directoryEntries: RawChildEntry[] } | null> {
   const cached = CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA
     ? directoryListCache.get(directory)
     : undefined;
-  let rawEntries: RawChildEntry[];
   if (
     cached &&
     cached.expiresAt > Date.now() &&
     cached.modifiedAtMs === directoryInfo.mtimeMs &&
     cached.changedAtMs === directoryInfo.ctimeMs
   ) {
-    rawEntries = cached.entries;
-  } else {
-    const dirents = await readdir(directory).catch(() => [] as Dirent[]);
-    rawEntries = dirents
-      .map(toRawChildEntry)
-      .filter((entry): entry is RawChildEntry => entry !== null)
-      .sort((left, right) => left.name.localeCompare(right.name));
-    if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA) {
-      directoryListCache.set(directory, {
-        expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
-        modifiedAtMs: directoryInfo.mtimeMs,
-        changedAtMs: directoryInfo.ctimeMs,
-        entries: rawEntries,
-      });
-      pruneCache();
-    }
+    return cached;
   }
 
-  for (const rawEntry of rawEntries) {
+  const dirents = await readdir(directory).catch(() => [] as Dirent[]);
+  if (signal?.aborted) return null;
+  const entries = dirents
+    .map(toRawChildEntry)
+    .filter((entry): entry is RawChildEntry => entry !== null)
+    .sort(compareRawChildNames);
+  const directoryEntries = entries.filter((entry) => entry.kind !== "file");
+  if (CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA) {
+    directoryListCache.set(directory, {
+      expiresAt: Date.now() + DIRECTORY_LIST_CACHE_TTL_MS,
+      modifiedAtMs: directoryInfo.mtimeMs,
+      changedAtMs: directoryInfo.ctimeMs,
+      entries,
+      directoryEntries,
+    });
+    pruneCache();
+  }
+  return { entries, directoryEntries };
+}
+
+async function* readChildren(directory: string, input: SearchInput): AsyncGenerator<ChildEntry> {
+  if (input.signal?.aborted) return;
+  const directoryInfo = await stat(directory).catch(() => null);
+  if (!directoryInfo?.isDirectory() || input.signal?.aborted) return;
+
+  const loaded = await loadRawDirectoryEntries(directory, directoryInfo, input.signal);
+  if (!loaded) return;
+
+  const candidates = input.includeFiles ? loaded.entries : loaded.directoryEntries;
+  for (const rawEntry of candidates) {
+    if (input.signal?.aborted) return;
+    if (shouldSkipRawEntry(rawEntry, input)) continue;
     const entry = await resolveChild(directory, rawEntry);
     if (entry) yield entry;
   }

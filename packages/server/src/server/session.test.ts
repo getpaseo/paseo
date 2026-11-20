@@ -6661,3 +6661,147 @@ test("does not publish internal agents' background work to subscribed clients", 
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(messages.some((message) => message.type === "agent.background_work.update")).toBe(false);
 });
+
+test("cancels an in-flight home directory suggestions search when a newer request arrives", async () => {
+  const tempHome = realpathSync(mkdtempSync(join(tmpdir(), "paseo-session-dir-cancel-")));
+  const codeDir = join(tempHome, "Code");
+  const paseoDir = join(codeDir, "paseo");
+  mkdirSync(paseoDir, { recursive: true });
+  for (let index = 0; index < 25; index += 1) {
+    mkdirSync(join(tempHome, "noise", `dir-${index}`, "nested"), { recursive: true });
+  }
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = tempHome;
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  try {
+    const first = session.handleMessage({
+      type: "directory_suggestions_request",
+      query: "definitely-not-present",
+      includeDirectories: true,
+      includeFiles: false,
+      limit: 30,
+      requestId: "req-home-old",
+    });
+    const second = session.handleMessage({
+      type: "directory_suggestions_request",
+      query: "~/Code/",
+      includeDirectories: true,
+      includeFiles: false,
+      limit: 30,
+      requestId: "req-home-new",
+    });
+    await Promise.all([first, second]);
+
+    const responses = messages.filter(
+      (message) => message.type === "directory_suggestions_response",
+    );
+    expect(responses).toEqual(
+      expect.arrayContaining([
+        {
+          type: "directory_suggestions_response",
+          payload: {
+            requestId: "req-home-old",
+            directories: [],
+            entries: [],
+            error: "Search cancelled",
+          },
+        },
+        {
+          type: "directory_suggestions_response",
+          payload: {
+            requestId: "req-home-new",
+            directories: [codeDir, paseoDir],
+            entries: [
+              { path: codeDir, kind: "directory" },
+              { path: paseoDir, kind: "directory" },
+            ],
+            error: null,
+          },
+        },
+      ]),
+    );
+  } finally {
+    await session.cleanup();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(!isPlatform("darwin"))(
+  "excludes macOS TCC media and application folders from home discovery while allowing explicit browsing",
+  async () => {
+    const tempHome = realpathSync(mkdtempSync(join(tmpdir(), "paseo-session-darwin-excl-")));
+    const hiddenMatches = [
+      join(tempHome, "Movies", "TV", "secret-match"),
+      join(tempHome, "Music", "Music", "secret-match"),
+      join(tempHome, "Pictures", "Photos Library.photoslibrary", "secret-match"),
+      join(tempHome, "Applications", "Tool.app", "Contents", "secret-match"),
+    ];
+    for (const dir of hiddenMatches) mkdirSync(dir, { recursive: true });
+    const visibleMatch = join(tempHome, "Code", "secret-match");
+    mkdirSync(visibleMatch, { recursive: true });
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages });
+    try {
+      await session.handleMessage({
+        type: "directory_suggestions_request",
+        query: "secret-match",
+        includeDirectories: true,
+        includeFiles: false,
+        limit: 30,
+        requestId: "req-darwin-discovery",
+      });
+      await session.handleMessage({
+        type: "directory_suggestions_request",
+        query: "~/Movies/",
+        includeDirectories: true,
+        includeFiles: false,
+        limit: 30,
+        requestId: "req-darwin-explicit",
+      });
+
+      const discovery = messages.find(
+        (message) =>
+          message.type === "directory_suggestions_response" &&
+          message.payload.requestId === "req-darwin-discovery",
+      );
+      const explicit = messages.find(
+        (message) =>
+          message.type === "directory_suggestions_response" &&
+          message.payload.requestId === "req-darwin-explicit",
+      );
+      expect(discovery).toEqual({
+        type: "directory_suggestions_response",
+        payload: {
+          requestId: "req-darwin-discovery",
+          directories: [visibleMatch],
+          entries: [{ path: visibleMatch, kind: "directory" }],
+          error: null,
+        },
+      });
+      expect(explicit).toEqual({
+        type: "directory_suggestions_response",
+        payload: {
+          requestId: "req-darwin-explicit",
+          directories: [join(tempHome, "Movies"), join(tempHome, "Movies", "TV")],
+          entries: [
+            { path: join(tempHome, "Movies"), kind: "directory" },
+            { path: join(tempHome, "Movies", "TV"), kind: "directory" },
+          ],
+          error: null,
+        },
+      });
+    } finally {
+      await session.cleanup();
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  },
+);
