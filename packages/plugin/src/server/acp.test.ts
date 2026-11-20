@@ -4707,4 +4707,102 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("does not delay reply settlement when a completed tool receives late output", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "late-out-tool",
+            name: "run_command",
+            title: "Build",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-late-output",
+      label: "Deferred Late Output",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "late-out-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "build" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "late-out-tool",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Tool completes, post-tool reply and usage_update arm the short settleDelayMs timer.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-out-tool",
+          status: "completed",
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Build succeeded."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+      });
+      // Late output on the already-completed tool must not reset the short reply timer to quietLimitMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-out-tool",
+          rawOutput: { output: "trailing log line" },
+        },
+      });
+
+      const startedAt = Date.now();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:late-out-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
 });

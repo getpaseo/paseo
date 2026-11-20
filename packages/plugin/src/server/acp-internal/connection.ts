@@ -1422,7 +1422,10 @@ class AcpRuntime {
       this.canceledToolCallIds.delete(update.toolCallId);
     }
     const current = this.toolCalls.get(update.toolCallId);
-    const wasQualifying = current !== undefined && this.toolKeepsTurnOpen(current);
+    const wasOpenQualifying =
+      current !== undefined &&
+      this.liveOpenToolIds.has(current.id) &&
+      this.toolKeepsTurnOpen(current);
     let snapshot = mergeToolCallSnapshot(update, current);
     const context = { sessionId: this.options.boundarySessionId };
     for (const transformer of this.transformers)
@@ -1438,7 +1441,9 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
     });
-    if (this.activePrompt?.deferred && (wasQualifying || this.toolKeepsTurnOpen(snapshot))) {
+    const isOpenQualifying =
+      this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
+    if (this.activePrompt?.deferred && (wasOpenQualifying || isOpenQualifying)) {
       this.activePrompt.deferred.replyOpen = false;
       this.activePrompt.deferred.replySettled = false;
       this.scheduleDeferredSettle();
