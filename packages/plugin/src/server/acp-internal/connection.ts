@@ -446,10 +446,15 @@ class AcpRuntime {
   private closing = false;
   private closePromise: Promise<void> | null = null;
   private deferredRetirement: Promise<boolean> | null = null;
+  private deferredFinalized = false;
   private processFailed = false;
   private configTransaction = false;
   private stagedTransformerConfig: ProviderConfigState | null = null;
-  private readonly closeConnector: (options?: { force?: boolean }) => Promise<void>;
+  private readonly closeConnector: (options?: {
+    force?: boolean;
+    timeoutMs?: number;
+  }) => Promise<void>;
+  private readonly whenConnectorClosed: () => Promise<void> | null;
   private notificationLane: Promise<void> = Promise.resolve();
   private incomingWireSeq = 0;
   private readonly sessionUpdateWireSeqs: number[] = [];
@@ -461,7 +466,11 @@ class AcpRuntime {
     let child: ChildProcessWithoutNullStreams | null = null;
     let spawnFailure: Promise<never> | null = null;
     let stream: Stream;
-    let closeConnector: (options?: { force?: boolean }) => Promise<void> = async () => {};
+    let closeConnector: (options?: {
+      force?: boolean;
+      timeoutMs?: number;
+    }) => Promise<void> = async () => {};
+    let whenConnectorClosed: () => Promise<void> | null = () => null;
     if (options.options.command) {
       // COMPAT(pluginProviderLaunch): added in v0.10.0, remove after 2027-03-29 once plugin host floor >= v0.10.0.
       // Standalone callers and older hosts do not send a daemon-resolved launch.
@@ -484,8 +493,9 @@ class AcpRuntime {
       const owned = ownConnectorStream(await options.options.connector());
       stream = owned.stream;
       closeConnector = owned.close;
+      whenConnectorClosed = owned.whenClosed;
     }
-    const runtime = new AcpRuntime(stream, child, closeConnector, options);
+    const runtime = new AcpRuntime(stream, child, closeConnector, whenConnectorClosed, options);
     try {
       const initialize = withTimeout(
         runtime.call(
@@ -512,11 +522,13 @@ class AcpRuntime {
   private constructor(
     stream: Stream,
     child: ChildProcessWithoutNullStreams | null,
-    closeConnector: (options?: { force?: boolean }) => Promise<void>,
+    closeConnector: (options?: { force?: boolean; timeoutMs?: number }) => Promise<void>,
+    whenConnectorClosed: () => Promise<void> | null,
     private readonly options: StartRuntimeOptions,
   ) {
     this.child = child;
     this.closeConnector = closeConnector;
+    this.whenConnectorClosed = whenConnectorClosed;
     this.emit = options.emit;
     this.transformers = options.options.transformers ?? [];
     const client: Client = {
@@ -778,7 +790,10 @@ class AcpRuntime {
     const active = this.activePrompt;
     const deferredTurnId = active?.deferred ? active.turnId : null;
     if (active && deferredTurnId) {
-      const retirement = this.retireDeferredTurn(active, deferredTurnId);
+      const retirement = this.retireDeferredTurn(active, deferredTurnId).catch((error) => {
+        if (this.deferredRetirement === retirement) this.deferredRetirement = null;
+        throw error;
+      });
       this.deferredRetirement = retirement;
       return retirement;
     }
@@ -794,32 +809,49 @@ class AcpRuntime {
     return false;
   }
 
+  private finalizeDeferredTurn(deferredTurnId: string, emitRetired: boolean): void {
+    if (this.deferredFinalized) return;
+    this.deferredFinalized = true;
+    this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
+      suppressTrailingToolEcho: true,
+    });
+    if (emitRetired) this.options.onRetired?.();
+  }
+
   private async retireDeferredTurn(active: ActivePrompt, deferredTurnId: string): Promise<boolean> {
     active.cancelling = true;
     // Record open tools owned by Stop before writing session/cancel so any failure
     // update arriving during cancel preserves their canceled state.
     for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
     let cancelTimedOut = false;
-    try {
-      await withTimeout(
-        this.call(this.connection.cancel({ sessionId: this.nativeSessionId })),
-        1_000,
-        `ACP session ${this.nativeSessionId} did not accept cancel`,
-      );
-    } catch {
-      cancelTimedOut = true;
-    } finally {
-      // An agent may wait for its outstanding permission replies before ending the prompt.
-      this.finishTurnPermissions(active.turnId);
+    if (!this.closing) {
+      try {
+        await withTimeout(
+          this.call(this.connection.cancel({ sessionId: this.nativeSessionId })),
+          1_000,
+          `ACP session ${this.nativeSessionId} did not accept cancel`,
+        );
+      } catch {
+        cancelTimedOut = true;
+      } finally {
+        // An agent may wait for its outstanding permission replies before ending the prompt.
+        this.finishTurnPermissions(active.turnId);
+      }
     }
     // ACP v1 has no response or end boundary for session/cancel once session/prompt
     // already returned. Close the process first while the turn still appears running,
     // then emit the canceled turn synchronously before request.completed and session.closed
     // so queued work and config changes immediately observe the retired session.
-    await this.close({ force: cancelTimedOut });
-    this.finishPromptTurn(deferredTurnId, "canceled", undefined, {
-      suppressTrailingToolEcho: true,
-    });
+    try {
+      await this.close({ force: cancelTimedOut, timeoutMs: 1_000 });
+    } catch (error) {
+      void this.whenConnectorClosed()?.then(
+        () => this.finalizeDeferredTurn(deferredTurnId, true),
+        () => undefined,
+      );
+      throw error;
+    }
+    this.finalizeDeferredTurn(deferredTurnId, false);
     return true;
   }
 
@@ -949,7 +981,7 @@ class AcpRuntime {
     await this.close();
   }
 
-  close(options?: { force?: boolean }): Promise<void> {
+  close(options?: { force?: boolean; timeoutMs?: number }): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     const promise = this.closeInternal(options).catch((error) => {
@@ -960,7 +992,7 @@ class AcpRuntime {
     return promise;
   }
 
-  private async closeInternal(options?: { force?: boolean }): Promise<void> {
+  private async closeInternal(options?: { force?: boolean; timeoutMs?: number }): Promise<void> {
     this.settlePendingWork();
     await this.closeConnector(options);
     const child = this.child;
@@ -1939,11 +1971,12 @@ function permissionOptionBehavior(
 
 function ownConnectorStream(source: Stream): {
   stream: Stream;
-  close(options?: { force?: boolean }): Promise<void>;
+  close(options?: { force?: boolean; timeoutMs?: number }): Promise<void>;
+  whenClosed(): Promise<void> | null;
 } {
   const reader = source.readable.getReader();
   const writer = source.writable.getWriter();
-  let closing: Promise<unknown> | null = null;
+  let closing: Promise<void> | null = null;
   const stream: Stream = {
     readable: new ReadableStream({
       async pull(controller) {
@@ -1965,7 +1998,8 @@ function ownConnectorStream(source: Stream): {
   };
   return {
     stream,
-    async close(options?: { force?: boolean }) {
+    whenClosed: () => closing,
+    async close(options?: { force?: boolean; timeoutMs?: number }) {
       if (!closing) {
         const closeWrite = options?.force
           ? writer.abort(new Error("Paseo aborted the ACP connector"))
@@ -1973,9 +2007,20 @@ function ownConnectorStream(source: Stream): {
         closing = Promise.allSettled([
           reader.cancel(new Error("Paseo closed the ACP connector")),
           closeWrite,
-        ]);
+        ]).then((results) => {
+          if (options?.timeoutMs === undefined) return undefined;
+          const rejected = results.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          if (rejected) throw rejected.reason;
+          return undefined;
+        });
       }
-      await withTimeout(closing, 1_000, "ACP connector did not close");
+      if (options?.timeoutMs !== undefined) {
+        await withTimeout(closing, options.timeoutMs, "ACP connector did not close");
+      } else {
+        await closing.catch(() => undefined);
+      }
     },
   };
 }

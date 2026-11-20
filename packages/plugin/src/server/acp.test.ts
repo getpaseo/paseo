@@ -6126,9 +6126,147 @@ describe("deferTurnOnRunningTools", () => {
             event.state === "canceled",
         ),
       ).toBe(false);
+
+      // Once the connector finishes closing after the deadline, the turn and session retire cleanly.
+      releaseStalledWrite!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:stalled-conn-turn" &&
+          event.state === "canceled",
+        2_000,
+      );
+      await waitForEvent(events, (event) => event.type === "session.closed", 2_000);
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
     } finally {
       releaseStalledWrite?.();
       await connection.close();
     }
+  });
+
+  it("reports interrupt failure when a connector rejects readable shutdown", async () => {
+    let connectorCall = 0;
+    const base = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "reject-cancel-bg",
+            name: "run_command",
+            title: "Job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const connector = async () => {
+      connectorCall += 1;
+      const inner = await base.connector();
+      if (connectorCall === 1) return inner;
+      const reader = inner.readable.getReader();
+      const readable = new ReadableStream<AcpStreamMessage>({
+        async pull(controller) {
+          const next = await reader.read();
+          if (next.done) controller.close();
+          else controller.enqueue(next.value);
+        },
+        async cancel() {
+          await reader.cancel();
+          throw new Error("connector cancel rejected");
+        },
+      });
+      return { readable, writable: inner.writable };
+    };
+    const registration = runAcpProvider({
+      id: "deferred-reject-cancel",
+      label: "Deferred Reject Cancel",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 5_000 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "reject-cancel-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "reject-cancel-bg",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "reject-cancel-int",
+        sessionId: "session-1",
+      });
+      const failed = await waitForEvent(
+        events,
+        (event) => event.type === "request.failed" && event.requestId === "reject-cancel-int",
+        2_000,
+      );
+      expect(failed.type === "request.failed" && failed.error.message).toContain(
+        "connector cancel rejected",
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:reject-cancel-turn" &&
+            event.state === "canceled",
+        ),
+      ).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("does not enforce the deferred Stop deadline on non-deferred probe shutdown", async () => {
+    const base = connectorHarness();
+    const connector = async () => {
+      const inner = await base.connector();
+      const writer = inner.writable.getWriter();
+      const writable = new WritableStream<AcpStreamMessage>({
+        write: (message) => writer.write(message),
+        async close() {
+          await new Promise((resolve) => setTimeout(resolve, 1_100));
+          await writer.close();
+        },
+        abort: (reason) => writer.abort(reason),
+      });
+      return { readable: inner.readable, writable };
+    };
+    const registration = runAcpProvider({
+      id: "slow-probe-close",
+      label: "Slow Probe Close",
+      connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    await connection.close();
   });
 });
