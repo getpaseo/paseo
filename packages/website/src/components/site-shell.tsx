@@ -17,7 +17,7 @@ export function SiteShell({ children, width }: SiteShellProps) {
   if (width === "default") {
     return (
       <div className="min-h-screen bg-background">
-        <PageHeaderBand />
+        <PageHeaderBand framed />
         <main className={`${PAGE_RAIL_CLASS} ${PAGE_INSET_CLASS} py-14 md:py-20`}>{children}</main>
         <SiteFooter width="default" />
       </div>

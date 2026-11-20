@@ -124,7 +124,7 @@ export function LandingPage({ title, subtitle, showHubEyebrow = false }: Landing
 
         <main>
           {/* Opening bookend: centered hero, interactive desktop mockup, and phone trio */}
-          <ChapterBand spacing="none" ruled={false} ticks={false}>
+          <ChapterBand spacing="none" ruled={false} ticks={false} framed={false}>
             <div className="pt-12 pb-8 md:pt-16 md:pb-10">
               <Hero title={title} subtitle={subtitle} showHubEyebrow={showHubEyebrow} />
               <GetStarted />
