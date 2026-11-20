@@ -8,7 +8,8 @@ interface AppearanceStyleBoundaryProps {
 }
 
 // Remounts its children when an appearance token changes. Memoized and parsed content bakes
-// tokens in, and on web numeric tokens (font sizes, line heights) are baked into generated
+// tokens in, and on web numeric tokens (font sizes, line heights, and the geometry tokens a
+// plugin theme can set) are baked into generated
 // classes that only a re-render refreshes. Native tracked styles update in place.
 // Keep native gesture hosts outside these keys too: shared gesture refs can outlive detached
 // dependent views until passive cleanup. It must sit below every native navigator: remounting
@@ -34,6 +35,12 @@ export function appearanceStyleBoundaryKey(theme: Theme): string {
     theme.fontSize.content,
     theme.fontSize.code,
     theme.lineHeight.diff,
+    ...Object.values(theme.spacing),
+    ...Object.values(theme.borderRadius),
+    ...Object.values(theme.borderWidth),
+    ...Object.values(theme.opacity),
+    ...Object.values(theme.fontWeight),
+    theme.iconStrokeWidth,
     theme.colors.foreground,
     theme.colors.foregroundMuted,
     theme.colors.mutedForeground,

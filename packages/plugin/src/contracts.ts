@@ -49,10 +49,7 @@ export interface PluginWorkspaceSnapshot {
   readonly status: "needs_input" | "failed" | "running" | "attention" | "done";
   readonly statusEnteredAt: string | null;
   readonly archivingAt: string | null;
-  readonly diffStat: {
-    readonly additions: number;
-    readonly deletions: number;
-  } | null;
+  readonly diffStat: { readonly additions: number; readonly deletions: number } | null;
 }
 
 export interface PluginAgentSnapshot {

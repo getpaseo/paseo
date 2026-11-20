@@ -403,6 +403,18 @@ describe("plugin theme design tokens", () => {
     expect(() => parsePluginThemeContribution({ ...MOCHA, radius: { md: Number.NaN } })).toThrow();
   });
 
+  it("keeps Paseo's value for a token key passed as undefined", () => {
+    const theme = buildPluginTheme(
+      parsePluginThemeContribution({
+        ...MOCHA,
+        radius: { md: undefined, lg: 3 },
+        fontSize: { base: undefined },
+      }),
+    );
+    expect(theme.borderRadius).toEqual({ ...darkTheme.borderRadius, lg: 3 });
+    expect(theme.fontSize).toEqual(darkTheme.fontSize);
+  });
+
   it("merges spacing and keeps 0 fixed", () => {
     const theme = buildPluginTheme(parsePluginThemeContribution({ ...MOCHA, spacing: { 2: 6 } }));
     expect(theme.spacing).toEqual({ ...darkTheme.spacing, 2: 6 });

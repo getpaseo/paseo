@@ -31,10 +31,10 @@ const hexColorSchema = z
   .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
 
 function pixels(max: number) {
-  return z.number().finite().min(0).max(max).optional();
+  return z.number().min(0).max(max).optional();
 }
 
-const fontSizeSchema = z.number().finite().min(8).max(64).optional();
+const fontSizeSchema = z.number().min(8).max(64).optional();
 
 const fontWeightSchema = z
   .enum(["normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900"])
@@ -92,8 +92,8 @@ const tokenSchemas = {
     })
     .optional(),
   borderWidth: z.strictObject({ 1: pixels(8), 2: pixels(8) }).optional(),
-  opacity: z.strictObject({ 50: z.number().finite().min(0).max(1).optional() }).optional(),
-  iconStrokeWidth: z.number().finite().min(0.5).max(4).optional(),
+  opacity: z.strictObject({ 50: z.number().min(0).max(1).optional() }).optional(),
+  iconStrokeWidth: z.number().min(0.5).max(4).optional(),
 };
 
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
@@ -221,6 +221,13 @@ function buildLightPluginTheme(contribution: PluginThemeContribution): Theme {
   );
 }
 
+// Zod keeps an optional key passed as `undefined`, so a plain spread would erase the default.
+function mergeDefined<T extends object>(base: T, overrides: object | undefined): T {
+  if (!overrides) return base;
+  const defined = Object.entries(overrides).filter(([, value]) => value !== undefined);
+  return { ...base, ...Object.fromEntries(defined) };
+}
+
 export function buildPluginTheme(contribution: PluginThemeContribution): Theme {
   const theme =
     contribution.appearance === "light"
@@ -230,12 +237,12 @@ export function buildPluginTheme(contribution: PluginThemeContribution): Theme {
   // Settings → Appearance font size scales (see `applyAppearance`).
   return {
     ...theme,
-    spacing: { ...theme.spacing, ...contribution.spacing },
-    fontSize: { ...theme.fontSize, ...contribution.fontSize },
-    fontWeight: { ...theme.fontWeight, ...contribution.fontWeight },
-    borderRadius: { ...theme.borderRadius, ...contribution.radius },
-    borderWidth: { ...theme.borderWidth, ...contribution.borderWidth },
-    opacity: { ...theme.opacity, ...contribution.opacity },
+    spacing: mergeDefined(theme.spacing, contribution.spacing),
+    fontSize: mergeDefined(theme.fontSize, contribution.fontSize),
+    fontWeight: mergeDefined(theme.fontWeight, contribution.fontWeight),
+    borderRadius: mergeDefined(theme.borderRadius, contribution.radius),
+    borderWidth: mergeDefined(theme.borderWidth, contribution.borderWidth),
+    opacity: mergeDefined(theme.opacity, contribution.opacity),
     iconStrokeWidth: contribution.iconStrokeWidth ?? theme.iconStrokeWidth,
   };
 }

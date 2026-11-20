@@ -5,6 +5,19 @@ import { darkTheme } from "@/styles/theme";
 import { appearanceStyleBoundaryKey } from "./appearance-style-boundary";
 
 describe("appearanceStyleBoundaryKey", () => {
+  it.each([
+    ["spacing", { spacing: { ...darkTheme.spacing, 2: 9 } }],
+    ["radius", { borderRadius: { ...darkTheme.borderRadius, md: 0 } }],
+    ["border width", { borderWidth: { ...darkTheme.borderWidth, 1: 2 } }],
+    ["opacity", { opacity: { ...darkTheme.opacity, 50: 0.3 } }],
+    ["font weight", { fontWeight: { ...darkTheme.fontWeight, normal: "300" as const } }],
+    ["icon stroke", { iconStrokeWidth: 1 }],
+  ])("changes when a plugin theme changes %s", (_, change) => {
+    expect(appearanceStyleBoundaryKey({ ...darkTheme, ...change })).not.toBe(
+      appearanceStyleBoundaryKey(darkTheme),
+    );
+  });
+
   it("changes when content size changes without any other appearance token changing", () => {
     const contentOnlyChange = {
       ...darkTheme,
