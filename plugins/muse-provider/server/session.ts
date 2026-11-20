@@ -400,12 +400,15 @@ export class Session {
       .catch((error: unknown) => this.runtimeFailed(error));
   }
   private runtimeFailed(error: unknown): void {
-    this.live().recovery.close();
-    this.options.emit({
-      type: "session.runtime_failed",
-      sessionId: this.options.id,
-      error: actionableError(error, this.options.launch),
-    });
+    // Closing the host can reject a notification's request. Let the close finish.
+    if (!this.closing) {
+      this.live().recovery.close();
+      this.options.emit({
+        type: "session.runtime_failed",
+        sessionId: this.options.id,
+        error: actionableError(error, this.options.launch),
+      });
+    }
     const interrupt = this.interruptCompletion;
     if (interrupt) interrupt.reject(error instanceof Error ? error : new Error(String(error)));
   }

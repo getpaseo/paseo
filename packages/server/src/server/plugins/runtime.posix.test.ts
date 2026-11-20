@@ -9,6 +9,7 @@ import pino from "pino";
 import {
   PROVIDER_CAPABILITIES,
   type ProviderEvent,
+  type ProviderPrompt,
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -567,11 +568,33 @@ register(${JSON.stringify(guardUrl)});`;
     }
   });
 
+  it("closes a Muse agent when the host exits without answering a child read", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-muse-close-"));
+    temporaryDirectories.push(directory);
+    const requests = path.join(directory, "requests.ndjson");
+    const { runtime, adapters, client } = await startMuseClient({
+      MUSE_TEST_HANG: "session/read",
+      MUSE_TEST_REQUESTS: requests,
+    });
+    try {
+      const session = await client.createSession({ provider: "muse", cwd: process.cwd() });
+      await session.startTurn("spawn a child", { clientMessageId: "close-with-pending-read" });
+      await expect
+        .poll(() => readFile(requests, "utf8"), { timeout: 5000 })
+        .toContain('"method":"session/read"');
+
+      await expect(session.close()).resolves.toBeUndefined();
+    } finally {
+      await adapters.shutdown();
+      await runtime.stopAll();
+    }
+  });
+
   it("runs a provider connection through the real plugin subprocess boundary", async () => {
     const directory = await createPlugin(
       "provider-round-trip",
       `import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { PROVIDER_CAPABILITIES, type ProviderEvent, type ProviderPrompt, type ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 const provider: ProviderRegistration = {
   id: "direct-example",
