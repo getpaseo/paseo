@@ -648,6 +648,14 @@
       }
     },
     "demo": {
+      "alt": "#engineering 中的 Slack 讨论串，展示开发者提及 @paseo-bot 查看 P0 issue 并创建拉取请求",
+      "searchPlaceholder": "搜索 Paseo",
+      "channels": "频道",
+      "apps": "应用",
+      "channelTopic": "核心 daemon、移动端与 Hub",
+      "threadReplies": "3 条回复",
+      "typing": "paseo-bot 正在输入...",
+      "composerPlaceholder": "回复...",
       "showIssues": "<mention/> 给我看看最新的 P0 issue",
       "issuesOpen": "目前有三个未关闭的 P0 issue：",
       "createPr": "<mention/> 为第一个创建一个拉取请求",
@@ -655,7 +663,7 @@
       "filesChanged": "3 个文件已更改",
       "testsPassed": "测试通过",
       "openInPaseo": "在 Paseo 中打开",
-      "bot": "机器人",
+      "bot": "应用",
       "caption": "同一讨论串中的后续消息会引导正在运行的 Agent。你可以随时在桌面端或手机端的 Paseo 中打开实时会话。"
     },
     "authoring": {

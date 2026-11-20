@@ -12,15 +12,15 @@ import * as React from "react";
 import type { ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { DiscordIcon } from "~/components/brand-icons";
 import { FAQItem } from "~/components/faq-item";
 import {
   HUB_AGENT_HARNESSES,
   HUB_TRIGGER_SOURCES,
   HubArchitectureDiagram,
 } from "~/components/hub-flow";
+import { HubSlackMockup } from "~/components/hub-slack-mockup";
 import { ChapterBand, HairlineGrid, PageHeaderBand, SectionOpener } from "~/components/page-frame";
-import { PaseoHubLockup, PaseoHubMark, PaseoMark } from "~/components/paseo-brand";
+import { PaseoHubLockup } from "~/components/paseo-brand";
 import { SiteFooter } from "~/components/site-footer";
 import {
   billingUnitLabel,
@@ -157,120 +157,9 @@ function AutomationsSection() {
             </div>
           ))}
         </HairlineGrid>
-        <ConversationDemo />
+        <HubSlackMockup />
       </div>
     </section>
-  );
-}
-
-const DEMO_ISSUES = [
-  { id: "#2811", title: "Terminal output drops under load" },
-  { id: "#2804", title: "Relay reconnect loop on Android after sleep" },
-  { id: "#2799", title: "Worktree cleanup leaves stale branches" },
-];
-
-const DEMO_COMPONENTS = {
-  mention: <Mention />,
-  host: <span className="font-mono text-white/50" />,
-  pr: <span className="text-white/80 underline decoration-white/20" />,
-};
-
-function ConversationDemo() {
-  const { t } = useTranslation();
-  return (
-    <figure className="space-y-3">
-      <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.015]">
-        <div className="flex items-center gap-2 border-b border-white/[0.08] bg-white/[0.025] px-5 py-3">
-          <DiscordIcon className="h-4 w-4 text-white/40" />
-          <span className="font-mono text-xs text-white/50">#engineering</span>
-        </div>
-        <div className="space-y-5 p-5">
-          <DemoMessage author="moboudra" time="09:41">
-            <p>
-              <Trans i18nKey="hub.demo.showIssues" components={DEMO_COMPONENTS} />
-            </p>
-          </DemoMessage>
-
-          <DemoMessage author="paseo-bot" time="09:41" bot>
-            <p>{t("hub.demo.issuesOpen")}</p>
-            <ul className="space-y-1">
-              {DEMO_ISSUES.map((issue) => (
-                <li key={issue.id} className="flex gap-2">
-                  <span className="font-mono text-white/40">{issue.id}</span>
-                  <span>{issue.title}</span>
-                </li>
-              ))}
-            </ul>
-          </DemoMessage>
-
-          <DemoMessage author="moboudra" time="09:43">
-            <p>
-              <Trans i18nKey="hub.demo.createPr" components={DEMO_COMPONENTS} />
-            </p>
-          </DemoMessage>
-
-          <DemoMessage author="paseo-bot" time="09:48" bot>
-            <p>
-              <Trans i18nKey="hub.demo.ranOn" components={DEMO_COMPONENTS} />
-            </p>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="rounded-full bg-brand-green/25 px-2.5 py-1 text-xs text-accent-text">
-                {t("hub.demo.filesChanged")}
-              </span>
-              <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-white/45">
-                {t("hub.demo.testsPassed")}
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/[0.05] px-2.5 py-1 text-xs text-white/75">
-                <PaseoMark className="h-3 w-3 text-white/85" />
-                {t("hub.demo.openInPaseo")}
-              </span>
-            </div>
-          </DemoMessage>
-        </div>
-      </div>
-      <figcaption className="text-sm text-muted-foreground">{t("hub.demo.caption")}</figcaption>
-    </figure>
-  );
-}
-
-function Mention() {
-  return <span className="rounded bg-indigo-400/15 px-1 py-0.5 text-indigo-200">@paseo-bot</span>;
-}
-
-function DemoMessage({
-  author,
-  time,
-  bot,
-  children,
-}: {
-  author: string;
-  time: string;
-  bot?: boolean;
-  children: ReactNode;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex gap-3">
-      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.06]">
-        {bot ? (
-          <PaseoHubMark className="h-5 w-5 text-white" />
-        ) : (
-          <span className="text-xs font-medium text-white/60">M</span>
-        )}
-      </div>
-      <div className="min-w-0 space-y-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white/90">{author}</span>
-          {bot ? (
-            <span className="rounded bg-indigo-400/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-200">
-              {t("hub.demo.bot")}
-            </span>
-          ) : null}
-          <span className="text-xs text-white/25">{time}</span>
-        </div>
-        <div className="space-y-2 text-sm leading-relaxed text-white/70">{children}</div>
-      </div>
-    </div>
   );
 }
 
