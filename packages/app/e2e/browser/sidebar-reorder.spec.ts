@@ -4,7 +4,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import { openMobileAgentSidebar, selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 
 async function rowTestIds(rows: Locator) {
@@ -369,6 +369,62 @@ test("compact groups retain active overflow and reveal the current ordered rows"
     await fixture.seed.cleanup();
   }
 });
+
+async function expectStickyWorkspacesHeader(scroll: Locator) {
+  const header = scroll.getByTestId("sidebar-workspaces-section-header");
+  const pinned = scroll.getByTestId("sidebar-pinned-section");
+  await scroll.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const start = await visibleBoundingBox(header);
+  const pinnedStart = await visibleBoundingBox(pinned);
+  expect(start.y).toBeGreaterThanOrEqual(pinnedStart.y + pinnedStart.height);
+
+  const viewport = await visibleBoundingBox(scroll);
+  await scroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() => scroll.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(start.y - viewport.y);
+  await expect
+    .poll(async () => Math.abs((await visibleBoundingBox(header)).y - viewport.y))
+    .toBeLessThanOrEqual(1);
+  await expect(pinned).not.toBeInViewport();
+
+  await header.getByTestId("sidebar-display-preferences-menu").click();
+  await expect(scroll.page().getByRole("menuitem", { name: /^Grouping/ })).toBeVisible();
+}
+
+for (const compact of [false, true]) {
+  test.describe(compact ? "Compact sidebar" : "Wide sidebar", () => {
+    test.use({ viewport: { width: compact ? 390 : 1280, height: 540 }, hasTouch: compact });
+
+    test("keeps the Workspaces header and Display menu reachable while scrolling", async ({
+      page,
+    }) => {
+      const { seed } = await seedCompactProject();
+      try {
+        await seed.client.setWorkspacePinned(seed.workspaceId, true);
+        await gotoAppShell(page);
+        if (compact) await openMobileAgentSidebar(page);
+        await waitForSidebarHydration(page);
+
+        const projectScroll = page.getByTestId("sidebar-project-workspace-list-scroll");
+        await revealWorkspaces(compactProjectRows(page, seed).group, "Show more");
+        await expectStickyWorkspacesHeader(projectScroll);
+        await page.getByTestId("sidebar-display-grouping").click();
+        await page.getByTestId("sidebar-grouping-status").click();
+
+        const statusScroll = page.getByTestId("sidebar-status-list-scroll");
+        await revealWorkspaces(page.getByTestId("sidebar-status-group-rows-done"), "Show more");
+        await expectStickyWorkspacesHeader(statusScroll);
+      } finally {
+        await seed.cleanup();
+      }
+    });
+  });
+}
 
 async function restorePreBetaOrder(page: Page, projectKey: string, workspaceKeys: string[]) {
   await page.evaluate(
