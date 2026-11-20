@@ -1379,6 +1379,10 @@ export async function deletePaseoWorktree({
   }
 
   if (await pathExists(resolvedWorktree)) {
+    await assertNoNestedGitWorktrees(
+      cwd ?? ownership.repoRoot ?? resolvedWorktree,
+      resolvedWorktree,
+    );
     const removedByPlugin = await prepareAndTryPluginWorktreeRemove({
       cwd,
       resolvedWorktree,
@@ -1411,6 +1415,27 @@ export async function deletePaseoWorktree({
 
   await removeDirectoryWithRetries(resolvedWorktree);
   await pruneWorktreesBestEffort(cwd);
+}
+
+async function assertNoNestedGitWorktrees(
+  repoCwd: string,
+  resolvedWorktree: string,
+): Promise<void> {
+  const gitCommonDir = await getGitCommonDir(repoCwd).catch(() => null);
+  if (!gitCommonDir) {
+    return;
+  }
+  const { entries } = await readGitWorktreeEntries(repoCwd);
+  const targetIdentity = normalizePathForIdentity(resolvedWorktree);
+  for (const entry of entries) {
+    const entryIdentity = normalizePathForIdentity(entry.path);
+    if (entryIdentity === targetIdentity) continue;
+    if (isPathInsideRoot(targetIdentity, entryIdentity) && (await pathExists(entry.path))) {
+      throw new Error(
+        `Refusing to delete worktree ${resolvedWorktree}: contains nested Git worktree ${entry.path}`,
+      );
+    }
+  }
 }
 
 async function pruneWorktreesBestEffort(cwd: string | null): Promise<void> {

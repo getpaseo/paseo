@@ -1347,3 +1347,114 @@ export default function contribute(server) {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }, 60_000);
+
+test("archive and rollback refuse to delete a worktree containing a live nested Git worktree", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-nested-delete-guard-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const detachedCreatedMarker = path.join(root, "detached-created");
+  const releaseDetachedMarker = path.join(root, "release-detached");
+  const removeCallsFile = path.join(root, "remove-calls.log");
+
+  const pluginDir = path.join(root, "nested-delete-guard-manager");
+  await mkdir(pluginDir);
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "nested-delete-guard-manager", requirements: { paseo: ">=0.17.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create(request) {
+      const target = path.join(path.dirname(request.repoRoot), "managed-" + request.branch);
+      if (request.branch === "detached-outer") {
+        execFileSync("git", ["worktree", "add", "--detach", target, request.baseRef], {
+          cwd: request.repoRoot,
+          stdio: "pipe",
+        });
+        writeFileSync(${JSON.stringify(detachedCreatedMarker)}, target);
+        const deadline = Date.now() + 15_000;
+        while (!existsSync(${JSON.stringify(releaseDetachedMarker)})) {
+          if (Date.now() > deadline) throw new Error("test did not release detached create");
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return { type: "created", path: target };
+      }
+      execFileSync("git", ["worktree", "add", "-b", request.branch, target, request.baseRef], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "created", path: target };
+    },
+    async remove(request) {
+      appendFileSync(${JSON.stringify(removeCallsFile)}, request.path + "\\n");
+      execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "removed" };
+    },
+  });
+}
+`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(pluginDir)).status).toBe("running");
+
+    // 1. Archive of outer worktree must preserve a live nested Git worktree that Paseo does not track.
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "outer-archive" },
+    });
+    expect(created.error).toBeNull();
+    const outerPath = created.workspace!.workspaceDirectory;
+    const nestedArchivePath = path.join(outerPath, "untracked-nested");
+    git(repository, ["worktree", "add", "-b", "untracked-nested", nestedArchivePath]);
+    const nestedArchiveFile = path.join(nestedArchivePath, "uncommitted.txt");
+    await writeFile(nestedArchiveFile, "keep-archive-nested");
+
+    const archived = await client.archiveWorkspace(created.workspace!.id);
+    expect(archived.error).toBeNull();
+    expect(await readFile(nestedArchiveFile, "utf8")).toBe("keep-archive-nested");
+    await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    // 2. Rollback of a failed create must preserve a nested Git worktree added while create paused.
+    const detachedCreate = client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "detached-outer" },
+    });
+    await expect
+      .poll(
+        () =>
+          stat(detachedCreatedMarker).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    const detachedOuterPath = await readFile(detachedCreatedMarker, "utf8");
+    const nestedRollbackPath = path.join(detachedOuterPath, "nested-during-create");
+    git(repository, ["worktree", "add", "-b", "nested-during-create", nestedRollbackPath]);
+    const nestedRollbackFile = path.join(nestedRollbackPath, "uncommitted.txt");
+    await writeFile(nestedRollbackFile, "keep-rollback-nested");
+
+    await writeFile(releaseDetachedMarker, "go");
+    const detachedResult = await detachedCreate;
+    expect(detachedResult.error).toContain("detached HEAD");
+    expect(detachedResult.error).toContain("contains nested Git worktree");
+    expect(await readFile(nestedRollbackFile, "utf8")).toBe("keep-rollback-nested");
+    await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
