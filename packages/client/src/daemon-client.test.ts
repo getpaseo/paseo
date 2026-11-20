@@ -2730,6 +2730,42 @@ test("foreground preserves RPCs waiting for a pending handshake", async () => {
   await expect(ping).resolves.toMatchObject({ requestId: "queued-ping" });
 });
 
+test("foreground shares a pending credential lookup with the current connection attempt", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const replacement = new FakeDaemon();
+  const daemons = [stalled, replacement];
+  const credentials: Array<(value: string) => void> = [];
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "foreground-credential-lookup",
+    localCredential: () => new Promise((resolve) => credentials.push(resolve)),
+    transportFactory: () => daemons[attempts++]!.transport,
+  });
+  clients.push(client);
+
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(1);
+  credentials[0]!("initial-credential");
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(attempts).toBe(1);
+
+  client.ensureConnected({ verify: true });
+  client.ensureConnected({ verify: true });
+  expect(credentials).toHaveLength(2);
+  expect(stalled.closesFromClient()).toHaveLength(1);
+  credentials[1]!("replacement-credential");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(attempts).toBe(2);
+  replacement.openConnection();
+
+  await connection;
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
 test("foreground keeps a connect attempt that just started", async () => {
   useHeartbeatClock();
   const pending = new FakeDaemon();

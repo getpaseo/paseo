@@ -1581,13 +1581,13 @@ export class DaemonClient {
     }
 
     this.shouldReconnect = true;
-    this.connectPromise = new Promise((resolve, reject) => {
+    const connection = new Promise<void>((resolve, reject) => {
       this.connectResolve = resolve;
       this.connectReject = reject;
-      this.attemptConnect();
     });
-
-    return this.connectPromise;
+    this.connectPromise = connection;
+    this.attemptConnect();
+    return connection;
   }
 
   private attemptConnect(): void {
@@ -1616,14 +1616,23 @@ export class DaemonClient {
       this.reconnectTimeout = null;
     }
 
+    // Retire the old transport before credential lookup can yield.
+    this.disposeTransport(
+      1001,
+      trigger === "STALE_CONNECT_ON_FOREGROUND" ? "Stale connection attempt" : "Reconnecting",
+    );
+    this.lastServerInfoMessage = null;
+    this.authFailureReasonValue = null;
+    this.updateConnectionState(
+      { status: "connecting", attempt: this.reconnectAttempt },
+      { event: trigger },
+    );
+
     try {
       const resolution = resolveConnectionAuth(this.config);
       const selected = resolution instanceof Promise ? await resolution : resolution;
       if (!this.shouldReconnect) return;
       this.helloAuth = selected.helloAuth;
-      // Reconnect can overlap with browser close/error delivery ordering.
-      // Dispose any previous transport before constructing the next one.
-      if (trigger === "CONNECT_REQUEST") this.disposeTransport();
       const baseTransportFactory =
         this.config.transportFactory ??
         createWebSocketTransportFactory(this.config.webSocketFactory ?? defaultWebSocketFactory);
@@ -1671,17 +1680,7 @@ export class DaemonClient {
         deliver: (frame) => this.handleTransportMessage(frame),
         onActivity: () => this.recordTransportActivity(),
       });
-      this.lastServerInfoMessage = null;
-      this.authFailureReasonValue = null;
-
       this.connectAttemptStartedAt = Date.now();
-      this.updateConnectionState(
-        {
-          status: "connecting",
-          attempt: this.reconnectAttempt,
-        },
-        { event: trigger },
-      );
       this.resetConnectTimeout();
       const timeoutMs = Math.max(1, this.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
       this.connectTimeout = setTimeout(() => {
@@ -1881,7 +1880,6 @@ export class DaemonClient {
         Date.now() - this.connectAttemptStartedAt >= FOREGROUND_STALE_CONNECT_MS
       ) {
         // Keep work queued while the client opens a fresh transport.
-        this.disposeTransport(1001, "Stale connection attempt");
         void this.openConnectionAttempt("STALE_CONNECT_ON_FOREGROUND");
       }
       return;
