@@ -41,13 +41,24 @@ export function usageWindowRowLabel(input: {
 /** A user-requested refresh of one report. The previous report stays on screen throughout. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 
-export function resolveUsageRefresh(
-  mutation: { isPending: boolean; error: unknown; context: string | undefined },
-  fetchedAt: string,
-): UsageRefresh {
-  if (mutation.isPending) return "pending";
-  if (mutation.error && mutation.context === fetchedAt) return "failed";
+export function resolveUsageRefresh(isPending: boolean, entry: UsageReportEntry): UsageRefresh {
+  if (isPending) return "pending";
+  if (entry.refreshFailure === "card") return "failed";
   return "idle";
+}
+
+/** Keep quota readings after a failed refresh and attach the outcome to the readings it targeted. */
+export function markUsageRefreshFailure(
+  current: UsageReportEntry[] | undefined,
+  attempted: readonly UsageReportEntry[],
+  failure: NonNullable<UsageReportEntry["refreshFailure"]>,
+): UsageReportEntry[] | undefined {
+  const attemptedAt = new Map(attempted.map((entry) => [entry.id, entry.fetchedAt]));
+  return current?.map((entry) =>
+    attemptedAt.get(entry.id) === entry.fetchedAt && entry.refreshFailure !== "card"
+      ? { ...entry, refreshFailure: failure }
+      : entry,
+  );
 }
 
 /**
@@ -60,7 +71,9 @@ export function replaceReport(
   refreshed: UsageReportEntry | null,
 ): UsageReportEntry[] {
   if (!refreshed) return reports.filter((report) => report.id !== reportId);
-  return reports.map((report) => (report.id === reportId ? refreshed : report));
+  return reports.map((report) =>
+    report.id === reportId ? laterFetched(report, refreshed) : report,
+  );
 }
 
 /**
@@ -68,7 +81,11 @@ export function replaceReport(
  * started, so a Refresh that lands while it streams is newer than what the request still delivers.
  */
 function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
-  return Date.parse(shown.fetchedAt) > Date.parse(arriving.fetchedAt) ? shown : arriving;
+  const shownAt = Date.parse(shown.fetchedAt);
+  const arrivingAt = Date.parse(arriving.fetchedAt);
+  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.refreshFailure)
+    ? shown
+    : arriving;
 }
 
 /**
@@ -236,11 +253,7 @@ export function resolveUsageSnapshot(entry: UsageReportEntry): UsageSnapshot | n
 }
 
 /** Current outcome owns messages; only a successful poll owns values and freshness. */
-export function resolveUsageReport(
-  entry: UsageReportEntry,
-  t: TFunction,
-  refreshState: UsageRefresh = "idle",
-) {
+export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
   const available = entry.report.status === "available";
   const snapshot = resolveUsageSnapshot(entry);
   const messages: string[] = [];
@@ -255,7 +268,7 @@ export function resolveUsageReport(
     else messages.push(usageProblemText(entry.report, t));
   }
   const forecastAt =
-    snapshot && !snapshot.retained && refreshState !== "failed"
+    snapshot && !snapshot.retained && !entry.refreshFailure
       ? (snapshot.report.observedAt ?? snapshot.successfulAt)
       : null;
   return {

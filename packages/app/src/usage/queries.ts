@@ -20,6 +20,7 @@ import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useUsageSetting } from "./setting";
 import { usageCopy } from "./copy";
 import {
+  markUsageRefreshFailure,
   replaceReport,
   resolveAgentUsageView,
   resolveUsageRefresh,
@@ -97,17 +98,33 @@ async function streamReports(input: {
   return settleReports(queryClient.getQueryData<UsageReportEntry[]>(queryKey), reports);
 }
 
-function listReports(
+async function listReports(
   queryClient: QueryClient,
   serverId: string,
   forceRefresh = false,
 ): Promise<UsageReportEntry[]> {
-  return streamReports({
-    queryClient,
-    queryKey: usageReportsQueryKey(serverId),
-    serverId,
-    forceRefresh,
-  });
+  const queryKey = usageReportsQueryKey(serverId);
+  const attempted = queryClient.getQueryData<UsageReportEntry[]>(queryKey) ?? [];
+  try {
+    return await streamReports({ queryClient, queryKey, serverId, forceRefresh });
+  } catch (error) {
+    recordUsageRefreshFailure(queryClient, queryKey, attempted, "list");
+    throw error;
+  }
+}
+
+function recordUsageRefreshFailure(
+  queryClient: QueryClient,
+  queryKey: QueryKey,
+  attempted: readonly UsageReportEntry[],
+  failure: NonNullable<UsageReportEntry["refreshFailure"]>,
+): void {
+  const { dataUpdatedAt } = queryClient.getQueryState(queryKey) ?? {};
+  queryClient.setQueryData<UsageReportEntry[]>(
+    queryKey,
+    (current) => markUsageRefreshFailure(current, attempted, failure),
+    { updatedAt: dataUpdatedAt },
+  );
 }
 
 async function getReport(
@@ -270,21 +287,21 @@ export function useReportRefresh(
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
   const usageScopeKey = useAgentUsageScopeKey(serverId, agentId);
-  const { id: reportId, fetchedAt } = entry;
+  const queryKey =
+    agentId === undefined
+      ? usageReportsQueryKey(serverId)
+      : agentUsageQueryKey(serverId, agentId, usageScopeKey);
   const mutation = useMutation({
-    // A failed request belongs to the reading it tried to replace.
-    onMutate: () => fetchedAt,
-    mutationFn: () => getReport(serverId, reportId, true, agentId),
-    onSuccess: (report) => {
-      queryClient.setQueryData<UsageReportEntry[]>(
-        agentId === undefined
-          ? usageReportsQueryKey(serverId)
-          : agentUsageQueryKey(serverId, agentId, usageScopeKey),
-        (reports) => (reports ? replaceReport(reports, reportId, report) : reports),
+    mutationFn: (attempted: UsageReportEntry) => getReport(serverId, attempted.id, true, agentId),
+    onSuccess: (report, attempted) => {
+      queryClient.setQueryData<UsageReportEntry[]>(queryKey, (reports) =>
+        reports ? replaceReport(reports, attempted.id, report) : reports,
       );
     },
+    onError: (_error, attempted) =>
+      recordUsageRefreshFailure(queryClient, queryKey, [attempted], "card"),
   });
-  const { mutate } = mutation;
-  const refresh = useCallback(() => mutate(), [mutate]);
-  return { refresh, refreshState: resolveUsageRefresh(mutation, fetchedAt) };
+  const { mutate, isPending } = mutation;
+  const refresh = useCallback(() => mutate(entry), [mutate, entry]);
+  return { refresh, refreshState: resolveUsageRefresh(isPending, entry) };
 }

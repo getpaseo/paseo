@@ -1,6 +1,12 @@
-import type { ProviderUsageTone, UsageReportEntry } from "@getpaseo/protocol/messages";
+import type {
+  ProviderUsageTone,
+  UsageReportEntry as WireUsageReportEntry,
+} from "@getpaseo/protocol/messages";
 
-export type { UsageReportEntry };
+export interface UsageReportEntry extends WireUsageReportEntry {
+  /** A refresh failed while this reading was cached. */
+  refreshFailure?: "card" | "list";
+}
 export type UsageReport = UsageReportEntry["report"];
 export type UsageTone = ProviderUsageTone;
 export type AvailableUsageReport = Extract<UsageReport, { status: "available" }>;

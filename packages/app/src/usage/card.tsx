@@ -76,7 +76,7 @@ export function UsageCard({
   const usage = entry.report;
   const status = statusText(usage, t);
   const collapsed = arrangement?.on === false;
-  const report = resolveUsageReport(entry, t, refreshState);
+  const report = resolveUsageReport(entry, t);
   const { planLabel, successfulAt, retained } = report;
 
   const containerStyle = useMemo(
