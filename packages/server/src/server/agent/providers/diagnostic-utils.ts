@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import path from "node:path";
+import stripAnsi from "strip-ansi";
 
 import {
   createProviderEnvSpec,
@@ -388,7 +389,10 @@ export async function buildCommandResolutionDiagnosticRows(
   ];
 }
 
-/** Run a version command and return its trimmed output, stdout first. Throws when it fails. */
+/**
+ * Run a version command and return its trimmed, unstyled output, stdout first. Throws when it
+ * fails. CLIs decorate `--version` for a terminal; callers show this string to the user.
+ */
 export async function readCommandVersionOutput(
   invocation: BinaryDiagnosticVersionCommand & { signal?: AbortSignal },
 ): Promise<string> {
@@ -397,7 +401,7 @@ export async function readCommandVersionOutput(
     timeout: 5_000,
     signal: invocation.signal,
   });
-  return stdout.trim() || stderr.trim();
+  return stripAnsi(stdout).trim() || stripAnsi(stderr).trim();
 }
 
 async function resolveCommandVersion(invocation: BinaryDiagnosticVersionCommand): Promise<string> {

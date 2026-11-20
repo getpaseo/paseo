@@ -5,10 +5,25 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   buildCommandResolutionDiagnosticRows,
+  readCommandVersionOutput,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
 const tempDirs: string[] = [];
+
+test("reads a plain version label from a CLI that styles its output", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "paseo-styled-version-"));
+  tempDirs.push(dir);
+  const script = path.join(dir, "styled-version.sh");
+  writeFileSync(
+    script,
+    "#!/bin/sh\nprintf '\\033[1mopencode\\033[0m \\033[2mv\\033[0m\\033[1m2.3.2\\033[0m\\n'\n",
+  );
+  chmodSync(script, 0o755);
+  await expect(readCommandVersionOutput({ command: script, args: [] })).resolves.toBe(
+    "opencode v2.3.2",
+  );
+});
 
 afterEach(() => {
   while (tempDirs.length > 0) {
