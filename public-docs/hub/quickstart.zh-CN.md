@@ -54,7 +54,9 @@ paseo hub permissions grant hub.execute
 
 ## 4. 创建入门触发器 {#4-create-the-starter-trigger}
 
-在同一仓库目录中生成并部署入门触发器：
+请使用绝对路径以 `/` 开头的仓库目录。`paseo hub init` 校验触发器时，Hub 会拒绝 `C:\work\project` 这类 Windows 盘符路径。请参阅[目标与 worktree](/docs/hub/configuration/reference#target-and-worktree)。
+
+在该仓库目录中生成并部署入门触发器。
 
 ```sh
 paseo hub init

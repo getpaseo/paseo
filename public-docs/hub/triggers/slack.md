@@ -54,7 +54,7 @@ Slack filters use IDs, not display names or connection slugs. All filters compos
 - `workspace` matches the Slack team ID and `channels` limits which channels can trigger the run.
 - `pattern` requires a prefix after the mention (`contains` is its legacy alias with the same prefix behavior).
 
-`${{ paseo.prompt }}` contains the complete received message text. If you declare `inputs` on the trigger, Hub parses leading `key=value` tokens after the mention into `${{ paseo.inputs }}`:
+`${{ paseo.prompt }}` contains the full message. Hub parses leading `key=value` tokens after the mention for inputs you declare. If you declare `inputs.repo`, use `${{ paseo.inputs.repo }}` in `run.prompt` to insert its value.
 
 ```text
 @Paseo repo=project investigate the failed sync

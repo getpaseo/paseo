@@ -50,7 +50,9 @@ Discord 过滤条件使用数字 snowflake ID，而不是服务器名称、显�
 
 `from_users` 为必填项，匹配发送者，`guild` 和 `channels` 限制提及出现的位置。`pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。所有过滤条件按逻辑与组合。
 
-`${{ paseo.prompt }}` 包含收到的完整消息文本。如果你声明了 `inputs`，Hub 会将提及之后紧跟的 `key=value` 头部解析到 `${{ paseo.inputs }}`。在 `run.prompt` 中包含 `${{ paseo.context }}`，即可以 JSON 形式传入被引用的消息、讨论串历史和附件描述符。
+`${{ paseo.prompt }}` 包含完整消息。Hub 会在提及后解析开头的 `key=value`，提取已声明的输入值。如果声明了 `inputs.repo`，请在 `run.prompt` 中使用 `${{ paseo.inputs.repo }}` 插入该值。
+
+在 `run.prompt` 中使用 `${{ paseo.context }}`，以 JSON 形式传入被引用的消息、讨论串历史和附件描述符。
 
 ## 回复与会话延续 {#replies-and-continuation}
 

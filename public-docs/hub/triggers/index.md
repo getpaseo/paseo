@@ -129,7 +129,9 @@ External provider triggers require a non-empty `from_users` allowlist. There are
 - `schedule.tick` uses `recurrence` and accepts no `connection` or `filters`.
 - `webhook.received` authenticates callers with a Bearer secret and accepts no `connection` or `filters`.
 
-The dashboard trigger form defaults **Audience** to **Everyone**, which saves `from_users: ["*"]` and lets any user on a public repository or workspace start a run. To restrict access, choose **Specific people** in the form or list explicit logins or user IDs in `from_users`.
+The dashboard defaults **Audience** to **Everyone** and saves `from_users: ["*"]`. GitHub, Slack, and Discord accept this wildcard. To limit who can trigger a run, choose **Specific people** or list the allowed logins or user IDs in `from_users`.
+
+For Linear comments and assignments, **Everyone** matches no users. Choose **Specific people** and enter the allowed Linear user UUIDs in **User IDs**, or list them in `from_users` in YAML.
 
 Allowlists do not sandbox the agent or sanitize untrusted text, so read [Hub security](/docs/hub/security) before granting write access or widening the audience.
 
@@ -170,7 +172,9 @@ Both run. Triggers are independent, unordered, and do not shadow each other.
 
 ## Replying and Open in Paseo links
 
-Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) automatically grant an event-native `reply` tool on the Hub MCP server so the agent can post progress updates and final answers back to the originating issue, pull request, or thread.
+Hub grants the `reply` tool when the event has an issue, pull request, or thread to reply to.
+
+A `github.push` event has no reply destination. If you require `github.reply` for a push, Hub fails the run before it starts the agent.
 
 To cap how many replies an agent can send or require at least one reply before `finish_execution` succeeds, declare `run.outputs`:
 

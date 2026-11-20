@@ -24,13 +24,15 @@ Hub 可以运行你已连接的 Paseo daemon 上配置的任意 Provider，包�
 
 ## 谁可以触发 Agent？ {#who-can-trigger-an-agent}
 
-对于 GitHub、Slack、Discord 以及 Linear 评论和分配触发器，Hub 会对照 `from_users` 检查发送者。设置为 `from_users: ["*"]`（控制台 **Audience: Everyone** 的默认值）时允许任意发送者，列出具名登录名或用户 ID 时则只允许这些账号。
+GitHub、Slack 和 Discord 触发器支持 `from_users: ["*"]`，这是控制台为 **Audience → Everyone** 保存的值。如需限制谁能触发运行，请在 `from_users` 中列出允许的登录名或用户 ID。
+
+对于 Linear 评论和分配事件，**Everyone** 无法匹配用户。请选择 **Specific people**，并在 **User IDs** 中输入允许的 Linear 用户 UUID。请参阅[触发器过滤条件](/docs/hub/triggers#filters)。
 
 `linear.issue_entered_scope` 要求设置 `filters.project` 且可以省略 `from_users`。入站 webhook 通过 Bearer 密钥（`whsec_...`）验证调用方，定时任务则按 Hub 自己的时钟触发。
 
 ## Agent 可以回复到 GitHub、Linear、Slack 或 Discord 吗？ {#can-an-agent-reply-back-to-github-linear-slack-or-discord}
 
-可以。对话类触发器（`github.*`、`linear.*`、`slack.*`、`discord.*`）会自动授予 Hub MCP `reply` 工具，将回复发布回触发运行的 issue、Pull Request 或讨论串。
+当事件有关联的 issue、Pull Request 或讨论串可供回复时，Hub 会授予 `reply` 工具。`github.push` 事件没有回复目标。
 
 添加 `run.outputs` 可设置 `max` 或 `required: true`，并在 `run.prompt` 中指示 Agent 调用 `reply` 和 `finish_execution`。当 Hub 运行在 HTTPS 下时，回复会为已登录的组织成员附带 **Open in Paseo** 链接。
 

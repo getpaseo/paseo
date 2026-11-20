@@ -37,8 +37,10 @@ nav: 触发器 YAML 参考
 | 字段       | 必填 | 说明                                                                         |
 | ---------- | ---- | ---------------------------------------------------------------------------- |
 | `daemon`   | 是   | 拥有 `hub.execute` 权限的已连接 daemon slug。                                |
-| `cwd`      | 是   | 该 daemon 上已存在的绝对路径。                                               |
+| `cwd`      | 是   | 该 daemon 上已有的目录，使用以 `/` 开头的绝对路径。                          |
 | `worktree` | 否   | 可选的 git worktree 模式：`branch-off`、`checkout-branch` 或 `checkout-pr`。 |
+
+例如，`/home/me/project` 符合路径格式。Hub 会拒绝 `C:\work\project` 这类 Windows 盘符路径。
 
 worktree 模式：
 
@@ -127,7 +129,11 @@ run:
 
 Hub 会为每次运行挂载执行 MCP 服务器，并始终提供 `finish_execution`。
 
-对话类触发器（`github.*`、`linear.*`、`slack.*`、`discord.*`）还会自动授予不限次、非必需的事件原生 `reply` 工具。如需限制 `max` 回复次数，或要求在 `finish_execution` 成功前至少回复一次，请添加 `run.outputs`：
+当事件有关联的 issue、Pull Request 或讨论串可供回复时，Hub 会授予 `reply` 工具。默认情况下，回复可选且不限次数。
+
+`github.push` 事件没有回复目标。如果为推送事件设置 `run.outputs.github.reply.required: true`，Hub 会在启动 Agent 前将运行标记为失败。
+
+通过 `run.outputs` 设置 `max` 可限制回复次数，也可以要求 Agent 在调用 `finish_execution` 前至少回复一次。
 
 ```yaml
 run:

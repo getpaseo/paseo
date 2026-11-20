@@ -56,7 +56,9 @@ paseo hub permissions grant hub.execute
 
 ## 4. Create the starter trigger
 
-From the same repository directory, generate and deploy a starter trigger:
+Use a repository directory whose absolute path starts with `/`. Hub rejects Windows drive paths such as `C:\work\project` when `paseo hub init` validates the trigger. See [target and worktree](/docs/hub/configuration/reference#target-and-worktree).
+
+From that repository directory, generate and deploy a starter trigger.
 
 ```sh
 paseo hub init

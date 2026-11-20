@@ -52,7 +52,7 @@ Slack 过滤条件使用 ID，而不是显示名称或连接 slug。所有过滤
 - `workspace` 匹配 Slack Team ID，`channels` 限制可触发运行的频道。
 - `pattern` 要求提及之后紧跟指定前缀（`contains` 是其旧别名，前缀行为相同）。
 
-`${{ paseo.prompt }}` 包含收到的完整消息文本。如果你在触发器上声明了 `inputs`，Hub 会将提及之后紧跟的 `key=value` 头部解析到 `${{ paseo.inputs }}`：
+`${{ paseo.prompt }}` 包含完整消息。Hub 会在提及后解析开头的 `key=value`，提取已声明的输入值。如果声明了 `inputs.repo`，请在 `run.prompt` 中使用 `${{ paseo.inputs.repo }}` 插入该值。
 
 ```text
 @Paseo repo=project investigate the failed sync

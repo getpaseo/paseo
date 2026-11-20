@@ -127,7 +127,9 @@ Hub 会在每段提示词中附带 `executionId`。在持续运行的 Agent 上�
 - `schedule.tick` 使用 `recurrence`，不接受 `connection` 或 `filters`。
 - `webhook.received` 通过 Bearer 密钥验证调用方，不接受 `connection` 或 `filters`。
 
-控制台触发器表单默认将 **Audience** 设为 **Everyone**，保存为 `from_users: ["*"]`，允许公开仓库或工作区中的任意用户启动运行。如需限制访问，请在表单中选择 **Specific people**，或在 YAML 的 `from_users` 中显式列出登录名或用户 ID。
+控制台默认将 **Audience** 设为 **Everyone**，并保存为 `from_users: ["*"]`。GitHub、Slack 和 Discord 支持此通配符。如需限制谁能触发运行，请选择 **Specific people**，或在 `from_users` 中列出允许的登录名或用户 ID。
+
+对于 Linear 评论和分配事件，**Everyone** 无法匹配用户。请选择 **Specific people**，在 **User IDs** 中输入允许的 Linear 用户 UUID，或在 YAML 的 `from_users` 中列出这些 UUID。
 
 白名单不能为 Agent 提供沙箱隔离，也不会清洗不可信文本，授予写权限或放宽受众范围前请先阅读 [Hub 安全](/docs/hub/security)。
 
@@ -168,7 +170,9 @@ on:
 
 ## 回复与 Open in Paseo 链接 {#replying-and-open-in-paseo-links}
 
-对话类触发器（`github.*`、`linear.*`、`slack.*`、`discord.*`）会自动通过 Hub MCP 服务器授予事件原生的 `reply` 工具，让 Agent 可以向来源 issue、Pull Request 或讨论串发送进度更新和最终答复。
+当事件有关联的 issue、Pull Request 或讨论串可供回复时，Hub 会授予 `reply` 工具。
+
+`github.push` 事件没有回复目标。如果为推送事件要求 `github.reply`，Hub 会在启动 Agent 前将运行标记为失败。
 
 如需限制最大回复次数，或要求在 `finish_execution` 成功前至少回复一次，请声明 `run.outputs`：
 

@@ -26,13 +26,15 @@ Yes. Integrations belong to the organization under **Integrations**, and each co
 
 ## Who can trigger an agent?
 
-For GitHub, Slack, Discord, and Linear comment or assignment triggers, Hub checks the sender against `from_users`. Setting `from_users: ["*"]` (the dashboard's **Audience: Everyone** default) allows any sender, while listing named logins or user IDs restricts access.
+GitHub, Slack, and Discord triggers accept `from_users: ["*"]`, the value the dashboard saves for **Audience → Everyone**. To limit who can trigger a run, list the allowed logins or user IDs in `from_users`.
+
+For Linear comments and assignments, **Everyone** matches no users. Choose **Specific people** and enter the allowed Linear user UUIDs in **User IDs**. See [trigger filters](/docs/hub/triggers#filters).
 
 `linear.issue_entered_scope` requires `filters.project` and can omit `from_users`. Inbound webhooks authenticate callers with a Bearer secret (`whsec_...`), and schedules fire on Hub's own clock.
 
 ## Can an agent reply back to GitHub, Linear, Slack, or Discord?
 
-Yes. Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) automatically grant the Hub MCP `reply` tool, which posts back to the triggering issue, pull request, or thread.
+Hub grants the `reply` tool when the event has an issue, pull request, or thread to reply to. A `github.push` event has no reply destination.
 
 Add `run.outputs` to set `max` or `required: true`, and tell the agent to call `reply` and `finish_execution` in `run.prompt`. When Hub runs over HTTPS, replies include an **Open in Paseo** link for signed-in organization members.
 

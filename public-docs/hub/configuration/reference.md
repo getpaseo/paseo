@@ -39,8 +39,10 @@ One trigger document can list more than one event under `on`. The dashboard visu
 | Field      | Required | Notes                                                                          |
 | ---------- | -------- | ------------------------------------------------------------------------------ |
 | `daemon`   | yes      | Connected daemon slug with `hub.execute` permission.                           |
-| `cwd`      | yes      | Existing absolute path on that daemon.                                         |
+| `cwd`      | yes      | Existing directory on that daemon, with an absolute path that starts with `/`. |
 | `worktree` | no       | Optional git worktree mode: `branch-off`, `checkout-branch`, or `checkout-pr`. |
+
+For example, `/home/me/project` uses the required path format. Hub rejects Windows drive paths such as `C:\work\project`.
 
 Worktree modes:
 
@@ -129,7 +131,11 @@ Wrap untrusted external text in a clear delimiter such as `<user-prompt>...</use
 
 Hub attaches its execution MCP server to every run and always exposes `finish_execution`.
 
-Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) also grant an unlimited, optional event-native `reply` tool automatically. Add `run.outputs` when you want to cap `max` replies or require at least one reply before `finish_execution` succeeds:
+Hub grants the `reply` tool when the event has an issue, pull request, or thread to reply to. Replies are optional and unlimited by default.
+
+A `github.push` event has no reply destination. If you set `run.outputs.github.reply.required: true` for a push, Hub fails the run before it starts the agent.
+
+Set `run.outputs` to cap replies with `max` or require a reply before `finish_execution`.
 
 ```yaml
 run:
