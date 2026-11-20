@@ -214,24 +214,14 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
       return;
     case "session.prompt": {
       const session = requireSession(state, input.sessionId);
-      await mutateSession(session, async () => {
-        try {
-          await session.runtime.prompt(input);
-        } finally {
-          if (session.runtime.isClosed()) {
-            state.sessions.delete(input.sessionId);
-          }
-        }
-      });
+      await mutateSession(session, () => session.runtime.prompt(input));
       return;
     }
     case "session.interrupt": {
       const session = requireSession(state, input.sessionId);
       const retired = await session.runtime.interrupt();
       state.emit({ type: "request.completed", requestId: input.requestId });
-      if (retired && state.sessions.delete(input.sessionId)) {
-        state.emit({ type: "session.closed", sessionId: input.sessionId });
-      }
+      if (retired) retireSession(state, input.sessionId);
       return;
     }
     case "session.permission":
@@ -320,6 +310,12 @@ async function listSessions(
   }
 }
 
+function retireSession(state: AcpConnectionState, sessionId: string): void {
+  if (state.sessions.delete(sessionId)) {
+    state.emit({ type: "session.closed", sessionId });
+  }
+}
+
 async function openSession(
   input: Extract<ProviderInput, { type: "session.open" }>,
   state: AcpConnectionState,
@@ -333,6 +329,7 @@ async function openSession(
     cwd: input.config.cwd,
     env: input.config.env,
     emit: state.emit,
+    onRetired: () => retireSession(state, input.sessionId),
   });
   try {
     const capabilities = await runtime.open(input, state.capabilities);
@@ -374,6 +371,7 @@ interface StartRuntimeOptions {
   cwd?: string;
   env: Readonly<Record<string, string>>;
   emit(event: ProviderEvent): void;
+  onRetired?: () => void;
 }
 
 interface PendingPermission {
@@ -682,7 +680,7 @@ class AcpRuntime {
         const retired = await this.interrupt();
         if (retired) {
           // Notify caller that the session closed before failing the replacement prompt.
-          this.emit({ type: "session.closed", sessionId: this.options.boundarySessionId });
+          this.options.onRetired?.();
           throw new Error("ACP session retired after stopping deferred background work");
         }
       }
@@ -773,10 +771,6 @@ class AcpRuntime {
     void settled.finally(() => {
       if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
     });
-  }
-
-  isClosed(): boolean {
-    return this.closing;
   }
 
   async interrupt(): Promise<boolean> {

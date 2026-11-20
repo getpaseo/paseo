@@ -5907,6 +5907,7 @@ describe("deferTurnOnRunningTools", () => {
             event.state === "canceled",
         ),
       ).toHaveLength(1);
+      expect(events.filter((event) => event.type === "session.closed")).toHaveLength(1);
     } finally {
       releaseCancelWrite?.();
       await connection.close();
