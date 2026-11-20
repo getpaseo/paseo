@@ -10175,6 +10175,8 @@ test("a sender's start wait follows its prompt across a stale-session retry", as
 
 test("a sender's start wait follows its prompt when the session is stale before the wait begins", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-immediate-stale-start-"));
+  const resumeEntered = deferred<void>();
+  const releaseResume = deferred<void>();
   class StaleStartSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       throw new StaleProviderSessionError("stale-bridge");
@@ -10183,6 +10185,15 @@ test("a sender's start wait follows its prompt when the session is stale before 
   class StaleStartClient extends ResumeTrackingTestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
       return new StaleStartSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeEntered.resolve();
+      await releaseResume.promise;
+      return await super.resumeSession(handle, config);
     }
   }
   const client = new StaleStartClient();
@@ -10196,9 +10207,11 @@ test("a sender's start wait follows its prompt when the session is stale before 
       runOptions: { clientMessageId: "immediate-stale-start" },
     });
     // The stale start has failed and been cleared before the sender begins waiting.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await resumeEntered.promise;
     expect(manager.hasInFlightRun(agent.id)).toBe(false);
-    await expect(dispatchStarted(dispatch)).resolves.toBeUndefined();
+    const senderWait = dispatchStarted(dispatch);
+    releaseResume.resolve();
+    await expect(senderWait).resolves.toBeUndefined();
     await client.waitForRetryStart();
     expect(manager.getTimeline(agent.id).filter((item) => item.type === "user_message")).toEqual([
       expect.objectContaining({
@@ -10207,6 +10220,7 @@ test("a sender's start wait follows its prompt when the session is stale before 
       }),
     ]);
   } finally {
+    releaseResume.resolve();
     manager.prepareForShutdown();
     await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     await manager.flushForShutdown();
