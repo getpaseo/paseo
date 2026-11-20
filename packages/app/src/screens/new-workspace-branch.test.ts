@@ -117,4 +117,14 @@ describe("buildBranchedWorkspacePrompt", () => {
     expect(prompt).toContain("`/sample/worktrees/new`");
     expect(prompt.endsWith("\n\nContinue.")).toBe(true);
   });
+
+  it("sends the user's text alone when the new workspace uses the same directory", () => {
+    const prompt = buildBranchedWorkspacePrompt({
+      sourceCwd: "/sample/repo",
+      cwd: "/sample/repo",
+      text: "Continue.",
+    });
+
+    expect(prompt).toBe("Continue.");
+  });
 });

@@ -5,14 +5,17 @@ import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceDraftBranch } from "@/stores/workspace-draft-submission-store";
 
 /**
- * The branch keeps every absolute path of the source conversation, while the new workspace is a
- * separate checkout without the source's uncommitted changes. The first message says so.
+ * The branch keeps every absolute path of the source conversation. When the new workspace is a
+ * separate checkout, without the source's uncommitted changes, the first message says so.
  */
 export function buildBranchedWorkspacePrompt(input: {
   sourceCwd: string;
   cwd: string;
   text: string;
 }): string {
+  if (input.cwd === input.sourceCwd) {
+    return input.text;
+  }
   return [
     `This conversation was forked from \`${input.sourceCwd}\`. You are now working in \`${input.cwd}\`, a separate checkout. Paths in the earlier conversation point to the old one, and its uncommitted changes are not here, so re-read files before editing them.`,
     input.text,
