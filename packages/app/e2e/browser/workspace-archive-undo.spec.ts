@@ -23,6 +23,8 @@ import {
   outlastUndoWindow,
   pressArchiveShortcut,
   pressUndoShortcut,
+  readSidebarListLayout,
+  recordLastRowBottomPerFrame,
   resizeSidebarToMinimum,
   rowArchiveButton,
   rowKebab,
@@ -121,7 +123,7 @@ test.describe("Workspace archive undo", () => {
     expect(shortcutBox.x - (labelBox.x + labelBox.width)).toBeLessThanOrEqual(8.5);
   });
 
-  test("a long list ends just below its last row, and the toast over it moves no row", async ({
+  test("a long list scrolls its last row clear of the toast, and settles back smoothly after it", async ({
     page,
   }) => {
     await page.clock.install({ time: Date.now() });
@@ -136,18 +138,35 @@ test.describe("Workspace archive undo", () => {
       const worktree = await seedWorktree(page, "archive-toast-long-list");
 
       const resting = await scrollSidebarListToEnd(page);
-      expect(resting.listBottom - resting.rowBottoms.at(-1)!).toBeLessThan(resting.rowHeight);
+      const restingEndGap = resting.listBottom - resting.rowBottoms.at(-1)!;
+      expect(restingEndGap).toBeLessThan(resting.rowHeight);
 
       await archiveFromRowButton(page, worktree.workspaceId);
       await page.mouse.move(0, 0);
-      const withToast = await scrollSidebarListToEnd(page);
       const toastBox = await archivedToast(page).boundingBox();
       if (!toastBox) throw new Error("Toast is not laid out");
-      expect(toastBox.y + toastBox.height).toBeLessThanOrEqual(withToast.listBottom);
+      // The list keeps its usual end gap, measured from the toast's top instead of its own bottom.
+      await expect
+        .poll(async () => {
+          const layout = await scrollSidebarListToEnd(page);
+          return Math.round(toastBox.y - layout.rowBottoms.at(-1)!);
+        })
+        .toBe(Math.round(restingEndGap));
 
+      const frames = recordLastRowBottomPerFrame(page, 40);
       await outlastUndoWindow(page);
+      const bottoms = await frames;
       await expect(archivedToast(page)).toHaveCount(0);
-      expect(await scrollSidebarListToEnd(page)).toEqual(withToast);
+
+      // Without scrolling again, the list ends just below its last row once more.
+      const settled = await readSidebarListLayout(page);
+      expect(settled.listBottom - settled.rowBottoms.at(-1)!).toBeCloseTo(restingEndGap, 0);
+      // The rows travel down by the toast's height over several frames, never in one jump.
+      const travel = bottoms.at(-1)! - bottoms[0]!;
+      expect(travel).toBeGreaterThan(toastBox.height);
+      const steps = bottoms.slice(1).map((bottom, index) => bottom - bottoms[index]!);
+      expect(Math.min(...steps)).toBeGreaterThanOrEqual(0);
+      expect(Math.max(...steps)).toBeLessThan(travel / 2);
     } finally {
       for (const projectId of fillerProjectIds) {
         await client.removeProject(projectId).catch(() => undefined);

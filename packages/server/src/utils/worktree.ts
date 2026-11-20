@@ -146,6 +146,13 @@ export class WorktreeSetupError extends Error {
 
 export type WorktreeTeardownCommandResult = WorktreeSetupCommandResult;
 
+// paseo.json can change this with worktree.teardownTimeoutMs. Archive waits for teardown before it
+// answers, and the app stops waiting for an archive answer after 60 seconds
+// (DEFAULT_SESSION_RPC_TIMEOUT_MS in the client). A teardown that runs to this limit, or to a longer
+// one, answers after the app has reported the archive as failed.
+const DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS = 60_000;
+const MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM = 1024 * 1024;
+
 export class WorktreeTeardownError extends Error {
   readonly results: WorktreeTeardownCommandResult[];
 
@@ -185,9 +192,16 @@ export interface WorktreeCheckoutRef {
 }
 
 export type WorktreeSource =
-  | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | {
+      kind: "branch-off";
+      baseBranch: string;
+      branchName: string;
+      /** Where the new branch starts when that is not `baseBranch`, such as a fork's head. */
+      startPoint?: string;
+    }
   | { kind: "checkout-branch"; branchName: string }
   | { kind: "restore"; branchName: string; baseRef: string | null }
+  | { kind: "restore-commit"; commit: string; baseRef: string }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
   | {
       kind: "checkout-change-request";
@@ -278,6 +292,13 @@ export async function getWorktreeSetupCommands(repoRoot: string): Promise<string
 
 export async function getWorktreeTeardownCommands(repoRoot: string): Promise<string[]> {
   return (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardown ?? [];
+}
+
+export async function getWorktreeTeardownTimeoutMs(repoRoot: string): Promise<number> {
+  return (
+    (await readPaseoConfigOrThrow(repoRoot))?.worktree?.teardownTimeoutMs ??
+    DEFAULT_WORKTREE_TEARDOWN_TIMEOUT_MS
+  );
 }
 
 export async function getWorktreeTerminalSpecs(
@@ -448,12 +469,14 @@ async function execSetupCommandStreamed(options: {
   index: number;
   total: number;
   signal?: AbortSignal;
+  maxOutputCharsPerStream?: number;
   onEvent?: (event: WorktreeSetupCommandProgressEvent) => void;
 }): Promise<WorktreeSetupCommandResult> {
   return new Promise((resolvePromise) => {
     const startedAt = Date.now();
-    const stdoutChunks: string[] = [];
-    const stderrChunks: string[] = [];
+    const outputChunks: Record<"stdout" | "stderr", string[]> = { stdout: [], stderr: [] };
+    const outputLimit = options.maxOutputCharsPerStream ?? Infinity;
+    const remainingOutputChars = { stdout: outputLimit, stderr: outputLimit };
     let settled = false;
     let termination: Promise<unknown> | null = null;
 
@@ -462,10 +485,10 @@ async function execSetupCommandStreamed(options: {
       if (!text) {
         return;
       }
-      if (stream === "stdout") {
-        stdoutChunks.push(text);
-      } else {
-        stderrChunks.push(text);
+      const retainedText = text.slice(0, remainingOutputChars[stream]);
+      if (retainedText) {
+        outputChunks[stream].push(retainedText);
+        remainingOutputChars[stream] -= retainedText.length;
       }
       options.onEvent?.({
         type: "output",
@@ -484,12 +507,17 @@ async function execSetupCommandStreamed(options: {
       }
       settled = true;
       options.signal?.removeEventListener("abort", abort);
-      await termination;
+      if (termination) {
+        await termination;
+        // A descendant can keep these pipes open after the shell exits.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
       const result: WorktreeSetupCommandResult = {
         command: options.command,
         cwd: options.cwd,
-        stdout: stdoutChunks.join(""),
-        stderr: stderrChunks.join(""),
+        stdout: outputChunks.stdout.join(""),
+        stderr: outputChunks.stderr.join(""),
         exitCode,
         durationMs: Date.now() - startedAt,
       };
@@ -528,6 +556,7 @@ async function execSetupCommandStreamed(options: {
         gracefulTimeoutMs: 1000,
         forceTimeoutMs: 1000,
       });
+      void finish(null);
     };
     if (options.signal?.aborted) {
       abort();
@@ -767,17 +796,26 @@ export async function runWorktreeTeardownCommands(options: {
     }),
   );
 
+  // One deadline covers every command. Reaching it counts as failure and keeps the worktree.
+  const timeoutMs = await getWorktreeTeardownTimeoutMs(teardownCwd);
+  const deadline = AbortSignal.timeout(timeoutMs);
   const results: WorktreeTeardownCommandResult[] = [];
-  for (const cmd of teardownCommands) {
-    const result = await execSetupCommand(cmd, {
+  for (const [index, cmd] of teardownCommands.entries()) {
+    const result = await execSetupCommandStreamed({
+      command: cmd,
       cwd: teardownCwd,
       env: teardownEnv,
+      index: index + 1,
+      total: teardownCommands.length,
+      signal: deadline,
+      maxOutputCharsPerStream: MAX_WORKTREE_TEARDOWN_OUTPUT_CHARS_PER_STREAM,
     });
     results.push(result);
 
     if (result.exitCode !== 0) {
+      const reason = deadline.aborted ? `Timed out after ${timeoutMs / 1000}s` : result.stderr;
       throw new WorktreeTeardownError(
-        `Worktree teardown command failed: ${cmd}\n${result.stderr}`.trim(),
+        `Worktree teardown command failed: ${cmd}\n${reason}`.trim(),
         results,
       );
     }
@@ -1039,9 +1077,18 @@ async function resolveMetadataOwnedWorktree(
 
 type ParsedPaseoWorktreeInfo = Omit<PaseoWorktreeInfo, "createdAt">;
 
+interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
+  /** A bare repository or a worktree whose directory is gone; nothing can work there. */
+  unusable?: true;
+}
+
 function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  const entries: ParsedPaseoWorktreeInfo[] = [];
-  let current: ParsedPaseoWorktreeInfo | null = null;
+  return parseWorktreeEntries(output).map(({ unusable: _unusable, ...entry }) => entry);
+}
+
+function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
+  const entries: ParsedWorktreeEntry[] = [];
+  let current: ParsedWorktreeEntry | null = null;
 
   for (const line of output.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -1061,6 +1108,8 @@ function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
     } else if (line.startsWith("HEAD ")) {
       current.head = line.slice("HEAD ".length).trim();
+    } else if (line === "bare" || line.startsWith("prunable")) {
+      current.unusable = true;
     } else if (line.trim().length === 0) {
       if (current.path) {
         entries.push(current);
@@ -1086,6 +1135,49 @@ async function resolveWorktreeCreatedAtIso(worktreePath: string): Promise<string
   } catch {
     return new Date(0).toISOString();
   }
+}
+
+/** One git worktree of a repository, whoever created it. */
+export interface GitWorktree {
+  path: string;
+  /** Null when HEAD is detached. */
+  branchName: string | null;
+  head: string | null;
+  createdAt: string;
+  /** Whether the `cwd` the list was asked for is inside this worktree. */
+  containsCwd: boolean;
+}
+
+/**
+ * Every usable worktree of the repository `cwd` is in. The main worktree comes first; the rest
+ * follow in no meaningful order.
+ * Unlike `listPaseoWorktrees`, ownership plays no part.
+ */
+export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWorktree[]> {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const { stdout: toplevel } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const cwdWorktree = await normalizePathForOwnership(toplevel.trim());
+  const worktrees: GitWorktree[] = [];
+  for (const entry of parseWorktreeEntries(stdout)) {
+    if (entry.unusable) continue;
+    // A locked worktree whose directory was deleted is neither prunable nor workable.
+    if (!(await pathExists(entry.path))) continue;
+    const path = await normalizePathForOwnership(entry.path);
+    worktrees.push({
+      path,
+      branchName: entry.branchName ?? null,
+      head: entry.head ?? null,
+      createdAt: await resolveWorktreeCreatedAtIso(path),
+      containsCwd: path === cwdWorktree,
+    });
+  }
+  return worktrees;
 }
 
 export async function listPaseoWorktrees({
@@ -1153,6 +1245,32 @@ async function assertWorktreeBelongsToRepo(cwd: string, worktreePath: string): P
   }
 }
 
+export async function readWorktreeHead(worktreePath: string): Promise<string | null> {
+  if (!(await pathExists(join(worktreePath, ".git")))) return null;
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], {
+      cwd: worktreePath,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+export async function readWorktreeHeadReference(worktreePath: string): Promise<string | null> {
+  if (!(await pathExists(join(worktreePath, ".git")))) return null;
+  try {
+    const result = await runGitCommand(["symbolic-ref", "--quiet", "HEAD"], {
+      cwd: worktreePath,
+      acceptExitCodes: [0, 1],
+    });
+    if (result.exitCode === 0) return result.stdout.trim();
+    return readWorktreeHead(worktreePath);
+  } catch {
+    return null;
+  }
+}
+
 export async function deletePaseoWorktree({
   cwd,
   worktreePath,
@@ -1206,6 +1324,12 @@ export async function deletePaseoWorktree({
       await runWorktreeTeardownCommands({
         worktreePath: resolvedWorktree,
         teardownCwd,
+      });
+    }
+    const commit = await readWorktreeHead(resolvedWorktree);
+    if (commit) {
+      await runGitCommand(["update-ref", `refs/paseo/kept-commits/${commit}`, commit], {
+        cwd: resolvedWorktree,
       });
     }
   }
@@ -1361,14 +1485,22 @@ export async function resolveDefaultWorktreePath(
 /**
  * Create a git worktree with proper naming conventions
  */
-export const createWorktree = async ({
+export function createWorktree(
+  options: CreateWorktreeOptions & { source: Exclude<WorktreeSource, { kind: "restore-commit" }> },
+): Promise<CreatedWorktree>;
+export function createWorktree(
+  options: CreateWorktreeOptions,
+): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }>;
+export async function createWorktree({
   cwd,
   source,
   worktreeSlug,
   paseoHome,
   worktreesRoot,
   worktreePath: explicitWorktreePath,
-}: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+}: CreateWorktreeOptions): Promise<
+  Omit<CreatedWorktree, "branchName"> & { branchName: string | null }
+> {
   const branchesBefore =
     source.kind === "checkout-branch" ||
     source.kind === "checkout-change-request" ||
@@ -1394,14 +1526,14 @@ export const createWorktree = async ({
     });
     worktreePath = await normalizePathForOwnership(worktreePath);
 
-    if (sourcePlan.pushRemote) {
+    if (sourcePlan.pushRemote && sourcePlan.branchName) {
       await configureWorktreePushRemote({
         cwd,
         branchName: sourcePlan.branchName,
         remote: sourcePlan.pushRemote,
       });
     }
-    if (sourcePlan.trackingRemote) {
+    if (sourcePlan.trackingRemote && sourcePlan.branchName) {
       await configureWorktreeTrackingRemote({
         cwd,
         branchName: sourcePlan.branchName,
@@ -1434,7 +1566,7 @@ export const createWorktree = async ({
     }
     throw error;
   }
-};
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;
@@ -1443,7 +1575,7 @@ interface ResolveWorktreeSourcePlanOptions {
 }
 
 interface WorktreeSourcePlan {
-  branchName: string;
+  branchName: string | null;
   // Display name and exact ref are two different facts. The name cannot round-trip to a
   // commit — "main" resolves local-first even when the worktree was cut from a fork's
   // upstream — so comparisons and actions read the ref and the UI reads the name.
@@ -1492,6 +1624,26 @@ async function resolveRestoredWorktreeSourcePlan(
   };
 }
 
+async function resolveRestoredCommitSourcePlan(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "restore-commit" }>,
+): Promise<WorktreeSourcePlan> {
+  let exactBase: string | undefined;
+  if (isQualifiedRef(source.baseRef)) {
+    try {
+      exactBase = await resolveBaseBranchForWorktree(cwd, source.baseRef);
+    } catch {
+      // Restore the saved commit even when its comparison ref no longer exists.
+    }
+  }
+  return {
+    branchName: null,
+    metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRef),
+    ...(exactBase ? { metadataBaseRef: exactBase } : {}),
+    addArguments: ["--detach", source.commit],
+  };
+}
+
 async function resolveRestoredWorktreeFromBasePlan(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "restore-from-base" }>,
@@ -1517,7 +1669,7 @@ async function resolveBranchOffWorktreeSourcePlan(
   const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
-  const base = branchExists ? branchName : resolvedBaseBranch;
+  const base = branchExists ? branchName : (source.startPoint ?? resolvedBaseBranch);
   await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
@@ -1544,6 +1696,8 @@ async function resolveWorktreeSourcePlan({
       return resolveBranchOffWorktreeSourcePlan(cwd, source, desiredSlug);
     case "restore":
       return resolveRestoredWorktreeSourcePlan(cwd, source);
+    case "restore-commit":
+      return resolveRestoredCommitSourcePlan(cwd, source);
     case "restore-from-base":
       return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {
@@ -1581,10 +1735,10 @@ async function resolveWorktreeSourcePlan({
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
       const changeRequestNumber =
         source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-      await fetchWorktreeCheckoutRefs({
+      await fetchFirstAvailableRef({
         cwd,
-        localBranchName,
-        checkoutRefs: source.checkoutRefs ?? [
+        destination: `refs/heads/${localBranchName}`,
+        sources: source.checkoutRefs ?? [
           { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
         ],
       });
@@ -1683,23 +1837,23 @@ async function configureWorktreePushRemote(options: {
   }
 }
 
-async function fetchWorktreeCheckoutRefs(options: {
+/**
+ * Fetches the first of `sources` a remote serves into the local ref `destination`, and returns
+ * the name of that remote.
+ */
+export async function fetchFirstAvailableRef(options: {
   cwd: string;
-  localBranchName: string;
-  checkoutRefs: WorktreeCheckoutRef[];
-}): Promise<void> {
+  sources: WorktreeCheckoutRef[];
+  destination: string;
+}): Promise<string> {
   let lastResult:
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
-  for (const checkoutRef of options.checkoutRefs) {
+  for (const checkoutRef of options.sources) {
+    const remoteName = checkoutRef.remoteName ?? "origin";
     lastResult = await runGitCommand(
-      [
-        "fetch",
-        checkoutRef.remoteName ?? "origin",
-        `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
-        "--force",
-      ],
+      ["fetch", remoteName, `+${checkoutRef.remoteRef}:${options.destination}`, "--force"],
       {
         cwd: options.cwd,
         timeout: 120_000,
@@ -1707,14 +1861,14 @@ async function fetchWorktreeCheckoutRefs(options: {
       },
     );
     if (lastResult.exitCode === 0) {
-      return;
+      return remoteName;
     }
   }
-  const attemptedRefs = options.checkoutRefs
+  const attemptedRefs = options.sources
     .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
     .join(", ");
   throw new Error(
-    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
+    `Unable to fetch change request refs into ${options.destination}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
   );
 }
 
@@ -1913,9 +2067,38 @@ async function ensureLocalBranch(cwd: string, branchName: string): Promise<void>
       cwd,
       timeout: 120_000,
     });
+    return;
   } catch {
+    // Origin does not have it; another remote may.
+  }
+  const remoteBranch = await uniqueRemoteTrackingBranch(cwd, branchName);
+  if (!remoteBranch) {
     throw new UnknownBranchError({ branchName, cwd });
   }
+  // Tracks the remote it came from, as `git checkout <branch>` does for a branch on one remote.
+  await runGitCommand(["branch", "--track", branchName, remoteBranch], { cwd });
+}
+
+/** The one remote-tracking ref named `<remote>/<branchName>`, if exactly one remote has it. */
+async function uniqueRemoteTrackingBranch(cwd: string, branchName: string): Promise<string | null> {
+  const { stdout: remotes } = await runGitCommand(["remote"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  const candidates: string[] = [];
+  for (const remote of remotes
+    .split("\n")
+    .map((name) => name.trim())
+    .filter(Boolean)) {
+    const ref = `refs/remotes/${remote}/${branchName}`;
+    try {
+      await runGitCommand(["show-ref", "--verify", "--quiet", ref], { cwd });
+      candidates.push(ref);
+    } catch {
+      // This remote does not have the branch.
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {

@@ -1,6 +1,19 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 
+// COMPAT(claudeUltracodeThinkingOption): added in v0.17.0, remove after 2027-05-18
+// once schedules stop writing the legacy effort and existing records have migrated.
+export function convertLegacyClaudeUltracode<
+  T extends { provider: string; thinkingOptionId?: string; providerOptions?: ProviderOptions },
+>(config: T, adapter = config.provider): T {
+  if (adapter !== "claude" || config.thinkingOptionId !== "ultracode") return config;
+  return {
+    ...config,
+    thinkingOptionId: "xhigh",
+    providerOptions: { ultracode: true, ...config.providerOptions },
+  };
+}
+
 /**
  * A patch over an agent's own options: top-level keys replace, `null` removes the key so the
  * `config.json` default (or the provider's own default) applies again.

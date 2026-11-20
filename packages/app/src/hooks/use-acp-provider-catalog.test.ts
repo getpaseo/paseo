@@ -150,3 +150,21 @@ describe("ACP provider catalog", () => {
     });
   });
 });
+
+it("adds bundled goose on capable hosts and uses the ACP config on older hosts", () => {
+  const goose = findProvider("goose");
+  expect(buildAcpProviderConfigPatch(goose, (feature) => feature === "gooseProvider")).toEqual({
+    providers: { goose: { enabled: true } },
+  });
+  expect(buildAcpProviderConfigPatch(goose)).toEqual({
+    providers: {
+      goose: {
+        extends: "acp",
+        label: "goose",
+        description: goose.description,
+        command: ["goose", "acp"],
+        env: {},
+      },
+    },
+  });
+});

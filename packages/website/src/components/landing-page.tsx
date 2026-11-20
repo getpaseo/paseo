@@ -89,6 +89,7 @@ import {
   PiIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
+import { PaseoHubMark } from "~/components/paseo-brand";
 import {
   MobileChat,
   MobileDiff,
@@ -515,6 +516,7 @@ function TurnkeySection() {
             description={t("landing.runAnywhere.teamsDescription")}
             ctaHref={localize("/hub")}
             ctaLabel={t("landing.runAnywhere.teamsCta")}
+            ctaIcon={PASEO_HUB_CTA_ICON}
             showIntegrationIcons
           />
         </div>
@@ -523,12 +525,15 @@ function TurnkeySection() {
   );
 }
 
+const PASEO_HUB_CTA_ICON = <PaseoHubMark className="h-4 w-4 shrink-0" />;
+
 function TurnkeyExtensionCard({
   icon: Icon,
   title,
   description,
   ctaHref,
   ctaLabel,
+  ctaIcon,
   showIntegrationIcons = false,
 }: {
   icon: LucideIcon;
@@ -536,6 +541,7 @@ function TurnkeyExtensionCard({
   description: string;
   ctaHref: string;
   ctaLabel: string;
+  ctaIcon?: React.ReactNode;
   showIntegrationIcons?: boolean;
 }) {
   return (
@@ -545,6 +551,7 @@ function TurnkeyExtensionCard({
           href={ctaHref}
           className="inline-flex items-center gap-1.5 rounded-full bg-foreground px-2.5 py-1.5 text-xs text-background transition-colors hover:bg-foreground/90"
         >
+          {ctaIcon}
           {ctaLabel}
           <ArrowRight className="h-3.5 w-3.5" />
         </a>
@@ -1370,7 +1377,7 @@ const FAQ_ENTRIES = [
 const FAQ_LINKS = {
   relay: "/docs/security",
   agents: "/agents",
-  muse: "/docs/muse-code",
+  muse: "/docs/supported-providers/muse-code",
   voice: "/docs/voice",
   configuration: "/docs/configuration",
   worktrees: "/docs/worktrees",

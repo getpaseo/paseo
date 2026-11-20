@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { BrowserAutomationBrowserIdSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserToolsBroker } from "./broker.js";
-import type { BrowserToolsResponsePayload } from "./errors.js";
+import type { BrowserHostTarget, BrowserToolsResponsePayload } from "./errors.js";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -24,7 +24,7 @@ export interface RegisterBrowserToolsOptions {
       context: PaseoToolExecutionContext,
     ) => Promise<PaseoToolResult>,
   ) => void;
-  broker: Pick<BrowserToolsBroker, "execute">;
+  broker: Pick<BrowserToolsBroker, "execute" | "listBrowserHosts">;
   callerAgentId?: string;
   resolveCallerAgent: () => CallerAgentContext | null;
 }
@@ -65,6 +65,24 @@ const BrowserWaitInputSchema = z
 
 export function registerBrowserTools(options: RegisterBrowserToolsOptions): void {
   options.registerTool(
+    "browser_list_hosts",
+    {
+      title: "List browser hosts",
+      description:
+        "List connected Paseo browser hosts, including hosts with no tabs. Use a browserHostId from this list to choose where browser_new_tab opens.",
+      inputSchema: {},
+    },
+    async () => {
+      const browserHosts = options.broker.listBrowserHosts();
+      const text =
+        browserHosts.length > 0
+          ? ["Connected browser hosts", ...browserHosts.map(formatBrowserHost)].join("\n")
+          : "No browser hosts are connected.";
+      return { content: [{ type: "text", text }], structuredContent: { browserHosts } };
+    },
+  );
+
+  options.registerTool(
     "browser_list_tabs",
     {
       title: "List browser tabs",
@@ -96,12 +114,20 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Create browser tab",
       description:
-        "Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass an http(s) URL or a scheme-less host URL, which is treated as http; the returned browserId is used by tab-scoped tools.",
+        "Open a background browser tab in this agent's workspace. Choose a browserHostId when multiple browser hosts can open tabs. Use the returned browserId for tab commands.",
       inputSchema: {
-        url: BrowserHttpUrlInputSchema.optional(),
+        url: BrowserHttpUrlInputSchema.optional().describe(
+          "An HTTP or HTTPS URL. A URL without a scheme uses HTTP.",
+        ),
+        browserHostId: z
+          .string()
+          .min(1)
+          .max(128)
+          .optional()
+          .describe("Destination ID from browser_list_hosts."),
       },
     },
-    async ({ url }) => {
+    async ({ url, browserHostId }) => {
       const context = resolveBrowserToolContext(options);
       const missingWorkspace = requireWorkspaceContext(context);
       if (missingWorkspace) {
@@ -111,6 +137,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
         agentId: context.agentId,
         cwd: context.cwd,
         ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
+        ...(browserHostId ? { browserHostId } : {}),
         command: {
           command: "new_tab",
           args: url ? { url } : {},
@@ -875,7 +902,7 @@ function summarizeBrowserSuccess(
     }
     const tabLines = payload.result.tabs.map((tab) => {
       const active = tab.isActive ? " active" : "";
-      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url}`;
+      return `- browserId=${tab.browserId}${active} title=${JSON.stringify(tab.title || "Untitled")} url=${tab.url} host=${JSON.stringify(tab.browserHost.label)}`;
     });
     return withDialogs(
       [
@@ -887,7 +914,7 @@ function summarizeBrowserSuccess(
 
   if (payload.result.command === "new_tab") {
     return withDialogs(
-      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url}. Use this browserId for tab-scoped browser tools.`,
+      `Created browser tab browserId=${payload.result.browserId} url=${payload.result.url} on ${payload.result.browserHost.label}. Use this browserId for tab-scoped browser tools.`,
     );
   }
 
@@ -1039,17 +1066,16 @@ function summarizeBrowserError(
   switch (error.code) {
     case "browser_disabled":
       return "Browser tools are disabled. Enable browser tools on the host, then try again.";
-    case "browser_no_host":
-      return error.message;
-    case "browser_timeout":
-      return "The browser did not respond before the timeout. Try again or check the browser host.";
-    case "screenshot_no_frame":
-      return error.message;
-    case "browser_unsupported":
-      return error.message;
     case "browser_stale_ref":
       return "That browser element reference is stale. Take a new browser snapshot and try again.";
+    case "browser_host_ambiguous":
+      return [error.message, ...(error.browserHosts ?? []).map(formatBrowserHost)].join("\n");
     default:
       return error.message;
   }
+}
+
+function formatBrowserHost(host: BrowserHostTarget): string {
+  const capability = host.canOpenTabs ? "" : " (cannot open tabs)";
+  return `- ${host.label} (${host.browserHostId})${capability}`;
 }

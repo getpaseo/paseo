@@ -2512,6 +2512,30 @@ describe("plugin provider launch and status", () => {
     }
   });
 
+  test("exposes the session launch for usage discovery", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([{ ...harness.registration, command: [process.execPath, "acp"] }]);
+    try {
+      const client = registry.clients()[harness.registration.id]!;
+      const session = await client.createSession(
+        { provider: harness.registration.id, cwd: "/workspace" },
+        { env: { HOME: "/session-home" } },
+      );
+      expect(session.usageSession?.()).toMatchObject({
+        provider: harness.registration.id,
+        model: "plugin-model",
+        env: { HOME: "/session-home" },
+        launch: { command: process.execPath, args: ["acp"], env: { HOME: "/session-home" } },
+        sessionKey: expect.any(String),
+      });
+      await session.close();
+      expect(session.usageSession?.()).toBeNull();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
   test("resolves relative executable paths before sending launch data", async () => {
     const harness = createProviderHarness();
     const launches: Array<ProviderLaunch | undefined> = [];
@@ -2762,5 +2786,31 @@ test("plugin provider import launches with runtime MCP servers and returns only 
     await imported.session.close();
   } finally {
     await registry.shutdown();
+  }
+});
+
+test("resumes a goose session saved by the generic ACP provider", async () => {
+  const logger = createTestLogger();
+  const harness = createProviderHarness();
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([{ ...harness.registration, id: "goose" }]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const client = registry.goose.createClient(logger);
+
+  try {
+    const session = await client.resumeSession(
+      {
+        provider: "goose",
+        sessionId: "native-goose-session",
+        nativeHandle: "native-goose-session",
+      },
+      { provider: "goose", cwd: "/tmp" },
+    );
+    expect(harness.inputs.findLast((input) => input.type === "session.open")).toMatchObject({
+      persistence: { version: 1, data: { sessionId: "native-goose-session" } },
+    });
+    await session.close();
+  } finally {
+    await plugins.shutdown();
   }
 });
