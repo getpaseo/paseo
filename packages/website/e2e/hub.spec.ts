@@ -33,6 +33,14 @@ async function expectSourceLabelFits(page: Page, name: string) {
   expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 }
 
+async function expectPreviewRowFits(page: Page, source: string, row: string) {
+  const name = new RegExp(`^${source}`);
+  await page.getByRole("tab", { name }).click();
+  const preview = page.getByRole("tabpanel", { name });
+  await preview.scrollIntoViewIfNeeded();
+  await expect(preview.getByText(row, { exact: true })).toBeInViewport({ ratio: 1 });
+}
+
 async function focusProSeatHelp(page: Page) {
   const pro = page
     .getByRole("article")
@@ -92,4 +100,13 @@ test("source names remain readable with larger text on a phone", async ({ page }
   for (const name of ["GitHub", "Discord", "Schedules", "Webhooks"]) {
     await expectSourceLabelFits(page, name);
   }
+});
+
+test("Hub previews have room for their final rows with larger text", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openHub(page, 1280);
+  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  await waitForHydration(page);
+  await expectPreviewRowFits(page, "GitHub", "Open in Paseo");
+  await expectPreviewRowFits(page, "Discord", "Message #engineering");
 });

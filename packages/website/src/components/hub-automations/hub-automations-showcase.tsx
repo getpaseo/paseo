@@ -115,7 +115,7 @@ export function HubAutomationsShowcase() {
           id={PANEL_ID}
           aria-labelledby={`hub-source-tab-${selected}`}
           tabIndex={0}
-          className="relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:h-[528px]"
+          className="relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:h-[33rem]"
         >
           <ActiveMockup active={isInView} reduceMotion={reduceMotion} />
         </div>
