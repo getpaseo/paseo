@@ -115,24 +115,22 @@ async function fixture() {
 test("managed two-home restart retains its supervisor and never routes ordinary commands or stop to the other home", async () => {
   const f = await fixture();
   const [a, b] = f.homes as [string, string];
-  const portA = await port(),
-    portB = await port(),
-    movedPort = await port();
   try {
-    await f.configure(a, `127.0.0.1:${portA}`);
-    await f.configure(b, `127.0.0.1:${portB}`);
+    await f.configure(a, "127.0.0.1:0");
+    await f.configure(b, "127.0.0.1:0");
     const launchA = await f.ok(["start", "--home", a, "--timeout", "30"]);
+    expect(launchA.listen).toMatch(/^127\.0\.0\.1:[1-9]\d*$/);
     const poisoned = {
       PASEO_HOME: a,
-      PASEO_HOST: `127.0.0.1:${portA}`,
-      PASEO_LISTEN: `127.0.0.1:${portA}`,
-      PORT: String(portA),
+      PASEO_HOST: launchA.listen,
+      PASEO_LISTEN: launchA.listen,
+      PORT: launchA.listen.split(":")[1],
       PASEO_WEB_UI_ENABLED: "true",
       PASEO_RELAY_ENABLED: "true",
     };
     const launchB = await f.ok(["daemon", "start", "--home", b, "--timeout", "30"], poisoned);
-    expect(launchA.listen).toBe(`127.0.0.1:${portA}`);
-    expect(launchB.listen).toBe(`127.0.0.1:${portB}`);
+    expect(launchB.listen).toMatch(/^127\.0\.0\.1:[1-9]\d*$/);
+    expect(launchB.listen).not.toBe(launchA.listen);
     const beforeA = await f.liveStatus(a);
     const beforeB = await f.liveStatus(b, poisoned);
     if (process.platform !== "win32") {
@@ -151,13 +149,13 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     expect(restart.supervisorPid).toBe(launchB.pid);
     expect(restart.workerPid).not.toBe(beforeB.workerPid);
     const saved = await f.ok(
-      ["daemon", "config", "set", "daemon.listen", `127.0.0.1:${movedPort}`, "--home", b],
+      ["daemon", "config", "set", "daemon.listen", "localhost:0", "--home", b],
       poisoned,
     );
     expect(saved.restartRequiredPaths).toContain("daemon.listen");
     await f.ok(["daemon", "restart", "--home", b, "--timeout", "30"], poisoned);
     const moved = await f.liveStatus(b);
-    expect(moved.listen).toBe(`127.0.0.1:${movedPort}`);
+    expect(moved.listen).toMatch(/^localhost:[1-9]\d*$/);
     expect(moved.pid).toBe(launchB.pid);
     await f.ok(["daemon", "stop", "--home", b], poisoned);
     const stoppedQuery = await f.run(["--json", "project", "ls", "--home", b], poisoned);
