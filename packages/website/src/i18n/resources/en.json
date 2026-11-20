@@ -352,6 +352,22 @@
       "product": "Paseo Hub",
       "label": "Automations on your machines"
     },
+    "eyebrows": {
+      "community": "Community",
+      "providers": "01 · Providers",
+      "deployment": "02 · Deployment",
+      "extensibility": "03 · Extensibility",
+      "automation": "04 · Automation",
+      "hub": "Paseo Hub",
+      "openSource": "Open source",
+      "sponsors": "Sponsors",
+      "faq": "FAQ"
+    },
+    "closingCta": {
+      "eyebrow": "Get started",
+      "title": "Your agents, on every screen.",
+      "description": "Download the desktop app or run the daemon on any machine. Open source under Apache 2.0."
+    },
     "socialProof": {
       "title": "Loved by developers",
       "description": "See what developers are saying about Paseo",
@@ -600,6 +616,15 @@
     "hero": {
       "getStarted": "Get started",
       "selfHost": "Self-host"
+    },
+    "eyebrows": {
+      "hero": "Paseo Hub",
+      "automations": "01 · Automations",
+      "authoring": "02 · Authoring",
+      "infrastructure": "03 · Infrastructure",
+      "agents": "04 · Harnesses",
+      "pricing": "05 · Pricing",
+      "faq": "FAQ"
     },
     "automations": {
       "title": "Automations from every source",

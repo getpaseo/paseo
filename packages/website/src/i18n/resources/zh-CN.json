@@ -352,6 +352,22 @@
       "product": "Paseo Hub",
       "label": "在你自己的机器上自动化运行"
     },
+    "eyebrows": {
+      "community": "社区",
+      "providers": "01 · Provider",
+      "deployment": "02 · 部署方式",
+      "extensibility": "03 · 可扩展性",
+      "automation": "04 · 自动化",
+      "hub": "Paseo Hub",
+      "openSource": "开源理念",
+      "sponsors": "赞助商",
+      "faq": "常见问题"
+    },
+    "closingCta": {
+      "eyebrow": "开始使用",
+      "title": "你的 Agent，在每块屏幕上。",
+      "description": "下载桌面应用，或在任意机器上运行 daemon。基于 Apache 2.0 开源。"
+    },
     "socialProof": {
       "title": "深受开发者喜爱",
       "description": "看看开发者们怎么评价 Paseo",
@@ -600,6 +616,15 @@
     "hero": {
       "getStarted": "开始使用",
       "selfHost": "自托管"
+    },
+    "eyebrows": {
+      "hero": "Paseo Hub",
+      "automations": "01 · 自动化",
+      "authoring": "02 · 配置方式",
+      "infrastructure": "03 · 基础设施",
+      "agents": "04 · Agent 运行时",
+      "pricing": "05 · 定价",
+      "faq": "常见问题"
     },
     "automations": {
       "title": "来自各类来源的自动化",

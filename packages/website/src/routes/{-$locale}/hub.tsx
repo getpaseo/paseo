@@ -19,8 +19,9 @@ import {
   HUB_TRIGGER_SOURCES,
   HubArchitectureDiagram,
 } from "~/components/hub-flow";
+import { ChapterBand, HairlineGrid, PageHeaderBand, SectionOpener } from "~/components/page-frame";
 import { PaseoHubLockup, PaseoHubMark, PaseoMark } from "~/components/paseo-brand";
-import { SiteShell } from "~/components/site-shell";
+import { SiteFooter } from "~/components/site-footer";
 import {
   billingUnitLabel,
   formatPlanPrice,
@@ -71,17 +72,39 @@ const SECONDARY_CTA_CLASS =
 function Hub() {
   const { plans } = Route.useLoaderData();
   return (
-    <SiteShell width="default">
-      <HubHero />
-      <div className="mt-20 space-y-24">
-        <AutomationsSection />
-        <AuthoringSection />
-        <InfrastructureSection />
-        <AgentsSection />
-        <PricingSection plans={plans} />
-        <FaqSection />
-      </div>
-    </SiteShell>
+    <div className="min-h-screen bg-background">
+      <PageHeaderBand />
+      <main>
+        <ChapterBand spacing="hero" ruled={false} ticks={false}>
+          <HubHero />
+        </ChapterBand>
+
+        <ChapterBand spacing="section">
+          <AutomationsSection />
+        </ChapterBand>
+
+        <ChapterBand spacing="section">
+          <AuthoringSection />
+        </ChapterBand>
+
+        <ChapterBand spacing="section">
+          <InfrastructureSection />
+        </ChapterBand>
+
+        <ChapterBand spacing="compact">
+          <AgentsSection />
+        </ChapterBand>
+
+        <ChapterBand spacing="section" tint="subtle">
+          <PricingSection plans={plans} />
+        </ChapterBand>
+
+        <ChapterBand spacing="section">
+          <FaqSection />
+        </ChapterBand>
+      </main>
+      <SiteFooter width="default" />
+    </div>
   );
 }
 
@@ -90,8 +113,11 @@ function HubHero() {
   const localize = useLocalizePath();
   return (
     <header className="space-y-6">
+      <p className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-accent-text">
+        {t("hub.eyebrows.hero")}
+      </p>
       <h1>
-        <PaseoHubLockup className="h-9 w-auto text-foreground md:h-10" />
+        <PaseoHubLockup className="h-10 w-auto text-foreground md:h-12" />
         <span className="sr-only">{t("hub.title")}</span>
       </h1>
       <p className="max-w-2xl text-lg leading-relaxed text-white/70">{t("hub.intro")}</p>
@@ -112,34 +138,31 @@ function HubHero() {
 function AutomationsSection() {
   const { t } = useTranslation();
   return (
-    <section className="space-y-8" aria-labelledby="automations-heading">
-      <div className="space-y-2">
-        <h2 id="automations-heading" className="text-2xl font-medium tracking-tight">
-          {t("hub.automations.title")}
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">
-          {t("hub.automations.description")}
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
-          <div
-            key={id}
-            className="flex items-start gap-3.5 rounded-xl border border-white/10 bg-white/[0.025] p-4"
-          >
-            <span className="mt-0.5 shrink-0 text-white/80">
-              <Icon className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 space-y-1">
-              <h3 className="text-sm font-medium text-white/90">{t(`hub.sources.${id}.name`)}</h3>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {t(`hub.sources.${id}.description`)}
-              </p>
+    <section aria-labelledby="automations-heading">
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.automations")}
+        headingId="automations-heading"
+        title={t("hub.automations.title")}
+        description={t("hub.automations.description")}
+      />
+      <div className="space-y-8">
+        <HairlineGrid columns="3">
+          {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
+            <div key={id} className="flex items-start gap-3.5 bg-background p-5">
+              <span className="mt-0.5 shrink-0 text-white/80">
+                <Icon className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 space-y-1">
+                <h3 className="text-sm font-medium text-white/90">{t(`hub.sources.${id}.name`)}</h3>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t(`hub.sources.${id}.description`)}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </HairlineGrid>
+        <ConversationDemo />
       </div>
-      <ConversationDemo />
     </section>
   );
 }
@@ -160,8 +183,8 @@ function ConversationDemo() {
   const { t } = useTranslation();
   return (
     <figure className="space-y-3">
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
-        <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-5 py-3">
+      <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.015]">
+        <div className="flex items-center gap-2 border-b border-white/[0.08] bg-white/[0.025] px-5 py-3">
           <DiscordIcon className="h-4 w-4 text-white/40" />
           <span className="font-mono text-xs text-white/50">#engineering</span>
         </div>
@@ -195,7 +218,7 @@ function ConversationDemo() {
               <Trans i18nKey="hub.demo.ranOn" components={DEMO_COMPONENTS} />
             </p>
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="rounded-full bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-300">
+              <span className="rounded-full bg-brand-green/25 px-2.5 py-1 text-xs text-accent-text">
                 {t("hub.demo.filesChanged")}
               </span>
               <span className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-white/45">
@@ -261,18 +284,18 @@ function AuthoringSection() {
   const { t } = useTranslation();
   const localize = useLocalizePath();
   return (
-    <section className="space-y-8" aria-labelledby="authoring-heading">
-      <div className="space-y-2">
-        <h2 id="authoring-heading" className="text-2xl font-medium tracking-tight">
-          {t("hub.authoring.title")}
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">{t("hub.authoring.description")}</p>
-      </div>
+    <section aria-labelledby="authoring-heading">
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.authoring")}
+        headingId="authoring-heading"
+        title={t("hub.authoring.title")}
+        description={t("hub.authoring.description")}
+      />
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <HairlineGrid columns="2">
         <AuthoringDashboardCard docsHref={localize("/docs/hub/configuration")} />
         <AuthoringYamlCard />
-      </div>
+      </HairlineGrid>
     </section>
   );
 }
@@ -280,10 +303,10 @@ function AuthoringSection() {
 function AuthoringDashboardCard({ docsHref }: { docsHref: string }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col justify-between gap-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+    <div className="flex flex-col justify-between gap-6 bg-background p-6">
       <div className="space-y-5">
         <div className="flex items-center gap-2.5">
-          <SlidersHorizontal className="h-4 w-4 text-extra-muted-foreground" strokeWidth={1.5} />
+          <SlidersHorizontal className="h-4 w-4 text-accent-text" strokeWidth={1.5} />
           <h3 className="text-base font-medium text-white/90">
             {t("hub.authoring.dashboardTitle")}
           </h3>
@@ -291,10 +314,10 @@ function AuthoringDashboardCard({ docsHref }: { docsHref: string }) {
         <p className="text-sm leading-relaxed text-white/65">
           {t("hub.authoring.dashboardDescription")}
         </p>
-        <ul className="space-y-3 border-t border-white/10 pt-4">
+        <ul className="space-y-3 border-t border-white/[0.08] pt-4">
           {DASHBOARD_ITEMS.map((item) => (
             <li key={item} className="flex items-start gap-2.5 text-sm">
-              <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+              <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-accent-text" />
               <span className="text-white/75">
                 <span className="font-medium text-white/90">{t(`hub.authoring.${item}Label`)}</span>{" "}
                 <span className="text-white/55">{t(`hub.authoring.${item}Text`)}</span>
@@ -306,7 +329,7 @@ function AuthoringDashboardCard({ docsHref }: { docsHref: string }) {
       <div>
         <a
           href={docsHref}
-          className="inline-flex items-center gap-1.5 text-sm text-white/70 transition-colors hover:text-white"
+          className="inline-flex items-center gap-1.5 text-sm text-white/75 transition-colors hover:text-accent-text"
         >
           {t("hub.authoring.docsLink")}
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -318,8 +341,8 @@ function AuthoringDashboardCard({ docsHref }: { docsHref: string }) {
 
 function AuthoringYamlCard() {
   return (
-    <div className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/25">
-      <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-3">
+    <div className="flex flex-col bg-[#0c1110]">
+      <div className="flex items-center justify-between border-b border-white/[0.08] bg-white/[0.02] px-5 py-3">
         <span className="font-mono text-xs text-white/70">.paseo/triggers/slack-help.yml</span>
         <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-white/40">
           YAML
@@ -344,7 +367,7 @@ function AuthoringYamlCard() {
         <span className="block text-emerald-300/80">{"    Answer the thread, then call"}</span>
         <span className="block text-emerald-300/80">{"    hub.finish_execution."}</span>
       </pre>
-      <div className="space-y-1 border-t border-white/10 bg-white/[0.02] px-5 py-3.5 font-mono text-xs text-white/65">
+      <div className="space-y-1 border-t border-white/[0.08] bg-white/[0.02] px-5 py-3.5 font-mono text-xs text-white/65">
         <div>
           <span className="select-none text-white/30">$ </span>
           <span className="text-white/90">paseo hub deploy</span>{" "}
@@ -393,36 +416,35 @@ const GUARDRAIL_CODE_COMPONENTS = {
 function InfrastructureSection() {
   const { t } = useTranslation();
   return (
-    <section className="space-y-8" aria-labelledby="infrastructure-heading">
-      <div className="space-y-2">
-        <h2 id="infrastructure-heading" className="text-2xl font-medium tracking-tight">
-          {t("hub.shape.title")}
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">{t("hub.shape.description")}</p>
-      </div>
+    <section aria-labelledby="infrastructure-heading">
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.infrastructure")}
+        headingId="infrastructure-heading"
+        title={t("hub.shape.title")}
+        description={t("hub.shape.description")}
+      />
 
-      <HubArchitectureDiagram />
+      <div className="space-y-6">
+        <HubArchitectureDiagram />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        {GUARDRAILS.map(({ key, Icon }) => (
-          <div
-            key={key}
-            className="rounded-xl border border-white/10 bg-white/[0.025] p-5 space-y-2.5"
-          >
-            <div className="flex items-center gap-2.5">
-              <Icon className="h-4 w-4 shrink-0 text-extra-muted-foreground" strokeWidth={1.5} />
-              <h3 className="text-sm font-medium text-white/90">
-                {t(`hub.guardrails.${key}Title`)}
-              </h3>
+        <HairlineGrid columns="3">
+          {GUARDRAILS.map(({ key, Icon }) => (
+            <div key={key} className="space-y-2.5 bg-background p-6">
+              <div className="flex items-center gap-2.5">
+                <Icon className="h-4 w-4 shrink-0 text-accent-text" strokeWidth={1.5} />
+                <h3 className="text-sm font-medium text-white/90">
+                  {t(`hub.guardrails.${key}Title`)}
+                </h3>
+              </div>
+              <p className="text-sm leading-relaxed text-white/60">
+                <Trans
+                  i18nKey={`hub.guardrails.${key}Description`}
+                  components={GUARDRAIL_CODE_COMPONENTS}
+                />
+              </p>
             </div>
-            <p className="text-sm leading-relaxed text-white/55">
-              <Trans
-                i18nKey={`hub.guardrails.${key}Description`}
-                components={GUARDRAIL_CODE_COMPONENTS}
-              />
-            </p>
-          </div>
-        ))}
+          ))}
+        </HairlineGrid>
       </div>
     </section>
   );
@@ -431,26 +453,23 @@ function InfrastructureSection() {
 function AgentsSection() {
   const { t } = useTranslation();
   return (
-    <section className="space-y-6" aria-labelledby="agents-heading">
-      <div className="space-y-2">
-        <h2 id="agents-heading" className="text-2xl font-medium tracking-tight">
-          {t("hub.agents.title")}
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">{t("hub.agents.description")}</p>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
+    <section aria-labelledby="agents-heading">
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.agents")}
+        headingId="agents-heading"
+        title={t("hub.agents.title")}
+        description={t("hub.agents.description")}
+      />
+      <HairlineGrid columns="3">
         {HUB_AGENT_HARNESSES.map(({ name, Icon }) => (
-          <div
-            key={name}
-            className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3"
-          >
+          <div key={name} className="flex items-center gap-3 bg-background px-5 py-4">
             <span className="text-white/80">
               <Icon className="h-5 w-5" />
             </span>
-            <span className="text-sm font-medium">{name}</span>
+            <span className="text-sm font-medium text-white/90">{name}</span>
           </div>
         ))}
-      </div>
+      </HairlineGrid>
     </section>
   );
 }
@@ -497,17 +516,14 @@ function PricingSection({ plans }: { plans: HubPlans | null }) {
 
   if (plans === null) {
     return (
-      <section className="space-y-6" aria-labelledby="pricing-heading">
-        <div className="space-y-2">
-          <h2 id="pricing-heading" className="text-2xl font-medium tracking-tight">
-            {t("hub.pricing.title")}
-          </h2>
-          <p className="max-w-2xl leading-relaxed text-white/70">{t("hub.pricing.unavailable")}</p>
-        </div>
-        <a
-          href={localize("/docs/hub/self-hosting")}
-          className="inline-block rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:border-white/25 hover:text-white"
-        >
+      <section aria-labelledby="pricing-heading">
+        <SectionOpener
+          eyebrow={t("hub.eyebrows.pricing")}
+          headingId="pricing-heading"
+          title={t("hub.pricing.title")}
+          description={t("hub.pricing.unavailable")}
+        />
+        <a href={localize("/docs/hub/self-hosting")} className={SECONDARY_CTA_CLASS}>
           {t("hub.pricing.selfHost")}
         </a>
       </section>
@@ -515,14 +531,14 @@ function PricingSection({ plans }: { plans: HubPlans | null }) {
   }
 
   return (
-    <section className="space-y-8" aria-labelledby="pricing-heading">
-      <div className="space-y-2">
-        <h2 id="pricing-heading" className="text-2xl font-medium tracking-tight">
-          {t("hub.pricing.title")}
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">{t("hub.pricing.seatNote")}</p>
-      </div>
-      <div className="grid gap-4 md:grid-cols-3">
+    <section aria-labelledby="pricing-heading">
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.pricing")}
+        headingId="pricing-heading"
+        title={t("hub.pricing.title")}
+        description={t("hub.pricing.seatNote")}
+      />
+      <HairlineGrid columns="3">
         <PlanCard
           name={t("hub.pricing.selfHosted")}
           price={t("hub.pricing.free")}
@@ -551,7 +567,7 @@ function PricingSection({ plans }: { plans: HubPlans | null }) {
           actionLabel={t("hub.pricing.getStarted")}
           featured
         />
-      </div>
+      </HairlineGrid>
     </section>
   );
 }
@@ -614,10 +630,10 @@ function PlanCard({
 }) {
   return (
     <article
-      className={`flex flex-col rounded-2xl border p-6 ${featured ? "border-white/25 bg-white/[0.06]" : "border-white/10 bg-white/[0.02]"}`}
+      className={`flex flex-col p-6 md:p-7 ${featured ? "bg-brand-green/[0.08]" : "bg-background"}`}
     >
-      <h3 className="text-xl font-medium">{name}</h3>
-      <div className="mt-6 flex items-end gap-2">
+      <h3 className="text-lg font-medium text-white/90">{name}</h3>
+      <div className="mt-5 flex items-end gap-2">
         <span className="text-4xl font-medium tracking-tight">{price}</span>
         <span className="mb-1 inline-flex items-center gap-1 text-sm text-white/45">
           {priceQualifier}
@@ -628,7 +644,7 @@ function PlanCard({
         <ul className="mt-6 grid flex-1 content-start gap-3 text-sm text-white/70">
           {features.map((feature) => (
             <li key={feature.key} className="flex items-start gap-2.5">
-              <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+              <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-accent-text" />
               <span>{feature.label}</span>
               {feature.tooltip !== null ? <InfoTip text={feature.tooltip} /> : null}
             </li>
@@ -637,7 +653,11 @@ function PlanCard({
       ) : null}
       <a
         href={actionHref}
-        className={`mt-8 rounded-md px-4 py-2 text-center text-sm font-medium transition-colors ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
+        className={`mt-8 rounded-lg px-4 py-2.5 text-center text-sm font-medium transition-colors ${
+          featured
+            ? "bg-foreground text-background hover:bg-foreground/90"
+            : "border border-white/15 text-white/85 hover:border-white/25 hover:bg-white/[0.04] hover:text-white"
+        }`}
       >
         {actionLabel}
       </a>
@@ -675,11 +695,17 @@ function FaqSection() {
     [localize],
   );
   return (
-    <section className="space-y-6" aria-labelledby="faq-heading">
-      <h2 id="faq-heading" className="text-2xl font-medium tracking-tight">
-        {t("hub.faq.title")}
-      </h2>
-      <div className="space-y-6">
+    <section
+      aria-labelledby="faq-heading"
+      className="grid items-start gap-10 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:gap-16"
+    >
+      <SectionOpener
+        eyebrow={t("hub.eyebrows.faq")}
+        headingId="faq-heading"
+        title={t("hub.faq.title")}
+        className="mb-0 self-start"
+      />
+      <div className="divide-y divide-white/[0.08] border-y border-white/[0.08]">
         <FAQItem question={t("hub.faq.whatQuestion")}>{t("hub.faq.whatAnswer")}</FAQItem>
         <FAQItem question={t("hub.faq.separateQuestion")}>
           <p>{t("hub.faq.separateAnswer1")}</p>
