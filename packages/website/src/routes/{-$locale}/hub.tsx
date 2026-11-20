@@ -467,7 +467,7 @@ function formatAllowance(executionsPerMonth: number | null, t: TFunction, locale
 }
 
 function formatSeats(seats: number | null, unit: string, t: TFunction, locale: Locale): string {
-  if (seats === null) return t("hub.pricing.unlimitedUnits", { unit });
+  if (seats === null) return t("hub.pricing.noSeatCap");
   return t("hub.pricing.units", { count: seats, value: formatNumber(seats, locale), unit });
 }
 

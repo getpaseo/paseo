@@ -117,7 +117,7 @@ function GitHubPrSummaryCard() {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#21262D] bg-[#161B22] px-3 py-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <GitPullRequest className="h-3.5 w-3.5 shrink-0 text-[#3FB950]" aria-hidden="true" />
-          <span className="truncate text-[12px] font-semibold text-[#E6EDF3]">
+          <span className="text-[12px] font-semibold text-[#E6EDF3]">
             fix(terminal): drain PTY write queue under burst
           </span>
           <span className="font-mono text-[11px] text-[#8B949E]">#2819</span>

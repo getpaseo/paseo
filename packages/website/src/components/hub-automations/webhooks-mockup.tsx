@@ -15,6 +15,10 @@ const STEP_DELAYS = {
   runCard: 1.25,
 } as const;
 
+const WEBHOOK_ID = "wh_4PCfLx4q46HniZpIeiThI4BmNC4zHGFY";
+const RUN_ID = "0197e5d2-a70c-4ad0-b7aa-a29154a6bc72";
+const ACCEPTED_RESPONSE = JSON.stringify({ status: "accepted", runId: RUN_ID });
+
 const WEBHOOK_COMPONENTS = {
   code: <code className="font-mono text-[11px] text-white/90" />,
   pr: <span className="font-mono text-[#6CB17B]">#2834</span>,
@@ -56,7 +60,7 @@ function WebhookTerminalChrome() {
       </div>
       <span className="hidden shrink-0 items-center gap-1.5 rounded border border-white/10 bg-white/[0.04] px-2 py-0.5 font-mono text-[10.5px] text-accent-text sm:inline-flex">
         <Webhook className="h-3 w-3" aria-hidden="true" />
-        POST /webhooks/sentry-alert
+        POST /webhooks/{WEBHOOK_ID}
       </span>
     </div>
   );
@@ -79,17 +83,21 @@ function WebhookRouteConnector() {
 function WebhookCurlBlock() {
   return (
     <MockupStep delay={STEP_DELAYS.curl}>
-      <pre className="overflow-x-auto font-mono text-[11.5px] leading-[1.6] text-white/80">
+      <pre className="font-mono text-[11.5px] leading-[1.6] wrap-anywhere whitespace-pre-wrap text-white/80">
         <code>
           <span className="select-none text-accent-text">$ </span>
           <span className="text-white">curl</span> <span className="text-sky-300/90">-X POST</span>{" "}
-          <span className="text-emerald-300/90">https://hub.paseo.sh/webhooks/sentry-alert</span>{" "}
+          <span className="text-emerald-300/90">
+            https://hub.paseo.sh/webhooks/
+            <wbr />
+            {WEBHOOK_ID}
+          </span>{" "}
           <span className="text-white/35">\</span>
           {"\n"}
           {"  "}
           <span className="text-sky-300/90">-H</span>{" "}
           <span className="text-amber-200/85">
-            &quot;Authorization: Bearer $PASEO_WEBHOOK_TOKEN&quot;
+            &quot;Authorization: Bearer $WEBHOOK_TOKEN&quot;
           </span>{" "}
           <span className="text-white/35">\</span>
           {"\n"}
@@ -101,7 +109,7 @@ function WebhookCurlBlock() {
           {"  "}
           <span className="text-sky-300/90">-d</span>{" "}
           <span className="text-white/75">
-            &#39;&#123;&quot;service&quot;:&quot;relay&quot;,&quot;error&quot;:&quot;ECONNRESET&quot;,&quot;owner&quot;:&quot;mo&quot;&#125;&#39;
+            &#39;&#123;&quot;error&quot;:&quot;ECONNRESET&quot;&#125;&#39;
           </span>
         </code>
       </pre>
@@ -120,9 +128,7 @@ function WebhookResponseBlock() {
         <span className="text-white/35">·</span>
         <span className="text-white/55">42ms</span>
       </div>
-      <div className="mt-0.5 overflow-x-auto text-white/80">
-        &#123;&quot;runId&quot;:&quot;run_01jz8k4m&quot;,&quot;daemon&quot;:&quot;devbox&quot;,&quot;agent&quot;:&quot;codex&quot;,&quot;status&quot;:&quot;queued&quot;&#125;
-      </div>
+      <div className="mt-0.5 wrap-anywhere text-white/80">{ACCEPTED_RESPONSE}</div>
     </MockupStep>
   );
 }
@@ -140,7 +146,7 @@ function WebhookRunCard() {
           <div>
             <div className="flex items-center gap-1.5 text-[12.5px]">
               <span className="font-semibold text-white/95">paseo-bot</span>
-              <span className="font-mono text-[11px] text-white/45">run_01jz8k4m</span>
+              <span className="font-mono text-[11px] text-white/45">{RUN_ID.slice(0, 8)}…</span>
             </div>
             <p className="text-[11px] text-white/55">{t("hub.demo.webhooks.runMeta")}</p>
           </div>

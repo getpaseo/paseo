@@ -605,7 +605,7 @@
   },
   "hub": {
     "metaTitle": "Paseo Hub - 在你的机器上自动化运行 Agent",
-    "metaDescription": "通过 GitHub、Linear、Slack、Discord、定时任务和 webhook，在你自己的机器上自动化运行 Claude Code、Codex 和 OpenCode。支持自托管或托管服务。",
+    "metaDescription": "通过 GitHub、Linear、Slack、Discord、定时任务和 webhook，在你的 Paseo daemon 上自动运行 Agent。你可以自托管 Hub 或使用托管服务。",
     "title": "Paseo Hub",
     "intro": "自动化运行编程 Agent，并与团队共享 daemon。每次运行都在你自己的机器上执行。",
     "runIt": "可基于 Apache 2.0 自托管运行，也可以使用托管服务。",
@@ -741,7 +741,7 @@
         "caption": "按你的时区定时运行 Agent，自动创建 PR 并将摘要发送到 Slack。"
       },
       "webhooks": {
-        "alt": "终端执行 curl POST 到 https://hub.paseo.sh/webhooks/sentry-alert，返回 202 Accepted 并在 devbox 上启动 Codex 运行",
+        "alt": "终端发送 webhook POST 请求。Hub 返回 202 Accepted 并在 devbox 上启动 Codex 运行。",
         "runMeta": "devbox · Codex · getpaseo/paseo",
         "statusDone": "已创建 PR",
         "trace1": "已在独立 worktree 中检出 <code>v0.19.4</code>",
@@ -756,11 +756,11 @@
       "title": "在仪表盘配置，或以代码方式部署",
       "description": "在浏览器中设置触发器，或将 YAML 文件提交到仓库并通过 CLI 部署。",
       "dashboardTitle": "仪表盘与运行活动",
-      "dashboardDescription": "在浏览器中选择 daemon、工作目录和 Agent 运行时。Hub 会在保存前针对在线 daemon 校验每个模型和模式。",
+      "dashboardDescription": "在浏览器中选择 daemon 和工作目录。配置触发器时，Hub 会检查该 daemon 提供哪些 Provider、模型和模式。",
       "triggersLabel": "触发器：",
       "triggersText": "在表单或 YAML 视图中创建、编辑或暂停自动化。",
       "validationLabel": "实时校验：",
-      "validationText": "针对已连接的 daemon 验证 Provider、模型和模式。",
+      "validationText": "查看已连接的 daemon 提供的 Provider、模型和模式。",
       "activityLabel": "运行活动：",
       "activityText": "查看事件投递、路由结果、输出和错误。",
       "docsLink": "阅读配置文档"
@@ -785,17 +785,17 @@
       "optInTitle": "主动授权执行",
       "optInDescription": "每个 daemon 的 <code>hub.execute</code> 权限默认关闭，按机器单独授予。",
       "scopedTitle": "受控触发范围",
-      "scopedDescription": "每个触发器都需要发送者白名单、资源过滤条件，以及按步骤显式声明的 GitHub 权限。",
+      "scopedDescription": "事件触发器支持发送者白名单和资源过滤。你可以为每个步骤设置 GitHub 权限，也可以限制 Slack 和 Discord 工具的使用范围。",
       "visibilityTitle": "团队可见性",
       "visibilityDescription": "所有者、管理员和成员共享 daemon、触发器、运行历史和路由结果。"
     },
     "agents": {
       "title": "运行你已有的 Agent",
-      "description": "Hub 在你的机器上运行 Claude Code、Codex 和 OpenCode，沿用你自己的订阅、模型和技能。"
+      "description": "Hub 会发现每个已连接的 Paseo daemon 上的 Provider。你可以运行 Claude Code、Codex、OpenCode、Pi 和自定义 Provider，包括插件提供的 Provider。"
     },
     "pricing": {
       "title": "自托管或托管",
-      "seatNote": "可基于 Apache 2.0 自行运行开源 Hub，或使用托管服务。只有 Hub 仪表盘成员计入席位。",
+      "seatNote": "你可以按 Apache 2.0 许可自行运行开源 Hub，或使用托管服务。Hub 仪表盘成员和待接受的邀请都计入席位。",
       "unavailable": "托管方案对比暂时不可用。",
       "selfHost": "自托管文档",
       "selfHosted": "自托管",
@@ -809,7 +809,7 @@
       "openSourceFeature": "Apache 2.0 开源",
       "unlimitedRuns": "无限次 Agent 运行",
       "runsPerMonth": "每月 {{value}} 次 Agent 运行",
-      "unlimitedUnits": "无限{{unit}}",
+      "noSeatCap": "无席位上限",
       "units_one": "{{value}} 个{{unit}}",
       "units_other": "{{value}} 个{{unit}}",
       "perMonth": "/ 月",
@@ -830,13 +830,13 @@
       "needQuestion": "运行它需要什么？",
       "needAnswer": "需要 Node.js 或 Docker，以及一个正在运行的 Paseo daemon。Hub 会引导你连接 daemon 和 Provider 应用。",
       "hostedQuestion": "有托管版本吗？",
-      "hostedAnswer": "有。<hosted>托管服务</hosted>运行的就是你可以自托管的同一套开源 Hub 软件。只有 Hub 仪表盘成员计入席位。",
+      "hostedAnswer": "有。<hosted>托管服务</hosted>运行的就是你可以自托管的同一套开源 Hub 软件。Hub 仪表盘成员和待接受的邀请都计入席位。",
       "codeQuestion": "Hub 能在我的机器上运行代码吗？",
       "codeAnswer": "只能在授予了 <code>hub.execute</code> 权限的 daemon 上运行。注册 daemon 默认不会开启执行权限，你可以随时在本机撤销该权限。",
       "moveQuestion": "我需要把团队迁移到新工具吗？",
       "moveAnswer": "不需要。Hub 通过 GitHub、Linear、Slack、Discord、定时任务和 webhook 在你已有的 daemon 上运行。需要直接查看或引导运行时，在桌面端或移动端的 Paseo 中打开实时会话即可。",
       "agentsQuestion": "它运行哪些 Agent？",
-      "agentsAnswer": "Hub 在已连接的 daemon 上运行 Claude Code、Codex 和 OpenCode，使用你自己的订阅、模型和技能。Hub 本身不附带任何 Agent。",
+      "agentsAnswer": "Hub 运行已连接的 Paseo daemon 上配置的 Provider，包括插件提供的自定义 Provider。Agent 使用这些机器上的订阅、模型和技能。",
       "plannedQuestion": "还计划了什么？",
       "plannedIntro": "以下能力尚未实现，列出来是为了让你了解 Hub 的方向。",
       "plannedProvisioning": "为团队预配远程 daemon",
