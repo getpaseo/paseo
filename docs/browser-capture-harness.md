@@ -55,10 +55,17 @@ window movement, including button clicks and a portal over the titlebar. Leave
 the mouse idle during this group. It reads the app's production CSS and writes
 screenshots and window bounds to the output directory.
 
-The browser profile group runs two Electron processes in sequence. It checks independent named shared and project sessions at the same origin, persistent storage after relaunch, and a popup using its opener’s session. It verifies that each
-renderer-side `did-attach` identity maps to the correct main-process guest, that two live
-tabs share cookies and local storage through one persistent session, and that the data is
-still present after the first Electron process exits and the second starts.
+The browser profile group launches two Electron processes against the same test origin
+and user data. It matches renderer registrations to the main-process guests, checks sharing
+within a profile and isolation between named profiles, and verifies that a child popup
+inherits its opener’s session. The second launch checks the saved cookies and local storage.
+
+For the toolbar and Settings journey, run the app against isolated workspace fixtures.
+Screenshots and `profiles.json` record each tab ID, visible label and account across relaunch.
+
+```bash
+PASEO_DESKTOP_BROWSER_PROFILES_ONLY=1 PASEO_DESKTOP_BROWSER_E2E_ARTIFACT_DIR=/tmp/paseo-profile-results npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
+```
 
 The automation group uses a real guest webview to verify the page-side ref contract:
 ARIA-like snapshot text includes headings, static text, and controls; refs survive
