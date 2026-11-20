@@ -76,6 +76,7 @@ interface AcpToolCallRecord {
   snapshot: AcpToolCallSnapshot;
   turnId?: string;
   settlement?: AcpToolSettlement;
+  stopped?: boolean;
 }
 
 export async function createAcpProviderConnection(
@@ -1277,7 +1278,7 @@ class AcpRuntime {
   ): void {
     const previous = this.toolCalls.get(update.toolCallId);
     // A stopped tool can still report output and terminal echoes after the next prompt.
-    if (previous?.settlement === "canceled") return;
+    if (previous?.stopped || previous?.settlement === "canceled") return;
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
     const previousStatus = previous?.snapshot.status;
     const backgroundProgress =
@@ -1420,10 +1421,16 @@ class AcpRuntime {
   ): void {
     for (const [id, record] of this.toolCalls) {
       const { snapshot, turnId, settlement } = record;
-      if (settlement === "canceled" || (settlement && state !== "canceled")) continue;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (options?.turnId && options.turnId !== turnId) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
+      if (settlement) {
+        // Antigravity can acknowledge Stop for a tool whose row already settled.
+        if (state === "canceled" && this.outOfTurnActivity && settlement !== "canceled") {
+          this.toolCalls.set(id, { ...record, stopped: true });
+        }
+        continue;
+      }
       this.toolCalls.set(id, { ...record, settlement: state });
       this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
     }

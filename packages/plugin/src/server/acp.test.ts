@@ -1126,6 +1126,86 @@ lines.on("line", (line) => {
     await connection.close();
   });
 
+  it("keeps an earlier tool completed when stopping a later prompt", async () => {
+    let followUp: AcpRequestMessage | undefined;
+    const { connector } = connectorHarness({
+      promptUpdates: () => [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "first-tool",
+          title: "Run tests",
+          kind: "execute",
+          status: "in_progress",
+        },
+      ],
+      handleMessage(instance, message) {
+        if (!("method" in message)) return false;
+        if (message.method === "session/prompt" && "id" in message) {
+          if (countRequests(instance, "session/prompt") === 1) return false;
+          followUp = message;
+          return true;
+        }
+        if (message.method === "session/cancel" && followUp) {
+          instance.respond(followUp, { stopReason: "cancelled" });
+          return true;
+        }
+        return false;
+      },
+    });
+    const registration = runAcpProvider({ id: "stop-later-prompt", label: "ACP", connector });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      for (const clientMessageId of ["first", "second"]) {
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId,
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: clientMessageId }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === `acp:${clientMessageId}` &&
+            event.state === (clientMessageId === "first" ? "completed" : "started"),
+        );
+      }
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-second",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:second" &&
+          event.state === "canceled",
+      );
+      expect(
+        events.flatMap((event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "first-tool"
+            ? [event.item.status]
+            : [],
+        ),
+      ).toEqual(["running", "completed"]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it.each([
     { counts: null, context: false, expected: [] },
     {
@@ -2982,6 +3062,15 @@ describe("ACP out-of-turn background activity", () => {
         turnCountAfterCancel,
       );
       expect(await queryCanStop(connection, events, "stop-after-cancel-echo")).toBe(true);
+      expect(
+        events.flatMap((event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "pending-before-stop"
+            ? [event.item.status]
+            : [],
+        ),
+      ).toEqual(["running", "completed"]);
     } finally {
       await connection.close();
     }
