@@ -434,18 +434,24 @@ describe("Gitea-family ChangeRequestSource polling", () => {
         return teaHttp({ number: 4, state: "open", merged: false, html_url: prUrl, head: { sha } });
       }
       if (endpoint.includes("/commits/sha-a/status") && endpoint.includes("page=1")) {
-        return teaHttp({
-          state: "pending",
-          total_count: 2,
-          statuses: [{ id: 1, status: "pending", context: "c1" }],
-        });
+        return teaHttp(
+          {
+            state: "pending",
+            total_count: 1,
+            statuses: [{ id: 1, status: "pending", context: "c1" }],
+          },
+          { headers: { "X-Total-Count": "2" } },
+        );
       }
       if (endpoint.includes("/commits/sha-a/status") && endpoint.includes("page=2")) {
-        return teaHttp({
-          state: "pending",
-          total_count: 2,
-          statuses: [{ id: 2, status: "success", context: "c2" }],
-        });
+        return teaHttp(
+          {
+            state: "pending",
+            total_count: 1,
+            statuses: [{ id: 2, status: "success", context: "c2" }],
+          },
+          { headers: { "X-Total-Count": "2" } },
+        );
       }
       if (endpoint.includes("/commits/sha-b/status")) {
         return teaHttp({ state: "success", total_count: 0, statuses: [] });
@@ -741,6 +747,116 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     } finally {
       await harness.close();
       await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reads 55 inline review comments in a single request and paginates >50 commit statuses via X-Total-Count", async () => {
+    vi.useFakeTimers();
+    const prUrl = "https://codeberg.org/Org/Repo/pulls/99";
+    const headSha = "sha-large";
+    let reviewCommentsCalls = 0;
+    let actionRunsCalls = 0;
+
+    const page1Statuses = [];
+    for (let i = 1; i <= 50; i += 1) {
+      page1Statuses.push({ id: i, status: "success", context: `ctx-${i}` });
+    }
+    const page2Statuses = [];
+    for (let i = 51; i <= 60; i += 1) {
+      page2Statuses.push({
+        id: i,
+        status: i === 55 ? "failure" : "success",
+        context: `ctx-${i}`,
+      });
+    }
+    const fiftyFiveInlineComments = [];
+    for (let i = 1; i <= 55; i += 1) {
+      fiftyFiveInlineComments.push({ id: i, html_url: `${prUrl}#issuecomment-${i}` });
+    }
+
+    const { runner } = createFakeTeaRunner((args) => {
+      if (args[0] === "login") {
+        return {
+          stdout: JSON.stringify([{ name: "cb", url: "https://codeberg.org" }]),
+          stderr: "",
+        };
+      }
+      const endpoint = args[4] ?? "";
+      if (endpoint === "repos/Org/Repo/pulls/99") {
+        return teaHttp({
+          number: 99,
+          state: "open",
+          merged: false,
+          html_url: prUrl,
+          head: { sha: headSha },
+        });
+      }
+      if (endpoint.includes(`/commits/${headSha}/status`) && endpoint.includes("page=1")) {
+        // Real Gitea sets body `total_count` to the page length (50) and puts 60 in X-Total-Count.
+        return teaHttp(
+          { state: "success", total_count: 50, statuses: page1Statuses },
+          { headers: { "X-Total-Count": "60" } },
+        );
+      }
+      if (endpoint.includes(`/commits/${headSha}/status`) && endpoint.includes("page=2")) {
+        return teaHttp(
+          { state: "failure", total_count: 10, statuses: page2Statuses },
+          { headers: { "X-Total-Count": "60" } },
+        );
+      }
+      if (endpoint.includes("/actions/tasks")) {
+        return teaHttp({ total_count: 0, workflow_runs: [] });
+      }
+      if (endpoint.includes("/actions/runs")) {
+        actionRunsCalls += 1;
+        return teaHttp({ total_count: 0, workflow_runs: [] });
+      }
+      if (endpoint.includes("/issues/99/comments")) {
+        return teaHttp([]);
+      }
+      if (endpoint.includes("/pulls/99/reviews?")) {
+        return teaHttp([
+          {
+            id: 7,
+            state: "COMMENT",
+            comments_count: 55,
+            submitted_at: "2026-11-20T08:00:00Z",
+            html_url: `${prUrl}#pullrequestreview-7`,
+          },
+        ]);
+      }
+      if (endpoint === "repos/Org/Repo/pulls/99/reviews/7/comments") {
+        reviewCommentsCalls += 1;
+        return teaHttp(fiftyFiveInlineComments);
+      }
+      throw new Error(`Unexpected: ${endpoint}`);
+    });
+
+    const service = createGiteaService({
+      runner,
+      resolveTeaPath: async () => "tea",
+      watchPollMs: 10_000,
+    });
+    const snapshots: ChangeRequestSnapshot[] = [];
+    try {
+      const release = service.changeRequests!.observe(prUrl, {
+        async snapshot(s) {
+          snapshots.push(s);
+        },
+        error(err) {
+          throw err;
+        },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(snapshots).toHaveLength(1);
+      expect(actionRunsCalls).toBe(0);
+      expect(reviewCommentsCalls).toBe(1);
+      expect(snapshots[0]!.checks).toHaveLength(60);
+      expect(snapshots[0]!.checksState).toBe("failed");
+      expect(snapshots[0]!.activity.filter((a) => a.kind === "inline comment")).toHaveLength(55);
+      release();
+    } finally {
+      service.dispose?.();
     }
   });
 });

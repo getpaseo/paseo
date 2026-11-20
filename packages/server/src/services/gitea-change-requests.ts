@@ -8,23 +8,28 @@ import {
   parseRetryAfterMs,
 } from "./change-request-poller.js";
 import type { ChangeRequestSnapshot, ChangeRequestSource } from "./change-request-source.js";
+import {
+  findTeaLoginNameForHost,
+  getGiteaActionRunIdFromUrl,
+  getGiteaActionTaskName,
+  getUrlOrigin,
+  GITEA_ACTION_MAX_PAGES,
+  GITEA_ACTION_PAGE_LIMIT,
+  GiteaActionsListResponseSchema,
+  GiteaCombinedCommitStatusSchema,
+  isGiteaActionShadowStatus,
+  latestGiteaActionTasksByWorkflow,
+  parseGiteaActionTasks,
+  type GiteaActionTask,
+  type GiteaCommitStatus,
+} from "./gitea-checks.js";
 
 const GITEA_CLOUD_HOSTS = new Set(["gitea.com", "codeberg.org"]);
 const GITEA_PR_TABS = new Set(["commits", "files", "checks"]);
-const GITEA_PAGE_SIZE = 50;
-const GITEA_ACTION_MAX_PAGES = 5;
+const GITEA_PAGE_SIZE = GITEA_ACTION_PAGE_LIMIT;
 const GITEA_REVIEW_COMMENT_CONCURRENCY = 3;
-const GITEA_RELATIVE_URL_ORIGIN = "https://gitea.invalid";
 
 const checkUrlSchema = z.url({ protocol: /^https?$/ });
-
-const giteaLoginSchema = z
-  .object({
-    name: z.string().optional(),
-    url: z.string().optional(),
-    ssh_host: z.string().optional(),
-  })
-  .passthrough();
 
 const giteaWatchPrSchema = z
   .object({
@@ -38,75 +43,6 @@ const giteaWatchPrSchema = z
         sha: z.string(),
       })
       .passthrough(),
-  })
-  .passthrough();
-
-const giteaCommitStatusSchema = z
-  .object({
-    id: z.number(),
-    status: z.string(),
-    target_url: z.string().nullable().optional(),
-    context: z.string().optional().default(""),
-  })
-  .passthrough();
-
-const giteaCombinedStatusSchema = z
-  .object({
-    state: z.string().optional().default(""),
-    total_count: z.number().optional(),
-    statuses: z.array(giteaCommitStatusSchema).nullable().optional(),
-  })
-  .passthrough();
-
-const giteaActionTaskSchema = z
-  .object({
-    id: z.number(),
-    name: z.string().nullable().optional(),
-    head_sha: z.string(),
-    run_number: z.number().optional(),
-    display_title: z.string().nullable().optional(),
-    status: z.string(),
-    need_approval: z.boolean().optional().default(false),
-    workflow_id: z.string().nullable().optional(),
-    url: z.string().nullable().optional(),
-    created_at: z.string().nullable().optional(),
-    run_started_at: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-const giteaActionsListSchema = z
-  .object({
-    workflow_runs: z.array(z.unknown()).nullable().optional(),
-    total_count: z.number().optional(),
-  })
-  .passthrough();
-
-const giteaActionRunPullRefSchema = z
-  .object({
-    repo: z.object({ id: z.number().optional() }).passthrough().nullable().optional(),
-  })
-  .passthrough();
-
-const giteaActionRunSchema = z
-  .object({
-    id: z.number().optional(),
-    run_number: z.number().optional(),
-    index_in_repo: z.number().optional(),
-    head_sha: z.string().optional(),
-    commit_sha: z.string().optional(),
-    status: z.string().optional(),
-    need_approval: z.boolean().optional().default(false),
-    pull_requests: z
-      .array(
-        z
-          .object({
-            head: giteaActionRunPullRefSchema.optional(),
-            base: giteaActionRunPullRefSchema.optional(),
-          })
-          .passthrough(),
-      )
-      .nullable()
-      .optional(),
   })
   .passthrough();
 
@@ -137,9 +73,6 @@ const giteaReviewCommentSchema = z
   .passthrough();
 
 type GiteaWatchPr = z.infer<typeof giteaWatchPrSchema>;
-type GiteaCommitStatus = z.infer<typeof giteaCommitStatusSchema>;
-type GiteaActionTask = z.infer<typeof giteaActionTaskSchema>;
-type GiteaActionRun = z.infer<typeof giteaActionRunSchema>;
 type GiteaReview = z.infer<typeof giteaReviewSchema>;
 
 interface GiteaPullRequestIdentity {
@@ -313,107 +246,9 @@ function computeAggregateChecksState(
   return "neutral";
 }
 
-function getActionRunIdFromUrl(value: string | null | undefined): number | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value, GITEA_RELATIVE_URL_ORIGIN);
-    const match = url.pathname.match(/\/actions\/runs\/(\d+)(?:\/jobs\/\d+)?\/?$/);
-    return match?.[1] ? Number.parseInt(match[1], 10) : null;
-  } catch {
-    return null;
-  }
-}
-
-function getUrlOrigin(value: string | null | undefined): string | null {
-  if (!value) return null;
-  try {
-    return new URL(value).origin;
-  } catch {
-    return null;
-  }
-}
-
-function isActionShadowStatus(
-  status: GiteaCommitStatus,
-  nativeOrigins: ReadonlySet<string>,
-  nativeRunIds: ReadonlySet<number>,
-): boolean {
-  if (!status.target_url) return false;
-  try {
-    const url = new URL(status.target_url, GITEA_RELATIVE_URL_ORIGIN);
-    if (!/\/actions\/runs\/\d+\/jobs\/\d+\/?$/.test(url.pathname)) return false;
-    if (url.origin !== GITEA_RELATIVE_URL_ORIGIN && !nativeOrigins.has(url.origin)) return false;
-    const runId = getActionRunIdFromUrl(status.target_url);
-    return runId !== null && nativeRunIds.has(runId);
-  } catch {
-    return false;
-  }
-}
-
-function getActionWorkflowIdentity(task: GiteaActionTask): string {
-  if (task.workflow_id) return `workflow\u0000${task.workflow_id}`;
-  const name = task.name || task.display_title;
-  if (name) return `name\u0000${name}`;
-  return `task\u0000${getActionExecutionIdentity(task)}`;
-}
-
-function getActionExecutionIdentity(task: GiteaActionTask): string {
-  if (task.run_number !== undefined) return `run-number\u0000${task.run_number}`;
-  const runId = getActionRunIdFromUrl(task.url);
-  if (runId !== null) return `run-id\u0000${runId}`;
-  if (task.url) return `url\u0000${task.url}`;
-  return `task\u0000${task.id}`;
-}
-
-function parseActionTaskTime(task: GiteaActionTask): number {
-  const timestamp = task.created_at ?? task.run_started_at ?? null;
-  if (!timestamp) return 0;
-  const parsed = Date.parse(timestamp);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function compareActionTaskRecency(left: GiteaActionTask, right: GiteaActionTask): number {
-  const leftRun = left.run_number ?? 0;
-  const rightRun = right.run_number ?? 0;
-  if (leftRun !== rightRun) return leftRun - rightRun;
-  const leftTime = parseActionTaskTime(left);
-  const rightTime = parseActionTaskTime(right);
-  if (leftTime !== rightTime) return leftTime - rightTime;
-  return left.id - right.id;
-}
-
-function latestActionTasksByWorkflow(tasks: GiteaActionTask[]): GiteaActionTask[] {
-  const latest = new Map<string, GiteaActionTask>();
-  for (const task of tasks) {
-    const id = getActionWorkflowIdentity(task);
-    const current = latest.get(id);
-    if (!current || compareActionTaskRecency(current, task) < 0) {
-      latest.set(id, task);
-    }
-  }
-  return tasks.filter((task) => {
-    const current = latest.get(getActionWorkflowIdentity(task));
-    return (
-      current !== undefined &&
-      getActionExecutionIdentity(task) === getActionExecutionIdentity(current)
-    );
-  });
-}
-
-function isRunAwaitingApproval(run: GiteaActionRun): boolean {
-  if (run.need_approval) return true;
-  const status = (run.status ?? "").toLowerCase();
-  if (status !== "waiting" && status !== "blocked") return false;
-  const pr = run.pull_requests?.[0];
-  const headRepoId = pr?.head?.repo?.id;
-  const baseRepoId = pr?.base?.repo?.id;
-  return headRepoId !== undefined && baseRepoId !== undefined && headRepoId !== baseRepoId;
-}
-
 function combineWatchChecks(
   commitStatuses: GiteaCommitStatus[],
   actionTasks: GiteaActionTask[],
-  actionRequiredRunIds: ReadonlySet<number>,
 ): ChangeRequestSnapshot["checks"] {
   const nativeOrigins = new Set(
     actionTasks
@@ -422,7 +257,7 @@ function combineWatchChecks(
   );
   const nativeRunIds = new Set(
     actionTasks
-      .map((task) => getActionRunIdFromUrl(task.url))
+      .map((task) => getGiteaActionRunIdFromUrl(task.url))
       .filter((runId): runId is number => runId !== null),
   );
   const checks: ChangeRequestSnapshot["checks"] = [];
@@ -431,17 +266,12 @@ function combineWatchChecks(
   for (const status of commitStatuses) {
     if (seenStatusIds.has(status.id)) continue;
     seenStatusIds.add(status.id);
-    if (isActionShadowStatus(status, nativeOrigins, nativeRunIds)) continue;
-    const runId = getActionRunIdFromUrl(status.target_url);
-    const state =
-      runId !== null && actionRequiredRunIds.has(runId)
-        ? "pending"
-        : mapCommitStatusToWatchState(status.status);
+    if (isGiteaActionShadowStatus(status, nativeOrigins, nativeRunIds)) continue;
     const url = checkUrlSchema.safeParse(status.target_url).data;
     checks.push({
       id: `status:${status.id}`,
       name: status.context || `status-${status.id}`,
-      state,
+      state: mapCommitStatusToWatchState(status.status),
       ...(url ? { url } : {}),
     });
   }
@@ -453,61 +283,13 @@ function combineWatchChecks(
     const url = checkUrlSchema.safeParse(task.url).data;
     checks.push({
       id: `action:${task.id}`,
-      name: task.name || task.display_title || task.workflow_id || `actions-${task.id}`,
+      name: getGiteaActionTaskName(task),
       state: mapActionTaskToWatchState(task.status),
       ...(url ? { url } : {}),
     });
   }
 
   return checks;
-}
-
-function matchTeaLoginName(stdout: string, hostWithPort: string, host: string): string | null {
-  let data: unknown;
-  try {
-    data = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  const parsed = z.array(giteaLoginSchema).safeParse(data);
-  if (!parsed.success) return null;
-
-  const targetWithPort = hostWithPort.toLowerCase();
-  const targetHost = host.toLowerCase();
-  const hasPort = targetWithPort !== targetHost;
-
-  for (const login of parsed.data) {
-    if (!login.name) continue;
-    if (login.url) {
-      try {
-        const loginUrl = new URL(login.url);
-        const loginHostWithPort = loginUrl.port
-          ? `${normalizeHost(loginUrl.hostname)}:${loginUrl.port}`
-          : normalizeHost(loginUrl.hostname);
-        if (loginHostWithPort === targetWithPort) return login.name;
-      } catch {
-        // ignore malformed login url
-      }
-    }
-  }
-
-  if (hasPort) return null;
-
-  for (const login of parsed.data) {
-    if (!login.name) continue;
-    const candidates = [login.ssh_host, login.name];
-    if (login.url) {
-      try {
-        candidates.push(normalizeHost(new URL(login.url).hostname));
-      } catch {
-        // ignore malformed login url
-      }
-    }
-    if (candidates.some((candidate) => candidate && normalizeHost(candidate) === targetHost)) {
-      return login.name;
-    }
-  }
-  return null;
 }
 
 function hasNextLinkHeader(headers: ReadonlyMap<string, string>): boolean {
@@ -602,7 +384,7 @@ export function createGiteaChangeRequestSource(
     const result = await options.runCommand(["login", "list", "-o", "json"], {
       cwd: process.cwd(),
     });
-    const loginName = matchTeaLoginName(result.stdout, hostWithPort, host);
+    const loginName = findTeaLoginNameForHost(result.stdout, host, hostWithPort);
     if (!loginName) {
       throw options.createAuthError(`No tea login configured for ${hostWithPort}`);
     }
@@ -748,31 +530,36 @@ export function createGiteaChangeRequestSource(
         hostWithPort: params.hostWithPort,
         loginName: params.loginName,
         endpoint: `${params.repoPrefix}/commits/${encodeURIComponent(params.headSha)}/status?limit=${GITEA_PAGE_SIZE}&page=${page}`,
-        schema: giteaCombinedStatusSchema,
+        schema: GiteaCombinedCommitStatusSchema,
         pauseHost: params.pauseHost,
       });
       pagesRead += 1;
-      const pageStatuses = response.data.statuses ?? [];
+      const pageStatuses = response.data.statuses;
       if (pageStatuses.length === 0) break;
       statuses.push(...pageStatuses);
-      if (response.data.total_count !== undefined) {
-        if (statuses.length >= response.data.total_count) break;
+
+      // Gitea sets body `total_count` to the current page length; the full total
+      // lives only in the `X-Total-Count` response header.
+      const headerTotal = parseTotalCountHeader(response.headers);
+      if (headerTotal !== null) {
+        if (statuses.length >= headerTotal) break;
         page += 1;
         continue;
       }
-      if (pageStatuses.length < GITEA_PAGE_SIZE) break;
-      page += 1;
+      if (hasNextLinkHeader(response.headers) || pageStatuses.length >= GITEA_PAGE_SIZE) {
+        page += 1;
+        continue;
+      }
+      break;
     }
 
     return { statuses, pagesRead };
   }
 
-  async function readBoundedActionPages(params: {
+  async function readBoundedActionTasks(params: {
     hostWithPort: string;
     loginName: string;
     repoPrefix: string;
-    endpoint: "tasks" | "runs";
-    query?: string;
     isObserved(): boolean;
     pauseHost(untilMs: number): void;
   }): Promise<{ items: unknown[]; pagesRead: number }> {
@@ -782,14 +569,13 @@ export function createGiteaChangeRequestSource(
 
     for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
       if (!params.isObserved()) return { items, pagesRead };
-      const queryPrefix = params.query ? `${params.query}&` : "";
-      let response: { data: z.infer<typeof giteaActionsListSchema> };
+      let response: { data: z.infer<typeof GiteaActionsListResponseSchema> };
       try {
         response = await teaApiGet({
           hostWithPort: params.hostWithPort,
           loginName: params.loginName,
-          endpoint: `${params.repoPrefix}/actions/${params.endpoint}?${queryPrefix}limit=${GITEA_PAGE_SIZE}&page=${page}`,
-          schema: giteaActionsListSchema,
+          endpoint: `${params.repoPrefix}/actions/tasks?limit=${GITEA_PAGE_SIZE}&page=${page}`,
+          schema: GiteaActionsListResponseSchema,
           pauseHost: params.pauseHost,
         });
       } catch (error) {
@@ -799,7 +585,7 @@ export function createGiteaChangeRequestSource(
         throw error;
       }
       pagesRead += 1;
-      const runs = response.data.workflow_runs ?? [];
+      const runs = response.data.workflow_runs;
       if (runs.length === 0) break;
       fetched += runs.length;
       items.push(...runs);
@@ -820,57 +606,18 @@ export function createGiteaChangeRequestSource(
   }): Promise<ChangeRequestSnapshot["checks"]> {
     const [statusResult, tasksResult] = await Promise.all([
       readCommitStatuses(params),
-      readBoundedActionPages({ ...params, endpoint: "tasks" }),
+      readBoundedActionTasks(params),
     ]);
     if (!params.isObserved()) {
       throw new Error("Change request observation ended");
     }
 
-    const parsedTasks: GiteaActionTask[] = [];
-    for (const raw of tasksResult.items) {
-      const parsed = giteaActionTaskSchema.safeParse(raw);
-      if (parsed.success && parsed.data.head_sha === params.headSha) {
-        parsedTasks.push(parsed.data);
-      }
-    }
-    const latestTasks = latestActionTasksByWorkflow(parsedTasks);
-
-    const taskRunIds = new Set(
-      latestTasks
-        .map((task) => getActionRunIdFromUrl(task.url))
-        .filter((runId): runId is number => runId !== null),
+    const matchingTasks = parseGiteaActionTasks(tasksResult.items).filter(
+      (task) => task.head_sha === params.headSha,
     );
-    const needsRunMetadata =
-      latestTasks.some((task) => task.status.toLowerCase() === "blocked") ||
-      statusResult.statuses.some((status) => {
-        const runId = getActionRunIdFromUrl(status.target_url);
-        return (
-          runId !== null &&
-          !taskRunIds.has(runId) &&
-          mapCommitStatusToWatchState(status.status) === "pending"
-        );
-      });
+    const latestTasks = latestGiteaActionTasksByWorkflow(matchingTasks);
 
-    let fetchedRuns = false;
-    const actionRequiredRunIds = new Set<number>();
-    if (needsRunMetadata) {
-      const runsResult = await readBoundedActionPages({
-        ...params,
-        endpoint: "runs",
-        query: `head_sha=${encodeURIComponent(params.headSha)}`,
-      });
-      fetchedRuns = runsResult.pagesRead > 0;
-      for (const raw of runsResult.items) {
-        const parsed = giteaActionRunSchema.safeParse(raw);
-        if (!parsed.success || parsed.data.id === undefined) continue;
-        if ((parsed.data.head_sha ?? parsed.data.commit_sha) !== params.headSha) continue;
-        if (isRunAwaitingApproval(parsed.data)) {
-          actionRequiredRunIds.add(parsed.data.id);
-        }
-      }
-    }
-
-    if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1 || fetchedRuns) {
+    if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1) {
       const { data: recheck } = await teaApiGet({
         hostWithPort: params.hostWithPort,
         loginName: params.loginName,
@@ -883,7 +630,7 @@ export function createGiteaChangeRequestSource(
       }
     }
 
-    return combineWatchChecks(statusResult.statuses, latestTasks, actionRequiredRunIds);
+    return combineWatchChecks(statusResult.statuses, latestTasks);
   }
 
   async function readActivity(params: {
@@ -958,15 +705,19 @@ export function createGiteaChangeRequestSource(
       return true;
     });
 
+    // Gitea's review-comments endpoint returns all comments for a review in one
+    // response and ignores page/limit, so fetch it once without a pagination loop.
     const fetchedGroups = await Promise.all(
       reviewsNeedingFetch.map((review) =>
         reviewCommentLimit(async () => {
-          const inlineComments = await teaApiGetAllPages({
+          if (!params.isObserved()) {
+            return { reviewId: review.id, count: review.comments_count, items: [] };
+          }
+          const { data: inlineComments } = await teaApiGet({
             hostWithPort: params.hostWithPort,
             loginName: params.loginName,
             endpoint: `${params.repoPrefix}/pulls/${params.number}/reviews/${review.id}/comments`,
-            itemSchema: giteaReviewCommentSchema,
-            isObserved: params.isObserved,
+            schema: z.array(giteaReviewCommentSchema),
             pauseHost: params.pauseHost,
           });
           const items: ChangeRequestSnapshot["activity"] = inlineComments.map((comment) => ({
