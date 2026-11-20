@@ -24,6 +24,16 @@ describe("desktop workspace navigation", () => {
     expect(inbox.windowReady(7)).toBeNull();
   });
 
+  it("discards a queued link when a newer link targets another window", () => {
+    const inbox = new WorkspaceNavigationInbox();
+    inbox.deliverOrQueue(7, { serverId: "srv_devbox", path: "/old" });
+    inbox.windowReady(8);
+    const target = { serverId: "srv_devbox", path: "/new" };
+
+    expect(inbox.deliverOrQueue(8, target)).toEqual(target);
+    expect(inbox.windowReady(7)).toBeNull();
+  });
+
   it("delivers warm navigation immediately", () => {
     const inbox = new WorkspaceNavigationInbox();
     inbox.windowReady(7);

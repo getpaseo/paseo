@@ -30,6 +30,7 @@ export class WorkspaceNavigationInbox {
     webContentsId: number,
     target: WorkspaceDeepLinkTarget,
   ): WorkspaceDeepLinkTarget | null {
+    this.pendingByWindow.clear();
     if (this.readyWindows.has(webContentsId)) return target;
     this.pendingByWindow.set(webContentsId, target);
     return null;

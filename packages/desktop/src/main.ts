@@ -136,6 +136,7 @@ const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 const workspaceNavigationInbox = new WorkspaceNavigationInbox();
+const workspaceWindows = new Set<BrowserWindow>();
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -740,6 +741,7 @@ async function createWindow(
   });
   applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
+  workspaceWindows.add(mainWindow);
   const webContentsId = mainWindow.webContents.id;
   options.onCreated?.(webContentsId);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
@@ -751,6 +753,7 @@ async function createWindow(
   mainWindow.on("closed", () => {
     options.onClosed?.(webContentsId);
     agentNavigationInbox.removeWindow(webContentsId);
+    workspaceWindows.delete(mainWindow);
     workspaceNavigationInbox.removeWindow(webContentsId);
     unregisterPaseoBrowserHost(webContentsId);
     browserKeyboard.detachHost(webContentsId);
@@ -862,25 +865,26 @@ desktopWindowOwner = createDesktopWindowOwner<AgentDeepLinkTarget>({
 });
 
 let workspaceWindowCreation: Promise<void> | null = null;
+let workspaceNavigationSequence = 0;
+
+function workspaceWindow(): BrowserWindow | undefined {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && workspaceWindows.has(focused) && !focused.isDestroyed()) return focused;
+  const windows = [...workspaceWindows].filter((win) => !win.isDestroyed());
+  return windows.find((win) => win.isVisible()) ?? windows[0];
+}
 
 async function openOrFocusWorkspace(target: WorkspaceDeepLinkTarget): Promise<void> {
-  const windows = BrowserWindow.getAllWindows();
-  const win =
-    BrowserWindow.getFocusedWindow() ??
-    windows.find((candidate) => candidate.isVisible()) ??
-    windows[0];
-  if (!win || win.isDestroyed()) {
-    if (!workspaceWindowCreation) {
-      workspaceWindowCreation = desktopWindowOwner.openPrimary().finally(() => {
-        workspaceWindowCreation = null;
-      });
-      await workspaceWindowCreation;
-      await openOrFocusWorkspace(target);
-      return;
-    }
+  const sequence = ++workspaceNavigationSequence;
+  let win = workspaceWindow();
+  if (!win) {
+    workspaceWindowCreation ??= desktopWindowOwner.openPrimary().finally(() => {
+      workspaceWindowCreation = null;
+    });
     await workspaceWindowCreation;
-    await openOrFocusWorkspace(target);
-    return;
+    if (sequence !== workspaceNavigationSequence) return;
+    win = workspaceWindow();
+    if (!win) return;
   }
   if (win.isMinimized()) win.restore();
   win.show();
@@ -919,8 +923,7 @@ function receiveAgentDeepLink(input: string): void {
   });
 }
 
-function receiveWorkspaceDeepLink(input: string): void {
-  const target = parseWorkspaceDeepLink(input);
+function receiveWorkspaceDeepLink(target: WorkspaceDeepLinkTarget | null): void {
   if (!target) return;
 
   if (bootstrapIsComplete) {
@@ -944,7 +947,7 @@ function receiveWorkspaceDeepLink(input: string): void {
 app.on("open-url", (event, url) => {
   event.preventDefault();
   receiveAgentDeepLink(url);
-  receiveWorkspaceDeepLink(url);
+  receiveWorkspaceDeepLink(parseWorkspaceDeepLink(url));
 });
 
 function setupSingleInstanceLock(): boolean {
@@ -970,9 +973,7 @@ function setupSingleInstanceLock(): boolean {
 
     const workspaceTarget = parseWorkspaceDeepLinkFromArgv(commandLine);
     if (workspaceTarget) {
-      void bootstrapComplete
-        .then(() => openOrFocusWorkspace(workspaceTarget))
-        .catch((error) => log.error("[window] failed to route workspace link", error));
+      receiveWorkspaceDeepLink(workspaceTarget);
       return;
     }
 
