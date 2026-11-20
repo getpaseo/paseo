@@ -1,5 +1,5 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
-import { daemonWsRoutePattern } from "./daemon-port";
+import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 
 export interface DirectoryBootstrapCounts {
   agents: number;
@@ -294,7 +294,8 @@ function recordClientRequest(
   directoryStarts.total[directory] += 1;
 }
 
-export async function installDaemonWebSocketGate(page: Page) {
+/** Gates the shared E2E daemon, or the daemon on `port` for a spec that runs its own. */
+export async function installDaemonWebSocketGate(page: Page, options: { port?: number } = {}) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
   let suppressAgentStream = false;
@@ -445,7 +446,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     return true;
   };
 
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+  const routePattern =
+    options.port === undefined
+      ? daemonWsRoutePattern()
+      : wsRoutePatternForPort(String(options.port));
+  await page.routeWebSocket(routePattern, (ws) => {
     if (!acceptingConnections) {
       blockedConnectionCount += 1;
       for (const resolve of blockedConnectionWaiters) resolve();
@@ -849,7 +854,12 @@ export async function installDaemonWebSocketGate(page: Page) {
     getClientRequests(type: string): ReadonlyArray<ClientRequest> {
       return [...(clientRequests.get(type) ?? [])];
     },
-    getTimelineRequestCount(direction: "tail" | "before" | "after"): number {
+    getTimelineRequestCount(direction: "tail" | "before" | "after", agentId?: string): number {
+      if (agentId) {
+        return (clientRequests.get("fetch_agent_timeline_request") ?? []).filter(
+          (request) => request.agentId === agentId && request.direction === direction,
+        ).length;
+      }
       return timelineRequestCounts.get(direction) ?? 0;
     },
     getAgentStreamItemCount(type: string): number {

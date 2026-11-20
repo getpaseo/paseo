@@ -1,0 +1,14 @@
+context platform=ios timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 20000
+wait "id=\"workspace-tab-agent_${AGENT_ID}\"" 20000
+longpress "id=\"workspace-tab-agent_${AGENT_ID}\"" 900
+wait "id=\"workspace-tab-context-${TAB_ID}\"" 10000
+is visible "id=\"workspace-tab-context-${TAB_ID}-copy-agent-id\""
+press "id=\"workspace-tab-context-${TAB_ID}-copy-agent-id\""
+wait "id=\"workspace-tab-agent_${OTHER_AGENT_ID}\"" 10000
+press "id=\"workspace-tab-agent_${OTHER_AGENT_ID}\""
+wait "id=\"agent-chat-scroll\"" 10000
+close

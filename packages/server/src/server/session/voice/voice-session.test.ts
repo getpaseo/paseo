@@ -1,3 +1,5 @@
+import { Readable } from "node:stream";
+import type { VoiceSpeakHandler } from "../../voice-types.js";
 import { EventEmitter } from "node:events";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
@@ -7,6 +9,7 @@ import type { ManagedAgent } from "../../agent/agent-manager.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
+  TextToSpeechProvider,
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
@@ -79,7 +82,8 @@ function createFakeHost(): FakeVoiceHost {
   };
 }
 
-function createVoiceSession() {
+function createVoiceSession(tts: TextToSpeechProvider | null = null) {
+  let speakHandler: VoiceSpeakHandler | undefined;
   const detector = new FakeVoiceTurnDetectionSession();
   const sttSession = new FakeVoiceSttSession();
   const stt: SpeechToTextProvider = {
@@ -96,11 +100,33 @@ function createVoiceSession() {
     logger: pino({ level: "silent" }),
     sessionId: "voice-session-test",
     sttLanguage: "en",
-    tts: null,
+    tts,
+    voiceBridge: {
+      registerVoiceSpeakHandler: (_id, handler) => {
+        speakHandler = handler;
+      },
+    },
     stt,
     voice: { turnDetection },
   });
-  return { voiceSession, detector, sttSession, host };
+  return {
+    voiceSession,
+    detector,
+    sttSession,
+    host,
+    speak: (args: Parameters<VoiceSpeakHandler>[0]) => {
+      if (!speakHandler) throw new Error("Voice speak handler not registered");
+      return speakHandler(args);
+    },
+  };
+}
+
+function isAudioOutput(message: SessionOutboundMessage): boolean {
+  return message.type === "audio_output";
+}
+
+async function waitForAudioOutput(host: FakeVoiceHost): Promise<void> {
+  await vi.waitFor(() => expect(host.emitted.filter(isAudioOutput)).toHaveLength(1));
 }
 
 async function settle(): Promise<void> {
@@ -110,6 +136,71 @@ async function settle(): Promise<void> {
 }
 
 describe("VoiceSession streaming transcription", () => {
+  test("interrupts playback and the agent on speech detection without partial transcripts", async () => {
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+      },
+    };
+    const { voiceSession, detector, host, speak } = createVoiceSession(tts);
+    const interrupted: string[] = [];
+    async function recordInterruption(agentId: string) {
+      interrupted.push(agentId);
+    }
+    host.interruptAgentIfRunning = recordInterruption;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({ text: "A spoken response." });
+    try {
+      await waitForAudioOutput(host);
+      detector.emit("speech_started");
+      await settle();
+      expect(host.emitted).toContainEqual({
+        type: "voice_input_state",
+        payload: { isSpeaking: true },
+      });
+      expect(interrupted).toEqual([VOICE_AGENT_ID]);
+      await playback;
+    } finally {
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
+  test("session abort stops later audio even when the speak tool supplies its own signal", async () => {
+    const tts: TextToSpeechProvider = {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm;rate=24000" };
+      },
+    };
+    const { voiceSession, host, speak } = createVoiceSession(tts);
+    const external = new AbortController();
+    let abortRequested = false;
+    const emit = host.emit;
+    function acknowledgeLaterAudio(message: SessionOutboundMessage) {
+      emit(message);
+      if (message.type === "audio_output" && abortRequested)
+        voiceSession.handleAudioPlayed(message.payload.id);
+    }
+    host.emit = acknowledgeLaterAudio;
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    const playback = speak({
+      text: "First sentence. Second sentence. Third sentence.",
+      signal: external.signal,
+    });
+    try {
+      await waitForAudioOutput(host);
+      abortRequested = true;
+      await voiceSession.handleAbort();
+      await playback;
+      expect(host.emitted.filter(isAudioOutput)).toHaveLength(1);
+      expect(external.signal.aborted).toBe(false);
+    } finally {
+      external.abort();
+      await voiceSession.cleanup();
+      await playback.catch(() => {});
+    }
+  });
+
   test("surfaces a refused voice-mode agent interruption", async () => {
     const { voiceSession, host } = createVoiceSession();
     host.interruptAgentIfRunning = vi.fn(async () => {

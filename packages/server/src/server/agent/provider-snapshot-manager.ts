@@ -1,3 +1,4 @@
+import { normalizeAgentModelCatalog, type ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -50,6 +51,8 @@ import {
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { convertLegacyClaudeUltracode, resolveAdapter } from "./option-controls.js";
+import { ProviderInstallations } from "./provider-installation/provider-installations.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -159,14 +162,14 @@ export interface ResolveProviderCreateConfigOptions {
   cwd?: string | null;
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: ManagedAgent | null;
   unattended: boolean;
 }
 
 export interface ResolvedProviderCreateConfig {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 interface ResolveDefaultModelOptions {
@@ -184,10 +187,7 @@ export interface AgentManagerProviderState {
   providerDefinitions: Partial<
     Record<
       AgentProvider,
-      Pick<
-        ProviderDefinition,
-        "enabled" | "derivedFromProviderId" | "validateOptions" | "applyOptions" | "applyToolPolicy"
-      >
+      Pick<ProviderDefinition, "enabled" | "derivedFromProviderId" | "applyToolPolicy">
     >
   >;
   clients: Partial<Record<AgentProvider, AgentClient>>;
@@ -255,6 +255,9 @@ export class ProviderSnapshotManager {
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
+  /** Installation links and versions; separate from availability and discovery. */
+  readonly installations: ProviderInstallations;
+  private pluginProvidersSettled = false;
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
@@ -280,9 +283,16 @@ export class ProviderSnapshotManager {
     );
     this.providerClients = {
       ...this.extraClients,
-      ...this.pluginProviders.clients(),
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+    this.installations = new ProviderInstallations({
+      logger: options.logger.child({ module: "provider-installations" }),
+      resolveClient: (provider) => {
+        const definition = this.generation.definitions[provider];
+        return definition ? this.ensureClient(provider, definition) : null;
+      },
+      refreshProvider: (provider) => this.refreshSettingsSnapshot({ providers: [provider] }),
+    });
   }
 
   getSnapshot(cwd?: string): ProviderSnapshot {
@@ -350,6 +360,10 @@ export class ProviderSnapshotManager {
     return Object.prototype.hasOwnProperty.call(this.generation.definitions, provider);
   }
 
+  supportsConfigRequiredProvider(provider: AgentProvider): boolean {
+    return this.pluginProviders.definitions()[provider]?.requiresConfiguration === true;
+  }
+
   getProviderLabel(provider: AgentProvider): string {
     return this.generation.definitions[provider]?.label ?? provider;
   }
@@ -368,8 +382,6 @@ export class ProviderSnapshotManager {
       providerDefinitions[provider] = {
         enabled: definition.enabled,
         derivedFromProviderId: definition.derivedFromProviderId,
-        validateOptions: definition.validateOptions,
-        applyOptions: definition.applyOptions,
         applyToolPolicy: definition.applyToolPolicy,
       };
       if (definition.enabled) {
@@ -384,17 +396,28 @@ export class ProviderSnapshotManager {
     return { providerDefinitions, clients };
   }
 
+  /** Called after built-in and configured plugin startup has completed, including disabled plugins. */
+  settlePluginProviders(): void {
+    if (this.pluginProvidersSettled) return;
+    this.pluginProvidersSettled = true;
+    this.warnUnknownProviderOverrides();
+  }
+
+  private warnUnknownProviderOverrides(): void {
+    if (!this.pluginProvidersSettled) return;
+    for (const [provider, override] of Object.entries(this.providerOverrides ?? {})) {
+      if (!override.extends && !this.generation.definitions[provider]) {
+        this.logger.warn({ provider }, "Provider override matches no registered provider");
+      }
+    }
+  }
+
   replacePluginProviders(
     registrations: readonly ProviderRegistration[],
   ): AgentManagerProviderState {
     for (const registration of registrations) {
-      if (
-        (this.generation.definitions[registration.id] || this.extraClients[registration.id]) &&
-        !this.pluginProviders.has(registration.id)
-      ) {
-        throw new Error(
-          `Plugin provider '${registration.id}' conflicts with a configured provider`,
-        );
+      if (BUILTIN_PROVIDER_IDS.includes(registration.id) || this.extraClients[registration.id]) {
+        throw new Error(`Plugin provider '${registration.id}' conflicts with a built-in provider`);
       }
     }
     const previousPlugins = this.pluginProviders.definitions();
@@ -404,17 +427,30 @@ export class ProviderSnapshotManager {
     this.pluginProviders.replace(registrations);
     const plugins = this.pluginProviders.definitions();
     const retiredProviders = Object.keys(previousPlugins).filter(
-      (provider) => previousPlugins[provider] !== plugins[provider],
+      (provider) =>
+        previousPlugins[provider] !== plugins[provider] &&
+        !this.providerOverrides?.[provider]?.extends,
     );
-    const definitions = { ...this.generation.definitions };
+    const definitions = this.buildRegistry(this.runtimeSettings, this.providerOverrides);
     const changed = new Set<AgentProvider>();
-    for (const provider of new Set([...Object.keys(previousPlugins), ...Object.keys(plugins)])) {
-      if (previousPlugins[provider] !== plugins[provider]) changed.add(provider);
-      delete definitions[provider];
-      delete clients[provider];
+    for (const provider of new Set([...this.generation.order, ...Object.keys(definitions)])) {
+      const before = this.generation.definitions[provider];
+      const after = definitions[provider];
+      const registrationChanged =
+        previousPlugins[provider] !== plugins[provider] &&
+        !this.providerOverrides?.[provider]?.extends;
+      if (
+        registrationChanged ||
+        !before ||
+        !after ||
+        !isDeepStrictEqual(before.configuration, after.configuration)
+      ) {
+        changed.add(provider);
+        delete clients[provider];
+      } else {
+        definitions[provider] = before;
+      }
     }
-    Object.assign(definitions, plugins);
-    Object.assign(clients, this.pluginProviders.clients());
     for (const client of Object.values(clients)) this.ownedClients.add(client);
     const generation = this.createGeneration(definitions, this.providerOverrides);
     const state = this.createAgentManagerState(definitions, clients);
@@ -435,6 +471,12 @@ export class ProviderSnapshotManager {
     clients[provider] = client;
     this.ownedClients.add(client);
     return client;
+  }
+
+  async resolveUsageLaunch(provider: string) {
+    const definition = this.generation.definitions[provider];
+    if (!definition?.enabled) return undefined;
+    return this.ensureClient(provider, definition).resolveUsageLaunch?.();
   }
 
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
@@ -491,11 +533,15 @@ export class ProviderSnapshotManager {
       ];
     }
 
-    const definition = this.requireProvider(input.provider);
     return validateAgentConfigurationAgainstProvider({
-      input,
+      input: convertLegacyClaudeUltracode(
+        input,
+        resolveAdapter({
+          provider: input.provider,
+          extendsOf: (id) => this.generation.definitions[id]?.derivedFromProviderId,
+        }),
+      ),
       provider,
-      validateOptions: definition.validateOptions,
     });
   }
 
@@ -541,7 +587,7 @@ export class ProviderSnapshotManager {
     return definition.resolveCreateConfig({
       provider: input.provider,
       requestedMode: input.requestedMode,
-      featureValues: input.featureValues,
+      providerOptions: input.providerOptions,
       parent,
       unattended: input.unattended || parent?.isUnattended === true,
       availableModes: entry.modes ?? [],
@@ -606,7 +652,7 @@ export class ProviderSnapshotManager {
         definitions[provider] = before;
       }
     }
-    Object.assign(clients, this.extraClients, this.pluginProviders.clients());
+    Object.assign(clients, this.extraClients);
     const generation = this.createGeneration(definitions, providerOverrides);
     const agentManagerState = this.createAgentManagerState(definitions, clients);
     return {
@@ -630,6 +676,7 @@ export class ProviderSnapshotManager {
     }
     this.generation = generation;
     this.providerClients = clients;
+    this.warnUnknownProviderOverrides();
     for (const [key, catalogs] of this.catalogs) {
       for (const provider of changed) catalogs.delete(provider);
       if (catalogs.size === 0) this.catalogs.delete(key);
@@ -665,6 +712,7 @@ export class ProviderSnapshotManager {
 
   async shutdown(): Promise<void> {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
@@ -675,6 +723,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     this.catalogs.clear();
     this.targets.clear();
@@ -688,18 +737,12 @@ export class ProviderSnapshotManager {
     const registry = buildProviderRegistry(this.logger, {
       runtimeSettings,
       providerOverrides,
+      pluginProviders: this.pluginProviders.definitions(),
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
       openCodeBridge: this.openCodeBridge,
       isDev: this.isDev,
     });
-
-    for (const [provider, definition] of Object.entries(this.pluginProviders.definitions())) {
-      if (registry[provider]) {
-        throw new Error(`Plugin provider '${provider}' conflicts with a configured provider`);
-      }
-      registry[provider] = definition;
-    }
 
     for (const [provider, client] of Object.entries(this.extraClients) as Array<
       [AgentProvider, AgentClient]
@@ -727,8 +770,13 @@ export class ProviderSnapshotManager {
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({
         modeId: parent.currentModeId,
-        config: parent.config,
-        features: parent.features,
+        // Provider defaults from `config.json` apply to the parent too, so classify on the
+        // effective options while the stored overrides stay as they are.
+        config: {
+          ...parent.config,
+          providerOptions: parent.effectiveOptions ?? parent.config.providerOptions,
+        },
+        controls: parent.controls,
         availableModes: parent.availableModes ?? definition.modes ?? [],
       }),
     };
@@ -1021,13 +1069,20 @@ export class ProviderSnapshotManager {
         return;
       }
 
+      const models = normalizeAgentModelCatalog(catalog.models);
+      if (models.length !== catalog.models.length) {
+        this.logger.warn(
+          { provider, discardedRows: catalog.models.length - models.length },
+          "Provider catalog contains repeated model IDs; retaining the first definition",
+        );
+      }
       setEntry({
         ...base,
         defaultModeId:
           catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
         status: "ready",
         enabled: true,
-        models: catalog.models,
+        models,
         modes: catalog.modes,
         fetchedAt: new Date().toISOString(),
       });

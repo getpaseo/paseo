@@ -28,11 +28,14 @@ manage their own relationship or permissions.
 ## Session grants and agent operations
 
 Hub uses the same authenticated, resumable Session protocol as other clients. Its persisted
-`hub.execute` permission authorizes ordinary agent creation, messaging, cancellation, archival,
-agent/workspace observation, timeline subscriptions, and workspace recovery. This authority is
+`hub.execute` permission authorizes ordinary agent creation, workspace titling, messaging,
+cancellation, archival, agent/workspace observation, timeline subscriptions, and workspace recovery. This authority is
 daemon-wide; it is not limited to agents created by that Hub. Daemon configuration, terminals,
 browser control, and permission management still require their own permissions. See
 [permissions.md](permissions.md).
+
+Creating an agent may create a directory workspace. The same `hub.execute` session can title that
+workspace through `workspace.title.set.request` without `workspace.manage`.
 
 Clients using this contract check `server_info.features.hubAgentRpc` and
 `server_info.features.agentRequestReceipts` once. An older host must be upgraded; do not silently
@@ -58,6 +61,10 @@ The daemon journals the assigned agent ID before creation. Concurrent retries sh
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
 workspace or starting a turn. Deleting that agent does not make its old creation key reusable.
 Confirmed message delivery is also journaled, so retrying its message ID does not submit it again.
+A direct send (one without `sourceAgentId`) rejected before its prompt is handed to a run, for
+example because the agent could not be loaded or the requested mode could not be set, leaves no
+receipt, so retrying its message ID submits it. A failure during or after run startup is treated
+as an unfinished delivery.
 An unfinished delivery after restart reports `agent_request_outcome_unknown`: a provider can have
 accepted a prompt before the daemon recorded success, so automatic resubmission could duplicate
 work. Inspect the agent before choosing a new message ID. Receipts contain identity and request

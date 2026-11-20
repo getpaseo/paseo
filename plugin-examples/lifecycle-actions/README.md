@@ -2,7 +2,7 @@
 
 Small callbacks using the existing SDK:
 
-- Send `Try again.` when the latest output contains `out of credits`.
+- Send `Try again.` when the latest output contains `out of credits`, except to background agents.
 - Decline a shell request matching `rm -rf`; approve exactly `git status`; leave other requests alone.
 - Inject `PASEO_HOOK_CREATE_EXAMPLE=created` on creation and `PASEO_HOOK_OPEN_EXAMPLE=opened` on each session opening.
 - Change requested Codex agents to Claude Haiku before creation.
@@ -33,4 +33,4 @@ Claude agent.
 See [agent configuration](../agent-configuration) for a focused example that injects MCP servers and
 changes Codex sandbox and approval options while preserving other settings.
 
-See the [lifecycle reference](../../public-docs/plugins/v0.8/reference.md#lifecycle-hooks) for the API.
+See the [lifecycle reference](../../public-docs/plugins/reference.md#lifecycle-hooks) for the API.

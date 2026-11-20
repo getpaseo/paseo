@@ -1,3 +1,4 @@
+import { ComposerDockBackground } from "@/composer/dock";
 import { useMemo, type ReactNode } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { View, type StyleProp, type ViewStyle } from "react-native";
@@ -49,7 +50,7 @@ export function ScreenHeader({
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 
   return (
-    <View style={styles.header}>
+    <ComposerDockBackground style={styles.header} testID="composer-dock-header">
       <View style={innerStyle}>
         <WindowChromeSafeArea
           placement="inline"
@@ -62,7 +63,7 @@ export function ScreenHeader({
           <View style={rightCombinedStyle}>{right}</View>
         </WindowChromeSafeArea>
       </View>
-    </View>
+    </ComposerDockBackground>
   );
 }
 

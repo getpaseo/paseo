@@ -11,7 +11,9 @@ import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
-import { usePanelStore } from "@/stores/panel-store";
+import { showExplorerSidebar } from "@/workspace-tabs/explorer-sidebar";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
 
@@ -80,17 +82,18 @@ function TerminalPanel() {
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
-    isGitCheckout: w.projectKind === "git",
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
-  const isGitCheckout = workspaceFields?.isGitCheckout ?? false;
-  const openCompactFileExplorer = usePanelStore((state) => state.openCompactFileExplorer);
+  const isCompact = useIsCompactFormFactor();
   const handleOpenFileExplorer = useCallback(() => {
     if (!workspaceDirectory) {
       return;
     }
-    openCompactFileExplorer({ serverId, cwd: workspaceDirectory, isGit: isGitCheckout });
-  }, [isGitCheckout, openCompactFileExplorer, serverId, workspaceDirectory]);
+    showExplorerSidebar({
+      isCompact,
+      workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
+    });
+  }, [isCompact, serverId, workspaceId, workspaceDirectory]);
   invariant(target.kind === "terminal", "TerminalPanel requires terminal target");
 
   if (!workspaceDirectory) {

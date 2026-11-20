@@ -1,18 +1,24 @@
 // One definition of how CHANGELOG.md is structured. Consumed by the GitHub release
 // notes sync and by the F-Droid changelog sync, which need the same section bodies
 // rendered two different ways.
+//
+// The app's What's new sheet and the website parse the same file with their own
+// code. `test-support/changelog-structure.json` holds the cases all three must
+// split the same way; a change to the structure rules starts there.
 const headingPattern = /^##\s+\[?([^\]\s]+)\]?\s*-\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\s*$/;
-const sectionHeadingPattern = /^###\s+(.+?)\s*$/;
+const sectionHeadingPattern = /^ {0,3}###(?:[ \t]+(.*?))?[ \t]*$/;
+const fencePattern = /^\s*(`{3,}|~{3,})/;
 const bulletPattern = /^\s*[-*]\s+(.+?)\s*$/;
 const blockquotePattern = /^\s*>\s?(.*)$/;
 
 // Returns entries newest-first, matching the order they appear in the file.
 export function parseChangelogEntries(changelogText) {
   const lines = changelogText.split(/\r?\n/);
+  const fenced = markFencedLines(lines);
   const headings = [];
 
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(headingPattern);
+    const match = fenced[index] ? null : lines[index].match(headingPattern);
     if (!match) {
       continue;
     }
@@ -45,6 +51,47 @@ export function parseChangelogEntries(changelogText) {
 
     return Object.assign({}, heading, { bodyLines });
   });
+}
+
+// Splits an entry body at its first `### ` section. What comes before it is the
+// release's highlights; the sections after it are the full record. Either part is
+// empty when the entry has none.
+export function splitChangelogHighlights(bodyLines) {
+  const fenced = markFencedLines(bodyLines);
+  const firstSection = bodyLines.findIndex(
+    (line, index) => !fenced[index] && sectionHeadingPattern.test(line),
+  );
+  const split = firstSection === -1 ? bodyLines.length : firstSection;
+  return {
+    highlightLines: trimBlankLines(bodyLines.slice(0, split)),
+    sectionLines: trimBlankLines(bodyLines.slice(split)),
+  };
+}
+
+// Flags the lines that belong to a fenced code block, edges included. A `##` or
+// `###` in there is an example, so it starts neither a release nor a section.
+function markFencedLines(lines) {
+  let fence = null;
+  return lines.map((line) => {
+    const edge = line.match(fencePattern)?.[1];
+    if (!edge) {
+      return fence !== null;
+    }
+    if (fence === null) {
+      fence = edge;
+    } else if (edge[0] === fence[0] && edge.length >= fence.length) {
+      fence = null;
+    }
+    return true;
+  });
+}
+
+function trimBlankLines(lines) {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && lines[start].trim() === "") start += 1;
+  while (end > start && lines[end - 1].trim() === "") end -= 1;
+  return lines.slice(start, end);
 }
 
 // Turns `[label](url)` into `label` and drops the trailing PR/attribution
@@ -134,7 +181,7 @@ export function parseChangelogBody(bodyLines) {
       if (current.bullets.length > 0) {
         sections.push(current);
       }
-      current = { bullets: [], title: stripChangelogMarkup(sectionMatch[1]) };
+      current = { bullets: [], title: stripChangelogMarkup(sectionMatch[1] ?? "") };
       continue;
     }
 

@@ -1,3 +1,4 @@
+import { Modal } from "@/components/ui/modal";
 import {
   Children,
   cloneElement,
@@ -16,9 +17,7 @@ import { createPortal } from "react-dom";
 import {
   Dimensions,
   Platform,
-  Modal,
   Pressable,
-  StatusBar,
   View,
   type PressableProps,
   type StyleProp,
@@ -28,8 +27,10 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
-import { isWeb } from "@/constants/platform";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { isNative, isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
+import { holdSurfaceEdge, surfaceFrameStyles, type SurfacePosition } from "./anchor";
 
 type Side = "top" | "bottom" | "left" | "right";
 type Align = "start" | "center" | "end";
@@ -41,10 +42,12 @@ interface Rect {
   height: number;
 }
 
+type TooltipTriggerElement = View | HTMLElement;
+
 interface TooltipContextValue {
   open: boolean;
   setOpen: (open: boolean) => void;
-  triggerRef: React.RefObject<View | null>;
+  triggerRef: React.RefObject<TooltipTriggerElement | null>;
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
@@ -120,12 +123,19 @@ function useControllableOpenState({
   return [value, setValue];
 }
 
-function measureElement(element: View): Promise<Rect> {
-  return new Promise((resolve) => {
-    element.measureInWindow((x, y, width, height) => {
-      resolve({ x, y, width, height });
+function measureElement(element: TooltipTriggerElement): Promise<Rect> {
+  if (isWeb && element instanceof HTMLElement) {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return Promise.resolve({ x, y, width, height });
+  }
+  if ("measureInWindow" in element) {
+    return new Promise((resolve) => {
+      element.measureInWindow((x, y, width, height) => {
+        resolve({ x, y, width, height });
+      });
     });
-  });
+  }
+  throw new Error("A DOM tooltip trigger requires the web platform");
 }
 
 function resolveActualSide(args: {
@@ -240,7 +250,7 @@ export function Tooltip({
   enabledOnDesktop?: boolean;
   enabledOnMobile?: boolean;
 }>): ReactElement {
-  const triggerRef = useRef<View>(null);
+  const triggerRef = useRef<TooltipTriggerElement>(null);
   const [isOpen, setIsOpen] = useControllableOpenState({
     open,
     defaultOpen,
@@ -248,7 +258,15 @@ export function Tooltip({
   });
 
   const isCompact = useIsCompactFormFactor();
-  const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
+  const active = useRetainedPanelActive();
+  const opensOnPress = isNative || isCompact;
+  const enabled = active && (opensOnPress ? enabledOnMobile : enabledOnDesktop);
+
+  // Remove the portal in the inactive commit, before the retained chat freezes.
+  // Closing also prevents the tooltip from returning when its panel is shown again.
+  useEffect(() => {
+    if (!active && isOpen) setIsOpen(false);
+  }, [active, isOpen, setIsOpen]);
 
   const value = useMemo<TooltipContextValue>(
     () => ({
@@ -256,10 +274,10 @@ export function Tooltip({
       setOpen: setIsOpen,
       triggerRef,
       enabled,
-      openOnPress: isCompact,
+      openOnPress: opensOnPress,
       delayDuration,
     }),
-    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
+    [isOpen, setIsOpen, enabled, opensOnPress, delayDuration],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -281,6 +299,12 @@ export function TooltipTrigger({
   triggerRefProp?: string;
 }): ReactElement {
   const ctx = useTooltipContext("TooltipTrigger");
+  const setTriggerRef = useCallback(
+    (node: View | null) => {
+      ctx.triggerRef.current = node;
+    },
+    [ctx.triggerRef],
+  );
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearOpenTimer = useCallback(() => {
@@ -313,6 +337,10 @@ export function TooltipTrigger({
       clearOpenTimer();
     };
   }, [clearOpenTimer]);
+
+  useEffect(() => {
+    if (!ctx.enabled) clearOpenTimer();
+  }, [ctx.enabled, clearOpenTimer]);
 
   const handleHoverIn = useCallback(
     (e?: unknown) => {
@@ -410,7 +438,7 @@ export function TooltipTrigger({
     };
 
     const existingRefProp = Reflect.get(rawProps, triggerRefProp);
-    mergedProps[triggerRefProp] = (node: View) => {
+    mergedProps[triggerRefProp] = (node: TooltipTriggerElement) => {
       if (isCallable(existingRefProp)) {
         existingRefProp(node);
       } else if (existingRefProp && typeof existingRefProp === "object") {
@@ -423,7 +451,7 @@ export function TooltipTrigger({
   }
 
   return (
-    <Pressable {...triggerProps} ref={ctx.triggerRef} collapsable={false}>
+    <Pressable {...triggerProps} ref={setTriggerRef} collapsable={false}>
       {children}
     </Pressable>
   );
@@ -448,7 +476,7 @@ export function TooltipContent({
   const ctx = useTooltipContext("TooltipContent");
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [position, setPosition] = useState<SurfacePosition | null>(null);
 
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {
@@ -458,11 +486,10 @@ export function TooltipContent({
       return () => {};
     }
 
-    const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
     let cancelled = false;
 
     void measureElement(ctx.triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
+      if (!cancelled) setTriggerRect(rect);
       return undefined;
     });
 
@@ -483,7 +510,12 @@ export function TooltipContent({
       align,
       offset,
     });
-    setPosition({ x: result.x, y: result.y });
+    setPosition(
+      holdSurfaceEdge(
+        { x: result.x, y: result.y, actualPlacement: result.actualSide },
+        contentSize.height,
+      ),
+    );
   }, [triggerRect, contentSize, side, align, offset]);
 
   const handleLayout = useCallback(
@@ -494,17 +526,8 @@ export function TooltipContent({
     [],
   );
 
-  const frameStyle = useMemo(
-    () => [
-      {
-        position: "absolute" as const,
-        top: position?.y ?? -9999,
-        left: position?.x ?? -9999,
-        maxWidth,
-      },
-    ],
-    [maxWidth, position?.x, position?.y],
-  );
+  const frame = useMemo(() => surfaceFrameStyles(position), [position]);
+  const frameStyle = useMemo(() => [frame.surface, { maxWidth }], [frame.surface, maxWidth]);
   const contentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
@@ -517,18 +540,21 @@ export function TooltipContent({
   if (isWeb) {
     return createPortal(
       <View pointerEvents="none" style={styles.portalOverlay}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+        <View pointerEvents="box-none" style={frame.holder}>
+          <FloatingSurface
+            pointerEvents="none"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            role="tooltip"
+            testID={testID}
+            onLayout={handleLayout}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </View>
       </View>,
       getOverlayRoot(),
     );
@@ -542,19 +568,22 @@ export function TooltipContent({
       statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={handleDismiss}
     >
-      <Pressable style={styles.overlay} onPress={handleDismiss}>
-        <FloatingSurface
-          pointerEvents="none"
-          entering={FadeIn.duration(80)}
-          exiting={FadeOut.duration(80)}
-          collapsable={false}
-          testID={testID}
-          onLayout={handleLayout}
-          style={contentStyle}
-          frameStyle={frameStyle}
-        >
-          {children}
-        </FloatingSurface>
+      <Pressable testID="tooltip-dismiss" style={styles.overlay} onPress={handleDismiss}>
+        <View pointerEvents="box-none" style={frame.holder}>
+          <FloatingSurface
+            pointerEvents="none"
+            entering={FadeIn.duration(80)}
+            exiting={FadeOut.duration(80)}
+            collapsable={false}
+            role="tooltip"
+            testID={testID}
+            onLayout={handleLayout}
+            style={contentStyle}
+            frameStyle={frameStyle}
+          >
+            {children}
+          </FloatingSurface>
+        </View>
       </Pressable>
     </Modal>
   );

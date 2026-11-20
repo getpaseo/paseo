@@ -13,11 +13,10 @@ export function normalizeWorkspaceOpaqueId(value: string | null | undefined): st
 }
 
 export function normalizeWorkspacePath(value: string | null | undefined): string | null {
-  const trimmed = trimNonEmpty(value);
-  if (!trimmed) {
+  if (typeof value !== "string" || value.trim().length === 0) {
     return null;
   }
-  const withUnixSeparators = trimmed.replace(/\\/g, "/");
+  const withUnixSeparators = value.replace(/\\/g, "/");
   if (withUnixSeparators === "/") {
     return withUnixSeparators;
   }

@@ -4,7 +4,7 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
-import { test, type Page } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
   connectNewWorkspaceDaemonClient,
@@ -49,6 +49,7 @@ interface ImportFlowScenario {
   worktreeDirectory: string;
   unrelatedDirectory: string;
   importSessionId: string;
+  importSessionTimestamp: number;
   repoCleanup(): Promise<void>;
   unrelatedCleanup(): Promise<void>;
 }
@@ -94,7 +95,7 @@ test.beforeAll(async () => {
   };
   const reuseTarget = await openProjectViaDaemon(client, unrelated.path);
   const importSessionId = "fixture-custom-title";
-  await seedClaudeSessions({
+  const importSessionTimestamp = await seedClaudeSessions({
     projectRoot: repo.path,
     worktreeDirectory,
     unrelatedDirectory: unrelated.path,
@@ -108,6 +109,7 @@ test.beforeAll(async () => {
     worktreeDirectory,
     unrelatedDirectory: unrelated.path,
     importSessionId,
+    importSessionTimestamp,
     repoCleanup: repo.cleanup,
     unrelatedCleanup: unrelated.cleanup,
   };
@@ -122,17 +124,29 @@ test.afterAll(async () => {
   await rm(claudeConfigDirectory, { recursive: true, force: true });
 });
 
+test("an open Import Session row keeps its age current", async ({ page }) => {
+  await page.clock.install({ time: scenario.importSessionTimestamp + 60_000 });
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+  await flow.openGlobally();
+
+  const row = page.getByTestId(`import-session-session-claude-${scenario.importSessionId}`);
+  await expect(row).toContainText("1m ago");
+  await page.clock.fastForward("03:00");
+  await expect(row).toContainText("4m ago");
+});
+
 test("captures the compact import-session journey", async ({ page }, testInfo) => {
   const flow = new ImportSessionFlow(page);
   await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
 
-  await test.step("the mobile sidebar exposes import in its footer", async () => {
-    await flow.revealMobileEntryPoint();
-    await capture(page, testInfo, "01-mobile-sidebar-footer.png");
+  await test.step("the new workspace screen offers import at the top", async () => {
+    await flow.revealNewWorkspaceEntryPoint();
+    await capture(page, testInfo, "01-mobile-new-workspace-import.png");
   });
 
   await test.step("the host-wide sheet is newest first and fits its provider filter", async () => {
-    await flow.openGlobally();
+    await flow.openFromNewWorkspace();
     await flow.expectScope("Sessions on", false);
     await flow.expectRows({
       first: [scenario.importSessionId, "fixture-worktree", "fixture-unrelated"],
@@ -168,6 +182,7 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
   await test.step("the selected row imports and opens the hydrated transcript", async () => {
     await flow.importSession(scenario.importSessionId);
     await flow.expectTranscript("Review the invoice migration", "The fixture transcript is ready.");
+    await expect(page.getByRole("button", { name: "Open menu", exact: true })).toBeVisible();
     await capture(page, testInfo, "08-mobile-agent-after-import.png");
   });
 
@@ -214,6 +229,143 @@ test("captures the desktop import sheet and command-center entry", async ({ page
   });
 });
 
+test("large import lists keep mounted rows bounded and remain scrollable", async ({
+  page,
+}, testInfo) => {
+  const fixtureDirectory = path.join(claudeConfigDirectory, "projects", "virtualization-fixture");
+  await mkdir(fixtureDirectory, { recursive: true });
+  try {
+    const newest = Date.now();
+    for (let index = 0; index < 200; index += 1) {
+      const id = `virtualized-${String(index).padStart(3, "0")}`;
+      const file = path.join(fixtureDirectory, `${id}.jsonl`);
+      await writeFile(
+        file,
+        `${JSON.stringify({
+          type: "user",
+          sessionId: id,
+          cwd: index % 2 === 0 ? scenario.projectRoot : scenario.worktreeDirectory,
+          message: {
+            role: "user",
+            content: `Virtualized session ${index}${index % 3 === 0 ? " with a longer preview that wraps onto a second line in a compact sheet" : ""}`,
+          },
+        })}\n`,
+      );
+      const timestamp = new Date(newest - index * 10);
+      await utimes(file, timestamp, timestamp);
+    }
+    for (const width of [1280, 390]) {
+      const flow = new ImportSessionFlow(page);
+      await flow.openWorkspace(scenario.project.workspaceId, { width, height: 844 });
+      await flow.openGlobally();
+      const rows = page.locator('[data-testid^="import-session-session-"]');
+      const scrollToEnd = async (end = true) => {
+        // Scroll the body's real overflow element. Virtual rows need not exist yet.
+        await rows.first().evaluate((row, atEnd) => {
+          let element = row.parentElement;
+          while (element && !["auto", "scroll"].includes(getComputedStyle(element).overflowY)) {
+            element = element.parentElement;
+          }
+          if (!element) throw new Error("Import list has no scroll owner");
+          element.scrollTop = atEnd ? element.scrollHeight : 0;
+          element.dispatchEvent(new Event("scroll"));
+        }, end);
+      };
+      for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+        const loadMore = page.getByTestId("import-session-load-more");
+        await expect(async () => {
+          await scrollToEnd();
+          await expect(loadMore).toBeInViewport({ timeout: 500 });
+        }).toPass({ timeout: 10_000 });
+        await loadMore.click();
+        if (pageIndex < 2) await expect(loadMore).toBeEnabled();
+      }
+      await expect(async () => {
+        await scrollToEnd();
+        await expect(
+          page.getByTestId("import-session-session-claude-virtualized-199"),
+        ).toBeInViewport({ timeout: 500 });
+      }).toPass({ timeout: 10_000 });
+      await expect.poll(() => rows.count()).toBeLessThan(100);
+      await page.screenshot({ path: testInfo.outputPath(`virtualized-${width}.png`) });
+      if (width === 1280) {
+        const row = (index: number) =>
+          page.getByTestId(
+            `import-session-session-claude-virtualized-${String(index).padStart(3, "0")}`,
+          );
+        await expect(async () => {
+          await scrollToEnd(false);
+          await expect(row(0)).toBeInViewport({ timeout: 500 });
+        }).toPass({ timeout: 10_000 });
+        await row(0).focus();
+        for (let index = 1; index <= 30; index += 1) {
+          await page.keyboard.press("Tab");
+          await expect(row(index)).toBeFocused();
+        }
+        for (let index = 29; index >= 15; index -= 1) {
+          await page.keyboard.press("Shift+Tab");
+          await expect(row(index)).toBeFocused();
+        }
+        const list = page.getByTestId("import-session-list");
+        const scrollWithKey = async (event: "scroll" | "scrollend", key: string) => {
+          const listener = await list.evaluateHandle((node, eventName) => {
+            const promise = new Promise<void>((resolve) => {
+              node.addEventListener(eventName, () => resolve(), { once: true });
+            });
+            return { promise };
+          }, event);
+          try {
+            await page.keyboard.press(key);
+            await listener.evaluate((value) => value.promise);
+          } finally {
+            await listener.dispose();
+          }
+        };
+        const beforePageDown = await list.evaluate((node) => node.scrollTop);
+        await scrollWithKey("scroll", "PageDown");
+        await expect
+          .poll(() => list.evaluate((node) => node.scrollTop))
+          .toBeGreaterThan(beforePageDown);
+        await expect(row(15)).toBeFocused();
+        await page.keyboard.press("End");
+        await expect(row(15)).toBeFocused();
+        await expect(row(199)).toBeInViewport();
+        // Home must remain at the first row after the native page scroll ends.
+        await scrollWithKey("scrollend", "Home");
+        await expect(row(0)).toBeInViewport();
+        await expect(row(15)).toBeFocused();
+
+        await page.keyboard.press("End");
+        await expect(row(199)).toBeInViewport();
+        await row(199).focus();
+        await scrollWithKey("scroll", "PageUp");
+        await page.keyboard.press("Home");
+        await expect(row(0)).toBeInViewport();
+        await scrollWithKey("scrollend", "End");
+        await expect(row(199)).toBeInViewport();
+        await expect(row(199)).toBeFocused();
+        await testInfo.attach("keyboard-scroll-owner", {
+          body: JSON.stringify(
+            await list.evaluate((node) => ({
+              focusedRow: document.activeElement?.getAttribute("data-testid"),
+              scrollTop: node.scrollTop,
+              scrollHeight: node.scrollHeight,
+              clientHeight: node.clientHeight,
+            })),
+          ),
+          contentType: "application/json",
+        });
+        await page.screenshot({ path: testInfo.outputPath("virtualized-keyboard-end.png") });
+        await page.keyboard.press("Home");
+        await expect(row(0)).toBeInViewport();
+      }
+      await flow.close();
+    }
+  } finally {
+    await rm(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const outputPath = testInfo.outputPath(name);
   await page.screenshot({ path: outputPath, fullPage: true });
@@ -225,7 +377,7 @@ async function seedClaudeSessions(input: {
   worktreeDirectory: string;
   unrelatedDirectory: string;
   importSessionId: string;
-}): Promise<void> {
+}): Promise<number> {
   const sessions = [
     {
       cwd: input.projectRoot,
@@ -290,4 +442,5 @@ async function seedClaudeSessions(input: {
     const timestamp = new Date(newest - index * 60_000);
     await utimes(sessionPath, timestamp, timestamp);
   }
+  return newest;
 }

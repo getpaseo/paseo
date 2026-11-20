@@ -17,6 +17,14 @@ export function getActiveMessageSubmissions(
   );
 }
 
+export function hasActiveMessageSubmission(
+  submissions: readonly MessageSubmissionRecord[] | null | undefined,
+): boolean {
+  return (submissions ?? EMPTY_MESSAGE_SUBMISSIONS).some(
+    (submission) => !submission.providerAcknowledged,
+  );
+}
+
 export function getSendingClientMessageIds(
   submissions: readonly MessageSubmissionRecord[] | null | undefined,
 ): string[] {

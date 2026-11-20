@@ -587,13 +587,9 @@ export class VoiceSession {
       sttLanguage: this.sttLanguage,
       callbacks: {
         onSpeechStarted: async () => {
+          // Voice STT providers return final transcripts only. Use the detector's
+          // confirmed speech event so interruption does not wait for transcription.
           this.sessionLogger.debug("Voice VAD speech_started");
-        },
-        onPartialTranscript: async ({ segmentId, transcript }) => {
-          this.sessionLogger.info(
-            { segmentId, transcriptLength: transcript.trim().length },
-            "voice_input_state emitting isSpeaking=true",
-          );
           this.emit({
             type: "voice_input_state",
             payload: {
@@ -601,6 +597,12 @@ export class VoiceSession {
             },
           });
           await this.handleVoiceSpeechStart();
+        },
+        onPartialTranscript: async ({ segmentId, transcript }) => {
+          this.sessionLogger.debug(
+            { segmentId, transcriptLength: transcript.trim().length },
+            "Voice partial transcript",
+          );
         },
         onSpeechStopped: async () => {
           this.handleVoiceSpeechStopped();
@@ -1058,7 +1060,9 @@ export class VoiceSession {
         },
         "Voice speak tool call received by session handler",
       );
-      const abortSignal = signal ?? this.abortController.signal;
+      const abortSignal = signal
+        ? AbortSignal.any([signal, this.abortController.signal])
+        : this.abortController.signal;
       await this.ttsManager.generateAndWaitForPlayback(
         text,
         (msg) => this.emit(msg),

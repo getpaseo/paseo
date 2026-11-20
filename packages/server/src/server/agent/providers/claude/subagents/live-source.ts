@@ -1,7 +1,8 @@
+import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
+import { mapTaskStatus } from "./task-status.js";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentMetadata } from "../../../agent-sdk-types.js";
-import type { ProviderSubagentStatus } from "../../../provider-subagents/store.js";
 import { resolveObservedClaudeModelId } from "../models.js";
 import type { SubagentObservation } from "./observation.js";
 import {
@@ -16,7 +17,8 @@ import {
  *
  * Verified on the wire (Claude Code 2.1.220, Paseo's own query options):
  *
- *   task_started       task_id, tool_use_id, description, subagent_type, task_type
+ *   task_started       task_id, tool_use_id, description, subagent_type, task_type,
+ *                      is_backgrounded
  *   task_updated       task_id, patch.status, patch.is_backgrounded
  *   task_notification  task_id, tool_use_id, status
  *
@@ -39,12 +41,17 @@ interface TaskStartedMessage {
   task_type?: string;
   prompt?: string;
   skip_transcript?: boolean;
+  /**
+   * Set at spawn: true for a task registered in the background. A resumed subagent is always
+   * registered in the background.
+   */
+  is_backgrounded?: boolean;
 }
 
 /** Task-tool subagents. Backgrounded shell commands announce as `local_bash`. */
-const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
+export const CLAUDE_SUBAGENT_TASK_TYPE = "local_agent";
 /** Workflow executions use the same announced task lifecycle as Task-tool subagents. */
-const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
+export const CLAUDE_WORKFLOW_TASK_TYPE = "local_workflow";
 
 /**
  * Not every announced task belongs in the subagents track. Verified on the wire:
@@ -71,8 +78,8 @@ interface TaskUpdatedMessage {
   task_id: string;
   /**
    * `is_backgrounded` is declared on `SDKTaskUpdatedMessage["patch"]`: it flips when a foreground
-   * task is backgrounded, which is the only signal that separates a child that dies with its turn
-   * from one that was explicitly told to outlive it.
+   * task is moved to the background after `task_started`. Together with `task_started`'s own
+   * flag it separates a child that dies with its turn from one told to outlive it.
    */
   patch?: { status?: string; is_backgrounded?: boolean };
 }
@@ -115,25 +122,13 @@ function readString(value: unknown): string | undefined {
 }
 
 /**
- * The descriptor has no paused or pending state, and neither is terminal, so both read as
- * running. `killed` is a cancellation, not a failure — the child was stopped, it did not error.
+ * A subagent a reopened session rebuilt from its transcript. Its `taskId` (the transcript's
+ * agentId) is the task id Claude announces again when SendMessage resumes the child.
  */
-function mapTaskStatus(status: string | undefined): ProviderSubagentStatus | undefined {
-  switch (status) {
-    case "pending":
-    case "running":
-    case "paused":
-      return "running";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "killed":
-    case "stopped":
-      return "canceled";
-    default:
-      return undefined;
-  }
+export interface ClaudeRestoredSubagent {
+  taskId: string;
+  id: string;
+  presentation: ClaudeSubagentPresentationFacts;
 }
 
 export interface ClaudeTaskProtocolSourceInput {
@@ -171,12 +166,20 @@ export class ClaudeTaskProtocolSource {
   /** Workflow invocations already own a real Workflow card in the parent timeline. */
   private readonly idsWithExistingParentToolCard = new Set<string>();
   /**
-   * Declared subagents that were moved to the background. They outlive the turn that spawned
-   * them, so a turn ending is not evidence that they stopped.
+   * Declared subagents running in the background, whether spawned there or moved there later.
+   * They outlive the turn that spawned them, so a turn ending is not evidence that they stopped.
    */
   private readonly backgroundedIds = new Set<string>();
   /** Last status emitted per subagent, so a redundant announcement is not re-broadcast. */
   private readonly lastStatusById = new Map<string, ProviderSubagentStatus>();
+  /**
+   * Children a reopened session restored from its transcript, by task id. Claude resumes one under
+   * its old task id with a new tool id, while its frames keep the original Task call as parent.
+   * Without this the resume reads as a new task: a second row, and every frame dropped as
+   * undeclared. Held apart from the declared table so a restored child is left alone until
+   * Claude announces it again.
+   */
+  private readonly restoredByTaskId = new Map<string, ClaudeRestoredSubagent>();
   /** Claude facts stay inside the provider boundary; clients receive one compact subtitle. */
   private readonly presentationById = new Map<string, ClaudeSubagentPresentationFacts>();
   private readonly lastSubtitleById = new Map<string, string>();
@@ -261,6 +264,14 @@ export class ClaudeTaskProtocolSource {
     }
   }
 
+  /** Remember the children a reopened session restored, for Claude to resume by task id. */
+  restore(subagents: Iterable<ClaudeRestoredSubagent>): void {
+    for (const subagent of subagents) {
+      if (this.subagentIdByTaskId.has(subagent.taskId)) continue;
+      this.restoredByTaskId.set(subagent.taskId, subagent);
+    }
+  }
+
   /**
    * Forget the session.
    *
@@ -274,6 +285,7 @@ export class ClaudeTaskProtocolSource {
     this.ownerSubagentIdByToolUseId.clear();
     this.ownerSubagentIdByTaskId.clear();
     this.declaredIds.clear();
+    this.restoredByTaskId.clear();
     this.workflowTaskIds.clear();
     this.lastWorkflowResultByTaskId.clear();
     this.idsWithExistingParentToolCard.clear();
@@ -330,12 +342,28 @@ export class ClaudeTaskProtocolSource {
     if (!id || message.skip_transcript === true || !isProviderSubagentTask(message)) return [];
 
     this.sawTaskStarted = true;
-    const existingId = this.subagentIdByTaskId.get(message.task_id);
+    const existingId =
+      this.subagentIdByTaskId.get(message.task_id) ?? this.adoptRestored(message.task_id);
+    this.recordBackgrounded(existingId ?? id, message.is_backgrounded);
     if (existingId) {
       return this.observeExistingTaskStart(message, id, existingId);
     }
 
     return this.observeNewTaskStart(message, id, parentSubagentId);
+  }
+
+  /** Declare a restored child under the id its transcript gave it, with what it already showed. */
+  private adoptRestored(taskId: string): string | undefined {
+    const restored = this.restoredByTaskId.get(taskId);
+    if (!restored) return undefined;
+    this.restoredByTaskId.delete(taskId);
+    this.subagentIdByTaskId.set(taskId, restored.id);
+    this.canonicalIdByToolUseId.set(restored.id, restored.id);
+    this.declaredIds.add(restored.id);
+    this.presentationById.set(restored.id, restored.presentation);
+    const subtitle = buildClaudeSubagentSubtitle(restored.presentation);
+    if (subtitle) this.lastSubtitleById.set(restored.id, subtitle);
+    return restored.id;
   }
 
   private observeExistingTaskStart(
@@ -414,12 +442,13 @@ export class ClaudeTaskProtocolSource {
 
   private observeTaskUpdated(message: TaskUpdatedMessage): SubagentObservation[] {
     const id = this.subagentIdByTaskId.get(message.task_id);
-    const backgrounded = message.patch?.is_backgrounded;
-    if (id && typeof backgrounded === "boolean") {
-      if (backgrounded) this.backgroundedIds.add(id);
-      else this.backgroundedIds.delete(id);
-    }
+    if (id) this.recordBackgrounded(id, message.patch?.is_backgrounded);
     return this.observeStatus(message.task_id, message.patch?.status);
+  }
+
+  private recordBackgrounded(id: string, backgrounded: boolean | undefined): void {
+    if (backgrounded === true) this.backgroundedIds.add(id);
+    else if (backgrounded === false) this.backgroundedIds.delete(id);
   }
 
   private observeTaskNotification(message: TaskNotificationMessage): SubagentObservation[] {

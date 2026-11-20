@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -68,19 +69,28 @@ it("rejects incompatible installs without persisting them, then accepts the corr
   await expect(service.installDirectory({ path: root })).resolves.toMatchObject({
     status: "running",
   });
-  expect(service.catalog()).toEqual([
-    { id: "example", requirements: { paseo: "^0.8.0" }, clientBundle: expect.any(String) },
+  const catalog = service.catalog();
+  expect(catalog).toEqual([
+    {
+      id: "example",
+      requirements: { paseo: "^0.8.0" },
+      clientBundle: expect.any(String),
+      clientBundleHash: expect.any(String),
+    },
   ]);
+  expect(catalog[0]!.clientBundleHash).toBe(
+    createHash("sha256").update(catalog[0]!.clientBundle).digest("hex"),
+  );
 });
 
 it("marks pre-0.8 plugins failed on startup and recovers after migration and reload", async () => {
   const root = await directory();
   await writePlugin(root);
   const { service } = await host("0.8.0", root);
-  expect(service.listPlugins()).toEqual([
+  expect(await service.listPlugins()).toEqual([
     expect.objectContaining({
       status: "failed",
-      error: expect.stringContaining("https://paseo.sh/docs/plugins/v0.8/migration"),
+      error: expect.stringContaining("https://paseo.sh/docs/plugins/migration"),
     }),
   ]);
   await writePlugin(root, ">=0.8.0");
@@ -97,7 +107,7 @@ it("still requires entry migration when an old plugin adds a compatible requirem
   await writeFile(path.join(root, "index.ts"), "export default () => () => {};");
   const { service } = await host();
   await expect(service.installDirectory({ path: root })).rejects.toThrow(
-    "https://paseo.sh/docs/plugins/v0.8/migration",
+    "https://paseo.sh/docs/plugins/migration",
   );
 });
 
@@ -120,8 +130,12 @@ it("rejects Git install and update before build commands, preserving the running
     [process.execPath, "-e", 'require("node:fs").writeFileSync(process.argv[1], "ran")', marker],
   ]);
   await commit();
-  await expect(service.updateSources("example")).rejects.toThrow("requires Paseo >=0.9.0");
-  expect(service.listPlugins()).toEqual([installed]);
+  const [preview] = await service.previewUpdates({ pluginId: "example" });
+  expect(preview).toMatchObject({ outcome: "update" });
+  await expect(service.applyUpdates([preview!.proposal!])).resolves.toMatchObject([
+    { id: "example", outcome: "error", error: expect.stringContaining("requires Paseo >=0.9.0") },
+  ]);
+  expect(await service.listPlugins()).toEqual([installed]);
   expect(service.catalog()).toHaveLength(1);
   expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
   await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
@@ -129,5 +143,5 @@ it("rejects Git install and update before build commands, preserving the running
     "requires Paseo >=0.9.0",
   );
   await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
-  expect(service.listPlugins()).toEqual([installed]);
+  expect(await service.listPlugins()).toEqual([installed]);
 });

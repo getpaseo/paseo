@@ -6,7 +6,6 @@ import {
   CircleHelp,
   GitPullRequest,
   History,
-  House,
   PanelBottom,
   PanelLeft,
   Plus,
@@ -18,9 +17,15 @@ import {
   SquarePlus,
 } from "lucide-react";
 import type * as React from "react";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { SIDEBAR_W, TITLEBAR_H } from "./geometry";
+import { HostBadge, type RemoteHostId } from "./hosts";
 import { PaseoMark } from "./icons";
 import { FADE_IN, FADE_OUT } from "./motion";
+import { DELEGATED_TASKS, tasksDelegated } from "./orchestration";
+import { useSceneClock } from "./player";
+import { pluginInstalled } from "./plugin-build";
 import type { MockupStateId } from "./states";
 
 const SIDEBAR_STYLE = { width: SIDEBAR_W };
@@ -40,7 +45,7 @@ interface WorkspaceRow {
   title: string;
   avatar: Avatar;
   time: string;
-  host?: string;
+  host?: RemoteHostId;
   pr?: string;
   passed?: boolean;
   running?: boolean;
@@ -64,6 +69,7 @@ const WORKING_ROWS: WorkspaceRow[] = [
     id: "safe-area",
     title: "Fix commit safe area in emulators",
     avatar: PASEO,
+    host: "mac-mini",
     time: "4m",
     running: true,
   },
@@ -81,6 +87,7 @@ const READY_TO_REVIEW_ROWS: WorkspaceRow[] = [
     id: "lineage",
     title: "Paseo homepage",
     avatar: PASEO,
+    host: "devbox",
     pr: "3981",
     passed: true,
     time: "now",
@@ -96,6 +103,16 @@ const READY_TO_REVIEW_ROWS: WorkspaceRow[] = [
   },
 ];
 
+/** The workspaces the orchestrating agent created, one per delegated task. */
+const DELEGATED_ROWS: WorkspaceRow[] = DELEGATED_TASKS.map((task) => ({
+  id: task.id,
+  title: task.title,
+  avatar: PASEO,
+  host: task.host,
+  time: "now",
+  running: true,
+}));
+
 const DONE_ROWS: WorkspaceRow[] = [
   { id: "beta", title: "Release v0.7.0-beta.2", avatar: PASEO, time: "2h" },
   {
@@ -110,7 +127,7 @@ const DONE_ROWS: WorkspaceRow[] = [
     id: "perms",
     title: "Design semantic permission sy…",
     avatar: PASEO,
-    host: "my-server",
+    host: "devbox",
     pr: "3981",
     passed: true,
     time: "7h",
@@ -119,6 +136,7 @@ const DONE_ROWS: WorkspaceRow[] = [
     id: "modules",
     title: "Plan modules and abstractions",
     avatar: PASEO,
+    host: "mac-mini",
     pr: "3884",
     passed: true,
     time: "1d",
@@ -197,15 +215,11 @@ function RowAvatar({ avatar, running }: { avatar: Avatar; running?: boolean }) {
 }
 
 function RowMeta({ row }: { row: WorkspaceRow }) {
+  const { t } = useTranslation();
   if (row.host || row.pr) {
     return (
       <span className="mt-[3px] flex items-center gap-[6px] text-[10.5px] leading-[13px] text-mock-fg-muted">
-        {row.host ? (
-          <span className="flex items-center gap-[4px] text-mock-host-teal">
-            <Server size={12} className="shrink-0" />
-            {row.host}
-          </span>
-        ) : null}
+        {row.host ? <HostBadge host={row.host} /> : null}
         {row.host && row.pr ? <span className="text-mock-fg-xmuted">·</span> : null}
         {row.pr ? (
           <span className="flex items-center gap-[4px]">
@@ -218,7 +232,7 @@ function RowMeta({ row }: { row: WorkspaceRow }) {
             <span className="text-mock-fg-xmuted">·</span>
             <span className="flex items-center gap-[4px] text-mock-success">
               <CircleCheck size={11} className="shrink-0" />
-              passed
+              {t("landing.mockup.app.checksPassedShort")}
             </span>
           </>
         ) : null}
@@ -264,7 +278,19 @@ function GroupHeader({ icon, label }: { icon: React.ReactNode; label: string }) 
 // --- sidebar ----------------------------------------------------------------
 
 export function Sidebar({ state }: { state: MockupStateId }) {
-  const extending = state === "extend";
+  const { t } = useTranslation();
+  // The plugin's item joins the nav when the plugin is installed, and each delegated workspace
+  // joins Working when the orchestrator creates it.
+  const pluginIsInstalled = useSceneClock("extend", pluginInstalled);
+  const delegated = useSceneClock("orchestrate", tasksDelegated);
+  const extending = state === "extend" && pluginIsInstalled;
+  const workingRows = useMemo(
+    () =>
+      state === "orchestrate"
+        ? [...DELEGATED_ROWS.slice(0, delegated), ...WORKING_ROWS]
+        : WORKING_ROWS,
+    [state, delegated],
+  );
 
   return (
     <div className="flex shrink-0 flex-col overflow-hidden bg-mock-sidebar" style={SIDEBAR_STYLE}>
@@ -285,9 +311,9 @@ export function Sidebar({ state }: { state: MockupStateId }) {
         animate={extending ? NAV_EXTENDED_LAYOUT : NAV_DEFAULT_LAYOUT}
         className="overflow-hidden px-[8px] pt-[7px]"
       >
-        <NavItem icon={NEW_WORKSPACE_ICON} label="New workspace" />
-        <NavItem icon={HISTORY_ICON} label="History" />
-        <NavItem icon={SCHEDULES_ICON} label="Schedules" />
+        <NavItem icon={NEW_WORKSPACE_ICON} label={t("landing.mockup.app.newWorkspace")} />
+        <NavItem icon={HISTORY_ICON} label={t("landing.mockup.app.history")} />
+        <NavItem icon={SCHEDULES_ICON} label={t("landing.mockup.app.schedules")} />
         <motion.div initial={false} animate={extending ? FADE_IN : FADE_OUT}>
           <NavItem icon={PLUGIN_ICON} label="Release Radar" active />
         </motion.div>
@@ -296,7 +322,9 @@ export function Sidebar({ state }: { state: MockupStateId }) {
       <div className="mt-[9px] h-px bg-mock-border" />
 
       <div className="min-h-0 flex-1 overflow-hidden px-[8px]">
-        <div className="px-[9px] pt-[8px] text-[11px] text-mock-fg-muted">Pinned</div>
+        <div className="px-[9px] pt-[8px] text-[11px] text-mock-fg-muted">
+          {t("landing.mockup.app.pinned")}
+        </div>
         {PINNED_ROWS.map((row) => (
           <Row key={row.id} row={row} />
         ))}
@@ -309,21 +337,21 @@ export function Sidebar({ state }: { state: MockupStateId }) {
           </span>
         </div>
 
-        <GroupHeader icon={READY_TO_REVIEW_ICON} label="Ready to review" />
+        <GroupHeader icon={READY_TO_REVIEW_ICON} label={t("landing.mockup.app.readyToReview")} />
         {READY_TO_REVIEW_ROWS.map((row) => (
           <Row key={row.id} row={row} indented />
         ))}
 
-        <GroupHeader icon={WORKING_ICON} label="Working" />
+        <GroupHeader icon={WORKING_ICON} label={t("landing.mockup.app.working")} />
         <AnimatePresence initial={false} mode="popLayout">
-          {WORKING_ROWS.map((row) => (
+          {workingRows.map((row) => (
             <motion.div key={row.id} layout initial={FADE_OUT} animate={FADE_IN} exit={FADE_OUT}>
               <Row row={row} indented />
             </motion.div>
           ))}
         </AnimatePresence>
 
-        <GroupHeader icon={DONE_ICON} label="Done" />
+        <GroupHeader icon={DONE_ICON} label={t("landing.mockup.app.done")} />
         {DONE_ROWS.map((row) => (
           <Row key={row.id} row={row} indented />
         ))}
@@ -332,10 +360,10 @@ export function Sidebar({ state }: { state: MockupStateId }) {
       <div className="h-px shrink-0 bg-mock-border" />
       <div className="flex h-[44px] shrink-0 items-center gap-[8px] px-[14px] text-[12.5px] text-mock-fg-muted">
         <SquarePlus size={14} />
-        <span className="text-mock-fg">Add project</span>
+        <span className="text-mock-fg">{t("landing.mockup.app.addProject")}</span>
         <span className="flex-1" />
         <PanelBottom size={14} />
-        <House size={14} />
+        <Server size={14} className={state === "remote" ? "text-mock-fg" : ""} />
         <CircleHelp size={14} />
         <Settings size={14} />
       </div>

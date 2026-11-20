@@ -1,4 +1,4 @@
-import { mkdtemp, open, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -73,7 +73,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -106,7 +106,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -138,7 +138,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -169,7 +169,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -252,6 +252,40 @@ describe("pid-lock ownership", () => {
       const lock = await getPidLockInfo(paseoHome);
       expect(lock?.pid).toBe(process.pid);
       expect(lock?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("starts over an empty lock file left by a supervisor killed before writing it", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-empty-"));
+    const ownerPid = process.pid + 10_000;
+
+    try {
+      await writeFile(join(paseoHome, "paseo.pid"), "");
+
+      await expect(getPidLockInfo(paseoHome)).resolves.toBeNull();
+      await acquirePidLock(paseoHome, null, { ownerPid });
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(ownerPid);
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a lock file whose contents cannot be read as a lock", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-unparseable-"));
+    const pidPath = join(paseoHome, "paseo.pid");
+
+    try {
+      await writeFile(pidPath, JSON.stringify({ pid: "unknown" }));
+
+      await expect(
+        acquirePidLock(paseoHome, null, { ownerPid: process.pid + 10_000 }),
+      ).rejects.toThrow("Cannot read daemon state");
+
+      await expect(readFile(pidPath, "utf-8")).resolves.toBe(JSON.stringify({ pid: "unknown" }));
     } finally {
       await rm(paseoHome, { recursive: true, force: true });
     }

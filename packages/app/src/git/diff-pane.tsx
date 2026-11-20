@@ -1,3 +1,6 @@
+import type { DiffFileHeader } from "@/git/diff-snapshot";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { floatingActionsClearance } from "@/components/ui/floating-action-button";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -8,7 +11,6 @@ import {
   View,
   Text,
   Pressable,
-  FlatList,
   type PressableStateCallbackType,
   type StyleProp,
   type ViewStyle,
@@ -18,6 +20,7 @@ import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
   AlignJustify,
+  ArrowRight,
   ChevronDown,
   Columns2,
   ExternalLink,
@@ -32,16 +35,10 @@ import {
 import { type ParsedDiffFile } from "@/git/use-diff-query";
 import type { ChangesState } from "@/panels/changes/state";
 import { defaultChangesState } from "@/panels/changes/state";
+import { ReviewCommentSheet, ReviewFeedbackAction } from "@/review";
 import { DiffDocument, type WorkingDiffMode } from "@/git/diff-document";
-import { FileHeader } from "@/git/file-header";
-import {
-  buildDiffTree,
-  collectDirPaths,
-  compressSingleChildChains,
-  flattenDiffTree,
-  type DiffTreeRow,
-} from "@/git/diff-tree";
-import { DiffFolderRow } from "@/git/diff-folder-row";
+import { ChangedFilesTree } from "@/git/changed-files-tree";
+import { JUMP_TO_FILE_CLEARANCE, JumpToFile } from "@/git/jump-to-file";
 import {
   selectPrHintFromStatus,
   type PrHint,
@@ -66,6 +63,7 @@ import { GitActionsSplitButton } from "@/git/actions-split-button";
 import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
+import { WorkspaceBaseBranchPicker } from "@/git/workspace-base-branch-picker";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
@@ -81,6 +79,7 @@ import {
   paneContentToolbarIconSize,
   paneContentToolbarIconButtonStyle,
   paneContentToolbarTrailingPadding,
+  type ToolbarTrailingControl,
   ToolbarButton,
   ToolbarControls,
 } from "@/components/ui/pane-content-toolbar";
@@ -137,7 +136,7 @@ function useDiscardChangesAction({
 }: {
   serverId: string;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
 }): ((path: string, oldPath?: string) => void) | undefined {
   const { t } = useTranslation();
   const toast = useToast();
@@ -205,6 +204,7 @@ const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedAlignJustify = withUnistyles(AlignJustify);
+const ThemedArrowRight = withUnistyles(ArrowRight);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
@@ -285,11 +285,12 @@ export function DiffLayoutToggle({
 }
 
 interface DiffModeMenuProps {
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   committedDescription?: string;
   testIDPrefix?: string;
   onSelectUncommitted: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
 }
 
 export function DiffModeMenu({
@@ -298,10 +299,12 @@ export function DiffModeMenu({
   testIDPrefix = "changes-diff",
   onSelectUncommitted,
   onSelectBase,
+  onSelectAll,
 }: DiffModeMenuProps) {
   const { t } = useTranslation();
   const uncommittedLabel = t("workspace.git.diff.uncommitted");
   const committedLabel = t("workspace.git.diff.committed");
+  const allLabel = t("workspace.git.diff.all");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -315,7 +318,7 @@ export function DiffModeMenu({
           return (
             <>
               <Text style={toolbarLabelTriggerTextStyle(highlighted)} numberOfLines={1}>
-                {diffMode === "uncommitted" ? uncommittedLabel : committedLabel}
+                {{ all: allLabel, uncommitted: uncommittedLabel, base: committedLabel }[diffMode]}
               </Text>
               <ToolbarLabelTriggerIcon>
                 <ThemedChevronDown size={12} uniProps={extraMutedIconColorMapping} />
@@ -325,6 +328,14 @@ export function DiffModeMenu({
         }}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" width={260} testID={`${testIDPrefix}-status-menu`}>
+        <DropdownMenuItem
+          testID={`${testIDPrefix}-mode-all`}
+          selected={diffMode === "all"}
+          onSelect={onSelectAll}
+        >
+          {allLabel}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           testID={`${testIDPrefix}-mode-uncommitted`}
           selected={diffMode === "uncommitted"}
@@ -463,6 +474,8 @@ interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | 
 }
 
 interface ChangesRepositoryToolbarModel {
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
@@ -473,10 +486,11 @@ interface ChangesRepositoryToolbarModel {
 
 interface ChangesComparisonToolbarModel {
   committedDescription?: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   mode: ChangesToolbarMode;
   selectedDiffStat: { additions: number; deletions: number } | null;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
 }
 
@@ -488,15 +502,18 @@ interface ChangesHeaderProps {
 }
 
 interface BuildChangesHeaderModelInput {
+  baseRef: string | null;
+  isWorktree: boolean;
   branchName: string | null;
   committedDescription?: string;
   compact: boolean;
   cwd: string;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   gitActions: GitActions;
   mode: ChangesToolbarMode;
   onOpenPullRequest: () => void;
   onSelectBase: () => void;
+  onSelectAll: () => void;
   onSelectUncommitted: () => void;
   pullRequest: PrHint | null;
   selectedDiffStat: { additions: number; deletions: number } | null;
@@ -510,6 +527,8 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
 } {
   return {
     repository: {
+      baseRef: input.baseRef,
+      isWorktree: input.isWorktree,
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
@@ -525,6 +544,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       mode: input.mode,
       selectedDiffStat: input.selectedDiffStat,
       onSelectBase: input.onSelectBase,
+      onSelectAll: input.onSelectAll,
       onSelectUncommitted: input.onSelectUncommitted,
     },
   };
@@ -568,7 +588,12 @@ function ChangesDiffOnlyToolbar({
   sidebarSurface: boolean;
 }) {
   return (
-    <ChangesToolbarRow compact={compact} sidebarSurface={sidebarSurface} testID="changes-header">
+    <ChangesToolbarRow
+      compact={compact}
+      sidebarSurface={sidebarSurface}
+      testID="changes-header"
+      trailing="glyph"
+    >
       <ChangesToolbarLeading />
       <ChangesToolbarTrailing>
         <ChangesToolbarActions mode={mode} compact={compact} />
@@ -582,19 +607,22 @@ function ChangesToolbarRow({
   compact,
   sidebarSurface,
   testID,
+  trailing,
 }: {
   children: ReactNode;
   compact: boolean;
   sidebarSurface: boolean;
   testID: string;
+  /** What the row's last control paints, so it can pad to the shared trailing rail. */
+  trailing: ToolbarTrailingControl;
 }) {
   const toolbarStyle = useMemo(
     () => [
       styles.changesToolbar,
-      { paddingRight: paneContentToolbarTrailingPadding(compact) },
+      { paddingRight: paneContentToolbarTrailingPadding(compact, trailing) },
       sidebarSurface ? styles.changesToolbarSidebar : null,
     ],
-    [compact, sidebarSurface],
+    [compact, sidebarSurface, trailing],
   );
   return (
     <PaneContentToolbar style={toolbarStyle} testID={testID}>
@@ -611,6 +639,10 @@ function ChangesToolbarTrailing({ children }: { children: ReactNode }) {
   return <ToolbarControls style={styles.changesToolbarControls}>{children}</ToolbarControls>;
 }
 
+function isManagedWorktree(status: { isPaseoOwnedWorktree?: boolean } | null | undefined): boolean {
+  return status?.isPaseoOwnedWorktree === true;
+}
+
 function ChangesRepositoryToolbar({
   compact,
   model,
@@ -625,6 +657,7 @@ function ChangesRepositoryToolbar({
       compact={compact}
       sidebarSurface={sidebarSurface}
       testID="changes-repository-header"
+      trailing={model.gitActions ? "framed" : "glyph"}
     >
       <ChangesToolbarLeading>
         <BranchSwitcher
@@ -635,6 +668,17 @@ function ChangesRepositoryToolbar({
           isGitCheckout
           testID="changes-branch-switcher"
         />
+        {model.baseRef && model.isWorktree ? (
+          <>
+            <ThemedArrowRight size={14} uniProps={extraMutedIconColorMapping} />
+            <WorkspaceBaseBranchPicker
+              serverId={model.serverId}
+              workspaceId={model.workspaceId}
+              cwd={model.cwd}
+              baseRef={model.baseRef}
+            />
+          </>
+        ) : null}
       </ChangesToolbarLeading>
       <ChangesToolbarTrailing>
         {model.pullRequest ? (
@@ -720,13 +764,19 @@ function ChangesComparisonToolbar({
   sidebarSurface: boolean;
 }) {
   return (
-    <ChangesToolbarRow compact={compact} sidebarSurface={sidebarSurface} testID="changes-header">
+    <ChangesToolbarRow
+      compact={compact}
+      sidebarSurface={sidebarSurface}
+      testID="changes-header"
+      trailing="glyph"
+    >
       <ChangesToolbarLeading>
         <DiffModeMenu
           diffMode={model.diffMode}
           committedDescription={model.committedDescription}
           onSelectUncommitted={model.onSelectUncommitted}
           onSelectBase={model.onSelectBase}
+          onSelectAll={model.onSelectAll}
         />
         {model.selectedDiffStat ? (
           <DiffStat
@@ -1045,6 +1095,7 @@ interface DiffBodyContentProps {
   emptyMessage: string;
   emptyAction: ChangesEmptyAction | null;
   children: ReactElement;
+  loadingLabel: string;
   checkingRepositoryLabel: string;
   notRepositoryLabel: string;
 }
@@ -1061,11 +1112,16 @@ function DiffBodyContent({
   emptyAction,
   children,
   checkingRepositoryLabel,
+  loadingLabel,
   notRepositoryLabel,
 }: DiffBodyContentProps) {
   if (isStatusLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View
+        style={styles.loadingContainer}
+        accessibilityRole="progressbar"
+        accessibilityLabel={loadingLabel}
+      >
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
         <Text style={styles.loadingText}>{checkingRepositoryLabel}</Text>
       </View>
@@ -1087,12 +1143,16 @@ function DiffBodyContent({
   }
   if (isDiffLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View
+        style={styles.loadingContainer}
+        accessibilityRole="progressbar"
+        accessibilityLabel={loadingLabel}
+      >
         <ThemedLoadingSpinner size="large" uniProps={foregroundMutedIconColorMapping} />
       </View>
     );
   }
-  if (diffTooLarge) {
+  if (diffTooLarge && !hasChanges) {
     return <DiffTooLargeState />;
   }
   if (diffErrorMessage) {
@@ -1109,7 +1169,7 @@ function DiffBodyContent({
         {emptyAction ? (
           <Button
             variant="ghost"
-            size="xs"
+            size="sm"
             testID="changes-empty-switch-mode"
             onPress={emptyAction.onPress}
           >
@@ -1145,7 +1205,7 @@ interface ChangesEmptyAction {
 
 function computeChangesEmptyAction(input: {
   hideWhitespace: boolean;
-  diffMode: "uncommitted" | "base";
+  diffMode: "uncommitted" | "base" | "all";
   status: CheckoutStatusPayload | null;
   seeUncommittedLabel: string;
   seeCommittedLabel: string;
@@ -1239,134 +1299,23 @@ function buildToggleButtonStyle(
   return (state) => [baseStyles, paneContentToolbarIconButtonStyle(state, selected, isMobile)];
 }
 
-function ChangedFilesTree({
-  files,
-  mode,
-  onSelectFile,
-  collapsedFolderPaths,
-  onCollapsedFolderPathsChange,
-}: {
-  files: ParsedDiffFile[];
-  mode: WorkingDiffMode;
-  onSelectFile: (path: string) => void;
-  collapsedFolderPaths: string[];
-  onCollapsedFolderPathsChange: (paths: string[]) => void;
-}) {
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const compressedTree = useMemo(() => compressSingleChildChains(buildDiffTree(files)), [files]);
-  const allFolderPaths = useMemo(() => collectDirPaths(compressedTree), [compressedTree]);
-  const collapsedFolders = useMemo(() => new Set(collapsedFolderPaths), [collapsedFolderPaths]);
-  const items = useMemo(
-    () => flattenDiffTree(compressedTree, collapsedFolders),
-    [collapsedFolders, compressedTree],
-  );
-  const handleSelectPath = useCallback((path: string) => setSelectedPath(path), []);
-  const handleSelectFile = useCallback(
-    (path: string) => {
-      setSelectedPath(path);
-      onSelectFile(path);
-    },
-    [onSelectFile],
-  );
-  const handleToggleFolder = useCallback(
-    (dirPath: string) => {
-      const next = collapsedFolders.has(dirPath)
-        ? Array.from(collapsedFolders).filter((path) => path !== dirPath)
-        : [...collapsedFolders, dirPath];
-      onCollapsedFolderPathsChange(next);
-    },
-    [collapsedFolders, onCollapsedFolderPathsChange],
-  );
-  const handleCollapseFolder = useCallback(
-    (dirPath: string) => {
-      const prefix = `${dirPath}/`;
-      onCollapsedFolderPathsChange([
-        ...new Set([
-          ...collapsedFolders,
-          ...allFolderPaths.filter(
-            (folderPath) => folderPath === dirPath || folderPath.startsWith(prefix),
-          ),
-        ]),
-      ]);
-    },
-    [allFolderPaths, collapsedFolders, onCollapsedFolderPathsChange],
-  );
-  const renderItem = useCallback(
-    ({ item }: { item: DiffTreeRow }) => {
-      if (item.kind === "folder") {
-        return (
-          <DiffFolderRow
-            dirPath={item.dirPath}
-            displayName={item.displayName}
-            depth={item.depth}
-            collapsed={collapsedFolders.has(item.dirPath)}
-            isSelected={selectedPath === item.dirPath}
-            additions={item.additions}
-            deletions={item.deletions}
-            onToggle={handleToggleFolder}
-            onCollapse={handleCollapseFolder}
-            onSelect={handleSelectPath}
-            onCopyPath={mode.onCopyPath}
-            onCopyRelativePath={mode.onCopyRelativePath}
-            onReveal={mode.onReveal}
-            revealTargetName={mode.revealTargetName}
-            onDuplicate={mode.onDuplicate}
-            onRevert={mode.onRevert}
-            testID={`diff-folder-${item.dirPath}`}
-          />
-        );
-      }
-      return (
-        <FileHeader
-          file={item.file}
-          workspaceFileDragScope={mode.workspaceFileDragScope}
-          bodyVisible={false}
-          showsBodyState={false}
-          isSelected={selectedPath === item.file.path}
-          depth={item.depth}
-          showDir={false}
-          onActivate={handleSelectFile}
-          onSelect={handleSelectPath}
-          onOpenFile={mode.onOpenFile}
-          onOpenToSide={mode.onOpenToSide}
-          onAddToChat={mode.onAddToChat}
-          onCopyPath={mode.onCopyPath}
-          onCopyRelativePath={mode.onCopyRelativePath}
-          onReveal={mode.onReveal}
-          revealTargetName={mode.revealTargetName}
-          onDownload={mode.onDownload}
-          onDuplicate={mode.onDuplicate}
-          onRevert={mode.onRevert}
-          testID={`diff-tree-file-${item.fileIndex}`}
-        />
-      );
-    },
-    [
-      handleCollapseFolder,
-      handleSelectFile,
-      handleSelectPath,
-      handleToggleFolder,
-      collapsedFolders,
-      mode,
-      selectedPath,
-    ],
-  );
-  const keyExtractor = useCallback(
-    (item: DiffTreeRow) =>
-      item.kind === "folder" ? `folder-${item.dirPath}` : `file-${item.file.path}`,
-    [],
-  );
+interface JumpToFileVisibility {
+  isCompact: boolean;
+  presentation: ChangesPresentation;
+  hasChanges: boolean;
+  isDiffLoading: boolean;
+}
 
-  return (
-    <FlatList
-      data={items}
-      renderItem={renderItem}
-      keyExtractor={keyExtractor}
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      testID="changes-file-tree"
-    />
-  );
+/**
+ * The room the floating Jump to file action needs over the diff, and zero where
+ * it is not offered. Compact users never see the tree rail, so the diff is their
+ * only view of what changed; the tree and diff presentations are already halves
+ * of a desktop split.
+ */
+function jumpToFileClearance(visibility: JumpToFileVisibility): number {
+  if (!visibility.isCompact || visibility.presentation !== "combined") return 0;
+  if (!visibility.hasChanges || visibility.isDiffLoading) return 0;
+  return JUMP_TO_FILE_CLEARANCE;
 }
 
 function ChangesTreeRail({
@@ -1382,7 +1331,7 @@ function ChangesTreeRail({
 }: {
   shown: boolean;
   children: ReactElement;
-  files: ParsedDiffFile[];
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1422,7 +1371,7 @@ function ChangesBody({
   children: ReactElement;
   desktopTreeVisible: boolean;
   isMobile: boolean;
-  files: ParsedDiffFile[];
+  files: DiffFileHeader[];
   mode: WorkingDiffMode;
   onSelectFile: (path: string) => void;
   treeWidth?: number;
@@ -1528,10 +1477,9 @@ function useDiffTabNavigation({
     openWorkspacePullRequest({
       isCompact: isMobile,
       workspaceKey: persistenceKey,
-      checkout: { serverId, cwd, isGit: true },
       destination: pullRequestOpenLocation,
     });
-  }, [cwd, isMobile, persistenceKey, pullRequestOpenLocation, serverId]);
+  }, [isMobile, persistenceKey, pullRequestOpenLocation]);
   return {
     openDiff,
     openCommit,
@@ -1646,13 +1594,17 @@ export function ChangesSurface({
     diffMode,
     selectUncommitted: handleSelectUncommitted,
     selectBase: handleSelectBase,
+    selectAll: handleSelectAll,
     files,
+    treeFiles,
     diffPayloadError,
     diffTooLarge,
     isDiffLoading,
     reviewActions,
     reviewAttachment,
+    reviewFeedback,
   } = useWorkingDiff({
+    presentation,
     serverId,
     workspaceId: workspaceId ?? undefined,
     cwd,
@@ -1833,7 +1785,15 @@ export function ChangesSurface({
     ],
   );
 
+  const { bottom: bottomInset } = useSafeAreaInsets();
   const hasChanges = files.length > 0;
+  const jumpToFileInset = jumpToFileClearance({
+    isCompact: isMobile,
+    presentation,
+    hasChanges,
+    isDiffLoading,
+  });
+  const showJumpToFile = jumpToFileInset > 0;
   const selectedDiffStat = useMemo(
     () => computeSelectedDiffStat(files, isDiffLoading),
     [files, isDiffLoading],
@@ -1875,33 +1835,49 @@ export function ChangesSurface({
   });
 
   const diffContent: ReactElement = (
-    <DiffBodyContent
-      isStatusLoading={isStatusLoading}
-      statusErrorMessage={statusErrorMessage}
-      notGit={notGit}
-      isDiffLoading={isDiffLoading}
-      diffErrorMessage={diffErrorMessage}
-      diffTooLarge={diffTooLarge}
-      hasChanges={hasChanges}
-      emptyMessage={emptyMessage}
-      emptyAction={emptyAction}
-      checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
-      notRepositoryLabel={t("workspace.git.diff.notRepository")}
-    >
-      <DiffDocument
-        files={files}
-        collapseState={collapseState}
-        displayPreferences={sharedDisplayPreferences}
-        mode={workingMode}
+    <View style={styles.diffContainer}>
+      <DiffBodyContent
+        isStatusLoading={isStatusLoading}
+        statusErrorMessage={statusErrorMessage}
+        notGit={notGit}
+        isDiffLoading={isDiffLoading}
+        diffErrorMessage={diffErrorMessage}
+        diffTooLarge={diffTooLarge}
+        hasChanges={hasChanges}
+        emptyMessage={emptyMessage}
+        emptyAction={emptyAction}
+        loadingLabel={t("common.loading")}
+        checkingRepositoryLabel={t("workspace.git.diff.checkingRepository")}
+        notRepositoryLabel={t("workspace.git.diff.notRepository")}
+      >
+        <DiffDocument
+          files={files}
+          contentInsetBottom={floatingActionsClearance(
+            [jumpToFileInset, reviewFeedback.clearance],
+            bottomInset,
+          )}
+          collapseState={collapseState}
+          displayPreferences={sharedDisplayPreferences}
+          mode={workingMode}
+        />
+      </DiffBodyContent>
+      <ReviewFeedbackAction
+        bottomOffset={jumpToFileInset}
+        enabled={enabled}
+        hasDiff={presentation !== "tree"}
+        model={reviewFeedback.model}
+        state={reviewFeedback.state}
+        serverId={serverId}
+        workspaceId={workspaceId}
       />
-    </DiffBodyContent>
+    </View>
   );
   const bodyContent = (
     <ChangesBody
       presentation={presentation}
       desktopTreeVisible={desktopTreeVisible}
       isMobile={isMobile}
-      files={files}
+      files={treeFiles}
       mode={workingMode}
       onSelectFile={handleSelectTreeFile}
       treeWidth={instanceState.treeWidth}
@@ -1965,6 +1941,8 @@ export function ChangesSurface({
   const changesHeaderModel = useMemo(
     () =>
       buildChangesHeaderModel({
+        baseRef: baseRef ?? null,
+        isWorktree: isManagedWorktree(status),
         branchName: currentBranchName,
         committedDescription: committedDiffDescription,
         compact: isMobile,
@@ -1974,6 +1952,7 @@ export function ChangesSurface({
         mode: toolbarMode,
         onOpenPullRequest: handleOpenPullRequest,
         onSelectBase: handleSelectBase,
+        onSelectAll: handleSelectAll,
         onSelectUncommitted: handleSelectUncommitted,
         pullRequest: selectPrHintFromStatus(pullRequestStatus, forge),
         selectedDiffStat,
@@ -1981,6 +1960,8 @@ export function ChangesSurface({
         workspaceId,
       }),
     [
+      baseRef,
+      status,
       committedDiffDescription,
       currentBranchName,
       cwd,
@@ -1988,6 +1969,7 @@ export function ChangesSurface({
       gitActions,
       handleOpenPullRequest,
       handleSelectBase,
+      handleSelectAll,
       handleSelectUncommitted,
       isMobile,
       forge,
@@ -2023,7 +2005,19 @@ export function ChangesSurface({
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
-      <View style={styles.diffContainer}>{bodyContent}</View>
+      <View style={styles.diffContainer}>
+        {bodyContent}
+        {showJumpToFile ? (
+          <JumpToFile files={files} mode={workingMode} onSelectFile={handleSelectTreeFile} />
+        ) : null}
+      </View>
+
+      <ReviewCommentSheet
+        enabled={enabled}
+        editor={reviewActions.sheetEditor}
+        reviewActions={reviewActions}
+        onChangeBody={reviewActions.onChangeEditorBody}
+      />
 
       <ChangesCommits
         presentation={presentation}
@@ -2092,16 +2086,10 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
     position: "relative",
   },
-  scrollView: {
-    flex: 1,
-  },
   scrollContainer: {
     flex: 1,
     minHeight: 0,
     position: "relative",
-  },
-  contentContainer: {
-    paddingBottom: theme.spacing[8],
   },
   loadingContainer: {
     flex: 1,

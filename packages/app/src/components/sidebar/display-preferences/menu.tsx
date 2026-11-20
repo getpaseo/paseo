@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { View, type PressableStateCallbackType } from "react-native";
+import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Captions,
@@ -35,7 +35,7 @@ import {
   MenuTrigger,
   type MenuPageDefinition,
 } from "@/components/ui/menu";
-import { HostStatusDot } from "@/components/host-status-dot";
+import { HostMenuItem } from "@/components/hosts/host-menu-item";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
@@ -58,6 +58,8 @@ import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
+import { PluginIconView } from "@/plugins/icons";
+import type { PluginWorkspaceRowBadgeItemGroup } from "@/plugins/workspace-row-badge-items";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -65,6 +67,7 @@ const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircle = withUnistyles(Circle);
+const ThemedPluginIconView = withUnistyles(PluginIconView);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
@@ -167,7 +170,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const hosts = useHosts();
   // `allProjects`, never `projects`: the model's `projects` is already filtered, so a picker fed
   // from it would lose the row that undoes the filter as soon as the filter narrowed to one.
-  const { allProjects, resolvedProjectFilters } = useSidebarModel();
+  const { allProjects, resolvedProjectFilters, workspaceSortSupported } = useSidebarModel();
   const { labels } = useWorkspaceLabelProjection();
   const [managerOpen, setManagerOpen] = useState(false);
   const openManager = useCallback(() => setManagerOpen(true), []);
@@ -240,6 +243,16 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
       },
     ];
 
+    if (preferences.grouping === "project") {
+      definitions.push({
+        id: "sort",
+        title: t("sidebar.display.sort.label"),
+        content: (
+          <SortPage preferences={preferences} automaticSortSupported={workspaceSortSupported} />
+        ),
+      });
+    }
+
     if (showHostFilter) {
       definitions.push({
         id: "hostFilter",
@@ -273,6 +286,7 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   }, [
     t,
     preferences,
+    workspaceSortSupported,
     hosts,
     showHostFilter,
     showProjectFilter,
@@ -308,6 +322,18 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           >
             {t("sidebar.display.grouping.label")}
           </MenuSubTrigger>
+          {preferences.grouping === "project" ? (
+            <MenuSubTrigger
+              id="sort"
+              value={
+                workspaceSortSupported || preferences.workspaceSort === "manual"
+                  ? t(`sidebar.display.sort.${preferences.workspaceSort}`)
+                  : undefined
+              }
+            >
+              {t("sidebar.display.sort.label")}
+            </MenuSubTrigger>
+          ) : null}
           <MenuSubTrigger
             id="titleSource"
             value={t(TITLE_SOURCE_LABEL_KEYS[preferences.titleSource])}
@@ -359,9 +385,53 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
               </MenuSubTrigger>
             </>
           ) : null}
+          <MenuSeparator />
+          <MenuItem
+            selected={preferences.showBackground}
+            closeOnSelect={false}
+            onSelect={preferences.toggleBackground}
+          >
+            {t("sidebar.display.showBackground")}
+          </MenuItem>
         </MenuSurface>
       </MenuRoot>
       <WorkspaceLabelManagerModal visible={managerOpen} onClose={closeManager} />
+    </>
+  );
+}
+
+function SortPage({
+  preferences,
+  automaticSortSupported,
+}: {
+  preferences: Preferences;
+  automaticSortSupported: boolean;
+}): ReactElement {
+  const { t } = useTranslation();
+  const { setWorkspaceSort } = preferences;
+  const selectManual = useCallback(() => setWorkspaceSort("manual"), [setWorkspaceSort]);
+  const selectCreated = useCallback(() => setWorkspaceSort("created"), [setWorkspaceSort]);
+  const selectLastPrompt = useCallback(() => setWorkspaceSort("lastPrompt"), [setWorkspaceSort]);
+  return (
+    <>
+      <MenuItem selected={preferences.workspaceSort === "manual"} onSelect={selectManual}>
+        {t("sidebar.display.sort.manual")}
+      </MenuItem>
+      {automaticSortSupported ? (
+        <>
+          <MenuItem selected={preferences.workspaceSort === "created"} onSelect={selectCreated}>
+            {t("sidebar.display.sort.created")}
+          </MenuItem>
+          <MenuItem
+            selected={preferences.workspaceSort === "lastPrompt"}
+            onSelect={selectLastPrompt}
+          >
+            {t("sidebar.display.sort.lastPrompt")}
+          </MenuItem>
+        </>
+      ) : (
+        <MenuItem disabled>{t("sidebar.display.sort.updateHost")}</MenuItem>
+      )}
     </>
   );
 }
@@ -540,9 +610,9 @@ function OptionList<Value extends string>({
 }
 
 /**
- * Two groups, split by the separator. Above it, what a row may say about a workspace — each one
- * independent. Below it, the one thing the slot to the right of the title holds, so picking the
- * one already showing empties the slot and gives the width back to the title.
+ * Three groups: Paseo's own row items, plugin badge items, then the one thing the slot to the
+ * right of the title holds. Picking the trailing choice already showing empties the slot and
+ * gives the width back to the title.
  *
  * CI is the one item above the separator with three answers rather than two, so it opens a page
  * instead of ticking, and it goes last: a row that navigates does not belong in the middle of a
@@ -565,6 +635,12 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
         />
       ))}
       <ChecksSubTrigger />
+      {preferences.pluginRowBadgeItems.length > 0 ? (
+        <MenuSeparator testID="sidebar-plugin-row-badge-items-separator" />
+      ) : null}
+      {preferences.pluginRowBadgeItems.map((item) => (
+        <PluginRowBadgeItemOption key={item.key} item={item} preferences={preferences} />
+      ))}
       <MenuSeparator />
       {TRAILING_CHOICES.map((choice) => (
         <OptionItem
@@ -579,6 +655,37 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
         />
       ))}
     </>
+  );
+}
+
+/** A plugin's workspace row badge item, toggled like the row's own. */
+function PluginRowBadgeItemOption({
+  item,
+  preferences,
+}: {
+  item: PluginWorkspaceRowBadgeItemGroup;
+  preferences: Preferences;
+}): ReactElement {
+  const handleSelect = useCallback(
+    () => preferences.togglePluginRowBadgeItem(item.key),
+    [item.key, preferences],
+  );
+  const leading = useMemo(
+    () => (
+      <ThemedPluginIconView icon={item.icon} size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />
+    ),
+    [item.icon],
+  );
+  return (
+    <MenuItem
+      selected={preferences.isPluginRowBadgeItemVisible(item.key)}
+      leading={leading}
+      closeOnSelect={false}
+      onSelect={handleSelect}
+      testID={`sidebar-row-badge-item-plugin-${item.pluginId}-${item.itemId}`}
+    >
+      {item.title}
+    </MenuItem>
   );
 }
 
@@ -706,50 +813,18 @@ function HostFilterPage({
         {t("sidebar.display.hostFilter.all")}
       </MenuItem>
       {hosts.map((host) => (
-        <HostFilterItem
+        <HostMenuItem
           key={host.serverId}
           serverId={host.serverId}
           label={host.label?.trim() || host.serverId}
           selected={preferences.hostFilters.includes(host.serverId)}
-          onToggle={preferences.toggleHostFilter}
+          onSelect={preferences.toggleHostFilter}
+          closeOnSelect={false}
+          testID={`sidebar-host-filter-${host.serverId}`}
+          statusTestID={`sidebar-host-filter-status-${host.serverId}`}
         />
       ))}
     </>
-  );
-}
-
-/** The one option row whose mark is live state rather than an icon. */
-function HostFilterItem({
-  serverId,
-  label,
-  selected,
-  onToggle,
-}: {
-  serverId: string;
-  label: string;
-  selected: boolean;
-  onToggle: (serverId: string) => void;
-}): ReactElement {
-  const handleSelect = useCallback(() => onToggle(serverId), [onToggle, serverId]);
-  const leading = useMemo(
-    () => (
-      <View testID={`sidebar-host-filter-status-${serverId}`}>
-        <HostStatusDot serverId={serverId} />
-      </View>
-    ),
-    [serverId],
-  );
-
-  return (
-    <MenuItem
-      selected={selected}
-      closeOnSelect={false}
-      leading={leading}
-      onSelect={handleSelect}
-      testID={`sidebar-host-filter-${serverId}`}
-    >
-      {label}
-    </MenuItem>
   );
 }
 

@@ -19,6 +19,68 @@ import {
   type TimelineCursor,
 } from "./session-stream-reducers";
 
+it("keeps streamed reasoning together while the initial history is loading", () => {
+  let head: StreamItem[] = [];
+  const chunks = ["Checking a long oper", "ation before", " the re", "sult arrives."];
+  for (const [index, text] of chunks.entries()) {
+    const result = processAgentStreamEvent({
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-18",
+        item: { type: "reasoning", text },
+      },
+      seq: index + 1,
+      epoch: "epoch-1",
+      currentTail: [],
+      currentHead: head,
+      currentCursor: undefined,
+      timestamp: new Date(1000 + index),
+      hasAuthoritativeBaseline: false,
+    });
+    head = result.head;
+    expect(head).toHaveLength(1);
+    expect(head[0]).toMatchObject({
+      kind: "thought",
+      text: chunks.slice(0, index + 1).join(""),
+      turnId: "turn-18",
+    });
+  }
+});
+
+it.each([false, true])(
+  "keeps adjacent reasoning from different turns separate (history loaded: %s)",
+  (hasAuthoritativeBaseline) => {
+    let head: StreamItem[] = [];
+    let tail: StreamItem[] = [];
+    let cursor: TimelineCursor | undefined;
+    for (const [index, turnId] of ["turn-1", "turn-2"].entries()) {
+      const result = processAgentStreamEvent({
+        event: {
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: { type: "reasoning", text: turnId },
+        },
+        seq: index + 1,
+        epoch: "epoch-1",
+        currentTail: tail,
+        currentHead: head,
+        currentCursor: cursor,
+        timestamp: new Date(1000),
+        hasAuthoritativeBaseline,
+      });
+      head = result.head;
+      tail = result.tail;
+      cursor = result.cursor ?? cursor;
+    }
+    expect([...tail, ...head]).toMatchObject([
+      { kind: "thought", text: "turn-1", turnId: "turn-1" },
+      { kind: "thought", text: "turn-2", turnId: "turn-2" },
+    ]);
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -1901,14 +1963,14 @@ describe("processTimelineResponse", () => {
     expect(assistants[0]).toMatchObject({ text: "Hello", messageId: "answer-1" });
   });
 
-  it("replaces every promoted assistant block when reconciling a projected message", () => {
+  it("replaces the whole live assistant message when reconciling projected history", () => {
     const live = processAgentStreamEvents({
       events: [makeStreamReducerEvent(makeAssistantTimelineEvent("First paragraph.\n\nSec"), 2)],
       currentTail: [],
       currentHead: [],
       currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 1 },
     });
-    expect(getAssistantTexts(live.tail)).toHaveLength(1);
+    expect(getAssistantTexts(live.tail)).toHaveLength(0);
     expect(getAssistantTexts(live.head)).toHaveLength(1);
 
     const result = processTimelineResponse({
@@ -2173,7 +2235,7 @@ describe("processTimelineResponse", () => {
       [...result.tail, ...result.head]
         .filter((item) => item.kind === "assistant_message" || item.kind === "user_message")
         .map((item) => item.text),
-    ).toEqual(["New prompt", "First paragraph.", "Second paragraph", "Missed answer"]);
+    ).toEqual(["New prompt", "First paragraph.\n\nSecond paragraph", "Missed answer"]);
   });
 
   it("does not move a prompt or its live answer around catch-up tool history", () => {
@@ -2211,7 +2273,6 @@ describe("processTimelineResponse", () => {
 
     expect([...result.tail, ...result.head].map((item) => item.kind)).toEqual([
       "user_message",
-      "assistant_message",
       "assistant_message",
       "tool_call",
     ]);
@@ -2777,7 +2838,7 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects).not.toContainEqual(expect.objectContaining({ type: "catch_up" }));
   });
 
-  it("keeps live assistant blocks ordered when merging a disjoint prompt-jump window", () => {
+  it("keeps whole live assistant messages ordered when merging a disjoint prompt-jump window", () => {
     const live = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -2789,11 +2850,10 @@ describe("processTimelineResponse", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 60, endSeq: 79 },
     });
     expect(getAssistantTexts([...live.tail, ...live.head])).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
 
     const result = processTimelineResponse({
@@ -2815,8 +2875,7 @@ describe("processTimelineResponse", () => {
     });
 
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
   });
 
@@ -3620,6 +3679,7 @@ describe("processAgentStreamEvent", () => {
       event: makeAssistantTimelineEvent("[System Error] failed"),
       epoch: "timeline-1",
       seq: 42,
+      currentCursor: { epoch: "timeline-1", startSeq: 1, endSeq: 41 },
     });
 
     expect(result.head).toEqual([
@@ -3840,6 +3900,24 @@ describe("processAgentStreamEvent", () => {
     });
   });
 
+  it("catches up from the first row when a chat that was empty receives a later row", () => {
+    const result = processAgentStreamEvent({
+      ...baseStreamInput,
+      event: makeTimelineEvent("word3"),
+      seq: 6,
+      epoch: "epoch-1",
+      currentCursor: undefined,
+    });
+
+    expect(result).toMatchObject({
+      head: [],
+      changedHead: false,
+      cursor: null,
+      cursorChanged: false,
+      sideEffects: [{ type: "catch_up", cursor: { epoch: "epoch-1", endSeq: 0 } }],
+    });
+  });
+
   it("renders a live row over painted items without creating an authoritative cursor", () => {
     const result = processAgentStreamEvent({
       ...baseStreamInput,
@@ -3980,7 +4058,7 @@ describe("processAgentStreamEvents", () => {
     expect(getAssistantTexts(result.head)).toEqual(["Identified"]);
   });
 
-  it("keeps a promoted live image block identity when the turn completes", () => {
+  it("keeps the whole live message identity when the turn completes", () => {
     const imageMarkdown = "![Architecture](docs/architecture.png)";
     const streaming = processAgentStreamEvents({
       events: [
@@ -3992,9 +4070,11 @@ describe("processAgentStreamEvents", () => {
       currentCursor: undefined,
     });
 
-    expect([streaming.changedTail, streaming.changedHead]).toEqual([true, true]);
-    expect(getAssistantTexts(streaming.tail)).toEqual(["Introductory paragraph"]);
-    expect(getAssistantTexts(streaming.head)).toEqual([imageMarkdown]);
+    expect([streaming.changedTail, streaming.changedHead]).toEqual([false, true]);
+    expect(getAssistantTexts(streaming.tail)).toEqual([]);
+    expect(getAssistantTexts(streaming.head)).toEqual([
+      `Introductory paragraph\n\n${imageMarkdown}`,
+    ]);
     const liveImageId = streaming.head[0]?.id;
 
     const completed = processAgentStreamEvent({
@@ -4009,13 +4089,12 @@ describe("processAgentStreamEvents", () => {
         item.kind === "assistant_message",
     );
     expect(assistantBlocks.map((item) => [item.id, item.text])).toEqual([
-      [streaming.tail[0]?.id, "Introductory paragraph"],
-      [liveImageId, imageMarkdown],
+      [liveImageId, `Introductory paragraph\n\n${imageMarkdown}`],
     ]);
     expect(assistantBlocks.filter((item) => item.id === liveImageId)).toHaveLength(1);
   });
 
-  it("preserves a live block trailing newline after promoting completed markdown blocks", () => {
+  it("preserves all newlines in the accumulated live message", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(
@@ -4029,24 +4108,20 @@ describe("processAgentStreamEvents", () => {
       ],
       currentTail: [],
       currentHead: [],
-      currentCursor: undefined,
+      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 237 },
     });
 
-    expect(result.changedTail).toBe(true);
+    expect(result.changedTail).toBe(false);
     expect(result.changedHead).toBe(true);
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "Done. I added `[TimelineMerge] ...` logging around the suspicious merge/reconcile paths.",
-    });
+    expect(result.tail).toHaveLength(0);
     expect(result.head).toHaveLength(1);
     expect(result.head[0]).toMatchObject({
       kind: "assistant_message",
-      text: "Changed:\n- [timeline-debug.ts]",
+      text: "Done. I added `[TimelineMerge] ...` logging around the suspicious merge/reconcile paths.\n\nChanged:\n- [timeline-debug.ts]",
     });
   });
 
-  it("does not promote a markdown block that is still inside an open code fence", () => {
+  it("preserves an open code fence in the whole source message", () => {
     const result = processAgentStreamEvents({
       events: [
         makeStreamReducerEvent(makeTimelineEvent("Before fence\n\n```ts\nconst a = 1;"), 1),
@@ -4057,16 +4132,12 @@ describe("processAgentStreamEvents", () => {
       currentCursor: undefined,
     });
 
-    expect(result.changedTail).toBe(true);
-    expect(result.tail).toHaveLength(1);
-    expect(result.tail[0]).toMatchObject({
-      kind: "assistant_message",
-      text: "Before fence",
-    });
+    expect(result.changedTail).toBe(false);
+    expect(result.tail).toHaveLength(0);
     expect(result.head).toHaveLength(1);
     expect(result.head[0]).toMatchObject({
       kind: "assistant_message",
-      text: "```ts\nconst a = 1;\n\nconst b = 2;",
+      text: "Before fence\n\n```ts\nconst a = 1;\n\nconst b = 2;",
     });
   });
 
@@ -4175,8 +4246,7 @@ describe("processAgentStreamEvents", () => {
     expect(getAssistantTexts([...result.tail, ...result.head])).toEqual([
       "ABC",
       imageMarkdown,
-      "D",
-      "E",
+      "D\n\nE",
     ]);
   });
 
@@ -4212,6 +4282,7 @@ describe("processAgentStreamEvents", () => {
       currentTail: [],
       currentHead: [],
       currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
       timestamp: new Date("2026-05-02T10:00:00.186Z"),
     });
 
@@ -4413,7 +4484,7 @@ describe("createAgentStreamReducerQueue", () => {
     const scheduler = createManualScheduler();
     let currentTail: StreamItem[] = [];
     let currentHead: StreamItem[] = [];
-    let currentCursor: TimelineCursor | undefined;
+    let currentCursor: TimelineCursor | undefined = { epoch: "epoch-1", startSeq: 1, endSeq: 1 };
 
     const queue = createAgentStreamReducerQueue({
       getSnapshot: () => ({
@@ -4456,7 +4527,7 @@ describe("createAgentStreamReducerQueue", () => {
     expect(getAssistantTexts(currentHead)).toEqual(["This is a paragraph continues."]);
     expect(currentCursor).toEqual({
       epoch: "epoch-1",
-      startSeq: 2,
+      startSeq: 1,
       endSeq: 4,
     });
   });

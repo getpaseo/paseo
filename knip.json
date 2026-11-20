@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/knip/schema.json",
   "workspaces": {
+    "plugins": {
+      "entry": ["**/index.{server,client}.{ts,tsx}", "**/*.test.ts"],
+      "project": ["**/*.{ts,tsx}"]
+    },
     ".": {
       "entry": ["scripts/**/*.{js,mjs,cjs,ts}"],
       "project": ["scripts/**/*.{js,mjs,cjs,ts}"]

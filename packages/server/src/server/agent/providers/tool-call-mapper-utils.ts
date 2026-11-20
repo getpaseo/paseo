@@ -7,6 +7,7 @@ const FAILED_STATUS_VOCAB = new Set([
   "errored",
   "rejected",
   "denied",
+  "declined",
 ]);
 const CANCELED_STATUS_VOCAB = new Set(["canceled", "cancelled", "interrupted", "aborted"]);
 const COMPLETED_STATUS_VOCAB = new Set(["completed", "complete", "done", "success", "succeeded"]);
@@ -223,9 +224,11 @@ export function stripReadLineNumberGutter(
   return { content: stripped.join("\n"), startLine };
 }
 
+export const TOOL_CALL_DIFF_MAX_CHARS = 12_000;
+
 export function truncateDiffText(
   text: string | undefined,
-  maxChars: number = 12_000,
+  maxChars: number = TOOL_CALL_DIFF_MAX_CHARS,
 ): string | undefined {
   if (typeof text !== "string") {
     return undefined;

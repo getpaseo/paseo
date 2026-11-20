@@ -634,6 +634,26 @@ describe("workspace message schemas", () => {
     ]);
   });
 
+  test("preserves informational workspace parentage in directory updates", () => {
+    const workspace = {
+      id: "child",
+      parentWorkspaceId: "parent",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "child",
+      status: "done",
+      activityAt: null,
+    };
+    expect(WorkspaceDescriptorPayloadSchema.parse(workspace).parentWorkspaceId).toBe("parent");
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...workspace, parentWorkspaceId: undefined })
+        .parentWorkspaceId,
+    ).toBeUndefined();
+  });
+
   test("parses legacy workspace descriptors without workspaceDirectory", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "workspace_update",
@@ -1231,6 +1251,15 @@ describe("workspace message schemas", () => {
     expect(
       WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, forge: "gitlab" }).forge,
     ).toBe("gitlab");
+
+    // forgeWeb is optional: an old daemon omits it, a new daemon's value round-trips.
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).forgeWeb).toBeUndefined();
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({
+        ...baseWorkspace,
+        forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+      }).forgeWeb,
+    ).toEqual({ host: "github.com", referenceRepository: "main-owner/repo" });
   });
 
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {

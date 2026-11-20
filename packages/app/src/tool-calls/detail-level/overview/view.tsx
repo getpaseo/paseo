@@ -1,11 +1,13 @@
-import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
+import React, { memo, useCallback, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
-import { useTranslation } from "react-i18next";
 import { Wrench } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { useDisclosureHold } from "@/agent-stream/disclosure";
+import { IndentRail } from "@/components/indent-rail";
 import { ExpandableBadge } from "@/components/message";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { type OverviewSummary, type OverviewToolCallGroup } from "./model";
+import { useOverviewSummaryLabel } from "./label";
+import type { OverviewToolCallGroup } from "./model";
 import { OverviewToolCallGroupSheet } from "./sheet";
 
 interface OverviewGroupProps {
@@ -18,41 +20,6 @@ interface OverviewGroupProps {
 
 const TOOL_CALL_GROUP_MAX_HEIGHT = 400;
 
-function joinSummaryParts(parts: string[], conjunction: string): string {
-  if (parts.length === 0) {
-    return "";
-  }
-  let joined = parts[0] ?? "";
-  if (parts.length === 2) {
-    joined = `${parts[0]} ${conjunction} ${parts[1]}`;
-  } else if (parts.length > 2) {
-    joined = `${parts.slice(0, -1).join(", ")}, ${conjunction} ${parts.at(-1)}`;
-  }
-  const firstCharacter = joined[0];
-  return firstCharacter ? `${firstCharacter.toLocaleUpperCase()}${joined.slice(1)}` : joined;
-}
-
-function useOverviewSummary(summary: OverviewSummary): string {
-  const { t } = useTranslation();
-  return useMemo(() => {
-    const parts: string[] = [];
-    const entries = [
-      [summary.editedFileCount, "toolCallGroup.editedFiles"],
-      [summary.commandCount, "toolCallGroup.commands"],
-      [summary.readFileCount, "toolCallGroup.readFiles"],
-      [summary.searchCount, "toolCallGroup.searches"],
-      [summary.otherToolCount, "toolCallGroup.otherTools"],
-      [summary.paseoCallCount, "toolCallGroup.paseoCalls"],
-    ] as const;
-    for (const [count, key] of entries) {
-      if (count > 0) {
-        parts.push(t(`${key}.${count === 1 ? "one" : "other"}`, { count }));
-      }
-    }
-    return joinSummaryParts(parts, t("toolCallGroup.and"));
-  }, [summary, t]);
-}
-
 export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView({
   group,
   expanded,
@@ -60,32 +27,21 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
   onExpandedChange,
   children,
 }: OverviewGroupProps) {
-  const scrollRef = useRef<ScrollView>(null);
   const isCompact = useIsCompactFormFactor();
-  const aggregateSummary = useOverviewSummary(group.summary);
-  const scrollToLatest = useCallback(() => {
-    scrollRef.current?.scrollToEnd({ animated: false });
-  }, []);
+  const aggregateSummary = useOverviewSummaryLabel(group.summary);
+  const hold = useDisclosureHold();
   const toggle = useCallback(() => {
-    onExpandedChange(group.run.id, !expanded);
-  }, [expanded, group.run.id, onExpandedChange]);
+    const apply = () => onExpandedChange(group.run.id, !expanded);
+    // Compact opens a sheet; nothing in the timeline moves.
+    if (isCompact) apply();
+    else hold(apply);
+  }, [expanded, group.run.id, hold, isCompact, onExpandedChange]);
   const close = useCallback(() => {
     onExpandedChange(group.run.id, false);
   }, [group.run.id, onExpandedChange]);
   const renderDetails = useCallback(
-    () => (
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator
-        onContentSizeChange={scrollToLatest}
-      >
-        {children}
-      </ScrollView>
-    ),
-    [children, scrollToLatest],
+    () => <InlineGroupDetails latestCallId={group.run.latest.id}>{children}</InlineGroupDetails>,
+    [children, group.run.latest.id],
   );
 
   if (isCompact) {
@@ -121,6 +77,35 @@ export const OverviewToolCallGroupView = memo(function OverviewToolCallGroupView
     />
   );
 });
+
+function InlineGroupDetails({
+  latestCallId,
+  children,
+}: {
+  latestCallId: string;
+  children: ReactNode;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const lastRevealedCall = useRef<string | null>(null);
+  const revealLatestCall = useCallback(() => {
+    // A disclosure changes height without appending a call. Keep the reader's place then.
+    if (lastRevealedCall.current === latestCallId) return;
+    lastRevealedCall.current = latestCallId;
+    scrollRef.current?.scrollToEnd({ animated: false });
+  }, [latestCallId]);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      style={styles.scroll}
+      contentContainerStyle={styles.content}
+      nestedScrollEnabled
+      showsVerticalScrollIndicator
+      onContentSizeChange={revealLatestCall}
+    >
+      <IndentRail>{children}</IndentRail>
+    </ScrollView>
+  );
+}
 
 const styles = StyleSheet.create((theme) => ({
   scroll: {

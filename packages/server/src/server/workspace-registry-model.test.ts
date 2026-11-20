@@ -87,6 +87,31 @@ describe("workspace placement", () => {
     });
   });
 
+  test("keeps the recorded placement when nothing was read at the workspace directory", () => {
+    const workspace = createPersistedWorkspaceRecord({
+      workspaceId: "workspace-one",
+      projectId: "project-one",
+      cwd: "/repo-feature",
+      kind: "worktree",
+      displayName: "feature/placement",
+      branch: "feature/placement",
+      worktreeRoot: "/repo-feature",
+      baseBranch: "main",
+      isPaseoOwnedWorktree: true,
+      mainRepoRoot: "/repo",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+
+    const update = reconcileWorkspacePlacement({
+      workspace,
+      checkout: null,
+      updatedAt: "2026-03-02T00:00:00.000Z",
+    });
+
+    expect(update).toBeNull();
+  });
+
   test("updates live placement while preserving its durable name and base branch", () => {
     const workspace = createPersistedWorkspaceRecord({
       workspaceId: "workspace-one",

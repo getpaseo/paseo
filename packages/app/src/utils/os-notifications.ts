@@ -1,6 +1,6 @@
 import { Asset } from "expo-asset";
 import { getDesktopHost } from "@/desktop/host";
-import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
+import { parseNotificationOpenTarget, WEB_NOTIFICATION_CLICK_EVENT } from "@/notification-open";
 import { isNative } from "@/constants/platform";
 
 interface OsNotificationPayload {
@@ -16,8 +16,6 @@ export interface WebNotificationClickDetail {
 interface WebNotificationInstance {
   addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
-
-export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
 let permissionRequest: Promise<boolean> | null = null;
 let notificationIconUrl: string | null | undefined;
@@ -98,8 +96,7 @@ export async function ensureOsNotificationPermission(): Promise<boolean> {
 }
 
 function hasNotificationClickTarget(data: Record<string, unknown> | undefined): boolean {
-  const target = resolveNotificationTarget(data);
-  return target.serverId !== null || target.agentId !== null || target.workspaceId !== null;
+  return parseNotificationOpenTarget(data) !== null;
 }
 
 function getWebNotificationIconUrl(): string | undefined {
@@ -135,31 +132,12 @@ function dispatchWebNotificationClick(detail: WebNotificationClickDetail): boole
   return !dispatch(event);
 }
 
-function fallbackNavigateToNotificationTarget(data: Record<string, unknown> | undefined): void {
-  const route = buildNotificationRoute(data);
-  const location = (globalThis as { location?: { assign?: (url: string) => void; href?: string } })
-    .location;
-  if (!location) {
-    return;
-  }
-  if (typeof location.assign === "function") {
-    location.assign(route);
-    return;
-  }
-  if (typeof location.href === "string") {
-    location.href = route;
-  }
-}
-
 function attachWebClickHandler(
   notification: WebNotificationInstance,
   data: Record<string, unknown> | undefined,
 ): void {
   notification.addEventListener("click", () => {
-    const handledByApp = dispatchWebNotificationClick({ data });
-    if (!handledByApp) {
-      fallbackNavigateToNotificationTarget(data);
-    }
+    dispatchWebNotificationClick({ data });
   });
 }
 

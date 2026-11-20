@@ -204,26 +204,36 @@ test.describe("Projects settings", () => {
   }) => {
     const repo = await createTempGitRepo("projects-settings-empty-");
     const client = await connectSeedClient();
-    let projectId: string | null = null;
+    let projectViewKey: string | null = null;
 
     try {
       await gotoAppShell(page);
 
-      projectId = await addProjectFromSidebar(page, repo.path);
-      await openProjectSettingsFromSidebar(page, projectId);
+      projectViewKey = await addProjectFromSidebar(page, repo.path);
+      await openProjectSettingsFromSidebar(page, projectViewKey);
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
     } finally {
-      if (projectId) {
-        await client.removeProject(projectId).catch(() => undefined);
+      if (projectViewKey) {
+        const project = (await client.listProjects()).projects.find(
+          (entry) => entry.projectKey === projectViewKey,
+        );
+        expect(project).toBeDefined();
+        await client.removeProject(project!.projectId);
+        expect(
+          (await client.listProjects()).projects.map((entry) => entry.projectKey),
+        ).not.toContain(projectViewKey);
       }
       await client.close().catch(() => undefined);
       await repo.cleanup().catch(() => undefined);
     }
   });
 
-  test("user edits worktree setup from the projects page", async ({ page, editableProject }) => {
+  test("edits worktree setup, navigates within the host, and removes a script", async ({
+    page,
+    editableProject,
+  }) => {
     await openProjects(page);
     await openProjectSettings(page, editableProject.name);
     await expectNoUncommittedSetupWarning(page);
@@ -236,15 +246,22 @@ test.describe("Projects settings", () => {
     await returnToProjectsList(page);
     await openProjectSettings(page, editableProject.name);
     await expectNoUncommittedSetupWarning(page);
-  });
 
-  test("project navigation stays inside the selected host", async ({ page, editableProject }) => {
-    await openProjects(page);
-    await openProjectSettings(page, editableProject.name);
-    await expectProjectHostContextHidden(page);
-    await returnToProjectsList(page);
-    await openProjectSettings(page, editableProject.name);
-    await expectProjectSettingsHistoryRoundTrip(page, editableProject.name);
+    await test.step("navigation stays inside the selected host", async () => {
+      await expectProjectHostContextHidden(page);
+      await returnToProjectsList(page);
+      await openProjectSettings(page, editableProject.name);
+      await expectProjectSettingsHistoryRoundTrip(page, editableProject.name);
+    });
+
+    await test.step("removing a script leaves the committed setup unchanged", async () => {
+      await expectScriptRowCount(page, 1);
+      await removeProjectScript(page, "dev");
+      await expectScriptRowCount(page, 0);
+      await expectEmptyScriptList(page);
+      await clickSaveProjectSettings(page);
+      await expectNoUncommittedSetupWarning(page);
+    });
   });
 
   test("user edits worktree setup on a non-GitHub remote project", async ({
@@ -259,18 +276,7 @@ test.describe("Projects settings", () => {
     await expectProjectConfigSaved(gitlabRemoteProject);
   });
 
-  test("user renames a project from the edit sheet", async ({ page, editableProject }) => {
-    await openProjects(page);
-    await openProjectSettings(page, editableProject.name);
-    await openProjectEditSheet(page);
-    await fillProjectName(page, "Renamed project");
-    await saveProjectEdits(page);
-
-    await expectProjectEditSaved(page);
-    await expectProjectTitle(page, "Renamed project");
-  });
-
-  test("reopening the edit sheet seeds from the saved project", async ({
+  test("renames a project, reopens the saved edit sheet, and adds an icon", async ({
     page,
     editableProject,
   }) => {
@@ -279,26 +285,26 @@ test.describe("Projects settings", () => {
     await openProjectEditSheet(page);
     await fillProjectName(page, "Renamed project");
     await saveProjectEdits(page);
+
     await expectProjectEditSaved(page);
+    await expectProjectTitle(page, "Renamed project");
 
-    await openProjectEditSheet(page);
-
-    await expectProjectEditName(page, "Renamed project");
-    await expectProjectEditsSaveDisabled(page);
-  });
-
-  test("user picks a custom project icon from a file", async ({ page, editableProject }) => {
-    await openProjects(page);
-    await openProjectSettings(page, editableProject.name);
-    await openProjectEditSheet(page);
-    await chooseProjectIconImage(page, {
-      name: "logo.png",
-      mimeType: "image/png",
-      buffer: PNG_1X1,
+    await test.step("reopening seeds the saved name with no unsaved changes", async () => {
+      await openProjectEditSheet(page);
+      await expectProjectEditName(page, "Renamed project");
+      await expectProjectEditsSaveDisabled(page);
     });
-    await saveProjectEdits(page);
 
-    await expectProjectEditSaved(page);
+    await test.step("an icon can be saved without another name change", async () => {
+      await chooseProjectIconImage(page, {
+        name: "logo.png",
+        mimeType: "image/png",
+        buffer: PNG_1X1,
+      });
+      await saveProjectEdits(page);
+      await expectProjectEditSaved(page);
+      await expectProjectTitle(page, "Renamed project");
+    });
   });
 
   test("user sets a project name and icon in one save", async ({ page, editableProject }) => {
@@ -458,32 +464,5 @@ test.describe("Projects settings — error UX", () => {
     await gate.drop();
 
     await expectNoEditableTarget(page);
-  });
-
-  test("project detail does not render a second host selector", async ({
-    page,
-    editableProject,
-  }) => {
-    await openProjects(page);
-    await openProjectSettings(page, editableProject.name);
-
-    await expectProjectHostContextHidden(page);
-  });
-
-  test("script removal via kebab menu removes the row from the form", async ({
-    page,
-    editableProject,
-  }) => {
-    await openProjects(page);
-    await openProjectSettings(page, editableProject.name);
-
-    await expectScriptRowCount(page, 1);
-
-    await removeProjectScript(page, "dev");
-
-    await expectScriptRowCount(page, 0);
-    await expectEmptyScriptList(page);
-    await clickSaveProjectSettings(page);
-    await expectNoUncommittedSetupWarning(page);
   });
 });

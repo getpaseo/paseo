@@ -12,6 +12,7 @@ import {
   getDesktopWindowControlsWidth,
 } from "@/desktop/window-chrome-presentation";
 import { isNative } from "@/constants/platform";
+import { useTopBand, type TopBand } from "@/window-layout";
 
 export type WindowChromeCorners = "none" | "top-left" | "top-right" | "both";
 type WindowChromeSafeAreaPlacement = "inline" | "below";
@@ -83,6 +84,19 @@ export function intersectWindowChromeCorners(
   );
 }
 
+export function resolveChildWindowChromeCorners(input: {
+  corners: WindowChromeCorners;
+  direction: "horizontal" | "vertical";
+  isFirst: boolean;
+  isLast: boolean;
+}): WindowChromeCorners {
+  if (input.direction === "vertical") return input.isFirst ? input.corners : "none";
+  return intersectWindowChromeCorners(
+    input.corners,
+    windowChromeCornersFromFlags(input.isFirst, input.isLast),
+  );
+}
+
 export function removeWindowChromeCorner(
   corners: WindowChromeCorners,
   corner: WindowChromeCorner,
@@ -92,10 +106,15 @@ export function removeWindowChromeCorner(
   return corner === "top-left" ? "top-right" : "top-left";
 }
 
+/** Desktop window controls, or the system region a native top band gives way to. */
 export function resolveWindowChromeObstruction(input: {
   mode: DesktopWindowChromeMode | null;
   isFullscreen: boolean;
+  topBand: TopBand | null;
 }): WindowChromeObstruction {
+  if (input.topBand?.trailingObstruction) {
+    return { topLeft: null, topRight: input.topBand.trailingObstruction };
+  }
   if (!input.mode || input.isFullscreen) return EMPTY_OBSTRUCTION;
   if (input.mode === "native-mac") {
     return {
@@ -204,13 +223,15 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const topBand = useTopBand();
   const obstruction = useMemo(
     () =>
       resolveWindowChromeObstruction({
         mode: isElectronReady ? getDesktopWindowChromeMode() : null,
         isFullscreen: windowState.isFullscreen,
+        topBand,
       }),
-    [isElectronReady, windowState.isFullscreen],
+    [isElectronReady, windowState.isFullscreen, topBand],
   );
   const desktopWindowChrome = useMemo(
     () => ({
