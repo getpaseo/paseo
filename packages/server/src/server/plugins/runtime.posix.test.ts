@@ -6,7 +6,11 @@ import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import {
+  PROVIDER_CAPABILITIES,
+  type ProviderEvent,
+  type ProviderRegistration,
+} from "@getpaseo/plugin/server/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
@@ -365,7 +369,7 @@ register(${JSON.stringify(guardUrl)});`;
   // that does not negotiate `session.subsession`, the daemon fails the whole
   // provider connection when the child is projected, so both tests fail
   // before the fix.
-  async function startMuseClient(extraEnv: Record<string, string>) {
+  async function startMuseRuntime() {
     const fakeMuse = fileURLToPath(
       new URL("../../../../../plugins/muse-provider/test/fake-muse.mjs", import.meta.url),
     );
@@ -376,14 +380,19 @@ register(${JSON.stringify(guardUrl)});`;
     await runtime.startPlugin("muse-provider", directory);
     const [metadata] = runtime.getProviderRegistrations("muse-provider");
     expect(metadata).toBeDefined();
+    return { runtime, metadata: metadata!, fakeMuse };
+  }
+
+  async function startMuseClient(extraEnv: Record<string, string>) {
+    const { runtime, metadata, fakeMuse } = await startMuseRuntime();
     const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
     adapters.replace([
       {
-        ...adaptRuntimeProvider(runtime, "muse-provider", metadata!),
-        command: metadata!.command,
+        ...adaptRuntimeProvider(runtime, "muse-provider", metadata),
+        command: metadata.command,
       },
     ]);
-    const client = adapters.definitions()[metadata!.id]!.createClient(pino({ level: "silent" }), {
+    const client = adapters.definitions()[metadata.id]!.createClient(pino({ level: "silent" }), {
       command: { mode: "replace", argv: [process.execPath, fakeMuse] },
       env: { MUSE_TEST_SCENARIO: "subagent", MUSE_TEST_CHILD: "tool", ...extraEnv },
     });
@@ -478,11 +487,91 @@ register(${JSON.stringify(guardUrl)});`;
     }
   });
 
+  it("keeps other Muse sessions live when a parent closes during a child read", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-muse-child-read-"));
+    temporaryDirectories.push(directory);
+    const requests = path.join(directory, "requests.ndjson");
+    const release = path.join(directory, "release");
+    const { runtime, metadata, fakeMuse } = await startMuseRuntime();
+    try {
+      const connection = await runtime.connectProvider("muse-provider", metadata.id, {
+        versions: [1],
+        capabilities: PROVIDER_CAPABILITIES,
+        launch: {
+          command: process.execPath,
+          args: [fakeMuse],
+          env: {
+            MUSE_TEST_SCENARIO: "subagent",
+            MUSE_TEST_CHILD: "tool",
+            MUSE_TEST_REQUESTS: requests,
+            MUSE_TEST_CHILD_READ_RELEASE: release,
+          },
+        },
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      for (const sessionId of ["closing", "sibling"]) {
+        await connection.send({
+          type: "session.open",
+          requestId: `open-${sessionId}`,
+          sessionId,
+          history: "skip",
+          config: { cwd: process.cwd(), env: {}, mcpServers: {}, settings: {}, persist: true },
+        });
+        await expect
+          .poll(() => events, { timeout: 5000 })
+          .toContainEqual(expect.objectContaining({ type: "session.ready", sessionId }));
+      }
+      const prompt: ProviderPrompt = {
+        clientMessageId: "spawn-child",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "spawn a child" }] },
+      };
+      await connection.send({ type: "session.prompt", sessionId: "closing", prompt });
+      await expect
+        .poll(() => readFile(requests, "utf8"), { timeout: 5000 })
+        .toContain('"method":"session/read"');
+
+      // send() resolves after the runtime has accepted the close and removed
+      // the parent from its session table, while the child read is still pending.
+      await connection.send({
+        type: "session.close",
+        requestId: "close-parent",
+        sessionId: "closing",
+      });
+      await writeFile(release, "");
+
+      const closeSettled = (event: ProviderEvent) =>
+        (event.type === "request.completed" && event.requestId === "close-parent") ||
+        (event.type === "session.runtime_failed" && event.sessionId === "sibling");
+      await expect.poll(() => events.some(closeSettled), { timeout: 5000 }).toBe(true);
+      expect(
+        events.filter(
+          (event) => event.type === "session.runtime_failed" && event.sessionId === "sibling",
+        ),
+      ).toEqual([]);
+      expect(events).toContainEqual({ type: "request.completed", requestId: "close-parent" });
+      await connection.send({ type: "session.prompt", sessionId: "sibling", prompt });
+      await expect
+        .poll(() => events, { timeout: 5000 })
+        .toContainEqual(
+          expect.objectContaining({
+            type: "session.turn",
+            sessionId: "sibling",
+            state: "completed",
+          }),
+        );
+    } finally {
+      await writeFile(release, "");
+      await runtime.stopAll();
+    }
+  });
+
   it("runs a provider connection through the real plugin subprocess boundary", async () => {
     const directory = await createPlugin(
       "provider-round-trip",
       `import type { PluginServerContext } from "@getpaseo/plugin/server";
-import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import { PROVIDER_CAPABILITIES, type ProviderEvent, type ProviderPrompt, type ProviderRegistration } from "@getpaseo/plugin/server/provider";
 
 const provider: ProviderRegistration = {
   id: "direct-example",

@@ -147,7 +147,7 @@ export class Session {
         this.options.id,
         this.config.cwd,
         this.options.emit,
-        this.options.capabilities.includes("session.subsession"),
+        () => !this.closing && this.options.capabilities.includes("session.subsession"),
       ),
       timeline: new Timeline(
         this.host,

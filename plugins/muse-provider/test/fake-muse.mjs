@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -166,9 +166,7 @@ function parityResponse(frame) {
     return true;
   }
   if (frame.method === "session/read") {
-    const result = responseFor(readFixture("phase3-child-read"), "session/read");
-    result.session.sessionId = frame.params.sessionId;
-    respond(frame, result);
+    respondToChildRead(frame);
     return true;
   }
   if (frame.method === "usage/read") {
@@ -222,6 +220,20 @@ function parityResponse(frame) {
   }
   if (skillResponse(frame)) return true;
   return false;
+}
+function respondToChildRead(frame) {
+  const result = responseFor(readFixture("phase3-child-read"), "session/read");
+  result.session.sessionId = frame.params.sessionId;
+  const releaseFile = process.env.MUSE_TEST_CHILD_READ_RELEASE;
+  if (releaseFile && !existsSync(releaseFile)) {
+    const waiting = setInterval(() => {
+      if (!existsSync(releaseFile)) return;
+      clearInterval(waiting);
+      respond(frame, result);
+    }, 10);
+  } else {
+    respond(frame, result);
+  }
 }
 function skillResponse(frame) {
   if (frame.method === "skill/list") {
