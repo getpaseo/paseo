@@ -1193,6 +1193,8 @@ export default function contribute(client: PluginClientContext) {
 
 ### 设计令牌
 
+**尚未发布的 API。** 发布插件前，请将 `requirements.paseo` 设置为首次包含设计令牌的版本。较旧的应用会拒绝包含未知键的主题，该插件的其他贡献也会随之加载失败。
+
 除了 `colors`，主题还可以设置 Paseo 的设计令牌。每一组都是可选的，也可以只写部分键：省略的键保留 Paseo 的值，因此只设置颜色的主题与之前完全一致。
 
 ```ts
@@ -1227,11 +1229,9 @@ client.addTheme({
 
 `fontSize` 设置界面字号阶梯。**设置 → 外观** 中的 **界面字号** 仍会缩放它：在默认设置下按主题给定的字号使用；调大设置时，每个字号按与 Paseo 自身阶梯相同的比例缩放。聊天内容字号和代码字号仍由用户设置，字体也仍由用户选择。
 
-`iconStrokeWidth` 改变使用默认描边的图标。Paseo 有意使用较粗描边绘制的图标（例如状态标记）保持不变。
+`iconStrokeWidth` 改变使用默认描边的图标。Paseo 以显式描边绘制的图标保持不变，包括状态标记、工具栏图标和设置侧边栏图标。
 
-令牌作用于 Paseo 自身的界面。插件视图仍只接收 `theme.colors` DTO。
-
-设计令牌需要 Paseo 0.17.0 或更高版本。较旧的应用会拒绝包含未知键的主题，因此使用它们时请提高 `requirements.paseo`。
+令牌作用于 Paseo 界面中从主题读取它们的部分。插件视图仍只接收 `theme.colors` DTO。在 Web 上，选择主题时设置页会保持表单挂载，因此设置页中的间距和圆角变化会在下次打开设置时显示。
 
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 

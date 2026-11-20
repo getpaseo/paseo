@@ -1435,6 +1435,10 @@ plugin's other contributions fail to load with it, so raise `requirements.paseo`
 
 ### Design tokens
 
+**Unreleased API.** Set `requirements.paseo` to the release that introduces design tokens before
+publishing your plugin. Older apps reject a theme with an unknown key, and the plugin's other
+contributions fail to load with it.
+
 Next to `colors`, a theme can set Paseo's design tokens. Every group is optional and partial: a key
 you leave out keeps Paseo's value, so a theme that sets only colors renders exactly like before.
 
@@ -1475,13 +1479,12 @@ scales it: at the default setting the theme's sizes are used as given, and a lar
 every size by the same ratio it scales Paseo's own ramp. Chat content and code sizes stay the
 user's settings, and the font families stay the user's choice.
 
-`iconStrokeWidth` changes icons that use the default stroke. Icons Paseo draws with a deliberate
-heavier stroke, such as status marks, keep it.
+`iconStrokeWidth` changes icons that use the default stroke. Any icon Paseo draws with an explicit
+stroke keeps it, including status marks, toolbar glyphs, and the settings sidebar icons.
 
-Tokens apply to Paseo's own UI. Plugin views still receive only the `theme.colors` DTO.
-
-Design tokens require Paseo 0.17.0 or later. Older apps reject a theme with an unknown key, so raise
-`requirements.paseo` when you use them.
+Tokens apply to Paseo's own UI where it reads them from the theme. Plugin views still receive only
+the `theme.colors` DTO. On web, Settings keeps its form mounted while you pick a theme, so spacing
+and corner changes there show the next time Settings opens.
 
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
