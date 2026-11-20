@@ -814,7 +814,7 @@ describe("checkout PR schemas", () => {
 });
 
 test.each(
-  ["hopliteProvider", "fxProvider"].flatMap((name) =>
+  ["hopliteProvider", "fxProvider", "gooseProvider"].flatMap((name) =>
     [undefined, false, true].map((value) => [name, value] as const),
   ),
 )("accepts optional bundled provider capability (%s: %s)", (name, value) => {
