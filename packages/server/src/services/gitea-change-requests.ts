@@ -26,6 +26,7 @@ const GITEA_CLOUD_HOSTS = new Set(["gitea.com", "codeberg.org"]);
 const GITEA_PR_TABS = new Set(["commits", "files", "checks"]);
 const GITEA_PAGE_SIZE = GITEA_ACTION_PAGE_LIMIT;
 const GITEA_REVIEW_COMMENT_CONCURRENCY = 3;
+const GITEA_REVIEW_COMMENTS_TTL_MS = 5 * 60_000;
 const GITEA_ACTION_RUN_LOOKUP_LIMIT = 5;
 
 const checkUrlSchema = z.url({ protocol: /^https?$/ });
@@ -205,7 +206,7 @@ function parseGiteaPullRequestUrl(input: string): GiteaPullRequestIdentity {
 
 export function resolveGiteaChangeRequest(input: string): string {
   const { baseUrl, owner, repo, number } = parseGiteaPullRequestUrl(input);
-  return `${baseUrl}/${owner}/${repo}/pulls/${number}`;
+  return `${baseUrl}/${owner.toLowerCase()}/${repo.toLowerCase()}/pulls/${number}`;
 }
 
 export function describeGiteaChangeRequest(url: string): string {
@@ -412,6 +413,7 @@ interface TeaPollApi {
 
 interface CachedReviewComments {
   count: number;
+  fetchedAt: number;
   items: ChangeRequestSnapshot["activity"];
 }
 
@@ -751,6 +753,7 @@ export function createGiteaChangeRequestSource(
     repoPrefix: string;
     number: number;
     prWebUrl: string;
+    terminal: boolean;
     knownActivity(): ReadonlySet<string> | undefined;
     isObserved(): boolean;
   }): Promise<ChangeRequestSnapshot["activity"]> {
@@ -797,11 +800,14 @@ export function createGiteaChangeRequestSource(
       cachedReviewCommentsByUrl.set(params.url, reviewCache);
     }
 
+    const staleBefore = now() - GITEA_REVIEW_COMMENTS_TTL_MS;
     const reviewsNeedingFetch = submittedReviews.filter((review) => {
       if (review.comments_count <= 0) return false;
       const cached = reviewCache.get(review.id);
       if (
+        !params.terminal &&
         cached &&
+        cached.fetchedAt > staleBefore &&
         cached.count === review.comments_count &&
         cached.items.every((item) => known?.has(item.id))
       ) {
@@ -835,10 +841,12 @@ export function createGiteaChangeRequestSource(
       throw new Error("Change request observation ended");
     }
 
+    const fetchedAt = now();
     for (const group of fetchedGroups) {
-      reviewCache.set(group.reviewId, { count: group.count, items: group.items });
+      reviewCache.set(group.reviewId, { count: group.count, fetchedAt, items: group.items });
     }
     for (const review of submittedReviews) {
+      if (review.comments_count <= 0) continue;
       const cached = reviewCache.get(review.id);
       if (cached) {
         activity.push(...cached.items);
@@ -880,18 +888,20 @@ export function createGiteaChangeRequestSource(
       headSha: pr.head.sha,
       isObserved: context.isObserved,
     });
+    const state = mapGiteaPrState(pr);
     const activity = await readActivity({
       url: context.url,
       api,
       repoPrefix,
       number,
       prWebUrl,
+      terminal: state !== "open",
       knownActivity: context.knownActivity,
       isObserved: context.isObserved,
     });
 
     return {
-      state: mapGiteaPrState(pr),
+      state,
       headSha: pr.head.sha,
       checksState: computeAggregateChecksState(checks),
       checks,

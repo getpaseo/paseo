@@ -55,16 +55,23 @@ describe("Gitea-family change request URL resolution and description", () => {
   it("canonicalizes Gitea, Codeberg, and self-hosted Forgejo PR URLs across tabs, queries, and ports", () => {
     expect(
       resolveGiteaChangeRequest("https://Codeberg.org/Org/Repo/pulls/042/files?style=split#diff-1"),
-    ).toBe("https://codeberg.org/Org/Repo/pulls/42");
+    ).toBe("https://codeberg.org/org/repo/pulls/42");
     expect(resolveGiteaChangeRequest("https://gitea.com/Alice/App/pulls/7/commits/")).toBe(
-      "https://gitea.com/Alice/App/pulls/7",
+      "https://gitea.com/alice/app/pulls/7",
     );
     expect(
       resolveGiteaChangeRequest("https://Forgejo.Example.Org:3000/Team/Tool/pulls/9/checks"),
-    ).toBe("https://forgejo.example.org:3000/Team/Tool/pulls/9");
+    ).toBe("https://forgejo.example.org:3000/team/tool/pulls/9");
     expect(resolveGiteaChangeRequest("http://gitea.lan:3000/Team/Tool/pulls/3")).toBe(
-      "http://gitea.lan:3000/Team/Tool/pulls/3",
+      "http://gitea.lan:3000/team/tool/pulls/3",
     );
+  });
+
+  it("maps repository case variants to one watch while preserving the mount path", () => {
+    const baseUrl = "https://forge.example/Apps/Gitea";
+    const canonical = `${baseUrl}/org/repo/pulls/1`;
+    expect(resolveGiteaChangeRequest(`${baseUrl}/Org/Repo/pulls/1/files`)).toBe(canonical);
+    expect(resolveGiteaChangeRequest(canonical)).toBe(canonical);
   });
 
   it("describes cloud and self-hosted PRs with native #N numbering and host when non-default", () => {
@@ -93,6 +100,65 @@ describe("Gitea-family change request URL resolution and description", () => {
 });
 
 describe("Gitea-family ChangeRequestSource polling", () => {
+  it("refreshes cached inline comments even if the review count stays the same", async () => {
+    vi.useFakeTimers();
+    const origin = "https://codeberg.org";
+    const url = `${origin}/org/repo/pulls/1`;
+    let inlineId = 10;
+    let closed = false;
+    let inlineRequests = 0;
+    const { runner, calls } = createFakeTeaRunner((args) => {
+      if (args[0] === "login")
+        return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+      const endpoint = args.at(-1)!;
+      if (endpoint.endsWith("/pulls/1"))
+        return teaHttp({ number: 1, state: closed ? "closed" : "open", head: { sha: "head" } });
+      if (endpoint.includes("/status?")) return teaHttp({ statuses: [] });
+      if (endpoint.includes("/actions/tasks?")) return teaHttp({ workflow_runs: [] });
+      if (endpoint.includes("/reviews?"))
+        return teaHttp([{ id: 5, state: "APPROVED", comments_count: 1 }]);
+      if (endpoint.endsWith("/reviews/5/comments")) {
+        inlineRequests += 1;
+        return teaHttp([{ id: inlineId }]);
+      }
+      return teaHttp([]);
+    });
+    const service = createGiteaService({
+      runner,
+      resolveTeaPath: async () => "tea",
+      watchPollMs: 60_000,
+    });
+    const seen = new Set<string>();
+    try {
+      service.changeRequests!.observe(url, {
+        knownActivity: () => seen,
+        async snapshot(snapshot) {
+          for (const item of snapshot.activity) seen.add(item.id);
+        },
+        error(error) {
+          throw error;
+        },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(seen.has("inline:10")).toBe(true);
+      inlineId = 12;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(seen.has("inline:12")).toBe(false);
+      expect(inlineRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(seen.has("inline:12")).toBe(true);
+      expect(calls.filter(({ args }) => args.at(-1)?.endsWith("/reviews/5/comments"))).toHaveLength(
+        2,
+      );
+      inlineId = 13;
+      closed = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(seen.has("inline:13")).toBe(true);
+    } finally {
+      service.dispose?.();
+    }
+  });
+
   it("keeps path-mounted and root tea logins separate", async () => {
     vi.useFakeTimers();
     const origin = "https://forge.example";
@@ -129,7 +195,9 @@ describe("Gitea-family ChangeRequestSource polling", () => {
       await vi.advanceTimersByTimeAsync(25);
       expect(snapshots.map(({ headSha }) => headSha)).toEqual(["root"]);
       const mountedPr = `${origin}/apps/gitea/Org/Repo/pulls/1`;
-      expect(source.resolve(`${mountedPr}/files?view=split`)).toBe(mountedPr);
+      expect(source.resolve(`${mountedPr}/files?view=split`)).toBe(
+        `${origin}/apps/gitea/org/repo/pulls/1`,
+      );
       source.observe(mountedPr, {
         async snapshot(snapshot) {
           snapshots.push(snapshot);
@@ -1207,17 +1275,17 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     try {
       await expect(router.resolve("https://gitea.com/Org/Repo/pulls/3")).resolves.toEqual({
         forge: "gitea",
-        url: "https://gitea.com/Org/Repo/pulls/3",
+        url: "https://gitea.com/org/repo/pulls/3",
       });
       await expect(router.resolve("https://codeberg.org/Org/Repo/pulls/4/files")).resolves.toEqual({
         forge: "codeberg",
-        url: "https://codeberg.org/Org/Repo/pulls/4",
+        url: "https://codeberg.org/org/repo/pulls/4",
       });
       await expect(
         router.resolve("https://forgejo.internal/Org/Repo/pulls/5/commits"),
       ).resolves.toEqual({
         forge: "forgejo",
-        url: "https://forgejo.internal/Org/Repo/pulls/5",
+        url: "https://forgejo.internal/org/repo/pulls/5",
       });
       expect(router.source("codeberg")?.describe("https://codeberg.org/Org/Repo/pulls/4")).toBe(
         "Org/Repo #4",
@@ -1235,7 +1303,7 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     const artifacts = join(import.meta.dirname, "../../../../.artifacts");
     await mkdir(artifacts, { recursive: true });
     const home = await mkdtemp(join(artifacts, "gitea-watch-"));
-    const prUrl = "https://codeberg.org/Org/Repo/pulls/42";
+    const prUrl = "https://codeberg.org/org/repo/pulls/42";
     let phase = 1;
 
     const { runner } = createFakeTeaRunner((args) => {
@@ -1246,7 +1314,7 @@ describe("Gitea-family ChangeRequestSource polling", () => {
         };
       }
       const endpoint = args[4] ?? "";
-      if (endpoint === "repos/Org/Repo/pulls/42") {
+      if (endpoint === "repos/org/repo/pulls/42") {
         return teaHttp({
           number: 42,
           state: phase >= 3 ? "closed" : "open",
@@ -1357,7 +1425,10 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     let harness = createWatchHarness();
     try {
       await harness.watches.start();
-      const subPromise = harness.watches.subscribe("agent-1", `${prUrl}/files`);
+      const subPromise = harness.watches.subscribe(
+        "agent-1",
+        "https://codeberg.org/Org/Repo/pulls/42/files",
+      );
       await vi.advanceTimersByTimeAsync(25);
       const sub = await subPromise;
       expect(sub).toMatchObject({
@@ -1369,8 +1440,11 @@ describe("Gitea-family ChangeRequestSource polling", () => {
         subscribed: true,
         stale: false,
       });
+      await expect(harness.watches.subscribe("agent-1", prUrl)).resolves.toMatchObject({
+        url: prUrl,
+      });
       expect(harness.backgroundWork.list("agent-1")).toEqual([
-        expect.objectContaining({ description: "Org/Repo #42", kind: "monitor" }),
+        expect.objectContaining({ description: "org/repo #42", kind: "monitor" }),
       ]);
       const saved = JSON.parse(await readFile(join(home, "change-request-watches.json"), "utf8"));
       expect(saved).toEqual([expect.objectContaining({ forge: "codeberg", url: prUrl })]);
@@ -1381,7 +1455,7 @@ describe("Gitea-family ChangeRequestSource polling", () => {
       harness = createWatchHarness();
       await harness.watches.start();
       expect(harness.backgroundWork.list("agent-1")).toEqual([
-        expect.objectContaining({ description: "Org/Repo #42", kind: "monitor" }),
+        expect.objectContaining({ description: "org/repo #42", kind: "monitor" }),
       ]);
 
       await vi.advanceTimersByTimeAsync(25);
