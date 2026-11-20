@@ -28,6 +28,18 @@ export function loadRegistryIndex(base: string, context: WebsiteCacheContext) {
     fetchFresh: async () => PluginRegistryIndexSchema.parse(await documentAt(base, "index.json")),
   });
 }
+/** Count of listed plugins in the published registry, or null when the registry is unreachable. */
+export async function loadPluginCount(
+  base: string,
+  context: WebsiteCacheContext,
+): Promise<number | null> {
+  try {
+    const index = await loadRegistryIndex(base, context);
+    return index.plugins.length;
+  } catch {
+    return null;
+  }
+}
 /** Install counts per window for every listed plugin, refreshed with the index cache. */
 export async function loadInstallCounts(base: string, context: WebsiteCacheContext) {
   const index = await loadRegistryIndex(base, context);

@@ -113,10 +113,16 @@ import "~/styles.css";
 interface LandingPageProps {
   title: React.ReactNode;
   subtitle: React.ReactNode;
+  pluginCount?: number | null;
   showHubEyebrow?: boolean;
 }
 
-export function LandingPage({ title, subtitle, showHubEyebrow = false }: LandingPageProps) {
+export function LandingPage({
+  title,
+  subtitle,
+  pluginCount = null,
+  showHubEyebrow = false,
+}: LandingPageProps) {
   return (
     <CursorFieldProvider>
       <div className="min-h-screen bg-background">
@@ -160,7 +166,7 @@ export function LandingPage({ title, subtitle, showHubEyebrow = false }: Landing
             </div>
             <ChapterDivider />
             <div className="py-16 md:py-20">
-              <ExtensibleSection />
+              <ExtensibleSection pluginCount={pluginCount} />
             </div>
             <ChapterDivider />
             <div className="py-16 md:py-20">
@@ -933,9 +939,13 @@ function HubSection() {
   );
 }
 
-function ExtensibleSection() {
+function ExtensibleSection({ pluginCount }: { pluginCount?: number | null }) {
   const { t } = useTranslation();
   const pluginActions = React.useMemo(() => <PluginActions />, []);
+  const libraryTitle =
+    pluginCount && pluginCount > 0
+      ? t("landing.plugins.libraryTitleCount", { count: pluginCount })
+      : t("landing.plugins.libraryTitle");
   return (
     <FeatureSection
       eyebrow={t("landing.eyebrows.plugins")}
@@ -948,7 +958,7 @@ function ExtensibleSection() {
           <div className="space-y-5 bg-background p-6">
             <ProductLead
               icon={Puzzle}
-              title={t("landing.plugins.libraryTitle")}
+              title={libraryTitle}
               description={t("landing.plugins.libraryDescription")}
               actions={pluginActions}
             />
