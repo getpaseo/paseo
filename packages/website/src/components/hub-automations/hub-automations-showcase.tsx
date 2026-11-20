@@ -45,6 +45,7 @@ const PANEL_ANIMATE = { opacity: 1, y: 0 } as const;
 const PANEL_EXIT = { opacity: 0, y: -4 } as const;
 const PANEL_TRANSITION = { duration: 0.16, ease: "easeOut" } as const;
 const STAGE_IN_VIEW_OPTIONS = { once: true, margin: "-60px" } as const;
+const PANEL_ID = "hub-source-panel";
 
 /**
  * Interactive split showcase for Paseo Hub automation sources:
@@ -92,7 +93,7 @@ export function HubAutomationsShowcase() {
         <div
           role="tablist"
           aria-label={t("hub.demo.shared.tablistLabel")}
-          className="grid grid-cols-3 gap-1.5 sm:gap-2 lg:flex lg:flex-col lg:gap-1.5"
+          className="grid grid-cols-2 gap-1.5 min-[375px]:grid-cols-3 sm:gap-2 lg:flex lg:flex-col lg:gap-1.5"
         >
           {SHOWCASE_SOURCES.map((source, index) => (
             <SourceTabButton
@@ -113,19 +114,21 @@ export function HubAutomationsShowcase() {
       </div>
 
       <figure ref={stageRef} className="min-w-0 space-y-3">
-        <div className="relative lg:h-[528px]">
+        <div
+          role="tabpanel"
+          id={PANEL_ID}
+          aria-labelledby={`hub-source-tab-${selected}`}
+          tabIndex={0}
+          className="relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:h-[528px]"
+        >
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={selected}
-              role="tabpanel"
-              id={`hub-source-panel-${selected}`}
-              aria-labelledby={`hub-source-tab-${selected}`}
-              tabIndex={0}
               initial={reduceMotion ? false : PANEL_INITIAL}
               animate={PANEL_ANIMATE}
               exit={reduceMotion ? undefined : PANEL_EXIT}
               transition={PANEL_TRANSITION}
-              className="h-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text"
+              className="h-full"
             >
               <ActiveMockup active={isInView} reduceMotion={reduceMotion} />
             </motion.div>
@@ -185,7 +188,7 @@ function SourceTabButton({
       role="tab"
       id={`hub-source-tab-${id}`}
       aria-selected={isSelected}
-      aria-controls={`hub-source-panel-${id}`}
+      aria-controls={PANEL_ID}
       tabIndex={isSelected ? 0 : -1}
       onClick={handleClick}
       onKeyDown={handleKeyDown}

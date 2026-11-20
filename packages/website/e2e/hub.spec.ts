@@ -1,9 +1,22 @@
-import { expect, test, type Page } from "./fixtures";
+import { expect, test, waitForHydration, type Page } from "./fixtures";
 
-async function openHub(page: Page) {
-  await page.setViewportSize({ width: 1024, height: 900 });
+async function openHub(page: Page, width = 1024) {
+  await page.setViewportSize({ width, height: 900 });
   await page.goto("/hub");
   await expect(page.getByRole("heading", { name: "Paseo Hub", level: 1 })).toBeVisible();
+}
+
+async function tabIntoNextPreview(page: Page) {
+  await waitForHydration(page);
+  await page.getByRole("tab", { name: /^Slack/ }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Tab");
+}
+
+async function expectSourceLabelFits(page: Page, name: string) {
+  const label = page.getByRole("tab", { name }).getByText(name, { exact: true });
+  await expect(label).toBeVisible();
+  expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 }
 
 async function focusProSeatHelp(page: Page) {
@@ -39,4 +52,16 @@ test("the Slack starter forwards the mention and declares a thread reply", async
   await expect(starter).toContainText("${{ paseo.prompt }}");
   await expect(starter).toContainText("hub.reply");
   await expect(starter).toContainText("slack.reply:");
+});
+
+test("keyboard focus enters the selected preview during its transition", async ({ page }) => {
+  await openHub(page);
+  await tabIntoNextPreview(page);
+  await expect(page.getByRole("tabpanel", { name: /^GitHub/ })).toBeFocused();
+});
+
+test("source names fit on a narrow phone", async ({ page }) => {
+  await openHub(page, 320);
+  await expectSourceLabelFits(page, "Schedules");
+  await expectSourceLabelFits(page, "Webhooks");
 });
