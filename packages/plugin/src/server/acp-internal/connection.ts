@@ -393,6 +393,8 @@ interface DeferredTurnState {
   resolve(outcome: DeferredTurnOutcome): void;
 }
 
+type DeferredReplyState = "idle" | "open" | "settled_with_open_tools" | "settled";
+
 interface ActivePrompt {
   turnId: string;
   settled: Promise<void>;
@@ -401,8 +403,7 @@ interface ActivePrompt {
   wirePromptLane: Promise<void>;
   lastPromptResponseWireSeq: number | null;
   crossedEndTurn: boolean;
-  replyOpen: boolean;
-  replySettled: boolean;
+  replyState: DeferredReplyState;
   deferred: DeferredTurnState | null;
 }
 
@@ -726,8 +727,7 @@ class AcpRuntime {
       wirePromptLane: Promise.resolve(),
       lastPromptResponseWireSeq: null,
       crossedEndTurn: false,
-      replyOpen: false,
-      replySettled: false,
+      replyState: "idle",
       deferred: null,
     };
     // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
@@ -1648,6 +1648,7 @@ class AcpRuntime {
         }
         this.fallbackChunkIds.clear();
         active.lastPromptResponseWireSeq = null;
+        if (active.replyState === "settled_with_open_tools") active.replyState = "idle";
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
@@ -1779,10 +1780,7 @@ class AcpRuntime {
     if (!active.deferred && wasOpenQualifying && !isOpen && this.toolKeepsTurnOpen(snapshot)) {
       active.crossedEndTurn = true;
     }
-    if (isOpenQualifying) {
-      active.replyOpen = false;
-      active.replySettled = false;
-    }
+    if (isOpenQualifying) active.replyState = "idle";
     if (active.deferred) this.scheduleDeferredSettle();
   }
 
@@ -1792,16 +1790,15 @@ class AcpRuntime {
   ): void {
     const active = this.activePrompt;
     if (!active || !this.isPostWirePrompt(active, wireSeq)) return;
-    if (kind === "agent_message_chunk") active.replyOpen = true;
-    active.replySettled = false;
+    if (kind === "agent_message_chunk") active.replyState = "open";
+    else if (active.replyState !== "open") active.replyState = "idle";
     if (active.deferred) this.scheduleDeferredSettle();
   }
 
   private noteDeferredUsageUpdate(wireSeq: number): void {
     const active = this.activePrompt;
-    if (!active || !this.isPostWirePrompt(active, wireSeq) || !active.replyOpen) return;
-    active.replyOpen = false;
-    active.replySettled = true;
+    if (!active || !this.isPostWirePrompt(active, wireSeq) || active.replyState !== "open") return;
+    active.replyState = this.hasQualifyingOpenTools() ? "settled_with_open_tools" : "settled";
     if (active.deferred) this.scheduleDeferredSettle();
   }
 
@@ -1815,7 +1812,9 @@ class AcpRuntime {
       deferred.timer = null;
     }
     if (this.hasDeferredBlockers()) return;
-    const delayMs = active.replySettled
+    const settled =
+      active.replyState === "settled" || active.replyState === "settled_with_open_tools";
+    const delayMs = settled
       ? (config.settleDelayMs ?? DEFAULT_DEFERRED_SETTLE_DELAY_MS)
       : (config.quietLimitMs ?? DEFAULT_DEFERRED_QUIET_LIMIT_MS);
     deferred.timer = setTimeout(() => {

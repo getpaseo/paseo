@@ -5448,4 +5448,179 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("keeps the turn open for a second background tool reply that starts during a second steer", async () => {
+    let promptCount = 0;
+    let releaseSteer1: (() => void) | null = null;
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-s1",
+              name: "run_command",
+              title: "Job 1",
+              status: "in_progress",
+            },
+          });
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-s2",
+              name: "run_command",
+              title: "Job 2",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          releaseSteer1 = () => {
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("Steer 1 ACK"),
+            });
+            instance.respond(request, { stopReason: "end_turn" });
+            // Job 1 finishes and sends its reply + usage while Job 2 is STILL running.
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "bg-s1",
+                status: "completed",
+              },
+            });
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("Job 1 done."),
+            });
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+            });
+          };
+          return true;
+        }
+        // During Steer 2, Job 2 completes and starts streaming its reply before Steer 2 ends.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "bg-s2",
+            status: "completed",
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Job 2 part 1 "),
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-second-tool-steer",
+      label: "Deferred Second Tool Steer",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 40,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "two-tool-steer-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run two jobs" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-s2",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "two-tool-steer-1",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "steer 1" }] },
+        },
+      });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "two-tool-steer-2",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "steer 2" }] },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      releaseSteer1!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.includes("Job 2 part 1"),
+      );
+
+      // Pause longer than settleDelayMs (40ms): turn must stay open for Job 2's remaining chunks.
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:two-tool-steer-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Job 2 finishes streaming and sends usage_update -> turn now completes cleanly.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("and part 2."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 350, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:two-tool-steer-turn" &&
+          event.state === "completed",
+        400,
+      );
+    } finally {
+      await connection.close();
+    }
+  });
 });
