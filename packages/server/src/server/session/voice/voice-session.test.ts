@@ -265,7 +265,7 @@ describe("VoiceSession streaming transcription", () => {
     await voiceSession.cleanup();
   });
 
-  test("emits an empty transcript on finalization timeout without submitting to the agent", async () => {
+  test("retries a stalled finalization once, then emits an empty transcript without submitting to the agent", async () => {
     vi.useFakeTimers();
     try {
       const { voiceSession, detector, sttSession, host } = createVoiceSession();
@@ -277,6 +277,18 @@ describe("VoiceSession streaming transcription", () => {
       await settle();
       sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
 
+      // First timeout with committed-but-no-finals triggers one stall retry
+      // (re-commit + one extra window), not an immediate empty result.
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settle();
+
+      expect(host.spokenInput).toEqual([]);
+      expect(host.emitted).not.toContainEqual(
+        expect.objectContaining({ type: "transcription_result" }),
+      );
+
+      // Retry window elapses with still no final: empty result, still
+      // nothing submitted to the agent.
       await vi.advanceTimersByTimeAsync(10_000);
       await settle();
 
