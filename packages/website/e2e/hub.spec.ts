@@ -1,3 +1,4 @@
+import copy from "../src/i18n/resources/en.json" with { type: "json" };
 import { expect, test, waitForHydration, type Page } from "./fixtures";
 
 async function openHub(page: Page, width = 1024) {
@@ -27,8 +28,12 @@ async function readPreviewOnFocus(page: Page) {
   });
 }
 
-async function expectSourceLabelFits(page: Page, name: string) {
-  const label = page.getByRole("tab", { name }).getByText(name, { exact: true });
+async function useLargerText(page: Page) {
+  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+}
+
+async function expectSourceLabelFits(page: Page, name: string, text = name) {
+  const label = page.getByRole("tab", { name }).getByText(text, { exact: true });
   await expect(label).toBeVisible();
   expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 }
@@ -100,16 +105,24 @@ test("source names fit on a narrow phone", async ({ page }) => {
 
 test("source names remain readable with larger text on a phone", async ({ page }) => {
   await openHub(page, 375);
-  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  await useLargerText(page);
   for (const name of ["GitHub", "Discord", "Schedules", "Webhooks"]) {
     await expectSourceLabelFits(page, name);
+  }
+});
+
+test("desktop source descriptions fit with larger text", async ({ page }) => {
+  await openHub(page, 1280);
+  await useLargerText(page);
+  for (const { name, description } of Object.values(copy.hub.sources)) {
+    await expectSourceLabelFits(page, name, description);
   }
 });
 
 test("Hub previews have room for their final rows with larger text", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openHub(page, 1280);
-  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  await useLargerText(page);
   await waitForHydration(page);
   await expectPreviewRowsFit(page, "GitHub", "Open in Paseo");
   await expectPreviewRowsFit(page, "Discord", "Message #engineering");
@@ -118,7 +131,7 @@ test("Hub previews have room for their final rows with larger text", async ({ pa
 test("preview results fit on a narrow phone with larger text", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openHub(page, 320);
-  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  await useLargerText(page);
   await waitForHydration(page);
   await expectPreviewRowsFit(page, "Discord", "Fix stale worktrees", "getpaseo/paseo#2825");
   await expectPreviewRowsFit(page, "Schedules", "tests passed");
