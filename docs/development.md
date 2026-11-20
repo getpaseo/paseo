@@ -664,6 +664,11 @@ connection endpoint or credential. When the server ID is not saved, Paseo opens
 the Remote SSH flow and applies the pending path only if the connection the user
 approves reports that exact server ID.
 
+On macOS, packaged builds with this handler list `open-workspace-v1` in the
+`PaseoDesktopCapabilities` string array in the app's `Contents/Info.plist`.
+Clients can check the target bundle before opening a workspace. Older and
+custom builds may omit the declaration, so offer manual SSH setup in that case.
+
 ## Agent state
 
 Agent data lives at:
