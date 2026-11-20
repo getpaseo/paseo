@@ -1,5 +1,4 @@
 import type { DaemonTarget } from "../../utils/daemon-target.js";
-import { createPaseoApi } from "@getpaseo/client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 
@@ -16,6 +15,7 @@ export async function connectTerminalClient(target: DaemonTarget) {
   const daemonHost = getDaemonHost({ target });
   try {
     const client = await connectToDaemon({ target });
+    const { createPaseoApi } = await import("../../utils/daemon-client-runtime.js");
     return { client: createPaseoApi(client), daemonHost, close: () => client.close() };
   } catch (err) {
     if (err && typeof err === "object" && "code" in err) throw err;
