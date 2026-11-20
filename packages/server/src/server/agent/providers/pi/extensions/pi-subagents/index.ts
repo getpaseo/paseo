@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
 import type { PiExtension, PiExtensionToolCall, PiExtensionToolMapping } from "../contract.js";
 
@@ -8,6 +10,7 @@ const Args = z
     task: z.string().trim().min(1).optional(),
     async: z.boolean().optional(),
     action: z.unknown().optional(),
+    message: z.string().optional(),
   })
   .passthrough();
 const Row = z
@@ -27,16 +30,62 @@ const Details = z
     mode: z.string(),
     runId: z.string().optional(),
     asyncId: z.string().optional(),
+    asyncDir: z.string().trim().min(1).optional(),
     results: z.array(Row),
     completions: z.array(Completion).optional(),
   })
   .passthrough();
+const AsyncStatus = z
+  .object({
+    state: z.string(),
+    steps: z.array(
+      z
+        .object({
+          agent: z.string().trim().min(1),
+          status: z.string().optional(),
+          sessionFile: z.string().trim().min(1).optional(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+function asyncChildStatus(runState: string, stepStatus?: string) {
+  if (!["complete", "failed", "stopped"].includes(runState)) return "running";
+  if (runState === "stopped" || stepStatus === "stopped") return "canceled";
+  if (runState === "failed" || stepStatus === "failed" || stepStatus === "error") return "failed";
+  return "completed";
+}
+
+/** The `subagent-notify` header; a grouped notice reports every run as completed. */
+function noticeStatus(header: string) {
+  if (/^Background tasks completed \(\d+\):/.test(header)) return "completed";
+  const outcome = header.match(
+    /^(?:Background task|Detached foreground task) (completed|failed|stopped): \*\*/,
+  )?.[1];
+  if (outcome === "stopped") return "canceled";
+  return outcome as "completed" | "failed" | undefined;
+}
 
 export const piSubagents: PiExtension = {
   id: "pi-subagents",
   createSession: () => {
     const callsByRun = new Map<string, string>();
     const readSessions = new Set<string>();
+    // Pi resumes append to the source transcript, but each attempt has its own timeline reader.
+    const rememberSession = (id: string, file: string) => {
+      const key = JSON.stringify([id, file]);
+      if (readSessions.has(key)) return false;
+      readSessions.add(key);
+      return true;
+    };
+    /** Keyed by async directory, which both status.json and the completion notice carry. */
+    const asyncRuns = new Map<string, { owner: string; polling: boolean }>();
+    const rememberAsyncRun = (details: z.infer<typeof Details>, call: PiExtensionToolCall) => {
+      if (details.asyncDir && call.status !== "failed") {
+        asyncRuns.set(details.asyncDir, { owner: call.callId, polling: true });
+      }
+    };
     const collectRows = (
       owner: string,
       rows: z.infer<typeof Row>[],
@@ -58,8 +107,7 @@ export const piSubagents: PiExtension = {
               ? "failed"
               : "completed",
         });
-        if (row.sessionFile && !readSessions.has(row.sessionFile)) {
-          readSessions.add(row.sessionFile);
+        if (row.sessionFile && rememberSession(id, row.sessionFile)) {
           childSessions.push({ id, file: row.sessionFile });
         }
       }
@@ -82,15 +130,48 @@ export const piSubagents: PiExtension = {
       }
       return subagents.length ? { subagents, childSessions } : undefined;
     };
+    const mapResume = (call: PiExtensionToolCall, description?: string) => {
+      // A resume can reject or only reattach to existing work. Declare a new attempt only once
+      // Pi confirms it launched an async single run; its new directory owns all later signals.
+      if (call.status !== "completed") return undefined;
+      const details = Details.safeParse(
+        typeof call.result === "object" ? call.result?.details : null,
+      );
+      if (
+        !details.success ||
+        details.data.mode !== "single" ||
+        !details.data.asyncId ||
+        !details.data.asyncDir ||
+        details.data.results.length !== 0
+      )
+        return undefined;
+      callsByRun.set(details.data.runId ?? details.data.asyncId, call.callId);
+      rememberAsyncRun(details.data, call);
+      return {
+        subagents: [
+          {
+            type: "upsert" as const,
+            id: call.callId,
+            title: "Subagent",
+            description,
+            toolCallId: call.callId,
+            status: "running" as const,
+          },
+        ],
+      };
+    };
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = Args.safeParse(call.args);
-      if (!args.success || args.data.action !== undefined || !args.data.agent || !args.data.task)
-        return undefined;
+      if (!args.success) return undefined;
+      if (args.data.action === "resume")
+        return mapResume(call, args.data.message ?? args.data.task);
+      if (args.data.action !== undefined || !args.data.agent || !args.data.task) return undefined;
       const detail = {
         type: "sub_agent" as const,
         subAgentType: args.data.agent,
         description: args.data.task,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        // COMPAT(subagent-log): remove after 2027-04-30.
+        log: "",
       };
       const base = {
         type: "upsert" as const,
@@ -109,7 +190,8 @@ export const piSubagents: PiExtension = {
           ? { detail, subagents: [{ ...base, status: "failed" as const }] }
           : { detail };
       if (details.data.runId) callsByRun.set(details.data.runId, call.callId);
-      if (details.data.results.length === 0 && (details.data.asyncId || args.data.async))
+      if (details.data.results.length === 0 && (details.data.asyncId || args.data.async)) {
+        rememberAsyncRun(details.data, call);
         return {
           detail,
           subagents: [
@@ -119,6 +201,7 @@ export const piSubagents: PiExtension = {
             },
           ],
         };
+      }
       if (details.data.results.length === 0 && call.status === "failed")
         return { detail, subagents: [{ ...base, status: "failed" as const }] };
       return {
@@ -131,6 +214,71 @@ export const piSubagents: PiExtension = {
         if (call.toolName === "bg_wait") return mapWait(call);
         if (call.toolName === "subagent") return mapSpawn(call);
         return undefined;
+      },
+      // The notice is the only completion Pi persists, so replay settles async runs from it.
+      mapCustomMessage(message) {
+        if (message.customType !== "subagent-notify") return undefined;
+        const text =
+          typeof message.content === "string"
+            ? message.content
+            : extractTextFromToolResult({ content: message.content });
+        const lines = text?.split("\n") ?? [];
+        const status = noticeStatus(lines[0] ?? "");
+        if (!status) return undefined;
+        const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
+        const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
+        // Each run's session line follows its async directory line; earlier lines are child output.
+        let owner: string | undefined;
+        for (const line of lines) {
+          const dir = line.match(/^Retention-managed async directory: (.+)$/)?.[1];
+          if (dir) {
+            owner = asyncRuns.get(dir)?.owner;
+            if (owner) subagents.push({ type: "upsert", id: owner, status });
+            continue;
+          }
+          const file = owner ? line.match(/^Session file: (.+)$/)?.[1] : undefined;
+          if (!owner || !file) continue;
+          if (rememberSession(owner, file)) {
+            childSessions.push({ id: owner, file });
+          }
+          owner = undefined;
+        }
+        return subagents.length ? { subagents, childSessions } : undefined;
+      },
+      poll() {
+        const subagents: NonNullable<PiExtensionToolMapping["subagents"]> = [];
+        const childSessions: NonNullable<PiExtensionToolMapping["childSessions"]> = [];
+        for (const [dir, run] of asyncRuns) {
+          if (!run.polling) continue;
+          let raw: unknown;
+          try {
+            raw = JSON.parse(readFileSync(join(dir, "status.json"), "utf8"));
+          } catch {
+            continue;
+          }
+          const parsed = AsyncStatus.safeParse(raw);
+          if (!parsed.success) continue;
+          const terminal = ["complete", "failed", "stopped"].includes(parsed.data.state);
+          for (const [index, step] of parsed.data.steps.entries()) {
+            const id = parsed.data.steps.length === 1 ? run.owner : `${run.owner}:${index}`;
+            const status = asyncChildStatus(parsed.data.state, step.status);
+            subagents.push({ type: "upsert", id, title: step.agent, status });
+            if (step.sessionFile && rememberSession(id, step.sessionFile)) {
+              childSessions.push({ id, file: step.sessionFile });
+            }
+          }
+          if (terminal) {
+            if (parsed.data.steps.length === 0) {
+              subagents.push({
+                type: "upsert",
+                id: run.owner,
+                status: parsed.data.state === "complete" ? "completed" : "failed",
+              });
+            }
+            run.polling = false;
+          }
+        }
+        return subagents.length || childSessions.length ? { subagents, childSessions } : undefined;
       },
     };
   },

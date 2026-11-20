@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { FolderTree } from "lucide-react-native";
 import {
   AdaptiveModalSheet,
-  SHEET_HEADER_CLOSE_PADDING_SCALE,
   SHEET_HORIZONTAL_PADDING_SCALE,
 } from "@/components/adaptive-modal-sheet";
 import {
@@ -26,14 +26,11 @@ import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
 // difference so a depth-0 file icon lands on the header glyph's rail.
 const TREE_LEADING_INSET = SPACING[SHEET_HORIZONTAL_PADDING_SCALE] - treeRowPaddingLeft(0);
 
-// The header's close glyph sits at the content inset plus the button's own
-// padding, while a tree row ends its trailing glyph at
-// `WORKSPACE_PANE_TRAILING_GLYPH_RAIL`. The body carries the difference so row
-// change icons land on the header X's rail.
+// The header's close glyph ends on the sheet's content inset, while a tree row
+// ends its trailing glyph at `WORKSPACE_PANE_TRAILING_GLYPH_RAIL`. The body
+// carries the difference so row change icons land on the header X's rail.
 const TREE_TRAILING_INSET =
-  SPACING[SHEET_HORIZONTAL_PADDING_SCALE] +
-  SPACING[SHEET_HEADER_CLOSE_PADDING_SCALE] -
-  WORKSPACE_PANE_TRAILING_GLYPH_RAIL;
+  SPACING[SHEET_HORIZONTAL_PADDING_SCALE] - WORKSPACE_PANE_TRAILING_GLYPH_RAIL;
 
 const ThemedFolderTree = withUnistyles(FolderTree);
 
@@ -53,6 +50,7 @@ export interface JumpToFileProps {
 /** Compact overview of a loaded diff: a floating action that opens the changed-files tree. */
 export function JumpToFile({ files, mode, onSelectFile }: JumpToFileProps) {
   const { t } = useTranslation();
+  const { bottom } = useSafeAreaInsets();
   const [isOpen, setIsOpen] = useState(false);
   // The sheet is a transient overview, so it always opens fully expanded and
   // never writes to the panel's persisted folder state.
@@ -83,6 +81,7 @@ export function JumpToFile({ files, mode, onSelectFile }: JumpToFileProps) {
     <>
       <FloatingActionButton
         icon={FolderTree}
+        bottomInset={bottom}
         accessibilityLabel={title}
         onPress={open}
         testID="changes-jump-to-file"

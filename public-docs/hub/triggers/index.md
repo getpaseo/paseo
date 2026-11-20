@@ -87,17 +87,18 @@ Hub includes an `executionId` in each prompt. When using a continuing agent, pas
 
 ## Events
 
-| `on`                                  | Fires when                                           |
-| ------------------------------------- | ---------------------------------------------------- |
-| `github.issue_created`                | An issue is opened.                                  |
-| `github.pull_request_created`         | A pull request is opened.                            |
-| `github.issue_comment_created`        | A comment is created on an issue.                    |
-| `github.pull_request_comment_created` | A conversation comment is created on a pull request. |
-| `github.issue_label_added`            | A label is added to an issue.                        |
-| `github.pull_request_label_added`     | A label is added to a pull request.                  |
-| `slack.mention`                       | The bot is mentioned in a channel.                   |
-| `discord.mention`                     | The bot is mentioned in a guild.                     |
-| `manual.run`                          | A run started from the API.                          |
+| `on`                                   | Fires when                                           |
+| -------------------------------------- | ---------------------------------------------------- |
+| `github.issue_created`                 | An issue is opened.                                  |
+| `github.pull_request_created`          | A pull request is opened.                            |
+| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.     |
+| `github.issue_comment_created`         | A comment is created on an issue.                    |
+| `github.pull_request_comment_created`  | A conversation comment is created on a pull request. |
+| `github.issue_label_added`             | A label is added to an issue.                        |
+| `github.pull_request_label_added`      | A label is added to a pull request.                  |
+| `slack.mention`                        | The bot is mentioned in a channel.                   |
+| `discord.mention`                      | The bot is mentioned in a guild.                     |
+| `manual.run`                           | A run started from the API.                          |
 
 New GitHub workflows should use a semantic event. The five legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. See [GitHub triggers](/docs/hub/triggers/github) for complete workflows and when to use each event.
 

@@ -96,6 +96,7 @@ function scheduleOnHost(input: {
   serverName: string;
   cwd: string;
   model: string;
+  provider?: string;
   thinkingOptionId?: string | null;
   cadence?: ScheduleSummary["cadence"];
 }): TestSchedule {
@@ -109,7 +110,7 @@ function scheduleOnHost(input: {
     target: {
       type: "new-agent",
       config: {
-        provider: "mock",
+        provider: input.provider ?? "mock",
         cwd: input.cwd,
         model: input.model,
         modeId: "load-test",
@@ -186,6 +187,56 @@ function applyPreferences(form: ReturnType<typeof open>, preferences: FormPrefer
 }
 
 describe("schedule form model", () => {
+  it("keeps Ultra Code available in the schedule effort picker", () => {
+    const model = "claude-opus-4-8";
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a",
+        provider: "claude",
+        model,
+        thinkingOptionId: "ultracode",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyProviderSnapshot("host-a", {
+      ...providerSnapshot([]),
+      entries: [
+        {
+          provider: "claude",
+          status: "ready",
+          enabled: true,
+          models: [
+            {
+              provider: "claude",
+              id: model,
+              label: "Opus 4.8",
+              thinkingOptions: [
+                { id: "high", label: "High" },
+                {
+                  id: "xhigh",
+                  label: "Extra high",
+                  metadata: { replacesThinkingOptionId: "ultracode" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(form.getState().selectedThinkingOptionId).toBe("ultracode");
+    expect(form.getState().availableThinkingOptions.map((option) => option.id)).toContain(
+      "ultracode",
+    );
+    form.setThinking("high");
+    expect(form.getState().selectedThinkingOptionId).toBe("high");
+    expect(form.getState().availableThinkingOptions.map((option) => option.id)).toContain(
+      "ultracode",
+    );
+  });
+
   it("opens edit from the schedule host snapshot and completes that host resolution", () => {
     const previous = open({
       mode: "edit",

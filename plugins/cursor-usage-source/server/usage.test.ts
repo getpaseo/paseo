@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { identify, fetchUsage } from "./usage.js";
+import { discover, discoverSession, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 // node:sqlite has no @types/node@20 typings; require it with a narrow local type.
@@ -97,14 +97,14 @@ describe("cursor usage source", () => {
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage({}, (url, init) => fetchApi(url, init));
+        const report = await fetchFirst((url, init) => fetchApi(url, init));
         return {
           providers: [
             {
               providerId: "cursor",
               ...report,
-              error: report.error ?? null,
-              planLabel: report.planLabel ?? null,
+              error: report.status === "error" ? report.error : null,
+              planLabel: report.status === "available" ? (report.planLabel ?? null) : null,
             },
           ],
         };
@@ -250,26 +250,188 @@ describe("cursor usage source", () => {
     expect(cursor.status).toBe("available");
   });
 
-  it("stays unavailable when state.vscdb is unreadable", async () => {
-    const path = join(homeDir, ".config", "Cursor", "User", "globalStorage");
-    mkdirSync(path, { recursive: true });
-    writeFileSync(join(path, "state.vscdb"), "not a database");
-    const cursor = findProvider(await service().listUsage(), "cursor");
-    expect(cursor.status).toBe("unavailable");
+  it("omits unreadable state.vscdb", async () => {
+    const directory = join(homeDir, ".config", "Cursor", "User", "globalStorage");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "state.vscdb"), "invalid database");
+    expect(await discover()).toEqual([]);
+  });
+
+  describe("session discovery", () => {
+    let sessionHome: string;
+    beforeEach(() => {
+      sessionHome = mkdtempSync(join(tmpdir(), "usage-session-home-"));
+    });
+    afterEach(() => {
+      rmSync(sessionHome, { recursive: true, force: true });
+    });
+    function cursorSession(env: Record<string, string>, provider = "cursor") {
+      return { kind: "session" as const, provider, env: { HOME: sessionHome, ...env } };
+    }
+    function writeAuthJson(path: string): void {
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, JSON.stringify({ accessToken: "session-token" }));
+    }
+
+    it("keeps different accounts separate while joining global and session logins for the same account", async () => {
+      function token(sub: string, nonce: string) {
+        return `e30.${Buffer.from(JSON.stringify({ sub, nonce })).toString("base64url")}.signature`;
+      }
+      writeCursorAuthJson(homeDir, token("user-a", "desktop"));
+      writeCursorAuthJson(sessionHome, token("user-b", "session"));
+      const globalAccounts = await discover();
+      const differentAccount = await discoverSession(cursorSession({}), "linux");
+      expect(globalAccounts).toHaveLength(1);
+      expect(differentAccount).toHaveLength(1);
+      expect(differentAccount[0]!.key).not.toBe(globalAccounts[0]!.key);
+
+      writeCursorAuthJson(sessionHome, token("user-a", "refreshed-session"));
+      const sameAccount = await discoverSession(cursorSession({}), "linux");
+      expect(sameAccount).toHaveLength(1);
+      expect(sameAccount[0]!.key).toBe(globalAccounts[0]!.key);
+    });
+
+    it("isolates logins without a readable subject by store and keeps their key across token rotation", async () => {
+      writeCursorAuthJson(homeDir, "opaque-global-token");
+      writeCursorAuthJson(sessionHome, "opaque-session-token");
+      const globalAccounts = await discover();
+      const sessionAccounts = await discoverSession(cursorSession({}), "linux");
+      expect(sessionAccounts).toHaveLength(1);
+      expect(globalAccounts).toHaveLength(1);
+      expect(sessionAccounts[0]!.key).not.toBe(globalAccounts[0]!.key);
+      writeCursorAuthJson(sessionHome, "e30.invalid-json.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+      writeCursorAuthJson(sessionHome, "e30.e30.signature");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual(sessionAccounts);
+    });
+
+    it("reads the login cursor-agent uses under the session's XDG_CONFIG_HOME", async () => {
+      const configHome = join(sessionHome, "xdg");
+      const authPath = join(configHome, "cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(
+        await discoverSession(cursorSession({ XDG_CONFIG_HOME: configHome }), "linux"),
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it("reads the login under the session's HOME, not the daemon's", async () => {
+      writeCursorAuthJson(homeDir, "daemon-token");
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: join(sessionHome, ".config", "cursor", "auth.json") },
+        },
+      ]);
+    });
+
+    it("reads %APPDATA%/Cursor/auth.json on Windows", async () => {
+      const appData = join(sessionHome, "AppData", "Roaming");
+      const authPath = join(appData, "Cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({ APPDATA: appData }), "win32")).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it("reads ~/.cursor/auth.json on macOS only when cursor-agent uses the file store", async () => {
+      const authPath = join(sessionHome, ".cursor", "auth.json");
+      writeAuthJson(authPath);
+      expect(await discoverSession(cursorSession({}), "darwin")).toEqual([]);
+      expect(
+        await discoverSession(cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "file" }), "darwin"),
+      ).toEqual([
+        {
+          key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+          input: { store: "file", locator: authPath },
+        },
+      ]);
+    });
+
+    it.each([
+      ["another provider", cursorSession({}, "claude")],
+      ["a CURSOR_API_KEY session", cursorSession({ CURSOR_API_KEY: "key" })],
+      ["a CURSOR_AUTH_TOKEN session", cursorSession({ CURSOR_AUTH_TOKEN: "token" })],
+      ["an in-memory credential store", cursorSession({ AGENT_CLI_CREDENTIAL_STORE: "memory" })],
+    ])("returns no login for %s", async (_scenario, scope) => {
+      writeCursorAuthJson(sessionHome, "session-token");
+      expect(await discoverSession(scope, "linux")).toEqual([]);
+    });
+
+    it("never falls back to the daemon's default stores", async () => {
+      writeCursorStateDb(homeDir, { "cursorAuth/accessToken": "desktop-token" });
+      writeCursorAuthJson(homeDir, "daemon-token");
+      process.env["CURSOR_ACCESS_TOKEN"] = "daemon-env-token";
+      expect(await discoverSession(cursorSession({}), "linux")).toEqual([]);
+    });
   });
 });
 
-it("identify returns a key when fetch finds cursor credentials", async () => {
+it("discovery returns a locator when fetch finds cursor credentials", async () => {
   const previous = process.env["CURSOR_ACCESS_TOKEN"];
   try {
     process.env["CURSOR_ACCESS_TOKEN"] = "fixture-token";
     let requested = false;
-    await fetchUsage({}, async () => {
+    await fetchFirst(async () => {
       requested = true;
       return new Response(null, { status: 401 });
     });
     expect(requested).toBe(true);
-    expect(await identify()).toEqual({ key: "default" });
+    expect(await discover()).toEqual([
+      {
+        key: expect.stringMatching(/^store-[a-f0-9]{64}$/),
+        input: { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
+      },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
+    else process.env["CURSOR_ACCESS_TOKEN"] = previous;
+  }
+});
+
+describe("account discovery", () => {
+  it.each(["empty home", "unrelated files"])("returns no accounts for %s", async (scenario) => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const directory = await mkdtemp(join(tmpdir(), "usage-empty-"));
+    const original = { ...process.env };
+    try {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      process.env.HOME = directory;
+      process.env.USERPROFILE = directory;
+      if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
+      expect(await discover()).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, original);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+async function fetchFirst(fetchApi: typeof fetch) {
+  const accounts = await discover();
+  const account = accounts[0];
+  if (!account) throw new Error("No configured account");
+  return fetchUsage(account.input as Parameters<typeof fetchUsage>[0], fetchApi);
+}
+
+it.each([401, 403])("reports an existing login rejected with HTTP %i", async (status) => {
+  const previous = process.env["CURSOR_ACCESS_TOKEN"];
+  try {
+    process.env["CURSOR_ACCESS_TOKEN"] = "fixture-rejected-login";
+    const report = await fetchUsage(
+      { store: "env", locator: "CURSOR_ACCESS_TOKEN" },
+      async () => new Response(null, { status }),
+    );
+    expect(report).toEqual({ status: "unavailable", problem: { kind: "rejected", status } });
   } finally {
     if (previous === undefined) delete process.env["CURSOR_ACCESS_TOKEN"];
     else process.env["CURSOR_ACCESS_TOKEN"] = previous;

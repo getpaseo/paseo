@@ -260,6 +260,38 @@ const DISCUSSIONS = [
   },
 ];
 
+describe("createGitLabService getReferenceRepository", () => {
+  it("names the project a fork was forked from, asking about the origin project explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          path_with_namespace: "example-group/example-project",
+          forked_from_project: { path_with_namespace: "upstream-group/sub/example-project" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-group/sub/example-project",
+    );
+    expect(calls).toEqual([["api", "projects/example-group%2Fexample-project"]]);
+  });
+
+  it("rejects when glab api answers with an error body", async () => {
+    const { service } = makeService(() => ok(JSON.stringify({ message: "404 Project Not Found" })));
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a project that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ path_with_namespace: "example-group/example-project" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGitLabService", () => {
   it("maps a glab merge request view to the neutral current PR status", async () => {
     const { service, calls } = makeService((args) =>
@@ -357,14 +389,36 @@ describe("createGitLabService", () => {
     expect(calls[1]).toEqual(["mr", "view", "270", "-F", "json"]);
   });
 
-  it("does not attach the latest historical merge request after a reused branch advances", async () => {
+  it("hides a historical MR on the project's default branch", async () => {
+    const historical = { ...OPEN_MR, state: "merged", source_branch: "trunk" };
+    const { service } = makeService((args) => {
+      if (args[1] === "list") return ok(JSON.stringify([historical]));
+      if (args[1] === "view") return ok(JSON.stringify(historical));
+      if (args[0] === "api" && args[1] === "projects/example-group%2Fexample-project") {
+        return ok(
+          JSON.stringify({
+            path_with_namespace: "example-group/example-project",
+            default_branch: "trunk",
+          }),
+        );
+      }
+      return ok("{}");
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "trunk" }),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps a merged MR when its remote head advances beyond the checkout", async () => {
     const stale = {
       ...OPEN_MR,
       state: "merged",
       source_branch: "dev",
       sha: "1111111111111111111111111111111111111111",
     };
-    const { service, calls } = makeService(() => ok(JSON.stringify([stale])));
+    const { service, calls } = makeService((args) =>
+      ok(JSON.stringify(args[1] === "list" ? [stale] : stale)),
+    );
 
     await expect(
       service.getCurrentPullRequestStatus({
@@ -372,8 +426,8 @@ describe("createGitLabService", () => {
         headRef: "dev",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toBeNull();
-    expect(calls).toEqual([currentMrListArgs("dev")]);
+    ).resolves.toMatchObject({ state: "merged" });
+    expect(calls[0]).toEqual(currentMrListArgs("dev"));
   });
 
   it("looks up a numeric current branch through the source-branch list filter", async () => {
@@ -477,6 +531,7 @@ describe("createGitLabService", () => {
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
       isCrossRepository: false,
+      headRefKind: "branch",
     });
     expect(calls[0]).toEqual(["mr", "view", "14", "-F", "json"]);
   });
@@ -1326,6 +1381,132 @@ describe("createGitLabService", () => {
     await expect(service.getPullRequest({ cwd: "/repo", number: 1 })).rejects.toBeInstanceOf(
       GlabCommandError,
     );
+  });
+
+  it("finds a merge request by number even when its title and description omit it", async () => {
+    const { service } = makeService((args) => {
+      // GitLab text search does not search the IID. Model both API behaviors.
+      if (args.includes("--search")) return ok("[]");
+      if (args[0] === "api" && args[1].includes("iids[]=14")) {
+        return ok(JSON.stringify([OPEN_MR]));
+      }
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: " 14 ",
+      kinds: ["change_request"],
+    });
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        kind: "change_request",
+        number: 14,
+        title: OPEN_MR.title,
+        headRefName: OPEN_MR.source_branch,
+        baseRefName: OPEN_MR.target_branch,
+      }),
+    ]);
+  });
+
+  it("finds issues by number through the same search interface", async () => {
+    const { service } = makeService((args) => {
+      if (args.includes("--search")) return ok("[]");
+      if (args[0] === "api" && args[1].includes("iids[]=7")) {
+        return ok(JSON.stringify([OPEN_ISSUE]));
+      }
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "7",
+      kinds: ["issue"],
+    });
+    expect(result.items).toEqual([
+      expect.objectContaining({ kind: "issue", number: 7, title: OPEN_ISSUE.title }),
+    ]);
+  });
+
+  it.each([
+    { kind: "change_request" as const, item: OPEN_MR },
+    { kind: "issue" as const, item: OPEN_ISSUE },
+  ])(
+    "preserves numeric text matches after the exact $kind number, without duplicates",
+    async ({ kind, item }) => {
+      const textMatches = [
+        {
+          ...item,
+          iid: 90,
+          title: `References ${item.iid}`,
+          updated_at: "2026-07-01T00:00:00.000Z",
+        },
+        item,
+        {
+          ...item,
+          iid: 91,
+          description: `References ${item.iid}`,
+          updated_at: "2026-06-30T00:00:00.000Z",
+        },
+      ];
+      const { service } = makeService((args) => {
+        if (args.includes("--search")) return ok(JSON.stringify(textMatches));
+        if (args[0] === "api") return ok(JSON.stringify([item]));
+        throw new Error(`unexpected glab args: ${args.join(" ")}`);
+      });
+      const result = await service.searchIssuesAndPrs({
+        cwd: "/repo",
+        query: String(item.iid),
+        limit: 2,
+        kinds: [kind],
+      });
+      expect(
+        result.items.map((resultItem) => ({ kind: resultItem.kind, number: resultItem.number })),
+      ).toEqual([
+        { kind, number: item.iid },
+        { kind, number: 90 },
+      ]);
+    },
+  );
+
+  it.each([
+    { kind: "change_request" as const, item: OPEN_MR },
+    { kind: "issue" as const, item: OPEN_ISSUE },
+  ])("keeps $kind text matches when the queried number is not open", async ({ kind, item }) => {
+    const { service } = makeService((args) => {
+      if (args.includes("--search")) {
+        return ok(JSON.stringify([{ ...item, description: "References 2024" }]));
+      }
+      if (args[0] === "api") return ok("[]");
+      throw new Error(`unexpected glab args: ${args.join(" ")}`);
+    });
+    const result = await service.searchIssuesAndPrs({
+      cwd: "/repo",
+      query: "2024",
+      kinds: [kind],
+    });
+    expect(result.items.map(({ number }) => number)).toEqual([item.iid]);
+  });
+
+  it("keeps closed and missing merge requests out of number search results", async () => {
+    const closedMr = { ...OPEN_MR, state: "closed" };
+    const { service } = makeService((args) => {
+      if (args.includes("--search")) return ok("[]");
+      if (args[0] !== "api") throw new Error(`unexpected glab args: ${args.join(" ")}`);
+      const endpoint = new URL(args[1], "https://gitlab.example.com/api/v4/");
+      const matches =
+        endpoint.searchParams.get("iids[]") === String(closedMr.iid) &&
+        endpoint.searchParams.get("state") !== "opened";
+      return ok(JSON.stringify(matches ? [closedMr] : []));
+    });
+    for (const query of ["14", "999999"]) {
+      const result = await service.searchIssuesAndPrs({
+        cwd: "/repo",
+        query,
+        limit: 10,
+        kinds: ["change_request"],
+      });
+      expect(result.authState).toBe("authenticated");
+      expect(result.items).toEqual([]);
+    }
   });
 
   it("searches issues and merge requests and maps them to neutral results", async () => {

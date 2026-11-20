@@ -50,7 +50,24 @@ const workspace = await client.workspaces.create({
 });
 ```
 
+Pass `agent` to create the workspace and its first agent in one call. See the
+[combined background workspace example](./agents.md#run-work-in-a-background-workspace).
+Set visibility on the workspace options; `agent.background` is rejected.
+
 You can pass `projectId` in either source when you already have one. Most integrations should omit it; the daemon finds or creates the project from the directory.
+
+Pass `background: true` to hide a workspace from default discovery. Its agents and terminals
+remain durable, with ordinary history, lifecycle hooks, archive, and exact-ID access. The app's
+sidebar offers **Show background** without dropping replicated state.
+
+`background` is creation-only. Omission defaults to false; when `callerAgentId` identifies an agent
+creating a new workspace, omission inherits the caller's visibility: true when the caller agent or
+its workspace is background. Explicit false or true overrides inheritance. Agent creation that
+creates its workspace applies `background` to both the workspace and the agent. To hide one agent
+in an existing workspace, see [background agents](./agents.md#run-a-helper-as-a-background-agent).
+
+Creation and inclusive discovery require `features.backgroundWorkspaces`; the client rejects an
+unsupported host with an update-host message.
 
 ## Start an agent in a workspace
 
@@ -115,6 +132,11 @@ do {
   cursor = page.pageInfo.nextCursor ?? undefined;
 } while (cursor);
 ```
+
+Background workspaces are left out unless `filter.includeBackground` is true. Use
+`client.workspaces.list({ filter: { includeBackground: true } })` or
+`client.agents.list({ filter: { includeBackground: true } })`. Workspace and agent snapshots carry
+`background`. An agent is hidden when it or its workspace is background.
 
 ## Refresh and archive a handle
 

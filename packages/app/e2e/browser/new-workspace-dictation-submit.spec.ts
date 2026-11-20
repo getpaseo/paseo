@@ -6,7 +6,23 @@ import {
   selectWorkspaceIsolation,
 } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  composerLocator,
+  expectComposerVisible,
+  fillComposerDraft,
+  enterComposerFullscreen,
+  resizeComposerViewport,
+  expectComposerFullscreenControls,
+} from "../support/helpers/composer";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
+import {
+  seedTerminalProfiles,
+  selectLaunchOption,
+  terminalPromptInput,
+} from "../support/helpers/new-workspace-launch";
+
+test.use({ channel: "chromium", launchOptions: { args: ["--use-fake-device-for-media-stream"] } });
 
 type WebSocketMessage = string | Buffer;
 
@@ -195,4 +211,132 @@ test.describe("New Workspace dictation submit", () => {
       await seeded.cleanup();
     }
   });
+});
+
+async function startDictationWithShortcut(page: Page): Promise<void> {
+  await composerLocator(page).press("Control+d");
+}
+
+test("dictation shortcut leaves retained fullscreen and exposes recording controls", async ({
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "fullscreen-dictation-",
+    title: "Fullscreen dictation shortcut",
+  });
+  await installSyntheticMicrophone(page);
+  const harness = await installDictationFailureHarness(page);
+  const draft = "First line\nSecond line\nThird line";
+  try {
+    await resizeComposerViewport(page, "portrait");
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await fillComposerDraft(page, draft);
+    await enterComposerFullscreen(page);
+    await resizeComposerViewport(page, "landscape");
+    await expectComposerFullscreenControls(page);
+    await startDictationWithShortcut(page);
+    await harness.waitForAudio();
+    await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Insert transcription", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Insert transcription and send", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+    await expect(composerLocator(page)).toBeEditable();
+    await expect(composerLocator(page)).toHaveValue(draft);
+    await resizeComposerViewport(page, "portrait");
+    await enterComposerFullscreen(page);
+    await resizeComposerViewport(page, "landscape");
+    await composerLocator(page).press("Control+Shift+d");
+    await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toHaveCount(0);
+    await expect(
+      page.getByText("Realtime voice is disabled in this test.", { exact: true }),
+    ).toBeVisible();
+    await expect(composerLocator(page)).toHaveValue(draft);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+async function controlMicrophonePermission(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const { targetInfo } = await cdp.send("Target.getTargetInfo");
+  const origin = new URL(page.url()).origin;
+  return async (setting: "denied" | "granted") => {
+    await cdp.send("Browser.setPermission", {
+      permission: { name: "microphone" },
+      setting,
+      origin,
+      browserContextId: targetInfo.browserContextId,
+    });
+  };
+}
+
+function startDictationByMic(page: Page) {
+  return page.getByRole("button", { name: "Start dictation", exact: true }).click();
+}
+
+function expectDictationPermissionError(page: Page) {
+  return expect(page.getByTestId("message-input-root").getByRole("alert")).toHaveText(
+    "Allow microphone access and try again.",
+  );
+}
+
+test("keeps the draft and retries from the mic after access is restored", async ({ page }) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "dictation-permission-",
+    title: "Dictation permission",
+  });
+  const draft = "Keep my draft";
+  await installDictationFailureHarness(page);
+  try {
+    await openAgentRoute(page, agent);
+    await expectComposerVisible(page);
+    await fillComposerDraft(page, draft);
+
+    const setMicrophonePermission = await controlMicrophonePermission(page);
+    await setMicrophonePermission("denied");
+    await startDictationByMic(page);
+    await expectDictationPermissionError(page);
+    await expect(composerLocator(page)).toHaveValue(draft);
+
+    await setMicrophonePermission("granted");
+    await startDictationByMic(page);
+    await expect(page.getByRole("button", { name: "Cancel dictation", exact: true })).toBeVisible();
+    await expect(page.getByText("Allow microphone access and try again.")).toHaveCount(0);
+    await page.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+    await expect(composerLocator(page)).toHaveValue(draft);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("shows dictation failure when the terminal prompt starts it by shortcut", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "terminal-dictation-permission-" });
+  const profile = {
+    id: "echo-prompt",
+    name: "Echo prompt",
+    command: "echo",
+    args: ["{{{prompt}}}"],
+  };
+  const profiles = await seedTerminalProfiles([profile]);
+  await installDictationFailureHarness(page);
+  try {
+    await gotoAppShell(page);
+    await waitForSidebarHydration(page);
+    await openNewWorkspaceComposer(page, workspace);
+    await selectLaunchOption(page, profile.id);
+
+    const setMicrophonePermission = await controlMicrophonePermission(page);
+    await setMicrophonePermission("denied");
+    await terminalPromptInput(page).press("Control+d");
+    await expectDictationPermissionError(page);
+  } finally {
+    await profiles.restore();
+    await workspace.cleanup();
+  }
 });

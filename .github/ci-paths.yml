@@ -41,6 +41,7 @@ server:
 desktop:
   - "packages/desktop/**"
   - "packages/app/src/desktop/**"
+  - "packages/app/src/**/*.electron.{ts,tsx}"
   - "packages/server/src/server/browser-tools/**"
   - "packages/app/e2e/support/**"
   - "packages/app/*config.{cjs,js,ts}"

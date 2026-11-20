@@ -1,6 +1,5 @@
 import stripAnsi from "strip-ansi";
-import type { TerminalCell } from "@getpaseo/protocol/messages";
-import type { TerminalSession } from "./terminal.js";
+import type { IBuffer } from "@xterm/headless";
 
 export interface CaptureTerminalLinesOptions {
   start?: number;
@@ -11,14 +10,6 @@ export interface CaptureTerminalLinesOptions {
 export interface CaptureTerminalLinesResult {
   lines: string[];
   totalLines: number;
-}
-
-function cellsToPlainText(cells: TerminalCell[], options: { stripAnsi: boolean }): string {
-  const text = cells
-    .map((cell) => cell.char)
-    .join("")
-    .trimEnd();
-  return options.stripAnsi ? stripAnsi(text) : text;
 }
 
 function resolveCaptureLineIndex(
@@ -46,14 +37,10 @@ function resolveCaptureLineIndex(
 }
 
 export function captureTerminalLines(
-  terminal: TerminalSession,
+  buffer: IBuffer,
   options: CaptureTerminalLinesOptions = {},
 ): CaptureTerminalLinesResult {
-  const state = terminal.getState();
-  const allLines = [...state.scrollback, ...state.grid].map((cells) =>
-    cellsToPlainText(cells, { stripAnsi: options.stripAnsi ?? true }),
-  );
-  const totalLines = allLines.length;
+  const totalLines = buffer.length;
   const startIndex = resolveCaptureLineIndex(options.start, totalLines, "start");
   const endIndex = resolveCaptureLineIndex(options.end, totalLines, "end");
 
@@ -64,8 +51,10 @@ export function captureTerminalLines(
     };
   }
 
-  return {
-    lines: allLines.slice(startIndex, endIndex + 1),
-    totalLines,
-  };
+  const lines: string[] = [];
+  for (let row = startIndex; row <= endIndex; row++) {
+    const text = buffer.getLine(row)!.translateToString(true).trimEnd();
+    lines.push(options.stripAnsi === false ? text : stripAnsi(text));
+  }
+  return { lines, totalLines };
 }

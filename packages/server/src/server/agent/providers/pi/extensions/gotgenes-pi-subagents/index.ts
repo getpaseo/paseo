@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { extractTextFromToolResult } from "../../tool-call-mapper.js";
+import { outputFileFromToolResult } from "../child-session.js";
+import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
 import type { PiExtension, PiExtensionToolCall } from "../contract.js";
 
 const SpawnArgs = z
@@ -22,11 +24,15 @@ const Details = z
 const Notification = z
   .object({
     id: z.string().trim().min(1),
-    status: z.string(),
+    status: z.string().optional(),
     description: z.string().optional(),
     outputFile: z.string().trim().min(1).optional(),
   })
   .passthrough();
+const LiveSession = z.object({
+  agentId: z.string().trim().min(1),
+  file: z.string().trim().min(1),
+});
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
   if (value === "completed") return "completed";
   if (value === "error") return "failed";
@@ -36,9 +42,16 @@ const status = (value: string): "running" | "completed" | "failed" | "canceled" 
 
 export const gotgenesPiSubagents: PiExtension = {
   id: "@gotgenes/pi-subagents",
+  runtimeBridge: gotgenesRuntimeBridge,
   createSession: () => {
     const callsByAgent = new Map<string, string>();
     const readSessions = new Set<string>();
+    const pendingFilesByAgent = new Map<string, string>();
+    const childSession = (id: string, file: string | undefined) => {
+      if (!file || readSessions.has(file)) return [];
+      readSessions.add(file);
+      return [{ id, file }];
+    };
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = SpawnArgs.safeParse(call.args);
       if (!args.success) return undefined;
@@ -51,7 +64,8 @@ export const gotgenesPiSubagents: PiExtension = {
         type: "sub_agent" as const,
         subAgentType: title,
         description,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        // COMPAT(subagent-log): remove after 2027-04-30.
+        log: "",
       };
       if (call.status === "running")
         return {
@@ -73,8 +87,16 @@ export const gotgenesPiSubagents: PiExtension = {
               detail,
               subagents: [{ type: "upsert" as const, id: call.callId, status: "failed" as const }],
             }
-          : { detail };
+          : { detail, subagents: [{ type: "remove" as const, id: call.callId }] };
       callsByAgent.set(details.data.agentId, call.callId);
+      const file =
+        outputFileFromToolResult(call.result) ?? pendingFilesByAgent.get(details.data.agentId);
+      pendingFilesByAgent.delete(details.data.agentId);
+      const childSessions = childSession(call.callId, file);
+      const childStatus = status(details.data.status);
+      // Without a session file, as on replay, the child's answer is the tool result.
+      const answer =
+        !file && childStatus !== "running" ? extractTextFromToolResult(call.result)?.trim() : "";
       return {
         detail,
         subagents: [
@@ -84,9 +106,19 @@ export const gotgenesPiSubagents: PiExtension = {
             title,
             description,
             toolCallId: call.callId,
-            status: status(details.data.status),
+            status: childStatus,
           },
+          ...(answer
+            ? [
+                {
+                  type: "timeline" as const,
+                  id: call.callId,
+                  item: { type: "assistant_message" as const, text: answer },
+                },
+              ]
+            : []),
         ],
+        childSessions,
       };
     };
     const mapFollowup = (call: PiExtensionToolCall) => {
@@ -100,15 +132,12 @@ export const gotgenesPiSubagents: PiExtension = {
       const detail = {
         type: "sub_agent" as const,
         description: details.success ? details.data.description : undefined,
-        log: extractTextFromToolResult(call.result)?.trim() ?? "",
+        // COMPAT(subagent-log): remove after 2027-04-30.
+        log: "",
       };
       if (call.status === "running" || !details.success) return { detail };
       const file = details.data.transcriptPath;
-      const childSessions =
-        file && status(details.data.status) !== "running" && !readSessions.has(file)
-          ? [{ id, file }]
-          : [];
-      if (childSessions.length && file) readSessions.add(file);
+      const childSessions = childSession(id, file);
       return {
         detail,
         subagents: [{ type: "upsert" as const, id, status: status(details.data.status) }],
@@ -135,21 +164,39 @@ export const gotgenesPiSubagents: PiExtension = {
         const id = callsByAgent.get(details.data.id);
         if (!id) return undefined;
         const file = details.data.outputFile;
-        const childSessions =
-          file && status(details.data.status) !== "running" && !readSessions.has(file)
-            ? [{ id, file }]
-            : [];
-        if (childSessions.length && file) readSessions.add(file);
+        const childSessions = childSession(id, file);
         return {
           subagents: [
             {
               type: "upsert",
               id,
               description: details.data.description,
-              status: status(details.data.status),
+              status: details.data.status ? status(details.data.status) : "running",
             },
           ],
           childSessions,
+        };
+      },
+      mapRuntimeNotification(message) {
+        const prefix = `${GOTGENES_CHILD_SESSION_MARKER} `;
+        if (!message.startsWith(prefix)) return undefined;
+        let raw: unknown;
+        try {
+          raw = JSON.parse(message.slice(prefix.length));
+        } catch {
+          return { subagents: [] };
+        }
+        const parsed = LiveSession.safeParse(raw);
+        if (!parsed.success) return { subagents: [] };
+        const { agentId, file } = parsed.data;
+        const id = callsByAgent.get(agentId);
+        if (!id) {
+          pendingFilesByAgent.set(agentId, file);
+          return { subagents: [] };
+        }
+        return {
+          subagents: [{ type: "upsert", id, status: "running" }],
+          childSessions: childSession(id, file),
         };
       },
     };

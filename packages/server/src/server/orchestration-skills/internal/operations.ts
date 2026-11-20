@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
-import { listFilesRecursive, removeSkill, syncSkills } from "./sync.js";
+import {
+  isLegacyCodexCopy,
+  listFilesRecursive,
+  readManagedFilesManifest,
+  removeSkill,
+  syncSkills,
+} from "./sync.js";
 
 export type SkillsState = "not-installed" | "up-to-date" | "drift";
 
@@ -29,8 +35,12 @@ export interface SkillsStatus {
 
 export interface SkillTargets {
   sourceDir: string;
-  agentsDir: string;
-  claudeDir: string;
+  /**
+   * Ordered active install roots. Append new roots to the end so transaction
+   * backup indices remain stable across daemon upgrades.
+   */
+  installDirs: readonly string[];
+  /** Legacy dedicated Codex root, retired on sync unless it aliases an install root. */
   codexDir: string;
 }
 
@@ -157,17 +167,27 @@ export async function getSkillsStatus(
 ): Promise<SkillsStatus> {
   const available = await listBundledSkills(targets.sourceDir);
   const names = managedSkillNames(available);
-  const [bundle, agentsDisk, claudeDisk, codexDisk] = await Promise.all([
+  const [bundle, codexDisk, ...disks] = await Promise.all([
     hashSkills(targets.sourceDir, available),
-    hashSkills(targets.agentsDir, names),
-    hashSkills(targets.claudeDir, names),
     hashSkills(targets.codexDir, names),
+    ...targets.installDirs.map((root) => hashSkills(root, names)),
   ]);
-  const disks = [agentsDisk, claudeDisk, codexDisk];
-  const ops = diff(bundle, disks, names, resolveDesiredSkills(selection, available));
-  const installed = installedSkillNames(disks, names);
+  const desired = resolveDesiredSkills(selection, available);
+  const ops = diff(bundle, disks, names, desired);
+  for (const name of codexDisk.keys()) {
+    if (ops.some((op) => op.name === name)) continue;
+    if (!(await isLegacyCodexCopy(name, targets))) continue;
+    if (!desired.has(name)) ops.push({ kind: "delete", name });
+    else if (await readManagedFilesManifest(path.join(targets.codexDir, name))) {
+      ops.push({ kind: "update", name });
+    }
+  }
+  ops.sort((a, b) => compareStrings(a.name, b.name));
+  const allDisks = [...disks, codexDisk];
+  const installed = installedSkillNames(allDisks, names);
 
-  if (!hasInstalledPaseoSkill(disks)) return { state: "not-installed", ops, available, installed };
+  if (!hasInstalledPaseoSkill(allDisks))
+    return { state: "not-installed", ops, available, installed };
   if (ops.length === 0) return { state: "up-to-date", ops, available, installed };
   return { state: "drift", ops, available, installed };
 }
@@ -185,8 +205,7 @@ async function applySkills(
   if (writes.length > 0) {
     await syncSkills({
       sourceDir: targets.sourceDir,
-      agentsDir: targets.agentsDir,
-      claudeDir: targets.claudeDir,
+      installDirs: targets.installDirs,
       codexDir: targets.codexDir,
       skillNames: writes,
     });
@@ -195,8 +214,7 @@ async function applySkills(
   for (const op of status.ops) {
     if (op.kind !== "delete") continue;
     await removeSkill(op.name, {
-      agentsDir: targets.agentsDir,
-      claudeDir: targets.claudeDir,
+      installDirs: targets.installDirs,
       codexDir: targets.codexDir,
     });
   }
@@ -241,12 +259,21 @@ export async function uninstallSkills(
   selection: SkillSelection,
 ): Promise<SkillsStatus> {
   const available = await listBundledSkills(targets.sourceDir);
+  let hasError = false;
+  let firstError: unknown = null;
   for (const name of managedSkillNames(available)) {
-    await removeSkill(name, {
-      agentsDir: targets.agentsDir,
-      claudeDir: targets.claudeDir,
-      codexDir: targets.codexDir,
-    });
+    try {
+      await removeSkill(name, {
+        installDirs: targets.installDirs,
+        codexDir: targets.codexDir,
+      });
+    } catch (error) {
+      if (!hasError) {
+        hasError = true;
+        firstError = error;
+      }
+    }
   }
+  if (hasError) throw firstError;
   return getSkillsStatus(targets, selection);
 }

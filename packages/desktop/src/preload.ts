@@ -12,6 +12,10 @@ const PASEO_BROWSER_PROFILE_PARTITION = "persist:paseo-browser";
 
 type EventHandler = (payload: unknown) => void;
 
+function readArgValue(prefix: string): string | undefined {
+  return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
+}
+
 function readWindowChromeMode(): DesktopWindowChromeMode {
   const prefix = "--paseo-window-chrome-mode=";
   const value = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length);
@@ -32,6 +36,8 @@ interface AttachedBrowserRegistration {
 contextBridge.exposeInMainWorld("paseoDesktop", {
   platform: process.platform,
   windowChromeMode: readWindowChromeMode(),
+  browserHostLabel: readArgValue("--paseo-browser-host-label="),
+  browserHostInstanceId: readArgValue("--paseo-browser-host-instance-id="),
   invoke: (command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke("paseo:invoke", command, args),
   getPendingOpenProject: () =>
@@ -95,7 +101,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     openUrl: (url: string) => ipcRenderer.invoke("paseo:opener:openUrl", url),
   },
   editor: {
-    listTargets: () => ipcRenderer.invoke("paseo:editor:listTargets"),
+    listTargets: (input?: { workspacePath?: string }) =>
+      ipcRenderer.invoke("paseo:editor:listTargets", input),
     openTarget: (input: {
       editorId: string;
       workspacePath: string;

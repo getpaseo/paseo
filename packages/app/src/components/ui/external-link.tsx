@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { ArrowUpRight } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -19,7 +19,7 @@ export interface ExternalLinkProps {
 /**
  * Inline "Docs ↗" affordance — muted text + arrow-top-right icon, opens the
  * URL via the platform's external opener. Wrap in a Tooltip when there's a
- * one-line hint worth surfacing on hover/tap.
+ * one-line hint worth surfacing on hover. A native tap opens the URL.
  */
 export function ExternalLink({
   href,
@@ -41,10 +41,10 @@ export function ExternalLink({
       accessibilityRole="link"
       accessibilityLabel={accessibilityLabel ?? label}
       testID={testID}
-      style={styles.trigger}
     >
-      <Text style={styles.label}>{children ?? label}</Text>
-      <ThemedArrowUpRight size={12} uniProps={iconColor} />
+      {({ hovered }: PressableStateCallbackType & { hovered?: boolean }) => (
+        <ExternalLinkLabel hovered={hovered}>{children ?? label}</ExternalLinkLabel>
+      )}
     </Pressable>
   );
 
@@ -53,7 +53,7 @@ export function ExternalLink({
   }
 
   return (
-    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent side="top" align="end" offset={6}>
         <Text style={styles.tooltipText}>{tooltip}</Text>
@@ -62,7 +62,27 @@ export function ExternalLink({
   );
 }
 
+/**
+ * What an external link looks like: muted text and an outward arrow, both turning foreground on
+ * hover. For a pressable that owns its own hover, such as a settings row that opens a page.
+ */
+export function ExternalLinkLabel({
+  hovered = false,
+  children,
+}: {
+  hovered?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <View style={styles.trigger}>
+      {children ? <Text style={[styles.label, hovered && styles.hovered]}>{children}</Text> : null}
+      <ThemedArrowUpRight size={12} uniProps={hovered ? hoveredIconColor : iconColor} />
+    </View>
+  );
+}
+
 const iconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const hoveredIconColor = (theme: Theme) => ({ color: theme.colors.foreground });
 const ThemedArrowUpRight = withUnistyles(ArrowUpRight);
 
 const styles = StyleSheet.create((theme) => ({
@@ -74,6 +94,9 @@ const styles = StyleSheet.create((theme) => ({
   label: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  hovered: {
+    color: theme.colors.foreground,
   },
   tooltipText: {
     color: theme.colors.foreground,

@@ -5,6 +5,10 @@ import pLimit from "p-limit";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import {
+  buildForkLocalBranchName,
+  buildPullHeadCheckoutRefs,
+} from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   createCachedCliPathResolver,
@@ -22,11 +26,13 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
   CheckDetails,
   CreatePullRequestOptions,
+  CurrentPullRequestLookup,
   CurrentPullRequestStatus,
   DisablePullRequestAutoMergeOptions,
   EnablePullRequestAutoMergeOptions,
@@ -75,6 +81,8 @@ const CURRENT_PR_HEAD_SHA_CACHE_TTL_MS = 30_000;
 // the sweep to the 250 most recent Actions tasks.
 const GITEA_ACTION_PAGE_LIMIT = 50;
 const GITEA_ACTION_MAX_PAGES = 5;
+// PullRequestFlowAGit in forgejo models/issues/pull.go
+const GITEA_PULL_REQUEST_FLOW_AGIT = 1;
 
 /**
  * Fields requested from `tea pr list -o json`. tea's default field set omits the
@@ -156,6 +164,7 @@ const GiteaPrListItemSchema = z
     updated: z.string().optional(),
     labels: z.string().optional(),
     ci: z.string().optional(),
+    headSha: z.string().optional(),
   })
   .passthrough();
 
@@ -225,14 +234,27 @@ const GiteaPullRequestRepoSchema = z
 
 const GiteaPullRequestApiSchema = z
   .object({
+    flow: z.number().optional(),
     head: z
-      .object({ repo: GiteaPullRequestRepoSchema.nullable().optional() })
+      .object({
+        ref: z.string().optional(),
+        repo: GiteaPullRequestRepoSchema.nullable().optional(),
+      })
       .passthrough()
       .optional(),
     base: z
       .object({ repo: GiteaPullRequestRepoSchema.nullable().optional() })
       .passthrough()
       .optional(),
+  })
+  .passthrough();
+
+// `full_name` is required so an HTTP error body, which `tea api` returns with exit code 0, fails the parse.
+const GiteaRepositoryApiSchema = z
+  .object({
+    full_name: z.string(),
+    default_branch: z.string().nullish(),
+    parent: z.object({ full_name: z.string().optional() }).nullable().optional(),
   })
   .passthrough();
 
@@ -1000,6 +1022,7 @@ function currentPullRequestApiToListItem(item: GiteaCurrentPullRequestApi): Gite
     ...(item.mergeable != null ? { mergeable: String(item.mergeable) } : {}),
     base: item.base.ref,
     head,
+    headSha: item.head.sha,
     updated: item.updated_at,
     labels: item.labels.map((label) => label.name).join(","),
   };
@@ -1072,6 +1095,7 @@ function toCurrentPullRequestStatus(item: GiteaPrListItem): CurrentPullRequestSt
     state,
     baseRefName: item.base ?? "",
     headRefName: stripHeadOwner(item.head),
+    ...(item.headSha ? { headSha: item.headSha } : {}),
     isMerged: state === "merged",
     mergeable: mapGiteaMergeable(item),
     checks: [],
@@ -1435,17 +1459,30 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return runJsonParse(args, runOptions, stdout, schema);
   }
 
+  function resolveHeadRefKind(
+    pr: z.infer<typeof GiteaPullRequestApiSchema>,
+    number: number,
+  ): "branch" | "pull-ref" {
+    // head.ref only becomes the branch name when the branch still exists,
+    // agit PRs and deleted branches keep the pull ref
+    const isPullRefOnly =
+      pr.flow === GITEA_PULL_REQUEST_FLOW_AGIT || pr.head?.ref === `refs/pull/${number}/head`;
+    return isPullRefOnly ? "pull-ref" : "branch";
+  }
+
   async function resolveForkCheckoutFacts(
     cwd: string,
     summary: PullRequestSummary,
   ): Promise<{
     isCrossRepository: boolean;
+    headRefKind: "branch" | "pull-ref";
     headOwnerLogin: string | null;
     headRepositorySshUrl: string | null;
     headRepositoryUrl: string | null;
   }> {
     const sameRepo = {
       isCrossRepository: false,
+      headRefKind: "branch" as const,
       headOwnerLogin: null,
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
@@ -1464,14 +1501,17 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     );
     const headRepo = pr.head?.repo ?? null;
     const baseRepo = pr.base?.repo ?? null;
-    if (headRepo?.id == null || baseRepo?.id == null || headRepo.id === baseRepo.id) {
-      return sameRepo;
+    const headRefKind = resolveHeadRefKind(pr, summary.number);
+    if (baseRepo?.id == null || headRepo?.id === baseRepo.id) {
+      return { ...sameRepo, headRefKind };
     }
+    // headRepo is null when the fork was deleted
     return {
       isCrossRepository: true,
-      headOwnerLogin: headRepo.owner?.login ?? null,
-      headRepositorySshUrl: headRepo.ssh_url ?? null,
-      headRepositoryUrl: headRepo.html_url ?? null,
+      headRefKind,
+      headOwnerLogin: headRepo?.owner?.login ?? null,
+      headRepositorySshUrl: headRepo?.ssh_url ?? null,
+      headRepositoryUrl: headRepo?.html_url ?? null,
     };
   }
 
@@ -1548,11 +1588,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return { items, truncated: true };
   }
 
-  async function loadCurrentPullRequestStatus(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<CurrentPullRequestStatus | null> {
+  async function loadCurrentPullRequestStatus(
+    input: CurrentPullRequestLookup,
+  ): Promise<CurrentPullRequestStatus | null> {
     const match = await findCurrentPullRequestForHeadRef(input);
     if (!match) {
       return null;
@@ -1576,11 +1614,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     return identity ? { owner: identity.owner, name: identity.name } : null;
   }
 
-  async function findCurrentPullRequestForHeadRef(input: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-  }): Promise<GiteaPrListItem | null> {
+  function readRepository(cwd: string, repoPath: string) {
+    return runJson(["api", repoPath], { cwd }, GiteaRepositoryApiSchema);
+  }
+
+  function repositoryApiPath(repo: { owner: string; name: string } | null): string {
+    return repo
+      ? `repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`
+      : "repos/{owner}/{repo}";
+  }
+
+  async function findCurrentPullRequestForHeadRef(
+    input: CurrentPullRequestLookup,
+  ): Promise<GiteaPrListItem | null> {
     const repoIdentity = await resolveCurrentRepoIdentity(input.cwd);
     const expectedHeadOwner = repoIdentity?.owner ?? null;
     const openMatch = await findOpenPullRequestForHeadRef(input, expectedHeadOwner);
@@ -1591,9 +1637,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     // tea discovers repository context from any configured git remote, while
     // the default remote resolver reads origin only. Preserve that broader
     // discovery for repositories whose primary remote has another name.
-    const repoPath = repoIdentity
-      ? `repos/${encodeURIComponent(repoIdentity.owner)}/${encodeURIComponent(repoIdentity.name)}`
-      : "repos/{owner}/{repo}";
+    const repoPath = repositoryApiPath(repoIdentity);
     const recentItems = await runJsonArray(
       [
         "api",
@@ -1627,7 +1671,14 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
           input.headSha !== undefined &&
           item.head.sha === input.headSha,
       ) ??
+      candidates[0] ??
       null;
+    if (match && mapGiteaState(match.state) !== "open") {
+      const repository = await readRepository(input.cwd, repoPath).catch(() => null);
+      if (isOnDefaultBranch(input, repository?.default_branch)) {
+        return null;
+      }
+    }
     return match ? currentPullRequestApiToListItem(match) : null;
   }
 
@@ -1692,7 +1743,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         combined,
         actionTasks,
       );
-      return applyGiteaChecks(status, combined, actionTasks, actionRequiredRunIds);
+      return applyGiteaChecks(
+        { ...status, headSha: pr.headSha },
+        combined,
+        actionTasks,
+        actionRequiredRunIds,
+      );
     } catch {
       return status;
     }
@@ -1972,12 +2028,17 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       }
     },
 
+    async getReferenceRepository(input): Promise<string | null> {
+      const repo = await resolveCurrentRepoIdentity(input.cwd);
+      if (!repo) {
+        return null;
+      }
+      const repository = await readRepository(input.cwd, repositoryApiPath(repo));
+      return repository.parent?.full_name ?? null;
+    },
+
     getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
-      return loadCurrentPullRequestStatus({
-        cwd: input.cwd,
-        headRef: input.headRef,
-        headSha: input.headSha,
-      });
+      return loadCurrentPullRequestStatus(input);
     },
 
     async getPullRequest(input: GetPullRequestOptions): Promise<PullRequestSummary> {
@@ -1997,17 +2058,29 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       return summary.headRefName;
     },
 
+    defaultCheckoutRefs({ changeRequestNumber }) {
+      return buildPullHeadCheckoutRefs(changeRequestNumber);
+    },
+
+    buildPrLocalBranchName({ headRef, checkoutTarget }) {
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
+    },
+
     async getPullRequestCheckoutTarget(
       input: GetPullRequestOptions,
     ): Promise<PullRequestCheckoutTarget> {
       const summary = await this.getPullRequest(input);
-      const checkoutRefs = [
-        { remoteName: "origin", remoteRef: `refs/pull/${summary.number}/head` },
-      ];
-      if (summary.headRefName) {
+      const fork = await resolveForkCheckoutFacts(input.cwd, summary);
+      const [originPullRef, upstreamPullRef] = buildPullHeadCheckoutRefs(summary.number);
+      const checkoutRefs = [originPullRef];
+      // for a fork PR a branch with that name on origin belongs to the base repo
+      const headBranchOnOrigin =
+        !fork.isCrossRepository && fork.headRefKind === "branch" && Boolean(summary.headRefName);
+      if (headBranchOnOrigin) {
         checkoutRefs.push({ remoteName: "origin", remoteRef: `refs/heads/${summary.headRefName}` });
       }
-      const fork = await resolveForkCheckoutFacts(input.cwd, summary);
+      // upstream can hold a different PR with the same number, so it goes last
+      checkoutRefs.push(upstreamPullRef);
       return {
         number: summary.number,
         baseRefName: summary.baseRefName,
@@ -2017,6 +2090,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         headRepositorySshUrl: fork.headRepositorySshUrl,
         headRepositoryUrl: fork.headRepositoryUrl,
         isCrossRepository: fork.isCrossRepository,
+        headRefKind: fork.headRefKind,
       };
     },
 

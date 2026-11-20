@@ -1,107 +1,189 @@
+import { Pin } from "lucide-react-native";
 import { useMemo } from "react";
-import { Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
-import { usedPercent } from "./model";
-import { deriveTone } from "./tone";
+import { useTranslation } from "react-i18next";
+import { Pressable, Text, View } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  formatDisplayPct,
+  formatProviderUsageLabel,
+  formatResetLabel,
+  formatResetTime,
+  formatRunsOutLabel,
+} from "./format";
+import { UsageMeter } from "./meter";
+import { displayPercent, usageWindowRowLabel } from "./model";
+import { UsageResetLine } from "./reset-line";
+import type { UsageDisplayAs } from "./preferences";
+import { windowTone } from "./tone";
 import type { UsageTone, UsageWindow } from "./types";
+import { useRelativeTimeTick } from "./use-relative-time-tick";
 
-function fillToneStyle(tone: UsageTone) {
-  switch (tone) {
-    case "ok":
-      return styles.fillOk;
-    case "warning":
-      return styles.fillWarning;
-    case "danger":
-      return styles.fillDanger;
-    default:
-      return styles.fillDefault;
+export function UsageWindowBar({
+  window,
+  displayAs,
+  pinnable,
+  pinned,
+  onTogglePin,
+  pinLabel,
+  pinTestID,
+  retained = false,
+}: {
+  retained?: boolean;
+  window: UsageWindow;
+  displayAs: UsageDisplayAs;
+  /** Whether the row pins the window to the sidebar. When false the row is a plain bar. */
+  pinnable: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
+  /** What the row pins, naming the source and window: "Pin Claude Session". */
+  pinLabel: string;
+  pinTestID: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const shownPct = displayPercent(window, displayAs);
+  const tone = windowTone(window);
+
+  const now = useRelativeTimeTick({ enabled: window.runsOutAt != null || window.resetsAt != null });
+  const isAtRisk =
+    window.runsOutAt != null &&
+    window.shortfallPct != null &&
+    (!retained || Date.parse(window.runsOutAt) > now);
+  const countdown = isAtRisk
+    ? formatRunsOutLabel(window.runsOutAt, now, t)
+    : formatResetLabel(window.resetsAt, retained, now, t);
+  // The exact time belongs to the reset; beside a runs-out warning it would read as the moment
+  // the quota runs out.
+  const exactTime = isAtRisk ? null : formatResetTime(window.resetsAt, now, t);
+
+  const value =
+    shownPct != null ? formatDisplayPct(shownPct, displayAs, i18n.resolvedLanguage, t) : "—";
+  const accessibilityState = useMemo(() => ({ checked: pinned }), [pinned]);
+  const content = {
+    label: formatProviderUsageLabel(window.id, window.label, t),
+    value,
+    countdown,
+    exactTime,
+    isAtRisk,
+    percent: shownPct ?? 0,
+    tone,
+    pinned,
+  };
+
+  if (!pinnable) {
+    return (
+      <View style={styles.row}>
+        <WindowRowContent {...content} pinnable={false} />
+      </View>
+    );
   }
+
+  // The whole row pins the window to the sidebar Usage item; the pin glyph is the only sign of it.
+  return (
+    <Pressable
+      onPress={onTogglePin}
+      accessibilityRole="checkbox"
+      accessibilityLabel={usageWindowRowLabel({
+        pinLabel,
+        value,
+        trailing: [countdown, exactTime].filter(Boolean).join(" · "),
+      })}
+      accessibilityState={accessibilityState}
+      aria-checked={pinned}
+      style={styles.row}
+      testID={pinTestID}
+    >
+      <WindowRowContent {...content} pinnable />
+    </Pressable>
+  );
 }
 
-export function UsageWindowBar({ window }: { window: UsageWindow }) {
-  const usedPct = usedPercent(window);
-  const tone = window.tone ?? deriveTone(usedPct);
-
-  const fillWidth = clampPct(usedPct ?? 0);
-  const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fill, fillToneStyle(tone), { width: `${fillWidth}%` }],
-    [fillWidth, tone],
-  );
-
-  const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
-  const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
-    : formatResetLabel(window.resetsAt);
-
+function WindowRowContent({
+  label,
+  value,
+  countdown,
+  exactTime,
+  isAtRisk,
+  percent,
+  tone,
+  pinnable,
+  pinned,
+}: {
+  label: string;
+  value: string;
+  countdown: string | null;
+  exactTime: string | null;
+  isAtRisk: boolean;
+  percent: number;
+  tone: UsageTone;
+  pinnable: boolean;
+  pinned: boolean;
+}) {
   return (
-    <View style={styles.container}>
+    <>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {label}
         </Text>
-        <Text style={styles.value}>
-          {usedPct != null ? formatPct(usedPct) : "—"}
-          {trailing ? (
-            <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
-          ) : null}
+        <Text style={styles.value} numberOfLines={1}>
+          {value}
         </Text>
+        {pinnable ? <UsagePinGlyph pinned={pinned} /> : null}
       </View>
-      <View style={styles.track}>
-        <View style={fillStyle} />
-      </View>
-    </View>
+      <UsageMeter percent={percent} tone={tone} />
+      <UsageResetLine countdown={countdown} exactTime={exactTime} atRisk={isAtRisk} />
+    </>
+  );
+}
+
+const ThemedPin = withUnistyles(Pin);
+
+function UsagePinGlyph({ pinned }: { pinned: boolean }) {
+  const { t } = useTranslation();
+  const iconMapping = useMemo(
+    () => (theme: { colors: { foreground: string; foregroundMuted: string } }) => ({
+      color: pinned ? theme.colors.foreground : theme.colors.foregroundMuted,
+      fill: pinned ? theme.colors.foreground : "none",
+    }),
+    [pinned],
+  );
+  return (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>
+        <View
+          style={styles.pin}
+          testID={pinned ? "usage-pin-glyph-pinned" : "usage-pin-glyph-unpinned"}
+        >
+          <ThemedPin size={12} uniProps={iconMapping} />
+        </View>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <Text style={styles.tooltipText}>
+          {pinned ? t("providerUsage.unpin") : t("providerUsage.pin")}
+        </Text>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  container: {
-    gap: 3,
-  },
+  row: { gap: 3, paddingVertical: theme.spacing[1.5] },
+  pin: { width: 12, alignItems: "center" },
+  tooltipText: { color: theme.colors.popoverForeground, fontSize: theme.fontSize.sm },
   labelRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     gap: theme.spacing[2],
   },
   label: {
-    flexShrink: 1,
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  value: {
+    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
-  reset: {
-    color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.normal,
-  },
-  atRisk: {
-    color: theme.colors.statusDanger,
-    fontWeight: theme.fontWeight.normal,
-  },
-  track: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: theme.colors.surface3,
-    overflow: "hidden",
-  },
-  fill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  fillDefault: {
-    backgroundColor: theme.colors.foregroundMuted,
-  },
-  fillOk: {
-    backgroundColor: theme.colors.statusSuccess,
-  },
-  fillWarning: {
-    backgroundColor: theme.colors.statusWarning,
-  },
-  fillDanger: {
-    backgroundColor: theme.colors.statusDanger,
+  value: {
+    flexShrink: 0,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
   },
 }));

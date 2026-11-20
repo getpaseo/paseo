@@ -8,11 +8,14 @@ export interface WorkspaceSummary {
   name: string;
   title?: string;
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
+  /** Started by automation rather than the user. The sidebar hides it unless asked. */
+  background: boolean;
   status: WorkspaceDescriptor["status"];
   currentBranch: string | null;
   archivingAt?: string;
   /** Pull/merge request number backing this workspace, so a query can find it. */
   changeRequestNumber: number | null;
+  statusEnteredAt: Date | null;
 }
 
 export interface ProjectHostEntry {
@@ -157,10 +160,12 @@ function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
     name: workspace.name,
     ...(workspace.title ? { title: workspace.title } : {}),
     workspaceKind: workspace.workspaceKind,
+    background: workspace.background ?? false,
     status: workspace.status,
     currentBranch: currentBranch && currentBranch !== "HEAD" ? currentBranch : null,
     ...(workspace.archivingAt ? { archivingAt: workspace.archivingAt } : {}),
     changeRequestNumber: toChangeRequestNumber(workspace),
+    statusEnteredAt: workspace.statusEnteredAt,
   };
 }
 

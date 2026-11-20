@@ -1,5 +1,5 @@
-import { useMemo, type ComponentProps, type ReactNode } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { useId, useMemo, type ComponentProps, type ReactNode } from "react";
+import { Pressable, StyleSheet } from "react-native";
 import { GestureDetector, type GestureType } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { isWeb } from "@/constants/platform";
@@ -14,6 +14,9 @@ interface MobilePanelOverlayProps {
   children: ReactNode;
   closeGesture: GestureType;
   panel: OverlayPanel;
+  presentation?: "overlay" | "dock";
+  dockVisible?: boolean;
+  frameStyle?: ComponentProps<typeof Animated.View>["style"];
   panelStyle?: ComponentProps<typeof Animated.View>["style"];
 }
 
@@ -22,28 +25,45 @@ export function MobilePanelOverlay({
   closeGesture,
   panel,
   panelStyle,
+  presentation = "overlay",
+  dockVisible = false,
+  frameStyle,
 }: MobilePanelOverlayProps) {
-  const { position, windowWidth } = useMobilePanelsRuntime();
+  const { leftPanelWidth, position, windowWidth } = useMobilePanelsRuntime();
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
-  const isOpen = useIsMobilePanelActive(panel);
+  const overlayOpen = useIsMobilePanelActive(panel);
+  const docked = presentation === "dock";
+  const isOpen = docked ? dockVisible : overlayOpen;
+  const hostId = useId();
   const isLeft = panel === "agent-list";
+  const width = isLeft ? leftPanelWidth : windowWidth;
 
   const sidebarAnimatedStyle = useAnimatedStyle(() => {
-    const frame = getMobilePanelFrame(position.value, windowWidth);
+    if (docked) return { transform: [{ translateX: 0 }] };
+    const frame = getMobilePanelFrame(position.value, width);
     return {
       transform: [{ translateX: isLeft ? frame.leftTranslateX : frame.rightTranslateX }],
     };
-  }, [isLeft, windowWidth]);
+  }, [docked, isLeft, width]);
 
   const backdropAnimatedStyle = useAnimatedStyle(() => {
-    const frame = getMobilePanelFrame(position.value, windowWidth);
+    const frame = getMobilePanelFrame(position.value, width);
     return { opacity: isLeft ? frame.leftBackdropOpacity : frame.rightBackdropOpacity };
-  }, [isLeft, windowWidth]);
+  }, [isLeft, width]);
 
   const overlayAnimatedStyle = useAnimatedStyle(() => {
+    if (docked) return { opacity: 1, display: "flex" as const, pointerEvents: "box-none" as const };
     const isVisible = isLeft ? position.value < 0 : position.value > 0;
-    return { display: isVisible ? ("flex" as const) : ("none" as const) };
-  }, [isLeft]);
+    if (isWeb) {
+      return { display: isVisible ? ("flex" as const) : ("none" as const) };
+    }
+    // Preserve native scroll ranges while hidden. Collapsing layout makes Android
+    // spring retained scroll offsets back to zero on touch cancellation or release.
+    return {
+      opacity: isVisible ? 1 : 0,
+      pointerEvents: isVisible ? ("box-none" as const) : ("none" as const),
+    };
+  }, [docked, isLeft]);
 
   const positionedPanelStyle = isLeft ? styles.leftPanel : styles.rightPanel;
   const backdropStyle = useMemo(
@@ -52,13 +72,13 @@ export function MobilePanelOverlay({
   );
   const combinedPanelStyle = useMemo(
     () => [
-      styles.panel,
-      positionedPanelStyle,
-      { width: windowWidth },
+      docked ? styles.dockedPanel : styles.panel,
+      !docked && positionedPanelStyle,
+      !docked && { width },
       panelStyle,
       sidebarAnimatedStyle,
     ],
-    [panelStyle, positionedPanelStyle, sidebarAnimatedStyle, windowWidth],
+    [docked, panelStyle, positionedPanelStyle, sidebarAnimatedStyle, width],
   );
   let overlayPointerEvents: "auto" | "box-none" | "none";
   if (!isWeb) {
@@ -71,25 +91,26 @@ export function MobilePanelOverlay({
     <GestureDetector gesture={closeGesture} touchAction="pan-y">
       {/* Fabric needs an always-mounted native host to attach the close handler while the
           retained panel content is hidden. nativeID keeps that host registered. */}
-      <View
+      <Animated.View
         accessibilityElementsHidden={!isOpen}
         collapsable={false}
         importantForAccessibility={isOpen ? "auto" : "no-hide-descendants"}
-        nativeID={`${panel}-gesture-host`}
+        nativeID={`${panel}-gesture-host-${hostId}`}
         pointerEvents={overlayPointerEvents}
-        style={styles.overlay}
+        style={[
+          docked ? styles.dock : styles.overlay,
+          frameStyle,
+          docked && !dockVisible && { display: "none" },
+        ]}
       >
-        <Animated.View
-          pointerEvents={overlayPointerEvents}
-          style={[styles.overlay, overlayAnimatedStyle]}
-        >
+        <Animated.View style={[docked ? styles.dockedPanel : styles.overlay, overlayAnimatedStyle]}>
           <Pressable
             accessible={false}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
             onPress={showMobileAgent}
             pointerEvents={isOpen ? "auto" : "none"}
-            style={StyleSheet.absoluteFillObject}
+            style={[StyleSheet.absoluteFill, docked && { display: "none" }]}
             testID={isOpen ? `${panel}-backdrop` : undefined}
           >
             <Animated.View pointerEvents="none" style={backdropStyle} />
@@ -99,7 +120,7 @@ export function MobilePanelOverlay({
             <WindowChromeRootRegion corners="both">{children}</WindowChromeRootRegion>
           </Animated.View>
         </Animated.View>
-      </View>
+      </Animated.View>
     </GestureDetector>
   );
 }
@@ -108,12 +129,14 @@ export function MobilePanelOverlay({
 // Theme values stay inline at call sites, avoiding Unistyles patching the same
 // native node after Fabric commits.
 const styles = StyleSheet.create({
+  dock: { flexShrink: 0, minHeight: 0 },
+  dockedPanel: { flex: 1, minHeight: 0, overflow: "hidden" },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   panel: {

@@ -21,8 +21,8 @@ The relay is designed to be untrusted. All traffic between your phone and daemon
 
 1. The daemon generates a persistent Curve25519 keypair on first run and stores it at `$PASEO_HOME/daemon-keypair.json` with mode `0600`
 2. The pairing URL (rendered as a QR code or opened directly) carries the daemon's public key in its URL fragment (`https://app.paseo.sh/#offer=...`). Fragments are not sent to the web server, so `app.paseo.sh` never sees the key.
-3. When the phone connects via the relay, it generates a fresh ephemeral Curve25519 keypair and sends an `e2ee_hello` message containing its public key. The daemon will not process any application messages until this handshake completes.
-4. Both sides perform a Curve25519 ECDH key exchange to derive a shared key. All subsequent messages are encrypted with XSalsa20-Poly1305 (NaCl `box`). The encrypted bundle is `[24-byte nonce][ciphertext]`. Peers optionally negotiate `binaryCiphertext` in `e2ee_hello` / `e2ee_ready`: negotiated application text is carried as a base64 WebSocket text frame, while application binary is carried as a raw WebSocket binary frame. A peer that does not negotiate the capability uses base64 text frames for both kinds.
+3. When the phone connects via the relay, it generates fresh ephemeral keys and sends an `e2ee_hello` message. The daemon will not process any application messages until this handshake completes.
+4. Updated peers run a Noise `NK` handshake (`Noise_NK_25519_ChaChaPoly_SHA256`) keyed to the daemon's static key: the `e2ee_hello` carries the first Noise message and the daemon's `e2ee_ready` carries the second. Every later frame is a counter-nonced ChaCha20-Poly1305 record. When either side predates this, the session falls back to the legacy construction: a Curve25519 ECDH shared key with XSalsa20-Poly1305 (NaCl `box`) and a random `[24-byte nonce][ciphertext]` bundle. Both modes negotiate `binaryCiphertext`: negotiated application text is carried as a base64 WebSocket text frame, while application binary is carried as a raw WebSocket binary frame. A peer that does not negotiate the capability uses base64 text frames for both kinds. [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md) has the exact mapping.
 
 The WebSocket opcode is preserved end to end after negotiation; the receiver never guesses whether authenticated plaintext is text or binary from its byte contents. The plaintext handshake remains WebSocket text and contains only public keys and capability declarations.
 
@@ -34,15 +34,15 @@ The daemon requires a valid cryptographic handshake before processing any comman
 
 - **Impersonate the daemon to your phone** — Without the daemon's secret key, it cannot derive the shared key, so any traffic it injects fails authenticated decryption on the phone
 - **Send commands as you** — The daemon only accepts traffic that decrypts and authenticates under a shared key derived with its own secret key. The phone's keypair is ephemeral per connection, so there is no persistent phone-side secret to steal; protection comes from the daemon's secret key never leaving the daemon.
-- **Read your traffic** — All messages are encrypted with XSalsa20-Poly1305 (NaCl box) after the handshake
-- **Forge messages** — NaCl box provides authenticated encryption; tampered messages are rejected
-- **Replay old messages across sessions** — Each session derives fresh encryption keys, so ciphertext from one session cannot be replayed into another session. Within a live session, replay protection is not yet implemented; the protocol uses random nonces and does not track nonce reuse or message counters.
+- **Read your traffic** — After the handshake every message is encrypted: ChaCha20-Poly1305 in protected mode, XSalsa20-Poly1305 (NaCl box) in legacy mode
+- **Forge messages** — Both constructions are authenticated encryption; a tampered message is rejected in either mode
+- **Replay old messages** — In protected mode the daemon contributes a fresh ephemeral key to every session and every record carries a strictly increasing counter, so a recorded session cannot be replayed into a new one and a duplicated, reordered, or reflected record closes the session. Legacy mode has neither property: it uses random nonces, and a daemon that still admits legacy clients accepts a recorded legacy transcript (hello, credentials, commands) as a new session. Set `daemon.relay.requireProtectedSecurity: true` to refuse legacy clients once every client you use has updated.
 
 ### Trust model
 
 The QR code or pairing link is the trust anchor. It contains the daemon's public key, which is required to establish the encrypted connection. Treat it like a password — don't share it publicly.
 
-When a daemon password is configured, new relay clients send it in the encrypted `hello` message. This release still admits relay clients that send no credential so existing mobile builds continue to connect. A wrong password is rejected. The next release will require the password for relay connections after updated mobile builds are available.
+When a daemon password is configured, relay clients send it in the encrypted `hello` message, so the relay never sees it. The daemon rejects a relay client that sends a wrong password or none, so a leaked pairing link alone does not grant access to a password-protected daemon.
 
 ## Local daemon trust boundary
 

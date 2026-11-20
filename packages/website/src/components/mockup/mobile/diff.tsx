@@ -15,6 +15,7 @@ import {
   SquareDot,
   X,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Code } from "../atoms";
 import { ReactFileIcon } from "../icons";
 
@@ -73,15 +74,16 @@ const DIFF_LINES: MobileDiffLine[] = [
 ];
 
 function Tabs() {
+  const { t } = useTranslation();
   return (
     <div className="flex shrink-0 items-center gap-[5px] px-[18px] pt-[4px] pb-[14px]">
       <span className="flex items-center gap-[7px] rounded-[8px] px-[10px] py-[6px] text-[16px] text-mock-fg-muted">
         <Files size={17} strokeWidth={1.8} />
-        Files
+        {t("landing.mockup.app.files")}
       </span>
       <span className="flex items-center gap-[7px] rounded-[8px] bg-mock-surface2 px-[10px] py-[6px] text-[16px] text-mock-fg">
         <FileDiff size={17} strokeWidth={1.8} />
-        Changes
+        {t("landing.mockup.app.changes")}
       </span>
       <span className="flex items-center gap-[7px] rounded-[8px] px-[10px] py-[6px] text-[16px] text-mock-fg-muted tabular-nums">
         <GitPullRequest size={17} strokeWidth={1.8} />
@@ -110,10 +112,11 @@ function BranchRow() {
 }
 
 function ScopeRow() {
+  const { t } = useTranslation();
   return (
     <div className="flex shrink-0 items-center gap-[12px] border-y border-mock-border px-[18px] py-[11px]">
       <span className="flex items-center gap-[5px] text-[16px] text-mock-fg">
-        Uncommitted
+        {t("landing.mockup.app.uncommitted")}
         <ChevronDown size={16} className="text-mock-fg-muted" />
       </span>
       <span className="flex items-center gap-[6px] text-[15px] tabular-nums">
@@ -170,6 +173,7 @@ const GUTTER_STYLE = { width: GUTTER_W };
 const GUTTER_RULE_STYLE = { left: GUTTER_W };
 
 export function MobileDiff() {
+  const { t } = useTranslation();
   return (
     <>
       <Tabs />
@@ -192,7 +196,7 @@ export function MobileDiff() {
         ))}
       </div>
       <div className="flex h-[52px] shrink-0 items-center border-t border-mock-border px-[18px] pb-[16px] text-[16px] text-mock-fg">
-        Commits
+        {t("landing.mockup.app.commits")}
       </div>
     </>
   );

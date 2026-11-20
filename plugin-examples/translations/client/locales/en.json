@@ -1,0 +1,23 @@
+{
+  "title": "Workspace notes",
+  "intro": "A small space for your next idea.",
+  "draft": "Your draft",
+  "placeholder": "What would you like to remember?",
+  "add": "Add note",
+  "empty": "No notes yet. Start with a thought above.",
+  "notes_one": "{{count}} note",
+  "notes_other": "{{count}} notes",
+  "preview": "Preview draft",
+  "close": "Close preview",
+  "previewTitle": "Draft preview",
+  "draftEmpty": "Your draft is empty.",
+  "locale": "App language: {{locale}}",
+  "fallback": "This English-only message demonstrates fallback.",
+  "open": "Open workspace notes",
+  "description": "Open the notes screen",
+  "hint": "[optional text]",
+  "copyTitle": "Copy notes title",
+  "tools": "Notes tools",
+  "pin": "Show notes tools",
+  "openPanel": "Open notes panel"
+}

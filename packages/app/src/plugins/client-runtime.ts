@@ -1,7 +1,7 @@
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { createPluginHosts } from "./hosts";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { createPlayAudio, type AudioEngine } from "@/audio";
+import { getPluginClientApi } from "./client-state/api";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
+import { subscribePluginRpc } from "@getpaseo/plugin/client/host";
 import {
   createPluginAgentActionContext,
   createPluginCapabilities,
@@ -11,24 +11,22 @@ import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginButtonStore } from "./buttons";
-import { createPluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
 
 export function createPluginClientRuntime(
   installation: InstalledPlugin,
-  daemonClient: DaemonClient,
+  audio: Pick<AudioEngine, "play">,
 ): PluginClientRuntime {
-  const runtime = createPluginSurfaceRuntime(daemonClient, installation);
-  if (!runtime) throw new Error("Plugin host is offline");
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(
     installation,
-    runtime,
     createPluginNavigation({ serverId: installation.serverId, workspaceId: null }),
   );
   return {
     ...capabilities,
-    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
+    i18n: installation.i18n,
+    playAudio: createPlayAudio(audio, installation.lifetime.signal),
+    hosts: getPluginClientApi(installation).hosts,
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },
@@ -36,26 +34,26 @@ export function createPluginClientRuntime(
       return pluginButtonStore.addHeaderButton(installation, contribution);
     },
     openPanel(panelId, options) {
-      openClientPanel({ installation, runtime, state, panelId, options });
+      openClientPanel({ installation, state, panelId, options });
     },
+    subscribe: (contract, input, onEvent, options) =>
+      subscribePluginRpc(contract, installation.subscribe, input, onEvent, options),
   };
 }
 
 function openClientPanel(input: {
   installation: InstalledPlugin;
-  runtime: NonNullable<ReturnType<typeof createPluginSurfaceRuntime>>;
   state: ReturnType<typeof createPluginClientStateSource>;
   panelId: string;
   options: PluginClientOpenPanelOptions;
 }): void {
-  const { installation, runtime, state, panelId, options } = input;
+  const { installation, state, panelId, options } = input;
   const workspaceId = options.workspaceId.trim();
   const agentId = options.agentId?.trim();
   const navigation = createPluginNavigation({ serverId: installation.serverId, workspaceId });
   const action = agentId
     ? createPluginAgentActionContext({
         plugin: installation,
-        runtime,
         navigation,
         state,
         workspaceId,
@@ -63,7 +61,6 @@ function openClientPanel(input: {
       })
     : createPluginWorkspaceActionContext({
         plugin: installation,
-        runtime,
         navigation,
         state,
         workspaceId,

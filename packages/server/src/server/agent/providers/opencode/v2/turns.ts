@@ -1,5 +1,5 @@
 import { structuredOutput } from "./structured-output.js";
-import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
+import type { OpenCodeEvent, SessionInfo, SessionMessageInfo } from "@opencode/client";
 
 import { randomUUID } from "node:crypto";
 
@@ -20,6 +20,25 @@ import { usageFromV2 } from "./mapping.js";
 import { commands } from "./commands.js";
 
 import type { V2Api } from "./api.js";
+type ExecutionEvent = Extract<
+  OpenCodeEvent,
+  {
+    type:
+      | "session.execution.started"
+      | "session.execution.succeeded"
+      | "session.execution.failed"
+      | "session.execution.interrupted";
+  }
+>;
+function isExecutionEvent(event: { type: string }): event is ExecutionEvent {
+  return (
+    event.type === "session.execution.started" ||
+    event.type === "session.execution.succeeded" ||
+    event.type === "session.execution.failed" ||
+    event.type === "session.execution.interrupted"
+  );
+}
+
 interface TurnSnapshot {
   info: SessionInfo;
   history: SessionMessageInfo[];
@@ -32,19 +51,28 @@ interface TurnOptions {
   emit(event: AgentStreamEvent): void;
   reconcile(): Promise<TurnSnapshot>;
   clearPermissions(): Promise<void>;
+  reportReconciliationError(error: unknown): void;
 }
 interface Turn {
   output?: ReturnType<typeof structuredOutput>;
   id: string;
   submitted: Promise<void>;
   completion: Promise<void>;
+  settle(): void;
+  accepted: boolean;
+  requestDenied: boolean;
 }
 
 export class SessionTurns {
   private turn: Turn | null = null;
   private stopping: Promise<void> | null = null;
   private stopFailed = false;
-  executionError: string | null = null;
+  private revision = 0;
+  private execution: ExecutionEvent | null = null;
+  private sequence = 0;
+  private refresh: Promise<void> | null = null;
+  private dirty = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(private readonly options: TurnOptions) {}
   get id() {
     return this.turn?.id;
@@ -54,21 +82,50 @@ export class SessionTurns {
   }
   fail(error: Error) {
     const turn = this.turn;
+    if (!turn) return;
+    this.release(turn);
+    this.options.emit({
+      type: "turn_failed",
+      provider: "opencode",
+      turnId: turn.id,
+      error: toDiagnosticErrorMessage(error),
+    });
+  }
+  private release(turn: Turn) {
     this.turn = null;
-    if (turn)
-      this.options.emit({
-        type: "turn_failed",
-        provider: "opencode",
-        turnId: turn.id,
-        error: error.message,
-      });
+    this.revision += 1;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    turn.settle();
+  }
+  close() {
+    if (this.turn) this.release(this.turn);
+  }
+  private createTurn(submitted: Promise<void>, accepted: boolean, output?: Turn["output"]): Turn {
+    let settle!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const turn: Turn = {
+      id: randomUUID(),
+      submitted,
+      completion,
+      settle,
+      accepted,
+      output,
+      requestDenied: false,
+    };
+    this.turn = turn;
+    this.execution = null;
+    this.revision += 1;
+    this.options.emit({ type: "turn_started", provider: "opencode", turnId: turn.id });
+    this.scheduleRecovery();
+    return turn;
   }
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions) {
     await this.stopping;
     if (this.options.signal.aborted) throw new Error("OpenCode session is closed");
     if (this.turn) throw new Error("OpenCode session already has an active turn");
-    this.executionError = null;
-    const id = randomUUID();
     const input = this.promptInput(prompt);
     let accept!: () => void;
     const submitted = new Promise<void>((resolve) => {
@@ -76,36 +133,113 @@ export class SessionTurns {
     });
     const output =
       options?.outputSchema === undefined ? undefined : structuredOutput(options.outputSchema);
-    const completion = this.submit(id, input, accept, options, output);
-    this.turn = { id, submitted, completion, output };
-    return { turnId: id };
+    const turn = this.createTurn(submitted, false, output);
+    void this.submit(turn, input, accept, options);
+    return { turnId: turn.id };
   }
   private async submit(
-    id: string,
+    turn: Turn,
     input: ReturnType<SessionTurns["promptInput"]>,
     accept: () => void,
     options?: AgentRunOptions,
-    output?: ReturnType<typeof structuredOutput>,
   ) {
-    // Defer until startTurn publishes ownership, including for immediately resolved test transports.
-    await Promise.resolve();
-    this.options.emit({ type: "turn_started", provider: "opencode", turnId: id });
     try {
-      await this.dispatch(input, options, output);
-      accept();
-      await this.finish(id);
+      await this.dispatch(input, options, turn.output);
+      if (this.turn !== turn) return;
+      turn.accepted = true;
+      this.revision += 1;
+      // Covers a fast execution whose terminal event preceded the admission response.
+      this.requestReconciliation();
     } catch (error) {
-      if (this.turn?.id === id) {
-        this.turn = null;
-        this.options.emit({
-          type: "turn_failed",
-          provider: "opencode",
-          turnId: id,
-          error: toDiagnosticErrorMessage(error),
-        });
-      }
+      if (this.turn === turn) this.fail(new Error(toDiagnosticErrorMessage(error)));
     } finally {
       accept();
+    }
+  }
+  observe(event: OpenCodeEvent) {
+    if (!isExecutionEvent(event) || event.durable.seq <= this.sequence) return;
+    this.revision += 1;
+    if (event.type === "session.execution.started") this.observeActiveTurn();
+    this.execution = event;
+    this.sequence = event.durable.seq;
+    this.requestReconciliation();
+  }
+  // OpenCode ends the execution when the user denies its permission or dismisses its question,
+  // but reports the interruption as "shutdown", the same reason as an execution it will resume.
+  requestDenied() {
+    if (!this.turn) return;
+    this.turn.requestDenied = true;
+    this.requestReconciliation();
+  }
+  private requestReconciliation() {
+    void this.reconcile().catch((error: unknown) => this.options.reportReconciliationError(error));
+  }
+  // Recovery reads state; a quiet stream (including SSE comment heartbeats) is not a reason to reconnect.
+  private scheduleRecovery() {
+    if (this.retryTimer || !this.turn || this.options.signal.aborted) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.requestReconciliation();
+    }, 5_000);
+    this.retryTimer.unref();
+  }
+  reconcile(): Promise<void> {
+    this.dirty = true;
+    if (this.refresh) return this.refresh;
+    this.refresh = Promise.resolve()
+      .then(() => this.drainReconciliation())
+      .finally(() => {
+        this.refresh = null;
+        this.scheduleRecovery();
+      });
+    return this.refresh;
+  }
+  private async drainReconciliation() {
+    while (this.dirty && !this.options.signal.aborted) {
+      this.dirty = false;
+      await this.reconcileTurn();
+    }
+  }
+  private async reconcileTurn() {
+    const revision = this.revision;
+    const turn = this.turn;
+    const active = await this.options.client().session.active({ signal: this.options.signal });
+    if (revision !== this.revision) {
+      this.dirty = true;
+      return;
+    }
+    if (active[this.options.id]) {
+      this.observeActiveTurn();
+      return;
+    }
+    if (!turn?.accepted) return;
+    // Idle outcome survives shutdown, and /event has no replay. Recover the latest
+    // durable execution even when its start or terminal was lost across reconnect.
+    const execution = await this.readExecution();
+    if (revision !== this.revision) {
+      this.dirty = true;
+      return;
+    }
+    if (!execution) return;
+    this.execution = execution;
+    this.sequence = execution.durable.seq;
+    if (
+      execution.type === "session.execution.started" ||
+      (execution.type === "session.execution.interrupted" &&
+        execution.data.reason === "shutdown" &&
+        !turn.requestDenied)
+    )
+      return;
+    // Read the final history only after observing idle. Never turn an observation transport error into an execution failure.
+    const snapshot = await this.options.reconcile();
+    if (revision !== this.revision) {
+      this.dirty = true;
+      return;
+    }
+    try {
+      this.finish(turn, snapshot, execution);
+    } catch (error) {
+      if (this.turn === turn) this.fail(new Error(toDiagnosticErrorMessage(error)));
     }
   }
   private async dispatch(
@@ -147,51 +281,43 @@ export class SessionTurns {
       },
     });
   }
-  private async finish(id: string) {
-    await this.options
-      .client()
-      .session.wait({ sessionID: this.options.id }, { signal: this.options.signal });
-    const { info, history } = await this.options.reconcile();
-    if (this.turn?.id !== id) return;
-    if (info.outcome !== "failed" && info.outcome !== "interrupted")
-      this.turn.output?.assert(history);
-    const failure =
-      info.outcome === "failed" ? (this.executionError ?? (await this.readExecutionError())) : null;
-    if (this.turn?.id !== id) return;
-    this.turn = null;
-    if (info.outcome === "interrupted")
+  private finish(turn: Turn, { info, history }: TurnSnapshot, execution: ExecutionEvent) {
+    if (execution.type === "session.execution.succeeded") turn.output?.assert(history);
+    this.release(turn);
+    if (execution.type === "session.execution.interrupted")
       this.options.emit({
         type: "turn_canceled",
         provider: "opencode",
-        turnId: id,
+        turnId: turn.id,
         reason: "OpenCode interrupted execution",
       });
-    else if (info.outcome === "failed")
+    else if (execution.type === "session.execution.failed")
       this.options.emit({
         type: "turn_failed",
         provider: "opencode",
-        turnId: id,
-        error: failure ?? "OpenCode execution failed",
+        turnId: turn.id,
+        error: execution.data.error.message,
       });
     else
       this.options.emit({
         type: "turn_completed",
         provider: "opencode",
-        turnId: id,
+        turnId: turn.id,
         usage: usageFromV2(info),
       });
   }
-  private async readExecutionError(): Promise<string> {
-    let message = "OpenCode execution failed";
+  private async readExecution(): Promise<ExecutionEvent | null> {
+    let execution = this.execution;
     for await (const event of this.options
       .client()
       .session.log(
-        { sessionID: this.options.id, follow: false },
+        { sessionID: this.options.id, follow: false, after: this.sequence },
         { signal: this.options.signal },
       )) {
-      if (event.type === "session.execution.failed") message = event.data.error.message;
+      if (isExecutionEvent(event) && event.durable.seq > (execution?.durable.seq ?? this.sequence))
+        execution = event;
     }
-    return message;
+    return execution;
   }
   private promptInput(prompt: AgentPromptInput) {
     if (typeof prompt === "string") return { text: prompt, files: [] };
@@ -229,6 +355,7 @@ export class SessionTurns {
         // A stop sent before the queued prompt is accepted would interrupt an idle session.
         await turn?.submitted;
         await this.options.client().session.interrupt({ sessionID: this.options.id });
+        await this.reconcile();
         await turn?.completion;
       })();
       this.stopping = stop;
@@ -241,22 +368,8 @@ export class SessionTurns {
       }
     } else await this.stopping;
   }
-  observeActiveTurn() {
-    if (this.turn) return;
-    const id = randomUUID();
-    const completion = Promise.resolve()
-      .then(() => this.finish(id))
-      .catch((error: unknown) => {
-        if (this.turn?.id !== id) return;
-        this.turn = null;
-        this.options.emit({
-          type: "turn_failed",
-          provider: "opencode",
-          turnId: id,
-          error: toDiagnosticErrorMessage(error),
-        });
-      });
-    this.turn = { id, submitted: Promise.resolve(), completion };
-    this.options.emit({ type: "turn_started", provider: "opencode", turnId: id });
+  private observeActiveTurn() {
+    if (this.turn || this.options.signal.aborted) return;
+    this.createTurn(Promise.resolve(), true);
   }
 }

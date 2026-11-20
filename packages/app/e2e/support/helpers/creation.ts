@@ -17,6 +17,7 @@ import {
   workspaceDeckEntryLocator,
 } from "./workspace-ui";
 import { getServerId } from "./server-id";
+import { revealSidebarProjectWorkspaces } from "./sidebar";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
 
@@ -141,6 +142,8 @@ export async function createCreationScenario(page: Page) {
   const requests = await observeCreationRequests(page);
   const project = await seedWorkspace({ repoPrefix: "creation-idempotency-" });
   let workspaceId = project.workspaceId;
+  // Workspaces the scenario opens itself to evict the deck; they are not creations under test.
+  const evictionWorkspaceIds = new Set<string>();
   return {
     cleanup: project.cleanup,
     async openWorkspaceForm(isolation: "local" | "worktree") {
@@ -182,6 +185,47 @@ export async function createCreationScenario(page: Page) {
       await this.expectWorkspaceReadyBeforeAgentCompletion();
       expect((await project.client.fetchAgents()).entries).toHaveLength(0);
     },
+    async expectCreatedAgentError() {
+      await requests.settled();
+      await expect(
+        page
+          .getByTestId("assistant-message")
+          .filter({ hasText: "[System Error] Requested mock prompt rejection", visible: true }),
+      ).toBeVisible();
+      await expect(
+        page
+          .locator('[data-testid^="workspace-tab-agent_"][aria-selected="true"]')
+          .filter({ visible: true }),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid^="workspace-tab-draft_"]').filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeEditable();
+      await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
+    },
+    async expectPromptBeforeError(prompt: string) {
+      const messages = page
+        .getByTestId("user-message")
+        .or(page.getByTestId("assistant-message"))
+        .filter({ visible: true });
+      await expect(messages).toHaveCount(2);
+      await expect(messages.nth(0)).toContainText(prompt);
+      await expect(messages.nth(1)).toContainText("[System Error]");
+      await expect(messages.nth(1)).toBeInViewport();
+    },
+    async reloadAgent() {
+      await page.reload();
+      await expect(page.getByText("Updating messages", { exact: true })).toHaveCount(0);
+      await this.expectCreatedAgentError();
+    },
+    async expectAssistantReply() {
+      await expect(
+        page
+          .getByTestId("assistant-message")
+          .filter({ visible: true, hasNotText: "[System Error]" })
+          .first(),
+      ).toBeVisible();
+    },
     async expectStartupFailure() {
       await expect(page.getByText(/Creation startup failed for test/).first()).toBeVisible();
     },
@@ -190,7 +234,9 @@ export async function createCreationScenario(page: Page) {
       await requests.settled();
       const workspaces = (await project.client.fetchWorkspaces()).entries.filter(
         (workspace) =>
-          workspace.projectId === project.projectId && workspace.id !== project.workspaceId,
+          workspace.projectId === project.projectId &&
+          workspace.id !== project.workspaceId &&
+          !evictionWorkspaceIds.has(workspace.id),
       );
       expect(workspaces).toHaveLength(1);
       workspaceId = workspaces[0]!.id;
@@ -205,6 +251,22 @@ export async function createCreationScenario(page: Page) {
             ).length,
         )
         .toBe(count);
+    },
+    async agentIds() {
+      await requests.settled();
+      return (await project.client.fetchAgents()).entries
+        .filter(({ agent }) => agent.workspaceId === workspaceId)
+        .map(({ agent }) => agent.id);
+    },
+    async expectAgentMetadata(metadata: Record<string, unknown>) {
+      await expect
+        .poll(
+          async () =>
+            (await project.client.fetchAgents()).entries.find(
+              ({ agent }) => agent.workspaceId === workspaceId,
+            )?.agent.metadata,
+        )
+        .toEqual(metadata);
     },
     async expectAgentTitle(title: string) {
       await expect
@@ -228,6 +290,7 @@ export async function createCreationScenario(page: Page) {
           source: { kind: "directory", path: project.repoPath },
         });
         if (!result.workspace) throw new Error(result.error ?? "Failed to seed eviction workspace");
+        evictionWorkspaceIds.add(result.workspace.id);
         await switchWorkspaceViaSidebar({
           page,
           serverId: getServerId(),
@@ -235,6 +298,7 @@ export async function createCreationScenario(page: Page) {
         });
       }
       await expect(workspaceDeckEntryLocator(page, getServerId(), workspaceId)).toHaveCount(0);
+      await revealSidebarProjectWorkspaces(page, project.projectKey);
       await switchWorkspaceViaSidebar({ page, serverId: getServerId(), workspaceId });
       await page
         .getByTestId(draftTestId!)

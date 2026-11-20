@@ -2,6 +2,9 @@ import type { ReactNode, RefObject } from "react";
 import type { StreamItem } from "@/types/stream";
 import type { StreamViewportHandle } from "../strategy";
 
+export interface MountedMessageIds {
+  has(messageId: string): boolean;
+}
 export interface ChatFindProps {
   agentId: string;
   serverId: string;
@@ -9,7 +12,7 @@ export interface ChatFindProps {
   items: StreamItem[];
   viewportRef: RefObject<StreamViewportHandle | null>;
   revealLoadedMessage(messageId: string): boolean;
-  visibleMessageIds: ReadonlySet<string>;
+  visibleMessageIds: MountedMessageIds;
   children: ReactNode;
 }
 export interface ChatFindExpansionProps {

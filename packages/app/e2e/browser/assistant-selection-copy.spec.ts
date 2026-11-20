@@ -72,10 +72,13 @@ const ASSISTANT_MARKDOWN = [
   "| Current \\| active | ~~obsolete~~ | ready |",
 ].join("\n");
 
-const EXPECTED_WHOLE_SELECTION_MARKDOWN = ASSISTANT_MARKDOWN.replace(
-  `${CROSS_STRUCTURE_MARKDOWN}\n\n`,
-  "",
+// text/plain carries the selection as displayed, so an inline code span the renderer
+// linked copies without its destination.
+const EXPECTED_WHOLE_SELECTION_TEXT = ASSISTANT_MARKDOWN.replace(
+  "www.example.com stays",
+  "[www.example.com](http://www.example.com) stays",
 )
+  .replace(`${CROSS_STRUCTURE_MARKDOWN}\n\n`, "")
   .replace(
     "<https://autolink.example.com>",
     "[https://autolink.example.com](https://autolink.example.com)",
@@ -98,8 +101,7 @@ async function allowRichClipboard(context: BrowserContext): Promise<void> {
 }
 
 /**
- * The rows of one assistant message. A message renders one row per Markdown block, so
- * every locator and every text walk below covers the group, not a single block.
+ * Locate assistant rows by source-message identity.
  */
 function assistantMessageBlocks(page: Page): Locator {
   return page.locator("[data-message-id]").filter({ has: page.getByTestId("assistant-message") });
@@ -120,6 +122,85 @@ async function selectAssistantElement(page: Page, selector: string): Promise<voi
   });
 }
 
+/**
+ * Select an element from the end of the text before it. A drag that starts in the gap
+ * above a block anchors there, so nothing outside the element is highlighted.
+ */
+async function selectAssistantElementFromEndOf(
+  page: Page,
+  startText: string,
+  selector: string,
+): Promise<void> {
+  await assistantMessageBlocks(page).evaluateAll(
+    (blocks, selected) => {
+      let startNode: Text | null = null;
+      for (const block of blocks) {
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          if (walker.currentNode.textContent?.endsWith(selected.startText)) {
+            startNode = walker.currentNode as Text;
+          }
+        }
+      }
+      const end = blocks.map((block) => block.querySelector(selected.selector)).find(Boolean);
+      if (!startNode || !end) {
+        throw new Error(`Could not find ${selected.startText} — ${selected.selector}`);
+      }
+      const range = document.createRange();
+      range.setStart(startNode, startNode.length);
+      range.setEnd(end, end.childNodes.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    },
+    { startText, selector },
+  );
+}
+
+/** A drag over an image alone selects it inside its rendered frame. */
+async function selectAssistantImage(page: Page): Promise<void> {
+  await assistantMessageBlocks(page)
+    .locator("img")
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNode(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    });
+}
+
+/** Press in the gap below the image and drag to the end of `text` in the block after it. */
+async function dragFromBelowImageTo(page: Page, text: string): Promise<void> {
+  const blocks = assistantMessageBlocks(page);
+  const target = blocks.getByText(text);
+  await target.scrollIntoViewIfNeeded();
+  const frame = await blocks.locator("img").boundingBox();
+  const end = await target.evaluate((element, selectedText) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const offset = node.textContent?.indexOf(selectedText) ?? -1;
+      if (offset >= 0) {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, offset + selectedText.length);
+        const box = range.getBoundingClientRect();
+        return { x: box.right - 1, y: box.top + box.height / 2, left: box.left };
+      }
+    }
+    throw new Error(`Could not find ${selectedText}`);
+  }, text);
+  if (!frame) {
+    throw new Error("Expected a rendered image");
+  }
+  await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.mouse.move(end.left + 1, end.y - 14);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 10 });
+  await page.mouse.up();
+}
+
 async function selectAssistantText(page: Page, text: string): Promise<void> {
   await selectAssistantTextRange(page, text, text);
 }
@@ -132,18 +213,12 @@ async function selectAssistantListItemFromMarker(
 ): Promise<void> {
   const assistantMessage = assistantMessageBlocks(page);
   const item = assistantMessage
-    .locator(`[data-paseo-markdown-tag="${listTag}"]`)
+    .locator(listTag)
     .filter({ hasText: itemText })
-    .locator(':scope > [data-paseo-markdown-tag="li"]')
+    .locator(":scope > li")
     .filter({ hasText: itemText });
 
   await item.evaluate((element, selectedEndText) => {
-    const marker = element.querySelector(':scope > [data-paseo-markdown-list-marker="true"]');
-    const markerText = marker?.firstChild;
-    if (!(markerText instanceof Text)) {
-      throw new Error("Expected rendered list marker text");
-    }
-
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let endNode: Text | null = null;
     let endOffset = -1;
@@ -161,7 +236,7 @@ async function selectAssistantListItemFromMarker(
     }
 
     const range = document.createRange();
-    range.setStart(markerText, 0);
+    range.setStart(element, 0);
     range.setEnd(endNode, endOffset);
     const selection = window.getSelection();
     selection?.removeAllRanges();
@@ -176,7 +251,7 @@ async function doubleClickAssistantMarkdownText(
 ): Promise<void> {
   const assistantMessage = assistantMessageBlocks(page);
   await assistantMessage
-    .locator(`[data-paseo-markdown-tag="${tag}"]`)
+    .locator(tag)
     .filter({ hasText: text })
     .dblclick({ position: { x: 5, y: 5 } });
 }
@@ -198,39 +273,23 @@ async function selectAssistantTextRange(
           found = blockWalker.nextNode();
         }
       }
-      let cursor = 0;
-      const walker = { nextNode: () => nodes[cursor++] ?? null };
-      let startNode: Node | null = null;
-      let startOffset = -1;
-      let endNode: Node | null = null;
-      let endOffset = -1;
-      let textNode = walker.nextNode();
-      while (textNode) {
-        if (!startNode) {
-          const offset = textNode.textContent?.indexOf(selectedRange.startText) ?? -1;
-          if (offset >= 0) {
-            startNode = textNode;
-            startOffset = offset;
-          }
-        }
-        if (startNode) {
-          const offset = textNode.textContent?.indexOf(selectedRange.endText) ?? -1;
-          if (offset >= 0) {
-            endNode = textNode;
-            endOffset = offset + selectedRange.endText.length;
-            break;
-          }
-        }
-        textNode = walker.nextNode();
-      }
-      if (!startNode || !endNode) {
+      const text = nodes.map((node) => node.data).join("");
+      const start = text.indexOf(selectedRange.startText);
+      const end = text.indexOf(selectedRange.endText, start);
+      if (start < 0 || end < 0)
         throw new Error(
           `Could not find assistant text range: ${selectedRange.startText} — ${selectedRange.endText}`,
         );
-      }
+      const boundary = (offset: number, isEnd = false): [Text, number] => {
+        for (const node of nodes) {
+          if (offset < node.length || (isEnd && offset === node.length)) return [node, offset];
+          offset -= node.length;
+        }
+        throw new Error("Selection extends beyond message");
+      };
       const range = document.createRange();
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
+      range.setStart(...boundary(start));
+      range.setEnd(...boundary(end + selectedRange.endText.length, true));
       const selection = window.getSelection();
       selection?.removeAllRanges();
       selection?.addRange(range);
@@ -350,22 +409,18 @@ test("copying an assistant selection preserves Markdown structure and links", as
       ["em", "emphasized prose"],
       ["s", "struck prose"],
     ]) {
-      const formattedProse = assistantMessage
-        .locator(`[data-paseo-markdown-tag="${tag}"]`)
-        .filter({ hasText: text });
+      const formattedProse = assistantMessage.locator(tag).filter({ hasText: text });
       await expect(formattedProse).toHaveCSS("font-family", "serif");
       await expect(formattedProse).not.toHaveAttribute("data-pmono");
     }
-    const inlineCode = assistantMessage
-      .locator('[data-paseo-markdown-tag="code"]')
-      .filter({ hasText: "apply_patch" });
-    await expect(inlineCode).toHaveAttribute("data-pmono", "");
+    const inlineCode = assistantMessage.locator("code").filter({ hasText: "apply_patch" });
+    await expect(inlineCode).toHaveCSS("font-family", /monospace|Mono/);
 
     await selectStructuredClipboardFixture(page);
     await copySelection(page);
 
     const clipboard = await readRichClipboard(page);
-    expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_MARKDOWN);
+    expect(clipboard.plainText).toBe(EXPECTED_WHOLE_SELECTION_TEXT);
     expect(clipboard.html).not.toContain("<ul>");
     expect(clipboard.html).not.toContain("<li>");
     expect(clipboard.html).toContain("<div>- ");
@@ -388,7 +443,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
       '<a href="file:///tmp/paseo%20notes.md#L4">workspace file</a>',
     );
     expect(clipboard.html).toContain("<code>https://example.com/generated</code>");
-    expect(clipboard.html).not.toContain(
+    expect(clipboard.html).toContain(
       '<a href="https://example.com/generated"><code>https://example.com/generated</code></a>',
     );
     expect(clipboard.html).toContain('<code class="language-typescript">');
@@ -565,6 +620,19 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const completeCodeClipboard = await readRichClipboard(page);
     expect(completeCodeClipboard.plainText).toBe('const answer = "yes";\n  return answer;');
 
+    // Touching the block before it without selecting any of its text is still a
+    // selection inside the code.
+    await selectAssistantElementFromEndOf(
+      page,
+      "not a generated link.",
+      '[data-paseo-markdown-language="typescript"] [data-paseo-markdown-tag="code"]',
+    );
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      'const answer = "yes";\n  return answer;',
+    );
+
     // Crossing the block boundary expresses an intent to carry its Markdown structure.
     await selectAssistantAcrossCodeLines(page, "const", "After code.");
     await copySelection(page);
@@ -572,6 +640,22 @@ test("copying an assistant selection preserves Markdown structure and links", as
     const crossedCodeClipboard = await readRichClipboard(page);
     expect(crossedCodeClipboard.plainText).toBe(
       '```typescript\nconst answer = "yes";\n  return answer;\n```\n\nAfter code.',
+    );
+
+    // Crossing into part of the block keeps the selected code lines as a fenced block.
+    await selectAssistantAcrossCodeLines(page, "not a generated link.", "return");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      'not a generated link.\n\n```typescript\nconst answer = "yes";\n  return\n```',
+    );
+
+    // So does starting partway through the block and leaving it.
+    await selectAssistantAcrossCodeLines(page, "answer", "After code.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      '```typescript\nanswer = "yes";\n  return answer;\n```\n\nAfter code.',
     );
 
     // Selecting a whole line runs off its end into the newline node. A trailing
@@ -600,4 +684,185 @@ test("copying an assistant selection preserves Markdown structure and links", as
   } finally {
     await agent.cleanup();
   }
+});
+
+test("pasting an assistant selection preserves literal underscores and authored links", async ({
+  context,
+  page,
+}) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-paste-",
+    title: "Assistant selection paste",
+    initialPrompt: "Render the paste fixture.",
+    featureValues: {
+      mockAssistantResponse:
+        "Keep \\_literal\\_ and `https://example.com/generated` beside [the docs](https://example.com/docs).",
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+
+    const message = assistantMessageBlocks(page);
+    await expect(message.locator('a[href="https://example.com/generated"]')).toHaveText(
+      "https://example.com/generated",
+    );
+    await selectAssistantTextRange(page, "Keep _literal_", "the docs.");
+    await copySelection(page);
+
+    await page.evaluate(() => {
+      const fields = document.createElement("div");
+      fields.style.cssText =
+        "position: fixed; bottom: 0; left: 0; z-index: 10000; background: white";
+      const plainText = document.createElement("textarea");
+      plainText.setAttribute("aria-label", "Plain text paste");
+      const richText = document.createElement("div");
+      richText.contentEditable = "true";
+      richText.setAttribute("role", "textbox");
+      richText.setAttribute("aria-label", "Rich text paste");
+      fields.append(plainText, richText);
+      document.body.append(fields);
+    });
+
+    const plainText = page.getByRole("textbox", { name: "Plain text paste" });
+    await plainText.focus();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(plainText).toHaveValue(
+      "Keep _literal_ and `https://example.com/generated` beside [the docs](https://example.com/docs).",
+    );
+
+    const richText = page.getByRole("textbox", { name: "Rich text paste" });
+    await richText.focus();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(richText).toHaveText(
+      "Keep _literal_ and https://example.com/generated beside the docs.",
+    );
+    await expect(richText.locator("code")).toHaveText("https://example.com/generated");
+    await expect(richText.getByRole("link")).toHaveCount(2);
+    await expect(
+      richText.getByRole("link", { name: "https://example.com/generated" }),
+    ).toHaveAttribute("href", "https://example.com/generated");
+    await expect(richText.getByRole("link", { name: "the docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test("copying a selection across an assistant image keeps its Markdown source and alt text", async ({
+  context,
+  page,
+}) => {
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "assistant-selection-copy-image-",
+    title: "Assistant selection copy image",
+    initialPrompt: "Render the image fixture.",
+    featureValues: {
+      mockAssistantResponse: [
+        "Before the image.",
+        "",
+        `![chart](${image})`,
+        "",
+        "After the image.",
+      ].join("\n"),
+    },
+  });
+
+  try {
+    await allowRichClipboard(context);
+    await agent.client.waitForAgentUpsert(
+      agent.agentId,
+      (snapshot) => snapshot.status === "idle",
+      30_000,
+    );
+    await openAgentRoute(page, agent);
+    await expect(assistantMessageBlocks(page).locator("img")).toHaveCount(1);
+
+    await selectAssistantTextRange(page, "Before the image.", "After the image.");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(
+      `Before the image.\n\n![chart](${image})\n\nAfter the image.`,
+    );
+
+    await selectAssistantImage(page);
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe(`![chart](${image})`);
+
+    await dragFromBelowImageTo(page, "After the");
+    await copySelection(page);
+
+    expect((await readRichClipboard(page)).plainText).toBe("After the");
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+test.describe("on a touch-capable desktop browser", () => {
+  // A touch screen registers the navigation pan's pointer listeners over the whole workspace.
+  // The pan accepts touch only, and a mouse drag must still extend the browser's selection.
+  test.use({ hasTouch: true });
+
+  test("a mouse drag selects across assistant list, quote, and code blocks", async ({ page }) => {
+    const agent = await seedMockAgentWorkspace({
+      repoPrefix: "assistant-selection-drag-",
+      title: "Assistant selection drag",
+      initialPrompt: "Render structured text.",
+      featureValues: {
+        mockAssistantResponse: [
+          "First paragraph.",
+          "",
+          "- List item.",
+          "",
+          "> Quote text.",
+          "",
+          "```ts",
+          "const answer = 1;",
+          "```",
+          "",
+          "Third paragraph.",
+        ].join("\n"),
+      },
+    });
+
+    try {
+      await agent.client.waitForAgentUpsert(
+        agent.agentId,
+        (snapshot) => snapshot.status === "idle",
+        30_000,
+      );
+      await openAgentRoute(page, agent);
+      const blocks = assistantMessageBlocks(page);
+      const first = await blocks.getByText("First paragraph.").boundingBox();
+      const third = await blocks.getByText("Third paragraph.").boundingBox();
+      if (!first || !third) {
+        throw new Error("Expected rendered paragraphs");
+      }
+
+      await page.mouse.move(first.x + 1, first.y + first.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(third.x + third.width - 1, third.y + third.height / 2, { steps: 20 });
+      await page.mouse.up();
+
+      const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+      expect(selected).toContain("First paragraph.");
+      expect(selected).toContain("List item.");
+      expect(selected).toContain("Quote text.");
+      expect(selected).toContain("const answer = 1;");
+      expect(selected).toContain("Third paragraph.");
+    } finally {
+      await agent.cleanup();
+    }
+  });
 });

@@ -6,6 +6,7 @@ import type { VisitorPlatform } from "~/platform";
 import { getVisitorPlatform } from "~/platform";
 import { getLatestRelease } from "~/release";
 import { getStarCount } from "~/stars";
+import { useLocale } from "~/i18n";
 
 interface StarsContext {
   stars: string;
@@ -91,8 +92,9 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
+  const locale = useLocale();
   return (
-    <html lang="en">
+    <html lang={locale}>
       <head>
         <HeadContent />
         <script async src="https://plausible.io/js/pa-cKNUoWbeH_Iksb2fh82s3.js" />

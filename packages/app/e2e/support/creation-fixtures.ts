@@ -1,6 +1,8 @@
-import { writeFile, rm, rename } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, rename } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { copyPluginExample } from "./helpers/plugin-fixture";
+import type { Page } from "@playwright/test";
+import { copyPluginExample, pluginRequirements } from "./helpers/plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./helpers/new-workspace";
 import { test as base } from "./fixtures";
 import {
@@ -13,6 +15,8 @@ import { delayBrowserAgentCreatedStatus } from "./helpers/new-workspace";
 
 export const test = base.extend<{
   startup: { release(): Promise<void>; fail(): Promise<void> };
+  promptRejection: void;
+  composerMetadata: { set(patch: Record<string, string>): Promise<void> };
   creation: Awaited<ReturnType<typeof createCreationScenario>>;
   promptRetry: ReturnType<typeof createPromptRetryScenario>;
   agentRetries: Awaited<ReturnType<typeof retryNextAgentCreation>>;
@@ -34,7 +38,8 @@ export const test = base.extend<{
 import { readFile, rm } from "node:fs/promises";
 export default function contribute(server) {
   return server.before("agent.session_open", async ({ request }) => {
-    if (request.reason !== "create") return request;
+    // Metadata helpers have no workspace and must not consume the one-shot failure.
+    if (request.reason !== "create" || !request.workspaceId) return request;
     const gate = ${JSON.stringify(gate)};
     let command = await readFile(gate, "utf8").catch(() => "release");
     while (command === "hold") {
@@ -62,6 +67,70 @@ export default function contribute(server) {
       await client.removePlugin("lifecycle-logger");
       await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
       await plugin.cleanup();
+      await client.close();
+    }
+  },
+  promptRejection: async ({ page }, provide) => {
+    void page;
+    const client = await connectNewWorkspaceDaemonClient();
+    const plugin = await copyPluginExample("lifecycle-logger");
+    const previous = await client.getDaemonConfig();
+    try {
+      await writeFile(
+        path.join(plugin.directory, "index.server.ts"),
+        `
+export default function contribute(server) {
+  return server.before("agent.create", ({ request }) => ({
+    ...request,
+    config: {
+      ...request.config,
+      model: "e2e-fast-stream",
+      featureValues: { ...request.config.featureValues, mockPromptRejections: 1 },
+    },
+  }));
+}
+`,
+      );
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(plugin.directory);
+      await provide();
+    } finally {
+      await client.removePlugin("lifecycle-logger");
+      await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+      await plugin.cleanup();
+      await client.close();
+    }
+  },
+  composerMetadata: async ({ page }, provide) => {
+    const client = await connectNewWorkspaceDaemonClient();
+    const previous = await client.getDaemonConfig();
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-composer-metadata-"));
+    try {
+      await writeFile(
+        path.join(directory, "paseo-plugin.json"),
+        JSON.stringify({ id: "composer-metadata", requirements: pluginRequirements }),
+      );
+      await writeFile(
+        path.join(directory, "index.client.tsx"),
+        `import { useComposer } from "@getpaseo/plugin/client";
+
+function Holder() {
+  globalThis.metadataComposer = useComposer();
+  return null;
+}
+
+export default function contribute(client) {
+  client.addComposerItem({ id: "holder", Component: Holder });
+  return () => {};
+}`,
+      );
+      await client.patchDaemonConfig({ pluginsEnabled: true });
+      await client.installDirectoryPlugin(directory);
+      await provide({ set: (patch) => setComposerMetadata(page, patch) });
+    } finally {
+      await client.removePlugin("composer-metadata");
+      await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
+      await rm(directory, { recursive: true, force: true });
       await client.close();
     }
   },
@@ -93,3 +162,15 @@ export default function contribute(server) {
     }
   },
 });
+
+type MetadataComposerGlobal = typeof globalThis & {
+  metadataComposer?: { setMetadata(patch: Record<string, string>): Promise<void> };
+};
+
+async function setComposerMetadata(page: Page, patch: Record<string, string>) {
+  await page.waitForFunction(() => (globalThis as MetadataComposerGlobal).metadataComposer);
+  await page.evaluate(
+    (value) => (globalThis as MetadataComposerGlobal).metadataComposer!.setMetadata(value),
+    patch,
+  );
+}

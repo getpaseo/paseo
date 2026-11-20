@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { identify, fetchUsage } from "./usage.js";
+import { discover, fetchUsage } from "./usage.js";
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
 
 function writeMiniMaxConfig(dir: string, payload: Record<string, unknown>): void {
@@ -83,14 +83,14 @@ describe("minimax usage source", () => {
   ) {
     return {
       listUsage: async () => {
-        const report = await fetchUsage({}, (url, init) => fetchApi(url, init));
+        const report = await fetchFirst((url, init) => fetchApi(url, init));
         return {
           providers: [
             {
               providerId: "minimax",
               ...report,
-              error: report.error ?? null,
-              planLabel: report.planLabel ?? null,
+              error: report.status === "error" ? report.error : null,
+              planLabel: report.status === "available" ? (report.planLabel ?? null) : null,
             },
           ],
         };
@@ -154,13 +154,8 @@ describe("minimax usage source", () => {
     });
   });
 
-  it("returns unavailable MiniMax usage when no credentials are configured", async () => {
-    fetchApi = vi.fn() as never;
-
-    const miniMax = findProvider(await service().listUsage(), "minimax");
-
-    expect(miniMax.status).toBe("unavailable");
-    expect(fetchApi).not.toHaveBeenCalled();
+  it("omits MiniMax when no credentials are configured", async () => {
+    expect(await discover()).toEqual([]);
   });
 
   it("reads MiniMax OAuth credentials from the CLI credentials file", async () => {
@@ -215,7 +210,11 @@ describe("minimax usage source", () => {
 
     const miniMax = findProvider(await service().listUsage(), "minimax");
 
-    expect(miniMax).toMatchObject({ status: "unavailable", windows: [], error: null });
+    expect(miniMax).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "no_quota" },
+      error: null,
+    });
   });
 
   it("reports a null MiniMax token plan as unavailable even without base_resp", async () => {
@@ -231,7 +230,11 @@ describe("minimax usage source", () => {
 
     const miniMax = findProvider(await service().listUsage(), "minimax");
 
-    expect(miniMax).toMatchObject({ status: "unavailable", windows: [], error: null });
+    expect(miniMax).toMatchObject({
+      status: "unavailable",
+      problem: { kind: "no_quota" },
+      error: null,
+    });
   });
 
   it("still reads MiniMax windows when base_resp reports success", async () => {
@@ -314,17 +317,60 @@ describe("minimax usage source", () => {
   });
 });
 
-it("identify returns a key when fetch finds minimax credentials", async () => {
+it("discovery returns a locator when fetch finds minimax credentials", async () => {
   const previous = process.env["MINIMAX_API_KEY"];
   try {
     process.env["MINIMAX_API_KEY"] = "fixture-token";
     let requested = false;
-    await fetchUsage({}, async () => {
+    await fetchFirst(async () => {
       requested = true;
       return new Response(null, { status: 401 });
     });
     expect(requested).toBe(true);
-    expect(await identify()).toEqual({ key: "default" });
+    expect(await discover()).toEqual([
+      { key: "default", input: { store: "env", locator: "MINIMAX_API_KEY" } },
+    ]);
+  } finally {
+    if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
+    else process.env["MINIMAX_API_KEY"] = previous;
+  }
+});
+
+describe("account discovery", () => {
+  it.each(["empty home", "unrelated files"])("returns no accounts for %s", async (scenario) => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const directory = await mkdtemp(join(tmpdir(), "usage-empty-"));
+    const original = { ...process.env };
+    try {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      process.env.HOME = directory;
+      process.env.USERPROFILE = directory;
+      if (scenario === "unrelated files") await writeFile(join(directory, "unrelated.json"), "{}");
+      expect(await discover()).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, original);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+async function fetchFirst(fetchApi: typeof fetch) {
+  const accounts = await discover();
+  const account = accounts[0];
+  if (!account) throw new Error("No configured account");
+  return fetchUsage(account.input as Parameters<typeof fetchUsage>[0], fetchApi);
+}
+
+it.each([401, 403])("reports an existing login rejected with HTTP %i", async (status) => {
+  const previous = process.env["MINIMAX_API_KEY"];
+  try {
+    process.env["MINIMAX_API_KEY"] = "fixture-rejected-login";
+    const report = await fetchUsage(
+      { store: "env", locator: "MINIMAX_API_KEY" },
+      async () => new Response(null, { status }),
+    );
+    expect(report).toEqual({ status: "unavailable", problem: { kind: "rejected", status } });
   } finally {
     if (previous === undefined) delete process.env["MINIMAX_API_KEY"];
     else process.env["MINIMAX_API_KEY"] = previous;

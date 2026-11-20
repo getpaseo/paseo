@@ -2,7 +2,8 @@ import { useCallback, useState } from "react";
 import { View, Text } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
-import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
+import { CHAT_COLUMN_RAIL_DATASET } from "@/chat-rail";
+import { FOOTER_HEIGHT } from "@/constants/layout";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { KeyboardTranslateView } from "@/keyboard/shift";
 import { Button } from "@/components/ui/button";
@@ -35,13 +36,12 @@ export function ArchivedAgentCallout({ serverId, agentId }: ArchivedAgentCallout
 
   return (
     <KeyboardTranslateView style={styles.container}>
-      <View style={styles.inputAreaContainer}>
+      <View style={styles.inputAreaContainer} dataSet={CHAT_COLUMN_RAIL_DATASET}>
         <View style={styles.inputAreaContent}>
           <View style={styles.calloutStack}>
             <View style={styles.callout}>
               <Text style={styles.calloutText}>{t("agentPanel.archived.callout")}</Text>
               <Button
-                size="sm"
                 variant="secondary"
                 onPress={handleUnarchive}
                 disabled={!isConnected || isUnarchiving}
@@ -77,7 +77,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   inputAreaContent: {
     width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
+    maxWidth: theme.contentMaxWidth,
   },
   callout: {
     flexDirection: "row",

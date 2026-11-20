@@ -16,6 +16,7 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
@@ -246,6 +247,17 @@ const GitLabApprovalsSchema = z
     approvals_required: z.number().nullable().optional(),
     approvals_left: z.number().nullable().optional(),
     approved_by: z.array(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+const GitLabProjectSchema = z
+  .object({
+    path_with_namespace: z.string(),
+    default_branch: z.string().nullish(),
+    forked_from_project: z
+      .object({ path_with_namespace: z.string().optional() })
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -728,6 +740,7 @@ function toCurrentPullRequestStatus(
     state: mapMergeRequestState(mr.state),
     baseRefName: mr.target_branch,
     headRefName: mr.source_branch,
+    ...(mr.sha ? { headSha: mr.sha } : {}),
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
@@ -882,6 +895,31 @@ function throwFirstNonGlabAuthSearchRejection(results: PromiseSettledResult<unkn
   }
 }
 
+function buildGitLabListArgs({
+  kind,
+  input,
+}: {
+  kind: "mr" | "issue";
+  input: ListPullRequestsOptions | ListIssuesOptions;
+}): string[] {
+  const query = input.query?.trim();
+  // issue list uses -O for JSON; its -F flag controls details/ids/urls.
+  // mr list uses -F for JSON instead.
+  const args = [kind, "list", kind === "mr" ? "-F" : "-O", "json"];
+  if (query) {
+    args.push("--search", query);
+  }
+  if (typeof input.limit === "number") {
+    args.push("-P", String(input.limit));
+  }
+  return args;
+}
+
+function gitLabNumberQuery(query: string | undefined): string | null {
+  const trimmed = query?.trim();
+  return trimmed && /^\d+$/.test(trimmed) ? trimmed : null;
+}
+
 export function createGitLabService(options: CreateGitLabServiceOptions = {}): ForgeService {
   const runner = options.runner ?? runGlabCommand;
   const resolveGlab = createCachedCliPathResolver(options.resolveGlabPath ?? resolveGlabPath);
@@ -962,6 +1000,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         (mr) =>
           mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
       ) ??
+      candidates[0] ??
       null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
   }
@@ -1057,43 +1096,65 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     }
   }
 
+  async function runList<T extends { iid: number }>({
+    kind,
+    input,
+    schema,
+  }: {
+    kind: "mr" | "issue";
+    input: ListPullRequestsOptions | ListIssuesOptions;
+    schema: z.ZodType<T[]>;
+  }): Promise<T[]> {
+    const textSearch = runJson(buildGitLabListArgs({ kind, input }), { cwd: input.cwd }, schema);
+    const numberQuery = gitLabNumberQuery(input.query);
+    if (!numberQuery) return textSearch;
+
+    // GitLab text search omits IIDs, so supplement it with an open-item lookup.
+    const resource = kind === "mr" ? "merge_requests" : "issues";
+    const [numberMatches, textMatches] = await Promise.all([
+      runJson(
+        ["api", `projects/:id/${resource}?state=opened&iids[]=${numberQuery}`],
+        { cwd: input.cwd },
+        schema,
+      ),
+      textSearch,
+    ]);
+    const seen = new Set<number>();
+    const items = [...numberMatches, ...textMatches].filter((item) => {
+      if (seen.has(item.iid)) return false;
+      seen.add(item.iid);
+      return true;
+    });
+    return typeof input.limit === "number" ? items.slice(0, input.limit) : items;
+  }
+
   async function runMergeRequestList(
     input: ListPullRequestsOptions,
   ): Promise<PullRequestSummary[]> {
-    const args = ["mr", "list", "-F", "json"];
-    const query = input.query?.trim();
-    if (query) {
-      args.push("--search", query);
-    }
-    if (typeof input.limit === "number") {
-      args.push("-P", String(input.limit));
-    }
-    const mergeRequests = await runJson(
-      args,
-      { cwd: input.cwd },
-      z.array(GitLabMergeRequestSchema),
-    );
+    const mergeRequests = await runList({
+      kind: "mr",
+      input,
+      schema: z.array(GitLabMergeRequestSchema),
+    });
     return mergeRequests.map(toPullRequestSummary);
   }
 
-  /**
-   * `glab issue list` toggles JSON output with `-O/--output` (text|json); its
-   * `-F/--output-format` flag means something else (details|ids|urls) and
-   * silently falls back to the human-readable table for an unknown value. This
-   * differs from `glab mr list`, where `-F/--output` is the JSON toggle. Using
-   * the wrong flag here would emit a text table that fails JSON parsing.
-   */
   async function runIssueList(input: ListIssuesOptions): Promise<IssueSummary[]> {
-    const args = ["issue", "list", "-O", "json"];
-    const query = input.query?.trim();
-    if (query) {
-      args.push("--search", query);
-    }
-    if (typeof input.limit === "number") {
-      args.push("-P", String(input.limit));
-    }
-    const issues = await runJson(args, { cwd: input.cwd }, z.array(GitLabIssueSchema));
+    const issues = await runList({ kind: "issue", input, schema: z.array(GitLabIssueSchema) });
     return issues.map(toIssueSummary);
+  }
+
+  async function readOriginProject(cwd: string) {
+    const remoteUrl = await resolveRemoteUrl(cwd);
+    const projectPath = remoteUrl ? parseGitRemoteLocation(remoteUrl)?.path : null;
+    if (!projectPath) {
+      return null;
+    }
+    return runJson(
+      ["api", `projects/${encodeURIComponent(projectPath)}`],
+      { cwd: cwd },
+      GitLabProjectSchema,
+    );
   }
 
   return {
@@ -1115,11 +1176,22 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       }
     },
 
+    async getReferenceRepository(input): Promise<string | null> {
+      const project = await readOriginProject(input.cwd);
+      return project?.forked_from_project?.path_with_namespace ?? null;
+    },
+
     async getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
       try {
         const mr = await resolveCurrentMergeRequest(input.cwd, input.headRef, input.headSha);
         if (!mr) {
           return null;
+        }
+        if (mapMergeRequestState(mr.state) !== "open") {
+          const project = await readOriginProject(input.cwd).catch(() => null);
+          if (isOnDefaultBranch(input, project?.default_branch)) {
+            return null;
+          }
         }
         const [approvals, pipelineChecks] = await Promise.all([
           fetchApprovals(input.cwd, mr),
@@ -1170,6 +1242,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           mr.target_project_id !== undefined &&
           mr.target_project_id !== null &&
           mr.source_project_id !== mr.target_project_id,
+        headRefKind: "branch",
       };
     },
 
@@ -1359,9 +1432,16 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           });
         }
       }
-      items.sort(
-        (left, right) => parseOptionalTime(right.updatedAt) - parseOptionalTime(left.updatedAt),
-      );
+      const numberQuery = gitLabNumberQuery(input.query);
+      items.sort((left, right) => {
+        if (numberQuery) {
+          const numberMatchOrder =
+            Number(right.number === Number(numberQuery)) -
+            Number(left.number === Number(numberQuery));
+          if (numberMatchOrder !== 0) return numberMatchOrder;
+        }
+        return parseOptionalTime(right.updatedAt) - parseOptionalTime(left.updatedAt);
+      });
 
       return {
         items,

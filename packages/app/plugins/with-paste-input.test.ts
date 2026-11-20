@@ -7,22 +7,14 @@ const {
 } = require("./with-paste-input");
 
 describe("withPasteInput", () => {
-  it("registers the module after React Native starts", () => {
-    const source = [
-      "import ReactAppDependencyProvider",
-      "",
-      "    bindReactNativeFactory(factory)",
-      "    factory.startReactNative(",
-      '      withModuleName: "main",',
-      "      in: window,",
-      "      launchOptions: launchOptions)",
-      "#endif",
-    ].join("\n");
+  it("registers paste input after Expo connects the React Native scene", () => {
+    const source = "class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {}";
     const configured = configurePasteInputAppDelegate(source);
-
-    expect(configured).toContain(
-      "      launchOptions: launchOptions)\n    PasteInputModule.setup(factory.rootViewFactory)\n#endif",
+    expect(configured).toContain("class PaseoSceneDelegate: ExpoAppSceneDelegate");
+    expect(configured.indexOf("super.scene(")).toBeLessThan(
+      configured.indexOf("PasteInputModule.setup("),
     );
+    expect(configured).toContain("provider.reactNativeFactory");
     expect(configurePasteInputAppDelegate(configured)).toBe(configured);
   });
 
@@ -33,15 +25,11 @@ describe("withPasteInput", () => {
     expect(configured).toContain("#import <react-native-paste-input/PasteInputModule.h>");
     expect(configurePasteInputBridgingHeader(configured)).toBe(configured);
   });
-
-  it("sets the new architecture environment before CocoaPods evaluates dependencies", () => {
+  it("enables the legacy new-architecture flag required by the paste input podspec", () => {
     const source =
-      "ENV['RCT_NEW_ARCH_ENABLED'] ||= '0' if podfile_properties['newArchEnabled'] == 'false'";
+      "require File.join(File.dirname(`node --print \"require.resolve('expo/package.json')\"`), 'scripts/autolinking')";
     const configured = configurePasteInputPodfile(source);
-
-    expect(configured).toContain(
-      "ENV['RCT_NEW_ARCH_ENABLED'] ||= '1' if podfile_properties['newArchEnabled'] == 'true'",
-    );
+    expect(configured).toBe("ENV['RCT_NEW_ARCH_ENABLED'] = '1'\n" + source);
     expect(configurePasteInputPodfile(configured)).toBe(configured);
   });
 });

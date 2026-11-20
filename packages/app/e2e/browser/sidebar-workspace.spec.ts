@@ -6,8 +6,16 @@ import {
   closeMobileAgentSidebar,
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
+  expectOnlyWorkspaceHoverCardFor,
+  expectWorkspaceHoverCardClosed,
+  expectWorkspaceHoverCardOpen,
+  expectWorkspaceHoverCardStaysOpen,
+  focusWorkspaceRowWithKeyboard,
+  movePointerAwayFromWorkspaceHoverCard,
   openMobileAgentSidebar,
   pinWorkspaceFromSidebar,
+  scrollWorkspaceList,
+  sweepPointerAcrossWorkspaceRows,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
@@ -72,6 +80,22 @@ async function openWorkspaceHoverCard(page: import("@playwright/test").Page, wor
   const hoverCard = page.getByRole("menu", { name: "Workspace scripts" });
   await expect(hoverCard).toBeVisible({ timeout: 30_000 });
   return hoverCard;
+}
+
+async function sortWorkspacesBySidebarOrder<T extends { workspaceId: string }>(
+  page: Page,
+  workspaces: T[],
+): Promise<T[]> {
+  const positioned = await Promise.all(
+    workspaces.map(async (workspace) => {
+      const bounds = await page
+        .getByTestId(getWorkspaceRowTestId(workspace.workspaceId))
+        .boundingBox();
+      if (!bounds) throw new Error(`Could not measure the row of ${workspace.workspaceId}`);
+      return { workspace, y: bounds.y };
+    }),
+  );
+  return positioned.sort((left, right) => left.y - right.y).map(({ workspace }) => workspace);
 }
 
 interface PaseoOwnedWorktree {
@@ -404,6 +428,84 @@ test.describe("Sidebar workspace list", () => {
     }
   });
 
+  test("workspace hover card closes when the pointer leaves a clicked row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-click-leave-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      const row = await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+
+      await row.click();
+      await expect(row).toBeFocused();
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  test("scanning up the workspace rows leaves only the resting row's hover card open", async ({
+    page,
+  }) => {
+    const workspaces = await Promise.all(
+      [1, 2, 3, 4, 5].map((index) =>
+        seedWorkspace({
+          repoPrefix: `sidebar-hover-scan-${index}-`,
+          title: `Hover scan ${index}`,
+        }),
+      ),
+    );
+
+    try {
+      await gotoAppShell(page);
+      for (const workspace of workspaces) {
+        await waitForSidebarWorkspace(page, workspace.workspaceId);
+      }
+      const rowsTopToBottom = await sortWorkspacesBySidebarOrder(page, workspaces);
+      const top = rowsTopToBottom[0]!;
+
+      for (let scan = 0; scan < 3; scan += 1) {
+        await sweepPointerAcrossWorkspaceRows(
+          page,
+          rowsTopToBottom.map((workspace) => workspace.workspaceId).toReversed(),
+        );
+        await expectOnlyWorkspaceHoverCardFor(page, top.workspaceName);
+      }
+    } finally {
+      await Promise.all(workspaces.map((workspace) => workspace.cleanup()));
+    }
+  });
+
+  test("workspace hover card follows keyboard focus on a row", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "sidebar-hover-keyboard-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarProject(page, path.basename(workspace.repoPath));
+      await openWorkspaceFromSidebar(page, workspace.workspaceId);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await expectWorkspaceHoverCardStaysOpen(page);
+      await page.keyboard.press("Escape");
+      await expectWorkspaceHoverCardClosed(page);
+
+      await focusWorkspaceRowWithKeyboard(page, workspace.workspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await page.keyboard.press("Tab");
+      await expectWorkspaceHoverCardClosed(page);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
   test("marks a finished workspace unread until it is opened again", async ({ page }) => {
     const workspace = await seedMockAgentWorkspace({
       repoPrefix: "sidebar-mark-unread-",
@@ -451,6 +553,17 @@ test.describe("Mobile sidebar panelState transition", () => {
     await expectMobileAgentSidebarVisible(page);
     await closeMobileAgentSidebar(page);
     await expectMobileAgentSidebarHidden(page);
+  });
+
+  test("places the close button beside the first nav row instead of over it", async ({ page }) => {
+    await gotoAppShell(page);
+    await openMobileAgentSidebar(page);
+    await expectMobileAgentSidebarVisible(page);
+
+    const firstRow = await page.getByTestId("sidebar-global-new-workspace").boundingBox();
+    const closeButton = await page.getByTestId("sidebar-close").boundingBox();
+    if (!firstRow || !closeButton) throw new Error("first nav row and close button must render");
+    expect(closeButton.x).toBeGreaterThanOrEqual(firstRow.x + firstRow.width);
   });
 
   test("keeps a pinned workspace rendered while the retained sidebar is closed", async ({
@@ -520,6 +633,12 @@ test.describe("Half-screen desktop layout", () => {
       await page.getByTestId("menu-button").click();
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
       await expect(sidebarScroll).toHaveJSProperty("scrollTop", scrollTop);
+
+      await movePointerAwayFromWorkspaceHoverCard(page);
+      await focusWorkspaceRowWithKeyboard(page, lastWorkspaceId);
+      await expectWorkspaceHoverCardOpen(page);
+      await scrollWorkspaceList(page);
+      await expectWorkspaceHoverCardClosed(page);
     } finally {
       await workspace.cleanup();
     }
@@ -562,7 +681,9 @@ test.describe("Half-screen desktop layout", () => {
     await expect(page.getByTestId("sidebar-settings")).not.toBeVisible();
   });
 
-  test("keeps app navigation beside the Explorer pane", async ({ page }) => {
+  test("yields app navigation to Explorer and restores it when Explorer closes", async ({
+    page,
+  }) => {
     const workspace = await seedWorkspace({ repoPrefix: "sidebar-half-screen-explorer-" });
 
     try {
@@ -572,18 +693,24 @@ test.describe("Half-screen desktop layout", () => {
 
       await openFilesPanel(page);
       const explorerToggle = page.getByTestId("workspace-explorer-toggle").first();
-      await expect(
-        page.getByTestId("explorer-sidebar-tab-files").filter({ visible: true }),
-      ).toBeVisible();
+      await expect(page.getByTestId("workspace-tab-files").filter({ visible: true })).toBeVisible();
       await expect(explorerToggle).toHaveAccessibleName("Close Explorer sidebar");
-      await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
-      await expect(page.getByTestId("explorer-sidebar-tab-rail")).toBeVisible();
-      await expect(page.getByTestId("workspace-tabs-row").filter({ visible: true })).toHaveCount(1);
+      await expect(page.getByTestId("sidebar-global-new-workspace")).not.toBeVisible();
+      await expect(page.getByTestId("workspace-explorer-sidebar")).toBeVisible();
+      await expect(
+        page
+          .locator('[data-testid^="workspace-pane-"]')
+          .getByTestId("workspace-tabs-row")
+          .filter({ visible: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByTestId("workspace-tab-switcher-trigger").filter({ visible: true }),
+      ).toHaveCount(1);
 
       await explorerToggle.click();
-      await expect(
-        page.getByTestId("explorer-sidebar-tab-files").filter({ visible: true }),
-      ).toHaveCount(0);
+      await expect(page.getByTestId("workspace-tab-files").filter({ visible: true })).toHaveCount(
+        0,
+      );
       await expect(explorerToggle).toHaveAccessibleName("Open Explorer sidebar");
       await expect(page.getByTestId("sidebar-global-new-workspace")).toBeVisible();
     } finally {

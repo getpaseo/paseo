@@ -65,6 +65,45 @@ function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
 }
 
 describe("buildSidebarProjectRowModel", () => {
+  it("prefers the active host when the grouped project can create there", () => {
+    const result = buildSidebarProjectRowModel({
+      project: project({
+        hosts: [
+          { serverId: "host-a", iconWorkingDir: "/repo/a", worktreeSupport: "supported" },
+          { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "supported" },
+        ],
+      }),
+      collapsed: false,
+      preferredServerId: "host-b",
+    });
+
+    expect(result.trailingAction).toEqual({
+      kind: "new_workspace",
+      target: { serverId: "host-b", projectId: "project-host-b", iconWorkingDir: "/repo/b" },
+    });
+  });
+
+  it.each(["host-b", "another-host"])(
+    "keeps the first eligible placement when preferred host %s cannot create here",
+    (preferredServerId) => {
+      const result = buildSidebarProjectRowModel({
+        project: project({
+          hosts: [
+            { serverId: "host-a", iconWorkingDir: "/repo/a", worktreeSupport: "supported" },
+            { serverId: "host-b", iconWorkingDir: "/repo/b", worktreeSupport: "unsupported" },
+          ],
+        }),
+        collapsed: false,
+        preferredServerId,
+      });
+
+      expect(result.trailingAction).toEqual({
+        kind: "new_workspace",
+        target: { serverId: "host-a", projectId: "project-host-a", iconWorkingDir: "/repo/a" },
+      });
+    },
+  );
+
   it("renders a non-git single-workspace project as an expandable section", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
