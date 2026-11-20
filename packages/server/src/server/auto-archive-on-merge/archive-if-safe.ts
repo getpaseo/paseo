@@ -25,6 +25,7 @@ export interface AutoArchiveArchiveOptions {
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
   workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
   getWorkspace?: ArchiveDependencies["getWorkspace"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: ForgeService;
@@ -112,6 +113,7 @@ export async function archiveIfSafe(input: {
         agentStorage: options.agentStorage,
         findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
         getWorkspace: options.getWorkspace,
+        isCheckoutUntrusted: options.isCheckoutUntrusted,
         listActiveWorkspaces: options.listActiveWorkspaces,
         archiveWorkspaceRecord: (workspaceIdToArchive, archivedAt) =>
           options.archiveWorkspaceRecord(

@@ -141,6 +141,7 @@ export interface PaseoToolHostDependencies {
   findWorkspaceIdForCwd?: ArchiveDependencies["findWorkspaceIdForCwd"];
   worktreeManagers?: ArchiveDependencies["worktreeManagers"];
   workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   listActiveWorkspaces?: ArchiveDependencies["listActiveWorkspaces"];
   archiveWorkspaceRecord?: ArchiveDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchiveDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
@@ -3413,6 +3414,7 @@ function archiveWorktreeDependencies(
     paseoWorktreesBaseRoot: options.worktreesRoot,
     worktreeManagers: options.worktreeManagers,
     workspaceArchiveOperations: options.workspaceArchiveOperations,
+    isCheckoutUntrusted: options.isCheckoutUntrusted,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
     agentManager: context.agentManager,

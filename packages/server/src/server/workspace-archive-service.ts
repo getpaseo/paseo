@@ -60,6 +60,7 @@ export interface ArchiveDependencies {
   killTerminalsForWorkspace: (workspaceId: string) => Promise<void>;
   stopWorkspaceSetup?: (workspaceId: string) => Promise<void>;
   assertWorkspaceAutomationAllowed?: (workspaceId: string) => Promise<void>;
+  isCheckoutUntrusted?: (checkoutPath: string) => Promise<boolean>;
   sessionLogger?: Logger;
 }
 
@@ -513,7 +514,8 @@ async function maybeRemoveDirectory(
       teardownTarget.workspaceId === null || archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
   );
 
-  let untrustedBacking = backing.untrusted;
+  let untrustedBacking =
+    backing.untrusted || Boolean(await dependencies.isCheckoutUntrusted?.(backing.path));
   try {
     const allowedTeardownTargets = await filterAllowedTeardownTargets(
       dependencies,

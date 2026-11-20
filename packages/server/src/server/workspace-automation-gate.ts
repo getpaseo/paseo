@@ -1,3 +1,4 @@
+import { createRealpathAwarePathMatcher } from "../utils/path.js";
 import type { WorkspaceRegistry } from "./workspace-registry.js";
 
 export interface UntrustedWorkspaceSource {
@@ -34,17 +35,44 @@ export async function assertWorkspaceAutomationAllowedForWorkspace(
   assertWorkspaceAutomationAllowed(workspace.untrustedSource);
 }
 
+export async function isCheckoutUntrusted(
+  registry: Pick<WorkspaceRegistry, "listAll">,
+  checkoutPath: string,
+): Promise<boolean> {
+  const matchesCheckout = createRealpathAwarePathMatcher(checkoutPath);
+  const workspaces = await registry.listAll();
+  return workspaces.some(
+    (workspace) =>
+      Boolean(workspace.untrustedSource) &&
+      matchesCheckout(workspace.worktreeRoot ?? workspace.cwd),
+  );
+}
+
 export async function clearWorkspaceAutomationBlock(
-  registry: Pick<WorkspaceRegistry, "update">,
+  registry: Pick<WorkspaceRegistry, "update" | "listAll">,
   workspaceId: string,
 ): Promise<boolean> {
   let cleared = false;
+  const timestamp = new Date().toISOString();
   const workspace = await registry.update(workspaceId, (record) => {
     if (!record.untrustedSource) return record;
     cleared = true;
     const { untrustedSource: _removed, ...trusted } = record;
-    return { ...trusted, updatedAt: new Date().toISOString() };
+    return { ...trusted, updatedAt: timestamp };
   });
   if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+  const checkoutPath = workspace.worktreeRoot ?? workspace.cwd;
+  const matchesCheckout = createRealpathAwarePathMatcher(checkoutPath);
+  const siblings = await registry.listAll();
+  for (const sibling of siblings) {
+    if (sibling.workspaceId === workspaceId || !sibling.untrustedSource) continue;
+    if (!matchesCheckout(sibling.worktreeRoot ?? sibling.cwd)) continue;
+    await registry.update(sibling.workspaceId, (record) => {
+      if (!record.untrustedSource) return record;
+      cleared = true;
+      const { untrustedSource: _removed, ...trusted } = record;
+      return { ...trusted, updatedAt: timestamp };
+    });
+  }
   return cleared;
 }

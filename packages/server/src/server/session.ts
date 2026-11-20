@@ -113,6 +113,7 @@ import {
   assertWorkspaceAutomationAllowedForWorkspace,
   clearWorkspaceAutomationBlock,
   formatWorkspaceAutomationBlockedMessage,
+  isCheckoutUntrusted,
 } from "./workspace-automation-gate.js";
 import {
   WorkspaceLabelError,
@@ -1054,6 +1055,8 @@ export class Session {
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
+      isCheckoutUntrusted: (checkoutPath) =>
+        isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       syncCheckoutWorktreeManager: async ({
         worktreeRoot,
         worktreeManagerPluginId,
@@ -1291,6 +1294,8 @@ export class Session {
       worktreeManagers: this.pluginRuntime,
       workspaceArchiveOperations: this.workspaceArchiveOperations,
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+      isCheckoutUntrusted: (checkoutPath) =>
+        isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
       github: this.github,
@@ -5835,6 +5840,8 @@ export class Session {
         clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
         killTerminalsForWorkspace: (workspaceId) =>
           this.terminalController.killTerminalsForWorkspace(workspaceId),
+        isCheckoutUntrusted: (checkoutPath) =>
+          isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
         sessionLogger: this.sessionLogger,
       },
       msg,
@@ -8251,6 +8258,8 @@ export class Session {
               clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
               assertWorkspaceAutomationAllowed: (workspaceId) =>
                 assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
+              isCheckoutUntrusted: (checkoutPath) =>
+                isCheckoutUntrusted(this.workspaceRegistry, checkoutPath),
               killTerminalsForWorkspace: (workspaceId) =>
                 this.terminalController.killTerminalsForWorkspace(workspaceId),
               stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),

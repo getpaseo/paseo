@@ -274,6 +274,13 @@ export function createWorkspaceProvisioningService(deps: {
         checkout.isGit && checkout.isPaseoOwnedWorktree
           ? await readPaseoWorktreeMetadata(checkout.worktreeRoot ?? normalizedCwd)
           : null;
+      const checkoutRoot = checkout.worktreeRoot ?? normalizedCwd;
+      const matchesCheckout = createRealpathAwarePathMatcher(checkoutRoot);
+      const inheritedUntrustedSource = (await workspaceRegistry.listAll()).find(
+        (candidate) =>
+          Boolean(candidate.untrustedSource) &&
+          matchesCheckout(candidate.worktreeRoot ?? candidate.cwd),
+      )?.untrustedSource;
       const timestamp = new Date().toISOString();
       const workspace = createPersistedWorkspaceRecord({
         workspaceId: context?.workspaceId ?? generateWorkspaceId(),
@@ -283,6 +290,7 @@ export function createWorkspaceProvisioningService(deps: {
         worktreeManagerPluginId: baseMetadata?.worktreeManagerPluginId ?? null,
         title: title?.trim() || null,
         metadata: context?.metadata,
+        ...(inheritedUntrustedSource ? { untrustedSource: inheritedUntrustedSource } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
         ...(await resolveCreationMetadata(context)),

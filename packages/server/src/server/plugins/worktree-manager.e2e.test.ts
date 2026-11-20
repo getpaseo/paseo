@@ -808,6 +808,42 @@ test("untrusted workspaces pass untrusted=true to worktree manager remove and re
     expect(restoreEvent?.command).toBe("switch");
     expect(restoreEvent?.args).toContain("--no-hooks");
     expect(restoreEvent?.args).not.toContain("--yes");
+
+    // Sibling workspace created on a subdirectory of the same unapproved fork checkout must also
+    // skip hooks on both last-sibling archive and subsequent restore.
+    const subDir = path.join(worktreePath, "packages", "sub");
+    await mkdir(subDir, { recursive: true });
+    await writeFile(path.join(subDir, "README.md"), "sub");
+    git(worktreePath, ["add", "packages/sub/README.md"]);
+    git(worktreePath, ["commit", "-m", "add subpackage"]);
+    const siblingCreated = await client.createWorkspace({
+      source: { kind: "directory", path: subDir },
+    });
+    expect(siblingCreated.error).toBeNull();
+    const siblingId = siblingCreated.workspace!.id;
+
+    expect((await client.archiveWorkspace(workspaceId)).error).toBeNull();
+    expect((await stat(worktreePath)).isDirectory()).toBe(true);
+
+    expect((await client.archiveWorkspace(siblingId)).error).toBeNull();
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await client.restoreWorkspace(siblingId);
+    expect(git(worktreePath, ["branch", "--show-current"])).toBe("fork-pr-branch");
+
+    const allEvents = (await readFile(wtLog, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { command: string; cwd: string; args: string[] });
+    const siblingEvents = allEvents.slice(events.length);
+    const siblingRemoveEvent = siblingEvents.find((event) => event.command === "remove");
+    expect(siblingRemoveEvent).toBeDefined();
+    expect(siblingRemoveEvent!.args).toContain("--no-hooks");
+    expect(siblingRemoveEvent!.args).not.toContain("--yes");
+    const siblingRestoreEvent = siblingEvents.at(-1);
+    expect(siblingRestoreEvent?.command).toBe("switch");
+    expect(siblingRestoreEvent?.args).toContain("--no-hooks");
+    expect(siblingRestoreEvent?.args).not.toContain("--yes");
   } finally {
     if (previousBin === undefined) delete process.env.WORKTRUNK_BIN;
     else process.env.WORKTRUNK_BIN = previousBin;
@@ -1451,6 +1487,23 @@ export default function contribute(server) {
     expect(detachedResult.error).toContain("detached HEAD");
     expect(detachedResult.error).toContain("contains nested Git worktree");
     expect(await readFile(nestedRollbackFile, "utf8")).toBe("keep-rollback-nested");
+    await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+
+    // 3. Archive of repo A's worktree must preserve a nested linked worktree belonging to another repo B.
+    const otherRepo = await createRepo(path.join(root, "repo-b"));
+    const crossRepoOuter = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "cross-repo-outer" },
+    });
+    expect(crossRepoOuter.error).toBeNull();
+    const crossRepoOuterPath = crossRepoOuter.workspace!.workspaceDirectory;
+    const otherRepoNestedPath = path.join(crossRepoOuterPath, "repo-b-nested");
+    git(otherRepo, ["worktree", "add", "-b", "other-nested", otherRepoNestedPath]);
+    const otherRepoDirtyFile = path.join(otherRepoNestedPath, "uncommitted.txt");
+    await writeFile(otherRepoDirtyFile, "keep-repo-b");
+
+    const crossRepoArchived = await client.archiveWorkspace(crossRepoOuter.workspace!.id);
+    expect(crossRepoArchived.error).toBeNull();
+    expect(await readFile(otherRepoDirtyFile, "utf8")).toBe("keep-repo-b");
     await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await client.close();

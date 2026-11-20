@@ -212,7 +212,10 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
-import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
+import {
+  assertWorkspaceAutomationAllowedForWorkspace,
+  isCheckoutUntrusted,
+} from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
@@ -1233,6 +1236,7 @@ export async function createPaseoDaemon(
     logger,
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     listActiveWorkspaces: listActiveWorkspacesExternal,
     getAutoArchivedChangeRequestUrl: async (workspaceId) =>
       (await workspaceRegistry.get(workspaceId))?.autoArchivedChangeRequestUrl ?? null,
@@ -1333,6 +1337,7 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
+        isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
         sessionLogger: logger,
       },
       { scope: { kind: "workspace", workspaceId }, requestId },
@@ -1343,6 +1348,7 @@ export async function createPaseoDaemon(
     worktreeManagers: pluginRuntime,
     workspaceArchiveOperations,
     getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     agentManager,
     agentStorage,
     github,
@@ -1466,6 +1472,7 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
+        isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
         sessionLogger: logger,
       },
       {
@@ -1594,6 +1601,7 @@ export async function createPaseoDaemon(
     workspaceGitService,
     worktreeManagers: pluginRuntime,
     workspaceArchiveOperations,
+    isCheckoutUntrusted: (checkoutPath) => isCheckoutUntrusted(workspaceRegistry, checkoutPath),
     findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: (workspaceId, archivedAt) =>

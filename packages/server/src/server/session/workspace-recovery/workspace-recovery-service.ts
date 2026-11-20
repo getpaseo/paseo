@@ -75,6 +75,7 @@ export function createWorkspaceRecoveryService(deps: {
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  isCheckoutUntrusted?: (checkoutPath: string) => Promise<boolean>;
   syncCheckoutWorktreeManager?: (input: {
     worktreeRoot: string;
     worktreeManagerPluginId: string | null;
@@ -221,6 +222,9 @@ export function createWorkspaceRecoveryService(deps: {
       hasRecordedWorktreePath = ownership.allowed;
     }
 
+    const untrusted =
+      Boolean(workspace.untrustedSource) ||
+      Boolean(await deps.isCheckoutUntrusted?.(previousWorktreePath));
     let recreatedWorktreePath: string;
     let restoredByPluginId: string | null = null;
     try {
@@ -230,6 +234,7 @@ export function createWorkspaceRecoveryService(deps: {
         source,
         previousWorktreePath,
         hasRecordedWorktreePath,
+        untrusted,
       });
       recreatedWorktreePath = restored.worktreePath;
       restoredByPluginId = restored.pluginId;
@@ -266,7 +271,7 @@ export function createWorkspaceRecoveryService(deps: {
           worktreeManagers: deps.worktreeManagers,
           worktreeManagerPluginId: restoredByPluginId,
           removeReason: "rollback",
-          untrusted: Boolean(workspace.untrustedSource),
+          untrusted,
         },
         error,
       );
@@ -280,11 +285,17 @@ export function createWorkspaceRecoveryService(deps: {
     source: Extract<WorktreeSource, { kind: "restore" | "restore-commit" | "restore-from-base" }>;
     previousWorktreePath: string;
     hasRecordedWorktreePath: boolean;
+    untrusted: boolean;
   }): Promise<{ worktreePath: string; pluginId: string | null }> {
-    const { workspace, sourceRepoRoot, source, previousWorktreePath, hasRecordedWorktreePath } =
-      options;
+    const {
+      workspace,
+      sourceRepoRoot,
+      source,
+      previousWorktreePath,
+      hasRecordedWorktreePath,
+      untrusted,
+    } = options;
     const managerPluginId = workspace.worktreeManagerPluginId;
-    const untrusted = Boolean(workspace.untrustedSource);
     if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
       const adopted = await runPluginWorktreeManagerCheckout({
         cwd: sourceRepoRoot,

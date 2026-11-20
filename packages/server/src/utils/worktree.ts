@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { constants as fsConstants, realpath } from "fs";
-import { copyFile, mkdir, rm, stat } from "fs/promises";
+import { constants as fsConstants, type Dirent, realpath } from "fs";
+import { copyFile, mkdir, readdir, rm, stat } from "fs/promises";
 import { join, basename, dirname, isAbsolute, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
@@ -1422,20 +1422,76 @@ async function assertNoNestedGitWorktrees(
   resolvedWorktree: string,
 ): Promise<void> {
   const gitCommonDir = await getGitCommonDir(repoCwd).catch(() => null);
-  if (!gitCommonDir) {
-    return;
-  }
-  const { entries } = await readGitWorktreeEntries(repoCwd);
-  const targetIdentity = normalizePathForIdentity(resolvedWorktree);
-  for (const entry of entries) {
-    const entryIdentity = normalizePathForIdentity(entry.path);
-    if (entryIdentity === targetIdentity) continue;
-    if (isPathInsideRoot(targetIdentity, entryIdentity) && (await pathExists(entry.path))) {
-      throw new Error(
-        `Refusing to delete worktree ${resolvedWorktree}: contains nested Git worktree ${entry.path}`,
-      );
+  if (gitCommonDir) {
+    const { entries } = await readGitWorktreeEntries(repoCwd);
+    const targetIdentity = normalizePathForIdentity(resolvedWorktree);
+    for (const entry of entries) {
+      const entryIdentity = normalizePathForIdentity(entry.path);
+      if (entryIdentity === targetIdentity) continue;
+      if (isPathInsideRoot(targetIdentity, entryIdentity) && (await pathExists(entry.path))) {
+        throw new Error(
+          `Refusing to delete worktree ${resolvedWorktree}: contains nested Git worktree ${entry.path}`,
+        );
+      }
     }
   }
+  const trackedSubmodulePaths = await readTrackedSubmodulePaths(resolvedWorktree);
+  const nestedCheckout = await findNestedGitCheckoutOnDisk(resolvedWorktree, trackedSubmodulePaths);
+  if (nestedCheckout) {
+    throw new Error(
+      `Refusing to delete worktree ${resolvedWorktree}: contains nested Git checkout ${nestedCheckout}`,
+    );
+  }
+}
+
+async function readTrackedSubmodulePaths(worktreeRoot: string): Promise<Set<string>> {
+  const submodules = new Set<string>();
+  try {
+    const { stdout } = await runGitCommand(["ls-files", "--stage", "-z"], {
+      cwd: worktreeRoot,
+      timeout: 15_000,
+    });
+    for (const record of stdout.split("\0")) {
+      if (!record.startsWith("160000 ")) continue;
+      const tabIndex = record.indexOf("\t");
+      if (tabIndex === -1) continue;
+      const relativePath = record.slice(tabIndex + 1);
+      if (!relativePath) continue;
+      submodules.add(normalizePathForIdentity(join(worktreeRoot, relativePath)));
+    }
+  } catch {
+    // Missing or damaged git admin dir: fall back to treating any nested .git as unsafe.
+  }
+  return submodules;
+}
+
+async function findNestedGitCheckoutOnDisk(
+  resolvedWorktree: string,
+  trackedSubmodulePaths: ReadonlySet<string>,
+): Promise<string | null> {
+  const stack: Array<{ dir: string; depth: number }> = [{ dir: resolvedWorktree, depth: 0 }];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = await readdir(current.dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    if (current.depth > 0 && entries.some((entry) => entry.name === ".git")) {
+      const currentIdentity = normalizePathForIdentity(current.dir);
+      if (!trackedSubmodulePaths.has(currentIdentity)) {
+        return current.dir;
+      }
+    }
+    for (const entry of entries) {
+      if (entry.name === ".git" || entry.isSymbolicLink() || !entry.isDirectory()) {
+        continue;
+      }
+      stack.push({ dir: join(current.dir, entry.name), depth: current.depth + 1 });
+    }
+  }
+  return null;
 }
 
 async function pruneWorktreesBestEffort(cwd: string | null): Promise<void> {

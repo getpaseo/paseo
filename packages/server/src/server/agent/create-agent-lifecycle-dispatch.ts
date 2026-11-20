@@ -29,6 +29,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
   workspaceArchiveOperations?: ArchiveDependencies["workspaceArchiveOperations"];
   getWorkspace?: ArchiveDependencies["getWorkspace"];
+  isCheckoutUntrusted?: ArchiveDependencies["isCheckoutUntrusted"];
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   github: ForgeService;
@@ -200,6 +201,7 @@ export class CreateAgentLifecycleDispatch {
         agentStorage: this.dependencies.agentStorage,
         findWorkspaceIdForCwd: this.dependencies.findWorkspaceIdForCwd,
         getWorkspace: this.dependencies.getWorkspace,
+        isCheckoutUntrusted: this.dependencies.isCheckoutUntrusted,
         listActiveWorkspaces: this.dependencies.listActiveWorkspaces,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
