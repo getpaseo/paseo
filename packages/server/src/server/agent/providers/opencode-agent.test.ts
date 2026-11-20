@@ -2477,6 +2477,42 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
+  test("reports a question rejected by a human steer as resolved", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_steer_question");
+    openCode.sessionPromptAsyncEvents = [];
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const { turnId } = await session.startTurn("first");
+    openCode.emitEvent({
+      type: "question.asked",
+      properties: {
+        id: "question-steer",
+        sessionID: "ses_steer_question",
+        questions: [{ question: "Which color?", header: "Color", options: [] }],
+      },
+    });
+    await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.steerActiveTurn?.("never mind", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(openCode.calls.questionReject).toContainEqual(
+      expect.objectContaining({ requestID: "question-steer" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        requestId: "question-steer",
+        resolution: expect.objectContaining({ behavior: "deny" }),
+      }),
+    );
+    await session.close();
+  });
+
   test("keeps multiple native steers correlated in admission order", async () => {
     const { parent: session, openCode } = await createParentSession("ses_native_steer_fifo");
     openCode.sessionPromptAsyncEvents = [];

@@ -59,6 +59,84 @@ it("skips unchanged reconciliations and immediately saves real layout changes", 
   );
 });
 
+it("hydrates a saved preview collision and persists the repaired identities", async () => {
+  const workspaceKey = "server:workspace";
+  const duplicateId = "file_a.ts";
+  const values = new Map([
+    [
+      "workspace-layout-state",
+      JSON.stringify({
+        version: 2,
+        state: {
+          layoutByWorkspace: {
+            [workspaceKey]: {
+              root: {
+                kind: "group",
+                group: {
+                  id: "split",
+                  direction: "horizontal",
+                  sizes: [0.5, 0.5],
+                  children: [
+                    { id: "main", path: "b.ts" },
+                    { id: "right", path: "a.ts" },
+                  ].map(({ id, path }) => ({
+                    kind: "pane",
+                    pane: {
+                      id,
+                      tabIds: [duplicateId],
+                      focusedTabId: duplicateId,
+                      tabs: [{ tabId: duplicateId, target: { kind: "file", path }, createdAt: 1 }],
+                    },
+                  })),
+                },
+              },
+              focusedPaneId: "right",
+            },
+          },
+        },
+      }),
+    ],
+  ]);
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  const layout = store.getState().layoutByWorkspace[workspaceKey];
+  const tabs = collectAllTabs(layout.root);
+
+  expect(tabs.filter((tab) => tab.target.kind === "file").map((tab) => tab.tabId)).toEqual([
+    "file_b.ts",
+    "file_a.ts",
+  ]);
+  expect(
+    deriveWorkspacePaneState({ layout, tabs, paneId: "main" }).activeTab?.descriptor.target,
+  ).toEqual({
+    kind: "file",
+    path: "b.ts",
+  });
+  expect(
+    deriveWorkspacePaneState({ layout, tabs, paneId: "right" }).activeTab?.descriptor.target,
+  ).toEqual({
+    kind: "file",
+    path: "a.ts",
+  });
+  store.getState().focusTab(workspaceKey, "file_b.ts");
+  expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe("main");
+
+  const reloaded = createWorkspaceLayoutStore(undefined, storage);
+  await reloaded.persist.rehydrate();
+  expect(reloaded.getState().layoutByWorkspace[workspaceKey]).toEqual(
+    store.getState().layoutByWorkspace[workspaceKey],
+  );
+});
+
 it("keeps the saved layout when the shell publishes its layout mode before hydration", async () => {
   const values = new Map<string, string>();
   const storage: StateStorage = {

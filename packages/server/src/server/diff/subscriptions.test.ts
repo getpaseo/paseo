@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -8,6 +8,9 @@ import { DiffSubscriptions } from "./index.js";
 import { createFileObserver } from "../file-observer/index.js";
 import {
   configureGitProcessPolicy,
+  getGitCommandMetrics,
+  startGitCommandMetrics,
+  stopGitCommandMetrics,
   runGitCommand,
   runWithGitCommandPriority,
 } from "../../utils/run-git-command.js";
@@ -170,6 +173,7 @@ test("shares computation, highlights only the changed file, recovers refs and re
       computations: before,
       highlightCalls: previousHighlightCalls,
       metadataObservers: 1,
+      fallbackTargets: 0,
     });
     first.length = 0;
     second.length = 0;
@@ -1258,4 +1262,242 @@ test.each(["pinned", "HEAD"] as const)(
     }
   },
   30000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "overflow fallback opens before probing refs and refreshes only comparisons whose inputs move",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-overflow-");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const record = (frames: DiffFrame[]) => async (frame: DiffFrame) => {
+      frames.push(frame);
+    };
+    const selectedFrames: DiffFrame[] = [];
+    const pinnedFrames: DiffFrame[] = [];
+    try {
+      const head = git("rev-parse", "HEAD");
+      const selectedRef = "refs/heads/selected";
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git(
+        "-c",
+        "commit.gpgsign=false",
+        "commit-tree",
+        empty,
+        "-p",
+        head,
+        "-m",
+        "next",
+      );
+      execFileSync("git", ["update-ref", "--stdin"], {
+        cwd: fixture.cwd,
+        input: [
+          `create ${selectedRef} ${head}`,
+          ...Array.from({ length: 5010 }, (_, i) => `create refs/heads/overflow-${i}/ref ${head}`),
+          "",
+        ].join("\n"),
+      });
+
+      // The valid packed refs alone are larger than a full Git command's output budget.
+      const packedPrefix = `refs/heads/${"p".repeat(180)}`;
+      const packed = Array.from(
+        { length: 100000 },
+        (_, i) => `${head} ${packedPrefix}/${String(i).padStart(6, "0")}\n`,
+      );
+      await writeFile(
+        join(fixture.cwd, ".git", "packed-refs"),
+        "# pack-refs with: peeled fully-peeled sorted \n" + packed.join(""),
+      );
+      expect(git("rev-parse", "--verify", `${packedPrefix}/099999`)).toBe(head);
+
+      startGitCommandMetrics();
+      const selected = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: selectedRef }, highlight: false },
+        record(selectedFrames),
+      );
+      const pinned = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: head }, highlight: false },
+        record(pinnedFrames),
+      );
+      await Promise.all([selected.start(), pinned.start()]);
+      expect(selectedFrames.find((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        revision: 1,
+        error: null,
+      });
+      expect(pinnedFrames.find((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        revision: 1,
+        error: null,
+      });
+      expect(
+        getGitCommandMetrics().submissions.filter((command) => command.priority === "background"),
+      ).toEqual([]);
+
+      // Move the selected ref before the first poll. The pinned comparison shares the
+      // same working tree and Git metadata, but the ref is unrelated to its inputs.
+      git("update-ref", selectedRef, moved);
+      await expect
+        .poll(() => selectedFrames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 10000,
+        })
+        .toMatchObject({ revision: 2, baseSha: moved });
+      await expect
+        .poll(() => selectedFrames.findLast((frame) => frame.opcode === DiffOpcode.End))
+        .toMatchObject({ revision: 2, error: null });
+      expect(
+        getGitCommandMetrics().submissions.filter((command) => command.priority === "background"),
+      ).toEqual([
+        {
+          args: ["cat-file", "--batch-check=%(objectname)"],
+          cwd: join(fixture.cwd, ".git"),
+          priority: "background",
+        },
+      ]);
+      await selected.release();
+      await pinned.release();
+      expect(pinnedFrames.filter((frame) => frame.opcode === DiffOpcode.Begin)).toHaveLength(1);
+      expect(fixture.subscriptions.getMetrics().computations).toBe(3);
+    } finally {
+      await fixture.close();
+      stopGitCommandMetrics();
+    }
+  },
+  30000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "a running comparison follows its ref after watcher overflow beside an invalid revision expression",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-runtime-overflow-");
+    const overflow = await mkdtemp(join(tmpdir(), "diff-runtime-refs-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const frames: DiffFrame[] = [];
+    try {
+      git("branch", "selected");
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git("-c", "commit.gpgsign=false", "commit-tree", empty, "-m", "next");
+      // Move the populated directory into the metadata watch in a single event.
+      for (let index = 0; index < 5010; index += 64) {
+        await Promise.all(
+          Array.from({ length: Math.min(64, 5010 - index) }, (_, offset) =>
+            mkdir(join(overflow, String(index + offset))),
+          ),
+        );
+      }
+      const subscription = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: "selected" }, highlight: false },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      const invalidFrames: DiffFrame[] = [];
+      const invalid = await fixture.subscriptions.subscribe(
+        { ...fixture.compare, base: { kind: "rev", rev: "selected@{upstream}" }, highlight: false },
+        async (frame) => {
+          invalidFrames.push(frame);
+        },
+      );
+      await Promise.all([subscription.start(), invalid.start()]);
+      expect(invalidFrames.findLast((frame) => frame.opcode === DiffOpcode.End)).toMatchObject({
+        error: { code: "REF_NOT_FOUND" },
+      });
+      expect(fixture.subscriptions.getMetrics()).toMatchObject({
+        metadataObservers: 1,
+        fallbackTargets: 0,
+      });
+
+      await rename(overflow, join(fixture.cwd, ".git", "refs", "heads", "overflow"));
+      await expect
+        .poll(() => fixture.subscriptions.getMetrics(), { timeout: 10000 })
+        .toMatchObject({ metadataObservers: 0, fallbackTargets: 2 });
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.End), { timeout: 5000 })
+        .toMatchObject({ revision: 2, error: null });
+
+      git("update-ref", "refs/heads/selected", moved);
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 12000,
+        })
+        .toMatchObject({ revision: 3, baseSha: moved });
+      await Promise.all([subscription.release(), invalid.release()]);
+      expect(fixture.subscriptions.getMetrics()).toMatchObject({
+        metadataObservers: 0,
+        fallbackTargets: 0,
+      });
+    } finally {
+      await fixture.close();
+      await rm(overflow, { recursive: true, force: true });
+    }
+  },
+  35000,
+);
+
+test.skipIf(process.platform !== "linux")(
+  "an unreachable worktree leaves shared revision probes available to other comparisons",
+  async () => {
+    const fixture = await createObservedWorktreeDiff("diff-shared-ref-");
+    const removed = await mkdtemp(join(tmpdir(), "diff-removed-worktree-"));
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+    const frames: DiffFrame[] = [];
+    const ref = "refs/heads/selected";
+    try {
+      const head = git("rev-parse", "HEAD");
+      const empty = git("hash-object", "-t", "tree", "-w", "--stdin");
+      const moved = git(
+        "-c",
+        "commit.gpgsign=false",
+        "commit-tree",
+        empty,
+        "-p",
+        head,
+        "-m",
+        "next",
+      );
+      git("worktree", "add", "--detach", removed, head);
+      execFileSync("git", ["update-ref", "--stdin"], {
+        cwd: fixture.cwd,
+        input: [
+          `create ${ref} ${head}`,
+          ...Array.from({ length: 5010 }, (_, i) => `create refs/heads/overflow-${i}/ref ${head}`),
+          "",
+        ].join("\n"),
+      });
+      const compare = {
+        base: { kind: "empty" },
+        head: { kind: "rev", rev: ref },
+        highlight: false,
+      } as const;
+      const unavailable = await fixture.subscriptions.subscribe(
+        { ...compare, cwd: removed },
+        async () => {},
+      );
+      const remaining = await fixture.subscriptions.subscribe(
+        { ...compare, cwd: fixture.cwd },
+        async (frame) => {
+          frames.push(frame);
+        },
+      );
+      await Promise.all([unavailable.start(), remaining.start()]);
+      expect(frames.find((frame) => frame.opcode === DiffOpcode.Begin)).toMatchObject({
+        revision: 1,
+        headSha: head,
+      });
+
+      git("worktree", "remove", removed);
+      git("update-ref", ref, moved);
+      await expect
+        .poll(() => frames.findLast((frame) => frame.opcode === DiffOpcode.Begin), {
+          timeout: 12000,
+        })
+        .toMatchObject({ revision: 2, headSha: moved });
+      await unavailable.release();
+      await remaining.release();
+    } finally {
+      await fixture.close();
+      await rm(removed, { recursive: true, force: true });
+    }
+  },
+  35000,
 );

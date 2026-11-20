@@ -26,6 +26,7 @@ import {
   resolveSnapshotCwd,
 } from "./provider-snapshot-manager.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { getClaudeModels } from "./providers/claude/models.js";
 
 const TEST_CAPABILITIES = {
   supportsStreaming: false,
@@ -304,6 +305,29 @@ describe("ProviderSnapshotManager public surface", () => {
             sandbox_workspace_write: { network_access: "sometimes" },
             arbitrary: true,
           },
+        }),
+      ).resolves.toEqual([]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("accepts a legacy Ultra Code choice on a model with an independent effort catalog", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        claude: createExtraClient("claude", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: getClaudeModels("2.1.284"), modes: [] }),
+        }),
+      },
+    });
+    try {
+      await expect(
+        manager.validateAgentConfiguration({
+          provider: "claude",
+          model: "claude-opus-4-8",
+          thinkingOptionId: "ultracode",
         }),
       ).resolves.toEqual([]);
     } finally {

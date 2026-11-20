@@ -12,6 +12,7 @@ import {
   PiIcon,
 } from "~/components/agent-icons";
 import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
+import { HubLockup, PaseoHubLockup, PaseoHubMark } from "~/components/paseo-brand";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
@@ -63,7 +64,10 @@ function Hub() {
   const { plans } = Route.useLoaderData();
   return (
     <SiteShell width="default">
-      <h1 className="text-3xl font-medium tracking-tight mb-4">{t("hub.title")}</h1>
+      <h1 className="mb-5">
+        <PaseoHubLockup className="h-9 md:h-10 w-auto text-foreground" />
+        <span className="sr-only">{t("hub.title")}</span>
+      </h1>
       <p className="text-lg text-white/70 leading-relaxed max-w-2xl">{t("hub.intro")}</p>
       <p className="text-white/40 text-sm mt-3">{t("hub.runIt")}</p>
 
@@ -379,7 +383,7 @@ function DemoMessage({
     <div className="flex gap-3">
       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.06]">
         {bot ? (
-          <img src="/logo.svg" alt="" className="h-4 w-4" />
+          <PaseoHubMark className="h-5 w-5 text-white" />
         ) : (
           <span className="text-xs font-medium text-white/60">M</span>
         )}
@@ -478,8 +482,11 @@ function Shape() {
           <Connector label={t("hub.shape.webhooks")} />
 
           <div className="w-full max-w-xs rounded-xl border border-white/20 bg-white/[0.06] px-6 py-5 text-center">
-            <p className="font-medium">{t("hub.shape.hub")}</p>
-            <p className="text-xs text-muted-foreground mt-1">{t("hub.shape.hubHosting")}</p>
+            <p className="flex justify-center">
+              <HubLockup className="h-[22px] w-auto text-foreground" />
+              <span className="sr-only">{t("hub.shape.hub")}</span>
+            </p>
+            <p className="text-xs text-muted-foreground mt-1.5">{t("hub.shape.hubHosting")}</p>
           </div>
 
           <Connector label={t("hub.shape.sameRpcs")} />

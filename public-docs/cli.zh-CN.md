@@ -96,7 +96,7 @@ paseo provider diagnostic codex --json
 paseo --host devbox:6767 provider diagnostic opencode
 ```
 
-诊断信息包括配置的命令、daemon 的 `PATH` 和 shell、匹配到的二进制文件、解析出的路径、版本、模型数量和 Provider 状态。对于远程 daemon，请使用全局的 `--host` 选项。这与 **设置 → 你的主机 → Providers → 对应 Provider → 诊断** 下显示的诊断相同。
+诊断信息包括配置的命令、daemon 的 `PATH` 和 shell、匹配到的二进制文件、解析出的路径、版本、模型数量和 Provider 状态。对于远程 daemon，请使用全局的 `--host` 选项。这与 **设置 → 你的主机 → Providers → 对应 Provider → 诊断报告** 下显示的诊断相同。
 
 ## 运行 Agent {#running-agents}
 

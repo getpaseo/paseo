@@ -49,9 +49,17 @@ Large unbounded timeline responses can exceed relay frame limits, so catch-up us
 
 Page limits are projected-item targets. A tool call lifecycle is one projected item even if it spans many source sequence numbers, and assistant/reasoning chunks are merged before counting. The response carries `seqStart`, `seqEnd`, `sourceSeqRanges`, and `collapsed` so clients can advance sequence cursors without rendering delta rows.
 
-When live delivery detects a sequence gap, the app fetches `direction: "after"`. If the daemon
-responds with `hasNewer: true`, the app immediately fetches the next page from `endCursor`. Gap
-recovery is complete only when `hasNewer: false`.
+When live delivery detects a sequence gap, the app fetches `direction: "after"` its end cursor. If
+the daemon responds with `hasNewer: true`, the app immediately fetches the next page from
+`endCursor`. Gap recovery is complete only when `hasNewer: false`.
+
+A chat that was empty when it last caught up has no end cursor to compare a live row against. Such a
+row starts coverage only if it is the epoch's first row, seq 1. A later row means the chat missed the
+rows before it, such as a prompt sent while the app was offline, so the app drops it and recovers
+after seq 0. Coverage started at that later row would make the resume page look already applied, and
+the chat and its replica cache would keep only the end of the reply. A recovery that waits behind a
+running catch-up starts after whatever that catch-up applied, because the app applies a forward page
+row by row and an older cursor repeats rows.
 
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
@@ -95,10 +103,11 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
 The daemon validates the epoch and locates the projected item at the selected position. A fork
-includes projected items through that checkpoint. If an item the fork copies spans the checkpoint
-and changed afterward, the daemon refuses that fork with an actionable error: discarded historical
-payloads cannot be reconstructed from sequence metadata. Plugin cards are not copied, so a card
-updated after the checkpoint does not block it. Forking the current context remains available.
+includes projected items through that checkpoint. A tool call that started before the checkpoint
+and changed after it, such as background work that outlives a reply, is copied as still running:
+the projection keeps only its latest payload, so its state at the checkpoint can't be read back.
+Plugin cards are not copied. A position from another epoch, or one that is gone, is refused;
+forking the current context remains available.
 
 ## Resume behavior
 

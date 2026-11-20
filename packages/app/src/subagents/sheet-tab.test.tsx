@@ -138,6 +138,88 @@ describe("useSubagentSheetTab", () => {
     expect(result.current?.tab.tabId).toBe(tabId);
   });
 
+  it("keeps an open menu sheet's id when an unrelated reused tab disappears", () => {
+    const row = seedParentWithChild();
+    const store = useWorkspaceLayoutStore.getState();
+    const reusedId = store.openTab({
+      workspaceKey,
+      target: { kind: "agent", agentId: "child" },
+      intent: "reveal",
+      asTab: true,
+    });
+    if (!reusedId) throw new Error("Expected a child tab");
+    store.replaceTab(workspaceKey, reusedId, { kind: "agent", agentId: "other" });
+    store.setLayoutMode("compact");
+    const { result } = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
+    const sheetId = result.current?.tab.tabId;
+    expect(result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
+    expect(sheetId).not.toBe(reusedId);
+
+    act(() => {
+      store.reconcileTabs(workspaceKey, {
+        agentsHydrated: true,
+        terminalsHydrated: true,
+        activeAgentIds: ["parent", "child"],
+        autoOpenAgentIds: [],
+        knownTerminalIds: [],
+        standaloneTerminalIds: [],
+      });
+    });
+    expect(store.getWorkspaceTabs(workspaceKey).map((tab) => tab.tabId)).not.toContain(reusedId);
+    expect(result.current?.tab.tabId).toBe(sheetId);
+    expect(result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
+  });
+
+  it("promotes a menu sheet to the subagent's own tab", () => {
+    const row = seedParentWithChild();
+    const store = useWorkspaceLayoutStore.getState();
+    store.setLayoutMode("compact");
+    const { result } = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
+    const sheet = result.current;
+    if (!sheet) throw new Error("Expected a menu sheet");
+
+    let promotedId: string | null = null;
+    act(() => {
+      promotedId = store.openTabInFront(workspaceKey, sheet);
+    });
+    expect(promotedId).toBe("agent_child");
+    expect(
+      store.getWorkspaceTabs(workspaceKey).filter((tab) => tab.target.kind === "agent"),
+    ).toEqual([
+      expect.objectContaining({
+        tabId: "agent_child",
+        target: { kind: "agent", agentId: "child" },
+      }),
+    ]);
+  });
+
+  it("does not reuse a menu id retained by a promoted tab showing another target", () => {
+    const row = seedParentWithChild();
+    const store = useWorkspaceLayoutStore.getState();
+    store.setLayoutMode("compact");
+    const { result } = renderHook(() => useSubagentSheetTab(workspaceKey, "parent-tab")(row));
+    const sheet = result.current;
+    if (!sheet) throw new Error("Expected a menu sheet");
+    act(() => {
+      store.openTabInFront(workspaceKey, sheet);
+    });
+    expect(result.current).toBeNull();
+
+    act(() => {
+      store.replaceTab(workspaceKey, sheet.tab.tabId, { kind: "agent", agentId: "other" });
+    });
+    expect(result.current?.tab.target).toEqual({ kind: "agent", agentId: "child" });
+    expect(result.current?.tab.tabId).not.toBe(sheet.tab.tabId);
+    expect(
+      store.getWorkspaceTabs(workspaceKey).filter((tab) => tab.target.kind === "agent"),
+    ).toEqual([
+      expect.objectContaining({
+        tabId: sheet.tab.tabId,
+        target: { kind: "agent", agentId: "other" },
+      }),
+    ]);
+  });
+
   it("hands a re-rendered row the same sheet", () => {
     const row = seedParentWithChild();
     useWorkspaceLayoutStore.getState().setLayoutMode("compact");
