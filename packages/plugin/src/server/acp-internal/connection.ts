@@ -640,6 +640,9 @@ class AcpRuntime {
   }
 
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
+    if (this.closing || this.processFailed) {
+      throw new Error("ACP session is closed");
+    }
     if (input.prompt.delivery === "steer") {
       this.steerDeferredPrompt(input);
       return;
@@ -1692,7 +1695,6 @@ class AcpRuntime {
         this.finishDeferredTurn(active, { type: "cancel" });
         await active.settled;
         if (!this.closing && !this.processFailed) {
-          this.processFailed = true;
           this.emit({
             type: "session.runtime_failed",
             sessionId: this.options.boundarySessionId,

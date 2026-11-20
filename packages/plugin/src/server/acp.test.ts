@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -4390,8 +4390,150 @@ describe("deferTurnOnRunningTools", () => {
       );
       await waitForEvent(events, (event) => event.type === "session.runtime_failed");
       expect(instances[1].readsCanceled).toBe(true);
+
+      // Direct prompts to the retired session must fail cleanly instead of reusing it.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "after-retire",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "should fail" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "after-retire" &&
+          event.result.type === "failed",
+      );
     } finally {
       await connection.close();
+    }
+  });
+
+  it("terminates a command-backed ACP child process when an interrupted steer times out", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-wedged-steer-"));
+    const pidFile = path.join(dir, "session.pid");
+    const script = path.join(dir, "wedged-agent.cjs");
+    await writeFile(
+      script,
+      `
+      const { writeFileSync } = require("node:fs");
+      const { createInterface } = require("node:readline");
+      const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+      let promptCount = 0;
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const msg = JSON.parse(line);
+        if (msg.method === "initialize") {
+          send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        } else if (msg.method === "session/new") {
+          writeFileSync(process.env.PID_FILE, String(process.pid));
+          send({ id: msg.id, result: { sessionId: "wedged-s1", configOptions: [] } });
+        } else if (msg.method === "session/prompt") {
+          promptCount += 1;
+          if (promptCount === 1) {
+            send({ method: "session/update", params: { sessionId: "wedged-s1", update: {
+              sessionUpdate: "tool_call", toolCallId: "bg-wedged", name: "run_command",
+              title: "Background job", status: "in_progress",
+            } } });
+            send({ id: msg.id, result: { stopReason: "end_turn" } });
+          }
+          // Prompt 2 (the steer) is intentionally never answered, even after session/cancel.
+        } else if (msg.method === "session/close") {
+          send({ id: msg.id, result: {} });
+        }
+      });
+      `,
+    );
+    const registration = runAcpProvider({
+      id: "wedged-command-acp",
+      label: "Wedged Command ACP",
+      command: [process.execPath, script],
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500, cancelTimeoutMs: 80 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      const open = openInput();
+      await connection.send({
+        ...open,
+        config: { ...open.config, env: { PID_FILE: pidFile } },
+      });
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const pid = Number((await readFile(pidFile, "utf8")).trim());
+      expect(Number.isInteger(pid) && pid > 0).toBe(true);
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "wedged-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-wedged",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "wedged-steer",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "hang here" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "wedged-steer" &&
+          event.result.type === "steer",
+      );
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "wedged-stop",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:wedged-1" &&
+          event.state === "canceled",
+      );
+      await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+
+      // The wedged child process must actually be terminated.
+      await expect
+        .poll(() => {
+          try {
+            process.kill(pid, 0);
+            return "alive";
+          } catch {
+            return "dead";
+          }
+        })
+        .toBe("dead");
+    } finally {
+      await connection.close();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });
