@@ -1,0 +1,30 @@
+# Connected host with a selected model, 1600x2560 at density 320. See README.md.
+# FORM_URL=paseo://new?serverId=<serverId>; MODEL_ID and MODEL_LABEL name a real catalog model.
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+env PROVIDER_ID=codex
+
+open "${APP_ID}" "${FORM_URL}"
+wait "label=\"Workspace project\"" 20000
+press "id=\"combined-model-selector\""
+wait "id=\"combobox-desktop-container\"" 10000
+# A remembered model opens its provider's list. Return to the provider page first.
+press "label=\"Back\""
+wait "id=\"model-provider-${PROVIDER_ID}\"" 10000
+press "id=\"model-provider-${PROVIDER_ID}\""
+wait "id=\"compact-model-list\"" 3000
+press "id=\"model-row-${PROVIDER_ID}-${MODEL_ID}\""
+wait "id=\"combined-model-selector\" label=\"Select model (${MODEL_LABEL})\"" 3000
+
+# A drag that leaves the short viewport must scroll without selecting or dismissing.
+press "id=\"combined-model-selector\""
+wait "id=\"model-row-${PROVIDER_ID}-${MODEL_ID}\"" 3000
+gesture pan 1000 1850 0 -700 600
+wait "id=\"compact-model-list\"" 3000
+wait "id=\"model-row-${PROVIDER_ID}-${LAST_MODEL_ID}\"" 3000
+gesture fling down 1000 1750 500
+wait "id=\"model-row-${PROVIDER_ID}-${MODEL_ID}\"" 3000
+# Android Back dismisses the whole popover without changing the remembered selection.
+back
+wait "id=\"combined-model-selector\" label=\"Select model (${MODEL_LABEL})\"" 3000
+close

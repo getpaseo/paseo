@@ -1,7 +1,43 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
-import { openSettingsSection } from "./settings";
+import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
 import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { loadSessionMessageReaders } from "./new-workspace";
+
+export async function withStreamingMarkdownOutline(
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-outline-markdown-",
+    title: "Streaming Markdown outline",
+    featureValues: {
+      mockStreamingAssistantResponse: Array.from(
+        { length: 60 },
+        (_, index) => `Paragraph ${index + 1}.`,
+      ).join("\n\n"),
+      mockStreamingAssistantIntervalMs: 80,
+    },
+  });
+  try {
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function expectReadingStreamedMarkdown(page: Page, prompt: string): Promise<void> {
+  await expect(page.getByText("Paragraph 30.", { exact: true }).last()).toBeVisible();
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const promptRow = timeline.getByTestId("user-message").filter({ hasText: prompt });
+  await expect
+    .poll(async () => {
+      const [viewport, row] = await Promise.all([timeline.boundingBox(), promptRow.boundingBox()]);
+      return viewport && row ? row.y + row.height - viewport.y : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThan(0);
+  await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toBeVisible();
+}
 
 export function chatOutlineRail(page: Page): Locator {
   return page.getByTestId("chat-outline-rail");
@@ -45,12 +81,13 @@ export async function splitCurrentPanelRight(page: Page): Promise<void> {
   await runWorkspaceActionFromCommandCenter(page, "Split pane right");
 }
 
-export async function disableChatOutlineFromAppearance(page: Page): Promise<void> {
-  const timelineUrl = page.url();
+export async function disableChatOutline(page: Page): Promise<void> {
   await openSettings(page);
-  await openSettingsSection(page, "appearance");
-  await page.getByRole("switch", { name: "Chat outline" }).click();
-  await page.goto(timelineUrl);
+  await openSettingsSection(page, "chat");
+  const outlineSwitch = page.getByRole("switch", { name: "Chat outline" });
+  await outlineSwitch.click();
+  await expect(outlineSwitch).not.toBeChecked();
+  await clickSettingsBackToWorkspace(page);
 }
 
 /** Parks the pointer in the middle of the transcript, clear of the rail. */
@@ -193,4 +230,23 @@ async function requireBoundingBox(
     throw new Error("Expected the chat outline element to have a layout box");
   }
   return box;
+}
+
+export async function observePromptIndexRequests(page: Page) {
+  const frames = await loadSessionMessageReaders();
+  const agentIds: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const request = frames.client(payload);
+      if (request?.type === "agent.timeline.list_prompts.request") {
+        agentIds.push(request.agentId);
+      }
+    });
+  });
+  return {
+    async waitForRequestFor(agentId: string) {
+      await expect.poll(() => agentIds).toContain(agentId);
+    },
+    requestedAgentIds: () => [...new Set(agentIds)],
+  };
 }

@@ -104,19 +104,6 @@ vi.mock("expo-router", () => ({
   router: { push },
 }));
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, values?: Record<string, string>) => {
-      if (key === "sidebar.project.empty.title") return "No projects yet";
-      if (key === "settings.projectList.hostLoadFailed") {
-        return `Couldn't load projects from host ${values?.hostName}: ${values?.message}`;
-      }
-      if (key === "settings.projectList.editProject") return `Edit ${values?.projectName}`;
-      return key;
-    },
-  }),
-}));
-
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: ({ size }: { size?: string | number }) =>
     React.createElement("span", {
@@ -184,6 +171,7 @@ vi.mock("@/projects/icons", () => ({
   useProjectIcons: () => new Map(),
 }));
 
+import { i18n } from "@/i18n/i18next";
 import ProjectsScreen from "./projects-screen";
 
 function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceSummary {
@@ -194,6 +182,8 @@ function workspaceSummary(overrides: Partial<WorkspaceSummary> = {}): WorkspaceS
     status: "done",
     currentBranch: "main",
     changeRequestNumber: null,
+    background: false,
+    statusEnteredAt: null,
     ...overrides,
   };
 }
@@ -251,7 +241,8 @@ describe("ProjectsScreen", () => {
   let container: HTMLElement | null = null;
   let root: Root | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
     vi.stubGlobal("React", React);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     container = document.createElement("div");

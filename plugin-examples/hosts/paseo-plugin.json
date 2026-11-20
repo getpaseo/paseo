@@ -1,0 +1,1 @@
+{ "id": "host-agents", "requirements": { "paseo": ">=0.8.0" } }

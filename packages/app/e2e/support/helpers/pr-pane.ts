@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { getStateLabel } from "@/git/pull-request-panel/data";
+import { en } from "@/i18n/resources/en";
 import { openPullRequestPanel } from "./workspace-tabs";
 
 export async function openPrPane(page: Page): Promise<void> {
@@ -14,7 +14,7 @@ export async function expectPrPaneState(
   page: Page,
   state: "open" | "merged" | "closed" | "draft",
 ): Promise<void> {
-  await expect(page.getByTestId("pr-pane-state")).toHaveText(getStateLabel(state), {
+  await expect(page.getByTestId("pr-pane-state")).toHaveText(en.workspace.git.pr.states[state], {
     timeout: 15_000,
   });
 }

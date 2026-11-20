@@ -1,0 +1,10 @@
+Plugins can now add tools to individual agents and configure their MCP servers when sessions open.
+
+Completed conversation turns can be collapsed into summaries and expanded to read the full exchange.
+
+Voice settings now let you configure speech providers and download local models with one tap, including SenseVoice and Whisper for Chinese dictation. Voice mode is now opt-in.
+
+Added
+- Let plugins give tools to specific agents
+
+Full notes: https://paseo.sh/changelog

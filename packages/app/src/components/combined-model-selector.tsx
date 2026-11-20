@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -13,8 +13,16 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import {
+  TOOLBAR_GLYPH_SIZES,
+  toolbarContentSlot,
+  type ToolbarGlyph,
+} from "@/components/ui/control-geometry";
+
+import { useKeyboardToggle, type KeyboardToggleAction } from "@/hooks/use-keyboard-toggle";
 
 const EMPTY_COMBOBOX_OPTIONS: ComboboxOption[] = [];
+const DEFAULT_TRIGGER_DECORATION = { showCaret: true, tooltip: undefined };
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const foregroundMutedMapping = (theme: Theme) => ({
@@ -42,6 +50,7 @@ interface CombinedModelSelectorProps {
     hovered: boolean;
     pressed: boolean;
   }) => React.ReactNode;
+  toggleAction?: KeyboardToggleAction;
   onOpen?: () => void;
   onClose?: () => void;
   onRetryProvider?: (provider: AgentProvider) => void;
@@ -60,8 +69,9 @@ interface CombinedModelSelectorProps {
    */
   triggerFill?: boolean;
   toolbar?: {
-    glyphSize: number;
+    glyph: ToolbarGlyph;
     showCaret: boolean;
+    tooltip?: ReactNode;
   };
 }
 
@@ -77,6 +87,7 @@ export function CombinedModelSelector({
   onCreateProfile,
   onEditProfile,
   renderTrigger,
+  toggleAction,
   onOpen,
   onClose,
   onRetryProvider,
@@ -141,6 +152,14 @@ export function CombinedModelSelector({
   const handleTriggerPress = useCallback(() => {
     handleOpenChange(!isOpen);
   }, [handleOpenChange, isOpen]);
+
+  useKeyboardToggle({
+    action: toggleAction,
+    disabled,
+    open: isOpen,
+    searchFocused: browser.isSearchFocused,
+    onToggle: handleTriggerPress,
+  });
 
   const triggerStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => {
@@ -211,6 +230,8 @@ export function CombinedModelSelector({
     </View>
   );
 
+  const { showCaret, tooltip } = toolbar ?? DEFAULT_TRIGGER_DECORATION;
+
   return (
     <>
       {renderTrigger ? (
@@ -249,14 +270,17 @@ export function CombinedModelSelector({
             model: browser.selectedModelLabel,
           })}
           testID="combined-model-selector"
-          chevron={toolbar?.showCaret === false ? null : undefined}
+          chevron={showCaret === false ? null : undefined}
+          tooltip={tooltip}
         >
           {selectedProvider.trim().length > 0 ? (
-            <View style={toolbar?.glyphSize === 20 ? styles.toolbarGlyph20 : styles.toolbarGlyph16}>
+            <View style={toolbar ? styles.toolbarGlyph : styles.glyph}>
               <ModelProviderGlyph
                 provider={selectedProvider}
                 serverId={serverId}
-                size={toolbar?.glyphSize ?? ICON_SIZE.md}
+                size={toolbar?.glyph.size ?? ICON_SIZE.md}
+                strokeWidth={toolbar?.glyph.strokeWidth}
+                tone={toolbar?.glyph.tone}
               />
             </View>
           ) : null}
@@ -292,31 +316,30 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
   },
   trigger: {
-    height: 28,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "transparent",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(),
+    borderRadius: theme.borderRadius.full,
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
   },
-  toolbarGlyph16: {
-    width: 16,
-    height: 16,
+  glyph: {
+    width: ICON_SIZE.md,
+    height: ICON_SIZE.md,
     flexShrink: 0,
   },
-  toolbarGlyph20: {
-    width: 20,
-    height: 20,
+  toolbarGlyph: {
+    width: TOOLBAR_GLYPH_SIZES.label,
+    height: TOOLBAR_GLYPH_SIZES.label,
     flexShrink: 0,
   },
   triggerPressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   triggerDisabled: {
     opacity: 0.5,
@@ -328,6 +351,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
+  // A custom trigger, such as a form field, owns its own box: none of the toolbar slot applies.
   customTriggerWrapper: {
     paddingHorizontal: 0,
     paddingVertical: 0,

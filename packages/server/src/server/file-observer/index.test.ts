@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   createFileObserver,
@@ -10,6 +10,8 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
 } from "./index.js";
+import { createObserverPaths } from "./internal/paths.js";
+import { FileObserverService } from "./internal/service.js";
 
 const roots = new Set<string>();
 const observers = new Set<FileObserver>();
@@ -46,6 +48,34 @@ test("observes nested files while pruning excluded directories", async () => {
   expect(events.map((event) => event.path)).not.toContain(join(ignored, "ignored.txt"));
   await subscription.unsubscribe();
 });
+
+// macOS FSEvents can replay writes made just before the stream starts, so the
+// startup contract is only exact on the Linux backend.
+test.skipIf(process.platform !== "linux")(
+  "subscribing to a populated tree reports only later changes",
+  async () => {
+    const root = await createRoot();
+    for (const directory of ["src", join("src", "nested"), "docs"]) {
+      await mkdir(join(root, directory), { recursive: true });
+      await Promise.all(
+        Array.from({ length: 20 }, (_, index) =>
+          writeFile(join(root, directory, `existing-${index}.txt`), `${index}`),
+        ),
+      );
+    }
+    const events: FileChange[] = [];
+    const subscription = await subscribeToFileChanges(root, (error, batch) => {
+      expect(error).toBeNull();
+      events.push(...batch);
+    });
+
+    const laterPath = join(root, "src", "nested", "later.txt");
+    await writeFile(laterPath, "later");
+    await expect.poll(() => events.map((event) => event.path)).toContain(laterPath);
+    expect(new Set(events.map((event) => event.path))).toEqual(new Set([laterPath]));
+    await subscription.unsubscribe();
+  },
+);
 
 test("covers files populated immediately inside a newly created directory", async () => {
   const root = await createRoot();
@@ -165,7 +195,12 @@ test("classifies a removed file as deleted", async () => {
   });
 
   await rm(target);
-  await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
+  // macOS FSEvents can replay the write above as a create after the subscription starts,
+  // so the delete is the latest event for the path, not the first. Native recursive delivery
+  // can also be coalesced before the backend's deletion audit, hence the longer timeout.
+  await expect
+    .poll(() => events.findLast((event) => event.path === target)?.type, { timeout: 10_000 })
+    .toBe("delete");
   await subscription.unsubscribe();
 });
 
@@ -212,51 +247,69 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const root = await createRoot();
   const directories = Array.from({ length: 20 }, (_, index) => join(root, `dir-${index}`));
   await Promise.all(directories.map((directory) => mkdir(directory)));
-  const observed = new Map<string, Set<FileChange["type"]>>();
-  const subscription = await subscribeToFileChanges(root, (error, events) => {
-    expect(error).toBeNull();
-    for (const event of events) {
-      const types = observed.get(event.path) ?? new Set();
-      types.add(event.type);
-      observed.set(event.path, types);
-    }
-  });
   const paths = Array.from({ length: 1_000 }, (_, index) =>
     join(directories[index % directories.length], `file-${index}.txt`),
   );
-
   const populatedDirectory = join(root, "populated", "nested");
-  await mkdir(populatedDirectory, { recursive: true });
   const populatedPaths = Array.from({ length: 200 }, (_, index) =>
     join(populatedDirectory, `nested-${index}.txt`),
   );
+  const removedPaths = paths.slice(0, 100);
+  const moves = directories.slice(0, 10).map((from, index) => ({
+    from,
+    to: join(root, `renamed-${index}`),
+  }));
+  const movedPaths = moves.flatMap(({ from, to }) =>
+    paths
+      .slice(100)
+      .filter((path) => dirname(path) === from)
+      .map((path) => join(to, basename(path))),
+  );
+  const sentinel = join(directories[15], "still-observed.txt");
+  const population = expectFileChanges(populatedPaths);
+  const writes = expectFileChanges(paths);
+  const deletions = expectFileChanges(removedPaths, "delete");
+  const movedFiles = expectFileChanges(movedPaths);
+  const recovery = expectFileChanges([sentinel]);
+  const observer = createObserver();
+  const subscription = await observer.subscribe(root, (error, events) => {
+    expect(error).toBeNull();
+    for (const event of events) {
+      population.record(event);
+      writes.record(event);
+      deletions.record(event);
+      movedFiles.record(event);
+      recovery.record(event);
+    }
+  });
+
+  await mkdir(populatedDirectory, { recursive: true });
   await Promise.all(populatedPaths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => populatedPaths.filter((path) => !observed.has(path)), { timeout: 10_000 })
-    .toEqual([]);
+  await population.complete;
 
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 60_000 })
-    .toEqual([]);
+  await writes.complete;
 
-  const removedPaths = paths.slice(0, 100);
+  // The first notice for each write can arrive before its remaining
+  // classifications. Drain those deliveries before starting a separate deletion
+  // phase, so a late create cannot coalesce with the expected delete as update.
+  await expect
+    .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
+    .toMatchObject({
+      pendingEventCount: 0,
+      pendingClassificationCount: 0,
+      reconciliationInFlightCount: 0,
+    });
+
+  // Completion still requires the delivered deletion notices.
   await Promise.all(removedPaths.map((path) => rm(path)));
-  await expect
-    .poll(() => removedPaths.filter((path) => !observed.get(path)?.has("delete")), {
-      timeout: 10_000,
-    })
-    .toEqual([]);
+  await deletions.complete;
 
-  for (let index = 0; index < 10; index += 1) {
-    const from = directories[index];
-    const to = join(root, `renamed-${index}`);
-    await rename(from, to);
-    await rm(to, { recursive: true, force: true });
-  }
-  const sentinel = join(directories[15], "still-observed.txt");
+  await Promise.all(moves.map(({ from, to }) => rename(from, to)));
+  await movedFiles.complete;
+  await Promise.all(moves.map(({ to }) => rm(to, { recursive: true, force: true })));
   await writeFile(sentinel, "alive");
-  await expect.poll(() => observed.has(sentinel)).toBe(true);
+  await recovery.complete;
   await subscription.unsubscribe();
 }, 90_000);
 
@@ -276,6 +329,99 @@ test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(callback).toHaveBeenCalledTimes(callsAtClose);
 }, 20_000);
+
+test("aborting a pending subscription stops its startup scan and rejects", async () => {
+  const root = await createRoot();
+  // More directories than the Linux backend watches: a scan that keeps walking after the abort
+  // fails on the directory limit instead of rejecting with the abort reason.
+  await Promise.all(
+    Array.from({ length: 80 }, (_, outer) =>
+      Promise.all(
+        Array.from({ length: 70 }, (__, inner) =>
+          mkdir(join(root, `dir-${outer}`, `nested-${inner}`), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const observer = createObserver();
+  const controller = new AbortController();
+  const reason = new Error("setup deadline passed");
+  const callback = vi.fn();
+
+  const subscription = observer.subscribe(root, callback, { signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  controller.abort(reason);
+
+  await expect(subscription).rejects.toBe(reason);
+  expect(observer.getDiagnostics()).toMatchObject({
+    activeObservationCount: 0,
+    nativeHandleCount: 0,
+    pendingReconciliationWorkCount: 0,
+  });
+  await writeFile(join(root, "dir-0", "after-abort.txt"), "late");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(callback).not.toHaveBeenCalled();
+}, 20_000);
+
+test.each([false, true])(
+  "closing waits for a starting backend to release its watcher (aborted: %s)",
+  async (abortBeforeClose) => {
+    const root = await createRoot();
+    const started = Promise.withResolvers<void>();
+    const finishStartup = Promise.withResolvers<void>();
+    let watcherOpen = false;
+    const observer = new FileObserverService(
+      () => ({
+        start() {
+          watcherOpen = true;
+          started.resolve();
+          return finishStartup.promise;
+        },
+        async close() {
+          await finishStartup.promise;
+          watcherOpen = false;
+        },
+        async updateIgnore() {},
+        getDiagnostics: () => ({
+          nativeHandleCount: Number(watcherOpen),
+          nativeTrackedFileCount: 0,
+          pendingReconciliationWorkCount: 0,
+          pendingClassificationCount: 0,
+          reconciliationInFlight: false,
+        }),
+      }),
+      createObserverPaths(process.platform),
+    );
+    const controller = new AbortController();
+    const reason = new Error("startup canceled");
+    const subscription = observer.subscribe(root, () => {}, { signal: controller.signal });
+    const outcome = subscription.catch((error: Error) => error);
+
+    await started.promise;
+    if (abortBeforeClose) controller.abort(reason);
+    const watcherOpenAfterClose = observer.close().then(() => watcherOpen);
+
+    // Give close a turn to run while the backend is still draining startup.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    finishStartup.resolve();
+
+    const subscriptionResult = await outcome;
+    expect(await watcherOpenAfterClose).toBe(false);
+    expect(subscriptionResult).toEqual(
+      abortBeforeClose ? reason : new Error("File observer is closed"),
+    );
+  },
+);
+
+test("a failed root lookup releases the observation", async () => {
+  const root = await createRoot();
+  const observer = createObserver();
+
+  await expect(observer.subscribe(join(root, "missing"), () => {})).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(observer.getDiagnostics().activeObservationCount).toBe(0);
+});
 
 test("aggregate diagnostics return to their lifecycle baseline", async () => {
   const root = await createRoot();
@@ -312,6 +458,7 @@ test("closing the observer service releases every subscription and rejects reuse
     nativeTrackedFileCount: 0,
     pendingEventCount: 0,
     pendingReconciliationWorkCount: 0,
+    pendingClassificationCount: 0,
     reconciliationInFlightCount: 0,
     reconciliationCount: 0,
     scopedReconciliationCount: 0,
@@ -359,4 +506,17 @@ async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "paseo-file-observer-"));
   roots.add(root);
   return root;
+}
+
+function expectFileChanges(paths: string[], type?: FileChange["type"]) {
+  const pending = new Set(paths);
+  const { promise: complete, resolve } = Promise.withResolvers<void>();
+  return {
+    complete,
+    record(event: FileChange) {
+      if (type && event.type !== type) return;
+      pending.delete(event.path);
+      if (pending.size === 0) resolve();
+    },
+  };
 }

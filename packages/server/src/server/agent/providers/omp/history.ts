@@ -1,12 +1,16 @@
-import { readFile } from "node:fs/promises";
+import { open, type FileHandle } from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 import { basename, extname, join } from "node:path";
-import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import { formatOmpSubagentTitle } from "./subagent-title.js";
+import { mapOmpTodoPhases } from "./todo-mapper.js";
+import { OmpTodoPhaseSchema } from "./rpc-types.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -15,6 +19,28 @@ interface OmpSessionEntry {
   timestamp?: string | number;
   message?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+type OmpReplayEntry =
+  | { entry: OmpSessionEntry; message: OmpAgentMessage }
+  | { entry: OmpSessionEntry; item: AgentTimelineItem };
+
+export async function readOmpHistoryTodoState(
+  sessionFile: string,
+): Promise<AgentTimelineItem | null> {
+  const entries = await readActiveOmpEntryChain(sessionFile).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== "todo") continue;
+    const details = message.details;
+    if (!details || typeof details !== "object") return null;
+    const phases = OmpTodoPhaseSchema.array().safeParse(Reflect.get(details, "phases"));
+    return phases.success ? mapOmpTodoPhases(phases.data) : null;
+  }
+  return null;
 }
 
 function extractOmpSubagentModel(entries: readonly OmpSessionEntry[]): string | null {
@@ -45,6 +71,7 @@ export async function* streamOmpHistory(input: {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
+  bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
@@ -68,21 +95,38 @@ export async function* streamOmpHistory(input: {
     throw error;
   }
   const messages: OmpAgentMessage[] = [];
-  const messageEntries: OmpSessionEntry[] = [];
+  const replayEntries: OmpReplayEntry[] = [];
   const userEntries: OmpCapturedUserMessageEntry[] = [];
+  let prepared = 0;
   for (const entry of entries) {
+    if (++prepared % 32 === 0) await setImmediate();
+    if (entry.type === "compaction") {
+      replayEntries.push({ entry, item: mapCompactionEntry(entry) });
+      continue;
+    }
     const mapped = mapEntryMessage(entry);
     if (!mapped) continue;
     messages.push(mapped);
-    messageEntries.push(entry);
+    replayEntries.push({ entry, message: mapped });
     if (mapped.role === "user" && entry.id) {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
   }
-  const mapper = new OmpHistoryMapper(input.provider, userEntries, OMP_HISTORY_MAPPER_HOOKS);
-  for (let index = 0; index < messages.length; index += 1) {
-    const timestamp = normalizeProviderReplayTimestamp(messageEntries[index]?.timestamp);
-    for (const event of mapper.mapMessages([messages[index]!])) {
+  const mapper = new OmpHistoryMapper(
+    input.provider,
+    userEntries,
+    OMP_HISTORY_MAPPER_HOOKS,
+    input.bridgedTools,
+  );
+  let replayed = 0;
+  for (const replayEntry of replayEntries) {
+    if (++replayed % 32 === 0) await setImmediate();
+    const timestamp = normalizeProviderReplayTimestamp(replayEntry.entry.timestamp);
+    const events: AgentStreamEvent[] =
+      "item" in replayEntry
+        ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
+        : mapper.mapMessages([replayEntry.message]);
+    for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;
     }
   }
@@ -290,34 +334,139 @@ function stripExtension(filePath: string): string {
   return extension ? filePath.slice(0, -extension.length) : filePath;
 }
 
-export async function readActiveOmpEntryChain(
-  sessionFile: string,
-  activeEntryId?: string,
-): Promise<OmpSessionEntry[]> {
-  const content = await readFile(sessionFile, "utf8");
-  const entries = content.split("\n").flatMap((line) => {
-    if (!line.trim()) return [];
-    try {
-      const value = JSON.parse(line) as OmpSessionEntry;
-      return value && typeof value === "object" && typeof value.id === "string" ? [value] : [];
-    } catch {
-      return [];
+interface OmpEntryLocation {
+  id: string;
+  parentId?: string | null;
+  offset: number;
+}
+
+// Yield after each bounded IO chunk, including chunks containing only tiny or invalid records.
+// Keep bytes until a complete line so multi-byte UTF-8 characters survive chunk boundaries.
+async function* readOmpLines(
+  file: FileHandle,
+  size: number,
+): AsyncGenerator<{
+  line: Buffer;
+  offset: number;
+}> {
+  const chunkSize = 64 * 1024;
+  let fragments: Buffer[] = [];
+  let lineOffset = 0;
+  for (let position = 0; position < size; ) {
+    const chunk = Buffer.allocUnsafe(Math.min(chunkSize, size - position));
+    const { bytesRead } = await file.read(chunk, 0, chunk.length, position);
+    if (!bytesRead) break;
+    let start = 0;
+    for (let index = 0; index < bytesRead; index++) {
+      if (chunk[index] !== 10) continue;
+      const tail = chunk.subarray(start, index);
+      const line = fragments.length ? Buffer.concat([...fragments, tail]) : tail;
+      yield { line, offset: lineOffset };
+      fragments = [];
+      start = index + 1;
+      lineOffset = position + start;
     }
-  });
-  if (entries.length === 0) return [];
-  const byId = new Map(entries.map((entry) => [entry.id!, entry]));
-  const parentIds = new Set(entries.flatMap((entry) => (entry.parentId ? [entry.parentId] : [])));
-  const leaves = entries.filter((entry) => !parentIds.has(entry.id!));
-  let current: OmpSessionEntry | undefined =
-    (activeEntryId ? byId.get(activeEntryId) : undefined) ?? leaves.at(-1) ?? entries.at(-1);
-  const chain: OmpSessionEntry[] = [];
+    if (start < bytesRead) fragments.push(chunk.subarray(start, bytesRead));
+    position += bytesRead;
+    await setImmediate();
+  }
+  if (fragments.length) yield { line: Buffer.concat(fragments), offset: lineOffset };
+}
+
+function parseOmpEntry(line: Buffer): OmpSessionEntry | null {
+  try {
+    const value: unknown = JSON.parse(line.toString("utf8"));
+    return value && typeof value === "object" && typeof Reflect.get(value, "id") === "string"
+      ? (value as OmpSessionEntry)
+      : null;
+  } catch {
+    // OMP can leave a partial last record; malformed records have always been ignored.
+    return null;
+  }
+}
+
+async function selectOmpChain(
+  locations: readonly OmpEntryLocation[],
+  byId: ReadonlyMap<string, OmpEntryLocation>,
+  parentIds: ReadonlySet<string>,
+  activeEntryId?: string,
+): Promise<OmpEntryLocation[]> {
+  let current = activeEntryId ? byId.get(activeEntryId) : undefined;
+  if (!current) {
+    for (let index = locations.length - 1; index >= 0; index--) {
+      const location = locations[index]!;
+      if (!parentIds.has(location.id)) {
+        current = location;
+        break;
+      }
+      if (index % 256 === 0) await setImmediate();
+    }
+    current ??= locations.at(-1);
+  }
+  const chain: OmpEntryLocation[] = [];
   const seen = new Set<string>();
   while (current?.id && !seen.has(current.id)) {
     chain.push(current);
     seen.add(current.id);
     current = current.parentId ? byId.get(current.parentId) : undefined;
+    if (chain.length % 256 === 0) await setImmediate();
   }
-  return chain.toReversed();
+  return chain;
+}
+
+export async function readActiveOmpEntryChain(
+  sessionFile: string,
+  activeEntryId?: string,
+): Promise<OmpSessionEntry[]> {
+  const file = await open(sessionFile, "r");
+  try {
+    const stat = await file.stat();
+    if (stat.isDirectory()) {
+      throw Object.assign(
+        new Error(`EISDIR: illegal operation on a directory, read '${sessionFile}'`),
+        {
+          code: "EISDIR",
+        },
+      );
+    }
+    // One descriptor and a fixed byte boundary exclude appends made while replay is yielding.
+    // Retain graph metadata only: abandoned branches must not retain their message payloads.
+    const locations: OmpEntryLocation[] = [];
+    const byId = new Map<string, OmpEntryLocation>();
+    const parentIds = new Set<string>();
+    for await (const { line, offset } of readOmpLines(file, stat.size)) {
+      const entry = parseOmpEntry(line);
+      if (!entry) continue;
+      const location = { id: entry.id!, parentId: entry.parentId, offset };
+      locations.push(location);
+      byId.set(location.id, location);
+      if (location.parentId) parentIds.add(location.parentId);
+    }
+    const chain = await selectOmpChain(locations, byId, parentIds, activeEntryId);
+    if (chain.length === 0) return [];
+    const selected = new Map<number, number>();
+    for (let index = 0; index < chain.length; index++) {
+      selected.set(chain[index]!.offset, chain.length - index - 1);
+      if (index % 256 === 0) await setImmediate();
+    }
+    const entries: OmpSessionEntry[] = [];
+    for await (const { line, offset } of readOmpLines(file, stat.size)) {
+      const index = selected.get(offset);
+      if (index === undefined) continue;
+      const entry = parseOmpEntry(line);
+      // Truncation in place invalidates the indexed snapshot; never publish a partial chain.
+      if (!entry || entry.id !== chain[chain.length - index - 1]!.id) {
+        throw new Error(`OMP transcript changed during replay: ${sessionFile}`);
+      }
+      entries[index] = entry;
+      selected.delete(offset);
+      if (selected.size === 0) break;
+    }
+    if (selected.size) throw new Error(`OMP transcript changed during replay: ${sessionFile}`);
+    return entries;
+  } finally {
+    await file.close();
+  }
 }
 
 function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
@@ -326,15 +475,79 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     if (message.role === "system") {
       return null;
     }
+    if (message.role === "developer") {
+      const content = message.content;
+      if (
+        Array.isArray(content) &&
+        content.length === 1 &&
+        content[0]?.type === "text" &&
+        typeof content[0].text === "string" &&
+        isSystemReminder(content[0].text)
+      ) {
+        return null;
+      }
+      return visibleFallback(message.role, message);
+    }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return message as unknown as OmpAgentMessage;
     }
+    // OMP roles the live timeline does not render either, such as the fileMention that carries
+    // an @-mentioned file's content.
+    if (
+      [
+        "pythonExecution",
+        "hookMessage",
+        "branchSummary",
+        "compactionSummary",
+        "fileMention",
+      ].includes(message.role)
+    ) {
+      return null;
+    }
     return visibleFallback(message.role, message);
+  }
+  if (entry.type === "custom_message") {
+    return mapCustomMessageEntry(entry);
   }
   if (!entry.type || isControlEntryType(entry.type)) {
     return null;
   }
   return visibleFallback(entry.type, entry);
+}
+
+// OMP persists a compaction as a top-level entry; the live timeline shows it as a compaction row.
+// The entry does not record whether a manual /compact or auto-compaction produced it.
+function mapCompactionEntry(entry: OmpSessionEntry): AgentTimelineItem {
+  return {
+    type: "compaction",
+    status: "completed",
+    ...(typeof entry.tokensBefore === "number" ? { preTokens: entry.tokensBefore } : {}),
+  };
+}
+
+// omp 18.1+ persists injected rows (skill prompts, hub messages, job notices) as top-level
+// custom_message entries without a message object; replay them as live custom messages
+function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
+  const content = entry.content;
+  if (typeof content !== "string" && !Array.isArray(content)) {
+    return null;
+  }
+  return {
+    role: "custom",
+    content,
+    id: entry.id,
+    customType: entry.customType,
+    display: entry.display,
+    details: entry.details,
+    attribution: entry.attribution,
+  } as OmpAgentMessage;
+}
+
+// OMP's rule-violation reminder carries attributes: <system-reminder reason="rule_violation" ...>
+function isSystemReminder(text: string): boolean {
+  return (
+    /^<system-reminder[\s>]/.test(text.trimStart()) && text.trimEnd().endsWith("</system-reminder>")
+  );
 }
 
 function isControlEntryType(type: string): boolean {
@@ -348,6 +561,7 @@ function isControlEntryType(type: string): boolean {
     type === "system_prompt" ||
     type === "model_change" ||
     type === "thinking_level_change" ||
+    type === "ttsr_injection" ||
     type === "tool_execution" ||
     type.startsWith("tool_execution_")
   );
@@ -357,6 +571,8 @@ function visibleFallback(role: string, value: Record<string, unknown>): OmpAgent
   let text = "Unsupported history record";
   if (typeof value.content === "string") {
     text = value.content;
+  } else if (Array.isArray(value.content)) {
+    text = textOf(value.content) || text;
   } else if (typeof value.text === "string") {
     text = value.text;
   }

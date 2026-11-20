@@ -29,18 +29,14 @@ describe("readPluginProviderIcon", () => {
   });
 
   test.each([
-    ["non-SVG document", "hello", "file is not an SVG document"],
-    ["script", "<svg><script /></svg>", "script elements"],
-    ["foreign object", "<svg><foreignObject /></svg>", "foreignObject elements"],
-    ["style", "<svg><style /></svg>", "style elements"],
-    ["event handler", '<svg><path onclick="run()" /></svg>', "event-handler attributes"],
-    ["javascript URL", '<svg><a href="javascript:run()" /></svg>', "javascript URLs"],
+    ["non-SVG document", "hello", "not an SVG document"],
+    ["script", "<svg><script /></svg>", "script elements are not allowed"],
     ["external href", '<svg><use href="https://example.com/icon.svg" /></svg>', "external href"],
-  ])("rejects %s", async (_name, svg, reason) => {
+  ])("rejects %s with the shared SVG rules", async (_name, svg, reason) => {
     const directory = await writeIcon(svg);
 
     await expect(readPluginProviderIcon(directory, "icon.svg")).rejects.toThrow(
-      `icon.svg": ${reason}`,
+      `Invalid plugin provider icon "icon.svg": ${reason}`,
     );
   });
 
@@ -78,7 +74,7 @@ describe("readPluginProviderIcon", () => {
     const directory = await writeIcon(`<svg>${" ".repeat(64 * 1024)}</svg>`);
 
     await expect(readPluginProviderIcon(directory, "icon.svg")).rejects.toThrow(
-      "file exceeds 64 KiB",
+      `Invalid plugin provider icon "icon.svg": exceeds 64 KiB`,
     );
   });
 });

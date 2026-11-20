@@ -1,4 +1,11 @@
-import type { MatchRange } from "@getpaseo/protocol/search/text-match";
+import {
+  fuzzyPolicyForToken,
+  matchRanges,
+  scoreMatch,
+  tokenizeQuery,
+  type MatchRange,
+  type TextFieldsOptions,
+} from "@getpaseo/protocol/search/text-match";
 
 export interface HighlightSegment {
   /** Offset into the source text; unique per segment, so it doubles as a key. */
@@ -32,4 +39,35 @@ export function toHighlightSegments(
     segments.push({ start: cursor, text: text.slice(cursor), marked: false });
   }
   return segments;
+}
+
+/**
+ * Best-effort presentation of each query token in this field, independently of other fields.
+ * Pass the same options the list was matched with, so a mark never claims a match the list did
+ * not make.
+ */
+export function findHighlightRanges(
+  query: string,
+  text: string,
+  options: TextFieldsOptions = {},
+): MatchRange[] {
+  const ranges = tokenizeQuery(query)
+    .flatMap((token) => {
+      const score = scoreMatch(token, text, {
+        fuzzy: options.typoTolerant ? fuzzyPolicyForToken(token) : null,
+        subsequence: options.subsequence,
+      });
+      return score ? matchRanges(token, text, score) : [];
+    })
+    .sort((left, right) => left.start - right.start);
+  const merged: MatchRange[] = [];
+  for (const range of ranges) {
+    const last = merged.at(-1);
+    if (last && range.start <= last.start + last.length) {
+      last.length = Math.max(last.length, range.start + range.length - last.start);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
 }

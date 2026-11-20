@@ -10,6 +10,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react-native";
+import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { resolveToolCallIconName, type ToolCallIcon } from "./tool-call-icon-name";
@@ -36,6 +37,7 @@ export function componentForToolCallIcon(name: ToolCallIcon): ToolCallIconCompon
 export function resolveToolCallIcon(
   toolName: string,
   detail?: ToolCallDetail,
+  agentMessage?: AgentMessage,
 ): ToolCallIconComponent {
-  return componentForToolCallIcon(resolveToolCallIconName(toolName, detail));
+  return componentForToolCallIcon(resolveToolCallIconName(toolName, detail, agentMessage));
 }

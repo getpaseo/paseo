@@ -3,7 +3,11 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { CommandError } from "../../output/index.js";
 import { connectToDaemon } from "../../utils/client.js";
 
-type PluginFeature = "pluginManagement" | "pluginLogs" | "pluginGitManagement";
+type PluginFeature =
+  | "pluginManagement"
+  | "pluginLogs"
+  | "pluginSourceUpdates"
+  | "pluginSourceInstallation";
 
 async function withPluginClient<T>(
   target: DaemonTarget,
@@ -51,11 +55,24 @@ export async function withPluginSourceClient<T>(
   target: DaemonTarget,
   run: (client: DaemonClient) => Promise<T>,
 ): Promise<T> {
-  // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
+  // COMPAT(pluginSourceInstallation): added in v0.8.0; remove gate after 2027-03-16 once daemon floor supports source identifiers.
   return withPluginClient(
     target,
-    "pluginGitManagement",
-    "Update the host to install and update Git plugins.",
+    "pluginSourceInstallation",
+    "Update the host to install plugin sources.",
+    run,
+  );
+}
+
+export async function withPluginUpdateClient<T>(
+  target: DaemonTarget,
+  run: (client: DaemonClient) => Promise<T>,
+): Promise<T> {
+  // COMPAT(pluginSourceUpdates): added in v0.8.0; remove after 2027-03-16 once daemon floor supports reviewed updates.
+  return withPluginClient(
+    target,
+    "pluginSourceUpdates",
+    "Update the host to review plugin updates.",
     run,
   );
 }

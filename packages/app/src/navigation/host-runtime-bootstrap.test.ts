@@ -11,7 +11,7 @@ import {
 import type { DaemonStartResult, StartDaemonIfEnabledInput } from "@/runtime/daemon-start-service";
 
 describe("startHostRuntimeBootstrap", () => {
-  it("boots the host registry and starts the managed-daemon decision as one operation", async () => {
+  it("boots the host registry and starts the managed-daemon decision independently", async () => {
     const events: string[] = [];
     const shouldStartDaemon = async () => true;
     const store = {
@@ -40,9 +40,10 @@ describe("startHostRuntimeBootstrap", () => {
 
     expect(events).toEqual(["boot", "daemon-start-decision"]);
     expect(await receivedDecisions[0]).toBe(true);
+    expect(events).toEqual(["boot", "daemon-start-decision"]);
   });
 
-  it("waits for the host registry to load before evaluating managed-daemon startup", async () => {
+  it("loads the registry before evaluating managed-daemon startup", async () => {
     const events: string[] = [];
     let resolveBoot!: () => void;
     const booted = new Promise<void>((resolve) => {
@@ -176,6 +177,7 @@ describe("resolveStartupRoute", () => {
     workspaceSelectionStatus: "unknown" as const,
     isWorkspaceSelectionLoaded: true,
     hasGivenUpWaitingForHost: false,
+    isWaitingForSetup: false,
   };
   const baseHostInput = {
     route: { kind: "host" as const, serverId: "server-saved" },
@@ -275,6 +277,28 @@ describe("resolveStartupRoute", () => {
         anyOnlineHostServerId: "srv-desktop",
       }),
     ).toEqual({ kind: "redirect", href: "/h/srv-desktop" });
+  });
+
+  it("holds the splash over the empty home while setup may still open", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "srv-desktop" }],
+        anyOnlineHostServerId: "srv-desktop",
+        isWaitingForSetup: true,
+      }),
+    ).toEqual({ kind: "splash" });
+  });
+
+  it("restores a saved workspace without waiting for setup", () => {
+    expect(
+      resolveStartupRoute({
+        ...baseIndexInput,
+        hosts: [{ serverId: "server-1" }],
+        workspaceSelection: { serverId: "server-1", workspaceId: "workspace-a" },
+        isWaitingForSetup: true,
+      }),
+    ).toEqual({ kind: "redirect", href: "/h/server-1" });
   });
 
   it("keeps a known connecting host in app-owned routing instead of showing welcome", () => {

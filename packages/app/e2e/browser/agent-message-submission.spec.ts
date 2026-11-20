@@ -18,7 +18,9 @@ import {
   expectComposerVisible,
   cancelAgent,
   composerLocator,
+  expectQueuedMessageButton,
   fillComposerDraft,
+  holdSendButton,
   sendDraftToQueue,
   startRunningMockAgent,
   submitMessage,
@@ -36,17 +38,22 @@ import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
+import { rememberTimelineRequestCounts } from "../support/helpers/timeline-resume";
 import {
-  expectResumeOverflowFallsBackToOneTail,
-  rememberTimelineRequestCounts,
-} from "../support/helpers/timeline-resume";
-import {
+  recordPanelToasts,
+  switchWorkspaceViaSidebar,
   waitForWorkspaceInSidebar,
   workspaceDeckEntryLocator,
 } from "../support/helpers/workspace-ui";
+import {
+  openSessions,
+  clickSessionRow,
+  expectWorkspaceTabVisible,
+} from "../support/helpers/archive-tab";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
+  userScrollsTimelineToHistoryStart,
   scrollTimelineUntilOlderHistoryIsReachable,
 } from "../support/helpers/timeline-pagination";
 import {
@@ -228,6 +235,7 @@ async function beginTimelineRowStabilityCheck(
       lastTop: initialRow.getBoundingClientRect().top,
       largestDownwardShift: 0,
       sawMissing: false,
+      sawHidden: false,
     };
     const windowState = window as unknown as Record<string, unknown>;
     windowState.__messageSubmissionTimelineRowStability = state;
@@ -237,6 +245,9 @@ async function beginTimelineRowStabilityCheck(
         state.sawMissing = true;
         requestAnimationFrame(checkFrame);
         return;
+      }
+      if (!initialRow.checkVisibility({ opacityProperty: true, visibilityProperty: true })) {
+        state.sawHidden = true;
       }
       const top = initialRow.getBoundingClientRect().top;
       state.largestDownwardShift = Math.max(state.largestDownwardShift, top - state.lastTop);
@@ -250,14 +261,24 @@ async function beginTimelineRowStabilityCheck(
     const result = await page.evaluate(() => {
       const windowState = window as unknown as Record<string, unknown>;
       const state = windowState.__messageSubmissionTimelineRowStability as
-        | { active: boolean; largestDownwardShift: number; sawMissing: boolean }
+        | {
+            active: boolean;
+            largestDownwardShift: number;
+            sawMissing: boolean;
+            sawHidden: boolean;
+          }
         | undefined;
       if (!state) throw new Error("Timeline-row stability check was not started");
       state.active = false;
       delete windowState.__messageSubmissionTimelineRowStability;
-      return { largestDownwardShift: state.largestDownwardShift, sawMissing: state.sawMissing };
+      return {
+        largestDownwardShift: state.largestDownwardShift,
+        sawMissing: state.sawMissing,
+        sawHidden: state.sawHidden,
+      };
     });
     expect(result.sawMissing).toBe(false);
+    expect(result.sawHidden).toBe(false);
     expect(result.largestDownwardShift).toBeLessThanOrEqual(2);
   };
 }
@@ -280,7 +301,6 @@ async function expectRejectedSubmissionRestored(
   await expectComposerDraft(page, input.prompt);
   await expectComposerEditable(page);
   await expectAttachmentPill(page, "composer-image-attachment-pill");
-  await expect(page.getByTestId("user-message").filter({ hasText: input.prompt })).toHaveCount(0);
   if (input.preservesActiveTurn) {
     await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
     return;
@@ -291,11 +311,19 @@ async function expectRejectedSubmissionRestored(
 
 async function retryRestoredSubmission(page: Page, prompt: string): Promise<void> {
   await page.getByRole("textbox", { name: "Message agent..." }).first().press("Enter");
-  const userMessage = page.getByTestId("user-message").filter({ hasText: prompt });
-  await expect(userMessage).toHaveCount(1);
+  const attempts = page.getByTestId("user-message").filter({ hasText: prompt });
+  await expect(attempts).toHaveCount(2);
+  const userMessage = attempts.last();
   await expect(userMessage).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
   await expect(userMessage.getByRole("button", { name: "Open image attachment" })).toBeVisible();
   await expect(page.getByTestId("composer-image-attachment-pill")).toHaveCount(0);
+}
+
+async function expectRejectedPromptBeforeError(page: Page, prompt: string, errorMessage: string) {
+  const messages = page.getByTestId("user-message").or(page.getByTestId("assistant-message"));
+  await expect(messages).toHaveCount(2);
+  await expect(messages.nth(0)).toContainText(prompt);
+  await expect(messages.nth(1)).toContainText(`[System Error] ${errorMessage}`);
 }
 
 async function configureSteerInSettings(page: Page): Promise<void> {
@@ -428,6 +456,18 @@ async function expectInterruptedTurnOrderAfterReconnect(
   }
 }
 
+async function visitEvictionWorkspaces(
+  page: Page,
+  agents: readonly { agentId: string }[],
+): Promise<void> {
+  for (const [index, agent] of agents.entries()) {
+    await openSessions(page);
+    await clickSessionRow(page, `Workspace eviction ${index + 1}.`);
+    await expectWorkspaceTabVisible(page, agent.agentId);
+    await expectComposerVisible(page);
+  }
+}
+
 async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
   page: Page,
   testInfo: { workerIndex: number },
@@ -443,50 +483,86 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
       seedMockAgentWorkspace({
         repoPrefix: `submission-workspace-eviction-${testInfo.workerIndex}-${index}-`,
-        title: `Workspace eviction ${index + 1}`,
+        title: `Workspace eviction ${index + 1}.`,
       }),
     ),
   );
   const prompt = "Keep this hidden image prompt before its streaming output.";
   const targetDeckEntry = workspaceDeckEntryLocator(page, getServerId(), target.workspaceId);
+  const openAgentIds = [target.agentId, ...evictionAgents.map((agent) => agent.agentId)];
 
   try {
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
-    await subscriptions.waitForSubscribedAgents([target.agentId]);
+    // Open every chat before holding output. Adding chats replaces the timeline
+    // subscription and retires the IDs stamped on already-buffered frames.
+    await visitEvictionWorkspaces(page, evictionAgents);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
+    await expectWorkspaceTabVisible(page, target.agentId);
+    await expectComposerVisible(page);
+    const subscriptionRequests = gate.getClientRequestCount(
+      "agent.timeline.set_subscription.request",
+    );
 
     const userMessageCount = gate.getAgentStreamItemCount("user_message");
-    gate.setAgentStreamSuppressed(true);
+    gate.setAgentStreamItemSuppressed("user_message", true);
+    gate.holdNextAgentStreamEvent("turn_started");
     const promptRow = await submitMessageWithImage(page, prompt);
     await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
-
-    for (const evictionAgent of evictionAgents) {
-      await openAgentRoute(page, evictionAgent);
-      await expectComposerVisible(page);
-    }
-    await expect(targetDeckEntry).toHaveCount(0);
-    await subscriptions.waitForSubscribedAgents([
-      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
-    ]);
-    gate.setAgentStreamSuppressed(false);
-
+    await gate.waitForHeldAgentStreamEvent("turn_started");
+    // Finish production before navigation so passing cannot depend on late
+    // chunks arriving after the final workspace switch.
     await target.client.waitForFinish(target.agentId, 30_000);
-    const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+
+    // Navigate inside the app: a document reload discards the retained deck and
+    // adds startup history fetches, so it cannot prove eviction/resume behavior.
+    await visitEvictionWorkspaces(page, evictionAgents);
+    await expect(targetDeckEntry).toHaveCount(0);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
+    expect(gate.getClientRequestCount("agent.timeline.set_subscription.request")).toBe(
+      subscriptionRequests,
+    );
+    const requestsBeforeRelease = rememberTimelineRequestCounts(gate, target.agentId);
+    gate.releaseHeldAgentStreamEvent("turn_started");
+    // The chat never saw the hidden prompt's live row, so the reply's first row is a gap.
+    // The chat recovers the missing rows once, while its workspace is still evicted.
+    await expect
+      .poll(() => gate.getTimelineRequestCount("after", target.agentId))
+      .toBe(requestsBeforeRelease.after + 1);
+    await gate.waitForServerMessage(
+      "fetch_agent_timeline_response",
+      gate.getClientRequestCount("fetch_agent_timeline_request"),
+    );
+    const requestsBeforeReturn = rememberTimelineRequestCounts(gate, target.agentId);
     await waitForWorkspaceInSidebar(page, {
       serverId: getServerId(),
       workspaceId: target.workspaceId,
     });
-    await openAgentRoute(page, target);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
     await expectComposerVisible(page);
-    await subscriptions.waitForSubscribedAgents([target.agentId]);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
 
+    const responseStart = page.getByText("Cycle 1", { exact: true });
     const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
     await expect(promptRow).toBeVisible();
+    await expect(responseStart).toBeVisible();
     await expect(response).toBeVisible();
+    await expectRenderedBefore(promptRow, responseStart);
     await expectRenderedBefore(promptRow, response);
-    expectResumeOverflowFallsBackToOneTail(gate, requestsBeforeReturn);
+    // Open chats stay subscribed when their workspace view is evicted. Returning
+    // uses that live timeline without another resume check or startup tail fetch.
+    expect(rememberTimelineRequestCounts(gate, target.agentId)).toEqual(requestsBeforeReturn);
   } finally {
-    gate.setAgentStreamSuppressed(false);
+    gate.setAgentStreamItemSuppressed("user_message", false);
     gate.restore();
     await Promise.all([...evictionAgents.map((agent) => agent.cleanup()), target.cleanup()]);
   }
@@ -868,7 +944,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("keeps one canonical prompt when the provider echoes before accepting", async ({
+  test("keeps canonical prompts through early echoes, reload, and later turns", async ({
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({
@@ -889,6 +965,20 @@ test.describe("Agent message submission", () => {
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
       await expectVisibleAgentSurfacesIdle(page);
+      for (const [index, nextPrompt] of [
+        "emit 1 coalesced agent stream updates for the second turn.",
+        "emit 1 coalesced agent stream updates for the third turn.",
+      ].entries()) {
+        await submitMessage(page, nextPrompt);
+        await expect(page.getByText(nextPrompt, { exact: true })).toBeVisible();
+        await expectVisibleAgentSurfacesIdle(page);
+        await expectComposerEditable(page);
+        await expect(page.getByTestId("user-message")).toHaveCount(index + 2);
+      }
+      await fillComposerDraft(page, "Keep this unsent draft.");
+      await composerLocator(page).blur();
+      await expect(page.getByTestId("user-message")).toHaveCount(3);
+      await expectComposerEditable(page);
     } finally {
       await workspace.cleanup();
     }
@@ -908,16 +998,12 @@ test.describe("Agent message submission", () => {
       await submitMessage(page, prompt);
       const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-      const marker = `late-provider-identity-${Date.now()}`;
-      await submittedPrompt.evaluate((element, value) => {
-        element.dataset.lateProviderIdentity = value;
-      }, marker);
 
       await submittedPrompt.hover();
       await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
         timeout: 5_000,
       });
-      await expect(page.locator(`[data-late-provider-identity="${marker}"]`)).toBeVisible();
+      await expect(submittedPrompt).toHaveCount(1);
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
       await expectVisibleAgentSurfacesIdle(page);
     } finally {
@@ -925,7 +1011,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("keeps one prompt when its provider echo crosses the bounded tail", async ({
+  test("keeps one prompt when a delayed provider echo belongs to a large whole turn", async ({
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({
@@ -942,8 +1028,10 @@ test.describe("Agent message submission", () => {
       await expectVisibleAgentSurfacesIdle(page);
       await page.reload();
 
-      await expect(submittedPrompt).toHaveCount(0);
-      await scrollTimelineUntilOlderHistoryIsReachable(page, prompt);
+      // The complete turn arrives on reload; scrolling mounts its oldest rows
+      // without requiring another page or an increase in total content height.
+      await userScrollsTimelineToHistoryStart(page);
+      await expect(submittedPrompt).toBeVisible();
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
     } finally {
@@ -1095,17 +1183,15 @@ test.describe("Agent message submission", () => {
       page,
       page.getByTestId("assistant-message").last(),
     );
-    const assistantMessageCount = await page.getByTestId("assistant-message").count();
-    const toolCallCount = await page.getByTestId("tool-call-badge").count();
     await composer.press("Enter");
     const userMessage = page.getByTestId("user-message").filter({ hasText: prompt }).last();
     await expect(userMessage).toBeVisible();
-    await expect
-      .poll(async () => page.getByTestId("assistant-message").count())
-      .toBeGreaterThan(assistantMessageCount);
-    await expect
-      .poll(async () => page.getByTestId("tool-call-badge").count())
-      .toBeGreaterThan(toolCallCount);
+    await expect(
+      page.getByTestId("assistant-message").filter({
+        hasText: "I'll take a look at the scroll anchor behavior you described.",
+      }),
+    ).toBeVisible();
+    await awaitToolCall(page, "Read");
     await finishTimelineRowStabilityCheck();
   });
 
@@ -1114,17 +1200,27 @@ test.describe("Agent message submission", () => {
     draftCreateScenario,
   }) => {
     test.setTimeout(120_000);
+    const toasts = await recordPanelToasts(page);
     const pending = await beginDraftCreateSubmission(page, draftCreateScenario);
+    // The created agent takes over the draft's timeline: the same row stays mounted and painted.
+    const finishTimelineRowStabilityCheck = await beginTimelineRowStabilityCheck(
+      page,
+      pending.userMessage,
+    );
     await completeDraftCreateSubmission(page, draftCreateScenario, pending);
+    await finishTimelineRowStabilityCheck();
+    // A chat this client just created is current by construction; it is never out of date.
+    await toasts.expectNeverShown("agent-updating-toast");
   });
 
-  test("restores a rejected submission and accepts its retry", async ({
+  test("retains a rejected submission before its error and accepts its retry", async ({
     page,
     rejectionScenario,
   }) => {
     const prompt = "Restore this rejected submission.";
     await submitMessageThatWillBeRejected(page, prompt);
     await expectRejectedSubmissionRestored(page, { prompt, ...rejectionScenario });
+    await expectRejectedPromptBeforeError(page, prompt, rejectionScenario.errorMessage);
     await retryRestoredSubmission(page, prompt);
   });
 
@@ -1154,6 +1250,7 @@ test.describe("Agent message submission", () => {
         errorMessage: "Requested mock steer transport failure",
         preservesActiveTurn: true,
       });
+      await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(0);
 
       expect(gate.getClientRequestCount("send_agent_message_request")).toBe(sendsBefore + 1);
       expect(gate.getClientRequestCount("cancel_agent_request")).toBe(cancelsBefore);
@@ -1187,6 +1284,7 @@ test.describe("Agent message submission", () => {
       await gate.waitForHeldServerMessage("send_agent_message_response");
       await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
       await expect(page.getByText(/^Worked for/)).toHaveCount(0);
+      await expectAgentReadyToInterrupt(page);
       gate.releaseHeldServerMessage("send_agent_message_response");
       await expect(page.getByText("hello", { exact: true })).toHaveCount(1);
     } finally {
@@ -1222,6 +1320,49 @@ test.describe("Agent message submission", () => {
       expect(request.activeTurnBehavior).toBe("interrupt");
       gate.accept();
       await expect(page.getByTestId("user-message").filter({ hasText: prompt })).toHaveCount(1);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  test("queues a draft by holding Send while a tap still steers", async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const gate = await gateNextAgentMessage(page);
+    const agent = await startRunningMockAgent(page, {
+      prefix: `hold-send-queue-${testInfo.workerIndex}-`,
+      model: "one-minute-stream",
+      prompt: "Keep this turn active while the user holds Send.",
+    });
+    try {
+      await expectComposerVisible(page);
+      await expectAgentReadyToInterrupt(page);
+
+      const queuedPrompt = "Queue this follow-up by holding Send.";
+      await test.step("holding Send queues the draft", async () => {
+        await fillComposerDraft(page, queuedPrompt);
+        await holdSendButton(page, "Send and steer");
+        await expectQueuedMessageButton(page);
+        await expectComposerDraft(page, "");
+        await expectAgentReadyToInterrupt(page);
+        await expect(
+          page.getByTestId("user-message").filter({ hasText: queuedPrompt }),
+        ).toHaveCount(0);
+      });
+
+      await test.step("tapping Send still steers", async () => {
+        const steeredPrompt = "Steer this turn with a tap.";
+        await fillComposerDraft(page, steeredPrompt);
+        await page.getByRole("button", { name: "Send and steer", exact: true }).click();
+
+        const request = await gate.waitForRequest();
+        expect(request.text).toBe(steeredPrompt);
+        expect(request.activeTurnBehavior).toBe("steer");
+        gate.accept();
+        await expect(
+          page.getByTestId("user-message").filter({ hasText: steeredPrompt }),
+        ).toHaveCount(1);
+        await expectQueuedMessageButton(page);
+      });
     } finally {
       await agent.cleanup();
     }

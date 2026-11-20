@@ -1,0 +1,56 @@
+export const DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT = 120;
+
+/** Reserve both endpoints during motion so content cannot grow into a closing IME. */
+export function reserveKeyboardLayoutShift(input: {
+  current: number;
+  target: number;
+  phase: "start" | "end";
+}): number {
+  "worklet";
+  return input.phase === "start" ? Math.max(input.current, input.target) : input.target;
+}
+
+export function resolveKeyboardShift(input: {
+  rawKeyboardHeight: number;
+  keyboardProgress: number;
+  bottomInset: number;
+  isIos: boolean;
+  iosMinHeight: number;
+}): number {
+  "worklet";
+
+  if (!(input.keyboardProgress > 0) || !(input.rawKeyboardHeight > 0)) {
+    return 0;
+  }
+
+  // iOS can report a small accessory/prediction bar height during touch focus.
+  // Treat that as non-keyboard so layouts don't "bounce" while interacting.
+  if (input.isIos && input.rawKeyboardHeight < input.iosMinHeight) {
+    return 0;
+  }
+
+  return Math.max(0, input.rawKeyboardHeight - input.bottomInset);
+}
+
+/** Distance a KeyboardTranslateView lifts its content for a given keyboard shift. */
+export function resolveKeyboardLift(input: {
+  shift: number;
+  enabled: boolean;
+  bottomClearance: number;
+  keyboardGap: number;
+}): number {
+  "worklet";
+  if (!input.enabled) return 0;
+  // The gap opens over the shift's first points, so the view never rises at rest.
+  return (
+    Math.max(0, input.shift - input.bottomClearance) + Math.min(input.keyboardGap, input.shift)
+  );
+}
+
+export function shouldReconcileHiddenKeyboardEnd(input: {
+  height: number;
+  progress: number;
+}): boolean {
+  "worklet";
+  return !(input.height > 0) || !(input.progress > 0);
+}

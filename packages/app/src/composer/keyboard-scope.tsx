@@ -7,18 +7,37 @@ import {
 } from "react";
 
 interface ComposerKeyboardScopeValue {
+  /**
+   * The pane this composer sits in is the user's pane. Mouse-driven focus
+   * restoration follows it; touch navigation does not restore editor focus.
+   */
+  isPaneFocused: boolean;
+  /**
+   * The composer takes input right now: keyboard actions, shortcuts, autocomplete,
+   * and the fullscreen exit action. False while a compact overlay panel covers the
+   * pane, which does not take pane focus.
+   */
   isActiveComposer: boolean;
+  /** The composer whose settings appear in Command Center. */
+  isCommandCenterTarget: boolean;
 }
 
 const ComposerKeyboardScopeContext = createContext<ComposerKeyboardScopeValue>({
+  isPaneFocused: false,
   isActiveComposer: false,
+  isCommandCenterTarget: false,
 });
 
 export function ComposerKeyboardScopeProvider({
+  isPaneFocused,
   isActiveComposer,
+  isCommandCenterTarget,
   children,
 }: PropsWithChildren<ComposerKeyboardScopeValue>): ReactElement {
-  const value = useMemo(() => ({ isActiveComposer }), [isActiveComposer]);
+  const value = useMemo(
+    () => ({ isPaneFocused, isActiveComposer, isCommandCenterTarget }),
+    [isPaneFocused, isActiveComposer, isCommandCenterTarget],
+  );
   return (
     <ComposerKeyboardScopeContext.Provider value={value}>
       {children}

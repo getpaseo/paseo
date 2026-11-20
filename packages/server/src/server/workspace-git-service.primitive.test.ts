@@ -1,3 +1,4 @@
+import { createWorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -263,6 +264,8 @@ function createSnapshot(cwd: string, overrides?: SnapshotOverrides): WorkspaceGi
       pullRequest: resolveSnapshotPullRequest(base, overrides),
       error: resolveSnapshotError(base, overrides),
     },
+    // Every remote these fixtures use is on github.com.
+    ...(forge ? { forgeWeb: { host: "github.com" } } : {}),
   };
 }
 
@@ -566,19 +569,19 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(subscription).toEqual({ unsubscribe: expect.any(Function) });
     expect(getCheckoutStatus).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
-    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
+    expect(listener.mock.lastCall?.[0] ?? null).toBeNull();
 
     await vi.waitFor(() => {
       expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
     });
     await flushPromises();
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
-    expect(service.peekSnapshot(REPO_CWD)).toBeNull();
+    expect(listener.mock.lastCall?.[0] ?? null).toBeNull();
 
     checkoutStatusDeferred.resolve(createCheckoutStatus(REPO_CWD));
 
     await expect(service.getSnapshot(REPO_CWD)).resolves.toEqual(createSnapshot(REPO_CWD));
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(createSnapshot(REPO_CWD));
+    expect(listener.mock.lastCall?.[0] ?? null).toEqual(createSnapshot(REPO_CWD));
 
     subscription.unsubscribe();
     service.dispose();
@@ -703,8 +706,9 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
     refreshStatus.resolve(createCheckoutStatus(REPO_CWD, { currentBranch: "feature" }));
     await refresh;
-    expect(service.peekSnapshot(REPO_CWD)).toEqual(
-      createSnapshot(REPO_CWD, {
+    // A branch change resets the PR status but not where the same remote lives on the web.
+    expect(await service.getSnapshot(REPO_CWD)).toEqual({
+      ...createSnapshot(REPO_CWD, {
         git: {
           currentBranch: "feature",
           diffStat: { additions: 4, deletions: 2 },
@@ -715,7 +719,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
           error: null,
         },
       }),
-    );
+      forgeWeb: { host: "github.com" },
+    });
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getCheckoutShortstat).toHaveBeenCalledTimes(2);
 
@@ -990,8 +995,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flushPromises();
 
-    expect(subscribe).toHaveBeenCalledTimes(2);
-    expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(subscribe).toHaveBeenCalledTimes(2));
+    // Setup itself does no snapshot read; once the watcher covers the tree, one
+    // checkout read catches changes made since the forced read.
+    await vi.waitFor(() => expect(getCheckoutStatus).toHaveBeenCalledTimes(2));
 
     subscription.unsubscribe();
     service.dispose();
@@ -1385,23 +1392,25 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       getPullRequestStatus: vi.fn(async () => createPullRequestStatusResult("Visible PR")),
     });
 
+    const workspaceRuntimeStore = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => workspaceRuntimeStore.set(snapshot));
     try {
-      await service.getSnapshot(REPO_CWD);
+      workspaceRuntimeStore.set(await service.getSnapshot(REPO_CWD));
       const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("Visible PR");
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest?.title).toBe("Visible PR");
 
       headSha = "2222222222222222222222222222222222222222";
       nowMs = 3_000;
       await service.refresh(REPO_CWD);
 
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest).toBeNull();
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest).toBeNull();
       expect(forge.getCurrentPullRequestStatus).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(0);
       await flushPromises();
 
       expect(forge.getCurrentPullRequestStatus).toHaveBeenCalledTimes(1);
-      expect(service.peekSnapshot(REPO_CWD)?.forge.pullRequest?.title).toBe("MR self-healed");
+      expect(workspaceRuntimeStore.get(REPO_CWD)?.forge.pullRequest?.title).toBe("MR self-healed");
       subscription.unsubscribe();
     } finally {
       service.dispose();
@@ -1819,6 +1828,46 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     service.dispose();
   });
 
+  test("invalidating worktrees discards warm listings across checkout roots and in-flight reads", async () => {
+    const worktrees = [
+      {
+        path: "/tmp/paseo-home/worktrees/repo/feature",
+        createdAt: "2026-04-12T00:00:00.000Z",
+        branchName: "feature",
+      },
+    ];
+    const readStarted = createDeferred<void>();
+    const oldRead = createDeferred<typeof worktrees>();
+    const alternateCheckout = resolvePath("/tmp/alternate-checkout");
+    let reads = 0;
+    const service = createService({
+      listPaseoWorktrees: async () => {
+        reads += 1;
+        if (reads <= 2) return worktrees;
+        if (reads === 3) {
+          readStarted.resolve();
+          return oldRead.promise;
+        }
+        return [];
+      },
+    });
+    try {
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual(worktrees);
+      await expect(service.listWorktrees(alternateCheckout)).resolves.toEqual(worktrees);
+      const pending = service.listWorktrees(REPO_CWD, { force: true, reason: "test" });
+      await readStarted.promise;
+      service.invalidateWorktrees();
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual([]);
+      await expect(service.listWorktrees(alternateCheckout)).resolves.toEqual([]);
+      oldRead.resolve(worktrees);
+      await expect(pending).resolves.toEqual(worktrees);
+      await expect(service.listWorktrees(REPO_CWD)).resolves.toEqual([]);
+    } finally {
+      oldRead.resolve(worktrees);
+      await service.dispose();
+    }
+  });
+
   test("listWorktrees shares one repo-root scoped read across sibling workspace cwds", async () => {
     const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-service-")));
     const repoDir = join(tempDir, "repo");
@@ -2146,6 +2195,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
       expect(subscribe).toHaveBeenCalledTimes(1);
       expect(subscribe).toHaveBeenCalledWith(repoDir, expect.any(Function), {
         ignore: [join(repoDir, ".git"), ignoredRoot],
+        signal: expect.any(AbortSignal),
       });
 
       subscription.unsubscribe();
@@ -2178,7 +2228,7 @@ describe("WorkspaceGitServiceImpl D2 read methods", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(2);
     expect(getPullRequestStatus).toHaveBeenCalledTimes(2);
 
-    service.dispose();
+    await service.dispose();
   });
 
   test("onWorkspaceStateMayHaveChanged preserves includeForge when a file watcher fires within the debounce window", async () => {

@@ -87,7 +87,25 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible();
 });
 
-async function createFeatureCommit(repoPath: string): Promise<void> {
+test("a fresh commit says just now and its age advances", async ({ page, withWorkspace }) => {
+  const workspace = await withWorkspace({ prefix: "commit-relative-time-" });
+  const committedAt = new Date();
+  await createFeatureCommit(workspace.repoPath, committedAt.toISOString());
+  await page.clock.install({ time: committedAt });
+  await workspace.navigateTo();
+
+  await openChangesTreePanel(page);
+  await page.getByRole("button", { name: /Commits/i }).click();
+  const row = page.locator('[data-testid^="commit-row-"]').filter({ hasText: COMMIT_SUBJECT });
+  await expect(row).toContainText("just now", { timeout: 30_000 });
+  await page.clock.fastForward("03:00");
+  await expect(row).toContainText("3m ago");
+});
+
+async function createFeatureCommit(
+  repoPath: string,
+  authorDate = "2020-01-15T12:00:00Z",
+): Promise<void> {
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: repoPath, stdio: "ignore" });
   await writeFile(path.join(repoPath, "feature.txt"), "before\nafter\n");
   execFileSync("git", ["add", "feature.txt"], { cwd: repoPath, stdio: "ignore" });
@@ -96,8 +114,8 @@ async function createFeatureCommit(repoPath: string): Promise<void> {
     stdio: "ignore",
     env: {
       ...process.env,
-      GIT_AUTHOR_DATE: "2020-01-15T12:00:00Z",
-      GIT_COMMITTER_DATE: "2020-01-15T12:00:00Z",
+      GIT_AUTHOR_DATE: authorDate,
+      GIT_COMMITTER_DATE: authorDate,
     },
   });
 }

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  getBottomSheetVisibleContentHeight,
-  getCompactSheetSafeAreaPadding,
-} from "@/components/adaptive-modal-sheet-layout";
+import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
 
 describe("getCompactSheetSafeAreaPadding", () => {
   it("assigns safe clearance to the footer independently of decorative padding", () => {
@@ -47,19 +44,5 @@ describe("getCompactSheetSafeAreaPadding", () => {
         safeAreaBottom: 34,
       }),
     ).toEqual({});
-  });
-});
-
-describe("getBottomSheetVisibleContentHeight", () => {
-  it("stops subtracting the retained keyboard height after the keyboard hides", () => {
-    const layout = {
-      containerHeight: 874,
-      contentPosition: 88,
-      handleHeight: 24,
-      keyboardHeight: 344,
-    };
-
-    expect(getBottomSheetVisibleContentHeight({ ...layout, isKeyboardVisible: true })).toBe(418);
-    expect(getBottomSheetVisibleContentHeight({ ...layout, isKeyboardVisible: false })).toBe(762);
   });
 });

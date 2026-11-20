@@ -106,14 +106,14 @@ githubTest(
       cwd: repository,
       worktreeSlug: "merged-feature",
       source: { kind: "branch-off", baseBranch: "main", branchName: "merged-feature" },
-      runSetup: false,
+
       paseoHome: context.daemon.paseoHome,
     });
     const unrelated = await createWorktree({
       cwd: repository,
       worktreeSlug: "never-pushed-unrelated",
       source: { kind: "branch-off", baseBranch: "main", branchName: "never-pushed-unrelated" },
-      runSetup: false,
+
       paseoHome: context.daemon.paseoHome,
     });
     const mergedWorkspace = await context.client.createWorkspace({

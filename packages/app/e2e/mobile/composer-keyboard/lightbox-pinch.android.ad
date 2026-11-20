@@ -1,0 +1,15 @@
+# CHAT_URL opens a connected chat containing a visible Markdown image with alt text IMAGE_LABEL.
+context platform=android timeout=120000 retries=0
+env APP_ID=sh.paseo.debug
+env IMAGE_LABEL="Test image"
+
+open "${APP_ID}" "${CHAT_URL}"
+wait "label=\"${IMAGE_LABEL}\"" 30000
+press "label=\"${IMAGE_LABEL}\""
+wait "label=\"Close image\"" 5000
+gesture pinch 1.7
+press "label=\"Close image\""
+press "editable=true"
+type "pinch regression"
+press "role=\"button\" label=\"Add attachment\""
+wait "label=\"Upload file\"" 3000

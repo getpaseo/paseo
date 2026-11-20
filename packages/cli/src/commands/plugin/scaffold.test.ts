@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -9,6 +9,7 @@ import { scaffoldPluginDirectory } from "./scaffold.js";
 
 const directories: string[] = [];
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 const tscPath = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 
 async function typecheckPlugin(directory: string): Promise<void> {
@@ -28,6 +29,48 @@ afterEach(async () => {
 });
 
 describe("plugin scaffold", () => {
+  it("creates an author overview beside the manifest", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "hello-plugin");
+    await scaffoldPluginDirectory(directory);
+
+    const overview = await readFile(path.join(directory, "OVERVIEW.md"), "utf8");
+    const comments = overview.match(/<!--[\s\S]*?-->/g) ?? [];
+    expect(comments).toHaveLength(1);
+    expect(overview.replace(/<!--[\s\S]*?-->/g, "").trim()).toBe("");
+    expect(overview).toContain("required to list");
+    expect(overview).toContain("README");
+    expect(overview).toContain("choosing a plugin in Paseo");
+    expect(overview).toContain("Length follows complexity");
+    expect(overview).toContain("1. Describe what your plugin is and does");
+    expect(overview).toContain("2. Explain how it works only when it is not obvious");
+    expect(overview).toContain("3. Explain setup when needed");
+    expect(overview).toContain("4. Explain capabilities and settings");
+    expect(overview).toContain("permissions");
+    expect(overview).toContain("known limits");
+    expect(overview).not.toContain("This plugin entry was imported");
+    const packageJson = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
+    expect(packageJson.files).toContain("OVERVIEW.md");
+    expect(await readdir(directory)).toContain("paseo-plugin.json");
+  });
+
+  it("includes the author overview and its translations in the packed npm artifact", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "packed-plugin");
+    await scaffoldPluginDirectory(directory);
+    await writeFile(path.join(directory, "OVERVIEW.zh-CN.md"), "插件概览\n");
+
+    const { stdout } = await execAsync("npm pack --dry-run --ignore-scripts --json", {
+      cwd: directory,
+    });
+    const [artifact] = JSON.parse(stdout) as { files: { path: string }[] }[];
+    expect(artifact.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining(["OVERVIEW.md", "OVERVIEW.zh-CN.md", "paseo-plugin.json"]),
+    );
+  });
+
   it(
     "creates a standalone split-runtime project that typechecks",
     { timeout: 15_000 },
@@ -51,6 +94,8 @@ describe("plugin scaffold", () => {
       expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
         {
           id: "hello-plugin",
+          $comment: expect.stringContaining('"icon": "assets/icon.png"'),
+          media: [],
           requirements: { paseo: `>=${cliPackageJson.version}` },
         },
       );
@@ -58,6 +103,18 @@ describe("plugin scaffold", () => {
         name: "hello-plugin",
         private: true,
         version: "0.0.0",
+        files: [
+          "paseo-plugin.json",
+          "OVERVIEW.md",
+          "OVERVIEW.*.md",
+          "index.client.ts",
+          "index.client.tsx",
+          "index.server.ts",
+          "index.server.tsx",
+          "client/",
+          "server/",
+          "shared/",
+        ],
         scripts: { typecheck: "tsc --noEmit" },
         devDependencies: {
           "@getpaseo/plugin": cliPackageJson.version,
@@ -141,7 +198,7 @@ export async function inspectConfig(
         path.join(directory, "client", "main.tsx"),
         `import React from "react";
 import { Text } from "react-native";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/client/ui";
 import { type PluginAgentPanelProps, type PluginClientContext, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
 import { inspect } from "../shared/inspect";
 
@@ -153,6 +210,8 @@ export function Surface({ navigation }: PluginSurfaceProps) {
   });
   navigation?.openAgent({ agentId: "agent-1" });
   navigation?.openWorkspace({ workspaceId: "workspace-1" });
+  navigation?.openAgent({ serverId: "server-2", agentId: "agent-2" });
+  navigation?.openWorkspace({ serverId: "server-2", workspaceId: "workspace-2" });
   void createWorkspace;
   return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
@@ -216,7 +275,7 @@ import { AgentPanel, contributeClient, Surface } from "./client/main";
 import { inspect } from "./shared/inspect";
 
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("main", Surface);
+  client.addScreen({ id: "main", title: "Review", Component: Surface });
   client.addWorkspacePanel({
     id: "review",
     title: "Review",
@@ -282,7 +341,9 @@ export default function contribute(client: PluginClientContext) {
 `,
     );
     const check = typecheckPlugin(directory);
-    await expect(check).rejects.toThrow("has no exported member 'PluginComposerPillProps'");
+    await expect(check).rejects.toThrow(
+      /has no exported member (named )?'PluginComposerPillProps'/,
+    );
     await expect(check).rejects.toThrow("Property 'button' is missing");
     await expect(check).rejects.toThrow("has no call signatures");
   }, 20_000);

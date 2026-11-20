@@ -127,4 +127,100 @@ for (const scenario of [
     await creation.submitPrompt("Retry this workspace and agent together.");
     await creation.expectAgentCount(1);
   });
+
+  test(`an edited prompt after failed agent initialization starts the agent in its workspace${scenario.suffix}`, async ({
+    creation,
+    startup,
+    page,
+  }) => {
+    await creation.openWorkspaceForm("local");
+    await creation.submitPrompt("Start the original task.", "Create");
+    await creation.expectAgentStillStarting();
+    await startup.fail();
+    await creation.expectStartupFailure();
+    await creation.expectOneCreatedWorkspace();
+    await scenario.prepare(creation);
+    await creation.submitPrompt("Start the edited task.");
+    await creation.expectPromptVisible("Start the edited task.");
+    await creation.expectOneCreatedWorkspace();
+    await creation.expectAgentCount(1);
+    await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+  });
+}
+
+test("retrying failed agent initialization keeps the plugin metadata set on New workspace", async ({
+  creation,
+  startup,
+  composerMetadata,
+}) => {
+  await creation.openWorkspaceForm("local");
+  await composerMetadata.set({ "composer-metadata.tag": "kept" });
+  await creation.submitPrompt("Start the tagged task.", "Create");
+  await creation.expectAgentStillStarting();
+  await startup.fail();
+  await creation.expectStartupFailure();
+  await creation.expectOneCreatedWorkspace();
+  await creation.submitPrompt("Start the tagged task.");
+  await creation.expectAgentCount(1);
+  await creation.expectAgentMetadata({ "composer-metadata.tag": "kept" });
+});
+
+test("an edited agent draft starts after its first start failed", async ({
+  creation,
+  startup,
+  page,
+}) => {
+  await creation.openAgentDraft();
+  await startup.fail();
+  await creation.submitPrompt("Start the original task.");
+  await creation.expectStartupFailure();
+  await creation.submitPrompt("Start the edited task.");
+  await creation.expectPromptVisible("Start the edited task.");
+  await creation.expectAgentCount(1);
+  await expect(page.getByText(/request_key_conflict/)).toHaveCount(0);
+});
+
+for (const entry of [
+  {
+    name: "agent draft",
+    open: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.openAgentDraft(),
+    button: "Send message",
+    settled: async (_creation: Awaited<ReturnType<typeof createCreationScenario>>) => {},
+  },
+  {
+    name: "new workspace",
+    open: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.openWorkspaceForm("local"),
+    button: "Create",
+    settled: (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.expectOneCreatedWorkspace(),
+  },
+]) {
+  test(`${entry.name} becomes an agent tab when the first prompt is rejected`, async ({
+    creation,
+    promptRejection,
+    page,
+  }, testInfo) => {
+    void promptRejection;
+    const prompt =
+      "Continue the attached conversation.\n" + "Earlier conversation context.\n".repeat(100);
+    await entry.open(creation);
+    await creation.submitPrompt(prompt, entry.button);
+    await entry.settled(creation);
+    await creation.expectCreatedAgentError();
+    await creation.expectPromptBeforeError(prompt);
+    await page.screenshot({
+      path: testInfo.outputPath("created-agent-prompt-error.png"),
+    });
+    await creation.reloadAgent();
+    await creation.expectPromptBeforeError(prompt);
+    await creation.submitPrompt("emit 1 coalesced agent stream updates for a corrected prompt.");
+    await creation.expectPromptVisible(
+      "emit 1 coalesced agent stream updates for a corrected prompt.",
+    );
+    await creation.expectAssistantReply();
+    await creation.expectAgentCount(1);
+    await expect(page.getByText("agent_request_key_conflict", { exact: true })).toHaveCount(0);
+  });
 }

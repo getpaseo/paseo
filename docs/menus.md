@@ -52,6 +52,13 @@ is another, with its own icons and hover-revealed actions — but both hand the 
 and take `closeOnSelect` to say whether choosing them ends the surface. A row that owns its press
 outright leaves the surface open behind whatever it opened, and skips the iOS wait.
 
+A row whose result opens a sheet opens it as a page of the menu's own sheet, never as a second
+sheet over it: the row names a [fill page](#a-page-that-fills-the-sheet) with `opensPage`, the page
+replaces the list in place, Back returns to the list, and Close ends both. A row that opens a tab
+closes, because the tab replaces the pane the menu belongs to. The subagents track asks the layout
+store which sheet tab a row would show (`useSubagentSheetTab`), since the answer changes with the
+layout; a row with none opens its tab.
+
 ## Pages
 
 A submenu is a page, declared as data on the surface and reached by a `MenuSubTrigger` whose `id`
@@ -95,6 +102,23 @@ that page, and both are set on the page definition rather than discovered later:
 The sheet keeps `keyboardBehavior="interactive"`. `extend` grows a sheet to its largest snap
 point, and with `enableDynamicSizing` that point is the content's own height — a short page does
 not grow, and the keyboard comes up over the field you are typing into.
+
+## A page that fills the sheet
+
+A page can carry its own content instead of rows: `{ id, fill: true, content }`. Only the sheet
+renders one. It takes the full-sheet snap point (`FULL_SHEET_SNAP_POINTS`) instead of sizing to
+content, and the sheet stops panning on content drags, because the page scrolls on its own and a
+drag would fight that scroll. The page's header drags the sheet instead, through `SheetDragArea`.
+
+The content renders on the far side of the sheet's portal, so it brings its own context bridge,
+built where the page is defined. Sheet tabs are the one user: `useSheetPanePage` turns a `SheetTab`
+into a fill page around the same `SheetPane` the workspace's own sheets render. See
+[explorer-sidebar.md](explorer-sidebar.md#sheets).
+
+Back pops one page. The header's Back and Android Back both call `goBack`, which answers `false` at
+the root so the sheet closes instead. A page whose definition disappears while it is open, such as
+a subagent archived from elsewhere, is pruned from the path, and the sheet falls back to the page
+that opened it.
 
 ## Hover intent
 
@@ -176,18 +200,34 @@ its own.
 
 ## Gotchas
 
-- **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
-  the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
-  identity changes — a pushed page taller than the one it replaced is clipped without that.
+- **Web enters without Reanimated.** For a custom keyframe, Reanimated's web path snapshots the
+  surface's rect when the animation ends and writes it back as inline top/left/width/height 750ms
+  after the start. Whatever moved or resized the surface in between was undone: content that
+  grew once its data arrived left the menu clipped, or hanging over its anchor, until it moved
+  again. `AnchoredSurface` plays the same keyframes through the Web Animations API on web, which
+  leaves no inline style; native keeps the Reanimated `Keyframe`.
+- **Animate only once placed.** `AnchoredSurface` remounts the surface when its position resolves,
+  so the entering animation runs at the final position rather than ending unseen at the
+  off-screen measuring position.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
-  rarely the height of the page before it.
+  rarely the height of the page before it. A fill page is the one exception.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
   both menu contexts through the sheet's `contextBridge`. Providing them around the modal puts
   them on the wrong side of the portal and every item inside throws. Gotcha 7 in
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
-- Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
-  positioning bugs there, not at a call site.
+- **Sheet stacking and backdrop dismissal belong to `IsolatedBottomSheetModal`.** Menus only
+  request a backdrop opacity. See [floating-panels.md](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth).
+- **A menu closes when its panel leaves the screen.** `MenuSurface` closes the menu when its
+  retained panel goes inactive. Hiding the surface alone leaves the open state behind, and the
+  menu would reappear with the panel on the next tab switch.
+- **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
+  inactive. An async action can navigate before its menu closes; a hidden panel must not leave a
+  portal backdrop blocking the destination. On web the chat suspends one commit after it goes
+  inactive, and that inactive commit is where the surface unmounts.
+- Anchoring, flipping, edge clamping, and capping a surface's width to the display live in
+  `components/ui/anchor.ts`, shared with the hover card, and are unit-tested. Clamping moves a
+  surface but cannot shrink it, so the width cap is what keeps a wide menu on a narrow screen. Fix positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
   status-bar offset, the open flash — is in [floating-panels.md](floating-panels.md).

@@ -187,6 +187,33 @@ describe("daemon web UI route module", () => {
     expect(res.body).toContain("app");
   });
 
+  test.each([
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp/agents",
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/openid-configuration",
+  ])("returns a JSON 404 instead of the SPA for missing %s", async (requestPath) => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", requestPath);
+
+    expect(res.status).toBe(404);
+    expect(res.headers["content-type"]).toBe("application/json; charset=utf-8");
+    expect(JSON.parse(res.body)).toEqual({ error: "Not found" });
+  });
+
+  test("serves well-known files that exist in the dist directory", async () => {
+    await mkdir(path.join(distDir, ".well-known"), { recursive: true });
+    await writeFile(path.join(distDir, ".well-known", "security.json"), '{"ok":true}');
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/.well-known/security.json");
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/json; charset=utf-8");
+    expect(res.body).toBe('{"ok":true}');
+  });
+
   test("serves static assets", async () => {
     const app = createApp({ enabled: true, distDir, publicDir });
 
