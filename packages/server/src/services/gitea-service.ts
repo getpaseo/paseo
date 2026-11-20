@@ -1226,7 +1226,6 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
 
   const changeRequests = createGiteaChangeRequestSource({
     runCommand: runRaw,
-    isAuthError: (error) => error instanceof TeaAuthenticationError,
     createAuthError: (stderr) => new TeaAuthenticationError({ stderr }),
     createCommandError: (params) => new TeaCommandError(params),
     now,

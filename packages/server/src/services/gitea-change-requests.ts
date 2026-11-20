@@ -26,6 +26,7 @@ const GITEA_CLOUD_HOSTS = new Set(["gitea.com", "codeberg.org"]);
 const GITEA_PR_TABS = new Set(["commits", "files", "checks"]);
 const GITEA_PAGE_SIZE = GITEA_ACTION_PAGE_LIMIT;
 const GITEA_REVIEW_COMMENT_CONCURRENCY = 3;
+const GITEA_ACTION_RUN_LOOKUP_LIMIT = 5;
 
 const checkUrlSchema = z.url({ protocol: /^https?$/ });
 
@@ -69,6 +70,24 @@ const giteaReviewCommentSchema = z
     html_url: z.string().optional(),
   })
   .passthrough();
+
+const giteaActionJobSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  status: z.string(),
+  conclusion: z.string().nullable().optional(),
+  html_url: z.string().nullable().optional(),
+});
+
+const giteaActionJobsPageSchema = z.object({
+  jobs: z
+    .array(giteaActionJobSchema)
+    .nullable()
+    .transform((jobs) => jobs ?? []),
+  total_count: z.number(),
+});
+
+type GiteaActionJob = z.infer<typeof giteaActionJobSchema>;
 
 type GiteaWatchPr = z.infer<typeof giteaWatchPrSchema>;
 type GiteaReview = z.infer<typeof giteaReviewSchema>;
@@ -246,14 +265,15 @@ function computeAggregateChecksState(
   return "neutral";
 }
 
-function nativeActionRun(value: string | null | undefined, origin: string, jobOnly: boolean) {
+function nativeActionUrl(value: string | null | undefined, origin: string) {
   if (!value) return null;
   try {
     const url = new URL(value, origin);
     if (url.origin !== origin) return null;
-    const match = /^(.*\/actions\/runs\/\d+)(\/jobs\/\d+)?\/?$/.exec(url.pathname);
-    if (!match || (jobOnly && !match[2])) return null;
-    return match[1]!;
+    const match = /^(.*\/actions\/runs\/(\d+))(\/jobs\/\d+)?\/?$/.exec(url.pathname);
+    if (!match) return null;
+    const [, run, runId, job] = match;
+    return { run: run!, runId: runId!, jobUrl: job ? `${origin}${run}${job}` : null };
   } catch {
     return null;
   }
@@ -262,20 +282,18 @@ function nativeActionRun(value: string | null | undefined, origin: string, jobOn
 function combineWatchChecks(
   commitStatuses: GiteaCommitStatus[],
   actionTasks: GiteaActionTask[],
+  jobsByRun: ReadonlyMap<string, GiteaActionJob[]>,
   origin: string,
 ): ChangeRequestSnapshot["checks"] {
-  // Use the forge's commit statuses for runs that publish per-job statuses on
-  // this head. The task endpoint identifies the run and also includes jobs
-  // from runs that don't publish statuses on this commit.
-  const runsWithJobStatuses = new Set(
-    commitStatuses.map((status) => nativeActionRun(status.target_url, origin, true)),
-  );
   const checks: ChangeRequestSnapshot["checks"] = [];
-  const seenStatusIds = new Set<number>();
+  const actionJobs = [...jobsByRun.values()].flat();
+  const coveredJobUrls = new Set(
+    actionJobs.map((job) => nativeActionUrl(job.html_url, origin)?.jobUrl),
+  );
 
   for (const status of commitStatuses) {
-    if (seenStatusIds.has(status.id)) continue;
-    seenStatusIds.add(status.id);
+    const jobUrl = nativeActionUrl(status.target_url, origin)?.jobUrl;
+    if (jobUrl && coveredJobUrls.has(jobUrl)) continue;
     const url = checkUrlSchema.safeParse(status.target_url).data;
     checks.push({
       id: `status:${status.id}`,
@@ -285,11 +303,21 @@ function combineWatchChecks(
     });
   }
 
+  for (const job of actionJobs) {
+    const url = checkUrlSchema.safeParse(job.html_url).data;
+    checks.push({
+      id: `action-job:${job.id}`,
+      name: job.name,
+      state: mapActionTaskToWatchState(job.conclusion || job.status),
+      ...(url ? { url } : {}),
+    });
+  }
+
   const seenTaskIds = new Set<number>();
   for (const task of actionTasks) {
     if (seenTaskIds.has(task.id)) continue;
-    const run = nativeActionRun(task.url, origin, false);
-    if (run && runsWithJobStatuses.has(run)) continue;
+    const address = nativeActionUrl(task.url, origin);
+    if (address && jobsByRun.has(address.run)) continue;
     seenTaskIds.add(task.id);
     const url = checkUrlSchema.safeParse(task.url).data;
     checks.push({
@@ -371,7 +399,6 @@ export interface CreateGiteaChangeRequestSourceOptions {
     args: string[],
     options: { cwd: string; envOverlay?: Record<string, string> },
   ): Promise<{ stdout: string; stderr: string }>;
-  isAuthError(error: unknown): boolean;
   createAuthError(stderr: string): Error;
   createCommandError(params: {
     args: string[];
@@ -389,14 +416,10 @@ export function createGiteaChangeRequestSource(
   options: CreateGiteaChangeRequestSourceOptions,
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
-  const loginByBaseUrl = new Map<string, string>();
   const cachedReviewCommentsByUrl = new Map<string, Map<number, CachedReviewComments>>();
   const reviewCommentLimit = pLimit(GITEA_REVIEW_COMMENT_CONCURRENCY);
 
   async function resolveLogin(baseUrl: string): Promise<string> {
-    const cached = loginByBaseUrl.get(baseUrl);
-    if (cached) return cached;
-
     const result = await options.runCommand(["login", "list", "-o", "json"], {
       cwd: process.cwd(),
     });
@@ -404,7 +427,6 @@ export function createGiteaChangeRequestSource(
     if (!loginName) {
       throw options.createAuthError(`No tea login configured for ${baseUrl}`);
     }
-    loginByBaseUrl.set(baseUrl, loginName);
     return loginName;
   }
 
@@ -437,19 +459,13 @@ export function createGiteaChangeRequestSource(
     return parsed.data;
   }
 
-  function bindTeaApi(context: PerHostReadContext, baseUrl: string, loginName: string): TeaApiGet {
+  function bindTeaApi(context: PerHostReadContext, loginName: string): TeaApiGet {
     return async (endpoint, schema) => {
       if (!context.isObserved()) throw new Error("Change request observation ended");
       context.assertHostAvailable();
       const args = ["api", "--login", loginName, "-i", endpoint];
       const cwd = process.cwd();
-      let result: { stdout: string; stderr: string };
-      try {
-        result = await options.runCommand(args, { cwd });
-      } catch (error) {
-        if (options.isAuthError(error)) loginByBaseUrl.delete(baseUrl);
-        throw error;
-      }
+      const result = await options.runCommand(args, { cwd });
       const parsed = parseTeaHttpStreams(result.stdout, result.stderr);
       const nowMs = now();
 
@@ -472,7 +488,6 @@ export function createGiteaChangeRequestSource(
         throw new ChangeRequestRateLimitError({ host: context.host, resetAtMs });
       }
       if (parsed.status === 401) {
-        loginByBaseUrl.delete(baseUrl);
         throw options.createAuthError(parsed.body || "401 Unauthorized");
       }
       if (parsed.status < 200 || parsed.status >= 300) {
@@ -532,6 +547,7 @@ export function createGiteaChangeRequestSource(
     isObserved(): boolean;
   }): Promise<{ statuses: GiteaCommitStatus[]; pagesRead: number }> {
     const statuses: GiteaCommitStatus[] = [];
+    const seenIds = new Set<number>();
     let page = 1;
     let pagesRead = 0;
 
@@ -544,7 +560,13 @@ export function createGiteaChangeRequestSource(
       pagesRead += 1;
       const pageStatuses = response.data.statuses;
       if (pageStatuses.length === 0) break;
-      statuses.push(...pageStatuses);
+      for (const status of pageStatuses) {
+        if (seenIds.has(status.id)) {
+          throw new Error("Gitea commit status pages overlap. Retry the poll.");
+        }
+        seenIds.add(status.id);
+        statuses.push(status);
+      }
 
       // Gitea sets body `total_count` to the current page length; the full total
       // lives only in the `X-Total-Count` response header.
@@ -598,6 +620,50 @@ export function createGiteaChangeRequestSource(
     return { items, pagesRead };
   }
 
+  async function readActionJobs(params: {
+    get: TeaApiGet;
+    origin: string;
+    repoPrefix: string;
+    tasks: GiteaActionTask[];
+    statuses: GiteaCommitStatus[];
+  }): Promise<Map<string, GiteaActionJob[]>> {
+    // Commit statuses identify a job URL. Tasks identify a run, so only a job
+    // list can establish coverage when both sources report the same run.
+    const statusRuns = new Set<string>();
+    for (const status of params.statuses) {
+      const address = nativeActionUrl(status.target_url, params.origin);
+      if (address?.jobUrl) statusRuns.add(address.run);
+    }
+    const runs = new Map<string, string>();
+    for (const task of params.tasks) {
+      const address = nativeActionUrl(task.url, params.origin);
+      if (address && statusRuns.has(address.run)) runs.set(address.run, address.runId);
+    }
+    const jobsByRun = new Map<string, GiteaActionJob[]>();
+    for (const [run, runId] of [...runs].slice(0, GITEA_ACTION_RUN_LOOKUP_LIMIT)) {
+      const endpoint = `${params.repoPrefix}/actions/runs/${runId}/jobs`;
+      const jobs: GiteaActionJob[] = [];
+      for (let page = 1; page <= GITEA_ACTION_MAX_PAGES; page += 1) {
+        try {
+          const { data } = await params.get(
+            `${endpoint}?limit=${GITEA_PAGE_SIZE}&page=${page}`,
+            giteaActionJobsPageSchema,
+          );
+          if (data.jobs.length === 0) break;
+          jobs.push(...data.jobs);
+          if (jobs.length >= data.total_count) {
+            jobsByRun.set(run, jobs);
+            break;
+          }
+        } catch (error) {
+          if (page === 1 && isOptionalEndpointStatus(error)) break;
+          throw error;
+        }
+      }
+    }
+    return jobsByRun;
+  }
+
   async function readChecks(params: {
     get: TeaApiGet;
     origin: string;
@@ -619,14 +685,19 @@ export function createGiteaChangeRequestSource(
     );
     const latestTasks = latestGiteaActionTasksByWorkflow(matchingTasks);
 
-    if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1) {
+    const jobsByRun = await readActionJobs({
+      ...params,
+      tasks: latestTasks,
+      statuses: statusResult.statuses,
+    });
+    if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1 || jobsByRun.size > 0) {
       const { data: recheck } = await params.get(params.prEndpoint, giteaWatchPrSchema);
       if (recheck.head.sha !== params.headSha) {
         throw new Error("The pull request head changed during pagination.");
       }
     }
 
-    return combineWatchChecks(statusResult.statuses, latestTasks, params.origin);
+    return combineWatchChecks(statusResult.statuses, latestTasks, jobsByRun, params.origin);
   }
 
   async function readActivity(params: {
@@ -732,9 +803,10 @@ export function createGiteaChangeRequestSource(
   }
 
   async function readPullRequest(context: PerHostReadContext): Promise<ChangeRequestSnapshot> {
-    const { baseUrl, owner, repo, number } = parseGiteaPullRequestUrl(context.url);
+    const identity = parseGiteaPullRequestUrl(context.url);
+    const { baseUrl, owner, repo, number } = identity;
     const loginName = await resolveLogin(baseUrl);
-    const get = bindTeaApi(context, baseUrl, loginName);
+    const get = bindTeaApi(context, loginName);
     const repoPrefix = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const prEndpoint = `${repoPrefix}/pulls/${number}`;
 
@@ -743,6 +815,16 @@ export function createGiteaChangeRequestSource(
       throw new Error(`Gitea pull request #${number} did not include a head commit SHA.`);
     }
     const prWebUrl = pr.html_url || context.url;
+    const address = parseGiteaPullRequestUrl(prWebUrl);
+    if (
+      address.baseUrl !== baseUrl ||
+      address.owner.toLowerCase() !== owner.toLowerCase() ||
+      address.repo.toLowerCase() !== repo.toLowerCase() ||
+      address.number !== number ||
+      pr.number !== number
+    ) {
+      throw new Error("Tea returned a pull request that does not match the watch URL.");
+    }
 
     const checks = await readChecks({
       get,
@@ -792,7 +874,6 @@ export function createGiteaChangeRequestSource(
     },
     dispose() {
       cachedReviewCommentsByUrl.clear();
-      loginByBaseUrl.clear();
       poller.dispose();
     },
   };
