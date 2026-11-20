@@ -2452,3 +2452,559 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
     await connection.close();
   }
 });
+
+describe("deferTurnOnRunningTools", () => {
+  it("keeps the turn open across end_turn until a running tool completes and the reply settles", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "cmd-1",
+            name: "run_command",
+            title: "Run background job",
+            status: "in_progress",
+            rawInput: { CommandLine: "sleep 10" },
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Started in background."),
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: { sessionUpdate: "usage_update", used: 100, size: 1000 },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-turn",
+      label: "Deferred Turn",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 30, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "turn-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "cmd-1" &&
+          event.item.status === "running",
+      );
+      // Give end_turn time to drain; the turn must remain open while cmd-1 is in_progress.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:turn-1" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Tool completes, followed by a usage_update before any assistant text: must NOT settle yet.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cmd-1",
+          status: "completed",
+          rawOutput: { stdout: "DONE" },
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 150, size: 1000 },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:turn-1" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Model emits follow-up reply and usage_update: turn settles after settleDelayMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Background job finished: DONE."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:turn-1" &&
+          event.state === "completed",
+      );
+      expect(
+        events.filter((event) => event.type === "session.turn").map((event) => event.state),
+      ).toEqual(["started", "completed"]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("does not defer when keepsTurnOpen excludes the running tool", async () => {
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "daemon-1",
+            name: "run_command",
+            title: "Start dev server",
+            status: "in_progress",
+            rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-daemon",
+      label: "Deferred Daemon",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 500,
+          keepsTurnOpen(toolCall) {
+            const input = toolCall.input;
+            return !(
+              typeof input === "object" &&
+              input !== null &&
+              !Array.isArray(input) &&
+              input.IsDaemon === true
+            );
+          },
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "daemon-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start server" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:daemon-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("settles via quietLimitMs when a background tool finishes with no follow-up reply", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "silent-1",
+            name: "run_command",
+            title: "Silent job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-quiet",
+      label: "Deferred Quiet",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 20, quietLimitMs: 50 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "quiet-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run silent" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "silent-1",
+      );
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "silent-1", status: "completed" },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:quiet-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("preserves running tools across a follow-up prompt without sending session/cancel", async () => {
+    let promptCount = 0;
+    let cancelCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleMessage(_instance, message) {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-1",
+              name: "run_command",
+              title: "Long job",
+              status: "in_progress",
+            },
+          });
+        } else {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: textChunk("ACK"),
+          });
+        }
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-followup",
+      label: "Deferred Followup",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "turn-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start long job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-1",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      // Send a follow-up prompt while bg-1 is still running.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "turn-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "ping" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:turn-1" &&
+          event.state === "completed",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text === "ACK",
+      );
+      // No session/cancel was sent, and turn-2 stays deferred while bg-1 is still running.
+      expect(cancelCount).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:turn-2" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      // Now bg-1 finishes and the agent replies.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-1", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Long job done."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 220, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:turn-2" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("cancels a deferred turn on interrupt and ignores trailing cancellation tool failures", async () => {
+    let cancelCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleMessage(_instance, message) {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "cancel-me",
+            name: "run_command",
+            title: "Cancelable job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-cancel",
+      label: "Deferred Cancel",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "cancel-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "cancel-me",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-1",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:cancel-turn" &&
+          event.state === "canceled",
+      );
+      expect(cancelCount).toBe(1);
+
+      // Trailing failure echo from the canceled tool must not overwrite its canceled state.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cancel-me",
+          status: "failed",
+          rawOutput: { error: "cancelled" },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const toolEvents = events.filter(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "cancel-me",
+      );
+      expect(toolEvents.at(-1)).toMatchObject({
+        type: "timeline.item",
+        item: { id: "cancel-me", status: "canceled" },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("fails a deferred turn cleanly when the transport closes unexpectedly", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "crash-1",
+            name: "run_command",
+            title: "Crashing job",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-crash",
+      label: "Deferred Crash",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "crash-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run job" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "crash-1",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      instances[1].closeFromAgent();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:crash-turn" &&
+          event.state === "failed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+});

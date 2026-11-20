@@ -366,6 +366,27 @@ interface PendingPermission {
   resolve(response: RequestPermissionResponse): void;
 }
 
+type DeferredTurnOutcome =
+  | { type: "complete"; terminalizeTools: boolean }
+  | { type: "cancel" }
+  | { type: "fail"; error: { message: string } };
+
+interface DeferredTurnState {
+  replyOpen: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  resolve(outcome: DeferredTurnOutcome): void;
+}
+
+interface ActivePrompt {
+  turnId: string;
+  settled: Promise<void>;
+  cancelling: boolean;
+  deferred: DeferredTurnState | null;
+}
+
+const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
+const DEFAULT_DEFERRED_QUIET_LIMIT_MS = 120_000;
+
 class AcpRuntime {
   readonly connection: ClientSideConnection;
   agentCapabilities: AgentCapabilities = {};
@@ -374,6 +395,8 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallSnapshot>();
+  private readonly liveOpenToolIds = new Set<string>();
+  private readonly canceledToolCallIds = new Set<string>();
   // Running tool rows published by transformers; the turn's terminal closes any left open.
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
@@ -407,8 +430,7 @@ class AcpRuntime {
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
   private autoAccept = false;
-  private activePrompt: { turnId: string; settled: Promise<void>; cancelling: boolean } | null =
-    null;
+  private activePrompt: ActivePrompt | null = null;
   private lastUsage: ProviderUsage = {};
 
   static async start(options: StartRuntimeOptions): Promise<AcpRuntime> {
@@ -484,23 +506,25 @@ class AcpRuntime {
     );
     if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
     child?.on("error", (error) => {
+      const message = describeError(error);
       this.processFailed = true;
-      this.settlePendingWork();
+      this.settlePendingWork(message);
       if (this.closing || !this.nativeSessionId) return;
       this.emit({
         type: "session.runtime_failed",
         sessionId: this.options.boundarySessionId,
-        error: { message: describeError(error) },
+        error: { message },
       });
     });
     child?.once("close", (code, signal) => {
       if (this.closing || this.processFailed || !this.nativeSessionId) return;
+      const message = `ACP process exited (${signal ?? code ?? "unknown"})`;
       this.processFailed = true;
-      this.settlePendingWork();
+      this.settlePendingWork(message);
       this.emit({
         type: "session.runtime_failed",
         sessionId: this.options.boundarySessionId,
-        error: { message: `ACP process exited (${signal ?? code ?? "unknown"})` },
+        error: { message },
       });
     });
   }
@@ -611,11 +635,18 @@ class AcpRuntime {
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
     const active = this.activePrompt;
     if (active) {
-      await this.interrupt();
+      if (active.deferred) {
+        // Wire session/prompt already resolved; finish the deferred turn without sending
+        // session/cancel so running background tools stay alive into the follow-up turn.
+        this.finishDeferredTurn(active, { type: "complete", terminalizeTools: false });
+      } else {
+        await this.interrupt();
+      }
       await active.settled;
     }
     const prompt = toAcpPrompt(input.prompt);
     this.replayWindow = null;
+    this.canceledToolCallIds.clear();
     const turnId = `acp:${input.prompt.clientMessageId}`;
     this.fallbackChunkIds.clear();
     this.emit({
@@ -643,6 +674,12 @@ class AcpRuntime {
       turnId,
       state: "started",
     });
+    const activePrompt: ActivePrompt = {
+      turnId,
+      settled: Promise.resolve(),
+      cancelling: false,
+      deferred: null,
+    };
     // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
     // while earlier session updates are still queued. Apply them before the turn ends.
     const settled = this.call(
@@ -665,33 +702,21 @@ class AcpRuntime {
           });
         }
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
-        this.fallbackChunkIds.clear();
-        this.terminalizeTransientItems(state);
-        this.finishTurnPermissions(turnId);
-        this.emit({
-          type: "session.turn",
-          sessionId: this.options.boundarySessionId,
-          turnId,
-          state,
-        });
+        if (state === "completed" && this.shouldDeferTurn(activePrompt)) {
+          await this.settleDeferredPrompt(activePrompt);
+          return undefined;
+        }
+        this.finishPromptTurn(turnId, state);
         return undefined;
       },
       async (error): Promise<void> => {
         await this.drainNotifications();
-        this.fallbackChunkIds.clear();
-        this.terminalizeTransientItems("failed");
-        this.finishTurnPermissions(turnId);
-        this.emit({
-          type: "session.turn",
-          sessionId: this.options.boundarySessionId,
-          turnId,
-          state: "failed",
-          error: { message: describeError(error) },
-        });
+        this.finishPromptTurn(turnId, "failed", { message: describeError(error) });
         return undefined;
       },
     );
-    this.activePrompt = { turnId, settled, cancelling: false };
+    activePrompt.settled = settled;
+    this.activePrompt = activePrompt;
     void settled.finally(() => {
       if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
     });
@@ -704,7 +729,10 @@ class AcpRuntime {
       await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
-      if (active) this.finishTurnPermissions(active.turnId);
+      if (active) {
+        this.finishTurnPermissions(active.turnId);
+        if (active.deferred) this.finishDeferredTurn(active, { type: "cancel" });
+      }
     }
   }
 
@@ -758,6 +786,7 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       permissionId,
     });
+    if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
   }
 
   async configure(
@@ -1066,6 +1095,7 @@ class AcpRuntime {
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     return new Promise((resolve) => {
       this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
       this.emit({
         type: "session.permission",
         sessionId: this.options.boundarySessionId,
@@ -1144,6 +1174,12 @@ class AcpRuntime {
             : {}),
         },
       });
+      if (this.activePrompt?.deferred) {
+        if (update.sessionUpdate === "agent_message_chunk") {
+          this.activePrompt.deferred.replyOpen = true;
+        }
+        this.scheduleDeferredSettle("quiet");
+      }
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
@@ -1253,6 +1289,7 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
+      if (this.activePrompt?.deferred?.replyOpen) this.scheduleDeferredSettle("reply");
       return;
     }
     if (update.sessionUpdate === "compaction_update") {
@@ -1267,12 +1304,20 @@ class AcpRuntime {
           status: update.status === "completed" ? "completed" : "loading",
         },
       });
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle("quiet");
     }
   }
 
-  private terminalizeTransientItems(state: "completed" | "failed" | "canceled"): void {
+  private terminalizeTransientItems(
+    state: "completed" | "failed" | "canceled",
+    options?: { preserveQualifyingOpenTools?: boolean },
+  ): void {
+    const preserve = options?.preserveQualifyingOpenTools === true;
     for (const [id, snapshot] of this.toolCalls) {
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
+      if (preserve && this.liveOpenToolIds.has(id) && this.toolKeepsTurnOpen(snapshot)) continue;
+      this.liveOpenToolIds.delete(id);
+      if (state === "canceled") this.canceledToolCallIds.add(id);
       const completed: AcpToolCallSnapshot = {
         ...snapshot,
         status: state === "completed" ? "completed" : "failed",
@@ -1302,18 +1347,42 @@ class AcpRuntime {
     this.pendingCompactions.clear();
   }
 
-  private reduceToolCall(update: ToolCall | ToolCallUpdate): void {
+  private reduceToolCall(
+    update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
+  ): void {
+    if (
+      update.sessionUpdate === "tool_call_update" &&
+      this.canceledToolCallIds.has(update.toolCallId) &&
+      (update.status === "failed" || update.status === "completed")
+    ) {
+      this.canceledToolCallIds.delete(update.toolCallId);
+      return;
+    }
+    if (update.sessionUpdate === "tool_call") {
+      this.canceledToolCallIds.delete(update.toolCallId);
+    }
     const current = this.toolCalls.get(update.toolCallId);
     let snapshot = mergeToolCallSnapshot(update, current);
     const context = { sessionId: this.options.boundarySessionId };
     for (const transformer of this.transformers)
       snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
     this.toolCalls.set(snapshot.id, snapshot);
+    const isOpen = snapshot.status === "pending" || snapshot.status === "in_progress";
+    if (this.replayWindow === null) {
+      if (isOpen) this.liveOpenToolIds.add(snapshot.id);
+      else this.liveOpenToolIds.delete(snapshot.id);
+    }
     this.emit({
       type: "timeline.item",
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
     });
+    if (this.activePrompt?.deferred) {
+      if (isOpen && this.toolKeepsTurnOpen(snapshot)) {
+        this.activePrompt.deferred.replyOpen = false;
+      }
+      this.scheduleDeferredSettle("quiet");
+    }
   }
 
   private vendorNotification(method: string, params: unknown): void {
@@ -1376,23 +1445,134 @@ class AcpRuntime {
 
   private handleUnexpectedTransportClose(): void {
     if (this.closing || this.processFailed) return;
+    const message = "ACP transport closed unexpectedly";
     this.processFailed = true;
-    this.settlePendingWork();
+    this.settlePendingWork(message);
     if (!this.nativeSessionId) return;
     this.emit({
       type: "session.runtime_failed",
       sessionId: this.options.boundarySessionId,
-      error: { message: "ACP transport closed unexpectedly" },
+      error: { message },
     });
   }
 
-  private settlePendingWork(): void {
+  private settlePendingWork(failureMessage?: string): void {
     for (const permission of this.permissions.values()) {
       permission.resolve({ outcome: { outcome: "cancelled" } });
     }
     this.permissions.clear();
+    if (this.activePrompt?.deferred) {
+      this.finishDeferredTurn(
+        this.activePrompt,
+        failureMessage ? { type: "fail", error: { message: failureMessage } } : { type: "cancel" },
+      );
+    }
     this.commandWaiter?.();
     this.commandWaiter = null;
+  }
+
+  private finishPromptTurn(
+    turnId: string,
+    state: "completed" | "failed" | "canceled",
+    error?: { message: string },
+    options?: { preserveQualifyingOpenTools?: boolean },
+  ): void {
+    this.fallbackChunkIds.clear();
+    this.terminalizeTransientItems(state, options);
+    this.finishTurnPermissions(turnId);
+    if (state === "failed") {
+      this.emit({
+        type: "session.turn",
+        sessionId: this.options.boundarySessionId,
+        turnId,
+        state,
+        error: error ?? { message: "ACP turn failed" },
+      });
+      return;
+    }
+    this.emit({
+      type: "session.turn",
+      sessionId: this.options.boundarySessionId,
+      turnId,
+      state,
+    });
+  }
+
+  private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
+    this.fallbackChunkIds.clear();
+    const outcome = await new Promise<DeferredTurnOutcome>((resolve) => {
+      active.deferred = { replyOpen: false, timer: null, resolve };
+    });
+    if (this.closing) return;
+    if (outcome.type === "fail") {
+      this.finishPromptTurn(active.turnId, "failed", outcome.error);
+      return;
+    }
+    if (outcome.type === "complete" && outcome.terminalizeTools) {
+      await this.drainNotifications();
+      if (this.closing) return;
+    }
+    this.finishPromptTurn(
+      active.turnId,
+      outcome.type === "cancel" ? "canceled" : "completed",
+      undefined,
+      {
+        preserveQualifyingOpenTools: outcome.type === "complete" && !outcome.terminalizeTools,
+      },
+    );
+  }
+
+  private toolKeepsTurnOpen(snapshot: AcpToolCallSnapshot): boolean {
+    const defer = this.options.options.acpOptions?.deferTurnOnRunningTools;
+    if (!defer) return false;
+    return defer.keepsTurnOpen ? defer.keepsTurnOpen(snapshot) : true;
+  }
+
+  private hasQualifyingOpenTools(): boolean {
+    for (const id of this.liveOpenToolIds) {
+      const snapshot = this.toolCalls.get(id);
+      if (snapshot && this.toolKeepsTurnOpen(snapshot)) return true;
+    }
+    return false;
+  }
+
+  private hasDeferredBlockers(): boolean {
+    return (
+      this.hasQualifyingOpenTools() || this.permissions.size > 0 || this.pendingCompactions.size > 0
+    );
+  }
+
+  private shouldDeferTurn(active: ActivePrompt): boolean {
+    if (!this.options.options.acpOptions?.deferTurnOnRunningTools) return false;
+    if (active.cancelling || this.closing || this.processFailed) return false;
+    return this.hasQualifyingOpenTools();
+  }
+
+  private finishDeferredTurn(active: ActivePrompt, outcome: DeferredTurnOutcome): void {
+    const deferred = active.deferred;
+    if (!deferred) return;
+    if (deferred.timer) clearTimeout(deferred.timer);
+    active.deferred = null;
+    deferred.resolve(outcome);
+  }
+
+  private scheduleDeferredSettle(mode: "quiet" | "reply"): void {
+    const active = this.activePrompt;
+    const deferred = active?.deferred;
+    const config = this.options.options.acpOptions?.deferTurnOnRunningTools;
+    if (!active || !deferred || !config || active.cancelling) return;
+    if (deferred.timer) {
+      clearTimeout(deferred.timer);
+      deferred.timer = null;
+    }
+    if (this.hasDeferredBlockers()) return;
+    const delayMs =
+      mode === "reply"
+        ? (config.settleDelayMs ?? DEFAULT_DEFERRED_SETTLE_DELAY_MS)
+        : (config.quietLimitMs ?? DEFAULT_DEFERRED_QUIET_LIMIT_MS);
+    deferred.timer = setTimeout(() => {
+      this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
+    }, delayMs);
   }
 
   private waitForInitialCommands(): Promise<void> {

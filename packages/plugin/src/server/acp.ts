@@ -53,6 +53,18 @@ export interface AcpOptions {
   initialCommandsTimeoutMs?: number;
   /** Allow delayed session/load updates before publishing the session as ready. */
   loadReplayQuietPeriodMs?: number;
+  /**
+   * Keep a turn open after `end_turn` while qualifying tool calls are still running,
+   * settling once those tools finish and the agent finishes its follow-up reply.
+   */
+  deferTurnOnRunningTools?: {
+    /** Delay after `usage_update` closes a follow-up reply before settling. Defaults to 500ms. */
+    settleDelayMs?: number;
+    /** Quiet limit after qualifying tools finish if no reply settles via `usage_update`. Defaults to 120_000ms. */
+    quietLimitMs?: number;
+    /** Predicate deciding whether an open tool call keeps the turn open. Defaults to all running tools. */
+    keepsTurnOpen?: (toolCall: AcpToolCallSnapshot) => boolean;
+  };
   /** An unattended mode that approves ACP allow-once requests in the specified native mode. */
   autoAcceptMode?: {
     mode: Omit<ProviderMode, "isUnattended">;
