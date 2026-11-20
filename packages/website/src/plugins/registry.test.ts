@@ -19,7 +19,12 @@ import {
   updatedAgo,
 } from "./registry";
 import { readInstallCounts, recordInstall } from "./installs";
-import { handlePluginRegistryRequest, loadRegistryIndex, loadRegistryPlugin } from "./published";
+import {
+  handlePluginRegistryRequest,
+  loadPluginCount,
+  loadRegistryIndex,
+  loadRegistryPlugin,
+} from "./published";
 const plugin: Plugin = {
   id: "acme/example",
   name: "Example",
@@ -371,6 +376,28 @@ describe("plugin registry", () => {
     );
     expect(at("https://gitlab.com/acme/example")).toBeUndefined();
     expect(at("javascript:alert(1)")).toBeUndefined();
+  });
+
+  it("reads the listed plugin count from the registry index and falls back to null on errors", async () => {
+    const context = { cache: seededIndex(), waitUntil: () => undefined };
+    expect(await loadPluginCount("https://registry.example.test", context)).toBe(1);
+
+    const server = createServer((_request, response) => {
+      response.statusCode = 503;
+      response.end("unavailable");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected numeric port");
+    try {
+      const count = await loadPluginCount(`http://127.0.0.1:${address.port}`, {
+        cache: memoryKv(),
+        waitUntil: () => undefined,
+      });
+      expect(count).toBeNull();
+    } finally {
+      server.close();
+    }
   });
 });
 
