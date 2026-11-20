@@ -192,6 +192,28 @@ export declare const Loading: ComponentType;
 /** Render a local document URL in an isolated frame. */
 export declare const DocumentFrame: ComponentType<{ url: string; testID?: string }>;
 
+export interface ScriptFrameProps {
+  /** Trusted, self-contained JavaScript to run in a new page. */
+  script: string;
+  /** Text the page sent with `window.paseoFrame.post(text)`. */
+  onMessage(text: string): void;
+  /** The script threw, or the page could not start. */
+  onError?(message: string): void;
+  /** What a screen reader calls the frame. */
+  title: string;
+  testID?: string;
+}
+export interface ScriptFrameHandle {
+  /** Sends text to `window.paseoFrame.onMessage`. Posts made before the page is ready wait, in order. */
+  post(text: string): void;
+}
+/**
+ * Runs a trusted plugin script in its own page and exchanges string messages with the plugin.
+ */
+export declare const ScriptFrame: ForwardRefExoticComponent<
+  ScriptFrameProps & RefAttributes<ScriptFrameHandle>
+>;
+
 export interface MarkdownProps {
   children: string;
 }

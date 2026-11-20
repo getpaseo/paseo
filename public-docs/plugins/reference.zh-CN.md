@@ -1600,6 +1600,14 @@ hook 的重新读取会采用磁盘上的版本，因此下一次写入会覆盖
 
 内联 PDF 渲染需要 Paseo 0.13.0 或更高版本的 daemon；更早的 daemon 会把 PDF 报告为 `application/octet-stream`。
 
+### ScriptFrame {#scriptframe}
+
+从 `@getpaseo/plugin/client/ui` 导入 `ScriptFrame`，在插件界面中运行自包含的浏览器视图，例如 WebGL 场景。通过 `script` 提供受信任的 JavaScript 字符串，通过 `title` 提供无障碍名称，并用 `onMessage(text)` 接收消息。可选属性为 `testID` 和 `onError(message)`。更改脚本会加载新页面。
+
+插件通过 `ref.current.post(text)` 发送字符串。脚本运行完毕前，消息会按顺序排队。在页面初始化时设置 `window.paseoFrame.onMessage = (text) => { … }`，用 `window.paseoFrame.post(text)` 回复。结构化数据可用 JSON。对于旧版客户端，使用 UI 模块的命名空间导入 `ui` 检查 `"ScriptFrame" in ui`。
+
+Android 和 iOS 使用具有独立来源的 WebView，禁用文件访问，并通过导航回调限制初始文档之后的导航。Web 和桌面端使用不透明来源的沙箱 iframe。需要持久保存的状态应由插件管理。初始页面的内容策略阻止 fetch 和外部子资源，允许内联脚本、样式和本地媒体。仅运行受信任的代码；该策略不提供任意网页内容的隔离，也不涵盖 WebRTC。静态文档预览使用 `DocumentFrame`。
+
 ### 版本要求与示例 {#version-requirement-and-examples}
 
 文件面板、`DocumentFrame` 和 `Loading` 需要 Paseo 0.13.0 或更高版本。请在 `paseo-plugin.json` 中声明 `"requirements": { "paseo": ">=0.13.0" }`。daemon 和应用都会检查[版本要求](#requirements)；更早的应用会在执行客户端包之前跳过它。用 `writeBytes` 写入需要 Paseo 0.13.0 或更高版本的 daemon。

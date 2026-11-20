@@ -1939,6 +1939,14 @@ navigation disabled. Where the platform cannot show the document inline, such as
 Inline PDF rendering needs a daemon from Paseo 0.13.0 or later; older daemons report PDFs as
 `application/octet-stream`.
 
+### ScriptFrame
+
+Use `ScriptFrame` from `@getpaseo/plugin/client/ui` to mount a self-contained browser view, such as a WebGL scene, in a plugin screen or panel. Supply a trusted JavaScript string in `script`, an accessible `title` and `onMessage(text)`. Optional props are `testID` and `onError(message)`. Changing the script starts a new page.
+
+The plugin sends strings with `ref.current.post(text)`. The frame queues them until the script has run. Inside the page, set `window.paseoFrame.onMessage = (text) => { … }` during initialization and send replies with `window.paseoFrame.post(text)`. Use JSON for structured data. The plugin can check for the component on older clients with `"ScriptFrame" in ui`, where `ui` is a namespace import of the UI kit.
+
+Android and iOS use a WebView with a per-frame origin, file access disabled and a navigation handler for the initial document. Web and desktop use a sandboxed iframe with an opaque origin. Keep durable state in the plugin. The initial page’s content policy blocks fetches and external subresources and allows inline scripts, styles and local media. Use this API only for code you trust. The policy does not isolate arbitrary web content or cover WebRTC. Use `DocumentFrame` for passive file previews.
+
 ### Version requirement and examples
 
 File panels, `DocumentFrame`, and `Loading` require Paseo 0.13.0 or later. Declare

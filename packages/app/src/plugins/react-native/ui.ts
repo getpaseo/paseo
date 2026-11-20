@@ -14,6 +14,7 @@ export { SidebarRow, SidebarSeparator } from "@/plugins/sidebar-items/kit";
 export { WorkspaceRowBadge } from "@/plugins/workspace-row-badge-items/kit";
 
 export { DocumentFrame } from "@/file-panels/document-frame";
+export { ScriptFrame } from "./script-frame";
 
 export { FilePanelLoading as Loading } from "@/file-panels/loading";
 
