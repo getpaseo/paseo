@@ -2562,6 +2562,101 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
 });
 
 describe("ACP out-of-turn background activity", () => {
+  it("keeps a prompt sent during idle Stop separate from the stopped reply", async () => {
+    const stopStarted = Promise.withResolvers<void>();
+    const finishStop = Promise.withResolvers<void>();
+    const { connector, instances } = connectorHarness({
+      promptUpdates: (text) =>
+        text === "Start"
+          ? [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd",
+                kind: "execute",
+                title: "Run a command",
+                status: "in_progress",
+              },
+            ]
+          : [textChunk("NEW REPLY.")],
+      async afterMessage(_instance, message) {
+        if (!("method" in message) || message.method !== "session/cancel") return;
+        stopStarted.resolve();
+        await finishStop.promise;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "prompt-during-stop",
+      label: "Prompt during Stop",
+      connector,
+      acpOptions: { outOfTurnActivity: true },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "first",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:first" &&
+          event.state === "completed",
+      );
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "idle-stop",
+        sessionId: "session-1",
+      });
+      await stopStarted.promise;
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "second",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Follow-up" }] },
+        },
+      });
+      await nextTurn();
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("OLD REPLY. "),
+      });
+      await nextTurn();
+      finishStop.resolve();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:second" &&
+          event.state === "completed",
+      );
+      expect(
+        events.flatMap((event) =>
+          event.type === "timeline.item" && event.item.type === "assistant_message"
+            ? [event.item.text]
+            : [],
+        ),
+      ).toEqual(["NEW REPLY."]);
+    } finally {
+      finishStop.resolve();
+      await connection.close();
+    }
+  });
+
   it.each(["idle interrupt", "foreground interrupt", "disconnect"] as const)(
     "settles the command on %s",
     async (action) => {

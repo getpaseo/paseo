@@ -665,7 +665,17 @@ class AcpRuntime {
     if (active) {
       await this.interrupt();
       await active.settled;
-    } else if (this.autonomousTurn) {
+    }
+    if (this.outOfTurnActivity) {
+      // Keep admission behind any Stop already writing its cancellation.
+      await this.enqueueNotification(() => this.beginPrompt(input));
+    } else {
+      this.beginPrompt(input);
+    }
+  }
+
+  private beginPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
+    if (this.autonomousTurn) {
       // session/cancel can kill running background commands and subagents; complete the
       // out-of-turn wakeup without cancelling so a follow-up prompt leaves them alive.
       this.finishAutonomousTurn("completed");
