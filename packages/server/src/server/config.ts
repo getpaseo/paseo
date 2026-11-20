@@ -496,12 +496,20 @@ function resolveAuthConfig(
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  const credentials = (persisted.daemon?.auth?.credentials ?? []).map((credential) => ({
+    name: credential.name,
+    password: credential.password,
+    permissions: credential.permissions,
+    denyModes: credential.denyModes ?? [],
+  }));
+  if (credentials.length > 0 && !password) {
+    // Without an owner password the daemon admits every caller as owner, so a
+    // scoped credential would restrict nothing.
+    throw new Error("daemon.auth.credentials requires an owner password (daemon.auth.password)");
   }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
-    : undefined;
+  if (!password) return undefined;
+  return credentials.length > 0 ? { password, credentials } : { password };
 }
 
 function resolveWorktreesRoot(

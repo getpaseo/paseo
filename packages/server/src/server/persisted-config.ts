@@ -3,6 +3,7 @@ import { PluginRegistriesSchema } from "@getpaseo/protocol/plugin-registry";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { DAEMON_PERMISSIONS } from "@getpaseo/protocol/messages";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -78,9 +79,28 @@ const BcryptHashSchema = z.string().regex(/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/
   message: "Expected a bcrypt hash",
 });
 
+const ScopedCredentialSchema = z
+  .object({
+    name: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, { message: "Expected a credential name" }),
+    password: BcryptHashSchema,
+    permissions: z.array(z.enum(DAEMON_PERMISSIONS)),
+    denyModes: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
 const DaemonAuthSchema = z
   .object({
     password: BcryptHashSchema.optional(),
+    // Named non-owner credentials. Each authenticates as its own principal with
+    // only the listed permissions; denyModes are agent modes it may not use.
+    credentials: z
+      .array(ScopedCredentialSchema)
+      .refine((items) => new Set(items.map((item) => item.name)).size === items.length, {
+        message: "Credential names must be unique",
+      })
+      .optional(),
   })
   .strict();
 
