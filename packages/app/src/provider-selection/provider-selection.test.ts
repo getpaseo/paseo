@@ -7,6 +7,7 @@ import {
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
+  buildSelectorProvider,
   filterAndRankModelRows,
   matchesModelSearch,
   resolveEffectiveComposerModeId,
@@ -21,7 +22,7 @@ describe("combined model selector data", () => {
         snapshotEntry({ provider: "waiting", status: "loading", models: [] }),
         snapshotEntry({ provider: "codex", status: "ready", models: [codexModel] }),
       ],
-      false,
+      { isConnected: false, selectedProvider: null },
     );
     expect(providers[0].modelSelection).toEqual({
       kind: "error",
@@ -54,13 +55,16 @@ describe("combined model selector data", () => {
 
   it("builds selector providers from ready enabled snapshot entries", () => {
     expect(
-      buildSelectableProviderSelectorProviders([
-        snapshotEntry({
-          provider: "codex",
-          label: "Codex",
-          models: [codexModel],
-        }),
-      ]),
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({
+            provider: "codex",
+            label: "Codex",
+            models: [codexModel],
+          }),
+        ],
+        { selectedProvider: null },
+      ),
     ).toEqual([
       {
         id: "codex",
@@ -91,9 +95,10 @@ describe("combined model selector data", () => {
       isSelectable: false,
     };
 
-    const [provider] = buildSelectableProviderSelectorProviders([
-      snapshotEntry({ provider: "codex", models: [codexModel, compatibilityModel] }),
-    ]);
+    const [provider] = buildSelectableProviderSelectorProviders(
+      [snapshotEntry({ provider: "codex", models: [codexModel, compatibilityModel] })],
+      { selectedProvider: null },
+    );
 
     expect(provider?.modelSelection).toMatchObject({
       kind: "models",
@@ -103,13 +108,16 @@ describe("combined model selector data", () => {
 
   it("synthesizes a default model row for ready enabled providers without explicit models", () => {
     expect(
-      buildSelectableProviderSelectorProviders([
-        snapshotEntry({
-          provider: "codewhale",
-          label: "CodeWhale",
-          models: [],
-        }),
-      ]),
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({
+            provider: "codewhale",
+            label: "CodeWhale",
+            models: [],
+          }),
+        ],
+        { selectedProvider: null },
+      ),
     ).toEqual([
       {
         id: "codewhale",
@@ -134,33 +142,34 @@ describe("combined model selector data", () => {
 
   it("excludes disabled providers from selector data", () => {
     expect(
-      buildSelectableProviderSelectorProviders([
-        snapshotEntry({
-          provider: "codewhale",
-          label: "CodeWhale",
-          enabled: false,
-          models: [],
-        }),
-      ]),
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({
+            provider: "codewhale",
+            label: "CodeWhale",
+            enabled: false,
+            models: [],
+          }),
+        ],
+        { selectedProvider: null },
+      ),
     ).toEqual([]);
   });
 
   it("surfaces non-ready providers with their state-specific selection", () => {
     expect(
-      buildSelectableProviderSelectorProviders([
-        snapshotEntry({ provider: "loading-provider", status: "loading", models: [] }),
-        snapshotEntry({
-          provider: "error-provider",
-          status: "error",
-          error: "boom",
-          models: [],
-        }),
-        snapshotEntry({
-          provider: "unavailable-provider",
-          status: "unavailable",
-          models: [],
-        }),
-      ]),
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({ provider: "loading-provider", status: "loading", models: [] }),
+          snapshotEntry({
+            provider: "error-provider",
+            status: "error",
+            error: "boom",
+            models: [],
+          }),
+        ],
+        { selectedProvider: null },
+      ),
     ).toEqual([
       {
         id: "loading-provider",
@@ -172,12 +181,43 @@ describe("combined model selector data", () => {
         label: "error-provider",
         modelSelection: { kind: "error", message: "boom" },
       },
-      {
-        id: "unavailable-provider",
-        label: "unavailable-provider",
-        modelSelection: { kind: "error", message: "Unavailable" },
-      },
     ]);
+  });
+
+  it("leaves out enabled providers that are not installed", () => {
+    expect(
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({ provider: "codex", label: "Codex" }),
+          snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+        ],
+        { selectedProvider: null },
+      ).map((provider) => provider.id),
+    ).toEqual(["codex"]);
+  });
+
+  it("keeps a saved choice whose provider is not installed, labelled Unavailable", () => {
+    const providers = buildSelectableProviderSelectorProviders(
+      [
+        snapshotEntry({ provider: "codex", label: "Codex" }),
+        snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+      ],
+      { selectedProvider: "gemini" },
+    );
+    expect(providers.map((provider) => provider.id)).toEqual(["codex", "gemini"]);
+    expect(providers[1].modelSelection).toEqual({ kind: "error", message: "Unavailable" });
+  });
+
+  it("keeps an agent's own provider in its selector when that provider is not installed", () => {
+    expect(
+      buildSelectorProvider(
+        snapshotEntry({ provider: "gemini", status: "unavailable", models: [] }),
+      ),
+    ).toEqual({
+      id: "gemini",
+      label: "gemini",
+      modelSelection: { kind: "error", message: "Unavailable" },
+    });
   });
 
   it("builds selector providers from an already-curated provider list", () => {
@@ -278,18 +318,21 @@ describe("combined model selector data", () => {
   });
 
   it("resolves selected labels from explicit provider model-selection state", () => {
-    const providers = buildSelectableProviderSelectorProviders([
-      snapshotEntry({
-        provider: "codex",
-        label: "Codex",
-        models: [codexModel],
-      }),
-      snapshotEntry({
-        provider: "codewhale",
-        label: "CodeWhale",
-        models: [],
-      }),
-    ]);
+    const providers = buildSelectableProviderSelectorProviders(
+      [
+        snapshotEntry({
+          provider: "codex",
+          label: "Codex",
+          models: [codexModel],
+        }),
+        snapshotEntry({
+          provider: "codewhale",
+          label: "CodeWhale",
+          models: [],
+        }),
+      ],
+      { selectedProvider: null },
+    );
 
     expect(
       resolveSelectedModelLabel({
@@ -329,13 +372,16 @@ describe("combined model selector data", () => {
   });
 
   it("keeps a stored selected model visible when current snapshot rows no longer offer it", () => {
-    const providers = buildSelectableProviderSelectorProviders([
-      snapshotEntry({
-        provider: "codex",
-        label: "Codex",
-        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
-      }),
-    ]);
+    const providers = buildSelectableProviderSelectorProviders(
+      [
+        snapshotEntry({
+          provider: "codex",
+          label: "Codex",
+          models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4", isDefault: true }],
+        }),
+      ],
+      { selectedProvider: null },
+    );
 
     expect(
       resolveSelectedModelLabel({
@@ -348,15 +394,18 @@ describe("combined model selector data", () => {
   });
 
   it("keeps provider snapshot errors visible in the selected trigger label", () => {
-    const providers = buildSelectableProviderSelectorProviders([
-      snapshotEntry({
-        provider: "opencode",
-        label: "OpenCode",
-        status: "error",
-        error: "OpenCode app.agents timed out after 10s",
-        models: [],
-      }),
-    ]);
+    const providers = buildSelectableProviderSelectorProviders(
+      [
+        snapshotEntry({
+          provider: "opencode",
+          label: "OpenCode",
+          status: "error",
+          error: "OpenCode app.agents timed out after 10s",
+          models: [],
+        }),
+      ],
+      { selectedProvider: null },
+    );
 
     expect(
       resolveSelectedModelLabel({
@@ -410,21 +459,27 @@ describe("combined model selector data", () => {
   it("uses the active app language for utility labels", async () => {
     await i18n.changeLanguage("zh-CN");
     try {
-      const providers = buildSelectableProviderSelectorProviders([
-        snapshotEntry({
-          provider: "deepseek-tui",
-          label: "DeepSeek TUI",
-          models: [],
-        }),
-        snapshotEntry({
-          provider: "unavailable-provider",
-          status: "unavailable",
-          models: [],
-        }),
-      ]);
+      const providers = buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({
+            provider: "deepseek-tui",
+            label: "DeepSeek TUI",
+            models: [],
+          }),
+        ],
+        { selectedProvider: null },
+      );
 
       expect(getAllModelLabels(providers)).toContain("默认");
-      expect(providers[1]?.modelSelection).toEqual({
+      expect(
+        buildSelectorProvider(
+          snapshotEntry({
+            provider: "unavailable-provider",
+            status: "unavailable",
+            models: [],
+          }),
+        ).modelSelection,
+      ).toEqual({
         kind: "error",
         message: "不可用",
       });

@@ -50,7 +50,10 @@ export class CheckoutDiffManager {
     workspaceGitService: Pick<WorkspaceGitService, "requestWorkingTreeWatch">;
     workspaceRuntimeStore: WorkspaceRuntimeStore;
   }) {
-    this.streams = new DiffSubscriptions(options.workspaceGitService);
+    this.streams = new DiffSubscriptions(
+      options.workspaceGitService,
+      options.logger.child({ module: "checkout-diff" }),
+    );
     this.paseoHome = options.paseoHome;
   }
   readCommitFile(input: CommitFileRead) {
@@ -178,7 +181,7 @@ export class CheckoutDiffManager {
       checkoutDiffTargetCount: metrics.targets,
       checkoutDiffSubscriptionCount: metrics.subscriptions,
       checkoutDiffWatcherCount: metrics.metadataObservers,
-      checkoutDiffFallbackRefreshTargetCount: 0,
+      checkoutDiffFallbackRefreshTargetCount: metrics.fallbackTargets,
     };
   }
   async dispose(): Promise<void> {

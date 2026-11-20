@@ -22,6 +22,7 @@ interface Receipt {
 }
 interface Admitted extends Message {
   sequence: number;
+  state: "queued" | "claimed" | "withdrawn";
   outOfBandDeclined: boolean;
   receipt: Receipt;
   resolve(disposition: PromptDispatchDisposition): void;
@@ -33,6 +34,8 @@ interface DispatchRequest {
   prompt: AgentPromptInput;
   activeTurnBehavior: "steer" | "interrupt";
   idleOnly: boolean;
+  /** Claim this exact prompt at provider admission. A withdrawn message invalidates the batch. */
+  admit(): boolean;
   sessionMode?: string;
   clearPendingPermissions: boolean;
   unarchive: boolean;
@@ -51,6 +54,8 @@ interface Dependencies {
 }
 export interface AgentMessageDelivery {
   enqueue(message: Message): Receipt;
+  /** Remove matching messages that the queue still owns before dispatcher handoff. */
+  withdrawPending(recipientId: string, matches: (source: AgentPromptSource) => boolean): number;
   /** Queued messages and provider dispatches still owned by this recipient. */
   hasPending(recipientId: string): boolean;
   /** Stop admission, flush pending messages, and await provider dispatch acknowledgments. */
@@ -69,10 +74,12 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     });
   const pending = new Map<string, { messages: Admitted[]; ready: boolean; cancel(): void }>();
   const dispatching = new Map<string, Promise<void>>();
-  const receipts = new Map<string, Set<Receipt>>();
+  const admitted = new Map<string, Set<Admitted>>();
   let sequence = 0;
   let closed = false;
   let closing: Promise<void> | undefined;
+
+  const isWithdrawn = (message: Admitted): boolean => message.state === "withdrawn";
 
   function requestFor(recipientId: string, messages: Admitted[]): DispatchRequest {
     const prompts = messages.map(
@@ -87,6 +94,11 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     return {
       recipientId,
       idleOnly: !closed && messages[0]!.activeTurnBehavior !== "interrupt",
+      admit() {
+        if (messages.some(isWithdrawn)) return false;
+        for (const message of messages) message.state = "claimed";
+        return true;
+      },
       messageIds: messages.map((message) => message.receipt.messageId),
       prompt,
       activeTurnBehavior: messages[0]!.activeTurnBehavior ?? "steer",
@@ -96,20 +108,47 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     };
   }
 
-  function dispatch(recipientId: string, messages: Admitted[]): void {
-    const request = requestFor(recipientId, messages);
+  function withdraw(message: Admitted): void {
+    message.state = "withdrawn";
+    message.reject(new DOMException("Agent message withdrawn", "AbortError"));
+  }
+
+  function withdrawPending(recipientId: string, matches: (message: Admitted) => boolean): number {
+    let removed = 0;
+    for (const message of admitted.get(recipientId) ?? []) {
+      if (message.state !== "queued" || !matches(message)) continue;
+      withdraw(message);
+      removed++;
+    }
+    const entry = pending.get(recipientId);
+    if (entry && removed) {
+      entry.messages = entry.messages.filter((message) => !isWithdrawn(message));
+      if (!entry.messages.length) {
+        entry.cancel();
+        pending.delete(recipientId);
+      }
+    }
+    return removed;
+  }
+
+  function dispatch(recipientId: string, batch: Admitted[]): void {
     queueDispatch(recipientId, async () => {
+      const messages = batch.filter((message) => message.state === "queued");
+      if (!messages.length) return;
+      const request = requestFor(recipientId, messages);
       try {
         for (const message of messages) message.beforeDispatch?.();
         let disposition: PromptDispatchDisposition;
         try {
           disposition = await dependencies.dispatch(request);
         } catch (error) {
-          if (!(error instanceof AgentTurnBusyError) || !closed) throw error;
+          if (!(error instanceof AgentTurnBusyError) || !closed || messages.some(isWithdrawn))
+            throw error;
           // Shutdown drains admitted messages before closing the recipients.
           disposition = await dependencies.dispatch({ ...request, idleOnly: false });
         }
         for (const message of messages) {
+          message.state = "claimed";
           try {
             message.onDispatch?.(disposition);
           } catch (error) {
@@ -119,6 +158,11 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         }
         return undefined;
       } catch (error) {
+        if (messages.some(isWithdrawn)) {
+          requeue(recipientId, messages);
+          if (closed) flush(recipientId);
+          return;
+        }
         if (error instanceof AgentTurnBusyError && !closed) {
           requeue(recipientId, messages);
           return;
@@ -142,13 +186,16 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   }
 
   function requeue(recipientId: string, messages: Admitted[]): void {
+    const queued = messages.filter((message) => !isWithdrawn(message));
+    if (!queued.length) return;
+    for (const message of queued) message.state = "queued";
     const entry = pending.get(recipientId) ?? {
       messages: [],
       ready: true,
       cancel: () => {},
     };
     entry.cancel();
-    entry.messages.push(...messages);
+    entry.messages.push(...queued);
     entry.messages.sort((a, b) => a.sequence - b.sequence);
     entry.cancel = schedule(2000, () => flush(recipientId));
     pending.set(recipientId, entry);
@@ -185,6 +232,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
     queueDispatch(recipientId, async () => {
       const waiting: Admitted[] = [];
       for (const message of messages) {
+        if (isWithdrawn(message)) continue;
         if (
           message.outOfBandDeclined ||
           message.sessionMode !== undefined ||
@@ -196,14 +244,16 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         }
         const request = requestFor(recipientId, [message]);
         try {
-          const accepted = await dependencies.tryRunOutOfBand!(request, () =>
-            message.beforeDispatch?.(),
-          );
+          const accepted = await dependencies.tryRunOutOfBand!(request, () => {
+            if (!request.admit()) throw new Error("Queued agent message was withdrawn");
+            message.beforeDispatch?.();
+          });
           if (!accepted) {
             message.outOfBandDeclined = true;
             waiting.push(message);
             continue;
           }
+          message.state = "claimed";
           try {
             message.onDispatch?.("out_of_band");
           } catch (error) {
@@ -211,6 +261,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
           }
           message.resolve("out_of_band");
         } catch (error) {
+          if (isWithdrawn(message)) continue;
           message.reject(error);
           dependencies.onError(error, request);
         }
@@ -257,6 +308,8 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
   });
 
   return {
+    withdrawPending: (recipientId, matches) =>
+      withdrawPending(recipientId, (message) => matches(message.source)),
     hasPending: (recipientId) => pending.has(recipientId) || dispatching.has(recipientId),
     enqueue(message) {
       if (closed) throw new Error("Agent message delivery is closed");
@@ -272,13 +325,22 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
         messageId: message.messageId ?? randomUUID(),
         dispatched,
       };
-      const owned = receipts.get(message.recipientId) ?? new Set<Receipt>();
-      owned.add(receipt);
-      receipts.set(message.recipientId, owned);
+      const item: Admitted = {
+        ...message,
+        receipt,
+        resolve,
+        reject,
+        sequence: sequence++,
+        state: "queued",
+        outOfBandDeclined: false,
+      };
+      const owned = admitted.get(message.recipientId) ?? new Set<Admitted>();
+      owned.add(item);
+      admitted.set(message.recipientId, owned);
       void dispatched
         .finally(() => {
-          owned.delete(receipt);
-          if (!owned.size) receipts.delete(message.recipientId);
+          owned.delete(item);
+          if (!owned.size) admitted.delete(message.recipientId);
         })
         .catch(() => undefined);
       const entry = pending.get(message.recipientId) ?? {
@@ -288,21 +350,19 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       };
       entry.cancel();
       entry.ready = false;
-      entry.messages.push({
-        ...message,
-        receipt,
-        resolve,
-        reject,
-        sequence: sequence++,
-        outOfBandDeclined: false,
-      });
+      entry.messages.push(item);
       entry.cancel = schedule(2000, () => flush(message.recipientId));
       pending.set(message.recipientId, entry);
       return receipt;
     },
     async waitForDispatch(recipientId, signal) {
       signal.throwIfAborted();
-      const admitted = Array.from(receipts.get(recipientId) ?? [], (receipt) => receipt.dispatched);
+      const waiting = Array.from(admitted.get(recipientId) ?? [], (message) =>
+        message.receipt.dispatched.catch((error) => {
+          if (message.state !== "withdrawn") throw error;
+          return undefined;
+        }),
+      );
       let unsubscribePermission: (() => void) | undefined;
       const permission = new Promise<void>((resolve) => {
         const check = () => {
@@ -320,7 +380,7 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       });
       try {
         await Promise.race([
-          Promise.all([dispatching.get(recipientId), ...admitted]),
+          Promise.all([dispatching.get(recipientId), ...waiting]),
           cancellation,
           permission,
         ]);
@@ -336,7 +396,9 @@ export function createAgentMessageDelivery(dependencies: Dependencies): AgentMes
       for (const recipientId of pending.keys()) flush(recipientId);
       // Each failure is reported and rejects its receipts; shutdown still drains other recipients.
       closing = Promise.allSettled(
-        [...receipts.values()].flatMap((owned) => [...owned].map((receipt) => receipt.dispatched)),
+        [...admitted.values()].flatMap((owned) =>
+          [...owned].map((message) => message.receipt.dispatched),
+        ),
       ).then(() => undefined);
       return closing;
     },

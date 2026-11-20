@@ -1,6 +1,10 @@
 import { phase, withPhase } from "../utils/checkout-phase.js";
 import { LRUCache } from "lru-cache";
-import { parseGitRemoteLocation, type GitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import {
+  normalizeHost,
+  parseGitRemoteLocation,
+  type GitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
 import { resolveSshHostname, type SshHostnameResolver } from "../utils/ssh-hostname.js";
 import { defaultResolveRemoteUrl } from "./forge-cli-command.js";
 import type { ForgeService } from "./forge-service.js";
@@ -25,6 +29,7 @@ export type ForgeHostProbe = (host: string) => Promise<string | null>;
 export interface CreateForgeResolverOptions {
   resolveRemoteUrl?: (cwd: string) => Promise<string | null>;
   createService?: (forge: string) => ForgeService | null;
+  matchHost?: (host: string) => string | null;
   probeForge?: ForgeHostProbe;
   resolveSshHostname?: SshHostnameResolver;
   now?: () => number;
@@ -37,12 +42,18 @@ export interface ForgeResolver {
   resolveFromRemoteUrl(remoteUrl: string | null): ForgeResolution | null;
   /** Resolve from a known origin remote URL, running the per-host probe when needed. */
   resolveFromRemoteUrlAsync(remoteUrl: string | null): Promise<ForgeResolution | null>;
+  /** Resolve a forge directly by hostname (cloud match first, then cached async probe). */
+  resolveHost(host: string): Promise<ForgeResolution | null>;
+  /** Return the shared adapter instance for a known forge id without probing the network. */
+  getService(forge: string): ForgeService | null;
   /**
    * Invalidate every cached adapter's state for a cwd. Routed through the
    * resolver so invalidation hits the same adapter instance the poller reads,
    * regardless of which forge backs the workspace.
    */
   invalidate(cwd: string): void;
+  /** Dispose all instantiated forge adapters owned by this resolver. */
+  dispose(): void;
 }
 
 // A positive probe (host IS a known forge) is cached permanently; a negative one
@@ -65,6 +76,7 @@ export function forgeForHost(host: string): string | null {
 export function createForgeResolver(options: CreateForgeResolverOptions = {}): ForgeResolver {
   const resolveRemoteUrl = options.resolveRemoteUrl ?? defaultResolveRemoteUrl;
   const create = options.createService ?? createForgeService;
+  const matchHost = options.matchHost ?? forgeForHost;
   const probeForge = options.probeForge ?? probeRegisteredForgeHost;
   const resolveSsh = options.resolveSshHostname ?? resolveSshHostname;
   const now = options.now ?? Date.now;
@@ -111,22 +123,34 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!entry) {
       return undefined;
     }
-    if (entry.expiresAt !== null && Date.now() >= entry.expiresAt) {
+    if (entry.expiresAt !== null && now() >= entry.expiresAt) {
       probedForgeByHost.delete(host);
       return undefined;
     }
     return entry.forge;
   }
 
-  function buildResolution(forge: string, host: string): ForgeResolution | null {
-    let service = services.get(forge);
+  function getService(forge: string): ForgeService | null {
+    const normalized = forge.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    let service = services.get(normalized);
     if (!service) {
-      const created = create(forge);
+      const created = create(normalized);
       if (!created) {
         return null;
       }
       service = created;
-      services.set(forge, service);
+      services.set(normalized, service);
+    }
+    return service;
+  }
+
+  function buildResolution(forge: string, host: string): ForgeResolution | null {
+    const service = getService(forge);
+    if (!service) {
+      return null;
     }
     return { forge, host, service };
   }
@@ -157,7 +181,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
         }
         probedForgeByHost.set(host, {
           forge: probed,
-          expiresAt: probed === null ? Date.now() + NEGATIVE_PROBE_TTL_MS : null,
+          expiresAt: probed === null ? now() + NEGATIVE_PROBE_TTL_MS : null,
         });
         return probed;
       } finally {
@@ -176,11 +200,27 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!host) {
       return null;
     }
-    const forge = forgeForHost(host) ?? readFreshProbe(host) ?? null;
+    const forge = matchHost(host) ?? readFreshProbe(host) ?? null;
     if (!forge) {
       return null;
     }
     return buildResolution(forge, host);
+  }
+
+  async function resolveHost(host: string): Promise<ForgeResolution | null> {
+    const normalized = normalizeHost(host);
+    if (!normalized) {
+      return null;
+    }
+    const directForge = matchHost(normalized);
+    if (directForge) {
+      return buildResolution(directForge, normalized);
+    }
+    const probed = await probeHostForge(normalized);
+    if (!probed) {
+      return null;
+    }
+    return buildResolution(probed, normalized);
   }
 
   async function resolveFromRemoteUrlAsync(
@@ -193,7 +233,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     if (!location) {
       return null;
     }
-    const directForge = forgeForHost(location.host);
+    const directForge = matchHost(location.host);
     if (directForge) {
       return buildResolution(directForge, location.host);
     }
@@ -221,7 +261,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     }
     probedForgeByHost.set(aliasHost, {
       forge,
-      expiresAt: forge === null ? Date.now() + NEGATIVE_PROBE_TTL_MS : null,
+      expiresAt: forge === null ? now() + NEGATIVE_PROBE_TTL_MS : null,
     });
   }
 
@@ -237,7 +277,7 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
       return { host: location.host };
     }
 
-    const resolvedForge = forgeForHost(resolvedHost);
+    const resolvedForge = matchHost(resolvedHost);
     if (resolvedForge) {
       return { host: resolvedHost, forge: resolvedForge };
     }
@@ -252,10 +292,19 @@ export function createForgeResolver(options: CreateForgeResolverOptions = {}): F
     }
   }
 
+  function dispose(): void {
+    for (const service of services.values()) {
+      service.dispose?.();
+    }
+  }
+
   return {
     resolveFromRemoteUrl,
     resolveFromRemoteUrlAsync,
+    resolveHost,
+    getService,
     invalidate,
+    dispose,
     async resolve(cwd: string): Promise<ForgeResolution | null> {
       return resolveFromRemoteUrlAsync(await resolveRemoteUrlCached(cwd));
     },

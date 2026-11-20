@@ -2,7 +2,7 @@
 title: Plugin hooks
 description: Register hooks to change requests or observe agent and workspace operations.
 nav: Hooks
-order: 48
+order: 49
 category: Plugins
 ---
 
