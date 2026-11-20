@@ -648,6 +648,14 @@
       }
     },
     "demo": {
+      "alt": "Slack thread in #engineering showing a developer mentioning @paseo-bot to list P0 issues and open a pull request",
+      "searchPlaceholder": "Search Paseo",
+      "channels": "Channels",
+      "apps": "Apps",
+      "channelTopic": "Core daemon, mobile & Hub",
+      "threadReplies": "3 replies",
+      "typing": "paseo-bot is typing...",
+      "composerPlaceholder": "Reply...",
       "showIssues": "<mention/> show me the latest P0 issues",
       "issuesOpen": "Three P0 issues are open:",
       "createPr": "<mention/> create a pull request for the first one",
@@ -655,7 +663,7 @@
       "filesChanged": "3 files changed",
       "testsPassed": "tests passed",
       "openInPaseo": "Open in Paseo",
-      "bot": "Bot",
+      "bot": "APP",
       "caption": "Follow-up messages in the same thread steer the running agent. Open the live session in Paseo on desktop or phone at any time."
     },
     "authoring": {
