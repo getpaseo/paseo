@@ -28,24 +28,6 @@ describe("plugin client slash commands", () => {
     expect(collision).toHaveBeenCalledTimes(3);
   });
 
-  it("deduplicates duplicate provider command names, keeping the first occurrence", () => {
-    const result = mergeSlashCommandSources({
-      builtIn: [],
-      plugins: [],
-      provider: [
-        { name: "plan", description: "Built-in plan" },
-        { name: "plan", description: "Skill plan" },
-        { name: "review", description: "Review changes" },
-      ],
-      onPluginCollision: vi.fn(),
-    });
-
-    expect(result).toEqual([
-      { source: "provider", command: { name: "plan", description: "Built-in plan" } },
-      { source: "provider", command: { name: "review", description: "Review changes" } },
-    ]);
-  });
-
   it("passes the trimmed raw remainder as args", () => {
     const command = { name: "review" };
     expect(

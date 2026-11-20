@@ -1215,13 +1215,11 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "available_commands_update") {
-      const commands = dedupeByName(
-        update.availableCommands.map((command) => ({
-          name: command.name,
-          description: command.description,
-          argumentHint: command.input?.hint,
-        })),
-      );
+      const commands = update.availableCommands.map((command) => ({
+        name: command.name,
+        description: command.description,
+        argumentHint: command.input?.hint,
+      }));
       this.emit({ type: "session.commands", sessionId: this.options.boundarySessionId, commands });
       this.receivedInitialCommands = true;
       this.commandWaiter?.();
@@ -1334,7 +1332,7 @@ class AcpRuntime {
       this.emit({
         type: "session.commands",
         sessionId: this.options.boundarySessionId,
-        commands: dedupeByName(update.commands),
+        commands: [...update.commands],
       });
     } else if (update.type === "config") {
       if (this.configTransaction) this.stagedTransformerConfig = update.config;
@@ -1550,17 +1548,6 @@ function toAcpMcpServers(config: ProviderSessionConfig) {
       headers: Object.entries(server.headers ?? {}).map(([key, value]) => ({ name: key, value })),
     };
   });
-}
-
-function dedupeByName<T extends { name: string }>(items: readonly T[]): T[] {
-  const seen = new Set<string>();
-  const unique: T[] = [];
-  for (const item of items) {
-    if (seen.has(item.name)) continue;
-    seen.add(item.name);
-    unique.push(item);
-  }
-  return unique;
 }
 
 function toAcpPrompt(
