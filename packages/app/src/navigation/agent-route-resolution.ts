@@ -24,13 +24,18 @@ export function resolveAgentRoute(input: {
   cachedWorkspaceId: string | null | undefined;
   connectionStatus: HostRuntimeConnectionStatus;
   lookup: AgentRouteLookup;
+  hasHydratedWorkspaces: boolean;
+  hasHydratedLayout: boolean;
 }): AgentRouteResolution {
   if (!input.serverId || !input.agentId) {
     return { kind: "invalid" };
   }
 
+  const hydrationPending = !input.hasHydratedWorkspaces || !input.hasHydratedLayout;
+  if (hydrationPending && input.connectionStatus === "online") return { kind: "fetchingAgent" };
+
   const cachedWorkspaceId = normalizeWorkspaceOpaqueId(input.cachedWorkspaceId);
-  if (cachedWorkspaceId) {
+  if (cachedWorkspaceId && !hydrationPending) {
     return { kind: "resolved", workspaceId: cachedWorkspaceId };
   }
 

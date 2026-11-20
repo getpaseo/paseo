@@ -26,14 +26,18 @@ describe("assistant message render limit", () => {
     });
   });
 
-  it("does not split a grapheme cluster at the boundary", () => {
-    const prefix = "a".repeat(ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT - 1);
-
-    expect(capAssistantMessageForRender(`${prefix}étail`)).toEqual({
-      text: prefix,
-      capped: true,
-    });
-  });
+  it.each(["😀", "é", "👨‍👩‍👧‍👦", "👍🏽", "❤️", "🇺🇸", "가", "कः"])(
+    "does not split %s at the render limit",
+    (cluster) => {
+      for (let offset = 1; offset < cluster.length; offset++) {
+        const prefix = "a".repeat(ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT - offset);
+        expect(capAssistantMessageForRender(`${prefix}${cluster}tail`)).toEqual({
+          text: prefix,
+          capped: true,
+        });
+      }
+    },
+  );
 
   it("counts the complete message size in UTF-8 bytes", () => {
     expect(getUtf8ByteLength("aé😀")).toBe(7);
@@ -51,4 +55,12 @@ describe("assistant message render limit", () => {
       capped: true,
     });
   });
+});
+
+it("preserves complete native multi-paragraph messages and the newline-heavy repro", async () => {
+  const native = await import("./assistant-message-render-limit.native");
+  const message = "Paragraph.\n\n".repeat(3000) + "Section 60";
+  expect(native.capAssistantMessageForRender(message)).toEqual({ text: message, capped: false });
+  const lines = "x\n".repeat(16_000) + "HIDDEN_OVERSIZED_MESSAGE_TAIL";
+  expect(native.capAssistantMessageForRender(lines)).toEqual({ text: lines, capped: false });
 });

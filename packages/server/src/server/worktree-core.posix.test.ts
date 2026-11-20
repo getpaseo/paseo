@@ -24,6 +24,7 @@ import {
   getPaseoWorktreeMetadataPath,
   readPaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
+import { validateBeforeRequest, validateBeforeResult } from "./plugins/lifecycle/index.js";
 import { UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
@@ -378,6 +379,10 @@ function getBranchUpstream(cwd: string): string | null {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
+}
+
 function getGitConfigValue(cwd: string, key: string): string | null {
   const result = spawnSync("git", ["config", "--get", key], {
     cwd,
@@ -405,7 +410,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           cwd: repoDir,
           worktreeSlug: "legacy-rpc",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -420,6 +424,21 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(existsSync(result.worktree.worktreePath)).toBe(true);
     });
 
+    test("keeps default placement suffixes when the default destination already exists", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const first = await createCoreWorktree(
+        { cwd: repoDir, paseoHome, branchName: "first", worktreeSlug: "same" },
+        createCoreDeps(),
+      );
+      const second = await createCoreWorktree(
+        { cwd: repoDir, paseoHome, branchName: "second", worktreeSlug: "same" },
+        createCoreDeps(),
+      );
+      expect(second.worktree.worktreePath).toBe(first.worktree.worktreePath + "-1");
+      expect(existsSync(first.worktree.worktreePath)).toBe(true);
+    });
+
     test("creates branch-off worktrees from origin main without tracking origin main", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginMain();
       cleanupPaths.push(tempDir);
@@ -431,7 +450,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "branch-off",
           refName: "main",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -452,7 +470,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         {
           cwd: repoDir,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -475,7 +492,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 123,
           refName: "feature/review-pr",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -492,6 +508,42 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.worktree.branchName).toBe("feature/review-pr");
     });
 
+    test("round trips every resolved change-request field through an unchanged before-hook result", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const deps = createCoreDeps();
+      const requests: unknown[] = [];
+      const result = await createCoreWorktree(
+        { cwd: repoDir, githubPrNumber: 123, refName: "feature/review-pr", paseoHome },
+        {
+          ...deps,
+          lifecycle: {
+            before: async (name, request) => {
+              requests.push(request);
+              return validateBeforeResult(name, validateBeforeRequest(name, request), request);
+            },
+          },
+        },
+      );
+      expect(requests).toEqual([
+        {
+          kind: "checkout-change-request",
+          forge: "github",
+          changeRequestNumber: 123,
+          headRef: "feature/review-pr",
+          baseRef: "main",
+          branch: "feature/review-pr",
+          checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/123/head" }],
+          trackOriginHead: true,
+          repoRoot: repoDir,
+          sourceCheckout: repoDir,
+          slug: "feature-review-pr",
+          path: result.worktree.worktreePath,
+        },
+      ]);
+      expect(result.worktree.branchName).toBe("feature/review-pr");
+    });
+
     test("uses the PR head ref as the default slug when no slug is supplied", async () => {
       const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
@@ -502,7 +554,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 123,
           refName: "feature/review-pr",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -520,7 +571,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           cwd: repoDir,
           worktreeSlug: "mcp-standalone",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -547,7 +597,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "branch-off",
           refName: "dev",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -576,7 +625,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           refName: "dev",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -594,6 +642,36 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(branch).toBe("dev");
     });
 
+    test("checks out a branch that only a remote other than origin has", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const upstreamDir = path.join(tempDir, "upstream.git");
+      execFileSync("git", ["clone", "--bare", repoDir, upstreamDir], { stdio: "pipe" });
+      execFileSync("git", [`--git-dir=${upstreamDir}`, "branch", "feature/upstream-only", "main"], {
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir, stdio: "pipe" });
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          refName: "feature/upstream-only",
+          paseoHome,
+        },
+        createCoreDeps(),
+      );
+
+      expect(result.worktree.branchName).toBe("feature/upstream-only");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe(
+        "upstream/feature/upstream-only",
+      );
+    });
+
     test("checks out an explicit GitHub PR target", async () => {
       const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
@@ -604,7 +682,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 123,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -656,7 +733,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -694,7 +770,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 14,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ forge: { forge: "gitlab", service: gitlab } }),
       );
@@ -746,7 +821,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 14,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ forge: { forge: "gitlab", service: gitlab } }),
       );
@@ -796,7 +870,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 14,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ forge: { forge: "gitlab", service: gitlab } }),
       );
@@ -841,7 +914,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 14,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ forge: { forge: "gitlab", service: gitlab } }),
       );
@@ -852,7 +924,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 14,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ forge: { forge: "gitlab", service: gitlab } }),
       );
@@ -869,7 +940,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         second.worktree.worktreePath,
         "remote.paseo-pr-14.url",
       );
-      const metadata = readPaseoWorktreeMetadata(second.worktree.worktreePath);
+      const metadata = await readPaseoWorktreeMetadata(second.worktree.worktreePath);
       const facts = await getCheckoutSnapshotFacts(second.worktree.worktreePath, { paseoHome });
 
       expect(second.worktree.branchName).toBe("feature/gitlab-mr-1");
@@ -910,7 +981,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -955,7 +1025,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -997,7 +1066,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1008,7 +1076,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1118,7 +1185,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1129,12 +1195,11 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           githubPrNumber: 1790,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
       writeFileSync(
-        getPaseoWorktreeMetadataPath(second.worktree.worktreePath),
+        await getPaseoWorktreeMetadataPath(second.worktree.worktreePath),
         `${JSON.stringify({ version: 1, baseRefName: "main" }, null, 2)}\n`,
         "utf8",
       );
@@ -1179,7 +1244,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 526,
           refName: "main",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1285,7 +1349,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 526,
           refName: "main",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1383,7 +1446,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 526,
           refName: "main",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1395,7 +1457,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           githubPrNumber: 526,
           refName: "main",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );
@@ -1417,11 +1478,246 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
             action: "checkout",
             refName: "missing-branch",
             paseoHome,
-            runSetup: false,
           },
           createCoreDeps(),
         ),
       ).rejects.toBeInstanceOf(UnknownBranchError);
+    });
+
+    test("branches off a same-repo pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The head branch has never been fetched, so creation has to fetch it.
+      execFileSync("git", ["update-ref", "-d", "refs/remotes/origin/daemon-shutdown-diagnostics"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(result.worktree.comparisonBaseRef).toBe(
+        "refs/remotes/origin/daemon-shutdown-diagnostics",
+      );
+      expect(git(repoDir, "branch", "--list", "daemon-shutdown-diagnostics")).toBe("");
+    });
+
+    test("branches off a same-repo pull request in a clone whose origin is a fork", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The layout a fork clone has: upstream is the base repository, origin is the fork, and
+      // the fork has an older branch with the pull request's branch name.
+      const forkDir = path.join(tempDir, "fork.git");
+      execFileSync("git", ["clone", "--bare", remoteDir, forkDir], { stdio: "pipe" });
+      execFileSync("git", [
+        `--git-dir=${forkDir}`,
+        "update-ref",
+        "refs/heads/daemon-shutdown-diagnostics",
+        "refs/heads/main",
+      ]);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["remote", "add", "origin", forkDir], { cwd: repoDir, stdio: "pipe" });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 1790,
+          baseRefName: "main",
+          headRefName: "daemon-shutdown-diagnostics",
+          headOwnerLogin: "getpaseo",
+          headRepositorySshUrl: remoteDir,
+          headRepositoryUrl: remoteDir,
+          isCrossRepository: false,
+          // As the GitHub service lists them: origin first, then upstream.
+          checkoutRefs: [
+            { remoteName: "origin", remoteRef: "refs/pull/1790/head" },
+            { remoteName: "upstream", remoteRef: "refs/pull/1790/head" },
+          ],
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 1790 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const prHead = execFileSync("git", [
+        `--git-dir=${remoteDir}`,
+        "rev-parse",
+        "refs/pull/1790/head",
+      ])
+        .toString()
+        .trim();
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(prHead);
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/daemon-shutdown-diagnostics",
+        startPoint: "refs/paseo/change-requests/1790",
+        branchName: "follow-up",
+      });
+    });
+
+    test("branches off a fork pull request's head without checking it out", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      // The base repository's main moved on since this clone last fetched.
+      const baseRemoteDir = path.join(tempDir, "base.git");
+      const upstreamMain = execFileSync("git", [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@test.com",
+        `--git-dir=${baseRemoteDir}`,
+        "commit-tree",
+        "main^{tree}",
+        "-p",
+        "main",
+        "-m",
+        "upstream commit",
+      ])
+        .toString()
+        .trim();
+      execFileSync("git", [
+        `--git-dir=${baseRemoteDir}`,
+        "update-ref",
+        "refs/heads/main",
+        upstreamMain,
+      ]);
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+      // The fork's branch is not in this repository, so a pull request from the new branch goes
+      // into the fork pull request's base, compared as the remote has it now.
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/origin/main",
+        startPoint: "refs/paseo/change-requests/526",
+        branchName: "follow-up",
+      });
+      expect(git(repoDir, "rev-parse", "refs/remotes/origin/main")).toBe(upstreamMain);
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/origin/main");
+      expect(result.worktree.branchName).toBe("follow-up");
+      expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect((await readPaseoWorktreeMetadata(result.worktree.worktreePath))?.baseRefName).toBe(
+        "main",
+      );
+      expect(git(repoDir, "branch", "--list", "therainisme/main")).toBe("");
+      expect(getGitConfigValue(repoDir, "remote.paseo-pr-526.url")).toBeNull();
+      // Base branch pickers list remote-tracking refs; the fork's head is not one of them.
+      expect(git(repoDir, "for-each-ref", "refs/remotes/paseo-pr-526")).toBe("");
+    });
+
+    test("branches off a fork pull request in a clone that calls the base repository upstream", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+          // As the GitHub service lists them: origin first, then upstream.
+          checkoutRefs: [
+            { remoteName: "origin", remoteRef: "refs/pull/526/head" },
+            { remoteName: "upstream", remoteRef: "refs/pull/526/head" },
+          ],
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          branchName: "follow-up",
+          paseoHome,
+        },
+        createCoreDeps({ github }),
+      );
+
+      // The base comes from the remote that served the pull request.
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/main",
+        startPoint: "refs/paseo/change-requests/526",
+        branchName: "follow-up",
+      });
+      expect(result.worktree.comparisonBaseRef).toBe("refs/remotes/upstream/main");
     });
 
     test("creates the agent-create worktree input shape", async () => {
@@ -1433,7 +1729,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           cwd: repoDir,
           worktreeSlug: "agent-worktree",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -1452,11 +1747,11 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       const deps = createCoreDeps();
 
       const first = await createCoreWorktree(
-        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome },
         deps,
       );
       const second = await createCoreWorktree(
-        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome, runSetup: false },
+        { cwd: repoDir, worktreeSlug: "reused-worktree", paseoHome },
         deps,
       );
 
@@ -1475,7 +1770,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         githubPrNumber: 123,
         refName: "feature/review-pr",
         paseoHome,
-        runSetup: false,
       };
 
       const first = await createCoreWorktree(input, deps);
@@ -1515,7 +1809,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           worktreeSlug: "stubbed-github",
           githubPrNumber: 123,
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );

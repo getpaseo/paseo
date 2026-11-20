@@ -1,5 +1,8 @@
 import type { Command } from "commander";
-import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+} from "@getpaseo/protocol/agent-types";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 
@@ -16,7 +19,7 @@ export interface PermissionResponseItem {
 export const permitResponseSchema: OutputSchema<PermissionResponseItem> = {
   idField: "requestId",
   columns: [
-    { header: "REQUEST ID", field: "requestId", width: 12 },
+    { header: "REQUEST ID", field: (item) => item.requestId.slice(0, 8), width: 12 },
     { header: "AGENT", field: "agentShortId", width: 10 },
     { header: "TOOL", field: "name", width: 20 },
     {
@@ -32,6 +35,21 @@ export const permitResponseSchema: OutputSchema<PermissionResponseItem> = {
   ],
 };
 
+/** Transform a permission the agent answered to a response item */
+export function toPermissionResponseItem(
+  agentId: string,
+  permission: AgentPermissionRequest,
+  result: "allowed" | "denied",
+): PermissionResponseItem {
+  return {
+    requestId: permission.id,
+    agentId,
+    agentShortId: agentId.slice(0, 7),
+    name: permission.name,
+    result,
+  };
+}
+
 export type PermitAllowResult = ListResult<PermissionResponseItem>;
 
 export interface PermitAllowOptions extends CommandOptions {
@@ -40,112 +58,136 @@ export interface PermitAllowOptions extends CommandOptions {
   host?: string;
 }
 
-export async function runAllowCommand(
-  agentIdOrPrefix: string,
-  reqId: string | undefined,
-  options: PermitAllowOptions,
-  _command: Command,
-): Promise<PermitAllowResult> {
-  // No validation needed - if no reqId provided, allow all by default
+export interface PermitClient {
+  fetchAgent(options: { agentId: string }): Promise<{
+    agent: { id: string; pendingPermissions?: AgentPermissionRequest[] };
+  } | null>;
+  respondToPermissionAndWait(
+    agentId: string,
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<unknown>;
+  close(): Promise<void>;
+}
 
-  // Parse input JSON if provided
-  let updatedInput: Record<string, unknown> | undefined;
-  if (options.input) {
-    try {
-      updatedInput = JSON.parse(options.input);
-    } catch (err) {
-      const error: CommandError = {
-        code: "INVALID_JSON",
-        message: `Invalid JSON for --input: ${err instanceof Error ? err.message : String(err)}`,
-        details: 'Provide valid JSON, e.g., --input \'{"key": "value"}\'',
-      };
-      throw error;
-    }
-  }
+export type PermitClientConnector = (
+  options: Parameters<typeof connectToDaemon>[0],
+) => Promise<PermitClient>;
 
-  const client = await connectToDaemon({ target: options.daemonTarget });
+export function createAllowCommand(connect: PermitClientConnector = connectToDaemon) {
+  return async function runAllowCommand(
+    agentIdOrPrefix: string,
+    reqId: string | undefined,
+    options: PermitAllowOptions,
+    _command: Command,
+  ): Promise<PermitAllowResult> {
+    // No validation needed - if no reqId provided, allow all by default
 
-  try {
-    const fetchResult = await client.fetchAgent({ agentId: agentIdOrPrefix });
-    if (!fetchResult) {
-      await client.close();
-      const error: CommandError = {
-        code: "AGENT_NOT_FOUND",
-        message: `Agent not found: ${agentIdOrPrefix}`,
-        details: 'Use "paseo ls" to list available agents',
-      };
-      throw error;
-    }
-    const agent = fetchResult.agent;
-    const resolvedAgentId = agent.id;
-
-    // Get pending permissions for this agent
-    const pendingPermissions = agent.pendingPermissions || [];
-    if (pendingPermissions.length === 0) {
-      await client.close();
-      const error: CommandError = {
-        code: "NO_PENDING_PERMISSIONS",
-        message: `No pending permissions for agent ${agent.id.slice(0, 7)}`,
-      };
-      throw error;
-    }
-
-    // Determine which permissions to allow
-    let permissionsToAllow: AgentPermissionRequest[];
-    if (!reqId || options.all) {
-      // Default: allow all pending permissions if no req_id specified
-      // --all flag is kept as an explicit alias for clarity
-      permissionsToAllow = pendingPermissions;
-    } else {
-      // Find permission by ID prefix
-      const permission = pendingPermissions.find((p) => p.id === reqId || p.id.startsWith(reqId));
-      if (!permission) {
-        await client.close();
+    // Parse input JSON if provided
+    let updatedInput: Record<string, unknown> | undefined;
+    if (options.input) {
+      try {
+        updatedInput = JSON.parse(options.input);
+      } catch (err) {
         const error: CommandError = {
-          code: "PERMISSION_NOT_FOUND",
-          message: `Permission request not found: ${reqId}`,
-          details: `Available requests: ${pendingPermissions.map((p) => p.id.slice(0, 8)).join(", ")}`,
+          code: "INVALID_JSON",
+          message: `Invalid JSON for --input: ${err instanceof Error ? err.message : String(err)}`,
+          details: 'Provide valid JSON, e.g., --input \'{"key": "value"}\'',
         };
         throw error;
       }
-      permissionsToAllow = [permission];
     }
 
-    // Allow permissions
-    const results: PermissionResponseItem[] = await Promise.all(
-      permissionsToAllow.map(async (permission) => {
-        await client.respondToPermission(resolvedAgentId, permission.id, {
-          behavior: "allow",
-          ...(updatedInput ? { updatedInput } : {}),
-        });
-        return {
-          requestId: permission.id.slice(0, 8),
-          agentId: resolvedAgentId,
-          agentShortId: resolvedAgentId.slice(0, 7),
-          name: permission.name,
-          result: "allowed",
+    const client = await connect({ target: options.daemonTarget });
+
+    try {
+      const fetchResult = await client.fetchAgent({ agentId: agentIdOrPrefix });
+      if (!fetchResult) {
+        await client.close();
+        const error: CommandError = {
+          code: "AGENT_NOT_FOUND",
+          message: `Agent not found: ${agentIdOrPrefix}`,
+          details: 'Use "paseo ls" to list available agents',
         };
-      }),
-    );
+        throw error;
+      }
+      const agent = fetchResult.agent;
+      const resolvedAgentId = agent.id;
 
-    await client.close();
+      // Get pending permissions for this agent
+      const pendingPermissions = agent.pendingPermissions || [];
+      if (pendingPermissions.length === 0) {
+        await client.close();
+        const error: CommandError = {
+          code: "NO_PENDING_PERMISSIONS",
+          message: `No pending permissions for agent ${agent.id.slice(0, 7)}`,
+        };
+        throw error;
+      }
 
-    return {
-      type: "list",
-      data: results,
-      schema: permitResponseSchema,
-    };
-  } catch (err) {
-    await client.close().catch(() => {});
-    // Re-throw CommandErrors
-    if (err && typeof err === "object" && "code" in err) {
-      throw err;
+      // Determine which permissions to allow
+      let permissionsToAllow: AgentPermissionRequest[];
+      if (!reqId || options.all) {
+        // Default: allow all pending permissions if no req_id specified
+        // --all flag is kept as an explicit alias for clarity
+        permissionsToAllow = pendingPermissions;
+      } else {
+        // Find permission by ID prefix
+        const permission = pendingPermissions.find((p) => p.id === reqId || p.id.startsWith(reqId));
+        if (!permission) {
+          await client.close();
+          const error: CommandError = {
+            code: "PERMISSION_NOT_FOUND",
+            message: `Permission request not found: ${reqId}`,
+            details: `Available requests: ${pendingPermissions.map((p) => p.id.slice(0, 8)).join(", ")}`,
+          };
+          throw error;
+        }
+        permissionsToAllow = [permission];
+      }
+
+      // Allow permissions
+      const results: PermissionResponseItem[] = await Promise.all(
+        permissionsToAllow.map(async (permission) => {
+          try {
+            await client.respondToPermissionAndWait(resolvedAgentId, permission.id, {
+              behavior: "allow",
+              ...(updatedInput ? { updatedInput } : {}),
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            const error: CommandError = {
+              code: "PERMISSION_RESPONSE_UNCONFIRMED",
+              message: `Permission response unconfirmed for request ${permission.id}: ${message}`,
+              details: 'Use "paseo permit ls" to check whether the request is still pending',
+            };
+            throw error;
+          }
+          return toPermissionResponseItem(resolvedAgentId, permission, "allowed");
+        }),
+      );
+
+      await client.close();
+
+      return {
+        type: "list",
+        data: results,
+        schema: permitResponseSchema,
+      };
+    } catch (err) {
+      await client.close().catch(() => {});
+      // Re-throw CommandErrors
+      if (err && typeof err === "object" && "code" in err) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      const error: CommandError = {
+        code: "ALLOW_PERMISSION_FAILED",
+        message: `Failed to allow permission: ${message}`,
+      };
+      throw error;
     }
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "ALLOW_PERMISSION_FAILED",
-      message: `Failed to allow permission: ${message}`,
-    };
-    throw error;
-  }
+  };
 }
+
+export const runAllowCommand = createAllowCommand();

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { areEquivalentPaths } from "../utils/path.js";
+import { deriveProjectKey } from "./project-key.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -79,7 +80,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
     this.nextError = error;
   }
 
-  override async list() {
+  override async listActive() {
     if (this.nextRead) {
       const pending = this.nextRead;
       this.nextRead = null;
@@ -90,7 +91,7 @@ class ObservedWorkspaceRegistry extends FileBackedWorkspaceRegistry {
       this.nextError = null;
       throw error;
     }
-    return super.list();
+    return super.listActive();
   }
 }
 
@@ -336,6 +337,14 @@ class ObservedPlacements {
         projectId: spec.id,
         rootPath,
         kind: "non_git",
+        // Seeded records already carry the key reconciliation derives, so a fixture's
+        // first pass reports only what its test is about.
+        projectKey: deriveProjectKey({
+          rootPath,
+          remoteUrl: null,
+          worktreeRoot: null,
+          mainRepoRoot: null,
+        }),
         displayName: spec.id,
         createdAt: TIMESTAMP,
         updatedAt: TIMESTAMP,
@@ -473,7 +482,11 @@ describe("observed workspace placement", () => {
 
   test("archives missing workspace directories on the periodic pass", async () => {
     const observed = new ObservedPlacements([
-      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+      {
+        id: "project-one",
+        root: "repo",
+        workspaces: [{ id: "workspace-one", cwd: "repo/worktree-one" }],
+      },
     ]);
     await observed.start();
     await observed.deleteWorkspaceDirectory("workspace-one");
@@ -482,12 +495,20 @@ describe("observed workspace placement", () => {
 
     expect((await observed.placement("workspace-one"))?.archivedAt).toEqual(expect.any(String));
     expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
+    const archived = await observed.placement("workspace-one");
+    await observed.advanceBy(RESCAN_INTERVAL_MS);
+    expect(await observed.placement("workspace-one")).toEqual(archived);
+    expect(observed.workspaceBatches).toEqual([["workspace-one"]]);
     observed.dispose();
   });
 
   test("preserves a periodic full pass queued behind metadata reconciliation", async () => {
     const observed = new ObservedPlacements([
-      { id: "project-one", root: "repo", workspaces: [{ id: "workspace-one", cwd: "repo" }] },
+      {
+        id: "project-one",
+        root: "repo",
+        workspaces: [{ id: "workspace-one", cwd: "repo/worktree-one" }],
+      },
     ]);
     await observed.start();
     const metadataRead = observed.holdNextReconciliation();

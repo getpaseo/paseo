@@ -2,12 +2,11 @@ import { Command } from "commander";
 import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import {
   readDaemonInstance,
-  readPersistedConfig,
-  resolveConfigFromPersisted,
   daemonLogPath,
   isSameDaemonInstance,
   DaemonInstanceError,
-} from "@getpaseo/server";
+} from "@getpaseo/server/daemon-control";
+import { readPersistedConfig, resolveConfigFromPersisted } from "@getpaseo/server/configuration";
 import { connectToDaemon, buildDaemonConnectionCommandError } from "../../utils/client.js";
 import { withOutput, toCommandError, type CommandOptions } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
@@ -104,6 +103,7 @@ async function probeDaemonStatus(
         daemonNode: status.nodePath,
         providers: status.providers,
         relay: status.relay,
+        ...(status.terminalsUnavailable ? { terminals: status.terminalsUnavailable } : {}),
       };
     }
   } finally {
@@ -125,6 +125,7 @@ function localStatus(home: string, instance: Awaited<ReturnType<typeof readDaemo
     pid: instance?.pid ?? null,
     startedAt: instance?.startedAt ?? null,
     listen: instance?.listen ?? null,
+    serverId: instance?.serverId ?? undefined,
     hostname: instance?.hostname ?? null,
     configuredListen: config.listen,
     localDaemon,

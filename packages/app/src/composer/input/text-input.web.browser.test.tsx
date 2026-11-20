@@ -96,6 +96,35 @@ describe("ComposerTextInput web IME composition", () => {
     expect(document.activeElement).toBe(mounted.textarea);
   });
 
+  it("keeps its editing handle and selection across a rerender during composition", () => {
+    const recorder = createTextRecorder();
+    const mounted = mountInput(recorder.onChangeText);
+    const handle = mounted.inputRef.current;
+    act(() => {
+      handle?.focus();
+      dispatchComposition(mounted.textarea, "compositionstart");
+      typeFromIme(mounted.textarea, "你好");
+      mounted.textarea.setSelectionRange(1, 2);
+      mounted.root.render(
+        <ComposerTextInput
+          ref={mounted.inputRef}
+          initialValue="stale publication"
+          multiline
+          onChangeText={recorder.onChangeText}
+          placeholder="updated presentation"
+        />,
+      );
+    });
+    expect(mounted.inputRef.current).toBe(handle);
+    expect(handle?.getNativeRef()).toBe(mounted.textarea);
+    expect([mounted.textarea.selectionStart, mounted.textarea.selectionEnd]).toEqual([1, 2]);
+    expect(document.activeElement).toBe(mounted.textarea);
+    expect(recorder.changes).toEqual([]);
+    act(() => dispatchComposition(mounted.textarea, "compositionend"));
+    expect(recorder.changes).toEqual(["你好"]);
+    expect(handle?.getText()).toBe("你好");
+  });
+
   it("keeps locally typed text when its parent rerenders with a stale value", () => {
     const recorder = createTextRecorder();
     const mounted = mountInput(recorder.onChangeText);

@@ -406,7 +406,7 @@ describe("selectPrPaneState", () => {
     expect(state.data?.forgeSpecific).toEqual({ ...gitlabFacts, mergeStatus: null });
   });
 
-  it("returns null data when the consumer disabled timeline rendering", () => {
+  it("keeps cached content when retained activity disables timeline demand", () => {
     const state = selectPrPaneState({
       ...baseSelectInput,
       status: prStatus(),
@@ -414,7 +414,7 @@ describe("selectPrPaneState", () => {
       timelinePayload: timelinePayload(),
     });
 
-    expect(state.data).toBeNull();
+    expect(state.data).not.toBeNull();
     expect(state.prNumber).toBe(42);
   });
 

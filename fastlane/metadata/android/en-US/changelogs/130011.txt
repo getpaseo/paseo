@@ -1,0 +1,4 @@
+Fixed
+- Fixed a startup crash with Show background enabled and eight or more workspaces in a project
+
+Full notes: https://paseo.sh/changelog

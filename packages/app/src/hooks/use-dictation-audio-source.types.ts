@@ -8,4 +8,5 @@ export interface DictationAudioSource {
   start: () => Promise<void>;
   stop: () => Promise<void>;
   volume: number;
+  isPaused: boolean;
 }

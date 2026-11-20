@@ -4,27 +4,6 @@ import { JSDOM } from "jsdom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommitsSection } from "./commits-section";
 
-vi.mock("react-native-unistyles", () => ({
-  StyleSheet: {
-    create: (factory: unknown) =>
-      typeof factory === "function"
-        ? factory({
-            borderRadius: { full: 9999, sm: 4 },
-            borderWidth: { 1: 1 },
-            colors: {
-              border: "#333",
-              foreground: "#fff",
-              foregroundMuted: "#aaa",
-              statusDanger: "#c33",
-              surface2: "#222",
-            },
-            fontSize: { base: 15, sm: 13 },
-            spacing: [0, 4, 8, 12],
-          })
-        : factory,
-  },
-}));
-
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 34, left: 0 }),
 }));

@@ -63,10 +63,25 @@ const html = `<!doctype html>
       #diagram svg {
         display: block;
       }
+      /* Keep Mermaid's temporary render container unscaled when the host mounts this frame
+         at 0x0 or 240x240 before the diagram's own dimensions are known. */
+      #staging-clip {
+        position: fixed;
+        width: 0;
+        height: 0;
+        overflow: hidden;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #staging {
+        width: 16384px;
+        height: 16384px;
+      }
     </style>
   </head>
   <body>
     <div id="diagram"></div>
+    <div id="staging-clip" aria-hidden="true"><div id="staging"></div></div>
     <script>${js}</script>
   </body>
 </html>`;

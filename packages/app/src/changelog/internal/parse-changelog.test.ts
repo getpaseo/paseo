@@ -8,15 +8,15 @@ import {
   type ChangelogSection,
 } from "./parse-changelog";
 
-function bodies(markdown: string, releaseIndex = 0): string[] {
-  return parseChangelog(markdown)[releaseIndex].sections.map(sectionBody);
+function bodies(markdown: string): string[] {
+  return parseChangelog(markdown)[0].sections.map(sectionBody);
 }
 
 function sectionBody(section: ChangelogSection): string {
   return section.body;
 }
 
-function sectionTitle(section: ChangelogSection): string | null {
+function sectionTitle(section: ChangelogSection): string {
   return section.title;
 }
 
@@ -25,16 +25,35 @@ function releaseDate(release: ChangelogRelease): string {
 }
 
 function authoredLines(release: ChangelogRelease): string[] {
-  return release.sections.flatMap(sectionLines);
+  return [...release.highlights.split("\n"), ...release.sections.flatMap(sectionLines)];
 }
 
 function sectionLines(section: ChangelogSection): string[] {
-  return [...(section.title ? [`### ${section.title}`] : []), ...section.body.split("\n")];
+  return [`### ${section.title}`, ...section.body.split("\n")];
 }
 
 function isNotBlank(line: string): boolean {
   return line.trim().length > 0;
 }
+
+function readRepositoryFile(path: string): string {
+  return readFileSync(fileURLToPath(new URL(`../../../../../${path}`, import.meta.url)), "utf8");
+}
+
+/** The cases the app, the website and the release scripts must all split the same way. */
+interface ChangelogStructureCases {
+  document: string[];
+  releases: {
+    version: string;
+    date: string;
+    highlights: string[];
+    sectionTitles: string[];
+  }[];
+}
+
+const structureCases: ChangelogStructureCases = JSON.parse(
+  readRepositoryFile("scripts/test-support/changelog-structure.json"),
+);
 
 describe("parseChangelog", () => {
   it("reads the shape the changelog is authored in today", () => {
@@ -44,7 +63,8 @@ describe("parseChangelog", () => {
         "",
         "## 0.8.0-beta.1 - 2026-09-08",
         "",
-        "This release extends what plugins can do.",
+        "- **Plugin providers:** Plugins can add providers.",
+        "- **Faster diffs:** Diffs load sooner.",
         "",
         "### Plugins",
         "",
@@ -67,8 +87,9 @@ describe("parseChangelog", () => {
       {
         version: "0.8.0-beta.1",
         date: "2026-09-08",
+        highlights:
+          "- **Plugin providers:** Plugins can add providers.\n- **Faster diffs:** Diffs load sooner.",
         sections: [
-          { title: null, body: "This release extends what plugins can do." },
           {
             title: "Plugins",
             body: "- Added provider contributions ([#4314](https://example.com/4314))",
@@ -79,6 +100,7 @@ describe("parseChangelog", () => {
       {
         version: "0.7.2",
         date: "2026-09-02",
+        highlights: "",
         sections: [{ title: "Fixed", body: "- Fixed a thing" }],
       },
     ]);
@@ -89,7 +111,7 @@ describe("parseChangelog", () => {
       "# Changelog\n\nAll notable changes.\n\n## 1.0.0 - 2026-01-01\n\n- One\n",
     );
     expect(releases).toHaveLength(1);
-    expect(releases[0].sections).toEqual([{ title: null, body: "- One" }]);
+    expect(releases[0]).toMatchObject({ highlights: "- One", sections: [] });
   });
 
   it("returns nothing for a document with no releases", () => {
@@ -136,13 +158,13 @@ describe("parseChangelog", () => {
     it("does not treat a deeper heading as a release", () => {
       const releases = parseChangelog("## 1.0.0 - 2026-01-01\n\n#### Deep\n\n- One\n");
       expect(releases).toHaveLength(1);
-      expect(releases[0].sections).toEqual([{ title: null, body: "#### Deep\n\n- One" }]);
+      expect(releases[0].highlights).toBe("#### Deep\n\n- One");
     });
 
     it("does not treat an unspaced hash run as a heading", () => {
       const releases = parseChangelog("## 1.0.0 - 2026-01-01\n\n##notaheading\n");
       expect(releases).toHaveLength(1);
-      expect(releases[0].sections[0].body).toBe("##notaheading");
+      expect(releases[0].highlights).toBe("##notaheading");
     });
   });
 
@@ -162,14 +184,34 @@ describe("parseChangelog", () => {
       ]);
     });
 
-    it("drops an empty lead section", () => {
+    it("keeps a bare section heading as an untitled section", () => {
+      const releases = parseChangelog("## 1.0.0 - 2026-01-01\n\n###\n\n- One\n");
+      expect(releases[0].sections).toEqual([{ title: "", body: "- One" }]);
+    });
+  });
+
+  describe("highlights", () => {
+    it("has none when the release opens with a section", () => {
       const releases = parseChangelog("## 1.0.0 - 2026-01-01\n\n### Fixed\n\n- One\n");
-      expect(releases[0].sections).toEqual([{ title: "Fixed", body: "- One" }]);
+      expect(releases[0]).toMatchObject({
+        highlights: "",
+        sections: [{ title: "Fixed", body: "- One" }],
+      });
+    });
+
+    it("reads the summary paragraphs older entries opened with as highlights", () => {
+      const releases = parseChangelog(
+        "## 1.0.0 - 2026-01-01\n\nDaemon restarts keep terminals.\n\nMore here.\n\n### Added\n\n- One\n",
+      );
+      expect(releases[0]).toMatchObject({
+        highlights: "Daemon restarts keep terminals.\n\nMore here.",
+        sections: [{ title: "Added", body: "- One" }],
+      });
     });
 
     it("keeps a release that is only prose", () => {
       const releases = parseChangelog("## 1.0.0 - 2026-01-01\n\nJust a note.\n");
-      expect(releases[0].sections).toEqual([{ title: null, body: "Just a note." }]);
+      expect(releases[0]).toMatchObject({ highlights: "Just a note.", sections: [] });
     });
   });
 
@@ -256,7 +298,12 @@ describe("parseChangelog", () => {
   it("reads CRLF documents", () => {
     const releases = parseChangelog("## 1.0.0 - 2026-01-01\r\n\r\n### Fixed\r\n\r\n- One\r\n");
     expect(releases).toEqual([
-      { version: "1.0.0", date: "2026-01-01", sections: [{ title: "Fixed", body: "- One" }] },
+      {
+        version: "1.0.0",
+        date: "2026-01-01",
+        highlights: "",
+        sections: [{ title: "Fixed", body: "- One" }],
+      },
     ]);
   });
 });
@@ -272,19 +319,45 @@ describe("formatChangelogDate", () => {
   });
 });
 
+describe("the structure every changelog surface shares", () => {
+  for (const lineEnding of ["\n", "\r\n"]) {
+    it(`splits the shared cases with ${JSON.stringify(lineEnding)} line endings`, () => {
+      const releases = parseChangelog(structureCases.document.join(lineEnding));
+
+      expect(
+        releases.map((release) => ({
+          version: release.version,
+          date: release.date,
+          highlights: release.highlights.split("\n").filter(isNotBlank),
+          sectionTitles: release.sections.map(sectionTitle),
+        })),
+      ).toEqual(
+        structureCases.releases.map((release) => ({
+          version: release.version,
+          date: release.date,
+          highlights: release.highlights.filter(isNotBlank),
+          sectionTitles: release.sectionTitles,
+        })),
+      );
+    });
+  }
+});
+
 describe("the repository's own CHANGELOG.md", () => {
-  const markdown = readFileSync(
-    fileURLToPath(new URL("../../../../../CHANGELOG.md", import.meta.url)),
-    "utf8",
-  );
+  const markdown = readRepositoryFile("CHANGELOG.md");
   const releases = parseChangelog(markdown);
+
+  it("finds a release for every release heading line", () => {
+    const headingLines = markdown.split("\n").filter((line) => line.startsWith("## "));
+    expect(releases).toHaveLength(headingLines.length);
+  });
 
   it("parses every release heading", () => {
     expect(releases.length).toBeGreaterThan(50);
     for (const release of releases) {
       expect(release.version).toMatch(/^\d+\.\d+\.\d+/);
       expect(release.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(release.sections.length).toBeGreaterThan(0);
+      expect(release.highlights.length + release.sections.length).toBeGreaterThan(0);
     }
   });
 

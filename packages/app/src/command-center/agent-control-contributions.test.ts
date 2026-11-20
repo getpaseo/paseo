@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { AgentFeature, AgentMode, AgentSelectOption } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentMode,
+  AgentOptionControl,
+  AgentSelectOption,
+} from "@getpaseo/protocol/agent-types";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import type { CommandCenterContribution } from "./contributions";
 import {
@@ -31,7 +35,7 @@ const ICONS: AgentControlContributionSource["icons"] = {
   thinking: TestIcon,
   planMode: TestIcon,
   mode: () => TestIcon,
-  feature: () => TestIcon,
+  control: () => TestIcon,
 };
 
 function provider(input: {
@@ -65,8 +69,8 @@ function provider(input: {
   };
 }
 
-function toggleFeature(id: string, value = false, icon?: string): AgentFeature {
-  return { type: "toggle", id, label: id, value, icon };
+function toggleControl(key: string, icon?: string): AgentOptionControl {
+  return { type: "toggle", key, label: key, icon };
 }
 
 function makeSource(
@@ -75,7 +79,7 @@ function makeSource(
     models?: Partial<AgentControlContributionSource["models"]>;
     thinking?: Partial<AgentControlContributionSource["thinking"]>;
     modes?: Partial<NonNullable<AgentControlContributionSource["modes"]>>;
-    features?: Partial<AgentControlContributionSource["features"]>;
+    optionControls?: Partial<AgentControlContributionSource["optionControls"]>;
   } = {},
 ): AgentControlContributionSource {
   return {
@@ -104,10 +108,11 @@ function makeSource(
       select: () => undefined,
       ...overrides.modes,
     },
-    features: {
-      list: [],
-      set: () => undefined,
-      ...overrides.features,
+    optionControls: {
+      controls: [],
+      options: {},
+      onSetOption: () => undefined,
+      ...overrides.optionControls,
     },
   };
 }
@@ -133,7 +138,7 @@ describe("Command Center agent-control contributions", () => {
     const contributions = buildAgentControlContributions({
       ...makeSource({
         models: { providers: [provider({ id: "claude", label: "Claude" })] },
-        features: { list: [toggleFeature("plan_mode", true)] },
+        optionControls: { controls: [toggleControl("plan_mode")], options: { plan_mode: true } },
       }),
       modes: undefined,
     });
@@ -323,9 +328,10 @@ describe("Command Center agent-control contributions", () => {
           selectedId: "default",
           defaultModeId: "default",
         },
-        features: {
-          list: [toggleFeature("plan_mode", true, "list-todo")],
-          set: (id, value) => {
+        optionControls: {
+          controls: [toggleControl("plan_mode", "list-todo")],
+          options: { plan_mode: true },
+          onSetOption: (id, value) => {
             calls.push([id, value]);
           },
         },
@@ -341,9 +347,10 @@ describe("Command Center agent-control contributions", () => {
     const calls: [string, unknown][] = [];
     const contributions = buildAgentControlContributions(
       makeSource({
-        features: {
-          list: [toggleFeature("fast_mode", false, "zap"), toggleFeature("auto_accept", true)],
-          set: (id, value) => {
+        optionControls: {
+          controls: [toggleControl("fast_mode", "zap"), toggleControl("auto_accept")],
+          options: { fast_mode: false, auto_accept: true },
+          onSetOption: (id, value) => {
             calls.push([id, value]);
           },
         },
@@ -376,7 +383,7 @@ describe("Command Center agent-control contributions", () => {
           selectedId: "default",
           defaultModeId: "default",
         },
-        features: { list: [toggleFeature("fast_mode")] },
+        optionControls: { controls: [toggleControl("fast_mode")], options: {} },
       }),
     );
     const ranks = new Map<string, number>();

@@ -25,7 +25,13 @@ checkout.forge.set_auto_merge.request;
 // -> checkout.forge.set_auto_merge.response
 ```
 
-Most new RPCs should follow this shape. If a request does not have a one-to-one response, call that out in the code near the schema.
+A finite streaming request can emit `.update` messages before its terminal `.response`.
+`usage.list_reports.request` uses this shape: each `.update` carries one settled report, and
+`.response` carries the request-level error or `null`. All three share `requestId`; no updates
+follow the response. An empty successful stream is an empty list. Register updates as replies
+of the originating request so source-owned delivery routes them to the requesting connection.
+
+Most new RPCs should follow these shapes. If a request does not have a one-to-one terminal response, call that out in the code near the schema.
 
 ## Message Shape
 

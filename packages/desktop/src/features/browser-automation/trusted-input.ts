@@ -154,13 +154,6 @@ export async function dispatchTrustedScroll(
   });
 }
 
-export async function dispatchTrustedText(send: CdpCommandSender, text: string): Promise<void> {
-  if (text.length === 0) {
-    return;
-  }
-  await send("Input.insertText", { text });
-}
-
 export function dispatchTrustedKey(send: KeyboardInputSender, key: string): void {
   const keyCode = ELECTRON_KEY_CODE_ALIASES[key] ?? key;
   let character: string | null = null;

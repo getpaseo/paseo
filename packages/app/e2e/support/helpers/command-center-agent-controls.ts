@@ -18,8 +18,27 @@ export async function openCommandCenterForAgent(
   workspace: Pick<MockAgentWorkspace, "workspaceId" | "agentId">,
 ): Promise<Locator> {
   await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+  await expect(
+    page.getByRole("button", { name: /^Select agent mode \(/ }).filter({ visible: true }),
+  ).toBeVisible({ timeout: 30_000 });
   const panel = await openCommandCenter(page);
   return panel.getByTestId("command-center-input");
+}
+
+/**
+ * Types a query that matches both the agent's modes and its models, and waits until rows from both
+ * groups are listed. The agent's controls register after the panel opens; a key pressed before
+ * then lands on whatever else matched, such as file search.
+ */
+export async function searchAgentControls(page: Page, query: string): Promise<void> {
+  const panel = page.getByTestId("command-center-panel");
+  await panel.getByTestId("command-center-input").fill(query);
+  await expect(panel.getByRole("button", { name: /^Mode › / }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(panel.getByRole("button", { name: /^Model › / }).first()).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 export async function chooseCommandCenterAgentControl(input: {

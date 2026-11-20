@@ -15,6 +15,13 @@ function isExcludedPath(requestPath: string): boolean {
   return EXCLUDED_PATHS.has(requestPath);
 }
 
+// RFC 8615 well-known URIs are machine-read metadata. Clients such as MCP OAuth
+// discovery (RFC 9728, RFC 8414) need a 404 for documents the daemon does not
+// serve; the SPA's index.html with a 200 reads as malformed metadata.
+function isWellKnownPath(requestPath: string): boolean {
+  return requestPath === "/.well-known" || requestPath.startsWith("/.well-known/");
+}
+
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -71,7 +78,14 @@ interface ResolvedTarget {
   isIndexHtml: boolean;
 }
 
-function resolveTargetFile(distDir: string, requestPath: string): ResolvedTarget | null {
+interface ResolveTargetFileOptions {
+  distDir: string;
+  requestPath: string;
+  spaFallback: boolean;
+}
+
+function resolveTargetFile(options: ResolveTargetFileOptions): ResolvedTarget | null {
+  const { distDir, requestPath, spaFallback } = options;
   const safePath = path.normalize(requestPath).replace(/^(\.\.[/\\])+/, "");
   let filePath = path.join(distDir, safePath);
 
@@ -82,6 +96,9 @@ function resolveTargetFile(distDir: string, requestPath: string): ResolvedTarget
 
   const finalStat = safeStat(filePath);
   if (!finalStat?.isFile()) {
+    if (!spaFallback) {
+      return null;
+    }
     filePath = path.join(distDir, "index.html");
     const fallbackStat = safeStat(filePath);
     if (!fallbackStat?.isFile()) {
@@ -190,8 +207,13 @@ interface ServeWebUiFileOptions {
 function serveWebUiFile(options: ServeWebUiFileOptions): void {
   const { distDir, requestPath, label, req, res } = options;
 
-  const target = resolveTargetFile(distDir, requestPath);
+  const wellKnown = isWellKnownPath(requestPath);
+  const target = resolveTargetFile({ distDir, requestPath, spaFallback: !wellKnown });
   if (!target) {
+    if (wellKnown) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
     res.status(404).end();
     return;
   }
@@ -250,6 +272,22 @@ function serializeInlineScriptJson(value: unknown): string {
     .replace(/&/g, "\\u0026");
 }
 
+/**
+ * A Host header carries no port when the client used the scheme's default one,
+ * which is what every browser sends to a proxy terminating TLS on 443. The app
+ * parses `listen` with parseHostPort, which requires an explicit port and
+ * rejects the value outright, so the hint has to spell the port out.
+ */
+function hasExplicitPort(host: string): boolean {
+  if (host.startsWith("[")) {
+    // IPv6 literals are bracketed: [::1] has no port, [::1]:443 does.
+    const end = host.indexOf("]");
+    return end !== -1 && /^:\d{1,5}$/.test(host.slice(end + 1));
+  }
+  const colon = host.indexOf(":");
+  return colon !== -1 && colon === host.lastIndexOf(":") && /^\d{1,5}$/.test(host.slice(colon + 1));
+}
+
 function injectConnectionHint(
   html: string,
   req: Parameters<RequestHandler>[0],
@@ -257,8 +295,16 @@ function injectConnectionHint(
 ): string {
   const host = typeof req.headers.host === "string" ? req.headers.host : "";
   const useTls = req.protocol === "https";
+  let listen = host;
+  if (host && !hasExplicitPort(host)) {
+    let defaultPort = 80;
+    if (useTls) {
+      defaultPort = 443;
+    }
+    listen = `${host}:${defaultPort}`;
+  }
   const hint = {
-    listen: host,
+    listen,
     useTls,
     label,
   };

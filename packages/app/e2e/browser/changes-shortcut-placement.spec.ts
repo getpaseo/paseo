@@ -1,5 +1,5 @@
 import { expect, test } from "../support/fixtures";
-import { gotoWorkspace } from "../support/helpers/launcher";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
@@ -12,11 +12,12 @@ test("Changes shortcut reveals the Changes tree in Explorer", async ({ page }) =
     await page.setViewportSize({ width: 1400, height: 900 });
     await gotoWorkspace(page, workspace.workspaceId);
     await waitForWorkspaceTabsVisible(page);
+    await clickNewChat(page);
 
     await page.keyboard.press(CHANGES_SHORTCUT);
 
     const explorer = page.getByTestId("workspace-explorer-sidebar").filter({ visible: true });
-    await expect(explorer.getByTestId("explorer-sidebar-tab-changes_tree")).toBeVisible({
+    await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible({
       timeout: 30_000,
     });
     await expect(explorer.getByTestId("changes-tree-panel")).toBeVisible();

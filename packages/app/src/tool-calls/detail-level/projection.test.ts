@@ -110,11 +110,7 @@ describe("tool call detail-level projection", () => {
       preparedHistory: prepared,
     });
     expect(single.head).toEqual([firstCall]);
-    expect(single.groupsByHostId.get(firstCall.id)?.run).toMatchObject({
-      calls: [firstCall],
-      latest: firstCall,
-      isSealed: false,
-    });
+    expect(single.groupsByHostId.size).toBe(0);
 
     const grouped = project({
       level: "overview",
@@ -142,18 +138,11 @@ describe("tool call detail-level projection", () => {
     expect(result.groupsByHostId.get("1")?.isLoading).toBe(true);
   });
 
-  it("builds a loading aggregate for a one-call run", () => {
+  it("leaves a running lone call visible without an aggregate", () => {
     const call = toolCall("1", { type: "shell", command: "one" }, { status: "running" });
     const result = project({ level: "overview", head: [call], isTurnActive: true });
-    const group = result.groupsByHostId.get(call.id);
-    if (!group) {
-      throw new Error("Expected an overview group");
-    }
-
-    expect(group).toMatchObject({
-      isLoading: true,
-      summary: { commandCount: 1 },
-    });
+    expect(result.head).toEqual([call]);
+    expect(result.groupsByHostId.size).toBe(0);
   });
 
   it("keeps an active overview group on its latest call until a visible boundary arrives", () => {
@@ -255,12 +244,13 @@ describe("tool call detail-level projection", () => {
       run: expect.any(Object),
       isLoading: false,
       summary: {
+        thoughtCount: 0,
         editedFileCount: 1,
         commandCount: 1,
         readFileCount: 2,
         searchCount: 0,
         otherToolCount: 0,
-        paseoCallCount: 0,
+        paseoActions: {},
       },
     });
   });
@@ -328,7 +318,7 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { otherToolCount: 2, paseoCallCount: 2 },
+      summary: { otherToolCount: 2, paseoActions: { "Listed agents": 1, "List worktrees": 1 } },
     });
   });
 
@@ -346,7 +336,11 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: calls });
 
     expect(result.groupsByHostId.get("1")).toMatchObject({
-      summary: { searchCount: 3, otherToolCount: 0, paseoCallCount: 3 },
+      summary: {
+        searchCount: 3,
+        otherToolCount: 0,
+        paseoActions: { "Listed providers": 1, "List worktrees": 2 },
+      },
     });
   });
 
@@ -476,7 +470,105 @@ describe("tool call detail-level projection", () => {
     const result = project({ level: "overview", head: [singleCall, plan, speak] });
 
     expect(result.head).toEqual([singleCall, plan, speak]);
-    expect(result.groupsByHostId.get(singleCall.id)?.run.calls).toEqual([singleCall]);
-    expect(result.groupsByHostId.size).toBe(1);
+    expect(result.groupsByHostId.size).toBe(0);
   });
+});
+
+it("keeps a heartbeat trigger visible outside grouped work", () => {
+  const trigger = toolCall(
+    "1",
+    { type: "plain_text", text: "Check progress" },
+    { name: "heartbeat" },
+  );
+  const work = toolCall("2", { type: "shell", command: "pwd" });
+  const result = project({ level: "overview", tail: [trigger, work] });
+  expect(result.tail.map((item) => item.id)).toEqual(["1", "2"]);
+  expect(result.groupsByHostId.has("1")).toBe(false);
+});
+
+it("does not merge tools from different canonical turns", () => {
+  const first = toolCall("1", { type: "shell", command: "pwd" });
+  first.turnId = "first";
+  const second = toolCall("2", { type: "shell", command: "ls" });
+  second.turnId = "second";
+  const result = project({ level: "overview", tail: [first, second] });
+  expect(result.tail.map((item) => item.id)).toEqual(["1", "2"]);
+});
+
+it.each([false, true])(
+  "handles streaming reasoning across retained history (Expand thinking %s)",
+  (autoExpandReasoning) => {
+    const call = { ...toolCall("1", { type: "shell", command: "echo ok" }), turnId: "run" };
+    const thought: StreamItem = {
+      kind: "thought",
+      id: "reasoning",
+      text: "Checking",
+      status: "loading",
+      timestamp: new Date(),
+      turnId: "run",
+    };
+    const tail = [call];
+    const result = project({
+      level: "overview",
+      tail,
+      head: [thought],
+      isTurnActive: true,
+      preparedHistory: prepareToolCallHistory("overview", tail, autoExpandReasoning),
+    });
+    expect(result.head).toEqual(autoExpandReasoning ? [thought] : []);
+    expect(result.groupsByHostId.get(call.id)?.run.calls).toEqual(
+      autoExpandReasoning ? undefined : [call, thought],
+    );
+    expect(result.groupsByHostId.get(call.id)?.summary).toEqual(
+      autoExpandReasoning
+        ? undefined
+        : expect.objectContaining({
+            commandCount: 1,
+            otherToolCount: 0,
+            thoughtCount: 1,
+          }),
+    );
+  },
+);
+
+it("turns a retained lone call into a group without replacing its row key", () => {
+  const first = toolCall("1", { type: "shell", command: "one" });
+  const second = toolCall("2", { type: "shell", command: "two" });
+  const tail = [assistant("before"), first];
+  const preparedHistory = prepareToolCallHistory("overview", tail);
+  const single = project({ level: "overview", tail, preparedHistory, isTurnActive: true });
+  const grouped = project({
+    level: "overview",
+    tail,
+    head: [second],
+    preparedHistory,
+    isTurnActive: true,
+  });
+  expect(single.groupsByHostId.size).toBe(0);
+  expect(single.tail).toBe(tail);
+  expect(grouped.tail).toBe(single.tail);
+  expect(grouped.head).toEqual([]);
+  expect(grouped.groupsByHostId.get(first.id)?.run.calls).toEqual([first, second]);
+  expect(grouped.historyGroupUpdatesByHostId.get(first.id)).toBe(
+    grouped.groupsByHostId.get(first.id),
+  );
+});
+
+it("shows one thought as itself until another groupable item arrives", () => {
+  const thought: StreamItem = {
+    kind: "thought",
+    id: "thought",
+    text: "Checking",
+    status: "ready",
+    timestamp: new Date(0),
+  };
+  const single = project({ level: "overview", tail: [thought] });
+  expect(single.tail).toEqual([thought]);
+  expect(single.groupsByHostId.size).toBe(0);
+  const grouped = project({
+    level: "overview",
+    tail: [thought, toolCall("1", { type: "shell", command: "one" })],
+  });
+  expect(grouped.tail.map((item) => item.id)).toEqual([thought.id]);
+  expect(grouped.groupsByHostId.get(thought.id)?.run.calls).toHaveLength(2);
 });

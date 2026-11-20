@@ -1,0 +1,68 @@
+{
+  "provenance": {
+    "package": "@gotgenes/pi-subagents",
+    "version": "23.4.0",
+    "sourceCommit": "63476ff869efd8ea339040f496fa734048b89e70",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-10-19"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "resume-call",
+      "toolName": "subagent",
+      "args": {
+        "subagent_type": "general-purpose",
+        "description": "resume",
+        "prompt": "Continue",
+        "resume": "expired-child",
+        "run_in_background": true
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "resume-call",
+      "toolName": "subagent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent \"expired-child\" had its session released after its retention window; resume is unavailable, but its result is still retrievable via get_subagent_result."
+          }
+        ]
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "resume-call",
+          "name": "subagent",
+          "arguments": {
+            "subagent_type": "general-purpose",
+            "description": "resume",
+            "prompt": "Continue",
+            "resume": "expired-child",
+            "run_in_background": true
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "resume-call",
+      "toolName": "subagent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent \"expired-child\" had its session released after its retention window; resume is unavailable, but its result is still retrievable via get_subagent_result."
+        }
+      ],
+      "isError": false
+    }
+  ]
+}

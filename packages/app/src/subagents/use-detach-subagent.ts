@@ -1,3 +1,4 @@
+import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { useCallback } from "react";
 import { useToast } from "@/contexts/toast-context";
 import { i18n } from "@/i18n/i18next";
@@ -14,16 +15,11 @@ export type {
   ResolveDetachSubagentDialogInput,
 } from "./detach-subagent";
 
-export interface UseDetachSubagentInput {
-  serverId: string;
-}
-
-export function useDetachSubagent(input: UseDetachSubagentInput): (subagentId: string) => void {
-  const { serverId } = input;
+export function useDetachSubagent(): (address: AgentAddress) => void {
   const toast = useToast();
 
   return useCallback(
-    (subagentId: string) => {
+    ({ serverId, agentId: subagentId }: AgentAddress) => {
       void requestDetachSubagent(
         { serverId, subagentId },
         {
@@ -46,6 +42,6 @@ export function useDetachSubagent(input: UseDetachSubagentInput): (subagentId: s
         },
       );
     },
-    [serverId, toast],
+    [toast],
   );
 }

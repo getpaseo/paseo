@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, type ReactElement } from "react";
 import { View, Text } from "react-native";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused } from "expo-router/react-navigation";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronLeft, Import } from "lucide-react-native";
@@ -87,7 +87,6 @@ function SessionsScreenContent() {
     isError,
     isSearchSupported,
     isSearchTruncated,
-    searchMatchesByAgentKey,
     hostErrors,
     loadMore,
     refreshAll,
@@ -113,7 +112,7 @@ function SessionsScreenContent() {
     void refreshAll().finally(() => setIsManualRefresh(false));
   }, [refreshAll]);
 
-  // `useAgentHistory` owns the order: recency at rest, relevance under a query.
+  // Searching filters the chronological history without changing its date buckets.
   const emptyText = resolveEmptyText({
     t,
     isSearching,
@@ -130,8 +129,8 @@ function SessionsScreenContent() {
   const handleClearSearch = useCallback(() => setSearchInput(""), []);
 
   const listFooterComponent = useMemo(() => {
-    // A ranked result set has no next page — reaching a weaker match means
-    // narrowing the query, so the footer says that instead of offering a button.
+    // COMPAT(historyPagination): old daemons return a truncated relevance page.
+    // Added in v0.8.0; remove after 2027-03-16 once the daemon floor supports search pagination.
     if (isSearchTruncated) {
       return (
         <View style={styles.footer}>
@@ -217,8 +216,7 @@ function SessionsScreenContent() {
           listFooterComponent={listFooterComponent}
           showAttentionIndicator={false}
           showHostColumn
-          searchMatchesByAgentKey={isSearching ? searchMatchesByAgentKey : undefined}
-          flat={isSearching}
+          search={isSearching ? search : undefined}
         />
       ) : null}
       {importSession.sheet}
