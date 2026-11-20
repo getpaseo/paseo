@@ -51,3 +51,18 @@ export async function expectColumnAtLeftGutter(page: Page, column: Locator): Pro
     })
     .toBeLessThanOrEqual(24);
 }
+
+/** Checks that two column surfaces sit on the same left and right vertical rails. */
+export async function expectSharedHorizontalRail(first: Locator, second: Locator): Promise<void> {
+  await expect(first).toBeVisible({ timeout: 30_000 });
+  await expect(second).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([first.boundingBox(), second.boundingBox()]);
+      if (!a || !b) return Infinity;
+      const leftDelta = Math.abs(a.x - b.x);
+      const rightDelta = Math.abs(a.x + a.width - (b.x + b.width));
+      return Math.max(leftDelta, rightDelta);
+    })
+    .toBeLessThanOrEqual(1);
+}

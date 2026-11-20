@@ -24,6 +24,9 @@ import { isNative } from "@/constants/platform";
  */
 export const WINDOW_CONTENT_DATASET = { "window-content": "" };
 
+/** Reserves a clickable area for a control mounted outside the titlebar rail. */
+export const WINDOW_NO_DRAG_DATASET = { "window-no-drag": "" };
+
 export const titlebarDragSurfaceStyle: React.CSSProperties = {
   cursor: "default",
   // @ts-expect-error — WebkitAppRegion is not in CSSProperties

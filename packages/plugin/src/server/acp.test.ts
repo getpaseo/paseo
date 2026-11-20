@@ -2320,3 +2320,135 @@ describe("ACP session history replay", () => {
     }
   });
 });
+
+it("sends extension requests from discovery and configure and preserves JSON-RPC errors", async () => {
+  const { connector, instances } = connectorHarness({
+    handleRequest(instance, request) {
+      if (request.method === "_example/catalog") {
+        instance.respond(request, { model: "vendor-model" });
+        return true;
+      }
+      if (request.method === "_example/select") {
+        instance.reject(request, "Vendor rejected the selection");
+        return true;
+      }
+      return false;
+    },
+  });
+  const registration = runAcpProvider({
+    id: "extensions",
+    label: "Extensions",
+    connector,
+    transformers: [
+      {
+        async discover(catalog, { request }) {
+          expect(await request("_example/catalog", { scope: "all" })).toEqual({
+            model: "vendor-model",
+          });
+          return { ...catalog, defaultModel: "vendor-model" };
+        },
+        async configure(change, { request }) {
+          await expect(request("_example/select", { model: change.value })).rejects.toMatchObject({
+            code: -32603,
+            message: "Vendor rejected the selection",
+          });
+          return "handled";
+        },
+      },
+    ],
+  });
+  const connection = await registration.connect({
+    versions: [1],
+    capabilities: ["session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({ type: "catalog", requestId: "catalog" });
+    expect(
+      await waitForEvent(
+        events,
+        (event) => event.type === "catalog" || event.type === "request.failed",
+      ),
+    ).toMatchObject({ type: "catalog", catalog: { defaultModel: "vendor-model" } });
+    expect(instances[1].requests).toContainEqual(
+      expect.objectContaining({
+        method: "_example/catalog",
+        params: { scope: "all" },
+      }),
+    );
+
+    const input = openInput();
+    await connection.send({ ...input, config: { ...input.config, model: "vendor-model" } });
+    expect(
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.ready" || event.type === "request.failed",
+      ),
+    ).toMatchObject({ type: "session.ready" });
+    expect(instances[2].requests).toContainEqual(
+      expect.objectContaining({
+        method: "_example/select",
+        params: { model: "vendor-model" },
+      }),
+    );
+  } finally {
+    await connection.close();
+  }
+});
+
+it("rewrites the session-ready, notification and configure-commit config snapshots", async () => {
+  const modelOption = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: "first",
+    options: ["first", "second", "third"].map((value) => ({ name: value, value })),
+  };
+  const { connector, instances } = connectorHarness({ configOptions: [modelOption] });
+  const registration = runAcpProvider({
+    id: "config-transformer",
+    label: "Config Transformer",
+    connector,
+    transformers: [
+      {
+        config(state, { sessionId }) {
+          return { ...state, model: `${sessionId}/${state.model}` };
+        },
+      },
+    ],
+  });
+  const connection = await registration.connect({
+    versions: [1],
+    capabilities: ["session.configure"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  const models = () =>
+    events.flatMap((event) => (event.type === "session.config" ? [event.config.model] : []));
+  try {
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    expect(models()).toEqual(["session-1/first"]);
+
+    instances[1].notify("session/update", {
+      sessionId: "connector-session",
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: [{ ...modelOption, currentValue: "second" }],
+      },
+    });
+    await expect.poll(models).toEqual(["session-1/first", "session-1/second"]);
+
+    await connection.send({
+      type: "session.configure",
+      requestId: "configure",
+      sessionId: "session-1",
+      changes: { model: "third" },
+    });
+    await expect.poll(models).toEqual(["session-1/first", "session-1/second", "session-1/third"]);
+  } finally {
+    await connection.close();
+  }
+});
