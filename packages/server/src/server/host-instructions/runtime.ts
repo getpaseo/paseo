@@ -32,8 +32,8 @@ const Registration = z.object({
   destinationId: z.string(),
   offer: z.string(),
   token: z.string(),
-  agentId: z.string(),
-  workspaceId: z.string(),
+  agentId: z.string().optional(),
+  workspaceId: z.string().optional(),
 });
 type Registration = z.infer<typeof Registration>;
 type ManagementResult = Omit<
@@ -41,7 +41,15 @@ type ManagementResult = Omit<
   "requestId"
 >;
 
+const ConversationTarget = z.object({
+  agentId: z.string(),
+  workspaceId: z.string(),
+  workspaceName: z.string().optional(),
+  title: z.string().optional(),
+});
+type ConversationTarget = z.infer<typeof ConversationTarget>;
 const Request = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("list") }),
   z.object({ action: z.literal("submit"), instruction: HostInstructionSchema }),
   z.object({ action: z.literal("cancel"), instruction: HostInstructionSchema }),
   z.object({ action: z.literal("status"), id: z.uuid(), expiresAt: z.number().int().positive() }),
@@ -50,7 +58,11 @@ type Request = z.infer<typeof Request>;
 
 const Frame = z.object({ token: z.string().max(128), request: Request });
 const Reply = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), receipt: HostInstructionReceiptSchema.nullable() }),
+  z.object({
+    ok: z.literal(true),
+    receipt: HostInstructionReceiptSchema.nullable(),
+    targets: z.array(ConversationTarget).optional(),
+  }),
   z.object({ ok: z.literal(false), state: z.enum(["failed", "revoked"]) }),
 ]);
 
@@ -73,6 +85,7 @@ export class HostInstructionsRuntime {
   private relayOffer: Promise<string> | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly active = new Set<string>();
+  private readonly discoveredTargets = new Map<string, ConversationTarget[]>();
   private busy = false;
   private stopped = false;
 
@@ -117,6 +130,9 @@ export class HostInstructionsRuntime {
         const grants = await this.inbox.listGrants();
         const requests = await this.inbox.list();
         return {
+          hostPolicies: grants.flatMap(({ id, sourceId, policy, workspaceOverrides }) =>
+            workspaceOverrides ? [{ id, sourceId, policy, workspaceOverrides }] : [],
+          ),
           grants: grants.flatMap((grant) =>
             grant.promptConversations.map((agentId) => ({
               id: grant.id,
@@ -138,6 +154,24 @@ export class HostInstructionsRuntime {
                 ]
               : [],
           ),
+        };
+      }
+      case "set_policy": {
+        if (command.sourceId === this.options.serverId) throw new Error("Choose another host");
+        const ids = new Set(command.workspaceOverrides.map((rule) => rule.workspaceId));
+        if (ids.size !== command.workspaceOverrides.length)
+          throw new Error("Duplicate workspace override");
+        const grant = await this.inbox.setHostPolicy(
+          command.sourceId,
+          command.policy,
+          command.workspaceOverrides,
+          async () => {
+            await this.getRelayOffer();
+          },
+        );
+        if (!grant) return {};
+        return {
+          registration: { id: grant.id, offer: await this.getRelayOffer(), token: grant.token },
         };
       }
       case "grant": {
@@ -168,6 +202,11 @@ export class HostInstructionsRuntime {
         if (target.kind !== "socket" || target.offer?.minimumSecurityMode !== "protected") {
           throw new Error("Host instructions require a protected relay offer");
         }
+        if (Boolean(command.agentId) !== Boolean(command.workspaceId)) {
+          throw new Error(
+            "A conversation registration requires both the conversation and workspace IDs",
+          );
+        }
         const registration = Registration.parse(command);
         this.registrations.set(registrationKey(registration), registration);
         await this.registrationWriter.persist([...this.registrations.values()]);
@@ -181,28 +220,65 @@ export class HostInstructionsRuntime {
         );
         return {};
       case "revoke":
-        await this.inbox.revoke(command.id);
+        await this.inbox.revoke(command.id, command.keepConversationGrants);
         return {};
     }
   }
 
-  listDestinations() {
-    return [...this.registrations.values()].map(({ destinationId, workspaceId, agentId }) => ({
-      destinationId,
-      workspaceId,
-      agentId,
-    }));
+  async listDestinations() {
+    const registrations = [...this.registrations.values()];
+    const hostPolicies = new Set(
+      registrations
+        .filter((registration) => !registration.agentId)
+        .map((registration) => registration.destinationId),
+    );
+    const entries = await Promise.all(
+      registrations
+        .filter((entry) => !entry.agentId || !hostPolicies.has(entry.destinationId))
+        .map(async (entry) => {
+          let targets: ConversationTarget[];
+          if (entry.agentId && entry.workspaceId) {
+            targets = [{ agentId: entry.agentId, workspaceId: entry.workspaceId }];
+          } else {
+            targets = await this.discover(entry);
+          }
+          return targets.map((target) =>
+            Object.assign({ destinationId: entry.destinationId }, target),
+          );
+        }),
+    );
+    const unique = new Map(
+      entries.flat().map((entry) => [JSON.stringify([entry.destinationId, entry.agentId]), entry]),
+    );
+    return [...unique.values()];
   }
 
-  async submit(destinationId: string, agentId: string, prompt: string) {
+  private async discover(entry: Registration) {
+    const key = registrationKey(entry);
+    const result = await exchangeFrame(entry, { action: "list" });
+    if (result) this.discoveredTargets.set(key, result.ok ? (result.targets ?? []) : []);
+    return this.discoveredTargets.get(key) ?? [];
+  }
+
+  async submit(destinationId: string, agentId: string, prompt: string, workspaceId?: string) {
     await this.registrationWriter.settled();
-    const entry = [...this.registrations.values()].findLast(
-      (registration) =>
-        registration.destinationId === destinationId && registration.agentId === agentId,
+    const entries = [...this.registrations.values()].filter(
+      (registration) => registration.destinationId === destinationId,
     );
+    const entry =
+      entries.findLast((registration) => !registration.agentId) ??
+      entries.findLast((registration) => registration.agentId === agentId);
     if (!entry) throw new Error("This conversation has no instruction grant");
+    const targetWorkspace =
+      entry.workspaceId ??
+      workspaceId ??
+      (await this.discover(entry)).find((target) => target.agentId === agentId)?.workspaceId;
+    if (!targetWorkspace)
+      throw new Error(
+        "Conversation unavailable. List instruction targets first or pass its workspace ID",
+      );
     return this.outbox.submit(registrationKey(entry), {
-      target: { kind: "conversation", workspaceId: entry.workspaceId, agentId },
+      target: { kind: "conversation", workspaceId: targetWorkspace, agentId },
       prompt,
     });
   }
@@ -292,6 +368,9 @@ export class HostInstructionsRuntime {
     const principal = await this.inbox.authenticate(token);
     if (!principal) return { ok: false, state: "revoked" };
     try {
+      if (request.action === "list") {
+        return { ok: true, receipt: null, targets: await this.getSharedTargets(principal) };
+      }
       if (request.action === "status") {
         const receipt = await this.inbox.status(principal, request.id);
         if (!receipt && request.expiresAt <= Date.now()) {
@@ -305,11 +384,45 @@ export class HostInstructionsRuntime {
           receipt: await this.inbox.cancelDelivery(principal, request.instruction),
         };
       }
+      const target = request.instruction.target;
+      if (target.kind !== "conversation") return { ok: false, state: "failed" };
+      // A sender may provide a workspace ID, but the destination owns conversation placement.
+      const current = await this.resolveConversation(target.agentId);
+      if (current?.workspaceId !== target.workspaceId) return { ok: false, state: "failed" };
       await this.inbox.submit(principal, request.instruction);
       return { ok: true, receipt: await this.inbox.status(principal, request.instruction.id) };
     } catch {
       return { ok: false, state: "failed" };
     }
+  }
+
+  private async getSharedTargets(
+    principal: NonNullable<Awaited<ReturnType<HostInstructionInbox["authenticate"]>>>,
+  ) {
+    const grant = (await this.inbox.listGrants()).find((entry) => entry.id === principal.id);
+    if (!grant?.workspaceOverrides) return [];
+    const workspaces = new Map(
+      (await this.options.workspaceRegistry.listActive()).map((workspace) => [
+        workspace.workspaceId,
+        workspace,
+      ]),
+    );
+    const targets: ConversationTarget[] = [];
+    for (const agent of await this.options.agentStorage.listAll()) {
+      if (!agent.workspaceId || agent.internal || agent.archivedAt) continue;
+      const workspace = workspaces.get(agent.workspaceId);
+      if (!workspace) continue;
+      const target = { agentId: agent.id, workspaceId: workspace.workspaceId };
+      if (await this.inbox.canDiscover(principal, { kind: "conversation", ...target })) {
+        targets.push({
+          ...target,
+          workspaceName: workspace.title ?? workspace.displayName,
+          title: agent.title ?? undefined,
+        });
+        if (targets.length >= 200) break;
+      }
+    }
+    return targets;
   }
 
   private async tick() {
@@ -359,6 +472,7 @@ export class HostInstructionsRuntime {
     const currentTarget = await this.resolveConversation(target.agentId);
     const claim = await this.inbox.claim(sourceId, id, currentTarget);
     if (claim?.state !== "dispatching") return;
+    let admitted = false;
     try {
       const result = await sendPreparedPromptToAgent({
         agentManager,
@@ -375,10 +489,13 @@ export class HostInstructionsRuntime {
         idleOnly: true,
         unarchive: false,
         allowOutOfBand: false,
-        admit: () =>
-          !this.stopped &&
-          this.inbox.canDispatch(sourceId, id) &&
-          !agentManager.getAgent(target.agentId)?.pendingPermissions.size,
+        admit: () => {
+          admitted =
+            !this.stopped &&
+            this.inbox.canDispatch(sourceId, id) &&
+            !agentManager.getAgent(target.agentId)?.pendingPermissions.size;
+          return admitted;
+        },
         logger,
       });
       if (result.disposition === "turn_started") {
@@ -394,7 +511,10 @@ export class HostInstructionsRuntime {
         "host_instruction_dispatched",
       );
     } catch (error) {
-      if (error instanceof AgentTurnBusyError) {
+      if (
+        error instanceof AgentTurnBusyError ||
+        (!admitted && !this.inbox.canDispatch(sourceId, id))
+      ) {
         await this.inbox.markBusy(sourceId, id);
       } else {
         await this.inbox.finish(sourceId, id, "outcome_unknown");
@@ -403,10 +523,19 @@ export class HostInstructionsRuntime {
   }
 }
 
-function exchange(registration: Registration | undefined, request: Request) {
+async function exchange(
+  registration: Registration | undefined,
+  request: Exclude<Request, { action: "list" }>,
+) {
   const id = request.action === "status" ? request.id : request.instruction.id;
-  if (!registration) return Promise.resolve({ id, state: "revoked" as const });
-  type Receipt = z.infer<typeof HostInstructionReceiptSchema> | null;
+  if (!registration) return { id, state: "revoked" as const };
+  const result = await exchangeFrame(registration, request);
+  if (!result) return null;
+  return result.ok ? result.receipt : { id, state: result.state };
+}
+
+function exchangeFrame(registration: Registration, request: Request) {
+  type Receipt = z.infer<typeof Reply> | null;
   let resolve!: (receipt: Receipt) => void;
   const promise = new Promise<Receipt>((complete) => {
     resolve = complete;
@@ -415,7 +544,7 @@ function exchange(registration: Registration | undefined, request: Request) {
     url: "ws://instruction-relay",
   });
   let finished = false;
-  const finish = (receipt: z.infer<typeof HostInstructionReceiptSchema> | null) => {
+  const finish = (receipt: Receipt) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
@@ -439,7 +568,7 @@ function exchange(registration: Registration | undefined, request: Request) {
         return;
       }
       const reply = Reply.parse(JSON.parse(value));
-      finish(reply.ok ? reply.receipt : { id, state: reply.state });
+      finish(reply);
     } catch {
       finish(null);
     }

@@ -96,6 +96,45 @@ describe("host instruction inbox", () => {
     ).toBe("queued");
   });
 
+  it("uses the host default and tightens queued instructions when a workspace rule changes", async () => {
+    const prepare = async () => {};
+    const grant = await inbox.setHostPolicy(
+      "worker",
+      "unattended",
+      [
+        { workspaceId: "protected", policy: "ask" },
+        { workspaceId: "blocked", policy: "blocked" },
+      ],
+      prepare,
+    );
+    if (!grant) throw new Error("Expected a new host policy");
+    const task = (workspaceId: string): HostInstruction => ({
+      ...instruction,
+      id: randomUUID(),
+      target: { kind: "conversation", workspaceId, agentId: "recipient" },
+    });
+    const normal = task("workspace");
+    expect((await inbox.submit(grant, normal)).state).toBe("queued");
+    expect((await inbox.submit(grant, task("protected"))).state).toBe("awaiting_approval");
+    await expect(inbox.submit(grant, task("blocked"))).rejects.toThrow("outside the grant");
+
+    expect(await inbox.setHostPolicy("worker", "ask", [], prepare)).toBeNull();
+    expect(await inbox.authenticate(grant.token)).toEqual({ id: grant.id, sourceId: "worker" });
+    expect((await inbox.status(grant, normal.id))?.state).toBe("awaiting_approval");
+    await inbox.decide("worker", normal.id, true);
+    expect((await inbox.claim("worker", normal.id, normal.target))?.state).toBe("dispatching");
+
+    await inbox.setHostPolicy(
+      "worker",
+      "ask",
+      [{ workspaceId: "workspace", policy: "blocked" }],
+      prepare,
+    );
+    expect(inbox.canDispatch("worker", normal.id)).toBe(false);
+    await inbox.markBusy("worker", normal.id);
+    expect((await inbox.status(grant, normal.id))?.state).toBe("denied");
+  });
+
   it("moves a busy claim back to the queue and blocks dispatch after revocation", async () => {
     const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
     await inbox.submit(grant, instruction);

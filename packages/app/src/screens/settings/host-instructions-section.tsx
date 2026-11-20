@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import type { HostInstructionWorkspaceOverrides } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { Button } from "@/components/ui/button";
@@ -15,10 +17,15 @@ import {
 import { settingsStyles } from "@/styles/settings";
 import type { HostProfile } from "@/types/host-connection";
 
+const styles = StyleSheet.create({
+  footer: { justifyContent: "flex-end" },
+});
+const footerRow = [settingsStyles.row, styles.footer];
+const emptyOverrides: HostInstructionWorkspaceOverrides = [];
 const borderedRow = [settingsStyles.row, settingsStyles.rowBorder];
 
 type Directory = Awaited<ReturnType<DaemonClient["manageHostInstructions"]>>;
-interface Conversation {
+interface Workspace {
   id: string;
   name: string;
 }
@@ -27,7 +34,7 @@ export function HostInstructionsSection({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const client = useHostRuntimeClient(host.serverId);
   const connected = useHostRuntimeIsConnected(host.serverId);
-  const supported = useHostFeature(host.serverId, "hostInstructions");
+  const supported = useHostFeature(host.serverId, "hostInstructionWorkspacePolicies");
   return (
     <SettingsSection title={t("settings.host.instructions.title")}>
       {client && connected && supported ? (
@@ -43,6 +50,10 @@ export function HostInstructionsSection({ host }: { host: HostProfile }) {
   );
 }
 
+function findSourcePolicy(directory: Directory | undefined, sourceId: string | undefined) {
+  return directory?.hostPolicies?.find((entry) => entry.sourceId === sourceId);
+}
+
 function HostInstructionsForm({ host, client }: { host: HostProfile; client: DaemonClient }) {
   const { t } = useTranslation();
   const hosts = useHosts();
@@ -53,35 +64,31 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
         .map((item) => ({ id: item.serverId, value: item.serverId, label: item.label })),
     [hosts, host.serverId],
   );
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [directory, setDirectory] = useState<Directory>();
   const [sourceId, setSourceId] = useState<string>();
-  const [agentId, setAgentId] = useState<string>();
-  const [policy, setPolicy] = useState<"ask" | "unattended">("ask");
+  const [draftPolicy, setDraftPolicy] = useState<"ask" | "unattended">();
+  const [draftOverrides, setDraftOverrides] = useState<HostInstructionWorkspaceOverrides>();
+  const saved = findSourcePolicy(directory, sourceId);
+  const policy = draftPolicy ?? saved?.policy ?? "ask";
+  const workspaceOverrides = draftOverrides ?? saved?.workspaceOverrides ?? emptyOverrides;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     let live = true;
-    const loadConversations = async () => {
-      try {
-        const { entries } = await client.fetchAgents({ scope: "active", page: { limit: 200 } });
-        if (live)
-          setConversations(
-            entries.flatMap(({ agent, project }) =>
-              agent.workspaceId
-                ? [
-                    {
-                      id: agent.id,
-                      name: `${project.workspaceName ?? project.projectName} · ${agent.title ?? agent.provider}`,
-                    },
-                  ]
-                : [],
-            ),
-          );
-      } catch (cause) {
-        if (live) setError(String(cause));
-      }
+    const loadWorkspaces = async () => {
+      const all: Workspace[] = [];
+      let cursor: string | undefined;
+      do {
+        const { entries, pageInfo } = await client.fetchWorkspaces({
+          page: { limit: 200, cursor },
+        });
+        if (!live) return;
+        all.push(...entries.map((workspace) => ({ id: workspace.id, name: workspace.name })));
+        cursor = pageInfo.nextCursor ?? undefined;
+      } while (cursor);
+      setWorkspaces(all);
     };
     const refresh = async () => {
       try {
@@ -91,7 +98,9 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
         if (live) setError(String(cause));
       }
     };
-    void loadConversations();
+    void loadWorkspaces().catch((cause: unknown) => {
+      if (live) setError(String(cause));
+    });
     void refresh();
     const timer = setInterval(refresh, 4000);
     return () => {
@@ -101,7 +110,7 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
   }, [client]);
 
   const hostLabel = (id: string) => hosts.find((item) => item.serverId === id)?.label ?? id;
-  const agentLabel = (id: string) => conversations.find((item) => item.id === id)?.name ?? id;
+  const workspaceLabel = (id: string) => workspaces.find((item) => item.id === id)?.name ?? id;
   const act = useCallback(
     async (operation: () => Promise<unknown>) => {
       setBusy(true);
@@ -123,45 +132,49 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
     },
     [act, client],
   );
-  const allow = useCallback(() => {
-    if (!sourceId || !agentId) return;
+  const selectSource = useCallback((id: string) => {
+    setSourceId(id);
+    setDraftPolicy(undefined);
+    setDraftOverrides(undefined);
+  }, []);
+  const save = useCallback(() => {
+    if (!sourceId || !directory) return;
     void act(async () => {
       const source = getHostRuntimeStore().getClient(sourceId);
-      if (!source?.isConnected || !source.getLastServerInfoMessage()?.features?.hostInstructions) {
+      if (
+        !saved &&
+        (!source?.isConnected ||
+          !source.getLastServerInfoMessage()?.features?.hostInstructionWorkspacePolicies)
+      ) {
         throw new Error(t("settings.host.instructions.updateSource"));
       }
       const { registration } = await client.manageHostInstructions({
-        action: "grant",
+        action: "set_policy",
         sourceId,
-        agentId,
         policy,
+        workspaceOverrides,
       });
-      if (!registration) throw new Error("The receiving host did not return a grant");
-      try {
-        await source.manageHostInstructions({
-          action: "register",
-          destinationId: host.serverId,
-          agentId,
-          offer: registration.offer,
-          token: registration.token,
-          workspaceId: registration.workspaceId,
-        });
-      } catch (cause) {
-        await client.manageHostInstructions({ action: "revoke", id: registration.id });
-        throw cause;
+      if (registration) {
+        try {
+          if (!source) throw new Error(t("settings.host.instructions.updateSource"));
+          await source.manageHostInstructions({
+            action: "register",
+            destinationId: host.serverId,
+            offer: registration.offer,
+            token: registration.token,
+          });
+        } catch (cause) {
+          await client.manageHostInstructions({
+            action: "revoke",
+            id: registration.id,
+            keepConversationGrants: true,
+          });
+          throw cause;
+        }
       }
     });
-  }, [act, agentId, client, host.serverId, policy, sourceId, t]);
+  }, [act, client, directory, host.serverId, policy, saved, sourceId, t, workspaceOverrides]);
 
-  const conversationOptions = useMemo(
-    () =>
-      conversations.map((agent) => ({
-        id: agent.id,
-        value: agent.id,
-        label: agent.name,
-      })),
-    [conversations],
-  );
   const policies = useMemo(
     () =>
       (["ask", "unattended"] as const).map((value) => ({
@@ -171,9 +184,8 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
       })),
     [t],
   );
-  const selectedSource = sources.find((entry) => entry.id === sourceId) ?? null;
-  const selectedConversation = conversationOptions.find((entry) => entry.id === agentId) ?? null;
   const selectedPolicy = policies.find((entry) => entry.id === policy) ?? null;
+  const selectedSource = sources.find((entry) => entry.id === sourceId) ?? null;
 
   return (
     <View style={settingsStyles.card} testID="host-instructions-section">
@@ -194,22 +206,7 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
             selectedDisplay={selectedSource}
             options={sources}
             disabled={busy}
-            onChange={setSourceId}
-          />
-        </View>
-      </View>
-      <View style={settingsStyles.row}>
-        <View style={settingsStyles.rowContent}>
-          <SelectField
-            label={t("settings.host.instructions.conversation")}
-            placeholder={t("settings.host.instructions.conversation")}
-            emptyText={t("settings.host.instructions.noConversations")}
-            value={agentId ?? null}
-            selectedDisplay={selectedConversation}
-            options={conversationOptions}
-            searchable
-            disabled={busy}
-            onChange={setAgentId}
+            onChange={selectSource}
           />
         </View>
       </View>
@@ -223,19 +220,40 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
             selectedDisplay={selectedPolicy}
             options={policies}
             disabled={busy}
-            onChange={setPolicy}
+            onChange={setDraftPolicy}
           />
         </View>
-        <Button disabled={busy || !sourceId || !agentId} onPress={allow}>
-          {t("settings.host.instructions.allow")}
+      </View>
+      {sourceId ? (
+        <WorkspaceOverrideFields
+          key={sourceId}
+          workspaces={workspaces}
+          workspaceOverrides={workspaceOverrides}
+          busy={busy}
+          onChange={setDraftOverrides}
+        />
+      ) : null}
+      <View style={footerRow}>
+        <Button disabled={busy || !sourceId || !directory} onPress={save}>
+          {t("settings.host.instructions.save")}
         </Button>
       </View>
+      {directory?.hostPolicies?.map((grant) => (
+        <InstructionGrantRow
+          key={grant.id}
+          grant={grant}
+          title={`${hostLabel(grant.sourceId)} → ${host.label}`}
+          conversation={t("settings.host.instructions.allWorkspaces")}
+          busy={busy}
+          onCommand={runCommand}
+        />
+      ))}
       {directory?.grants?.map((grant) => (
         <InstructionGrantRow
           key={grant.id}
           grant={grant}
           title={`${hostLabel(grant.sourceId)} → ${host.label}`}
-          conversation={agentLabel(grant.agentId)}
+          conversation={`${t("settings.host.instructions.legacyConversation")} · ${grant.agentId}`}
           busy={busy}
           onCommand={runCommand}
         />
@@ -244,12 +262,102 @@ function HostInstructionsForm({ host, client }: { host: HostProfile; client: Dae
         <InstructionRequestRow
           key={`${request.sourceId}/${request.id}`}
           request={request}
-          title={`${hostLabel(request.sourceId)} → ${agentLabel(request.agentId)}`}
+          title={`${hostLabel(request.sourceId)} → ${workspaceLabel(request.workspaceId)}`}
           busy={busy}
           onCommand={runCommand}
         />
       ))}
     </View>
+  );
+}
+
+function WorkspaceOverrideFields({
+  workspaces,
+  workspaceOverrides,
+  busy,
+  onChange,
+}: {
+  workspaces: Workspace[];
+  workspaceOverrides: HostInstructionWorkspaceOverrides;
+  busy: boolean;
+  onChange: (value: HostInstructionWorkspaceOverrides) => void;
+}) {
+  const { t } = useTranslation();
+  const [workspaceId, setWorkspaceId] = useState<string>();
+  const workspaceOptions = useMemo(
+    () => workspaces.map((entry) => ({ id: entry.id, value: entry.id, label: entry.name })),
+    [workspaces],
+  );
+  const workspacePolicies = useMemo(
+    () =>
+      (["inherit", "ask", "unattended", "blocked"] as const).map((value) => ({
+        id: value,
+        value,
+        label: t(`settings.host.instructions.${value}`),
+      })),
+    [t],
+  );
+  const selectedWorkspace = workspaceOptions.find((entry) => entry.id === workspaceId) ?? null;
+  const workspacePolicy =
+    workspaceOverrides.find((rule) => rule.workspaceId === workspaceId)?.policy ?? "inherit";
+  const selectedWorkspacePolicy =
+    workspacePolicies.find((entry) => entry.value === workspacePolicy) ?? null;
+  const setWorkspacePolicy = useCallback(
+    (value: (typeof workspacePolicies)[number]["value"]) => {
+      if (!workspaceId) return;
+      const others = workspaceOverrides.filter((rule) => rule.workspaceId !== workspaceId);
+      onChange(value === "inherit" ? others : [...others, { workspaceId, policy: value }]);
+    },
+    [onChange, workspaceId, workspaceOverrides],
+  );
+
+  return (
+    <>
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <SelectField
+            label={t("settings.host.instructions.workspace")}
+            placeholder={t("settings.host.instructions.chooseWorkspace")}
+            emptyText={t("settings.host.instructions.noWorkspaces")}
+            value={workspaceId ?? null}
+            selectedDisplay={selectedWorkspace}
+            options={workspaceOptions}
+            searchable
+            disabled={busy}
+            onChange={setWorkspaceId}
+          />
+        </View>
+      </View>
+      {workspaceId ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <SelectField
+              label={t("settings.host.instructions.workspacePolicy")}
+              placeholder={t("settings.host.instructions.inherit")}
+              emptyText={t("settings.host.instructions.inherit")}
+              value={workspacePolicy}
+              selectedDisplay={selectedWorkspacePolicy}
+              options={workspacePolicies}
+              disabled={busy}
+              onChange={setWorkspacePolicy}
+            />
+          </View>
+        </View>
+      ) : null}
+      {workspaceOverrides.length > 0 ? (
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            {workspaceOverrides.map((rule) => (
+              <Text key={rule.workspaceId} style={settingsStyles.rowHint}>
+                {workspaceOptions.find((entry) => entry.id === rule.workspaceId)?.label ??
+                  rule.workspaceId}{" "}
+                · {t(`settings.host.instructions.${rule.policy}`)}
+              </Text>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -262,7 +370,7 @@ function InstructionGrantRow({
   busy,
   onCommand,
 }: {
-  grant: NonNullable<Directory["grants"]>[number];
+  grant: Pick<NonNullable<Directory["grants"]>[number], "id" | "policy">;
   title: string;
   conversation: string;
   busy: boolean;

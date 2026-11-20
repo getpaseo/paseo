@@ -1,3 +1,4 @@
+import { HostInstructionWorkspaceOverridesSchema } from "@getpaseo/protocol/messages";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
@@ -12,6 +13,7 @@ const Grant = z.object({
   id: z.uuid(),
   sourceId: Id,
   policy: z.enum(["ask", "unattended"]),
+  workspaceOverrides: HostInstructionWorkspaceOverridesSchema.optional(),
   start: z.record(Id, Id),
   promptWorkspaces: z.array(Id),
   promptConversations: z.array(Id),
@@ -48,6 +50,7 @@ const RecordSchema = z.object({
   fingerprint: z.string(),
   state: HostInstructionStateSchema,
   profileId: Id.optional(),
+  approved: z.boolean().optional(),
   agentId: Id.optional(),
   messageId: z.uuid(),
   reply: z.string().max(32_768).optional(),
@@ -80,7 +83,8 @@ function targetPermission(grant: HostInstructionGrant, target: HostInstruction["
   }
   return (
     !grant.excludedConversations.includes(target.agentId) &&
-    (grant.promptConversations.includes(target.agentId) ||
+    (grant.workspaceOverrides !== undefined ||
+      grant.promptConversations.includes(target.agentId) ||
       grant.promptWorkspaces.includes(target.workspaceId))
   );
 }
@@ -117,6 +121,70 @@ export class HostInstructionInbox {
     return { ...structuredClone(grant), token };
   }
 
+  async setHostPolicy(
+    sourceId: string,
+    policy: HostInstructionGrant["policy"],
+    workspaceOverrides: NonNullable<HostInstructionGrant["workspaceOverrides"]>,
+    prepare: () => Promise<void>,
+  ) {
+    await this.writer.settled();
+    const current = this.hostGrant(sourceId);
+    if (!current) {
+      await prepare();
+      if (this.hostGrant(sourceId)) throw new Error("Sending host already has a policy");
+      return this.createGrant({
+        sourceId,
+        policy,
+        workspaceOverrides,
+        start: {},
+        promptWorkspaces: [],
+        promptConversations: [],
+        excludedConversations: [],
+      });
+    }
+    const updated = StoredGrant.parse({ ...current, policy, workspaceOverrides });
+    await this.commit({
+      ...this.data,
+      grants: this.data.grants.map((grant) => (grant === current ? updated : grant)),
+      requests: this.data.requests.map((request) => this.reconcilePolicy(request, updated)),
+    });
+    return null;
+  }
+
+  async canDiscover(principal: Principal, target: HostInstruction["target"]): Promise<boolean> {
+    await this.writer.settled();
+    return this.effectivePolicy(this.requireGrant(principal), target) !== "blocked";
+  }
+
+  private hostGrant(sourceId: string) {
+    return this.data.grants.find(
+      (grant) => grant.sourceId === sourceId && grant.workspaceOverrides !== undefined,
+    );
+  }
+
+  private reconcilePolicy(request: InboxRequest, host: HostInstructionGrant): InboxRequest {
+    if (request.sourceId !== host.sourceId || !unstarted(request.state)) return request;
+    const grant = this.data.grants.find((entry) => entry.id === request.grantId);
+    if (!grant) return request;
+    const state = this.pendingState(request, grant, host);
+    if (state === request.state || (request.state === "awaiting_approval" && state === "queued")) {
+      return request;
+    }
+    return { ...request, state };
+  }
+
+  private effectivePolicy(
+    grant: HostInstructionGrant,
+    target: HostInstruction["target"],
+    host: HostInstructionGrant = this.hostGrant(grant.sourceId) ?? grant,
+  ) {
+    if (!targetPermission(grant, target)) return "blocked";
+    return (
+      host.workspaceOverrides?.find((rule) => rule.workspaceId === target.workspaceId)?.policy ??
+      host.policy
+    );
+  }
+
   async authenticate(token: string): Promise<Principal | null> {
     if (!/^[a-f0-9-]{36}\.[A-Za-z0-9_-]{43}$/.test(token)) return null;
     await this.writer.settled();
@@ -132,11 +200,23 @@ export class HostInstructionInbox {
     return this.data.grants.map(({ tokenDigest: _secret, ...grant }) => structuredClone(grant));
   }
 
-  async revoke(grantId: string): Promise<void> {
+  async revoke(grantId: string, keepConversationGrants = false): Promise<void> {
+    const host = this.data.grants.find(
+      (grant) => grant.id === grantId && grant.workspaceOverrides !== undefined,
+    );
+    const revoked = new Set(
+      this.data.grants
+        .filter(
+          (grant) =>
+            grant.id === grantId ||
+            (!keepConversationGrants && host && grant.sourceId === host.sourceId),
+        )
+        .map((grant) => grant.id),
+    );
     await this.commit({
-      grants: this.data.grants.filter((grant) => grant.id !== grantId),
+      grants: this.data.grants.filter((grant) => !revoked.has(grant.id)),
       requests: this.data.requests.map((request) =>
-        request.grantId === grantId && unstarted(request.state)
+        revoked.has(request.grantId) && unstarted(request.state)
           ? { ...request, state: "revoked" }
           : request,
       ),
@@ -172,7 +252,8 @@ export class HostInstructionInbox {
     }
 
     const permission = targetPermission(grant, instruction.target);
-    if (!permission) throw new Error("Instruction target is outside the grant");
+    const policy = this.effectivePolicy(grant, instruction.target);
+    if (policy === "blocked") throw new Error("Instruction target is outside the grant");
 
     const remaining = instruction.expiresAt - this.now();
     if ((!cancel && remaining <= 0) || remaining > HOST_INSTRUCTION_TTL_MS) {
@@ -187,12 +268,13 @@ export class HostInstructionInbox {
       throw new Error("Too many pending instructions");
     }
 
-    const initialState = grant.policy === "ask" ? "awaiting_approval" : "queued";
+    const initialState = policy === "ask" ? "awaiting_approval" : "queued";
     const request: InboxRequest = {
       grantId: grant.id,
       sourceId: grant.sourceId,
       instruction,
       fingerprint,
+      approved: false,
       state: cancel ? "cancelled" : initialState,
       profileId: typeof permission === "string" ? permission : undefined,
       messageId: randomUUID(),
@@ -223,7 +305,11 @@ export class HostInstructionInbox {
     const request = this.requireRequest(sourceId, instructionId);
     if (request.state !== "awaiting_approval")
       throw new Error("Instruction is not awaiting approval");
-    return this.update(request, { state: approve ? "queued" : "denied" });
+    const grant = this.requireGrant({ id: request.grantId, sourceId });
+    if (this.effectivePolicy(grant, request.instruction.target) === "blocked") {
+      return this.update(request, { state: "denied" });
+    }
+    return this.update(request, { approved: approve, state: approve ? "queued" : "denied" });
   }
 
   async list(): Promise<InboxRequest[]> {
@@ -249,6 +335,8 @@ export class HostInstructionInbox {
     ) {
       return this.update(request, { state: "failed" });
     }
+    const state = this.pendingState(request, grant);
+    if (state !== "queued") return this.update(request, { state });
     return this.update(request, {
       state: "dispatching",
       agentId: target.kind === "conversation" ? target.agentId : undefined,
@@ -259,7 +347,7 @@ export class HostInstructionInbox {
     const request = this.requireRequest(sourceId, instructionId);
     if (request.state !== "dispatching") throw new Error("Instruction has no dispatch claim");
     const grant = this.data.grants.find((entry) => entry.id === request.grantId);
-    await this.update(request, { state: grant ? "queued" : "revoked" });
+    await this.update(request, { state: this.pendingState(request, grant) });
     await this.expire();
   }
 
@@ -268,8 +356,32 @@ export class HostInstructionInbox {
     return (
       request?.state === "dispatching" &&
       request.instruction.expiresAt > this.now() &&
-      this.data.grants.some((grant) => grant.id === request.grantId)
+      this.pendingState(
+        request,
+        this.data.grants.find((grant) => grant.id === request.grantId),
+      ) === "queued"
     );
+  }
+
+  private pendingState(
+    request: InboxRequest,
+    grant: HostInstructionGrant | undefined,
+    host?: HostInstructionGrant,
+  ) {
+    if (!grant) return "revoked";
+    const policy = this.effectivePolicy(grant, request.instruction.target, host);
+    if (policy === "blocked") return "denied";
+    if (
+      policy === "ask" &&
+      !(
+        request.approved ??
+        (grant.workspaceOverrides === undefined &&
+          !this.hostGrant(grant.sourceId) &&
+          grant.policy === "ask")
+      )
+    )
+      return "awaiting_approval";
+    return "queued";
   }
 
   async markRunning(sourceId: string, instructionId: string, agentId: string): Promise<void> {

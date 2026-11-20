@@ -403,7 +403,7 @@ async function waitForCapturedLog(
   };
 
   test(
-    "connected hosts deliver a restricted relay instruction only after approval",
+    "connected hosts deliver a workspace override instructions according to the receiving policy",
     { timeout: 90000 },
     async () => {
       const cleanup: (() => Promise<unknown>)[] = [];
@@ -447,17 +447,15 @@ async function waitForCapturedLog(
           title: "Local checks",
         });
         const { registration } = await destinationClient.manageHostInstructions({
-          action: "grant",
+          action: "set_policy",
           sourceId,
-          agentId: agent.id,
-          policy: "ask",
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "ask" }],
         });
         if (!registration) throw new Error("Expected instruction registration");
         await sourceClient.manageHostInstructions({
           action: "register",
           destinationId: serverId,
-          agentId: agent.id,
-          workspaceId: registration.workspaceId,
           offer: registration.offer,
           token: registration.token,
         });
@@ -466,6 +464,21 @@ async function waitForCapturedLog(
         await mcp.connect(
           new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${source.port}/mcp/agents`)),
         );
+        await expect
+          .poll(
+            async () => {
+              const list = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+              return list.structuredContent?.targets;
+            },
+            { timeout: 15000 },
+          )
+          .toEqual([
+            expect.objectContaining({
+              destinationId: serverId,
+              agentId: agent.id,
+              workspaceId: workspace.id,
+            }),
+          ]);
         const result = await mcp.callTool({
           name: "send_host_instruction",
           arguments: { serverId, agentId: agent.id, prompt: "Run the local check" },
@@ -507,6 +520,38 @@ async function waitForCapturedLog(
             { timeout: 15000 },
           )
           .toBe("completed");
+        const change = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "unattended",
+          workspaceOverrides: [{ workspaceId: workspace.id, policy: "blocked" }],
+        });
+        expect(change.registration).toBeUndefined();
+        const list = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(list.structuredContent?.targets).toEqual([]);
+        const blocked = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Blocked workspace",
+          },
+        });
+        await expect
+          .poll(
+            async () => {
+              const status = await mcp.callTool({
+                name: "get_host_instruction_status",
+                arguments: { id: blocked.structuredContent?.id },
+              });
+              return status.structuredContent?.state;
+            },
+            { timeout: 15000 },
+          )
+          .toBe("failed");
+        expect(sent).toHaveLength(1);
+
         const ordinary = createHostClient(registration.offer, {
           clientId: crypto.randomUUID(),
           connectTimeoutMs: 3000,
@@ -517,7 +562,12 @@ async function waitForCapturedLog(
         await destinationClient.manageHostInstructions({ action: "revoke", id: registration.id });
         const revoked = await mcp.callTool({
           name: "send_host_instruction",
-          arguments: { serverId, agentId: agent.id, prompt: "Try again after revocation" },
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            workspaceId: workspace.id,
+            prompt: "Try again after revocation",
+          },
         });
         const revokedId = revoked.structuredContent?.id;
         if (typeof revokedId !== "string")

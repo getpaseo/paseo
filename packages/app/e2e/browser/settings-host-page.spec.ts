@@ -60,7 +60,11 @@ test.describe("Settings host page", () => {
       const instructions = page.getByTestId("host-instructions-section");
       await expect(instructions).toBeVisible();
       await expect(instructions.getByText("Ask each time")).toBeVisible();
-      await expect(instructions.getByRole("button", { name: "Allow instructions" })).toBeDisabled();
+      const save = instructions.getByRole("button", { name: "Save instruction policy" });
+      await expect(save).toBeDisabled();
+      const button = await save.boundingBox();
+      const policy = await instructions.getByText("Ask each time").boundingBox();
+      expect(button?.y).toBeGreaterThan((policy?.y ?? 0) + (policy?.height ?? 0));
     });
     await test.step("agents section shows the inject MCP toggle", async () => {
       await openHostSection(page, serverId, "agents");

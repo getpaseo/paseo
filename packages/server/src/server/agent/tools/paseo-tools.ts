@@ -1397,7 +1397,7 @@ function createToolCatalog(
       },
       async () => ({
         content: [],
-        structuredContent: ensureValidJson({ targets: instructions.listDestinations() }),
+        structuredContent: ensureValidJson({ targets: await instructions.listDestinations() }),
       }),
     );
     registerTool(
@@ -1409,12 +1409,21 @@ function createToolCatalog(
         inputSchema: {
           serverId: z.string().min(1),
           agentId: z.string().min(1),
+          workspaceId: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "Workspace of the target from list_instruction_targets. Supply it to queue when the receiving host is offline.",
+            ),
           prompt: z.string().min(1).max(32768),
         },
       },
-      async ({ serverId, agentId, prompt }) => ({
+      async ({ serverId, agentId, prompt, workspaceId }) => ({
         content: [],
-        structuredContent: ensureValidJson(await instructions.submit(serverId, agentId, prompt)),
+        structuredContent: ensureValidJson(
+          await instructions.submit(serverId, agentId, prompt, workspaceId),
+        ),
       }),
     );
     registerTool(
