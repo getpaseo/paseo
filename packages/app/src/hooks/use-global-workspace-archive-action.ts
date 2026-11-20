@@ -1,11 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
-import type { WorkspaceArchiveTarget } from "@/workspace/workspace-archive";
+import { isWorkspaceListed, type WorkspaceArchiveTarget } from "@/workspace/workspace-archive";
 
 const WORKSPACE_ARCHIVE_ACTIONS: readonly KeyboardActionId[] = ["workspace.archive"];
 
@@ -26,7 +26,6 @@ export function useGlobalWorkspaceArchiveAction() {
     archivingAt: workspace.archivingAt,
     diffStat: workspace.diffStat,
   }));
-  const [isHiding, setIsHiding] = useState(false);
 
   // useWorkspaceArchive calls the latest render's callback, so `activeWorkspaceId` is whatever is
   // routed when the archive starts, after any confirmation. It is the descriptor id, which is what
@@ -51,18 +50,22 @@ export function useGlobalWorkspaceArchiveAction() {
     name: fields?.name ?? "",
     diffStat: fields?.diffStat,
     onArchiveStarted: redirectAfterArchive,
-    onSetHiding: setIsHiding,
   });
 
-  const canArchive = fields !== null && fields.archivingAt === null && !isHiding;
+  const canArchive = fields !== null && fields.archivingAt === null;
 
   const handle = useCallback(() => {
-    if (!canArchive) {
+    if (!canArchive || !serverId) {
+      return false;
+    }
+    // Archiving hides its target immediately. Read the store in case the shortcut
+    // runs again before React renders that update.
+    if (!isWorkspaceListed({ serverId, workspaceId: fields.id })) {
       return false;
     }
     archiveController.archive();
     return true;
-  }, [archiveController, canArchive]);
+  }, [archiveController, canArchive, fields, serverId]);
 
   useKeyboardActionHandler({
     handlerId: "workspace-archive-global",
