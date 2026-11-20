@@ -507,3 +507,103 @@ test("a file classified with no parent bucket yet still gets its delete emitted"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("tree scan cooperatively yields to the event loop across directory batches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-yield-"));
+  const count = 70;
+  for (let i = 0; i < count; i++) {
+    await mkdir(join(root, `dir-${String(i).padStart(2, "0")}`));
+  }
+  const paths = createObserverPaths(process.platform);
+  let active = true;
+  const observer = createFileObserver();
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({
+      close: () => {},
+      on: () => {},
+    }),
+  );
+
+  const setImmediateSpy = vi.spyOn(globalThis, "setImmediate");
+  try {
+    await backend.start();
+    // 70 subdirectories + 1 root = 71 directories.
+    // With SCAN_TREE_YIELD_INTERVAL = 32, it yields after 32 and 64 directories.
+    expect(setImmediateSpy).toHaveBeenCalledTimes(2);
+  } finally {
+    setImmediateSpy.mockRestore();
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("tree scan deactivation during a yielded turn stops traversal promptly", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-yield-deactivate-"));
+  const count = 70;
+  for (let i = 0; i < count; i++) {
+    const dir = join(root, `dir-${String(i).padStart(2, "0")}`);
+    await mkdir(dir);
+    await writeFile(join(dir, "file.txt"), "content");
+  }
+  const paths = createObserverPaths(process.platform);
+  let active = true;
+  let yieldObserved = false;
+  const observer = createFileObserver();
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isPathInside: paths.isInside,
+      queueEvent: () => {},
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    () => ({
+      close: () => {},
+      on: () => {},
+    }),
+  );
+
+  const originalSetImmediate = globalThis.setImmediate;
+  let yieldCount = 0;
+  globalThis.setImmediate = ((callback: (...args: unknown[]) => void, ...args: unknown[]) => {
+    yieldCount++;
+    if (yieldCount === 1) {
+      active = false;
+      yieldObserved = true;
+    }
+    return originalSetImmediate(callback, ...args);
+  }) as typeof globalThis.setImmediate;
+
+  try {
+    await backend.start();
+    expect(yieldObserved).toBe(true);
+    // Deactivation during the first yield prevented the remaining directories
+    // from being scanned and committed to tracked files.
+    expect(backend.getDiagnostics().nativeTrackedFileCount).toBe(0);
+  } finally {
+    globalThis.setImmediate = originalSetImmediate;
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
