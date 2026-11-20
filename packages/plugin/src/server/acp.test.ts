@@ -5120,4 +5120,195 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("does not defer when an open tool is reclassified as an excluded daemon immediately after end_turn", async () => {
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "daemon-race",
+            name: "run_command",
+            title: "Dev server",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        // Reclassification to IsDaemon: true arrives in the same batch right after end_turn.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "daemon-race",
+            rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+          },
+        });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-daemon-race",
+      label: "Deferred Daemon Race",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 1_500,
+          keepsTurnOpen(toolCall) {
+            const input = toolCall.input;
+            return !(
+              typeof input === "object" &&
+              input !== null &&
+              !Array.isArray(input) &&
+              input.IsDaemon === true
+            );
+          },
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const startedAt = Date.now();
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "daemon-race-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start dev server" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:daemon-race-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("settles on the reply timer when background completion and reply arrive immediately after steer end_turn", async () => {
+    let promptCount = 0;
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-after-steer",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        // Steer response followed immediately in the same wire batch by background completion + reply + usage.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Steer ACK"),
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: { sessionUpdate: "usage_update", used: 100, size: 1000 },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "bg-after-steer",
+            status: "completed",
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Background finished."),
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: { sessionUpdate: "usage_update", used: 300, size: 1000 },
+        });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-post-steer-batch",
+      label: "Deferred Post Steer Batch",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 40,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "post-steer-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run bg" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-after-steer",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const startedAt = Date.now();
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "post-steer-followup",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "status?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:post-steer-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
 });

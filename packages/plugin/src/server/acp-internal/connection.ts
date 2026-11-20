@@ -399,7 +399,7 @@ interface ActivePrompt {
   cancelling: boolean;
   wirePromptsInFlight: number;
   wirePromptLane: Promise<void>;
-  endTurnWireSeq: number | null;
+  lastPromptResponseWireSeq: number | null;
   crossedEndTurn: boolean;
   replyOpen: boolean;
   replySettled: boolean;
@@ -724,7 +724,7 @@ class AcpRuntime {
       cancelling: false,
       wirePromptsInFlight: 1,
       wirePromptLane: Promise.resolve(),
-      endTurnWireSeq: null,
+      lastPromptResponseWireSeq: null,
       crossedEndTurn: false,
       replyOpen: false,
       replySettled: false,
@@ -1202,20 +1202,16 @@ class AcpRuntime {
       "id" in record &&
       typeof record.result === "object" &&
       record.result !== null &&
-      (record.result as Record<string, unknown>).stopReason === "end_turn" &&
+      typeof (record.result as Record<string, unknown>).stopReason === "string" &&
       this.activePrompt &&
-      !this.activePrompt.deferred &&
-      this.activePrompt.endTurnWireSeq === null
+      this.activePrompt.lastPromptResponseWireSeq === null
     ) {
-      this.activePrompt.endTurnWireSeq = ++this.incomingWireSeq;
+      this.activePrompt.lastPromptResponseWireSeq = ++this.incomingWireSeq;
     }
   }
 
-  private isPostEndTurn(active: ActivePrompt, wireSeq: number): boolean {
-    return (
-      active.deferred !== null ||
-      (active.endTurnWireSeq !== null && wireSeq > active.endTurnWireSeq)
-    );
+  private isPostWirePrompt(active: ActivePrompt, wireSeq: number): boolean {
+    return active.lastPromptResponseWireSeq !== null && wireSeq > active.lastPromptResponseWireSeq;
   }
 
   private sessionUpdate(notification: SessionNotification, wireSeq: number): void {
@@ -1480,15 +1476,7 @@ class AcpRuntime {
     });
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
-    const active = this.activePrompt;
-    if (active && this.isPostEndTurn(active, wireSeq) && wasOpenQualifying !== isOpenQualifying) {
-      if (wasOpenQualifying) active.crossedEndTurn = true;
-      if (isOpenQualifying) {
-        active.replyOpen = false;
-        active.replySettled = false;
-      }
-      if (active.deferred) this.scheduleDeferredSettle();
-    }
+    this.noteDeferredToolTransition(wasOpenQualifying, isOpenQualifying, isOpen, snapshot, wireSeq);
   }
 
   private vendorNotification(method: string, params: unknown): void {
@@ -1661,6 +1649,9 @@ class AcpRuntime {
           return;
         }
         this.fallbackChunkIds.clear();
+        active.lastPromptResponseWireSeq = null;
+        active.replyOpen = false;
+        active.replySettled = false;
         const response = await this.call(
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
@@ -1710,6 +1701,9 @@ class AcpRuntime {
           });
         }
       } finally {
+        if (active.lastPromptResponseWireSeq === null) {
+          active.lastPromptResponseWireSeq = this.incomingWireSeq;
+        }
         active.wirePromptsInFlight -= 1;
         this.scheduleDeferredSettle();
       }
@@ -1776,23 +1770,45 @@ class AcpRuntime {
     deferred.resolve(outcome);
   }
 
+  private noteDeferredToolTransition(
+    wasOpenQualifying: boolean,
+    isOpenQualifying: boolean,
+    isOpen: boolean,
+    snapshot: AcpToolCallSnapshot,
+    wireSeq: number,
+  ): void {
+    const active = this.activePrompt;
+    if (
+      !active ||
+      !this.isPostWirePrompt(active, wireSeq) ||
+      wasOpenQualifying === isOpenQualifying
+    ) {
+      return;
+    }
+    if (!active.deferred && wasOpenQualifying && !isOpen && this.toolKeepsTurnOpen(snapshot)) {
+      active.crossedEndTurn = true;
+    }
+    if (isOpenQualifying) {
+      active.replyOpen = false;
+      active.replySettled = false;
+    }
+    if (active.deferred) this.scheduleDeferredSettle();
+  }
+
   private noteDeferredChunk(
     kind: "agent_message_chunk" | "agent_thought_chunk",
     wireSeq: number,
   ): void {
     const active = this.activePrompt;
-    if (!active || !this.isPostEndTurn(active, wireSeq)) return;
-    const inWireSteer = active.deferred !== null && active.wirePromptsInFlight > 0;
-    if (kind === "agent_message_chunk" && !inWireSteer) active.replyOpen = true;
+    if (!active || !this.isPostWirePrompt(active, wireSeq)) return;
+    if (kind === "agent_message_chunk") active.replyOpen = true;
     active.replySettled = false;
     if (active.deferred) this.scheduleDeferredSettle();
   }
 
   private noteDeferredUsageUpdate(wireSeq: number): void {
     const active = this.activePrompt;
-    if (!active || !this.isPostEndTurn(active, wireSeq)) return;
-    const inWireSteer = active.deferred !== null && active.wirePromptsInFlight > 0;
-    if (inWireSteer || !active.replyOpen) return;
+    if (!active || !this.isPostWirePrompt(active, wireSeq) || !active.replyOpen) return;
     active.replyOpen = false;
     active.replySettled = true;
     if (active.deferred) this.scheduleDeferredSettle();
