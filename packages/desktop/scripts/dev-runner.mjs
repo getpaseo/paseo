@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import net from "node:net";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -10,6 +9,7 @@ import {
   resolveChildKillTarget,
 } from "./dev-runner-config.mjs";
 
+import { waitForMetro } from "./dev-runner-readiness.mjs";
 import { resolveDevElectronArgs } from "./dev-runner-args.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -134,35 +134,6 @@ function stopAll(signal) {
   }, 50);
 }
 
-async function waitForPort(port, host = "127.0.0.1", timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (await canConnect(port, host)) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-
-  throw new Error(`Timed out waiting for ${host}:${port}`);
-}
-
-function canConnect(port, host) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ port, host });
-    socket.setTimeout(1000);
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.once("error", () => resolve(false));
-  });
-}
-
 registerDevRunnerShutdownSignals({ signalSource: process, stop: stopAll });
 
 spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
@@ -179,7 +150,7 @@ spawnChild("metro", "npx", ["expo", "start", "--port", String(expoPort)], {
 });
 
 try {
-  await waitForPort(expoPort);
+  await waitForMetro(expoDevUrl);
 } catch (error) {
   console.error(`[dev] ${error.message}`);
   exitCode = 1;

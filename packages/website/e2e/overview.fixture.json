@@ -1,0 +1,32 @@
+{
+  "id": "security/overview",
+  "name": "</script><script>globalThis.__overviewExecuted=1</script><img src=x onerror=\"globalThis.__overviewExecuted=1\">",
+  "description": "</script><script>globalThis.__overviewExecuted=1</script><img src=x onerror=\"globalThis.__overviewExecuted=1\">",
+  "artifact": {
+    "kind": "npm",
+    "package": "@alhassanaraouf/paseo-base2tone-theme",
+    "version": "0.1.2",
+    "resolved": "https://registry.npmjs.org/@alhassanaraouf/paseo-base2tone-theme/-/paseo-base2tone-theme-0.1.2.tgz",
+    "integrity": "sha512-baP+qh3MlPgwACvt72XjrULjbDHARofzHfxyGGVVl22iw6qVnMzyfBJXi4exgtplvD/yPqf/XlsqD8wTqHB+lg=="
+  },
+  "license": "MIT",
+  "repository": {
+    "url": "javascript:alert(1)"
+  },
+  "categories": ["themes"],
+  "author": {
+    "github": "security",
+    "name": "</script><script>globalThis.__overviewExecuted=1</script><img src=x onerror=\"globalThis.__overviewExecuted=1\">"
+  },
+  "media": [
+    "data:image/svg+xml,<svg onload=\"globalThis.__overviewExecuted=1\"/>",
+    "http://example.com/image.png"
+  ],
+  "submittedAt": "2026-09-24T00:00:00.000Z",
+  "reviewedAt": "2026-10-03T00:00:00.000Z",
+  "publishedAt": "2026-09-24T17:12:05.467Z",
+  "updatedAt": "2026-10-03T00:00:00.000Z",
+  "installs": 0,
+  "readme": "## Overview security\n\n</script><script>globalThis.__overviewExecuted=1</script><img src=x onerror=\"globalThis.__overviewExecuted=1\">",
+  "icon": "data:image/png;base64,AAAA"
+}

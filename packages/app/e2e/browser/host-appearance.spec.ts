@@ -82,121 +82,66 @@ const test = base.extend<{ twoHostSidebar: TwoHostSidebar }>({
   },
 });
 
-test.describe("Host appearance", () => {
-  test.describe.configure({ timeout: 180_000 });
+test.describe.configure({ timeout: 180_000 });
 
-  test("renaming a host renames its sidebar badge", async ({ page, twoHostSidebar }) => {
-    const badge = {
-      serverId: twoHostSidebar.secondaryServerId,
-      workspaceId: twoHostSidebar.secondaryWorkspaceId,
-    };
+test("customizes a host badge and preserves its appearance after reload", async ({
+  page,
+  twoHostSidebar,
+}) => {
+  const badge = {
+    serverId: twoHostSidebar.secondaryServerId,
+    workspaceId: twoHostSidebar.secondaryWorkspaceId,
+  };
+  const hostName = "Developer MacBook Pro.local";
+
+  await test.step("rename the host and use its available sidebar width", async () => {
     await expectHostBadgeName(page, { ...badge, hostName: SECONDARY_HOST_LABEL });
-
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
-    await renameHostFromSettings(page, "Build Box");
-    await leaveHostAppearanceSettings(page);
-
-    await expectHostBadgeName(page, { ...badge, hostName: "Build Box" });
-  });
-
-  test("host names use the available metadata width", async ({ page, twoHostSidebar }) => {
-    const hostName = "Developer MacBook Pro.local";
-    const workspaceKey = `${twoHostSidebar.secondaryServerId}:${twoHostSidebar.secondaryWorkspaceId}`;
-
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
+    await openHostAppearanceSettings(page, badge.serverId);
     await renameHostFromSettings(page, hostName);
     await leaveHostAppearanceSettings(page);
+    await expectHostBadgeName(page, { ...badge, hostName });
 
-    const row = page.getByTestId(`sidebar-workspace-row-${workspaceKey}`);
-    const badge = row.getByTestId(`host-badge-${twoHostSidebar.secondaryServerId}`);
-    await expect(badge).toHaveText(hostName);
-    const [badgeBox, rowBox] = await Promise.all([badge.boundingBox(), row.boundingBox()]);
-
+    const row = page.getByTestId(`sidebar-workspace-row-${badge.serverId}:${badge.workspaceId}`);
+    const hostBadge = row.getByTestId(`host-badge-${badge.serverId}`);
+    const [badgeBox, rowBox] = await Promise.all([hostBadge.boundingBox(), row.boundingBox()]);
     expect(badgeBox).not.toBeNull();
     expect(rowBox).not.toBeNull();
     expect(badgeBox!.width).toBeGreaterThan(96);
     expect(badgeBox!.x + badgeBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
-    const labelWidths = await badge.getByText(hostName, { exact: true }).evaluate((label) => ({
-      clientWidth: label.clientWidth,
-      scrollWidth: label.scrollWidth,
+    const widths = await hostBadge.getByText(hostName, { exact: true }).evaluate((label) => ({
+      client: label.clientWidth,
+      content: label.scrollWidth,
     }));
-    expect(labelWidths.scrollWidth).toBeLessThanOrEqual(labelWidths.clientWidth);
+    expect(widths.content).toBeLessThanOrEqual(widths.client);
   });
 
-  test("picking a color identifies the badge", async ({ page, twoHostSidebar }) => {
-    const badge = {
-      serverId: twoHostSidebar.secondaryServerId,
-      workspaceId: twoHostSidebar.secondaryWorkspaceId,
-      hostName: SECONDARY_HOST_LABEL,
-    };
-
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
+  await test.step("preview a color and apply it to the sidebar badge", async () => {
+    await openHostAppearanceSettings(page, badge.serverId);
     await chooseHostColor(page, "Teal");
+    await expectHostAppearancePreview(page, { serverId: badge.serverId, hostName, color: "teal" });
     await leaveHostAppearanceSettings(page);
-
-    await expectHostBadgeTinted(page, { ...badge, color: "teal" });
+    await expectHostBadgeTinted(page, { ...badge, hostName, color: "teal" });
   });
 
-  test("icon only keeps the badge and drops the name", async ({ page, twoHostSidebar }) => {
-    const badge = {
-      serverId: twoHostSidebar.secondaryServerId,
-      workspaceId: twoHostSidebar.secondaryWorkspaceId,
-      hostName: SECONDARY_HOST_LABEL,
-    };
-
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
+  await test.step("keep the icon-only preference through reload", async () => {
+    await openHostAppearanceSettings(page, badge.serverId);
     await chooseHostBadgeDisplay(page, "Icon only");
     await leaveHostAppearanceSettings(page);
-
-    await expectHostBadgeIconOnly(page, badge);
+    await expectHostBadgeIconOnly(page, { ...badge, hostName });
+    await reloadPreservingHostRegistry(page);
+    await waitForSidebarHydration(page);
+    await expectHostBadgeIconOnly(page, { ...badge, hostName });
   });
 
-  test("hiding one host leaves the other host's badge visible", async ({
-    page,
-    twoHostSidebar,
-  }) => {
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
+  await test.step("hide this badge without hiding the other host", async () => {
+    await openHostAppearanceSettings(page, badge.serverId);
     await chooseHostBadgeDisplay(page, "Hidden");
     await leaveHostAppearanceSettings(page);
-
-    await expectNoHostBadge(page, {
-      serverId: twoHostSidebar.secondaryServerId,
-      workspaceId: twoHostSidebar.secondaryWorkspaceId,
-      hostName: SECONDARY_HOST_LABEL,
-    });
+    await expectNoHostBadge(page, { ...badge, hostName });
     await expectHostBadgeName(page, {
       serverId: twoHostSidebar.primaryServerId,
       workspaceId: twoHostSidebar.primaryWorkspaceId,
       hostName: PRIMARY_HOST_LABEL,
-    });
-  });
-
-  test("name, color, and display survive a reload", async ({ page, twoHostSidebar }) => {
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
-    await renameHostFromSettings(page, "Build Box");
-    await chooseHostColor(page, "Amber");
-    await chooseHostBadgeDisplay(page, "Icon only");
-    await leaveHostAppearanceSettings(page);
-
-    await reloadPreservingHostRegistry(page);
-    await waitForSidebarHydration(page);
-
-    await expectHostBadgeIconOnly(page, {
-      serverId: twoHostSidebar.secondaryServerId,
-      workspaceId: twoHostSidebar.secondaryWorkspaceId,
-      hostName: "Build Box",
-    });
-  });
-
-  test("the settings preview shows the badge as configured", async ({ page, twoHostSidebar }) => {
-    await openHostAppearanceSettings(page, twoHostSidebar.secondaryServerId);
-    await renameHostFromSettings(page, "Build Box");
-    await chooseHostColor(page, "Emerald");
-
-    await expectHostAppearancePreview(page, {
-      serverId: twoHostSidebar.secondaryServerId,
-      hostName: "Build Box",
-      color: "emerald",
     });
   });
 });

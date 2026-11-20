@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
-import { buildReviewAttachmentSnapshot, buildReviewDraftKey } from "./store";
+import {
+  buildReviewAttachmentSnapshot,
+  buildReviewDraftKey,
+  addReviewDraftComment,
+  saveReviewDraftComment,
+  clearSentReviewDraftComments,
+  getReviewDraftComments,
+  resetReviewDraftStore,
+  useReviewDraftStore,
+} from "./store";
 import {
   addCommentToState,
   clearReviewInState,
@@ -303,4 +312,50 @@ describe("buildReviewAttachmentSnapshot", () => {
       },
     });
   });
+});
+
+describe("successful feedback cleanup", () => {
+  it("clears sent versions only, preserving edits, additions and other workspace drafts", () => {
+    resetReviewDraftStore();
+    const first = addReviewDraftComment({ key: "first", comment: makeComment() });
+    const edited = addReviewDraftComment({
+      key: "first",
+      comment: makeComment({ id: "edited", body: "Before send" }),
+    });
+    const other = addReviewDraftComment({ key: "other", comment: makeComment({ id: "other" }) });
+    useReviewDraftStore.getState().updateComment({
+      key: "first",
+      id: edited.id,
+      updates: { body: "After send" },
+      updatedAt: edited.updatedAt,
+    });
+    const added = addReviewDraftComment({ key: "first", comment: makeComment({ id: "added" }) });
+    clearSentReviewDraftComments({ key: "first", comments: [first, edited] });
+    expect(getReviewDraftComments("first")).toEqual([{ ...edited, body: "After send" }, added]);
+    expect(getReviewDraftComments("other")).toEqual([other]);
+    resetReviewDraftStore();
+  });
+});
+
+it("saves an acknowledged open edit as a new version and keeps subsequent edits on that record", () => {
+  resetReviewDraftStore();
+  const submitted = addReviewDraftComment({ key: "first", comment: makeComment() });
+  clearSentReviewDraftComments({ key: "first", comments: [submitted] });
+  saveReviewDraftComment({
+    key: "first",
+    id: submitted.id,
+    comment: { ...submitted, body: "Open edit after acknowledgement" },
+  });
+  const restored = getReviewDraftComments("first")![0]!;
+  expect(restored.body).toBe("Open edit after acknowledgement");
+  expect(restored.id).not.toBe(submitted.id);
+  clearSentReviewDraftComments({ key: "first", comments: [submitted] });
+  expect(getReviewDraftComments("first")).toEqual([restored]);
+  saveReviewDraftComment({
+    key: "first",
+    id: restored.id,
+    comment: { ...restored, body: "Saved again" },
+  });
+  expect(getReviewDraftComments("first")).toMatchObject([{ id: restored.id, body: "Saved again" }]);
+  resetReviewDraftStore();
 });

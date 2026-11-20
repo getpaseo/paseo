@@ -126,15 +126,21 @@ function ArchivedWorkspaceRecovery({
   if (recovery.phase === "failed") {
     actionLabel = t("common.actions.retry");
   }
-  const description =
-    recovery.recovery.action === "restore"
-      ? t("workspace.route.recovery.restoreDescription", {
-          workspaceName: recovery.recovery.workspaceName,
-          branch: recovery.recovery.branch,
-        })
-      : t("workspace.route.recovery.unarchiveDescription", {
-          workspaceName: recovery.recovery.workspaceName,
-        });
+  let description: string;
+  if (recovery.recovery.action === "restore" && recovery.recovery.branch) {
+    description = t("workspace.route.recovery.restoreDescription", {
+      workspaceName: recovery.recovery.workspaceName,
+      branch: recovery.recovery.branch,
+    });
+  } else if (recovery.recovery.action === "restore") {
+    description = t("workspace.route.recovery.restoreWithoutBranchDescription", {
+      workspaceName: recovery.recovery.workspaceName,
+    });
+  } else {
+    description = t("workspace.route.recovery.unarchiveDescription", {
+      workspaceName: recovery.recovery.workspaceName,
+    });
+  }
 
   return (
     <View style={styles.emptyState}>
@@ -156,7 +162,6 @@ function ArchivedWorkspaceRecovery({
       </View>
       <View style={styles.actions}>
         <Button
-          size="sm"
           variant="default"
           leftIcon={isRestoring ? undefined : RotateCw}
           onPress={onRecover}
@@ -187,10 +192,10 @@ function WorkspaceRecoveryInspectionFailed({
         <Text style={styles.error}>{state.error}</Text>
       </View>
       <View style={styles.actions}>
-        <Button size="sm" variant="default" leftIcon={RotateCw} onPress={onRetry}>
+        <Button variant="default" leftIcon={RotateCw} onPress={onRetry}>
           {t("common.actions.retry")}
         </Button>
-        <Button size="sm" variant="outline" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
+        <Button variant="outline" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
           {t("common.actions.back")}
         </Button>
       </View>
@@ -239,10 +244,10 @@ function WorkspaceUnreachable({
       </View>
       {canRetry ? (
         <View style={styles.actions}>
-          <Button size="sm" variant="default" leftIcon={RotateCw} onPress={onRetry}>
+          <Button variant="default" leftIcon={RotateCw} onPress={onRetry}>
             {t("common.actions.retry")}
           </Button>
-          <Button size="sm" variant="outline" leftIcon={Settings} onPress={onManageHost}>
+          <Button variant="outline" leftIcon={Settings} onPress={onManageHost}>
             {t("workspace.route.manageHost")}
           </Button>
         </View>
@@ -271,7 +276,7 @@ function WorkspaceEmptyState({
         <Text style={styles.description}>{description ?? hostName}</Text>
       </View>
       <View style={styles.actions}>
-        <Button size="sm" variant="default" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
+        <Button variant="default" leftIcon={ArrowLeftToLine} onPress={onDismiss}>
           {t("common.actions.back")}
         </Button>
       </View>

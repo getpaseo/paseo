@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { createServer } from "http";
-import { mkdtempSync, rmSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -249,5 +249,40 @@ describe("getStructuredAgentResponse (e2e)", () => {
     }
 
     expect(result.message.trim().toLowerCase()).toBe("hello");
+  }, 180000);
+
+  test("does not run the project's Claude hooks for an internal Claude agent", async (context) => {
+    if (!canRunClaude) {
+      context.skip();
+    }
+    const hookMarker = path.join(cwd, "stop-hook-ran");
+    mkdirSync(path.join(cwd, ".claude"));
+    writeFileSync(
+      path.join(cwd, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          Stop: [{ hooks: [{ type: "command", command: `touch '${hookMarker}'` }] }],
+        },
+      }),
+    );
+
+    const result = await generateStructuredAgentResponse({
+      manager,
+      agentConfig: {
+        provider: "claude",
+        model: CLAUDE_TEST_MODEL,
+        cwd,
+        title: "Branch name generator",
+        internal: true,
+      },
+      prompt:
+        'Respond with exactly this JSON (no markdown, no extra keys, no extra text): {"message":"hello"}',
+      schema: z.object({ message: z.string() }),
+      maxRetries: 2,
+      persistSession: false,
+    });
+
+    expect(result.message.trim().toLowerCase()).toBe("hello");
+    expect(existsSync(hookMarker)).toBe(false);
   }, 180000);
 });

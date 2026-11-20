@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/text-input";
 
 const RELAY_DOCS_URL = "https://paseo.sh/docs/security";
+export const CONNECTIVITY_DOCS_URL = "https://paseo.sh/docs/connectivity";
+export const TAILSCALE_DOCS_URL = `${CONNECTIVITY_DOCS_URL}#tailscale`;
 const FLEX_ONE_STYLE = { flex: 1 } as const;
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedShieldCheck = withUnistyles(ShieldCheck);
@@ -80,7 +82,6 @@ export function PairDeviceSection({ serverId, onClose }: PairDeviceSectionProps)
         type: "svg",
         errorCorrectionLevel: "M",
         margin: 1,
-        width: 480,
       }),
     enabled: Boolean(pairingQuery.data?.url),
     dataShape: "value",
@@ -169,8 +170,8 @@ function PairDeviceBody(props: PairDeviceBodyProps) {
 function OfferLoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   const { t } = useTranslation();
   return (
-    <Alert variant="error" description={message}>
-      <Button variant="outline" size="sm" leftIcon={RotateCw} onPress={onRetry}>
+    <Alert size="sm" variant="error" description={message}>
+      <Button variant="outline" leftIcon={RotateCw} onPress={onRetry}>
         {t("pairing.device.retry")}
       </Button>
     </Alert>
@@ -197,9 +198,11 @@ function RelayConsent(props: PairDeviceBodyProps) {
           accessibilityLabel={t("pairing.device.relayDocsAccessibility")}
         />
       </View>
-      {props.enableError ? <Alert variant="error" description={props.enableError.message} /> : null}
+      {props.enableError ? (
+        <Alert size="sm" variant="error" description={props.enableError.message} />
+      ) : null}
       {!props.canConfigureRelay ? (
-        <Alert variant="warning" description={t("pairing.device.updateRequired")} />
+        <Alert size="sm" variant="warning" description={t("pairing.device.updateRequired")} />
       ) : null}
       <View style={styles.actions}>
         <Button variant="secondary" style={FLEX_ONE_STYLE} onPress={props.onClose}>
@@ -218,7 +221,14 @@ function RelayConsent(props: PairDeviceBodyProps) {
       </View>
       <View style={styles.directRow}>
         <ThemedNetwork size={14} style={styles.directIcon} />
-        <Text style={styles.directHint}>{t("pairing.device.directConnectionHint")}</Text>
+        <View style={styles.directContent}>
+          <Text style={styles.directHint}>{t("pairing.device.directConnectionHint")}</Text>
+          <ExternalLink
+            href={TAILSCALE_DOCS_URL}
+            label={t("pairing.device.tailscaleDocs")}
+            accessibilityLabel={t("pairing.device.tailscaleDocsAccessibility")}
+          />
+        </View>
       </View>
     </View>
   );
@@ -253,16 +263,11 @@ function PairingOffer(props: PairDeviceBodyProps & { offer: { url: string } }) {
             accessibilityLabel={t("pairing.link.label")}
           />
         </View>
-        <Button
-          variant="outline"
-          size="sm"
-          leftIcon={props.copied ? Check : Copy}
-          onPress={props.onCopy}
-        >
+        <Button variant="outline" leftIcon={props.copied ? Check : Copy} onPress={props.onCopy}>
           {props.copied ? t("pairing.device.copied") : t("pairing.device.copy")}
         </Button>
       </View>
-      <Alert variant="warning" description={t("pairing.device.securityWarning")} />
+      <Alert size="sm" variant="warning" description={t("pairing.device.securityWarning")} />
     </View>
   );
 }
@@ -273,7 +278,8 @@ function PairingQr({ svg, isError }: { svg: string | null; isError: boolean }) {
     return (
       <SvgXml
         xml={svg}
-        style={styles.qrImage}
+        width="100%"
+        height="100%"
         accessibilityRole="image"
         accessibilityLabel={t("pairing.device.qrAccessibility")}
       />
@@ -336,8 +342,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     marginTop: 1, // optical: seats the glyph on the hint's first text line
   },
-  directHint: {
+  directContent: {
     flex: 1,
+    alignItems: "flex-start",
+    gap: theme.spacing[2],
+  },
+  directHint: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.5,
@@ -362,10 +372,6 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.palette.white,
-  },
-  qrImage: {
-    width: "100%",
-    height: "100%",
   },
   linkRow: {
     flexDirection: "row",

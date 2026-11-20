@@ -1,5 +1,6 @@
 import GithubSlugger from "github-slugger";
 import type { Root } from "mdast";
+import { takeAnchorId } from "./docs-anchor-ids.js";
 
 // `:::example[Answer a Slack mention]` becomes a <details> block. Authors get a
 // collapsible without us enabling rehype-raw, which would turn on raw HTML for
@@ -32,10 +33,11 @@ export function remarkDocsExample() {
     visit(tree as unknown as DirectiveNode, (node) => {
       if (node.type !== "containerDirective" || node.name !== DIRECTIVE_NAME) return;
       const label = (node.children ?? []).find(isLabel);
+      const pinnedId = label ? takeAnchorId(label) : undefined;
       const title = label ? labelText(label) : "";
       node.data = {
         hName: "details",
-        hProperties: { className: "docs-example", id: slugger.slug(title) },
+        hProperties: { className: "docs-example", id: pinnedId ?? slugger.slug(title) },
       };
       if (label) {
         label.data = {

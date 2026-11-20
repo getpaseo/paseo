@@ -5,12 +5,9 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import {
-  buildDeterministicWorkspaceTabId,
-  normalizeWorkspaceTabTarget,
-  workspaceTabTargetsEqual,
-} from "@/workspace-tabs/identity";
+import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { findAdjacentPane } from "@/utils/split-navigation";
+import { panelResourceKey } from "@/panels/panel-manifest";
 
 export interface WorkspaceDerivedTab {
   descriptor: WorkspaceTabDescriptor;
@@ -124,8 +121,10 @@ function getActiveTabId(input: {
     }
     const matchingTab =
       input.tabs.find((tab) => workspaceTabTargetsEqual(tab.descriptor.target, preferredTarget)) ??
-      null;
-    return matchingTab?.descriptor.tabId ?? buildDeterministicWorkspaceTabId(preferredTarget);
+      input.tabs.find(
+        (tab) => panelResourceKey(tab.descriptor.target) === panelResourceKey(preferredTarget),
+      );
+    return matchingTab?.descriptor.tabId ?? null;
   })();
 
   if (preferredTabId && input.openTabIds.has(preferredTabId)) {
@@ -211,10 +210,8 @@ export function resolveSideFileOpenPlacement(input: {
   tabs: WorkspaceTab[];
   target: WorkspaceTabTarget;
 }): WorkspaceSideFileOpenPlacement {
-  const targetTabId = buildDeterministicWorkspaceTabId(input.target);
-  const existingTab = input.tabs.find(
-    (tab) => tab.tabId === targetTabId || workspaceTabTargetsEqual(tab.target, input.target),
-  );
+  const targetKey = panelResourceKey(input.target);
+  const existingTab = input.tabs.find((tab) => panelResourceKey(tab.target) === targetKey);
   if (existingTab) {
     return { kind: "open-in-source" };
   }

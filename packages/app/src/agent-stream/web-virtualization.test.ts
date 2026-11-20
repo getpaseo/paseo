@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_CONTENT_MAX_WIDTH } from "@/styles/theme";
 import type { StreamItem } from "@/types/stream";
 import {
-  clearAssistantImageMetadataCache,
-  setAssistantImageMetadata,
-} from "@/utils/assistant-image-metadata";
+  setAssistantMessageHeight,
+  clearAssistantMessageHeightEstimateCache,
+} from "@/utils/assistant-message-height-estimate";
 import {
   DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS,
   DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD,
@@ -11,7 +12,6 @@ import {
   findMountedWindowStart,
   getWebMountedRecentStreamItems,
   getWebPartialVirtualizationThreshold,
-  shouldAdjustScrollForVirtualRowResize,
   splitWebVirtualizedHistory,
   type IndexedStreamItem,
 } from "./web-virtualization";
@@ -70,6 +70,17 @@ function indexEntries(items: StreamItem[]): IndexedStreamItem[] {
 }
 
 describe("findMountedWindowStart", () => {
+  it("mounts complete autonomous runs and keeps same-run steers together", () => {
+    const items = [
+      { ...userMessage("human", 1), turnId: "first" },
+      { ...assistantMessage("reply", 2), turnId: "first" },
+      { ...toolCall("wake", 3), turnId: "autonomous" },
+      { ...userMessage("steer", 4), turnId: "autonomous" },
+      { ...assistantMessage("done", 5), turnId: "autonomous" },
+    ];
+    expect(findMountedWindowStart({ items, minMountedCount: 1 })).toBe(2);
+  });
+
   it("keeps all items mounted when the chat is below the threshold", () => {
     const items = [userMessage("u1", 1), assistantMessage("a1", 2)];
 
@@ -123,8 +134,18 @@ describe("splitWebVirtualizedHistory", () => {
 
 describe("estimateStreamItemHeight", () => {
   it("uses compact estimates for collapsed tool sequence rows", () => {
-    expect(estimateStreamItemHeight(toolCall("tool", 1))).toBe(40);
-    expect(estimateStreamItemHeight(thought("thought", 2))).toBe(40);
+    expect(
+      estimateStreamItemHeight({
+        item: toolCall("tool", 1),
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
+    ).toBe(40);
+    expect(
+      estimateStreamItemHeight({
+        item: thought("thought", 2),
+        contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+      }),
+    ).toBe(40);
   });
 
   it("uses a larger estimate for user messages with image attachments", () => {
@@ -146,75 +167,23 @@ describe("estimateStreamItemHeight", () => {
       ],
     };
 
-    expect(estimateStreamItemHeight(item)).toBe(220);
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH })).toBe(
+      220,
+    );
   });
 
-  it("uses cached assistant image metadata when available", () => {
-    clearAssistantImageMetadataCache();
-    setAssistantImageMetadata(
-      {
-        source: "https://example.com/tall.png",
-      },
-      { width: 800, height: 1600 },
-    );
-
+  it("uses the renderer's whole-message measurement at the measured width", () => {
+    clearAssistantMessageHeightEstimateCache();
     const item: StreamItem = {
       kind: "assistant_message",
-      id: "a-image",
-      text: "Look at this\n\n![Screenshot](https://example.com/tall.png)",
+      id: "measured",
+      text: "First paragraph\n\n![Image](image.png)",
       timestamp: createTimestamp(2),
     };
-
-    expect(estimateStreamItemHeight(item)).toBeGreaterThan(220);
-  });
-});
-
-describe("virtual row resize anchoring", () => {
-  it("does not move the viewport when a visible row expands while detached", () => {
-    expect(
-      shouldAdjustScrollForVirtualRowResize({
-        isHistoryStartPrependActive: false,
-        rowStart: 1200,
-        scrollOffset: 1000,
-        remainingDistanceFromBottom: 5000,
-        bottomThreshold: 64,
-      }),
-    ).toBe(false);
-  });
-
-  it("keeps the reading position when a row above the viewport changes size", () => {
-    expect(
-      shouldAdjustScrollForVirtualRowResize({
-        isHistoryStartPrependActive: false,
-        rowStart: 800,
-        scrollOffset: 1000,
-        remainingDistanceFromBottom: 5000,
-        bottomThreshold: 64,
-      }),
-    ).toBe(true);
-  });
-
-  it("leaves history prepend and bottom following to their existing anchors", () => {
-    const baseInput = {
-      rowStart: 800,
-      scrollOffset: 1000,
-      remainingDistanceFromBottom: 5000,
-      bottomThreshold: 64,
-    };
-
-    expect(
-      shouldAdjustScrollForVirtualRowResize({
-        ...baseInput,
-        isHistoryStartPrependActive: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldAdjustScrollForVirtualRowResize({
-        ...baseInput,
-        isHistoryStartPrependActive: false,
-        remainingDistanceFromBottom: 64,
-      }),
-    ).toBe(false);
+    setAssistantMessageHeight({ markdown: item.text, width: 608, height: 640 });
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 608 })).toBe(640);
+    expect(estimateStreamItemHeight({ item, contentMaxWidth: 320 })).toBe(220);
+    clearAssistantMessageHeightEstimateCache();
   });
 });
 

@@ -166,8 +166,8 @@ export const gitlabForgeLogic = {
     lineAnchor: gitlabLineAnchor,
     changeRequestChecksSuffix: "/pipelines",
     referencePaths: [
-      { kind: "change_request", infix: "/-/merge_requests/" },
-      { kind: "issue", infix: "/-/issues/" },
+      { kind: "change_request", infix: "/-/merge_requests/", sigil: "!" },
+      { kind: "issue", infix: "/-/issues/", sigil: "#" },
     ],
   },
   facts: defineForgeFacts({

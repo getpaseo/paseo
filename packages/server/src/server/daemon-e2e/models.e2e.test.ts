@@ -1,6 +1,15 @@
 import { describe, test, expect } from "vitest";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { loadConfig } from "../config.js";
+import { findExecutable } from "../../executable-resolution/executable-resolution.js";
+import { BuiltinPluginLoader } from "../plugins/builtin/index.js";
+import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
 import { execFileSync } from "node:child_process";
 import { createDaemonTestContext } from "../test-utils/index.js";
+import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 
 function isBinaryInstalled(binary: string): boolean {
   try {
@@ -96,3 +105,474 @@ describe("daemon E2E", () => {
     );
   });
 });
+
+test("Antigravity creates an agent and answers a prompt with real agy", async ({ skip }) => {
+  const command = await findExecutable(process.env.AGY_COMMAND ?? "agy");
+  if (command === null) {
+    skip("agy is not resolvable");
+    return;
+  }
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "paseo-antigravity-e2e-"));
+  const daemon = await createTestPaseoDaemon({
+    agentClients: {},
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["antigravity-provider"]),
+    providerOverrides: { antigravity: { command: [command], paseoTools: { enabled: false } } },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.10.0",
+  });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    // Snapshot reads start discovery again; await one refresh before checking readiness.
+    await client.refreshProvidersSnapshot({ cwd, providers: ["antigravity"] });
+    const snapshot = await client.getProvidersSnapshot({ cwd });
+    expect(snapshot.entries.find((entry) => entry.provider === "antigravity")?.status).toBe(
+      "ready",
+    );
+    const agent = await client.createAgent({
+      provider: "antigravity",
+      cwd,
+      title: "Antigravity E2E",
+    });
+    expect(agent.currentModeId).toBe("full-access");
+    expect(agent.availableModes?.map((mode) => mode.id)).toEqual(["full-access"]);
+    const openedTimeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(openedTimeline.entries.map((entry) => entry.item)).toEqual([
+      {
+        type: "notification",
+        level: "warning",
+        message:
+          "Antigravity is running with full access\nAntigravity's CLI cannot ask for permission when another app drives it, so Paseo starts it with --dangerously-skip-permissions. Every tool call, including shell commands, runs without asking.",
+      },
+    ]);
+    await client.sendMessage(agent.id, "Reply with exactly ANTIGRAVITY_E2E_OK. No tools.");
+    const result = await client.waitForFinish(agent.id, 90000);
+    expect(result.status).toBe("idle");
+    const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(
+      timeline.entries.some(
+        (entry) =>
+          entry.item.type === "assistant_message" && entry.item.text.includes("ANTIGRAVITY_E2E_OK"),
+      ),
+    ).toBe(true);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+}, 120000);
+
+test("bundled fx requires a config entry and lists models instead of its providers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-fx-optin-"));
+  const record = path.join(root, "launches.txt");
+  await writeFile(record, "");
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["fx-provider"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.15.3",
+  });
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    expect(client.getLastServerInfoMessage()?.features?.fxProvider).toBe(true);
+    const before = await client.getProvidersSnapshot();
+    expect(before.entries.some((entry) => entry.provider === "fx")).toBe(false);
+    expect(await readFile(record, "utf8")).toBe("");
+
+    await client.patchDaemonConfig({
+      providers: {
+        fx: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "fx-fixture.cjs")],
+          env: { FX_TEST_RECORD: record },
+        },
+      },
+    });
+    const { models } = await client.listProviderModels("fx", { cwd: root });
+    expect(models.map((model) => model.id)).toEqual(["fixture-small", "fixture-large"]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60000);
+
+test("bundled Hoplite requires a config entry and removal survives restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-hoplite-optin-"));
+  const record = path.join(root, "launches.txt");
+  await writeFile(record, "");
+  const options = {
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, [
+      "hoplite-provider",
+      "antigravity-provider",
+    ]),
+  };
+  let daemon = await createTestPaseoDaemon(options);
+  const connect = async () => {
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.11.2",
+    });
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    return client;
+  };
+  let client = await connect();
+  try {
+    const before = await client.getProvidersSnapshot();
+    expect(before.entries.some((entry) => entry.provider === "hoplite")).toBe(false);
+    expect(before.entries.some((entry) => entry.provider === "antigravity")).toBe(true);
+    expect(await readFile(record, "utf8")).toBe("");
+
+    await client.patchDaemonConfig({
+      providers: {
+        hoplite: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "hoplite-fixture.cjs")],
+          env: { HOPLITE_TEST_RECORD: record, HOPLITE_TEST_CWD: root },
+        },
+      },
+    });
+    const globalModels = await client.listProviderModels("hoplite");
+    expect(globalModels.error).toBeNull();
+    expect(globalModels.models).toEqual([]);
+    await expect
+      .poll(
+        async () =>
+          (await client.getProvidersSnapshot()).entries.find(
+            (entry) => entry.provider === "hoplite",
+          )?.status,
+      )
+      .toBe("ready");
+    const workspaceModels = await client.listProviderModels("hoplite", { cwd: root });
+    expect(workspaceModels.error).toBeNull();
+    expect(workspaceModels.models.map((model) => model.id)).toEqual(["fixture-model"]);
+    await client.refreshProvidersSnapshot({ providers: ["hoplite"] });
+    expect((await client.listProviderModels("hoplite")).models).toEqual([]);
+    expect(
+      (await client.listProviderModels("hoplite", { cwd: root })).models.map((model) => model.id),
+    ).toEqual(["fixture-model"]);
+    const agent = await client.createAgent({
+      provider: "hoplite",
+      cwd: root,
+      model: "fixture-model",
+    });
+    await client.sendMessage(agent.id, "Exercise the contributor transformer");
+    await client.waitForFinish(agent.id, 10000);
+    const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(timeline.entries.map((entry) => entry.item)).toContainEqual(
+      expect.objectContaining({
+        type: "tool_call",
+        name: "Hoplite workspace",
+        status: "completed",
+      }),
+    );
+    await client.archiveAgent(agent.id);
+    expect(await readFile(record, "utf8")).toContain("launch");
+
+    await client.patchDaemonConfig({ providers: { hoplite: { enabled: false } } });
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+    await client.close();
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      ...options,
+      staticDir: daemon.staticDir,
+      providerOverrides: loadConfig(daemon.paseoHome, { env: {} }).providerOverrides,
+    });
+    client = await connect();
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+    await client.patchDaemonConfig({ removeProviders: ["hoplite"] });
+    expect(
+      (await client.getProvidersSnapshot()).entries.some((entry) => entry.provider === "hoplite"),
+    ).toBe(false);
+    expect((await client.getDaemonConfig()).config.providers?.hoplite).toBeUndefined();
+    const persisted = JSON.parse(
+      await readFile(path.join(daemon.paseoHome, "config.json"), "utf8"),
+    );
+    expect(persisted.agents?.providers?.hoplite).toBeUndefined();
+    const launchesAfterRemoval = await readFile(record, "utf8");
+    await client.close();
+    await daemon.close();
+    daemon = await createTestPaseoDaemon({
+      ...options,
+      staticDir: daemon.staticDir,
+      providerOverrides: loadConfig(daemon.paseoHome, { env: {} }).providerOverrides,
+    });
+    client = await connect();
+    const restarted = await client.getProvidersSnapshot();
+    expect(restarted.entries.some((entry) => entry.provider === "hoplite")).toBe(false);
+    expect(restarted.entries.map((entry) => entry.provider)).toEqual(
+      before.entries.map((entry) => entry.provider),
+    );
+    expect(await readFile(record, "utf8")).toBe(launchesAfterRemoval);
+    await client.patchDaemonConfig({ providers: { hoplite: { enabled: false } } });
+    expect(
+      (await client.getProvidersSnapshot()).entries.find((entry) => entry.provider === "hoplite")
+        ?.enabled,
+    ).toBe(false);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+    await rm(daemon.staticDir, { recursive: true, force: true });
+  }
+}, 60000);
+
+test("provider installation reaches the client: version unchanged, Install link when missing", async () => {
+  const version = "  codex-cli 0.200.0-alpha+local (build 7)\n";
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      installUrl: "https://example.com/codex/install",
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    expect(client.getLastServerInfoMessage()?.features?.providerInstallation).toBe(true);
+    await expect(client.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      installation: {
+        installUrl: "https://example.com/codex/install",
+        inspection: { status: "installed", version },
+      },
+    });
+    await expect(client.inspectProviderInstallation("muse")).resolves.toMatchObject({
+      provider: "muse",
+      error: null,
+      installation: {
+        installUrl: "https://paseo.sh/docs/muse-code",
+        inspection: { status: "not_installed" },
+      },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("provider update checks reach the client: versions unchanged, failures inconclusive", async () => {
+  const versions = ["  0.300.0-beta+x\n", "nightly (unstable)"];
+  const message = "  Restart Codex to finish\n";
+  let codexChecks = 0;
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async checkForUpdates() {
+        codexChecks += 1;
+        return { status: "available" as const, versions, message };
+      },
+    },
+  });
+  const claude = Object.assign(createTestAgentClient("claude"), {
+    installation: {
+      async checkForUpdates(): Promise<never> {
+        throw new Error("release channel unreachable");
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex, claude },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+    providerOverrides: { muse: { command: ["paseo-e2e-missing-muse"] } },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await expect(client.checkProviderUpdates("codex")).resolves.toMatchObject({
+      provider: "codex",
+      error: null,
+      updateCheck: { status: "available", versions, message },
+    });
+    await client.checkProviderUpdates("codex");
+    expect(codexChecks).toBe(1);
+    await client.checkProviderUpdates("codex", { refresh: true });
+    expect(codexChecks).toBe(2);
+
+    await expect(client.checkProviderUpdates("claude")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "error", message: "release channel unreachable" },
+    });
+    await expect(client.checkProviderUpdates("muse")).resolves.toMatchObject({
+      error: null,
+      updateCheck: { status: "unknown", message: "Not installed" },
+    });
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("a provider update outlives the client that started it and a new client reads it", async () => {
+  let version = "1.0.0";
+  let updates = 0;
+  let finish!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const codex = Object.assign(createTestAgentClient("codex"), {
+    installation: {
+      async inspect() {
+        return { status: "installed" as const, version };
+      },
+      async update({ report }: { report: (event: { type: "stdout"; text: string }) => void }) {
+        updates += 1;
+        report({ type: "stdout", text: " step 1\r\n" });
+        await finished;
+        report({ type: "stdout", text: " step 2\n" });
+        version = "2.0.0";
+        return { status: "succeeded" as const, message: " Restart agents \n" };
+      },
+    },
+  });
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { codex },
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, []),
+  });
+  const first = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  const second = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await first.connect();
+    await expect(first.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { canUpdate: true, inspection: { version: "1.0.0" } },
+    });
+    const firstObservation = first.observeProviderUpdates("codex");
+    const firstOutput: string[] = [];
+    firstObservation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type === "provider.installation.update.progress")
+          firstOutput.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(firstObservation.ready).resolves.toMatchObject({ update: null });
+    const started = await first.updateProvider("codex");
+    expect(started).toMatchObject({ error: null, update: { operation: { status: "running" } } });
+    await expect.poll(() => firstOutput).toEqual([" step 1\r\n"]);
+    await first.close();
+
+    await second.connect();
+    const joined = await second.updateProvider("codex");
+    expect(joined.update?.operation.id).toBe(started.update?.operation.id);
+    expect(updates).toBe(1);
+
+    const observation = second.observeProviderUpdates("codex");
+    let latest: { status: string; message?: string } | null = null;
+    const output: string[] = [];
+    observation.subscribe({
+      snapshot: (snapshot) => {
+        latest = snapshot.update?.operation ?? null;
+        output.splice(0, output.length, ...(snapshot.update?.output ?? []).map((e) => e.text));
+      },
+      update: (message) => {
+        if (message.type !== "provider.installation.update.progress") return;
+        latest = message.payload.operation;
+        output.push(...message.payload.output.map((entry) => entry.text));
+      },
+    });
+    await expect(observation.ready).resolves.toMatchObject({
+      update: {
+        operation: { status: "running" },
+        output: [{ type: "stdout", text: " step 1\r\n" }],
+      },
+    });
+    finish();
+    await expect
+      .poll(() => latest)
+      .toMatchObject({ status: "succeeded", message: " Restart agents \n" });
+    expect(output).toEqual([" step 1\r\n", " step 2\n"]);
+    await expect(second.inspectProviderInstallation("codex")).resolves.toMatchObject({
+      installation: { inspection: { version: "2.0.0" } },
+    });
+    await observation.release();
+  } finally {
+    finish();
+    await first.close().catch(() => undefined);
+    await second.close();
+    await daemon.close();
+  }
+}, 60000);
+
+test("bundled goose lists configured providers and switches models across providers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-goose-models-"));
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: root,
+    cleanup: false,
+    mcpEnabled: false,
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["goose-provider"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.16.0",
+  });
+  const openRouterModel = "openrouter/anthropic/claude-sonnet-4.5";
+  const openAiModel = "openai/gpt-4o";
+  try {
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    expect(client.getLastServerInfoMessage()?.features?.gooseProvider).toBe(true);
+    expect(
+      (await client.getProvidersSnapshot()).entries.some((entry) => entry.provider === "goose"),
+    ).toBe(false);
+
+    await client.patchDaemonConfig({
+      providers: {
+        goose: {
+          enabled: true,
+          command: [process.execPath, path.resolve(import.meta.dirname, "goose-fixture.cjs")],
+        },
+      },
+    });
+    const catalog = await client.listProviderModels("goose", { cwd: root });
+    expect(catalog.error).toBeNull();
+    expect(catalog.models.map((model) => [model.id, model.isDefault === true])).toEqual([
+      [openRouterModel, true],
+      [openAiModel, false],
+    ]);
+
+    const agent = await client.createAgent({ provider: "goose", cwd: root, model: openAiModel });
+    await client.sendMessage(agent.id, "Which provider and model are you running?");
+    expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
+    await client.setAgentModel(agent.id, openRouterModel);
+    await client.sendMessage(agent.id, "Which provider and model are you running now?");
+    expect((await client.waitForFinish(agent.id, 10_000)).status).toBe("idle");
+    expect((await client.fetchAgent(agent.id))?.agent.model).toBe(openRouterModel);
+    const timeline = await client.fetchAgentTimeline(agent.id, { limit: 100 });
+    expect(
+      timeline.entries.flatMap(({ item }) =>
+        item.type === "assistant_message" ? [item.text] : [],
+      ),
+    ).toEqual([openAiModel, openRouterModel]);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);

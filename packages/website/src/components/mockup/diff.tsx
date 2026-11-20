@@ -9,6 +9,9 @@ import {
   RefreshCw,
   Rows3,
 } from "lucide-react";
+import { Fragment } from "react";
+import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { Code, DiffStat } from "./atoms";
 import { TABBAR_H } from "./geometry";
 import { ReactFileIcon } from "./icons";
@@ -28,7 +31,7 @@ const SUBHEADER_STYLE = { height: TABBAR_H };
 export type DiffRow =
   | { kind: "file"; name: string; path?: string; add: string; remove: string }
   | { kind: "hunk"; label: string }
-  | { kind: "line"; n: string; text: string; mark?: DiffMark }
+  | { kind: "line"; n: string; text: string; mark?: DiffMark; reviewed?: boolean }
   | { kind: "scrollbar" }
   | { kind: "gap" };
 
@@ -46,16 +49,35 @@ const NUMBER_COLOR: Record<DiffMark, string> = {
   remove: "text-mock-danger",
 };
 
-function DiffLine({ n, text, mark }: { n: string; text: string; mark?: DiffMark }) {
+/** What a review adds to the line it comments on. Rows mark that line with `reviewed`. */
+export interface LineReview {
+  /** Drawn on the line's gutter, such as the button that adds a comment. */
+  action: React.ReactNode;
+  /** Drawn under the line: the thread of comments. */
+  thread: React.ReactNode;
+}
+
+function DiffLine({
+  n,
+  text,
+  mark,
+  action,
+}: {
+  n: string;
+  text: string;
+  mark?: DiffMark;
+  action?: React.ReactNode;
+}) {
   const fill = mark ? ROW_FILL[mark] : "";
   const number = mark ? NUMBER_COLOR[mark] : "text-mock-fg-muted";
   return (
     <div className={`flex items-center ${fill}`} style={ROW_STYLE}>
       <span
-        className={`flex h-full shrink-0 items-center justify-end border-r border-mock-border pr-[10px] font-mono text-[11px] tabular-nums ${number}`}
+        className={`relative flex h-full shrink-0 items-center justify-end border-r border-mock-border pr-[10px] font-mono text-[11px] tabular-nums ${number}`}
         style={GUTTER_STYLE}
       >
         {n}
+        {action}
       </span>
       <span className="min-w-0 flex-1 overflow-hidden whitespace-pre pl-[10px] font-mono text-[12px] leading-[18.5px]">
         <Code line={text} />
@@ -87,7 +109,15 @@ function FileRow({
   );
 }
 
-export function DiffRows({ rows, flush }: { rows: DiffRow[]; flush?: boolean }) {
+export function DiffRows({
+  rows,
+  flush,
+  review,
+}: {
+  rows: DiffRow[];
+  flush?: boolean;
+  review?: LineReview;
+}) {
   return (
     <div className={`relative overflow-hidden bg-mock-surface1 ${flush ? "" : "min-h-0 flex-1"}`}>
       {rows.map((row, index) => {
@@ -109,6 +139,14 @@ export function DiffRows({ rows, flush }: { rows: DiffRow[]; flush?: boolean }) 
               </span>
             </div>
           );
+        if (row.reviewed && review) {
+          return (
+            <Fragment key={key}>
+              <DiffLine {...row} action={review.action} />
+              {review.thread}
+            </Fragment>
+          );
+        }
         return <DiffLine key={key} {...row} />;
       })}
       {!flush ? (
@@ -332,6 +370,7 @@ export const REVIEW_DIFF_ROWS: DiffRow[] = [
     n: "23",
     text: 'type ToolKind = "read" | "shell";',
     mark: "add",
+    reviewed: true,
   },
   { kind: "line", n: "24", text: "" },
   {
@@ -536,10 +575,11 @@ export function ChangesBranchRow() {
 }
 
 export function ChangesScopeRow() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-[36px] shrink-0 items-center border-b border-mock-border px-[14px]">
       <span className="flex items-center gap-[5px] text-[12px] text-mock-fg-muted">
-        Uncommitted
+        {t("landing.mockup.app.uncommitted")}
         <ChevronDown size={12} />
       </span>
       <span className="ml-[9px] flex items-center gap-[5px] text-[11.5px] tabular-nums">
@@ -556,10 +596,11 @@ export function ChangesScopeRow() {
 }
 
 export function ChangesCommitsRow() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-[36px] shrink-0 items-center gap-[8px] border-t border-mock-border px-[10px] text-[12px] text-mock-fg">
       <ChevronRight size={13} className="text-mock-fg-muted" />
-      Commits
+      {t("landing.mockup.app.commits")}
     </div>
   );
 }

@@ -2,24 +2,44 @@ import type { Dialog } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { getServerId } from "../support/helpers/server-id";
 import {
+  expectInstallOpensGuide,
   expectProviderInstalledInSettings,
+  expectProviderNotOnHost,
   installAcpCatalogProvider,
-  openAddProviderArea,
+  leaveProviderDetail,
+  openAddProvider,
+  openProviderDetail,
   openSettingsHost,
   openSettingsHostSection,
 } from "../support/helpers/settings";
+import { copyPluginExample } from "../support/helpers/plugin-fixture";
 
 const CUSTOM_PROVIDER = {
   id: "junie",
   name: "Junie",
+  // The Add provider catalog's guide. The CLI is not installed where these tests run.
+  installGuide: "https://junie.jetbrains.com/docs/junie-cli-acp.html",
+} as const;
+
+const PLUGIN_PROVIDER = {
+  id: "direct-example",
+  name: "Direct provider example",
+  pluginId: "provider-direct-example",
 } as const;
 
 interface ProviderRemovalDaemonClient {
   connect(): Promise<void>;
   close(): Promise<void>;
-  patchDaemonConfig(config: { removeProviders?: string[] }): Promise<unknown>;
+  getDaemonConfig(): Promise<{ config: { pluginsEnabled?: boolean } }>;
+  patchDaemonConfig(config: {
+    removeProviders?: string[];
+    pluginsEnabled?: boolean;
+  }): Promise<unknown>;
+  installDirectoryPlugin(path: string): Promise<unknown>;
+  removePlugin(pluginId: string): Promise<void>;
   getProvidersSnapshot(): Promise<{
     entries: Array<{ provider: string; source?: "builtin" | "custom" }>;
   }>;
@@ -49,12 +69,38 @@ async function clickRemoveProviderAndAcceptWarning(page: Page): Promise<Dialog> 
     expect(dialog.message()).toContain("This deletes the provider entry from config.json.");
     void dialog.accept();
   });
-  await page.getByTestId(`provider-remove-${CUSTOM_PROVIDER.id}`).click();
+  await page.getByTestId("provider-remove").click();
   if (!warning) {
     throw new Error("Expected a provider removal confirmation dialog, but none was shown.");
   }
   return warning;
 }
+
+const MISSING_NOTICE = '[data-testid="provider-detail-missing"]';
+
+/** Records whether the page ever says its provider isn't on the host, however briefly. */
+async function watchForMissingNotice(page: Page): Promise<void> {
+  await page.evaluate((selector) => {
+    const flags = window as unknown as { sawMissingNotice?: boolean };
+    flags.sawMissingNotice = false;
+    new MutationObserver(() => {
+      if (document.querySelector(selector)) flags.sawMissingNotice = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  }, MISSING_NOTICE);
+}
+
+async function expectMissingNoticeNeverShown(page: Page): Promise<void> {
+  const saw = await page.evaluate(
+    () => (window as unknown as { sawMissingNotice?: boolean }).sawMissingNotice,
+  );
+  expect(saw).toBe(false);
+}
+
+/**
+ * The daemon publishes the provider list without the removed provider before it answers the config
+ * patch. Holding the answer keeps the page in that window.
+ */
+const CONFIG_RESPONSE = "set_daemon_config_response";
 
 test.describe("provider removal", () => {
   test("removes a custom provider from Settings", async ({ page }) => {
@@ -66,20 +112,42 @@ test.describe("provider removal", () => {
     try {
       await removeCustomProvider(client);
 
+      const gate = await installDaemonWebSocketGate(page);
       await gotoAppShell(page);
       await openSettings(page);
       await openSettingsHost(page, getServerId());
       await openSettingsHostSection(page, getServerId(), "providers");
 
-      await expect(page.getByTestId("provider-actions-claude")).toHaveCount(0);
-      await openAddProviderArea(page);
+      // A built-in provider has no Danger zone.
+      await openProviderDetail(page, "Claude");
+      await expect(page.getByTestId("provider-remove")).toHaveCount(0);
+      await leaveProviderDetail(page);
+
+      await openAddProvider(page);
       await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
       await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);
       await expectProviderSource(client, "custom");
 
-      await page.getByTestId(`provider-actions-${CUSTOM_PROVIDER.id}`).click();
-      await expect(page.getByTestId(`provider-remove-${CUSTOM_PROVIDER.id}`)).toBeVisible();
+      await openProviderDetail(page, CUSTOM_PROVIDER.name);
+      await test.step("the page points at the catalog's install guide", async () => {
+        await expectInstallOpensGuide(page, CUSTOM_PROVIDER.installGuide);
+      });
+      await expect(page.getByTestId("provider-remove")).toBeVisible();
+      await watchForMissingNotice(page);
+      gate.holdNextServerMessage(CONFIG_RESPONSE);
       await clickRemoveProviderAndAcceptWarning(page);
+      await gate.waitForHeldServerMessage(CONFIG_RESPONSE);
+      await expectProviderSource(client, undefined);
+      // Until the removal is answered, the page keeps the provider and the pressed button says so.
+      const removeButton = page.getByTestId("provider-remove");
+      await expect(removeButton).toHaveText("Removing...");
+      await expect(removeButton.getByRole("progressbar")).toBeVisible();
+      await expect(removeButton).toBeDisabled();
+      await expect(page.getByTestId("provider-detail-title")).toHaveText(CUSTOM_PROVIDER.name);
+      gate.releaseHeldServerMessage(CONFIG_RESPONSE);
+      // Removing leaves the provider's page for the list, without first calling it missing.
+      await expect(page.getByTestId("provider-list")).toBeVisible();
+      await expectMissingNoticeNeverShown(page);
 
       await expect(
         page.getByRole("button", {
@@ -87,10 +155,79 @@ test.describe("provider removal", () => {
           exact: true,
         }),
       ).toHaveCount(0);
-      await expectProviderSource(client, undefined);
     } finally {
       await removeCustomProvider(client).catch(() => undefined);
       await client.close().catch(() => undefined);
+    }
+  });
+
+  test("says a provider removed elsewhere while its page is open isn't on this host", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const client = await connectDaemonClient<ProviderRemovalDaemonClient>({
+      clientIdPrefix: "provider-removal-e2e",
+    });
+
+    try {
+      await removeCustomProvider(client);
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openSettingsHost(page, getServerId());
+      await openSettingsHostSection(page, getServerId(), "providers");
+      await openAddProvider(page);
+      await installAcpCatalogProvider(page, CUSTOM_PROVIDER.name);
+      await expectProviderInstalledInSettings(page, CUSTOM_PROVIDER.name);
+      await openProviderDetail(page, CUSTOM_PROVIDER.name);
+
+      await removeCustomProvider(client);
+      await expectProviderNotOnHost(page);
+    } finally {
+      await removeCustomProvider(client).catch(() => undefined);
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  test("does not offer Remove for a plugin-registered provider", async ({ page }) => {
+    test.setTimeout(120_000);
+    const client = await connectDaemonClient<ProviderRemovalDaemonClient>({
+      clientIdPrefix: "provider-removal-e2e",
+    });
+
+    const plugin = await copyPluginExample("provider-direct");
+    try {
+      const previous = await client.getDaemonConfig();
+      try {
+        await client.patchDaemonConfig({ pluginsEnabled: true });
+        await client.installDirectoryPlugin(plugin.directory);
+
+        await gotoAppShell(page);
+        await openSettings(page);
+        await openSettingsHost(page, getServerId());
+        await openSettingsHostSection(page, getServerId(), "providers");
+
+        const pluginProviderRow = page.getByRole("button", {
+          name: `${PLUGIN_PROVIDER.name} provider details`,
+          exact: true,
+        });
+        await expect(pluginProviderRow).toBeVisible();
+        await openProviderDetail(page, PLUGIN_PROVIDER.name);
+        await expect(page.getByTestId("provider-remove")).toHaveCount(0);
+        await leaveProviderDetail(page);
+
+        // The provider survives a removeProviders patch pointed at it: the
+        // plugin, not config.json, owns the definition.
+        await client.patchDaemonConfig({ removeProviders: [PLUGIN_PROVIDER.id] });
+        await expect(pluginProviderRow).toBeVisible();
+      } finally {
+        await client.removePlugin(PLUGIN_PROVIDER.pluginId).catch(() => undefined);
+        await client
+          .patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled })
+          .catch(() => undefined);
+      }
+    } finally {
+      await client.close().catch(() => undefined);
+      await plugin.cleanup();
     }
   });
 });

@@ -289,7 +289,10 @@ function classifySessionTimelineSeq({
   seq: number;
 }): SessionTimelineSeqDecision {
   if (!cursor) {
-    return "init";
+    // A synced chat without coverage was empty when it last caught up. Only an epoch's
+    // first row can start coverage; a later row means rows before it were missed, for
+    // example while offline, and a cursor started there would hide them from catch-up.
+    return seq === 1 ? "init" : "gap";
   }
   if (cursor.epoch !== epoch) {
     return "drop_epoch";
@@ -422,13 +425,7 @@ function mergeTimelineWindow(args: {
     return cursor?.epoch !== payload.epoch || cursor.seq < startSeq || cursor.seq > endSeq;
   });
   const retainedHead = projected.head;
-  const reservedItemIds = new Set(
-    [...retainedTail, ...retainedHead].flatMap((item) =>
-      item.kind === "assistant_message" && item.blockGroupId
-        ? [item.id, item.blockGroupId]
-        : [item.id],
-    ),
-  );
+  const reservedItemIds = new Set([...retainedTail, ...retainedHead].map((item) => item.id));
   const hydrated = hydrateStreamState(
     toHydratedEvents(timelineUnits.filter((unit) => !projected.reconciledUnits.has(unit))),
     {
@@ -817,57 +814,49 @@ function reconcileOverlappingProjectedAssistant(params: {
   };
 
   const headMatch = findMatch(params.head);
-  const tailMatch = headMatch ? null : findMatch(params.tail);
+  const tailMatch = findMatch(params.tail);
   const match = headMatch ?? tailMatch;
   if (!match) {
     return { tail: params.tail, head: params.head, reconciled: false };
   }
 
-  const blockGroupId = match.current.blockGroupId;
   const messageId = projectedMessageId ?? match.current.messageId;
   const replacement: AssistantMessageItem = {
     kind: "assistant_message",
-    id: blockGroupId ?? match.current.id,
+    id: match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
   };
-  const belongsToBlockGroup = (item: StreamItem) =>
-    blockGroupId !== undefined &&
-    item.kind === "assistant_message" &&
-    item.blockGroupId === blockGroupId;
-  const removeBlockGroup = (items: StreamItem[]) =>
-    blockGroupId !== undefined ? items.filter((item) => !belongsToBlockGroup(item)) : items;
   const replaceMatch = (items: StreamItem[], index: number) => {
-    if (!blockGroupId) {
-      const next = [...items];
-      next[index] = replacement;
-      return next;
-    }
-    const next: StreamItem[] = [];
-    let inserted = false;
-    for (const item of items) {
-      if (!belongsToBlockGroup(item)) {
-        next.push(item);
-      } else if (!inserted) {
-        next.push(replacement);
-        inserted = true;
-      }
-    }
+    const next = [...items];
+    next[index] = replacement;
     return next;
   };
 
   if (headMatch) {
+    const tailCursor = tailMatch?.current.timelineCursor;
+    const replacesCachedPrefix =
+      tailMatch !== null &&
+      tailCursor?.epoch === params.epoch &&
+      unit.sourceSeqRanges.some(
+        (range) => range.startSeq <= tailCursor.seq && tailCursor.seq <= range.endSeq,
+      );
     return {
-      tail: removeBlockGroup(params.tail),
+      // Live chunks can arrive before catch-up while their cached prefix is still painted.
+      // The projected reply owns both copies; keeping the prefix would duplicate it and
+      // cause completion to discard the updated head as an already-committed item.
+      tail: replacesCachedPrefix
+        ? [...params.tail.slice(0, tailMatch.index), ...params.tail.slice(tailMatch.index + 1)]
+        : params.tail,
       head: replaceMatch(params.head, headMatch.index),
       reconciled: true,
     };
   }
   return {
     tail: replaceMatch(params.tail, match.index),
-    head: removeBlockGroup(params.head),
+    head: params.head,
     reconciled: true,
   };
 }
@@ -1162,13 +1151,7 @@ function applyAcceptedTimelinePage(input: {
     })),
     {
       source: "canonical",
-      reservedItemIds: new Set(
-        currentTail.flatMap((item) =>
-          item.kind === "assistant_message" && item.blockGroupId
-            ? [item.id, item.blockGroupId]
-            : [item.id],
-        ),
-      ),
+      reservedItemIds: new Set(currentTail.map((item) => item.id)),
     },
   );
   return {
@@ -1563,14 +1546,14 @@ function processTimelineSequencingGate(input: {
     return {
       ...base,
       shouldApplyStreamEvent: false,
-      sideEffects: currentCursor
-        ? [
-            {
-              type: "catch_up",
-              cursor: { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq },
-            },
-          ]
-        : [],
+      sideEffects: [
+        {
+          type: "catch_up",
+          cursor: currentCursor
+            ? { epoch: currentCursor.epoch, endSeq: currentCursor.endSeq }
+            : { epoch, endSeq: 0 },
+        },
+      ],
     };
   }
   if (decision === "drop_epoch" && seq === 1) {
@@ -1635,19 +1618,17 @@ export function processAgentStreamEvent(
         unmatchedUserMessageInsert: "head",
       });
     } else {
-      const overlay = applyStreamEvent({
-        tail: currentHead,
-        head: [],
-        event,
-        timestamp,
+      // Before history arrives, the overlay is one ordered stream. Reducing it
+      // directly keeps consecutive reasoning chunks in the same row.
+      const overlay = reduceStreamUpdate(currentHead, event, timestamp, {
         source: "live",
         timelineCursor,
       });
       streamResult = {
         tail: currentTail,
-        head: [...overlay.tail, ...overlay.head],
+        head: overlay,
         changedTail: false,
-        changedHead: overlay.changedTail || overlay.changedHead,
+        changedHead: overlay !== currentHead,
       };
     }
   } else {

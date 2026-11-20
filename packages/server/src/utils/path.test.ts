@@ -42,6 +42,35 @@ describe("path equivalence", () => {
     );
   });
 
+  test.each([
+    { root: "/repo", candidate: "/repo/..notes.txt", inside: true },
+    { root: "/repo", candidate: "/repo/..drafts/notes.md", inside: true },
+    { root: "/repo", candidate: "/repo/...drafts/notes.md", inside: true },
+    { root: "/repo", candidate: "/repo/docs/..notes.txt", inside: true },
+    { root: "/repo", candidate: "/repo", inside: true },
+    { root: "/repo", candidate: "/repo/../sibling/notes.md", inside: false },
+    { root: "/repo", candidate: "/repo/..drafts/../../outside.txt", inside: false },
+    { root: "/repo", candidate: "/repo-other/notes.md", inside: false },
+    { root: "C:\\Repo", candidate: "c:/repo/..notes.txt", inside: true },
+    { root: "C:\\Repo", candidate: "C:\\Repo\\..drafts\\notes.md", inside: true },
+    { root: "C:\\Repo", candidate: "C:\\Repo\\...drafts\\notes.md", inside: true },
+    { root: "C:\\Repo", candidate: "C:\\Repo\\..\\sibling\\notes.md", inside: false },
+    { root: "C:\\Repo", candidate: "C:\\Repo-other\\notes.md", inside: false },
+    { root: "C:\\Repo", candidate: "D:\\Repo\\..notes.txt", inside: false },
+    {
+      root: String.raw`\\server\share\repo`,
+      candidate: String.raw`\\server\share\repo\..drafts\notes.md`,
+      inside: true,
+    },
+    {
+      root: String.raw`\\?\C:\Repo`,
+      candidate: "C:\\Repo\\..notes.txt",
+      inside: true,
+    },
+  ])("checks named path containment for $candidate", ({ root, candidate, inside }) => {
+    expect(isPathInsideRoot(root, candidate)).toBe(inside);
+  });
+
   test("preserves the casing of Windows relative suffixes", () => {
     expect(getRealpathAwareRelativePath("C:\\Repo\\.git", "c:\\repo\\.git\\HEAD")).toBe("HEAD");
     expect(

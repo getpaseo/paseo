@@ -4,9 +4,11 @@ import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   createControlGeometry,
-  segmentedIconSize,
-  type SegmentedControlSize,
+  controlIconSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
+import { useContainedControlSize } from "@/components/ui/control-size";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
 
 type SegmentedControlIconRenderer = (props: { color: string; size: number }) => ReactNode;
@@ -17,13 +19,15 @@ export interface SegmentedControlOption<T extends string> {
   icon?: SegmentedControlIconRenderer;
   disabled?: boolean;
   testID?: string;
+  /** Shown below the segment while the pointer is over it. */
+  tooltip?: string;
 }
 
 interface SegmentedControlProps<T extends string> {
   options: SegmentedControlOption<T>[];
-  value: T;
+  value: T | null;
   onValueChange: (value: T) => void;
-  size?: SegmentedControlSize;
+  size?: ControlSize;
   hideLabels?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -48,20 +52,21 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onValueChange,
-  size = "md",
+  size: sizeProp,
   hideLabels = false,
   style,
   testID,
 }: SegmentedControlProps<T>) {
+  const containedSize = useContainedControlSize();
+  const size = sizeProp ?? containedSize ?? "md";
   const sizeStyles = {
-    xs: { container: styles.containerXs, segment: styles.segmentXs, label: styles.labelXs },
     sm: { container: styles.containerSm, segment: styles.segmentSm, label: styles.labelSm },
     md: { container: styles.containerMd, segment: styles.segmentMd, label: styles.labelMd },
   }[size];
   const containerSizeStyle = sizeStyles.container;
   const segmentSizeStyle = sizeStyles.segment;
   const labelSizeStyle = sizeStyles.label;
-  const iconSize = segmentedIconSize[size];
+  const iconSize = controlIconSize[size];
 
   const containerStyle = useMemo(
     () => [styles.container, containerSizeStyle, style],
@@ -107,7 +112,7 @@ function SegmentItem<T extends string>({
   hideLabels: boolean;
   segmentSizeStyle: StyleProp<ViewStyle>;
   labelSizeStyle: StyleProp<TextStyle>;
-  currentValue: T;
+  currentValue: T | null;
   onValueChange: (value: T) => void;
 }) {
   const labelStyle = useMemo(
@@ -134,7 +139,7 @@ function SegmentItem<T extends string>({
     () => ({ selected: isSelected, disabled: option.disabled }),
     [isSelected, option.disabled],
   );
-  return (
+  const segment = (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
@@ -158,6 +163,15 @@ function SegmentItem<T extends string>({
       )}
     </Pressable>
   );
+  if (!option.tooltip) return segment;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{segment}</TooltipTrigger>
+      <TooltipContent side="bottom" offset={8}>
+        <Text style={styles.tooltipText}>{option.tooltip}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -169,9 +183,6 @@ const styles = StyleSheet.create((theme) => {
       alignItems: "center",
       backgroundColor: "transparent",
       gap: theme.spacing[1],
-    },
-    containerXs: {
-      ...geometry.segmentedContainerXs,
     },
     containerSm: {
       ...geometry.segmentedContainerSm,
@@ -185,9 +196,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: "center",
       flexShrink: 0,
       gap: theme.spacing[1],
-    },
-    segmentXs: {
-      ...geometry.segmentedSegmentXs,
     },
     segmentSm: {
       ...geometry.segmentedSegmentSm,
@@ -215,9 +223,6 @@ const styles = StyleSheet.create((theme) => {
       color: theme.colors.foregroundMuted,
       fontWeight: theme.fontWeight.normal,
     },
-    labelXs: {
-      ...geometry.segmentedLabelXs,
-    },
     labelSm: {
       ...geometry.segmentedLabelSm,
     },
@@ -226,6 +231,10 @@ const styles = StyleSheet.create((theme) => {
     },
     labelSelected: {
       color: theme.colors.foreground,
+    },
+    tooltipText: {
+      fontSize: theme.fontSize.base,
+      color: theme.colors.popoverForeground,
     },
   };
 });

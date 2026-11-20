@@ -1,7 +1,14 @@
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { openSettingsSection } from "../support/helpers/settings";
-import { openWhatsNew, release, serveChangelog } from "../support/helpers/changelog";
+import {
+  allChangesToggle,
+  hideAllChanges,
+  openWhatsNew,
+  release,
+  serveChangelog,
+  showAllChanges,
+} from "../support/helpers/changelog";
 
 const DISCORD_DESTINATION =
   /^https:\/\/(?:discord\.gg\/jz8T2uahpH|discord\.com\/invite\/jz8T2uahpH)(?:[/?#]|$)/;
@@ -73,25 +80,29 @@ test("opens troubleshooting and support destinations", async ({ page }) => {
 });
 
 test("renders the changelog in the app and links the website", async ({ page }) => {
-  // A callout, a section name the app has never seen, and a fenced sample whose
-  // contents look like a release heading.
+  // Highlights, a section name the app has never seen, a callout, and a fenced
+  // sample whose contents look like a release heading.
   await serveChangelog(page, [
     "# Changelog",
     "",
     "## 9.1.0 - 2026-03-04",
     "",
-    "Headline release note.",
-    "",
-    "> [!WARNING]",
-    "> Read this before upgrading.",
+    "- **Background tasks:** Paseo now shows the tasks an agent is running.",
     "",
     "### Sparkles",
     "",
     "- Added a brand new thing",
     "",
+    "> [!WARNING]",
+    "> Read this before upgrading.",
+    "",
     "```md",
     "## 0.0.0 - 1999-01-01",
     "```",
+    "",
+    "### Fixed",
+    "",
+    "- Fixed a crash",
     "",
     "## 9.0.0 - 2026-02-01",
     "",
@@ -104,14 +115,32 @@ test("renders the changelog in the app and links the website", async ({ page }) 
 
   const sheet = await openWhatsNew(page);
   const latest = release(sheet, "9.1.0");
+  const older = release(sheet, "9.0.0");
 
-  await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
-  await expect(latest.getByText("Headline release note.")).toBeVisible();
-  await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
-  await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
-  await expect(latest.getByText("Added a brand new thing")).toBeVisible();
-  await expect(release(sheet, "9.0.0")).toBeVisible();
-  await expect(release(sheet, "0.0.0")).toHaveCount(0);
+  await test.step("leads a release with its highlights and tucks the rest away", async () => {
+    await expect(latest.getByText("March 4, 2026", { exact: true })).toBeVisible();
+    await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
+    await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
+    await expect(latest.getByText("Fixed a crash")).toHaveCount(0);
+  });
+
+  await test.step("shows every section on request and tucks them away again", async () => {
+    await showAllChanges(latest);
+    await expect(latest.getByText("Sparkles", { exact: true })).toBeVisible();
+    await expect(latest.getByText("Added a brand new thing")).toBeVisible();
+    await expect(latest.getByText("Read this before upgrading.")).toBeVisible();
+    await expect(latest.getByText("Fixed a crash")).toBeVisible();
+    await expect(release(sheet, "0.0.0")).toHaveCount(0);
+
+    await hideAllChanges(latest);
+    await expect(latest.getByText("Added a brand new thing")).toHaveCount(0);
+    await expect(latest.getByText("Paseo now shows the tasks an agent is running.")).toBeVisible();
+  });
+
+  await test.step("shows a release without highlights whole", async () => {
+    await expect(older.getByText("Fixed an older thing")).toBeVisible();
+    await expect(allChangesToggle(older)).toHaveCount(0);
+  });
 
   await expectExternalPage(page, "changelog-open-website", CHANGELOG_DESTINATION);
   await closeSheet(page, "changelog-sheet");
@@ -155,6 +184,18 @@ test("keeps diagnostics available from Settings after globalizing the sheet", as
 test.describe("compact sidebar help", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
+  test("footer buttons provide finger-sized targets and accept taps beyond the glyph", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openCompactSidebar(page);
+    await expectFingerSizedFooterTargets(page);
+    await tapHelpNearTargetEdge(page);
+    await expect(page.getByTestId("sidebar-help-menu")).toBeVisible();
+    await page.getByTestId("sidebar-help-diagnostics").click();
+    await expectDiagnosticReport(page);
+  });
+
   test("offers diagnostics without advertising disabled keyboard shortcuts", async ({ page }) => {
     await gotoAppShell(page);
     await page.getByRole("button", { name: "Open menu", exact: true }).click();
@@ -165,3 +206,29 @@ test.describe("compact sidebar help", () => {
     await expectDiagnosticReport(page);
   });
 });
+
+async function openCompactSidebar(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  await expect(page.getByTestId("sidebar-footer-bottom-line")).toBeVisible();
+}
+
+const MIN_TARGET_SIZE = 44;
+
+async function expectFingerSizedFooterTargets(page: Page): Promise<void> {
+  const buttons = page.getByTestId("sidebar-footer-bottom-line").getByRole("button");
+  await expect(buttons).toHaveCount(5);
+  for (const button of await buttons.all()) {
+    const bounds = await button.boundingBox();
+    // Layout can report a 44pt box as 43.99999, so compare at a hundredth of a point.
+    expect(bounds?.width).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
+    expect(bounds?.height).toBeGreaterThanOrEqual(MIN_TARGET_SIZE - 0.01);
+    // Glyphs stay at the composer toolbar size (some optically smaller); only the target grows.
+    const glyphWidth = await button.locator("svg").first().getAttribute("width");
+    expect(Number(glyphWidth)).toBeLessThanOrEqual(20);
+  }
+}
+
+async function tapHelpNearTargetEdge(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: "Help and support", exact: true });
+  await button.tap({ position: { x: 40, y: 40 } });
+}

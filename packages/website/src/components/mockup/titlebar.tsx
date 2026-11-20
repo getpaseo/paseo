@@ -64,7 +64,7 @@ export function TitleBar({ state }: { state: MockupStateId }) {
         {shipping ? (
           <>
             <GithubGlyph size={13} />
-            Merge PR (squash)
+            Merge PR
           </>
         ) : (
           <>
@@ -106,9 +106,17 @@ const WORKSPACE_TABS: Tab[] = [
 
 const DIFF_TAB: Tab = { id: "diff", label: "Diff", icon: <FileDiff size={11} /> };
 
+/** The tab a scene has in front. The orchestrating agent is Claude; the remote scene is a terminal. */
+function activeTabId(state: MockupStateId): string {
+  if (state === "review") return DIFF_TAB.id;
+  if (state === "orchestrate") return "claude";
+  if (state === "remote") return "terminal";
+  return "codex";
+}
+
 export function TabStrip({ state }: { state: MockupStateId }) {
-  const review = state === "review";
-  const tabs = review ? [...WORKSPACE_TABS, DIFF_TAB] : WORKSPACE_TABS;
+  const tabs = state === "review" ? [...WORKSPACE_TABS, DIFF_TAB] : WORKSPACE_TABS;
+  const activeId = activeTabId(state);
   return (
     <div
       className="flex shrink-0 items-center gap-[5px] border-b border-mock-border pr-[16px] pl-[7px]"
@@ -118,9 +126,7 @@ export function TabStrip({ state }: { state: MockupStateId }) {
         <div
           key={tab.id}
           className={`flex items-center gap-[7px] rounded-[7px] px-[10px] py-[5px] ${
-            (review ? tab.id === "diff" : tab.id === "codex")
-              ? "bg-mock-surface2 text-mock-fg"
-              : "text-mock-fg-muted"
+            tab.id === activeId ? "bg-mock-surface2 text-mock-fg" : "text-mock-fg-muted"
           }`}
         >
           <span>{tab.icon}</span>

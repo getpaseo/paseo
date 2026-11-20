@@ -8,7 +8,6 @@ import {
   buildOpenProjectRoute,
   resolveKnownHostRoute,
   buildSessionsRoute,
-  buildSettingsAddHostRoute,
   buildProjectSettingsRoute,
   buildProjectsSettingsRoute,
   decodeFilePathFromPathSegment,
@@ -18,6 +17,7 @@ import {
   isSettingsSectionSlug,
   normalizeHostSectionSlug,
   normalizeProjectSettingsRouteId,
+  buildProviderSettingsRoute,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -185,14 +185,6 @@ describe("workspace route parsing", () => {
 });
 
 describe("projects settings routes", () => {
-  it("buildSettingsAddHostRoute opens settings with the add-host flag", () => {
-    expect(buildSettingsAddHostRoute()).toBe("/settings/general?addHost=1");
-  });
-
-  it("buildSettingsAddHostRoute accepts a repeatable intent id", () => {
-    expect(buildSettingsAddHostRoute("retry 1")).toBe("/settings/general?addHost=retry%201");
-  });
-
   it("buildProjectsSettingsRoute scopes the list to a host", () => {
     expect(buildProjectsSettingsRoute("host a")).toBe("/settings/hosts/host%20a/projects");
   });
@@ -205,6 +197,14 @@ describe("projects settings routes", () => {
 
   it("keeps route ids opaque", () => {
     expect(normalizeProjectSettingsRouteId("project%2F1")).toBe("project%2F1");
+  });
+});
+
+describe("provider settings routes", () => {
+  it("buildProviderSettingsRoute addresses one provider on a host", () => {
+    expect(buildProviderSettingsRoute("host a", "acp/gemini")).toBe(
+      "/settings/hosts/host%20a/providers/acp%2Fgemini",
+    );
   });
 });
 

@@ -1,3 +1,6 @@
+import { collectTimelineSnapshot } from "./test-utils/v2-timeline.js";
+import type { SessionMessageAssistant, SessionMessageUser } from "@opencode/client";
+import { V2Timeline } from "./v2/timeline.js";
 import { describe, expect, it } from "vitest";
 
 import { translateOpenCodeEvent, type OpenCodeEventTranslationState } from "../opencode-agent.js";
@@ -1276,6 +1279,44 @@ describe("translateOpenCodeEvent", () => {
     expect(result).toEqual([]);
   });
 
+  it("shows OpenCode user text parts unless OpenCode marks them synthetic", () => {
+    const state = createState();
+    const userTextPart = (messageId: string, text: string, synthetic: boolean) => {
+      translateOpenCodeEvent(
+        {
+          type: "message.updated",
+          properties: { info: { id: messageId, sessionID: "session-1", role: "user" } },
+        },
+        state,
+      );
+      return translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `part-${messageId}`,
+              sessionID: "session-1",
+              messageID: messageId,
+              type: "text",
+              text,
+              synthetic,
+            },
+          },
+        },
+        state,
+      );
+    };
+
+    expect(userTextPart("msg-continue", "Continue if you have next steps", true)).toEqual([]);
+    expect(userTextPart("msg-user", "Plugin prompt", false)).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "user_message", text: "Plugin prompt", messageId: "msg-user" },
+      },
+    ]);
+  });
+
   it("ignores message.part.delta for user messages", () => {
     const state = createState();
 
@@ -1516,5 +1557,96 @@ describe("translateOpenCodeEvent", () => {
         error: '{"name":"UnknownError","data":{"message":"something broke"}}',
       },
     ]);
+  });
+});
+
+describe("OpenCode v2 history reconciliation", () => {
+  it("keeps client message identity on live echoes but omits it from history", async () => {
+    const user: SessionMessageUser = {
+      id: "native-message",
+      type: "user",
+      text: "hello",
+      time: { created: 1 },
+      metadata: { paseoClientMessageId: "client-message" },
+    };
+    expect(await collectTimelineSnapshot(new V2Timeline(), [user])).toMatchObject([
+      { item: { clientMessageId: "client-message", messageId: "native-message" } },
+    ]);
+    expect(await collectTimelineSnapshot(new V2Timeline(false), [user])).toMatchObject([
+      { item: { type: "user_message", messageId: "native-message" } },
+    ]);
+    const [event] = await collectTimelineSnapshot(new V2Timeline(false), [user]);
+    expect(event && "item" in event && event.item).not.toHaveProperty("clientMessageId");
+  });
+  function assistant(text: string): SessionMessageAssistant {
+    return {
+      id: "message",
+      type: "assistant",
+      agent: "build",
+      model: { id: "model", providerID: "provider" },
+      time: { created: 1 },
+      content: [{ type: "text", text }],
+    };
+  }
+  it("emits only the missing suffix after reconnect, even if an intermediate snapshot lags", async () => {
+    const timeline = new V2Timeline();
+    const text = (messages: Awaited<ReturnType<typeof collectTimelineSnapshot>>) =>
+      messages.flatMap((event) =>
+        event.type === "timeline" && event.item.type === "assistant_message"
+          ? [event.item.text]
+          : [],
+      );
+    expect(text(await collectTimelineSnapshot(timeline, [assistant("hello")]))).toEqual(["hello"]);
+    expect(await collectTimelineSnapshot(timeline, [assistant("hel")])).toEqual([]);
+    expect(text(await collectTimelineSnapshot(timeline, [assistant("hello world")]))).toEqual([
+      " world",
+    ]);
+    expect(await collectTimelineSnapshot(timeline, [assistant("hello world")])).toEqual([]);
+  });
+  it("keeps reasoning separate from assistant output", async () => {
+    const timeline = new V2Timeline();
+    const message = assistant("answer");
+    message.content.unshift({ type: "reasoning", text: "thinking" });
+    expect(
+      (await collectTimelineSnapshot(timeline, [message])).map((event) =>
+        event.type === "timeline" ? event.item : null,
+      ),
+    ).toEqual([
+      { type: "reasoning", text: "thinking" },
+      { type: "assistant_message", text: "answer", messageId: "message" },
+    ]);
+  });
+  it("emits tool state transitions once and keeps their call identity", async () => {
+    const timeline = new V2Timeline();
+    const message = assistant("");
+    message.content = [
+      {
+        type: "tool",
+        id: "call",
+        name: "bash",
+        time: { created: 1 },
+        state: { status: "running", input: { command: "pwd" }, metadata: {} },
+      },
+    ];
+    expect(await collectTimelineSnapshot(timeline, [message])).toMatchObject([
+      { item: { type: "tool_call", callId: "call", status: "running" } },
+    ]);
+    message.content = [
+      {
+        type: "tool",
+        id: "call",
+        name: "bash",
+        time: { created: 1, completed: 2 },
+        state: {
+          status: "completed",
+          input: { command: "pwd" },
+          content: [{ type: "text", text: "/workspace" }],
+        },
+      },
+    ];
+    expect(await collectTimelineSnapshot(timeline, [message])).toMatchObject([
+      { item: { type: "tool_call", callId: "call", status: "completed" } },
+    ]);
+    expect(await collectTimelineSnapshot(timeline, [message])).toEqual([]);
   });
 });

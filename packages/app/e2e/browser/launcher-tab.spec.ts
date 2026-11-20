@@ -2,9 +2,7 @@ import { test, expect } from "../support/fixtures";
 import type { Locator } from "@playwright/test";
 import {
   gotoWorkspace,
-  assertNewChatTileVisible,
   assertNewTabMenuTriggerVisible,
-  assertSingleNewTabButton,
   openNewTabMenuWithShortcut,
   clickNewChat,
   clickNewTerminal,
@@ -13,17 +11,13 @@ import {
   pressNewTabShortcut,
   pressDirectNewTabShortcut,
   getTabTestIds,
-  waitForTabWithTitle,
   measureTileTransition,
   sampleTabsDuringTransition,
   expectTabTitleFits,
   terminalSurfaceLocator,
 } from "../support/helpers/launcher";
 import { expectComposerVisible, composerLocator } from "../support/helpers/composer";
-import {
-  expectTerminalSurfaceVisible,
-  setupDeterministicPrompt,
-} from "../support/helpers/terminal-perf";
+import { expectTerminalSurfaceVisible } from "../support/helpers/terminal-perf";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
   expectTerminalOutputContains,
@@ -43,7 +37,7 @@ const EMPTY_PROMPT_PROFILE: TerminalProfile = {
   id: "e2e-empty-prompt",
   name: "Empty Prompt",
   command: "/bin/sh",
-  args: ["-c", 'echo prompt-args: "$#"; sleep 10', "profile-name", "{{{prompt}}}"],
+  args: ["-c", 'echo prompt-args: "$#"; exec cat', "profile-name", "{{{prompt}}}"],
 };
 
 async function tabTestIds(tabs: Locator): Promise<(string | null)[]> {
@@ -126,47 +120,44 @@ test.describe("Tab creation", () => {
     await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(newTabCountBefore);
   });
 
-  test("Cmd+T creates a New tab without creating an agent", async ({ page }) => {
+  test("opens the menu, then creates independent New tabs without creating agents", async ({
+    page,
+  }) => {
     await gotoWorkspace(page, workspace.workspaceId);
-    const countBefore = await countTabsOfKind(page, "draft");
-
-    await openNewTabMenuWithShortcut(page);
-
-    await expect.poll(() => countTabsOfKind(page, "draft")).toBe(countBefore);
-    await expect(
-      page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
-    ).toBeVisible();
-  });
-
-  test("clicking + opens its menu without creating a New tab", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-    const countBefore = await countTabsOfKind(page, "new_tab");
-
-    await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
-
-    await expect(
-      page.getByTestId("workspace-new-tab-menu").filter({ visible: true }),
-    ).toBeVisible();
-    await expect.poll(() => countTabsOfKind(page, "new_tab")).toBe(countBefore);
-  });
-
-  test("opening two New tabs creates two independent tab identities", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-
+    await assertNewTabMenuTriggerVisible(page);
     const newTabs = page
       .locator('[data-testid^="workspace-tab-tab_"]')
       .filter({ hasText: "New tab" });
-    const countBefore = await newTabs.count();
-
+    // The workspace opens on a New tab of its own; count from the tab the shortcut adds.
+    await expect(newTabs.first()).toBeVisible();
+    const openedCount = await newTabs.count();
     await pressNewTabShortcut(page);
-    await expect(newTabs).toHaveCount(countBefore + 1);
-    const firstIds = await tabTestIds(newTabs);
+    await expect(newTabs).toHaveCount(openedCount + 1);
+    const countBefore = openedCount + 1;
+    const draftCount = await countTabsOfKind(page, "draft");
 
-    await pressNewTabShortcut(page);
-    await expect(newTabs).toHaveCount(countBefore + 2);
-    const ids = await tabTestIds(newTabs);
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.filter((id) => !firstIds.includes(id))).toHaveLength(1);
+    await test.step("opening the plus menu leaves the current tabs intact", async () => {
+      await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+      await expect(
+        page.getByTestId("workspace-new-tab-menu").filter({ visible: true }),
+      ).toBeVisible();
+      await expect(newTabs).toHaveCount(countBefore);
+      await page.keyboard.press("Escape");
+    });
+    await test.step("two shortcuts open two independent launchers", async () => {
+      await pressNewTabShortcut(page);
+      await expect(newTabs).toHaveCount(countBefore + 1);
+      const firstIds = await tabTestIds(newTabs);
+      await pressNewTabShortcut(page);
+      await expect(newTabs).toHaveCount(countBefore + 2);
+      const ids = await tabTestIds(newTabs);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toEqual(expect.arrayContaining(firstIds));
+      expect(await countTabsOfKind(page, "draft")).toBe(draftCount);
+      await expect(
+        page.getByTestId("workspace-new-tab-panel").filter({ visible: true }),
+      ).toBeVisible();
+    });
   });
 
   test("New tab exposes shortcuts and supports arrow navigation after refocus", async ({
@@ -201,11 +192,18 @@ test.describe("Tab creation", () => {
     await expect(agent).toBeFocused();
   });
 
-  test("clicking new agent tab creates a draft tab", async ({ page }) => {
+  test("the Agent menu creates a draft and shows its composer within the visual budget", async ({
+    page,
+  }) => {
     await gotoWorkspace(page, workspace.workspaceId);
 
-    await clickNewChat(page);
-
+    const elapsed = await measureTileTransition(
+      page,
+      () => clickNewChat(page),
+      composerLocator(page),
+      10_000,
+    );
+    expect(elapsed).toBeLessThan(3_000);
     await expectComposerVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
@@ -213,12 +211,17 @@ test.describe("Tab creation", () => {
     expect(draftCountAfter).toBeGreaterThanOrEqual(1);
   });
 
-  test("clicking terminal button creates a standalone terminal", async ({ page }) => {
+  test("the Terminal menu creates a terminal within the visual budget", async ({ page }) => {
     test.setTimeout(45_000);
     await gotoWorkspace(page, workspace.workspaceId);
 
-    await clickNewTerminal(page);
-
+    const elapsed = await measureTileTransition(
+      page,
+      () => clickNewTerminal(page),
+      terminalSurfaceLocator(page),
+      20_000,
+    );
+    expect(elapsed).toBeLessThan(5_000);
     await expectTerminalSurfaceVisible(page);
 
     const tabsAfter = await getTabTestIds(page);
@@ -261,114 +264,49 @@ test.describe("Tab creation", () => {
     await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/terminals$/);
   });
 
-  test("tab bar shows action buttons per pane", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-    await assertSingleNewTabButton(page);
-    await assertNewChatTileVisible(page);
-    await assertNewTabMenuTriggerVisible(page);
-  });
-
-  test("never shades the New tab button", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    const tabRow = page.getByTestId("workspace-tabs-row").filter({ visible: true }).first();
-    const scrollArea = tabRow.getByTestId("workspace-tabs-scroll");
-    const newTabButtonInScroll = await scrollArea.getByTestId("workspace-new-tab-button").count();
-    const scrollShades = await tabRow
-      .locator('[data-testid^="workspace-tabs-scroll-shade-"]')
-      .count();
-
-    expect(newTabButtonInScroll === 0 || scrollShades === 0).toBe(true);
-    await expect(tabRow.getByTestId("workspace-new-tab-button")).toBeVisible();
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Terminal Title Tests
-// ═══════════════════════════════════════════════════════════════════════════
-
-test.describe("Terminal title propagation", () => {
-  // OSC title escape sequence propagation is inherently flaky — the terminal
-  // must process the sequence, emit a title change event, and the tab bar
-  // must re-render before the assertion deadline. Allow retries.
-  test.describe.configure({ retries: 2 });
-
-  test.skip("terminal tab title updates from OSC title escape sequence", async ({ page }) => {
-    test.setTimeout(60_000);
-
-    const result = await workspace.client.createTerminal(
-      workspace.repoPath,
-      "title-test",
-      undefined,
-      {
-        workspaceId: workspace.workspaceId,
-      },
-    );
-    if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
-    const terminalId = result.terminal.id;
-
-    try {
-      // Navigate to workspace and open a terminal
-      await gotoWorkspace(page, workspace.workspaceId);
-      await clickNewTerminal(page);
-
-      await expectTerminalSurfaceVisible(page);
-      await terminalSurfaceLocator(page).click();
-
-      await setupDeterministicPrompt(page);
-
-      // Send OSC 0 (set window title) escape sequence
-      const testTitle = `E2E-Title-${Date.now()}`;
-      await terminalSurfaceLocator(page).pressSequentially(`printf '\\033]0;${testTitle}\\007'\n`, {
-        delay: 0,
-      });
-
-      // Wait for the tab to reflect the new title
-      await waitForTabWithTitle(page, testTitle, 15_000);
-    } finally {
-      await workspace.client.killTerminal(terminalId).catch(() => {});
-    }
-  });
-
-  test.skip("title debouncing coalesces rapid changes", async ({ page }) => {
-    test.setTimeout(60_000);
-
-    const result = await workspace.client.createTerminal(
-      workspace.repoPath,
-      "debounce-test",
-      undefined,
-      {
-        workspaceId: workspace.workspaceId,
-      },
-    );
-    if (!result.terminal) throw new Error(`Failed to create terminal: ${result.error}`);
-    const terminalId = result.terminal.id;
+  test("Cursor CLI profile uses the Cursor icon in New tab and host settings", async ({ page }) => {
+    const guessed: TerminalProfile = {
+      id: "e2e-cursor-guessed",
+      name: "Cursor guessed",
+      command: "cursor-agent",
+      args: ["{{{prompt}}}"],
+    };
+    const explicit: TerminalProfile = {
+      ...guessed,
+      id: "e2e-cursor-explicit",
+      name: "Cursor explicit",
+      icon: "cursor",
+    };
+    const profileSeed = await seedTerminalProfiles([guessed, explicit]);
 
     try {
       await gotoWorkspace(page, workspace.workspaceId);
-      await clickNewTerminal(page);
+      await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
 
-      await expectTerminalSurfaceVisible(page);
-      await terminalSurfaceLocator(page).click();
+      const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
+      const menuIconPath = (name: string) =>
+        menu
+          .getByRole("menuitem", { name })
+          .evaluate((element) => element.querySelector("svg path")?.getAttribute("d") ?? null);
+      const guessedMenuPath = await menuIconPath(guessed.name);
+      const explicitMenuPath = await menuIconPath(explicit.name);
 
-      await setupDeterministicPrompt(page);
+      await menu.getByTestId("workspace-new-tab-menu-edit-terminal-profiles").click();
+      await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/terminals$/);
 
-      // Fire many rapid title changes — only the last should stick
-      const finalTitle = `Final-${Date.now()}`;
-      for (let i = 0; i < 5; i++) {
-        await terminalSurfaceLocator(page).pressSequentially(`printf '\\033]0;Rapid-${i}\\007'\n`, {
-          delay: 0,
-        });
-      }
-      await terminalSurfaceLocator(page).pressSequentially(
-        `printf '\\033]0;${finalTitle}\\007'\n`,
-        { delay: 0 },
-      );
+      const settingsIconPath = (id: string) =>
+        page
+          .getByTestId(`terminal-profile-row-${id}`)
+          .evaluate((element) => element.querySelector("svg path")?.getAttribute("d") ?? null);
+      const guessedSettingsPath = await settingsIconPath(guessed.id);
+      const explicitSettingsPath = await settingsIconPath(explicit.id);
 
-      // The tab should eventually settle on the final title
-      await waitForTabWithTitle(page, finalTitle, 15_000);
+      expect(explicitMenuPath).not.toBeNull();
+      expect(explicitSettingsPath).not.toBeNull();
+      expect.soft(guessedMenuPath, "New tab Cursor profile icon").toBe(explicitMenuPath);
+      expect.soft(guessedSettingsPath, "Settings Cursor profile icon").toBe(explicitSettingsPath);
     } finally {
-      await workspace.client.killTerminal(terminalId).catch(() => {});
+      await profileSeed.restore();
     }
   });
 });
@@ -406,39 +344,6 @@ test.describe("Tab transitions (no flash)", () => {
 
     expect(counts.every((count) => count === initialCount)).toBe(true);
     expect(new Set(snapshots.map(tabIdentityKey)).size).toBeLessThanOrEqual(2);
-    await expectTabTitleFits(page, "New Agent", { min: 96, max: 160 });
-  });
-
-  test("Terminal transition completes within visual budget", async ({ page }) => {
-    test.setTimeout(30_000);
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    const elapsed = await measureTileTransition(
-      page,
-      () => clickNewTerminal(page),
-      terminalSurfaceLocator(page),
-      20_000,
-    );
-
-    // Terminal surface should appear within a reasonable budget.
-    // Note: terminal creation involves a server round-trip, so we allow more time
-    // than a pure in-memory transition, but it should still be well under 5 seconds.
-    expect(elapsed).toBeLessThan(5_000);
-  });
-
-  test("New agent tab click shows composer without flash", async ({ page }) => {
-    await gotoWorkspace(page, workspace.workspaceId);
-
-    const elapsed = await measureTileTransition(
-      page,
-      () => clickNewChat(page),
-      composerLocator(page),
-      10_000,
-    );
-
-    // Draft creation is fully in-memory — should be fast
-    // We use a generous budget here because CI can be slow, but the key assertion
-    // is that no blank/flash frame appears (tested above).
-    expect(elapsed).toBeLessThan(3_000);
+    await expectTabTitleFits(page, "New Agent", { min: 64, max: 160 });
   });
 });

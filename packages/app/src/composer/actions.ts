@@ -1,3 +1,5 @@
+import type { SelectedFile } from "@/attachments/selected-file";
+import { FILE_UPLOAD_MAX_BYTES } from "@/attachments/upload-limit";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type {
@@ -53,7 +55,7 @@ export interface ComposerSendClient {
       images: Array<{ data: string; mimeType: string }>;
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
     requestId: string;
     file: {
@@ -123,11 +125,26 @@ export async function pickAndPersistImages(input: {
 
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
-  files: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
+  files: SelectedFile[];
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
+  const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
 
   for (const file of input.files) {
+    const bytes = await file.readBytes();
+    if (bytes.byteLength > FILE_UPLOAD_MAX_BYTES) {
+      throw new Error(
+        i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
+      );
+    }
+    prepared.push({
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      bytes,
+    });
+  }
+
+  for (const file of prepared) {
     const response = await input.client.uploadFile(file);
     if (response.error || !response.file) {
       throw new Error(response.error ?? "Upload failed.");

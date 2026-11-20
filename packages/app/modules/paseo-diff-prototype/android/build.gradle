@@ -12,6 +12,7 @@ useDefaultAndroidSdkVersions()
 def skiaPackage = new File(["node", "--print", "require.resolve('@shopify/react-native-skia/package.json')"].execute(null, projectDir).text.trim()).parentFile
 
 android {
+  ndkVersion rootProject.ext.ndkVersion
   namespace "sh.paseo.diffprototype"
   defaultConfig {
     externalNativeBuild {

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { loadConfig } from "./config.js";
-import { isBearerTokenValid } from "./auth.js";
+import { isBearerTokenValidAsync } from "./auth.js";
 
 const roots: string[] = [];
 const CONFIG_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
@@ -34,9 +34,9 @@ describe("daemon auth config", () => {
     const config = loadConfig(paseoHome, { env: {} });
 
     expect(config.auth?.password).toBe(CONFIG_PASSWORD_HASH);
-    expect(isBearerTokenValid({ password: config.auth?.password, token: "correct-password" })).toBe(
-      true,
-    );
+    expect(
+      await isBearerTokenValidAsync({ password: config.auth?.password, token: "correct-password" }),
+    ).toBe(true);
   });
 
   test("lets PASEO_PASSWORD override config.json auth password hash", async () => {
@@ -53,6 +53,8 @@ describe("daemon auth config", () => {
 
     expect(config.auth?.password).not.toBe(CONFIG_PASSWORD_HASH);
     expect(config.auth?.password).toMatch(/^\$2[aby]\$12\$/);
-    expect(isBearerTokenValid({ password: config.auth?.password, token: "from-env" })).toBe(true);
+    expect(
+      await isBearerTokenValidAsync({ password: config.auth?.password, token: "from-env" }),
+    ).toBe(true);
   });
 });

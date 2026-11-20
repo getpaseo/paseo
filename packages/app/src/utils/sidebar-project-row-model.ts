@@ -85,7 +85,9 @@ export function resolveSidebarProjectLocalPath(
 function resolveNewWorkspaceTarget(
   project: SidebarProjectEntry,
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
+  preferredServerId: string | null | undefined,
 ): SidebarProjectHostTarget | null {
+  let fallbackTarget: SidebarProjectHostTarget | null = null;
   for (const host of project.hosts) {
     if (
       host.worktreeSupport === "unsupported" &&
@@ -94,22 +96,30 @@ function resolveNewWorkspaceTarget(
       continue;
     }
     const target = hostTarget(host);
-    if (target) return target;
+    if (!target) continue;
+    if (host.serverId === preferredServerId) return target;
+    fallbackTarget ??= target;
   }
-  return null;
+  return fallbackTarget;
 }
 
 function projectTrailingAction(
   project: SidebarProjectEntry,
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
+  preferredServerId: string | null | undefined,
 ): SidebarProjectTrailingAction {
-  const target = resolveNewWorkspaceTarget(project, supportsMultiplicityByServerId);
+  const target = resolveNewWorkspaceTarget(
+    project,
+    supportsMultiplicityByServerId,
+    preferredServerId,
+  );
   return target ? { kind: "new_workspace", target } : { kind: "none" };
 }
 
 export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
+  preferredServerId?: string | null;
   supportsMultiplicityByServerId?: ReadonlyMap<string, boolean>;
 }): SidebarProjectRowModel {
   return {
@@ -118,6 +128,7 @@ export function buildSidebarProjectRowModel(input: {
     trailingAction: projectTrailingAction(
       input.project,
       input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
+      input.preferredServerId,
     ),
   };
 }

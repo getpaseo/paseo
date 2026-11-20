@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type * as React from "react";
+import { useTranslation } from "react-i18next";
 import { LetterTile, PaseoTile } from "./atoms";
 
 // Icons passed as props are hoisted so they are not rebuilt on every render.
@@ -86,6 +87,7 @@ function BlankPageGlyph({ running }: { running?: boolean }) {
 }
 
 function WorkspaceMeta({ host, pr, passed }: Pick<RowData, "host" | "pr" | "passed">) {
+  const { t } = useTranslation();
   if (!host && !pr) return null;
   return (
     <span className="mt-[3px] flex items-center gap-[6px] text-[12.5px] text-mock-fg-muted">
@@ -107,7 +109,7 @@ function WorkspaceMeta({ host, pr, passed }: Pick<RowData, "host" | "pr" | "pass
           <span className="text-mock-fg-xmuted">·</span>
           <span className="flex items-center gap-[4px] text-mock-success">
             <CircleCheck size={13} />
-            passed
+            {t("landing.mockup.app.checksPassedShort")}
           </span>
         </>
       ) : null}
@@ -247,18 +249,25 @@ function GroupHeader({ icon, label }: { icon: React.ReactNode; label: string }) 
 }
 
 export function MobileSidebar() {
+  const { t } = useTranslation();
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-mock-sidebar">
       <div className="pt-[4px]">
-        <NavRow icon={NEW_WORKSPACE_ICON} label="New workspace" trailing={NEW_WORKSPACE_CLOSE} />
-        <NavRow icon={HISTORY_ICON} label="History" />
-        <NavRow icon={SCHEDULES_ICON} label="Schedules" />
+        <NavRow
+          icon={NEW_WORKSPACE_ICON}
+          label={t("landing.mockup.app.newWorkspace")}
+          trailing={NEW_WORKSPACE_CLOSE}
+        />
+        <NavRow icon={HISTORY_ICON} label={t("landing.mockup.app.history")} />
+        <NavRow icon={SCHEDULES_ICON} label={t("landing.mockup.app.schedules")} />
       </div>
 
       <div className="mt-[4px] h-px bg-mock-border" />
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="px-[20px] pt-[16px] pb-[6px] text-[15px] text-mock-fg-muted">Pinned</div>
+        <div className="px-[20px] pt-[16px] pb-[6px] text-[15px] text-mock-fg-muted">
+          {t("landing.mockup.app.pinned")}
+        </div>
 
         <div className="px-[8px]">
           {PINNED.map(({ key, ...row }) => (
@@ -274,21 +283,21 @@ export function MobileSidebar() {
           </span>
         </div>
 
-        <GroupHeader icon={READY_ICON} label="Ready to review" />
+        <GroupHeader icon={READY_ICON} label={t("landing.mockup.app.readyToReview")} />
         <div className="px-[8px]">
           {READY.map(({ key, ...row }) => (
             <Row key={key} {...row} indented />
           ))}
         </div>
 
-        <GroupHeader icon={WORKING_ICON} label="Working" />
+        <GroupHeader icon={WORKING_ICON} label={t("landing.mockup.app.working")} />
         <div className="px-[8px]">
           {WORKING.map(({ key, ...row }) => (
             <Row key={key} {...row} indented />
           ))}
         </div>
 
-        <GroupHeader icon={DONE_ICON} label="Done" />
+        <GroupHeader icon={DONE_ICON} label={t("landing.mockup.app.done")} />
         <div className="px-[8px]">
           {DONE.map(({ key, ...row }) => (
             <Row key={key} {...row} indented />
@@ -300,7 +309,7 @@ export function MobileSidebar() {
       <div className="flex h-[64px] shrink-0 items-center px-[20px] pb-[16px] text-mock-fg-muted">
         <span className="flex flex-1 items-center gap-[10px] text-[16px] text-mock-fg">
           <SquarePlus size={19} strokeWidth={1.8} />
-          Add project
+          {t("landing.mockup.app.addProject")}
         </span>
         <span className="flex items-center gap-[22px]">
           <Columns2 size={20} strokeWidth={1.8} />

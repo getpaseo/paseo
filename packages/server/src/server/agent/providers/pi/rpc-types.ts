@@ -41,6 +41,9 @@ export type PiAgentMessage =
   | {
       role: "custom";
       content: string | Array<PiTextContent | PiImageContent>;
+      customType?: string;
+      details?: unknown;
+      display?: boolean;
     }
   | {
       role: "assistant";
@@ -74,6 +77,7 @@ export interface PiModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
   contextWindow?: number;
   maxTokens?: number;
   api?: string;
@@ -156,6 +160,7 @@ export type PiAssistantMessageEvent =
   | { type: "start" | "text_start" | "text_end" | "thinking_start" | "thinking_end" | "done" };
 
 export type PiAgentSessionEvent =
+  | { type: "thinking_level_changed"; level: PiThinkingLevel }
   | { type: "agent_start" }
   | { type: "turn_start" }
   | { type: "message_start"; message: PiAgentMessage }
