@@ -70,16 +70,6 @@ interface TerminalTouchFocus {
   y: number;
 }
 
-// A phone browser shortens the visual viewport, not the layout viewport, for its keyboard.
-const SOFTWARE_KEYBOARD_MIN_HEIGHT_PX = 100;
-
-function isSoftwareKeyboardShown(): boolean {
-  const viewport = window.visualViewport;
-  if (!viewport) return false;
-  const visibleHeight = viewport.height * viewport.scale;
-  return window.innerHeight - visibleHeight > SOFTWARE_KEYBOARD_MIN_HEIGHT_PX;
-}
-
 function buildXtermThemeKey(theme: ITheme): string {
   const values: Array<string> = [
     theme.background,
@@ -597,9 +587,7 @@ export default function TerminalEmulator({
     if (touch?.pointerId !== event.pointerId) return;
     if (Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 8) {
       touchFocusRef.current = null;
-      // Android Back hides the keyboard but leaves the input focused, and a drag
-      // on a focused input reopens it. An open keyboard stays open while scrolling.
-      if (!isSoftwareKeyboardShown()) runtimeRef.current?.blur();
+      runtimeRef.current?.suppressAutomaticKeyboard();
     }
   }, []);
 

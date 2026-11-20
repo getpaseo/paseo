@@ -503,10 +503,9 @@ test.describe("terminal history with a finger", () => {
     await expectMouseWheelScrollsHistory(page);
   });
 
-  test("finger scrolling leaves the keyboard closed and a tap focuses input", async ({ page }) => {
+  test("finger scrolling leaves terminal input unfocused until a tap", async ({ page }) => {
     await openPhoneTerminalHistory(page);
-    await input(page).evaluate((element) => element.blur());
-    await expect(input(page)).not.toBeFocused();
+    await blurTerminalInput(page);
 
     await expectSingleFingerScroll(page, 24);
     await expect(input(page)).not.toBeFocused();
@@ -515,21 +514,21 @@ test.describe("terminal history with a finger", () => {
 
     await tapTerminalScreen(page);
     await expect(input(page)).toBeFocused();
-    // Android's Back button hides the IME without blurring this input.
-    await expectSingleFingerScroll(page, 24);
-    await expect(input(page)).not.toBeFocused();
-    await terminalScreen(page).click();
-    await expect(input(page)).toBeFocused();
   });
 
-  test("finger scrolling keeps an open keyboard open", async ({ page }) => {
+  test("finger scrolling keeps a floating keyboard's input focused", async ({ page }) => {
     await openPhoneTerminalHistory(page);
     await tapTerminalScreen(page);
     await expect(input(page)).toBeFocused();
 
-    await showSoftwareKeyboard(page);
+    // A floating keyboard leaves the visual viewport unchanged.
     await expectSingleFingerScroll(page, 24);
     await expect(input(page)).toBeFocused();
+    await expect(input(page)).toHaveAttribute("virtualkeyboardpolicy", "manual");
+
+    // Android Back also leaves the input focused. A tap restores automatic keyboard opening.
+    await tapTerminalScreen(page);
+    await expect(input(page)).not.toHaveAttribute("virtualkeyboardpolicy");
   });
 
   for (const mode of ["alternate", "mouse"] as const) {
@@ -577,15 +576,9 @@ async function tapTerminalScreen(page: Page) {
   await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 3);
 }
 
-// Playwright cannot show a software keyboard. A phone browser keeps the layout
-// viewport and shortens the visual viewport by the keyboard height.
-async function showSoftwareKeyboard(page: Page) {
-  await page.evaluate(() => {
-    Object.defineProperty(window.visualViewport!, "height", {
-      configurable: true,
-      get: () => window.innerHeight - 300,
-    });
-  });
+async function blurTerminalInput(page: Page) {
+  await input(page).evaluate((element) => element.blur());
+  await expect(input(page)).not.toBeFocused();
 }
 
 async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
