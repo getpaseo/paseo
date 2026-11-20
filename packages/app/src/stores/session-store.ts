@@ -81,6 +81,7 @@ export interface Agent {
   status: AgentLifecycleStatus;
   backgroundWork?: AgentBackgroundWorkSummary;
   turn: TurnLiveness;
+  interruptRecoveryPending?: boolean;
   createdAt: Date;
   updatedAt: Date;
   lastUserMessageAt: Date | null;

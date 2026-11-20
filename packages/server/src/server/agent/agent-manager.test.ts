@@ -8525,8 +8525,11 @@ test("failed replacement cancellation preserves an autonomous running state", as
     await running;
 
     await expect(manager.replaceAgentRun(agent.id, "replacement prompt")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+      `Paseo could not confirm the agent stopped. Your message was not sent. Try Stop, then retry your message.`,
     );
+    await expect(manager.replaceAgentRun(agent.id, "another replacement")).rejects.toMatchObject({
+      deliveryOutcome: "not_submitted",
+    });
     expect(manager.getAgent(agent.id)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: null,
@@ -9915,9 +9918,15 @@ test("canceling a pending Codex start settles as canceled without accepting its 
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-codex-cold-cancel-"));
   const threadLoaded = deferred<{ data: string[] }>();
   const appServer = createFakeCodexAppServer({ "thread/loaded/list": () => threadLoaded.promise });
+  const replacement = createFakeCodexAppServer();
+  const runtimes = [appServer, replacement];
   class ColdStartClient extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new CodexAppServerAgentSession(config, null, logger, async () => appServer.child);
+      return new CodexAppServerAgentSession(config, null, logger, async () => {
+        const runtime = runtimes.shift();
+        if (!runtime) throw new Error("Unexpected extra runtime");
+        return runtime.child;
+      });
     }
   }
   const manager = new AgentManager({
@@ -9969,11 +9978,13 @@ test("canceling a pending Codex start settles as canceled without accepting its 
     expect(appServer.requests().some((request) => request.method === "turn/start")).toBe(false);
 
     const nextRun = manager.runAgent(agent.id, "Next prompt", { clientMessageId: "next-prompt" });
-    await appServer.waitForRequest("turn/start");
-    appServer.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
-    appServer.completeTurn();
+    void nextRun.catch(() => undefined);
+    await replacement.waitForRequest("turn/start");
+    replacement.startsTurn({ threadId: "thread-1", turnId: "next-turn" });
+    replacement.completeTurn();
     await expect(nextRun).resolves.toMatchObject({ canceled: false });
     appServer.assertNoErrors();
+    replacement.assertNoErrors();
   } finally {
     threadLoaded.resolve({ data: ["thread-1"] });
     manager.prepareForShutdown();
@@ -15845,3 +15856,43 @@ function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): P
   void dispatch.started.catch(() => undefined);
   return dispatch.started;
 }
+
+test("cancelAgentRun preserves permission requests from an autonomous successor", async () => {
+  let fixture!: ControlledInterruptFixture;
+  fixture = await createControlledInterruptFixture({
+    name: "successor-permissions",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "old-turn",
+    interrupt: async (session) => {
+      const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
+      session.pushEvent({ type: "turn_completed", provider: session.provider, turnId: "old-turn" });
+      await settled;
+      session.pushEvent({ type: "turn_started", provider: session.provider, turnId: "successor" });
+      session.pushEvent({
+        type: "permission_requested",
+        provider: session.provider,
+        turnId: "successor",
+        request: {
+          id: "successor-question",
+          provider: session.provider,
+          kind: "tool",
+          name: "Question",
+        },
+      });
+      await expect
+        .poll(() => fixture.manager.getPendingPermissions(fixture.agentId).map((p) => p.id))
+        .toEqual(["successor-question"]);
+    },
+  });
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getPendingPermissions(fixture.agentId).map((p) => p.id)).toEqual([
+      "successor-question",
+    ]);
+  } finally {
+    await fixture.cleanup();
+  }
+});

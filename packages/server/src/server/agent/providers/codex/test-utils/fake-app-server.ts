@@ -72,6 +72,7 @@ export interface FakeCodexAppServer {
   disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  asksAsyncQuestion(params: { threadId: string; turnId: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: {
@@ -414,6 +415,17 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    asksAsyncQuestion(params) {
+      writeNotification("item/completed", {
+        ...params,
+        item: {
+          type: "agentMessage",
+          id: "async-question",
+          delivery: "async",
+          questions: [{ title: "Which option?", options: ["One", "Two"] }],
+        },
+      });
     },
     startsCompaction(params) {
       writeNotification("item/started", {

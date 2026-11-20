@@ -189,6 +189,7 @@ export interface MessageInputProps {
   voiceModeContent?: React.ReactNode;
   /** Primary action to render when the agent is active and the composer has no sendable content. */
   activeActionContent?: React.ReactNode;
+  interruptRecoveryPending?: boolean;
   voiceServerId?: string;
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
@@ -1189,6 +1190,7 @@ interface ResolvedMessageInputProps {
   beforeVoiceContent: React.ReactNode;
   voiceModeContent: React.ReactNode;
   activeActionContent: React.ReactNode;
+  interruptRecoveryPending: boolean;
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
@@ -1237,6 +1239,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     beforeVoiceContent: props.beforeVoiceContent,
     voiceModeContent: props.voiceModeContent,
     activeActionContent: props.activeActionContent,
+    interruptRecoveryPending: props.interruptRecoveryPending ?? false,
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
@@ -1319,6 +1322,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       beforeVoiceContent,
       voiceModeContent,
       activeActionContent,
+      interruptRecoveryPending,
       voiceServerId,
       voiceAgentId,
       isAgentRunning,
@@ -1912,17 +1916,19 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       ],
     );
 
-    const primaryActionKind = resolvePrimaryActionKind({
-      hasSendableContent: hasSendableComposerContent({
-        hasText: hasLiveText,
-        attachments,
-        hasExternalContent,
-      }),
-      allowEmptySubmit,
-      isAgentRunning,
-      isSubmitLoading,
-      offersVoiceMode: voiceModeContent != null,
-    });
+    const primaryActionKind = interruptRecoveryPending
+      ? "active"
+      : resolvePrimaryActionKind({
+          hasSendableContent: hasSendableComposerContent({
+            hasText: hasLiveText,
+            attachments,
+            hasExternalContent,
+          }),
+          allowEmptySubmit,
+          isAgentRunning,
+          isSubmitLoading,
+          offersVoiceMode: voiceModeContent != null,
+        });
     const { canPressLoadingButton, isSendButtonDisabled, defaultActionQueues } =
       computeSendButtonState({
         disabled,

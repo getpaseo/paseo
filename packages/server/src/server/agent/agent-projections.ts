@@ -144,6 +144,7 @@ export function toAgentPayload(
     updatedAt: agent.updatedAt.toISOString(),
     lastUserMessageAt: agent.lastUserMessageAt ? agent.lastUserMessageAt.toISOString() : null,
     status: agent.lifecycle,
+    interruptRecoveryPending: agent.session?.hasPendingInterruptRecovery?.(),
     activeTurn: agent.activeTurnId
       ? {
           turnId: agent.activeTurnId,
