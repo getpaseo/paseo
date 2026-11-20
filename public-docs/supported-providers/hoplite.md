@@ -14,7 +14,7 @@ Run Hoplite's cloud coding agent in Paseo through the Hoplite CLI on your daemon
 
 1. Install the [Hoplite CLI](https://hoplite.sh/docs/cli) on your daemon host.
 2. Run `hoplite login`.
-3. In Paseo, open **Settings → Hosts → your host → Providers**, find **Hoplite** in the catalog, and choose **Add**.
+3. In Paseo, open **Settings → Hosts → your host → Providers**, select **+ Provider**, find **Hoplite**, and choose **Add**.
 
 Paseo launches `hoplite acp`. See [Hoplite's ACP guide](https://hoplite.sh/docs/cli/acp) for authentication and project setup.
 

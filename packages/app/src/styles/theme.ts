@@ -1,4 +1,5 @@
-import { Platform } from "react-native";
+import { Platform, type ViewStyle } from "react-native";
+import { isWeb } from "@/constants/platform";
 import { darkHighlightColors, lightHighlightColors } from "@getpaseo/highlight";
 import { deriveSurfaceStates } from "./derive-colors";
 
@@ -641,6 +642,17 @@ export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
 // Chat and markdown content column; the appearance updater patches the user's width in.
 export const DEFAULT_CONTENT_MAX_WIDTH = 820;
 
+// On web Unistyles puts string tokens in CSS variables, so mounted content
+// receives width changes without regenerating its classes. The px string is
+// emitted as CSS by Unistyles. Native always receives a number or percentage.
+export function themeContentMaxWidth(
+  width: number | undefined,
+): NonNullable<ViewStyle["maxWidth"]> {
+  return isWeb && width !== undefined
+    ? (`${width}px` as NonNullable<ViewStyle["maxWidth"]>)
+    : (width ?? "100%");
+}
+
 // `fontSize`, `fontFamily`, `lineHeight`, and `contentMaxWidth` are deliberately widened to plain
 // `number`/`string` (not narrowed by `as const`) so the appearance updater can patch
 // them at runtime via `UnistylesRuntime.updateTheme`. The remaining tokens keep their
@@ -650,7 +662,7 @@ interface CommonTheme {
   fontSize: Record<keyof typeof FONT_SIZE, number>;
   fontFamily: { ui: string; mono: string };
   lineHeight: Record<keyof typeof LINE_HEIGHT, number>;
-  contentMaxWidth: number;
+  contentMaxWidth: ReturnType<typeof themeContentMaxWidth>;
   iconSize: typeof ICON_SIZE;
   fontWeight: typeof FONT_WEIGHT;
   borderRadius: typeof BORDER_RADIUS;
@@ -663,7 +675,7 @@ const commonTheme: CommonTheme = {
   fontSize: FONT_SIZE,
   fontFamily: { ui: DEFAULT_UI_FONT_STACK, mono: DEFAULT_MONO_FONT_STACK },
   lineHeight: LINE_HEIGHT,
-  contentMaxWidth: DEFAULT_CONTENT_MAX_WIDTH,
+  contentMaxWidth: themeContentMaxWidth(DEFAULT_CONTENT_MAX_WIDTH),
   iconSize: ICON_SIZE,
   fontWeight: FONT_WEIGHT,
   borderRadius: BORDER_RADIUS,
