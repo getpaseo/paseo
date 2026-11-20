@@ -82,6 +82,19 @@ describe("plugin host navigation", () => {
     expect(useSidebarViewStore.getState().hostFilters).toEqual(["selected"]);
   });
 
+  it("uses the same normalized host ID for navigation and the sidebar", () => {
+    const { navigation, destinations, focusedHosts } = setup();
+    navigation.openAgent({ serverId: " remote ", agentId: "agent-2", focusHost: true });
+    navigation.openWorkspace({ serverId: " selected ", workspaceId: "one", focusHost: true });
+
+    expect(destinations).toEqual([
+      { serverId: "remote", agentId: "agent-2" },
+      { serverId: "selected", workspaceId: "one" },
+    ]);
+    expect(focusedHosts).toEqual(["remote", "selected"]);
+    expect(useSidebarViewStore.getState().hostFilters).toEqual(["selected"]);
+  });
+
   it("leaves existing sidebar filters alone unless explicitly requested", () => {
     useSidebarViewStore.setState({
       hostFilters: ["remote"],

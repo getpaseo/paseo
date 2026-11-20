@@ -18,12 +18,12 @@ export function createPluginHostNavigation(
   return {
     supportsFocusHost: true,
     openAgent: ({ agentId, serverId: targetServerId, focusHost }) => {
-      const destinationServerId = targetServerId ?? serverId;
+      const destinationServerId = (targetServerId ?? serverId).trim();
       owner.openAgent({ serverId: destinationServerId, agentId });
       if (focusHost) owner.focusHost(destinationServerId);
     },
     openWorkspace: ({ workspaceId, serverId: targetServerId, focusHost }) => {
-      const destinationServerId = targetServerId ?? serverId;
+      const destinationServerId = (targetServerId ?? serverId).trim();
       owner.openWorkspace({ serverId: destinationServerId, workspaceId });
       if (focusHost) owner.focusHost(destinationServerId);
     },
