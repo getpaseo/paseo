@@ -33,7 +33,7 @@ describe("ensureWorkspaceServicePortPlan", () => {
     expect(allocatedServices).toEqual(["api", "web", "worker"]);
   });
 
-  it("returns the existing plan without calling the allocator on later calls", async () => {
+  it("extends the existing plan with newly declared services without reallocating peers", async () => {
     let allocationCount = 0;
 
     const firstPlan = await ensureWorkspaceServicePortPlan({
@@ -54,9 +54,11 @@ describe("ensureWorkspaceServicePortPlan", () => {
       },
     });
 
-    expect(Array.from(secondPlan.entries())).toEqual(Array.from(firstPlan.entries()));
-    expect(secondPlan.has("new-service")).toBe(false);
-    expect(allocationCount).toBe(2);
+    expect(Array.from(secondPlan.entries())).toEqual([
+      ...firstPlan.entries(),
+      ["new-service", 4300],
+    ]);
+    expect(allocationCount).toBe(3);
   });
 
   it("shares one first-plan build across concurrent callers", async () => {
@@ -99,6 +101,103 @@ describe("ensureWorkspaceServicePortPlan", () => {
     ]);
     expect(Array.from(secondPlan.entries())).toEqual(Array.from(firstPlan.entries()));
     expect(allocationCount).toBe(2);
+  });
+
+  it("extends a pending plan for a concurrent caller with another service", async () => {
+    const allocation = createDeferredPort();
+    const workspaceId = "registry-concurrent-extension-workspace";
+    const firstPlan = ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => allocation.promise,
+    });
+    let allocations = 0;
+    const secondPlan = ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }, { scriptName: "web" }],
+      allocatePort: async () => {
+        allocations += 1;
+        return 6101;
+      },
+    });
+    allocation.resolve(6100);
+    expect(Array.from((await firstPlan).entries())).toEqual([["backend-dev", 6100]]);
+    expect(Array.from((await secondPlan).entries())).toEqual([
+      ["backend-dev", 6100],
+      ["web", 6101],
+    ]);
+    expect(allocations).toBe(1);
+    releaseWorkspaceServicePortPlan(workspaceId);
+  });
+
+  it("keeps the previous plan and reservations when an extension fails", async () => {
+    const workspaceId = "registry-failed-extension-workspace";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => 6200,
+    });
+    let allocations = 0;
+    await expect(
+      ensureWorkspaceServicePortPlan({
+        workspaceId,
+        services: [{ scriptName: "backend-dev" }, { scriptName: "web" }, { scriptName: "worker" }],
+        allocatePort: async () => {
+          allocations += 1;
+          if (allocations === 1) return 6201;
+          throw new Error("Allocation failed");
+        },
+      }),
+    ).rejects.toThrow("Allocation failed");
+    const priorPlan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => {
+        throw new Error("Existing port must survive");
+      },
+    });
+    expect(Array.from(priorPlan.entries())).toEqual([["backend-dev", 6200]]);
+    const otherWorkspace = "registry-failed-extension-other-workspace";
+    const reusedPlan = await ensureWorkspaceServicePortPlan({
+      workspaceId: otherWorkspace,
+      services: [{ scriptName: "web" }],
+      allocatePort: async ({ reservedPorts }) => {
+        expect(reservedPorts.has(6200)).toBe(true);
+        expect(reservedPorts.has(6201)).toBe(false);
+        return 6201;
+      },
+    });
+    expect(reusedPlan.get("web")).toBe(6201);
+    releaseWorkspaceServicePortPlan(workspaceId);
+    releaseWorkspaceServicePortPlan(otherWorkspace);
+  });
+
+  it("rejects a new explicit port that collides with an existing service", async () => {
+    const workspaceId = "registry-extension-explicit-collision-workspace";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => 6300,
+    });
+    await expect(
+      ensureWorkspaceServicePortPlan({
+        workspaceId,
+        services: [{ scriptName: "backend-dev" }, { scriptName: "web", port: 6300 }],
+        allocatePort: async () => 6301,
+      }),
+    ).rejects.toThrow("Service 'web' has a duplicate port 6300");
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }, { scriptName: "web", port: 6301 }],
+      allocatePort: async () => {
+        throw new Error("No allocation needed");
+      },
+    });
+    expect(Array.from(plan.entries())).toEqual([
+      ["backend-dev", 6300],
+      ["web", 6301],
+    ]);
+    releaseWorkspaceServicePortPlan(workspaceId);
   });
 
   it("uses explicit configured ports without calling the allocator", async () => {
@@ -310,6 +409,123 @@ describe("refreshWorkspaceServicePort", () => {
       ["api", 4900],
       ["web", 4801],
     ]);
+  });
+
+  it("preserves a concurrent service addition while refreshing a stopped service", async () => {
+    const workspaceId = "registry-refresh-and-extend-workspace";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }],
+      allocatePort: async () => 6400,
+    });
+    const allocation = createDeferredPort();
+    const refreshing = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "backend-dev" },
+      allocatePort: async () => allocation.promise,
+    });
+    const extending = ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "backend-dev" }, { scriptName: "web", port: 6402 }],
+      allocatePort: async () => {
+        throw new Error("Explicit addition needs no allocation");
+      },
+    });
+    allocation.resolve(6401);
+    expect(await refreshing).toBe(6401);
+    await extending;
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [],
+      allocatePort: async () => {
+        throw new Error("No allocation needed");
+      },
+    });
+    expect(Array.from(plan.entries())).toEqual([
+      ["backend-dev", 6401],
+      ["web", 6402],
+    ]);
+    releaseWorkspaceServicePortPlan(workspaceId);
+  });
+
+  it.each(["reused port", "allocation failure"])(
+    "cancels a pending refresh and its waiter after workspace release (%s)",
+    async (outcome) => {
+      const workspaceId = "registry-cancelled-refresh-workspace";
+      await ensureWorkspaceServicePortPlan({
+        workspaceId,
+        services: [{ scriptName: "api" }],
+        allocatePort: async () => 6500,
+      });
+      const allocation = createDeferredPort();
+      const refreshing = refreshWorkspaceServicePort({
+        workspaceId,
+        service: { scriptName: "api" },
+        allocatePort: async () => {
+          const port = await allocation.promise;
+          if (outcome === "allocation failure") throw new Error("Allocation failed");
+          return port;
+        },
+      });
+      const waiting = refreshWorkspaceServicePort({
+        workspaceId,
+        service: { scriptName: "web", port: 6501 },
+        allocatePort: async () => 6501,
+      });
+      const assertions = Promise.all([
+        expect(refreshing).rejects.toThrow("Workspace service port plan was released"),
+        expect(waiting).rejects.toThrow("Workspace service port plan was released"),
+      ]);
+      releaseWorkspaceServicePortPlan(workspaceId);
+      allocation.resolve(6500);
+      await assertions;
+      const reusedPlan = await ensureWorkspaceServicePortPlan({
+        workspaceId: "registry-after-cancelled-refresh-workspace",
+        services: [{ scriptName: "api" }],
+        allocatePort: async () => 6500,
+      });
+      expect(reusedPlan.get("api")).toBe(6500);
+      releaseWorkspaceServicePortPlan("registry-after-cancelled-refresh-workspace");
+    },
+  );
+
+  it("lets a waiting service restart allocate after another service's restart fails", async () => {
+    const workspaceId = "registry-independent-refresh-failure-workspace";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [{ scriptName: "api" }, { scriptName: "web" }],
+      allocatePort: createSequentialPortAllocator(6600),
+    });
+    const allocation = createDeferredPort();
+    const failedRefresh = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "api" },
+      allocatePort: async () => {
+        await allocation.promise;
+        throw new Error("API port script failed");
+      },
+    });
+    const failedAssertion = expect(failedRefresh).rejects.toThrow("API port script failed");
+    const waitingRefresh = refreshWorkspaceServicePort({
+      workspaceId,
+      service: { scriptName: "web" },
+      allocatePort: async () => 6602,
+    });
+    allocation.resolve(0);
+    await failedAssertion;
+    expect(await waitingRefresh).toBe(6602);
+    const plan = await ensureWorkspaceServicePortPlan({
+      workspaceId,
+      services: [],
+      allocatePort: async () => {
+        throw new Error("No allocation needed");
+      },
+    });
+    expect(Array.from(plan.entries())).toEqual([
+      ["api", 6600],
+      ["web", 6602],
+    ]);
+    releaseWorkspaceServicePortPlan(workspaceId);
   });
 
   it("uses an explicit configured port without calling the allocator", async () => {

@@ -1,0 +1,375 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, type Page, type TestInfo } from "@playwright/test";
+import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
+import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import { openAgentRoute, seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+import { expectReconnectingToastVisible } from "./workspace-ui";
+
+const PLUGIN_ID = "timeline-transform-e2e";
+
+/** Observe the app's real socket, including fresh sockets after a reload. */
+export function trackPluginChatRecovery(page: Page) {
+  const messages: {
+    type: string;
+    payload?: { plugins?: { id: string; clientBundle?: string }[] };
+  }[] = [];
+  page.on("websocket", (socket) => {
+    const collect = ({ payload }: { payload: string | Buffer }) => {
+      if (typeof payload !== "string") return;
+      const frame = JSON.parse(payload);
+      if (frame.type === "session") messages.push(frame.message);
+    };
+    socket.on("framesent", collect);
+    socket.on("framereceived", collect);
+  });
+  return {
+    reset() {
+      messages.length = 0;
+    },
+    async expectCatalogWithoutRetransmission() {
+      await expect
+        .poll(() =>
+          messages.some(
+            (message) =>
+              message.type === "plugin.catalog.get.response" &&
+              message.payload?.plugins?.some((plugin) => plugin.id === PLUGIN_ID),
+          ),
+        )
+        .toBe(true);
+      const entry = messages
+        .find((message) => message.type === "plugin.catalog.get.response")
+        ?.payload?.plugins?.find((plugin) => plugin.id === PLUGIN_ID);
+      expect(entry).toBeDefined();
+      expect(entry).not.toHaveProperty("clientBundle");
+    },
+    async expectRecoveredWithoutRetransmission() {
+      await this.expectCatalogWithoutRetransmission();
+      await expect
+        .poll(() =>
+          messages.some(
+            (message) =>
+              message.type === "fetch_agent_timeline_response" ||
+              message.type === "agent.timeline.set_subscription.response",
+          ),
+        )
+        .toBe(true);
+    },
+  };
+}
+
+export async function reconnectPluginChat(
+  page: Page,
+  gate: Awaited<ReturnType<typeof installDaemonWebSocketGate>>,
+) {
+  await gate.drop();
+  await gate.waitForBlockedConnection();
+  await expectReconnectingToastVisible(page);
+  gate.restore();
+}
+export const ASSISTANT_TEXT =
+  "Skill header\n\n# Instructions\n\nRead every paragraph and preserve the full message while this response is still streaming.";
+
+const CLIENT_SOURCE = `import React, { useState } from "react";
+import { Text, View, Pressable } from "react-native";
+import { z } from "zod";
+
+function Card({ item }) {
+  const [count, setCount] = useState(0);
+  return <View>
+    <Text accessibilityRole="header">{item.data.label + " " + item.data.phase}</Text>
+    <Text>{item.data.text}</Text>
+    <Pressable accessibilityRole="button" onPress={() => setCount(count + 1)}>
+      <Text>{"Card clicks " + count}</Text>
+    </Pressable>
+  </View>;
+}
+
+export default function contribute(client) {
+  for (const itemType of ["assistant_message", "tool_call"]) {
+    client.addTimelineTransformer({
+      id: itemType.replaceAll("_", "-"),
+      query: { itemType },
+      transform({ item, phase }) {
+        return { items: [{ type: "plugin", kind: "card", version: 1, data: {
+          label: item.type === "tool_call" ? "Tool " + item.name : "Assistant",
+          text: item.type === "tool_call" ? item.callId : item.text,
+          phase,
+        } }] };
+      },
+    });
+  }
+  client.addTimelineRenderer({
+    kind: "card", version: 1,
+    schema: z.object({ label: z.string(), text: z.string(), phase: z.enum(["streaming", "complete"]) }),
+    Component: Card,
+  });
+  return () => {};
+}`;
+
+const PROMPT_PLUGIN_ID = "timeline-prompt-e2e";
+
+function promptClientSource(prompts?: readonly string[]): string {
+  return `import React from "react";
+import { Text, View } from "react-native";
+import { z } from "zod";
+
+const selectedPrompts = ${JSON.stringify(prompts ?? null)};
+
+function PromptCard({ item }) {
+  return <View testID="plugin-prompt"><Text>{item.data.text}</Text></View>;
+}
+
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "prompt",
+    query: { itemType: "user_message" },
+    transform({ item }) {
+      if (selectedPrompts && !selectedPrompts.includes(item.text)) return undefined;
+      return { items: [{ type: "plugin", kind: "prompt", version: 1, data: { text: item.text } }] };
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "prompt", version: 1,
+    schema: z.object({ text: z.string() }),
+    Component: PromptCard,
+  });
+  return () => {};
+}`;
+}
+
+export async function withDirectoryPlugin(options: {
+  pluginId: string;
+  source: string;
+  run: () => Promise<void>;
+}): Promise<void> {
+  const { pluginId, source, run } = options;
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-timeline-plugin-"));
+  const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await pluginClient.getDaemonConfig();
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: pluginId, requirements: pluginRequirements }),
+    );
+    await writeFile(path.join(directory, "index.client.tsx"), source);
+    await pluginClient.patchDaemonConfig({ pluginsEnabled: true });
+    await pluginClient.installDirectoryPlugin(directory);
+    await run();
+  } finally {
+    await pluginClient.removePlugin(pluginId);
+    await pluginClient.patchDaemonConfig({
+      pluginsEnabled: previous.config.pluginsEnabled ?? false,
+    });
+    await pluginClient.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+export async function withTimelinePlugin(
+  page: Page,
+  info: TestInfo,
+  mode: "assistant" | "tools",
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  info.setTimeout(120_000);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "@paseo:app-settings",
+      JSON.stringify({ chatDisplay: "collapseToolCalls" }),
+    );
+  });
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "timeline-plugin-",
+    title: "Timeline plugin regression",
+    model: "ten-second-stream",
+    featureValues:
+      mode === "assistant"
+        ? {
+            mockStreamingAssistantResponse: ASSISTANT_TEXT,
+            mockStreamingAssistantIntervalMs: 300,
+          }
+        : {},
+  });
+  try {
+    await withDirectoryPlugin({
+      pluginId: PLUGIN_ID,
+      source: CLIENT_SOURCE,
+      run: async () => {
+        try {
+          await openAgentRoute(page, agent);
+          await expect(
+            page.getByRole("textbox", { name: "Message agent..." }).first(),
+          ).toBeVisible();
+          await run(agent);
+          await info.attach("timeline-plugin", {
+            body: await page.screenshot({ path: info.outputPath("timeline-plugin.png") }),
+            contentType: "image/png",
+          });
+        } catch (error) {
+          await info.attach("timeline-before-cleanup", {
+            body: await page.screenshot({ path: info.outputPath("timeline-before-cleanup.png") }),
+            contentType: "image/png",
+          });
+          throw error;
+        }
+      },
+    });
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+/** Draws all prompts, or only the selected prompts, as plugin cards. */
+export async function withPromptTimelinePlugin(
+  run: () => Promise<void>,
+  prompts?: readonly string[],
+): Promise<void> {
+  await withDirectoryPlugin({
+    pluginId: PROMPT_PLUGIN_ID,
+    source: promptClientSource(prompts),
+    run,
+  });
+}
+
+export async function expectPromptsDrawnByPlugin(page: Page): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await expect(timeline.getByTestId("plugin-prompt").first()).toBeVisible({ timeout: 30_000 });
+  await expect(timeline.getByTestId("user-message")).toHaveCount(0);
+}
+
+export async function requestPluginTimeline(agent: MockAgentWorkspace): Promise<void> {
+  await agent.client.sendAgentMessage(agent.agentId, "Exercise timeline transforms.");
+}
+
+export async function interactWithStreamingCard(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Assistant streaming", exact: true })).toHaveCount(
+    1,
+  );
+  await page.getByRole("button", { name: "Card clicks 0", exact: true }).click();
+  await expect(page.getByText(/Skill header\s+# Instructions/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Assistant streaming", exact: true })).toHaveCount(
+    1,
+  );
+  await expect(page.getByRole("button", { name: "Card clicks 1", exact: true })).toBeVisible();
+  await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+}
+
+export async function expectWholeCompletedCard(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Assistant complete", exact: true })).toHaveCount(
+    1,
+  );
+  await expect(page.getByText(ASSISTANT_TEXT, { exact: true })).toBeVisible();
+  await expect(page.getByTestId("assistant-message")).toHaveCount(0);
+}
+
+export async function expectBothConsecutiveTools(page: Page): Promise<void> {
+  // read and grep are consecutive source calls in the fixture. Overview used to
+  // send only the later call to the plugin, so the read card never existed.
+  const read = page.getByRole("heading", { name: "Tool read complete", exact: true }).first();
+  await read.scrollIntoViewIfNeeded();
+  await expect(read).toBeVisible();
+  const grep = page.getByRole("heading", { name: "Tool grep complete", exact: true }).first();
+  await grep.scrollIntoViewIfNeeded();
+  await expect(grep).toBeVisible();
+}
+
+/** The row belongs to the virtualized history, not the always-mounted recent window. */
+export async function expectVirtualizedPluginPromptVisible(
+  page: Page,
+  prompt: string,
+): Promise<void> {
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  await expect(
+    timeline.locator("[data-index]").getByTestId("plugin-prompt").filter({ hasText: prompt }),
+  ).toBeVisible();
+}
+
+export async function attachPromptTimelineEvidence(page: Page, info: TestInfo): Promise<void> {
+  await info.attach("plugin-outline-jump", {
+    body: await page.screenshot({ path: info.outputPath("plugin-outline-jump.png") }),
+    contentType: "image/png",
+  });
+}
+
+const POPOVER_CLIENT_SOURCE = `import React, { useEffect, useRef } from "react";
+import { z } from "zod";
+
+function Preview() {
+  const panel = useRef(null);
+  useEffect(() => {
+    const close = (event) => {
+      if (event.key === "Escape" && panel.current.matches(":popover-open")) {
+        panel.current.hidePopover();
+      }
+    };
+    document.addEventListener("keydown", close, true);
+    return () => document.removeEventListener("keydown", close, true);
+  }, []);
+  return <div>
+    <button onMouseEnter={() => panel.current.showPopover()}>Hover plugin preview</button>
+    <div ref={panel} popover="manual" role="dialog" aria-label="Plugin preview">Plugin hover preview</div>
+  </div>;
+}
+
+export default function contribute(client) {
+  client.addTimelineTransformer({
+    id: "preview", query: { itemType: "user_message" },
+    transform({ item }) {
+      if (item.text !== "Show the plugin preview.") return;
+      return { items: [{ type: "plugin", kind: "preview", version: 1, data: {} }] };
+    },
+  });
+  client.addTimelineRenderer({
+    kind: "preview", version: 1, schema: z.object({}), Component: Preview,
+  });
+  return () => {};
+}`;
+
+/** Installs a timeline preview that owns Escape through the DOM Popover API. */
+export async function withPopoverTimelinePlugin(run: () => Promise<void>): Promise<void> {
+  await withDirectoryPlugin({
+    pluginId: "timeline-popover-e2e",
+    source: POPOVER_CLIENT_SOURCE,
+    run,
+  });
+}
+
+const THOUGHT =
+  "Need to find the scroll container, the layout effect that watches for new messages, and any gesture handler that might fight with programmatic scrolling. Probably a ref on the FlatList plus a near-bottom threshold.";
+
+/** Exercises the maintained inline-thinking renderer against real streamed reasoning. */
+export async function viewInlineThinkingExample(page: Page, info: TestInfo): Promise<void> {
+  info.setTimeout(120_000);
+  const example = await copyPluginExample("inline-thinking");
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previous = await client.getDaemonConfig();
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "inline-thinking-",
+    title: "Inline thinking example",
+    model: "one-minute-stream",
+  });
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(example.directory);
+    await openAgentRoute(page, agent);
+    await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible();
+    await requestPluginTimeline(agent);
+    const thought = page.getByText(/^Need to find the scroll container/);
+    await expect(thought).toBeVisible({ timeout: 60_000 });
+    await expect(thought).not.toHaveText(THOUGHT);
+    await info.attach("inline-thinking-streaming", {
+      body: await page.screenshot({ path: info.outputPath("inline-thinking-streaming.png") }),
+      contentType: "image/png",
+    });
+    await expect(thought).toHaveText(THOUGHT, { timeout: 30_000 });
+  } finally {
+    await client.removePlugin("inline-thinking");
+    await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled ?? false });
+    await client.close();
+    await agent.cleanup();
+    await example.cleanup();
+  }
+}

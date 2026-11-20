@@ -1,0 +1,40 @@
+appId: sh.paseo.debug
+---
+- launchApp
+- runFlow:
+    when:
+      visible: ".*getRegistrationInfoAsync.*"
+    commands:
+      - tapOn: ".*getRegistrationInfoAsync.*"
+      - tapOn: Dismiss
+- assertNotVisible: ".*getRegistrationInfoAsync.*"
+- extendedWaitUntil:
+    visible:
+      id: workspace-new-tab-button
+    timeout: 30000
+- tapOn:
+    id: workspace-new-tab-button
+- tapOn:
+    id: workspace-new-tab-menu-terminal
+- extendedWaitUntil:
+    visible:
+      id: terminal-virtual-keyboard-native-wide
+    timeout: 10000
+- assertVisible:
+    id: terminal-key-esc
+- assertVisible:
+    id: terminal-key-enter
+- assertVisible:
+    id: terminal-paste
+- tapOn:
+    id: terminal-paste
+- runFlow:
+    when:
+      visible: Allow Paste
+    commands:
+      - tapOn: Allow Paste
+- tapOn:
+    id: terminal-key-enter
+- extendedWaitUntil:
+    visible: __AD_IOS_PASTE_OK__
+    timeout: 10000

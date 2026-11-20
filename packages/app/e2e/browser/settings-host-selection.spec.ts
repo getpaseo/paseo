@@ -6,7 +6,10 @@ import {
   addDirectHostFromSettings,
   clickSettingsBackToWorkspace,
   openSettingsHostSection,
+  openSettingsSection,
+  selectSettingsHost,
 } from "../support/helpers/settings";
+import { getServerId } from "../support/helpers/server-id";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
 
@@ -43,6 +46,14 @@ test.describe("Settings host selection", () => {
 
       await openSettings(page);
 
+      await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
+
+      await selectSettingsHost(page, getServerId());
+      await openSettingsSection(page, "appearance");
+      await openSettingsHostSection(page, getServerId(), "connections");
+
+      await clickSettingsBackToWorkspace(page);
+      await openSettings(page);
       await openSettingsHostSection(page, remoteDaemon.serverId, "connections");
     } finally {
       await remoteWorkspace.cleanup().catch(() => undefined);

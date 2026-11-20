@@ -1,0 +1,437 @@
+import { useOverlayRegistration, type KeyboardInputEvent } from "@/keyboard";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { Dimensions, View, type Role, type StyleProp, type ViewStyle } from "react-native";
+import { FadeIn, FadeOut } from "react-native-reanimated";
+import { StyleSheet } from "react-native-unistyles";
+import { Portal } from "@gorhom/portal";
+import { OverlayLayerProvider, useOverlayLayer } from "@/lib/overlay-root";
+import { FloatingSurface } from "@/components/ui/floating";
+import { useFloatingPanelPortalHostName } from "@/components/ui/floating-panel-portal";
+import { isWeb } from "@/constants/platform";
+import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
+import { computePosition, type Alignment, type Placement, type Rect } from "./anchor";
+
+const CLOSE_GRACE_MS = 100;
+
+// One card per layer: moving onto a sibling trigger replaces the open card instead of stacking
+// a second one beside it for the grace period. Nested cards open on a higher layer.
+const openCardCloseByLayer = new Map<number, () => void>();
+
+interface HoverCardContextValue {
+  open: boolean;
+  layer: number;
+  setTriggerRef: (node: View | null) => void;
+  triggerRef: RefObject<View | null>;
+  contentRef: RefObject<View | null>;
+  openNow: () => void;
+  scheduleClose: () => void;
+}
+
+const HoverCardContext = createContext<HoverCardContextValue | null>(null);
+
+/**
+ * A card that opens while the pointer is on its trigger and stays open while the pointer crosses
+ * onto it, so its content can be pressed. Hover only exists on web; elsewhere the trigger renders
+ * alone and the content never mounts. See docs/hover.md.
+ *
+ * ```tsx
+ * <HoverCard>
+ *   <HoverCardTrigger>{trigger}</HoverCardTrigger>
+ *   <HoverCardContent placement="top">{details}</HoverCardContent>
+ * </HoverCard>
+ * ```
+ */
+export function HoverCard({
+  disabled = false,
+  children,
+}: {
+  /** Closes the card and keeps it closed, e.g. while its trigger is dragged. */
+  disabled?: boolean;
+  children: ReactNode;
+}): ReactNode {
+  if (!isWeb) return children;
+  return <WebHoverCard disabled={disabled}>{children}</WebHoverCard>;
+}
+
+function WebHoverCard({
+  disabled,
+  children,
+}: {
+  disabled: boolean;
+  children: ReactNode;
+}): ReactElement {
+  const layer = useOverlayLayer("floating");
+  const triggerRef = useRef<View>(null);
+  const contentRef = useRef<View>(null);
+  const [open, setOpen] = useState(false);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Read when focus arrives: by focusout the element losing focus no longer matches :focus-visible.
+  const keyboardFocusedRef = useRef(false);
+
+  const clearGraceTimer = useCallback(() => {
+    if (graceTimerRef.current) {
+      clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = null;
+    }
+  }, []);
+
+  const focusInside = useCallback(() => {
+    if (!isWeb) return false;
+    const active = document.activeElement;
+    return [triggerRef.current, contentRef.current].some((view) =>
+      (view as unknown as HTMLElement | null)?.contains(active),
+    );
+  }, []);
+
+  // Keyboard focus keeps the card open for keyboard users; the focus a pointer click leaves
+  // behind on the trigger or a button in the card does not outlast the pointer leaving.
+  const keyboardFocusInside = useCallback(() => {
+    return focusInside() && document.activeElement?.matches(":focus-visible") === true;
+  }, [focusInside]);
+
+  const scheduleClose = useCallback(() => {
+    if (keyboardFocusInside()) return;
+    if (graceTimerRef.current) return;
+    graceTimerRef.current = setTimeout(() => {
+      graceTimerRef.current = null;
+      if (keyboardFocusInside()) return;
+      setOpen(false);
+    }, CLOSE_GRACE_MS);
+  }, [keyboardFocusInside]);
+
+  const closeNow = useCallback(() => {
+    clearGraceTimer();
+    setOpen(false);
+  }, [clearGraceTimer]);
+
+  const openNow = useCallback(() => {
+    clearGraceTimer();
+    if (disabled) return;
+    const openSibling = openCardCloseByLayer.get(layer);
+    if (openSibling && openSibling !== closeNow) openSibling();
+    openCardCloseByLayer.set(layer, closeNow);
+    setOpen(true);
+  }, [clearGraceTimer, closeNow, disabled, layer]);
+
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      if (openCardCloseByLayer.get(layer) === closeNow) openCardCloseByLayer.delete(layer);
+    };
+  }, [closeNow, layer, open]);
+
+  const keyPressed = useCallback(
+    (event: KeyboardInputEvent): boolean => {
+      if (!isWeb) return false;
+      const trigger = triggerRef.current as unknown as HTMLElement | null;
+      if (!trigger) return false;
+      if (event.key === "Escape" && open) {
+        event.preventDefault();
+        if (focusInside()) trigger.focus();
+        clearGraceTimer();
+        setOpen(false);
+        return true;
+      } else if (
+        focusInside() &&
+        document.activeElement === trigger &&
+        ["ArrowDown", "Enter", " "].includes(event.key)
+      ) {
+        event.preventDefault();
+        openNow();
+        requestAnimationFrame(() => {
+          (contentRef.current as unknown as HTMLElement | null)
+            ?.querySelector<HTMLElement>(
+              'button, [role="button"][tabindex="0"], a[href], input, [tabindex="0"]',
+            )
+            ?.focus();
+        });
+        return true;
+      }
+      return false;
+    },
+    [clearGraceTimer, focusInside, open, openNow],
+  );
+
+  const setOverlayScope = useOverlayRegistration({
+    keys: ["Escape"],
+    active: !disabled && open,
+    layer,
+    onKeyDown: keyPressed,
+    manageFocus: false,
+  });
+  const setTriggerRef = useCallback(
+    (node: View | null) => {
+      triggerRef.current = node;
+      setOverlayScope(node);
+    },
+    [setOverlayScope],
+  );
+
+  useEffect(() => {
+    if (!isWeb) return;
+    const trigger = triggerRef.current as unknown as HTMLElement | null;
+    if (!trigger) return;
+    const close = () => {
+      clearGraceTimer();
+      setOpen(false);
+    };
+    const focusEntered = (event: FocusEvent) => {
+      const target = event.target as Element;
+      keyboardFocusedRef.current = target.matches(":focus-visible");
+      if (trigger.contains(target)) {
+        openNow();
+      } else if ((contentRef.current as unknown as HTMLElement | null)?.contains(target)) {
+        clearGraceTimer();
+      }
+    };
+    // Only keyboard focus keeps the card open, so only losing keyboard focus closes it. A button
+    // that disables itself on press drops pointer focus while the pointer is still on the card.
+    const focusLeft = (event: FocusEvent) => {
+      const next = event.relatedTarget as Node | null;
+      if (
+        keyboardFocusedRef.current &&
+        !trigger.contains(next) &&
+        !(contentRef.current as unknown as HTMLElement | null)?.contains(next)
+      ) {
+        scheduleClose();
+      }
+    };
+    const activateClosedTrigger = (event: KeyboardEvent) => {
+      if (
+        !open &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        ["ArrowDown", "Enter", " "].includes(event.key)
+      )
+        keyPressed(event);
+    };
+    // Only a scroll that moves the trigger detaches the card. A streaming chat beside it does not.
+    const scrolled = (event: Event) => {
+      if ((event.target as Node).contains(trigger)) close();
+    };
+    document.addEventListener("focusin", focusEntered);
+    document.addEventListener("focusout", focusLeft);
+    trigger.addEventListener("keydown", activateClosedTrigger);
+    document.addEventListener("scroll", scrolled, true);
+    window.addEventListener("resize", close);
+    return () => {
+      document.removeEventListener("focusin", focusEntered);
+      document.removeEventListener("focusout", focusLeft);
+      trigger.removeEventListener("keydown", activateClosedTrigger);
+      document.removeEventListener("scroll", scrolled, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [clearGraceTimer, keyPressed, open, openNow, scheduleClose]);
+
+  // While open, the safe zone covers trigger + content + the bridge between
+  // them. Close only fires when the pointer leaves the safe zone; re-entering
+  // it (including the bridge) cancels the pending close.
+  useHoverSafeZone({
+    enabled: open,
+    triggerRef,
+    contentRef,
+    onEnterSafeZone: clearGraceTimer,
+    onLeaveSafeZone: scheduleClose,
+  });
+
+  useEffect(() => {
+    if (disabled) {
+      clearGraceTimer();
+      setOpen(false);
+    }
+  }, [clearGraceTimer, disabled]);
+
+  useEffect(() => clearGraceTimer, [clearGraceTimer]);
+
+  const value = useMemo<HoverCardContextValue>(
+    () => ({ open, layer, setTriggerRef, triggerRef, contentRef, openNow, scheduleClose }),
+    [open, layer, setTriggerRef, openNow, scheduleClose],
+  );
+
+  return (
+    <OverlayLayerProvider layer={layer}>
+      <HoverCardContext.Provider value={value}>{children}</HoverCardContext.Provider>
+    </OverlayLayerProvider>
+  );
+}
+
+export function HoverCardTrigger({
+  children,
+  focusable = false,
+  accessibilityLabel,
+}: {
+  children: ReactNode;
+  focusable?: boolean;
+  accessibilityLabel?: string;
+}): ReactNode {
+  const ctx = useContext(HoverCardContext);
+  if (!ctx) return children;
+  return (
+    <View
+      ref={ctx.setTriggerRef}
+      tabIndex={focusable ? 0 : undefined}
+      accessibilityRole={focusable ? "button" : undefined}
+      accessibilityLabel={accessibilityLabel}
+      collapsable={false}
+      onPointerEnter={ctx.openNow}
+      onPointerLeave={ctx.scheduleClose}
+    >
+      {children}
+    </View>
+  );
+}
+
+interface HoverCardContentProps {
+  placement: Placement;
+  alignment?: Alignment;
+  offset?: number;
+  /** Layered over the default popover surface. */
+  style?: StyleProp<ViewStyle>;
+  role?: Role;
+  accessibilityLabel?: string;
+  testID?: string;
+  /** Mounted only while the card is open, so whatever it fetches runs only then. */
+  children: ReactNode;
+}
+
+export function HoverCardContent(props: HoverCardContentProps): ReactElement | null {
+  const ctx = useContext(HoverCardContext);
+  const portalHostName = useFloatingPanelPortalHostName();
+  if (!ctx?.open) return null;
+  return (
+    <Portal hostName={portalHostName}>
+      <HoverCardSurface
+        {...props}
+        layer={ctx.layer}
+        triggerRef={ctx.triggerRef}
+        contentRef={ctx.contentRef}
+      />
+    </Portal>
+  );
+}
+
+// A card above its trigger holds its bottom edge, so content that loads while it is open grows it
+// upward without a correction. Anchored by its top, it would paint over the trigger until placed.
+type CardPosition = { left: number; top: number } | { left: number; bottom: number };
+
+function isSamePosition(current: CardPosition | null, next: CardPosition): boolean {
+  if (!current || current.left !== next.left) return false;
+  return "top" in current
+    ? "top" in next && current.top === next.top
+    : "bottom" in next && current.bottom === next.bottom;
+}
+
+function readDomRect(view: View | null): Rect | null {
+  const element = view as unknown as HTMLElement | null;
+  if (!element) return null;
+  const { x, y, width, height } = element.getBoundingClientRect();
+  return { x, y, width, height };
+}
+
+// Rendered inside the portal so the card is placed in the commit that mounts it: the first
+// painted frame already sits beside the trigger. Web-only, like the rest of the open card.
+function HoverCardSurface({
+  layer,
+  triggerRef,
+  contentRef,
+  placement,
+  alignment = "center",
+  offset = 4,
+  style,
+  role,
+  accessibilityLabel,
+  testID,
+  children,
+}: HoverCardContentProps & {
+  layer: number;
+  triggerRef: RefObject<View | null>;
+  contentRef: RefObject<View | null>;
+}): ReactElement {
+  const overlayRef = useRef<View>(null);
+  const [position, setPosition] = useState<CardPosition | null>(null);
+
+  const place = useCallback(() => {
+    const triggerRect = readDomRect(triggerRef.current);
+    const overlayRect = readDomRect(overlayRef.current);
+    const content = contentRef.current as unknown as HTMLElement | null;
+    if (!triggerRect || !overlayRect || !content) return;
+    const { width, height } = Dimensions.get("window");
+    const { x, y, actualPlacement } = computePosition({
+      triggerRect,
+      contentSize: { width: content.offsetWidth, height: content.offsetHeight },
+      displayArea: { x: 0, y: 0, width, height },
+      placement,
+      flipHorizontal: true,
+      alignment,
+      offset,
+    });
+    const left = x - overlayRect.x;
+    const next: CardPosition =
+      actualPlacement === "top"
+        ? { left, bottom: overlayRect.height - (y + content.offsetHeight - overlayRect.y) }
+        : { left, top: y - overlayRect.y };
+    setPosition((current) => (isSamePosition(current, next) ? current : next));
+  }, [alignment, contentRef, offset, placement, triggerRef]);
+
+  useLayoutEffect(place, [place]);
+
+  const frameStyle = useMemo(
+    () => ({ position: "absolute" as const, ...(position ?? { top: -9999, left: -9999 }) }),
+    [position],
+  );
+  const surfaceStyle = useMemo(() => [styles.surface, style], [style]);
+
+  return (
+    <View
+      ref={overlayRef}
+      pointerEvents="box-none"
+      style={[styles.portalOverlay, { zIndex: layer }]}
+    >
+      <FloatingSurface
+        ref={contentRef}
+        entering={FadeIn.duration(80)}
+        exiting={FadeOut.duration(80)}
+        collapsable={false}
+        onLayout={place}
+        role={role}
+        accessibilityLabel={accessibilityLabel}
+        testID={testID}
+        style={surfaceStyle}
+        frameStyle={frameStyle}
+      >
+        {children}
+      </FloatingSurface>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  portalOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1000,
+  },
+  surface: {
+    backgroundColor: theme.colors.popover,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.xl,
+    ...theme.shadow.md,
+    zIndex: 1000,
+  },
+}));

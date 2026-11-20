@@ -21,7 +21,6 @@ export interface OlderTimelinePagesGate {
   getRepeatedEntryCount(): number;
   getOwnedEntryCountContaining(text: string): number;
   releasePage(pageNumber: number): void;
-  waitForRequestCount(count: number): Promise<void>;
 }
 
 export interface DaemonHydrationGate {
@@ -37,82 +36,6 @@ export interface RewindCompletionGate {
 
 export interface PromptJumpRequestTracker {
   requests(): Array<{ cursorSeq: number | null; limit: number | null; mergeWindow: boolean }>;
-}
-
-export interface TimelineRequestTracker {
-  nextRequest(): Promise<{
-    direction: string | null;
-    cursor: { epoch: string; seq: number } | null;
-  }>;
-  requests(): Array<{
-    direction: string | null;
-    cursor: { epoch: string; seq: number } | null;
-  }>;
-  waitForResponse(): Promise<void>;
-}
-
-export async function trackAgentTimelineRequests(
-  page: Page,
-  agentId: string,
-): Promise<TimelineRequestTracker> {
-  type Request = ReturnType<TimelineRequestTracker["requests"]>[number];
-  const seen: Request[] = [];
-  const waiters: Array<(request: Request) => void> = [];
-  let responseSeen = false;
-  let resolveResponse: (() => void) | null = null;
-  const response = new Promise<void>((resolve) => {
-    resolveResponse = resolve;
-  });
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
-    const server = ws.connectToServer();
-    ws.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      if (
-        sessionMessage?.type === "fetch_agent_timeline_request" &&
-        sessionMessage.agentId === agentId
-      ) {
-        const rawCursor = sessionMessage.cursor;
-        const cursor =
-          rawCursor &&
-          typeof rawCursor === "object" &&
-          typeof (rawCursor as { epoch?: unknown }).epoch === "string" &&
-          typeof (rawCursor as { seq?: unknown }).seq === "number"
-            ? {
-                epoch: (rawCursor as { epoch: string }).epoch,
-                seq: (rawCursor as { seq: number }).seq,
-              }
-            : null;
-        const request = {
-          direction: typeof sessionMessage.direction === "string" ? sessionMessage.direction : null,
-          cursor,
-        };
-        seen.push(request);
-        waiters.shift()?.(request);
-      }
-      server.send(message);
-    });
-    server.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      const payload = sessionMessage ? getPayload(sessionMessage) : null;
-      if (
-        sessionMessage?.type === "fetch_agent_timeline_response" &&
-        payload?.agentId === agentId
-      ) {
-        responseSeen = true;
-        resolveResponse?.();
-      }
-      ws.send(message);
-    });
-  });
-  return {
-    nextRequest() {
-      const request = seen[0];
-      if (request) return Promise.resolve(request);
-      return new Promise((resolve) => waiters.push(resolve));
-    },
-    requests: () => [...seen],
-    waitForResponse: () => (responseSeen ? Promise.resolve() : response),
-  };
 }
 
 export async function trackPromptJumpRequests(
@@ -293,11 +216,14 @@ export async function holdRewindCompletion(
       }
       if (
         !released &&
-        sessionMessage?.type === "agent.rewind.response" &&
+        (sessionMessage?.type === "agent.rewind.response" ||
+          sessionMessage?.type === "agent.timeline.replacement") &&
         payload?.agentId === agentId
       ) {
+        // The replacement also signals completion and removes the rewound row/menu.
+        // Hold it with the response so the pending-state assertion observes a pending rewind.
         delayedForwards.push(() => ws.send(message));
-        resolveDelayedResponse?.();
+        if (sessionMessage.type === "agent.rewind.response") resolveDelayedResponse?.();
         return;
       }
       ws.send(message);
@@ -411,11 +337,32 @@ export async function delayAgentOlderTimelineResponse(
   return delayAgentTimelineResponse(page, agentId, "before");
 }
 
+export interface OlderTimelinePagesOptions {
+  daemonPort?: number;
+  /**
+   * Hide whole-turn paging from the app so it reads this host with item pages, as it reads
+   * daemons released before whole-turn pages. An item page can end inside a turn or a tool run.
+   */
+  itemPagedHost?: boolean;
+}
+
+function withoutWholeTurnPages(message: WebSocketMessage): WebSocketMessage {
+  const sessionMessage = getSessionMessage(message);
+  const payload = sessionMessage ? getPayload(sessionMessage) : null;
+  if (sessionMessage?.type !== "status" || payload?.status !== "server_info") return message;
+  const envelope = parseWebSocketJson(message) as {
+    message: { payload: { features?: Record<string, unknown> } };
+  };
+  delete envelope.message.payload.features?.wholeTurnTimeline;
+  return JSON.stringify(envelope);
+}
+
 export async function holdAgentOlderTimelinePages(
   page: Page,
   agentId: string,
-  daemonPort?: number,
+  options: OlderTimelinePagesOptions = {},
 ): Promise<OlderTimelinePagesGate> {
+  const { daemonPort } = options;
   let requestCount = 0;
   let responseCount = 0;
   let repeatedEntryCount = 0;
@@ -423,15 +370,6 @@ export async function holdAgentOlderTimelinePages(
   const ownedEntries = new Map<string, string>();
   const releasedPages = new Set<number>();
   const delayedForwards = new Map<number, Array<() => void>>();
-  const requestWaiters = new Map<number, Array<() => void>>();
-
-  const resolveRequestWaiters = () => {
-    for (const [count, resolvers] of requestWaiters) {
-      if (requestCount < count) continue;
-      requestWaiters.delete(count);
-      for (const resolve of resolvers) resolve();
-    }
-  };
 
   const routePattern =
     daemonPort === undefined ? daemonWsRoutePattern() : wsRoutePatternForPort(String(daemonPort));
@@ -445,11 +383,11 @@ export async function holdAgentOlderTimelinePages(
         sessionMessage.direction === "before"
       ) {
         requestCount += 1;
-        resolveRequestWaiters();
       }
       server.send(message);
     });
-    server.onMessage((message) => {
+    server.onMessage((received) => {
+      const message = options.itemPagedHost ? withoutWholeTurnPages(received) : received;
       const sessionMessage = getSessionMessage(message);
       const payload = sessionMessage ? getPayload(sessionMessage) : null;
       if (
@@ -489,14 +427,6 @@ export async function holdAgentOlderTimelinePages(
       releasedPages.add(pageNumber);
       for (const forward of delayedForwards.get(pageNumber) ?? []) forward();
       delayedForwards.delete(pageNumber);
-    },
-    waitForRequestCount(count) {
-      if (requestCount >= count) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        const resolvers = requestWaiters.get(count) ?? [];
-        resolvers.push(resolve);
-        requestWaiters.set(count, resolvers);
-      });
     },
   };
 }
@@ -604,5 +534,78 @@ async function delayAgentTimelineResponse(
       }
     },
     waitForDelayedResponse: () => delayedResponse,
+  };
+}
+
+/** Holds real incoming frames so intermediate rendering assertions do not race the producer. */
+export async function holdAssistantStream(page: Page, agentId: string) {
+  const pending: Array<{ forward(): void; text: string }> = [];
+  let holding = false;
+  let released = false;
+  let forwardedText = "";
+  let notifyFrame: (() => void) | undefined;
+  let notifyInitialTimeline!: () => void;
+  const initialTimeline = new Promise<void>((resolve) => {
+    notifyInitialTimeline = resolve;
+  });
+
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const session = getSessionMessage(message);
+      const payload = session ? getPayload(session) : null;
+      if (session?.type === "fetch_agent_timeline_response" && payload?.agentId === agentId) {
+        notifyInitialTimeline();
+      }
+      const event = payload?.event as
+        | { type?: string; item?: { type?: string; text?: string } }
+        | undefined;
+      const text =
+        session?.type === "agent_stream" &&
+        payload?.agentId === agentId &&
+        event?.type === "timeline" &&
+        event.item?.type === "assistant_message"
+          ? (event.item.text ?? "")
+          : "";
+      if (text) holding = true;
+      if (holding && !released) {
+        pending.push({ forward: () => ws.send(message), text });
+        notifyFrame?.();
+      } else {
+        ws.send(message);
+      }
+    });
+  });
+
+  const forwardUntil = async (done: (text: string) => boolean): Promise<void> => {
+    while (!done(forwardedText)) {
+      const frame = pending.shift();
+      if (!frame) {
+        await new Promise<void>((resolve) => {
+          notifyFrame = resolve;
+        });
+        continue;
+      }
+      forwardedText += frame.text;
+      frame.forward();
+    }
+  };
+
+  return {
+    waitForInitialTimeline: () => initialTimeline,
+    showUntil: (text: string) => forwardUntil((forwarded) => forwarded.includes(text)),
+    async showThrough(prefix: string): Promise<void> {
+      await forwardUntil((text) => text.length >= prefix.length);
+      if (forwardedText !== prefix) {
+        throw new Error(
+          `Stream did not stop at ${JSON.stringify(prefix)}: ${JSON.stringify(forwardedText)}`,
+        );
+      }
+    },
+    release() {
+      released = true;
+      for (const frame of pending.splice(0)) frame.forward();
+    },
   };
 }

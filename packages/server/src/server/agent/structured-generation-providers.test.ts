@@ -18,7 +18,7 @@ class ProviderSnapshots {
 }
 
 describe("resolveStructuredGenerationProviders", () => {
-  test("tries the configured model before dynamically discovered fallbacks", async () => {
+  test("tries only the configured models when metadata generation is manual", async () => {
     const snapshots = new ProviderSnapshots([
       {
         provider: "work-claude",
@@ -28,6 +28,12 @@ describe("resolveStructuredGenerationProviders", () => {
           { provider: "work-claude", id: "claude-haiku-2026", label: "Haiku", isDefault: true },
         ],
       },
+      {
+        provider: "opencode",
+        status: READY,
+        enabled: true,
+        models: [{ provider: "opencode", id: "minimax-m3", label: "MiniMax M3", isDefault: true }],
+      },
     ]);
 
     const providers = await resolveStructuredGenerationProviders({
@@ -35,14 +41,18 @@ describe("resolveStructuredGenerationProviders", () => {
       providerSnapshotManager: snapshots,
       daemonConfig: {
         metadataGeneration: {
-          providers: [{ provider: "mock", model: "ten-second-stream" }],
+          providers: [
+            { provider: "local-llm", model: "qwen-local" },
+            { provider: "mock", model: "ten-second-stream" },
+          ],
         },
       },
+      currentSelection: { provider: "opencode", model: "minimax-m3" },
     });
 
     expect(providers).toEqual([
+      { provider: "local-llm", model: "qwen-local" },
       { provider: "mock", model: "ten-second-stream" },
-      { provider: "work-claude", model: "claude-haiku-2026" },
     ]);
     expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
@@ -227,10 +237,7 @@ describe("resolveStructuredGenerationProviders", () => {
       },
     });
 
-    expect(providers).toEqual([
-      { provider: "current-provider", model: "configured-model" },
-      { provider: "current-provider", model: "selected-model", thinkingOptionId: "medium" },
-    ]);
+    expect(providers).toEqual([{ provider: "current-provider", model: "configured-model" }]);
     expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 });

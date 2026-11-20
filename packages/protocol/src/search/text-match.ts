@@ -18,11 +18,8 @@ export interface MatchOptions {
   /** Omit or pass null to match exactly. `fuzzyPolicyForToken` picks a policy. */
   fuzzy?: FuzzyPolicy | null;
   /**
-   * Match characters that appear in order but not adjacently, so `pasbab` finds
-   * `paseo-babysit`. Defaults to on. Turn it off where a near miss has to read as
-   * no match at all: it widens far enough that most typos hit something, and a
-   * list that preselects its first row would then act on that row when the user
-   * presses Enter expecting nothing to happen.
+   * Match characters in order within one whitespace-delimited word, so `pasbab`
+   * finds `paseo-babysit`, but `labdes` cannot join "Label as Design". Defaults to on.
    */
   subsequence?: boolean;
 }
@@ -74,6 +71,12 @@ function scoreSubsequenceMatch(query: string, text: string): MatchScore | null {
   let firstIndex = -1;
   let lastIndex = -1;
   for (let textIndex = 0; textIndex < text.length && queryIndex < query.length; textIndex += 1) {
+    if (/\s/u.test(text[textIndex])) {
+      queryIndex = 0;
+      firstIndex = -1;
+      lastIndex = -1;
+      continue;
+    }
     if (text[textIndex] !== query[queryIndex]) continue;
     if (firstIndex === -1) firstIndex = textIndex;
     lastIndex = textIndex;
@@ -286,7 +289,11 @@ export function matchRanges(query: string, text: string, score: MatchScore): Mat
   if (score.tier === TIER_SUBSEQUENCE) {
     const indices: number[] = [];
     let queryIndex = 0;
-    for (let textIndex = 0; textIndex < t.length && queryIndex < q.length; textIndex += 1) {
+    for (
+      let textIndex = score.offset;
+      textIndex < t.length && queryIndex < q.length;
+      textIndex += 1
+    ) {
       if (t[textIndex] !== q[queryIndex]) continue;
       indices.push(textIndex);
       queryIndex += 1;
@@ -324,16 +331,14 @@ export interface TextFieldsOptions {
   subsequence?: boolean;
 }
 
-export function scoreTextFields(
+/** Each token's best score across the fields, or null when some token matches none. */
+function scoreTokens(
   query: string,
   fields: string[],
-  options: TextFieldsOptions = {},
-): MatchScore | null {
-  const tokens = tokenizeQuery(query);
-  if (tokens.length === 0) return { tier: TIER_EXACT, offset: 0, spread: 0 };
-
-  const aggregate: MatchScore = { tier: TIER_EXACT, offset: 0, spread: 0 };
-  for (const token of tokens) {
+  options: TextFieldsOptions,
+): { token: string; score: MatchScore }[] | null {
+  const scores: { token: string; score: MatchScore }[] = [];
+  for (const token of tokenizeQuery(query)) {
     const fuzzy = options.typoTolerant ? fuzzyPolicyForToken(token) : null;
     let best: MatchScore | null = null;
     for (const field of fields) {
@@ -343,9 +348,59 @@ export function scoreTextFields(
       }
     }
     if (!best) return null;
-    aggregate.tier += best.tier;
-    aggregate.offset += best.offset;
-    aggregate.spread = (aggregate.spread ?? 0) + (best.spread ?? token.length);
+    scores.push({ token, score: best });
+  }
+  return scores;
+}
+
+export function scoreTextFields(
+  query: string,
+  fields: string[],
+  options: TextFieldsOptions = {},
+): MatchScore | null {
+  const scores = scoreTokens(query, fields, options);
+  if (!scores) return null;
+  const aggregate: MatchScore = { tier: TIER_EXACT, offset: 0, spread: 0 };
+  for (const { token, score } of scores) {
+    aggregate.tier += score.tier;
+    aggregate.offset += score.offset;
+    aggregate.spread = (aggregate.spread ?? 0) + (score.spread ?? token.length);
   }
   return aggregate;
+}
+
+/**
+ * How closely a query matched, coarser than a tier: every token at a word boundary, some token
+ * inside a word, or some token only scattered across a word or misspelled. Positional tier
+ * differences ("lo" at a title's start versus a branch's middle word) stay within one class.
+ */
+export type MatchClass = "word" | "inside-word" | "scattered";
+
+const MATCH_CLASS_ORDER: readonly MatchClass[] = ["word", "inside-word", "scattered"];
+
+function matchClassOfTier(tier: number): MatchClass {
+  if (tier <= TIER_WORD_START) return "word";
+  if (tier === TIER_SUBSTRING) return "inside-word";
+  return "scattered";
+}
+
+/** Closer classes first. */
+export function compareMatchClasses(a: MatchClass, b: MatchClass): number {
+  return MATCH_CLASS_ORDER.indexOf(a) - MATCH_CLASS_ORDER.indexOf(b);
+}
+
+/** The class of the query's loosest token, or null when some token matches no field. */
+export function textFieldsMatchClass(
+  query: string,
+  fields: string[],
+  options: TextFieldsOptions = {},
+): MatchClass | null {
+  const scores = scoreTokens(query, fields, options);
+  if (!scores) return null;
+  let loosest: MatchClass = "word";
+  for (const { score } of scores) {
+    const tokenClass = matchClassOfTier(score.tier);
+    if (compareMatchClasses(tokenClass, loosest) > 0) loosest = tokenClass;
+  }
+  return loosest;
 }

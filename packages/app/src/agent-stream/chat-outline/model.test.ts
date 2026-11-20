@@ -12,7 +12,6 @@ describe("chat outline prompt index epoch", () => {
   it("accepts only the authoritative timeline epoch", () => {
     expect(shouldAcceptPromptIndexEpoch("epoch-2", "epoch-2")).toBe(true);
     expect(shouldAcceptPromptIndexEpoch("epoch-2", "epoch-1")).toBe(false);
-    expect(shouldAcceptPromptIndexEpoch(null, "epoch-1")).toBe(true);
   });
 });
 

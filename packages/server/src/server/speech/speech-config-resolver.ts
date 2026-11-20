@@ -43,8 +43,13 @@ const RequestedSpeechProvidersSchema = z.object({
   voiceTts: OptionalSpeechProviderSchema.default("local"),
 });
 
-function resolveOptionalBooleanFlag(value: unknown): boolean {
-  return OptionalBooleanFlagSchema.parse(value) ?? true;
+// Dictation is on unless turned off. Voice mode is opt-in: it downloads its own models and
+// runs a hidden agent, so a host only pays for it once someone turns it on.
+export const DICTATION_ENABLED_BY_DEFAULT = true;
+export const VOICE_MODE_ENABLED_BY_DEFAULT = false;
+
+function resolveOptionalBooleanFlag(value: unknown, fallback: boolean): boolean {
+  return OptionalBooleanFlagSchema.parse(value) ?? fallback;
 }
 
 interface FeatureProviderInputs {
@@ -70,6 +75,7 @@ function buildFeatureProviderInputs(params: {
       params.env.PASEO_VOICE_MODE_ENABLED,
       params.persisted.features?.voiceMode?.enabled,
     ]),
+    VOICE_MODE_ENABLED_BY_DEFAULT,
   );
   return {
     dictationStt: {
@@ -82,6 +88,7 @@ function buildFeatureProviderInputs(params: {
           params.env.PASEO_DICTATION_ENABLED,
           params.persisted.features?.dictation?.enabled,
         ]),
+        DICTATION_ENABLED_BY_DEFAULT,
       ),
     },
     voiceTurnDetection: {
@@ -119,7 +126,7 @@ function buildRequestedFeatureProvider(
   };
 }
 
-function resolveRequestedSpeechProviders(params: {
+export function resolveRequestedSpeechProviders(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): RequestedSpeechProviders {
@@ -173,6 +180,7 @@ export function resolveSpeechConfig(params: {
     openai,
     speech: {
       providers,
+      localModelsDir: local.modelsDir,
       sttLanguages: local.sttLanguages,
       ...(local.local ? { local: local.local } : {}),
     },

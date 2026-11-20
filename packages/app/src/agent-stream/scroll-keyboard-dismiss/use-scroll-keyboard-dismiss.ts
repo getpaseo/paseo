@@ -5,7 +5,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from "react-native";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { useKeyboardShift } from "@/keyboard/shift";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import {
   beginDrag,
@@ -18,7 +18,7 @@ type ScrollEvent = NativeSyntheticEvent<NativeScrollEvent>;
 
 /**
  * Owns the chat history's flick-to-dismiss behavior. The native stream only
- * forwards the FlatList scroll lifecycle; removing this hook and those three
+ * forwards the LegendList scroll lifecycle; removing this hook and those three
  * calls removes the feature completely.
  */
 export function useScrollKeyboardDismiss() {

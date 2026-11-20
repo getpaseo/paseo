@@ -54,6 +54,8 @@ export const ProviderOverrideSchema = z.object({
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  options: z.record(z.string(), z.unknown()).optional(),
+  // COMPAT(providerParams): added in v0.10.0, remove after 2027-03-30 once configs use options.
   params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
@@ -82,15 +84,10 @@ export const ProviderOverridesSchema = z
       }
 
       const isBuiltinProvider = builtinProviderIdSet.has(providerId);
-      if (!isBuiltinProvider && !provider.extends) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [providerId, "extends"],
-          message: `Custom provider "${providerId}" must declare extends.`,
-        });
-      }
-
-      if (!isBuiltinProvider && !provider.label) {
+      // Config loads before plugin registration. An entry without extends is an override;
+      // registry construction decides whether its provider exists. Configurable plugin IDs
+      // use this existing config alphabet; dots/underscores remain registration-only.
+      if (!isBuiltinProvider && provider.extends && !provider.label) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [providerId, "label"],

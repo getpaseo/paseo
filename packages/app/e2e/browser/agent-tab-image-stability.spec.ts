@@ -1,3 +1,12 @@
+import type { Page } from "@playwright/test";
+import { createReadStream } from "node:fs";
+import { createServer } from "node:http";
+import { delayFileReadResponse } from "../support/helpers/file-read-gate";
+import {
+  expectCompletedDiagram,
+  openDiagramFullscreen,
+  expectFullscreenDiagram,
+} from "../support/helpers/diagram";
 import { expect, test as base } from "../support/fixtures";
 import {
   appendSettledTimelineTurns,
@@ -16,6 +25,11 @@ import {
 } from "../support/helpers/assistant-images";
 import { expectAgentReadyToInterrupt } from "../support/helpers/agent-stream";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
+import path from "node:path";
+import {
+  rememberTimelineViewport,
+  scrollTimelinePromptIntoView,
+} from "../support/helpers/timeline-pagination";
 
 const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
   imageWorkspace: async ({ page: _page }, provide) => {
@@ -26,6 +40,42 @@ const test = base.extend<{ imageWorkspace: SeededWorkspace }>({
       await workspace.cleanup();
     }
   },
+});
+
+test("assistant images at paths with spaces, Unicode and literal percent escapes render", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Angle destination image",
+    fileName: "My image Мои.png",
+  });
+  const agent = await createSettledMockAgent(workspace, "Encoded image paths");
+  await emitSettledAssistantImage(workspace.client, agent, image, `<${image.relativePath}>`);
+  await openAssistantImageTimeline(page, agent);
+  await expectAssistantImageRendered(page, image);
+
+  const encodedImage = { ...image, alt: "Encoded destination image" };
+  await emitSettledAssistantImage(
+    workspace.client,
+    agent,
+    encodedImage,
+    encodeURI(path.join(workspace.repoPath, image.relativePath)),
+  );
+  await expectAssistantImageRendered(page, encodedImage);
+
+  const literalPercentImage = await createSmallAssistantPng(workspace, {
+    alt: "Literal percent filename image",
+    fileName: "literal%20name.png",
+  });
+  await emitSettledAssistantImage(
+    workspace.client,
+    agent,
+    literalPercentImage,
+    encodeURI(literalPercentImage.relativePath),
+  );
+  await expectAssistantImageRendered(page, literalPercentImage);
 });
 
 test("switching between settled agent tabs keeps a real assistant PNG rendered", async ({
@@ -60,11 +110,11 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await openAssistantImageTimeline(page, imageAgent);
   await expectAssistantImageRendered(page, image);
 
-  await page.getByRole("button", { name: "Open image attachment" }).click();
+  await page.getByRole("button", { name: image.alt }).click();
   const lightboxImage = page.getByTestId("attachment-lightbox-image");
   const canvas = page.getByTestId("attachment-lightbox-canvas");
   await expect(lightboxImage).toBeVisible();
-  await canvas.hover();
+  await page.getByTestId("zoomable-viewport-toolbar").hover();
   const transformedContent = canvas.locator(":scope > div").first();
   const initialBox = await transformedContent.boundingBox();
   const canvasBox = await canvas.boundingBox();
@@ -96,7 +146,7 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await expectAgentReadyToInterrupt(page);
 });
 
-test("reloading a timeline anchors near-tail assistant image growth", async ({
+test("reloading a timeline reserves image height without a load-time scroll jump", async ({
   imageWorkspace: workspace,
   page,
 }) => {
@@ -106,119 +156,34 @@ test("reloading a timeline anchors near-tail assistant image growth", async ({
     fileName: "reload-geometry-image.png",
   });
   const imageAgent = await createSettledMockAgent(workspace, "Reload image geometry");
-  await emitSettledAssistantImage(workspace.client, imageAgent, image);
-  await appendSettledTimelineTurns(workspace.client, imageAgent, 3);
+  const delivery = await serveDelayedImage(path.join(workspace.repoPath, image.relativePath));
+  try {
+    delivery.release();
+    await emitSettledAssistantImage(workspace.client, imageAgent, image, delivery.url);
+    await appendSettledTimelineTurns(workspace.client, imageAgent, 3);
+    await openAssistantImageTimeline(page, imageAgent);
+    await expectAssistantImageRendered(page, image);
 
-  await page.addInitScript(
-    ({ accessibleName }) => {
-      interface ImageGeometryEvent {
-        atMs: number;
-        complete: boolean;
-        height: number;
-        naturalHeight: number;
-        naturalWidth: number;
-        scrollTop: number;
-        width: number;
-      }
-      const state = {
-        accessibleName,
-        events: [] as ImageGeometryEvent[],
-        mutationObserver: null as MutationObserver | null,
-        resizeObserver: null as ResizeObserver | null,
-        target: null as Element | null,
-      };
-      const record = () => {
-        const target = state.target;
-        if (!target) return;
-        const imageElement =
-          target instanceof HTMLImageElement ? target : target.querySelector("img");
-        const scroll = target.closest('[data-testid="agent-chat-scroll"]');
-        const rect = target.getBoundingClientRect();
-        const event: ImageGeometryEvent = {
-          atMs: performance.now(),
-          complete: imageElement?.complete ?? false,
-          height: rect.height,
-          naturalHeight: imageElement?.naturalHeight ?? 0,
-          naturalWidth: imageElement?.naturalWidth ?? 0,
-          scrollTop: scroll instanceof HTMLElement ? scroll.scrollTop : -1,
-          width: rect.width,
-        };
-        const previous = state.events.at(-1);
-        if (
-          !previous ||
-          previous.complete !== event.complete ||
-          previous.height !== event.height ||
-          previous.naturalHeight !== event.naturalHeight ||
-          previous.naturalWidth !== event.naturalWidth ||
-          previous.scrollTop !== event.scrollTop ||
-          previous.width !== event.width
-        ) {
-          state.events.push(event);
-        }
-      };
-      const inspect = () => {
-        const target = Array.from(document.querySelectorAll('[role="img"]')).find(
-          (element) => element.getAttribute("aria-label") === accessibleName,
-        );
-        if (!target || target === state.target) {
-          record();
-          return;
-        }
-        state.target = target;
-        state.resizeObserver?.disconnect();
-        state.resizeObserver = new ResizeObserver(record);
-        state.resizeObserver.observe(target);
-        record();
-      };
-      const start = () => {
-        state.mutationObserver = new MutationObserver(inspect);
-        state.mutationObserver.observe(document.documentElement, {
-          attributes: true,
-          attributeFilter: ["src", "style"],
-          childList: true,
-          subtree: true,
-        });
-        inspect();
-      };
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", start, { once: true });
-      } else {
-        start();
-      }
-      (
-        window as unknown as {
-          __paseoReloadImageGeometry?: typeof state;
-        }
-      ).__paseoReloadImageGeometry = state;
-    },
-    { accessibleName: image.alt },
-  );
+    delivery.holdNextRequest();
+    await page.reload();
+    await delivery.waitUntilRequested();
+    const rendered = page.getByRole("button", { name: image.alt }).first();
+    await expect(rendered).toHaveAttribute("src", /^data:image\/png/);
+    await scrollTimelinePromptIntoView(
+      page,
+      "image-history-turn-2: emit 1 coalesced agent stream updates",
+    );
+    const beforeLoad = await rememberTimelineViewport(page);
+    const reservedHeight = (await rendered.boundingBox())?.height;
+    expect(reservedHeight).toBe(320);
 
-  await openAssistantImageTimeline(page, imageAgent);
-  await expectAssistantImageRendered(page, image);
-  await page.reload();
-  await expectAssistantImageRendered(page, image);
-  await page.waitForTimeout(500);
-
-  const events = await page.evaluate(() => {
-    const state = (
-      window as unknown as {
-        __paseoReloadImageGeometry?: { events: Array<unknown> };
-      }
-    ).__paseoReloadImageGeometry;
-    if (!state) throw new Error("Reload image geometry observer was not installed");
-    return state.events;
-  });
-  const geometryEvents = events as Array<{ height: number; scrollTop: number }>;
-  const initialGeometry = geometryEvents.find((event) => event.height > 0);
-  if (!initialGeometry)
-    throw new Error(`Image geometry was never measurable: ${JSON.stringify(events)}`);
-  const expandedGeometry = geometryEvents.find((event) => event.height > initialGeometry.height);
-  if (!expandedGeometry)
-    throw new Error(`Image geometry never expanded: ${JSON.stringify(events)}`);
-  expect(expandedGeometry.scrollTop, JSON.stringify(events)).toBeGreaterThan(
-    initialGeometry.scrollTop,
-  );
+    delivery.release();
+    await expectAssistantImageRendered(page, image);
+    expect((await rendered.boundingBox())?.height).toBe(reservedHeight);
+    await expect.poll(() => rememberTimelineViewport(page)).toEqual(beforeLoad);
+  } finally {
+    await delivery.close();
+  }
 });
 
 test("a real assistant PNG remains reachable through pagination and remount", async ({
@@ -259,3 +224,222 @@ test("a near-10 MiB real assistant PNG renders and the app remains responsive", 
     response: "stress-update-0",
   });
 });
+
+test("a later reply reads new bytes at the same workspace image path", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  const agent = await createSettledMockAgent(workspace, "Screenshot revisions");
+  const first = await createSmallAssistantPng(workspace, {
+    alt: "Earlier screenshot",
+    fileName: "screenshot.png",
+  });
+  await emitSettledAssistantImage(workspace.client, agent, first);
+  await openAssistantImageTimeline(page, agent);
+  await expectAssistantImageRendered(page, first);
+  const second = await createSmallAssistantPng(workspace, {
+    alt: "Updated screenshot",
+    fileName: "screenshot.png",
+    width: 2,
+    height: 3,
+  });
+  await emitSettledAssistantImage(workspace.client, agent, second);
+  await expectAssistantImageRendered(page, second);
+  await expectAssistantImageRendered(page, first);
+});
+
+test("pending assistant images reserve their decoded height", async ({
+  imageWorkspace: workspace,
+  page,
+}, testInfo) => {
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Delayed remote image",
+    fileName: "delayed.png",
+    width: 32,
+    height: 24,
+  });
+  const agent = await createSettledMockAgent(workspace, "Pending image geometry");
+  const delivery = await serveDelayedImage(path.join(workspace.repoPath, image.relativePath));
+  const { url } = delivery;
+  try {
+    await emitSettledAssistantImage(workspace.client, agent, image, url);
+    await openAssistantImageTimeline(page, agent);
+    const rendered = page.getByRole("button", { name: image.alt }).first();
+    await expect(rendered).toHaveAttribute("src", /^data:image\/png/);
+    await delivery.waitUntilRequested();
+    const pendingBox = await rendered.boundingBox();
+    expect(pendingBox?.height).toBe(320);
+    await rendered.click();
+    await expect(page.getByTestId("attachment-lightbox-image")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("pending-image.png") });
+    delivery.release();
+    await expect(rendered).toHaveAttribute("src", url);
+    expect((await rendered.boundingBox())?.height).toBe(pendingBox?.height);
+  } finally {
+    await delivery.close();
+  }
+});
+
+/** Serve the fixture's real PNG bytes; release controls when the decoder can finish. */
+async function serveDelayedImage(file: string) {
+  let release!: () => void;
+  let ready: Promise<void>;
+  let requested!: () => void;
+  let requestStarted: Promise<void>;
+  const holdNextRequest = () => {
+    ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    requestStarted = new Promise<void>((resolve) => {
+      requested = resolve;
+    });
+  };
+  holdNextRequest();
+  const server = createServer((_request, response) => {
+    requested();
+    void ready.then(() => {
+      response.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
+      return createReadStream(file).pipe(response);
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Image server did not listen");
+  return {
+    url: `http://127.0.0.1:${address.port}/image.png`,
+    release: () => release(),
+    holdNextRequest,
+    waitUntilRequested: () => requestStarted,
+    close: async () => {
+      release();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+test("late workspace image completion preserves selected prose", async ({
+  imageWorkspace,
+  page,
+}) => {
+  await withPendingWorkspaceImage(page, imageWorkspace, async (image, release) => {
+    const selected = await selectImageFixtureParagraphs(page);
+    release();
+    await expectAssistantImageRendered(page, image);
+    await expectSelectedParagraphsRetained(page, selected);
+  });
+});
+
+test("late workspace image completion keeps Mermaid fullscreen open", async ({
+  imageWorkspace,
+  page,
+}) => {
+  await withPendingWorkspaceImage(page, imageWorkspace, async (image, release) => {
+    await openDiagramFullscreen(page);
+    await expectFullscreenDiagram(page, ["Start", "Done"]);
+    release();
+    await expectAssistantImageRendered(page, image);
+    await expectFullscreenDiagram(page, ["Start", "Done"]);
+  });
+});
+
+async function withPendingWorkspaceImage(
+  page: Page,
+  workspace: SeededWorkspace,
+  run: (
+    image: Awaited<ReturnType<typeof createSmallAssistantPng>>,
+    release: () => void,
+  ) => Promise<void>,
+) {
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Late workspace image",
+    fileName: "late.png",
+    width: 32,
+    height: 24,
+  });
+  const source = [
+    "Paragraph one stays selected while the workspace image loads.",
+    "Paragraph two remains in this reply.",
+    "Paragraph three is the selection endpoint.",
+    "```mermaid\nflowchart LR\n Start --> Done\n```",
+    `![${image.alt}](${image.relativePath})`,
+  ].join("\n\n");
+  const agent = await createSettledMockAgent(workspace, "Delayed workspace read", source);
+  await emitSettledAssistantImage(workspace.client, agent, image);
+  const gate = await delayFileReadResponse(page, image.relativePath);
+  let released = false;
+  const release = () => {
+    if (!released) {
+      released = true;
+      gate.release();
+    }
+  };
+  try {
+    await openAssistantImageTimeline(page, agent);
+    await gate.waitUntilHeld();
+    await expectCompletedDiagram(page, ["Start", "Done"]);
+    await run(image, release);
+  } finally {
+    release();
+  }
+}
+
+type SelectionProofWindow = Window & { __lateImageSelection?: { start: Node; end: Node } };
+
+async function selectImageFixtureParagraphs(page: Page): Promise<string> {
+  const message = page.getByTestId("assistant-message");
+  await message
+    .getByText("Paragraph one stays selected while the workspace image loads.", { exact: true })
+    .scrollIntoViewIfNeeded();
+  const bounds = await message.evaluate((root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let start: Text | undefined;
+    let end: Text | undefined;
+    while (walker.nextNode()) {
+      const text = walker.currentNode as Text;
+      if (text.data.startsWith("Paragraph one stays")) start = text;
+      if (text.data.startsWith("Paragraph three is")) end = text;
+    }
+    if (!start || !end) throw new Error("Selection paragraphs are missing");
+    (window as SelectionProofWindow).__lateImageSelection = { start, end };
+    const first = document.createRange();
+    first.selectNodeContents(start);
+    const last = document.createRange();
+    last.selectNodeContents(end);
+    return {
+      first: first.getBoundingClientRect().toJSON(),
+      last: last.getBoundingClientRect().toJSON(),
+    };
+  });
+  await page.mouse.move(bounds.first.x + 1, bounds.first.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(bounds.last.right - 1, bounds.last.bottom - 2, { steps: 20 });
+  await page.mouse.up();
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  expect(selected).toContain("Paragraph one");
+  expect(selected).toContain("Paragraph three");
+  return selected;
+}
+
+async function expectSelectedParagraphsRetained(page: Page, selected: string) {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const proof = (window as SelectionProofWindow).__lateImageSelection;
+        return {
+          startConnected: proof?.start.isConnected,
+          endConnected: proof?.end.isConnected,
+          text: window.getSelection()?.toString(),
+        };
+      }),
+    )
+    .toEqual({ startConnected: true, endConnected: true, text: selected });
+}

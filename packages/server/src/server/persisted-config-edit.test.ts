@@ -43,3 +43,19 @@ test("configuration edits validate before writing and preserve unrelated setting
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("configuration paths edit fields inside speech provider variants", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "paseo-speech-edit-"));
+  try {
+    editPersistedConfig(home, "features.voiceMode.stt", { value: { provider: "openai" } });
+    editPersistedConfig(home, "features.voiceMode.stt.apiKey", { value: "site-secret" });
+    const config = readPersistedConfig(home);
+    expect(getPersistedConfigValue(config, "features.voiceMode.stt.apiKey")).toBe("site-secret");
+    editPersistedConfig(home, "features.voiceMode.stt.apiKey", { unset: true });
+    expect(
+      getPersistedConfigValue(readPersistedConfig(home), "features.voiceMode.stt.apiKey"),
+    ).toBeUndefined();
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

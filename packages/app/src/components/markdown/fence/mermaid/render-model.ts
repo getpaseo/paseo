@@ -1,4 +1,4 @@
-import type { MarkdownPhase } from "../types";
+import type { MarkdownPhase } from "./types";
 
 export type DiagramColorScheme = "light" | "dark";
 

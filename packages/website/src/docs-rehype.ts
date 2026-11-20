@@ -5,9 +5,15 @@ import remarkGfm from "remark-gfm";
 import { createHighlighterCore, type HighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { PluggableList } from "unified";
+import { remarkHeadingIds } from "./docs-anchor-ids.js";
 import { remarkDocsExample } from "./docs-example-directive.js";
 
-export const docsRemarkPlugins: PluggableList = [remarkGfm, remarkDirective, remarkDocsExample];
+export const docsRemarkPlugins: PluggableList = [
+  remarkGfm,
+  remarkDirective,
+  remarkDocsExample,
+  remarkHeadingIds,
+];
 
 let docsHighlighter: Promise<HighlighterCore> | undefined;
 
@@ -39,19 +45,22 @@ export function getDocsHighlighter(): Promise<HighlighterCore> {
   return docsHighlighter;
 }
 
-export const docsRehypePlugins: PluggableList = [
-  rehypeSlug,
-  [
-    rehypeAutolinkHeadings,
-    {
-      behavior: "prepend",
-      properties: { className: "heading-anchor", ariaLabel: "Link to this section" },
-      content: {
-        type: "element",
-        tagName: "span",
-        properties: { className: "heading-anchor-icon", ariaHidden: "true" },
-        children: [{ type: "text", value: "#" }],
+/** Rehype plugins for docs, with the heading anchor's accessible name in the page language. */
+export function docsRehypePlugins(anchorLabel: string): PluggableList {
+  return [
+    rehypeSlug,
+    [
+      rehypeAutolinkHeadings,
+      {
+        behavior: "prepend",
+        properties: { className: "heading-anchor", ariaLabel: anchorLabel },
+        content: {
+          type: "element",
+          tagName: "span",
+          properties: { className: "heading-anchor-icon", ariaHidden: "true" },
+          children: [{ type: "text", value: "#" }],
+        },
       },
-    },
-  ],
-];
+    ],
+  ];
+}

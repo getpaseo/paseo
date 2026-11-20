@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import {
   MutableDaemonConfigSchema,
@@ -22,6 +23,50 @@ describe("plugin protocol compatibility", () => {
       expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
     },
   );
+  it.each([
+    { type: "plugin.catalog.get.request", requestId: "catalog" },
+    {
+      type: "plugin.catalog.get.request",
+      requestId: "catalog",
+      cachedClientBundles: [{ id: "example", clientBundleHash: "a".repeat(64) }],
+    },
+  ])("parses plugin catalog requests %j", (request) => {
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+  });
+  it("parses plugin catalogs that leave out a client bundle the client already holds", () => {
+    const message = {
+      type: "plugin.catalog.get.response",
+      payload: {
+        requestId: "catalog",
+        plugins: [
+          { id: "cached", clientBundleHash: "a".repeat(64) },
+          { id: "changed", clientBundle: "bundle", clientBundleHash: "b".repeat(64) },
+        ],
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
+  it("preserves manifest metadata in plugin list responses", () => {
+    const message = {
+      type: "plugin.list.response",
+      payload: {
+        requestId: "metadata",
+        plugins: [
+          {
+            id: "review",
+            name: "Review tools",
+            icon: "assets/icon.png",
+            media: ["screenshot.png", "https://example.com/demo.mp4"],
+            path: "/plugins/review",
+            enabled: false,
+            status: "disabled",
+          },
+        ],
+      },
+    };
+    expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+  });
+
   it("parses plugin timeline append messages and advertises the capability", () => {
     expect(
       SessionInboundMessageSchema.parse({
@@ -96,6 +141,22 @@ describe("plugin protocol compatibility", () => {
         type: "plugin.directory.install.response",
         payload: {
           requestId: "request-1",
+          plugin: {
+            id: "example-work",
+            description: "Reviews changes before merge",
+            path: "/plugins/example",
+            enabled: true,
+            status: "running",
+          },
+        },
+      }).type,
+    ).toBe("plugin.directory.install.response");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "plugin.directory.install.response",
+        payload: {
+          requestId: "request-old-shape",
           plugin: {
             id: "example-work",
             path: "/plugins/example",
@@ -275,5 +336,79 @@ describe("plugin protocol compatibility", () => {
         payload: { requestId: "request-2", plugin: { id: "extra" } },
       }),
     ).toThrow();
+  });
+});
+
+it("npm metadata leaves legacy plugin rows parseable without extending their closed source enum", () => {
+  const legacyPlugin = z.object({
+    id: z.string(),
+    path: z.string(),
+    enabled: z.boolean(),
+    status: z.enum(["running", "disabled", "failed"]),
+    source: z.enum(["directory", "git"]).optional(),
+  });
+  const plugin = {
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+    installation: {
+      identity: { kind: "npm", packageName: "@acme/review", pluginPath: "." },
+      currentRevision: "1.2.0",
+    },
+  };
+  const message = SessionOutboundMessageSchema.parse({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
+  });
+  expect(legacyPlugin.parse(plugin)).toEqual({
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+  });
+  expect(message).toEqual({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
+  });
+});
+
+describe("plugin subscription protocol", () => {
+  it("parses a subscribe request and its response", () => {
+    const request = {
+      type: "plugin.rpc.subscribe.request",
+      requestId: "r1",
+      pluginId: "diff-watch",
+      method: "diff.watch",
+      input: { a: "main", b: "HEAD" },
+    };
+    expect(SessionInboundMessageSchema.parse(request)).toEqual(request);
+    const response = {
+      type: "plugin.rpc.subscribe.response",
+      payload: { requestId: "r1", subscriptionId: "s1" },
+    };
+    expect(SessionOutboundMessageSchema.parse(response)).toEqual(response);
+  });
+
+  it("parses JSON events and closes with and without an error", () => {
+    for (const message of [
+      { type: "plugin.rpc.event", payload: { subscriptionId: "s1", event: { path: "a.ts" } } },
+      { type: "plugin.rpc.closed", payload: { subscriptionId: "s1" } },
+      { type: "plugin.rpc.closed", payload: { subscriptionId: "s1", error: "boom" } },
+    ]) {
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    }
+  });
+
+  it("advertises the feature as an optional flag", () => {
+    const status = {
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv",
+        features: { pluginSubscriptions: true },
+      },
+    };
+    expect(StatusMessageSchema.parse(status)).toMatchObject(status);
   });
 });

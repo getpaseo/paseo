@@ -20,7 +20,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { InlineReviewThread } from "@/review";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { useKeyboardShift } from "@/keyboard/shift";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
 import {
@@ -38,6 +38,7 @@ import {
 } from "./horizontal-offsets";
 import {
   buildDiffDocumentModel,
+  captureScrollAnchor,
   resolveRelayoutScrollTop,
   retainReusableModels,
   shouldApplyRelayoutScroll,
@@ -138,6 +139,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
+      materializationAnchor: previousModelRef.current
+        ? captureScrollAnchor(previousModelRef.current, scrollTop.get())
+        : null,
       reuseFrom,
     });
     reusableModelRef.current = {
@@ -148,6 +152,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   }, [
     measurement,
     fileWindowTop,
+    scrollTop,
     props.collapsedFilePaths,
     props.displayPreferences.layout,
     props.displayPreferences.wrapLines,
@@ -256,9 +261,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
       consumedFocusRef.current = requestKey;
     }
   }, [collapsedFilePaths, mode, model.files, onToggleFile, scrollTop]);
+  const contentInsetBottom = props.contentInsetBottom ?? 0;
   const contentStyle = useMemo(
-    () => ({ minHeight: Math.max(model.height, viewport.height), backgroundColor: "transparent" }),
-    [model.height, viewport.height],
+    () => ({
+      minHeight: Math.max(model.height, viewport.height) + contentInsetBottom,
+      backgroundColor: "transparent",
+    }),
+    [contentInsetBottom, model.height, viewport.height],
   );
   return (
     <View style={[styles.root, { backgroundColor: props.palette.surface }]} onLayout={layout}>

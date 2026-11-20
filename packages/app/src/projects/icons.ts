@@ -30,7 +30,7 @@ function legacyIconQueryKey(serverId: string, cwd: string) {
   return ["projectIcon", serverId, "legacy", cwd] as const;
 }
 
-function iconDataUri(icon: ProjectIcon | null): string | null {
+export function projectIconDataUri(icon: ProjectIcon | null): string | null {
   if (!icon) return null;
   return `data:${icon.mimeType};base64,${icon.data}`;
 }
@@ -98,7 +98,7 @@ export function useProjectIcons(input: {
           () => getHostRuntimeStore().getClient(request.serverId),
           isHostRuntimeConnected(getHostRuntimeStore().getSnapshot(request.serverId)),
         ),
-        select: iconDataUri,
+        select: projectIconDataUri,
       };
     }),
   });

@@ -31,11 +31,11 @@ Keep GitHub's SSL verification enabled.
 
 ## Subscribe to GitHub events
 
-Under **Subscribe to events**, select **Issue comment**, **Issues**, **Pull requests**, **Pull request review**, **Pull request review comment**, and **Push**. **Pull requests** is required for `github.pull_request_created` and `github.pull_request_label_added`.
+Under **Subscribe to events**, select **Issue comment**, **Issues**, **Pull requests**, **Pull request review**, **Pull request review comment**, and **Push**. **Pull requests** is required for `github.pull_request_created`, `github.pull_request_ready_for_review`, and `github.pull_request_label_added`.
 
 ## Connect repositories
 
-After Hub verifies the App, choose **Install on GitHub**. Select the account or organization and repositories the App may access.
+After Hub verifies the App, choose **Connect GitHub**. Select the account or organization and repositories the App may access.
 
 Start from Hub rather than GitHub's own install button. The round trip binds the installation to the active Hub organization.
 

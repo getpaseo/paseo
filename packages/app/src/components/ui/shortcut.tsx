@@ -1,7 +1,7 @@
 import React, { useMemo, type ReactElement } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
+import { useHardwareKeyboardPresent } from "@/keyboard";
 import { normalizeDisplayChord } from "@/components/ui/normalize-display-chord";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
@@ -17,7 +17,7 @@ export function Shortcut({
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
 }): ReactElement | null {
-  const shortcutsAvailable = useKeyboardShortcutsAvailable();
+  const shortcutsAvailable = useHardwareKeyboardPresent();
   const displayChord = normalizeDisplayChord(chord, keys);
   const shortcutOs = getShortcutOs();
 
@@ -68,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 0,
   },
   badgeBackground: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface3,
     opacity: theme.opacity[50],

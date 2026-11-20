@@ -1,0 +1,296 @@
+import type { TFunction } from "i18next";
+import { i18n } from "@/i18n/i18next";
+import { usageCopy } from "./copy";
+import type { UsageDisplayAs } from "./preferences";
+import type {
+  AvailableUsageReport,
+  UsageReport,
+  UsageReportEntry,
+  UsageView,
+  UsageWindow,
+} from "./types";
+
+export function usedPercent(window: UsageWindow): number | null {
+  if (window.usedPct != null) return window.usedPct;
+  if (window.remainingPct != null) return 100 - window.remainingPct;
+  return null;
+}
+
+/** The percent a window shows under the user's used/remaining preference. */
+export function displayPercent(window: UsageWindow, displayAs: UsageDisplayAs): number | null {
+  if (displayAs === "used") return usedPercent(window);
+  if (window.remainingPct != null) return window.remainingPct;
+  const used = usedPercent(window);
+  return used == null ? null : 100 - used;
+}
+
+/**
+ * A window row's accessible label: what pinning it pins, then what the row shows. The row is a
+ * checkbox, so its checked state says whether it is pinned: "Pin Claude Session, 31% · resets in
+ * 2h", checked.
+ */
+export function usageWindowRowLabel(input: {
+  pinLabel: string;
+  value: string;
+  trailing: string | null | undefined;
+}): string {
+  const summary = input.trailing ? `${input.value} · ${input.trailing}` : input.value;
+  return `${input.pinLabel}, ${summary}`;
+}
+
+/** The outcome of a user-requested usage refresh. */
+export type UsageRefresh = "idle" | "pending" | "failed";
+
+export function resolveUsageRefresh(mutation: {
+  isPending: boolean;
+  isError: boolean;
+}): UsageRefresh {
+  if (mutation.isPending) return "pending";
+  if (mutation.isError) return "failed";
+  return "idle";
+}
+
+/** Keep quota readings after a failed refresh and attach the outcome to the readings it targeted. */
+export function markUsageRefreshFailure(
+  current: UsageReportEntry[] | undefined,
+  attempted: readonly UsageReportEntry[],
+): UsageReportEntry[] | undefined {
+  const attemptedAt = new Map(attempted.map((entry) => [entry.id, entry.fetchedAt]));
+  return current?.map((entry) =>
+    attemptedAt.get(entry.id) === entry.fetchedAt && !entry.forecastStale
+      ? { ...entry, forecastStale: true }
+      : entry,
+  );
+}
+
+/**
+ * A host's report list with one report swapped for its refreshed copy, in place.
+ * `null` means the daemon no longer knows the ID, so the report leaves the list.
+ */
+export function replaceReport(
+  reports: readonly UsageReportEntry[],
+  reportId: string,
+  refreshed: UsageReportEntry | null,
+): UsageReportEntry[] {
+  if (!refreshed) return reports.filter((report) => report.id !== reportId);
+  return reports.map((report) =>
+    report.id === reportId ? laterFetched(report, refreshed) : report,
+  );
+}
+
+/**
+ * The later-fetched of two copies of one report. A list request's copies were fetched when it
+ * started, so a Refresh that lands while it streams is newer than what the request still delivers.
+ */
+function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
+  const shownAt = Date.parse(shown.fetchedAt);
+  const arrivingAt = Date.parse(arriving.fetchedAt);
+  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.forecastStale) ? shown : arriving;
+}
+
+/**
+ * A report list with one streamed report in place of its previous copy, or appended if new. A
+ * copy fetched after the streamed one stays.
+ */
+export function upsertReport(
+  reports: readonly UsageReportEntry[] | undefined,
+  report: UsageReportEntry,
+): UsageReportEntry[] {
+  if (!reports?.some((entry) => entry.id === report.id)) return [...(reports ?? []), report];
+  return reports.map((entry) => (entry.id === report.id ? laterFetched(entry, report) : entry));
+}
+
+/**
+ * Keep displayed reports in place: the finished list is in fetch-completion order, which can
+ * change on every refresh. Drop missing reports, append new ones, and keep newer fetched copies.
+ */
+export function settleReports(
+  shown: readonly UsageReportEntry[] | undefined,
+  finished: readonly UsageReportEntry[],
+): UsageReportEntry[] {
+  const remaining = new Map(finished.map((report) => [report.id, report]));
+  const settled: UsageReportEntry[] = [];
+  for (const report of shown ?? []) {
+    const arriving = remaining.get(report.id);
+    if (!arriving) {
+      continue;
+    }
+    settled.push(laterFetched(report, arriving));
+    remaining.delete(report.id);
+  }
+  return [...settled, ...remaining.values()];
+}
+
+export interface UsageQueryState {
+  data: UsageReportEntry[] | undefined;
+  error: unknown;
+  isFetching: boolean;
+}
+
+export function resolveUsageView(
+  input: {
+    enabled?: boolean;
+    hostLabel: string;
+    isConnected: boolean;
+    supportsUsage: boolean;
+    query: UsageQueryState | undefined;
+    refreshState?: UsageRefresh;
+  },
+  t: TFunction = i18n.t,
+): UsageView {
+  const { hostLabel, isConnected, supportsUsage, query, refreshState } = input;
+  if (!isConnected)
+    return {
+      kind: "unavailable",
+      message: t("providerUsage.hostUnavailable", { host: hostLabel }),
+    };
+  if (!supportsUsage) {
+    return {
+      kind: "unavailable",
+      message: t("providerUsage.hostUpgradeRequired", { host: hostLabel }),
+    };
+  }
+  if (input.enabled === false)
+    return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
+  if (query?.data) {
+    return {
+      kind: "ready",
+      reports: query.data,
+      isRefreshing: query.isFetching || refreshState === "pending",
+      refreshFailed: refreshState === "failed",
+    };
+  }
+  if (query?.error) {
+    return {
+      kind: "error",
+      message: query.error instanceof Error ? query.error.message : String(query.error),
+    };
+  }
+  return { kind: "loading" };
+}
+
+/** What a meter popover shows of its agent's usage: nothing while the host cannot say. */
+export type AgentUsageView =
+  | { kind: "none" }
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; reports: UsageReportEntry[] };
+
+export function resolveAgentUsageView(
+  input: {
+    canReport: boolean;
+    query: UsageQueryState;
+  },
+  t: TFunction = i18n.t,
+): AgentUsageView {
+  const { canReport, query } = input;
+  if (!canReport) return { kind: "none" };
+  // A failed request keeps the reports from before it, or those that streamed in before it failed;
+  // shown alone they would pass for the agent's complete, current usage.
+  if (query.error) {
+    const reason = query.error instanceof Error ? query.error.message : String(query.error);
+    return { kind: "error", message: t("providerUsage.agentError", { reason }) };
+  }
+  if (query.data) {
+    return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
+  }
+  return { kind: "loading" };
+}
+
+export interface UsageHost {
+  serverId: string;
+  label: string;
+  isConnected: boolean;
+  supportsUsage: boolean;
+}
+
+/** Where usage looks for its host: the user's saved pick, then the workspace they are in. */
+export interface UsageHostChoice {
+  pickedServerId: string | null;
+  activeServerId: string | null;
+  hosts: readonly UsageHost[];
+}
+
+/**
+ * The host the sidebar Usage row reads: the picked host, else the active workspace's host, else the
+ * first host. Each only while it is connected and reports usage.
+ */
+export function resolveUsageHostId(choice: UsageHostChoice): string | null {
+  const reporting = choice.hosts.filter((host) => host.isConnected && host.supportsUsage);
+  const find = (serverId: string | null) => reporting.find((host) => host.serverId === serverId);
+  return (
+    (find(choice.pickedServerId) ?? find(choice.activeServerId) ?? reporting[0])?.serverId ?? null
+  );
+}
+
+/**
+ * The host the Usage modal shows: the picked host while it is connected, even one that cannot
+ * report usage so the modal says to update it; else the sidebar row's host; else the first
+ * connected host.
+ */
+export function resolveUsageModalHostId(choice: UsageHostChoice): string | null {
+  const connected = choice.hosts.filter((host) => host.isConnected);
+  const picked = connected.find((host) => host.serverId === choice.pickedServerId);
+  return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;
+}
+
+export interface UsageSnapshot {
+  report: AvailableUsageReport;
+  successfulAt: string;
+  retained: boolean;
+}
+
+/** The latest successful values and their freshness, independent of the latest attempt's outcome. */
+export function resolveUsageSnapshot(entry: UsageReportEntry): UsageSnapshot | null {
+  if (entry.report.status === "available") {
+    // COMPAT(usageSuccessfulAt): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
+    // Old daemons expose only attempt time for available reports, never for failures.
+    return {
+      report: entry.report,
+      successfulAt: entry.successfulAt ?? entry.fetchedAt,
+      retained: false,
+    };
+  }
+  // COMPAT(usageLastSuccessful): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
+  // Older daemons cannot provide history; a failed attempt is never a successful update.
+  const retained = entry.lastSuccessful;
+  if (!retained) return null;
+  return { report: retained.report, successfulAt: retained.fetchedAt, retained: true };
+}
+
+/** Current outcome owns messages; only a successful poll owns values and freshness. */
+export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
+  const available = entry.report.status === "available";
+  const snapshot = resolveUsageSnapshot(entry);
+  const messages: string[] = [];
+  if (!available) {
+    if (entry.loginErrors)
+      messages.push(
+        ...entry.loginErrors.map(
+          (login) => `${login.harness}: ${usageProblemText(login.report, t)}`,
+        ),
+      );
+    // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once daemon floor >= v0.11.0.
+    else messages.push(usageProblemText(entry.report, t));
+  }
+  const forecastAt =
+    snapshot && !snapshot.retained && !entry.forecastStale
+      ? (snapshot.report.observedAt ?? snapshot.successfulAt)
+      : null;
+  return {
+    forecastAt,
+    windows: snapshot?.report.windows ?? [],
+    balances: snapshot?.report.balances ?? [],
+    details: snapshot?.report.details ?? [],
+    planLabel: snapshot?.report.planLabel ?? null,
+    successfulAt: snapshot?.successfulAt ?? null,
+    retained: snapshot?.retained ?? false,
+    messages,
+  };
+}
+
+function usageProblemText(report: UsageReport, t: TFunction): string {
+  if (report.status === "error") return report.error;
+  if (report.status === "unavailable") return usageCopy.problem(report.problem, new Date(), t);
+  return "";
+}

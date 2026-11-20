@@ -162,7 +162,7 @@ describe("AgentManager rewind", () => {
     });
   });
 
-  test("blocks new prompts until the rehydrate epoch broadcasts", async () => {
+  test("blocks new prompts immediately and until the rehydrate epoch broadcasts", async () => {
     const historyGate = new RewindHistoryGate();
     historyGate.hold();
     const { manager, agentId } = await createRewindHarness({ historyGate });

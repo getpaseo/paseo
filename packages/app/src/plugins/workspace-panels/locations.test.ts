@@ -4,6 +4,8 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry } from "../registry";
 import { panelTargetSupportsHost, resolvePluginPanelOpenLocation } from "./locations";
 
+const audio = { play: async () => 0 };
+
 vi.mock("../navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
@@ -37,6 +39,7 @@ function install(locations: readonly ("workspace" | "explorer")[]) {
     [{ id: "review", requirements: { paseo: `>=${appPackage.version}` }, clientBundle: bundle }],
     {
       client: {} as DaemonClient,
+      audio,
     },
   );
   return pluginRegistry.getSnapshot()[0]!;

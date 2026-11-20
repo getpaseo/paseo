@@ -1,0 +1,45 @@
+context platform=android timeout=120000 retries=0
+env APP_ID=sh.paseo.debug
+env SCRIPT=worker
+
+open "${APP_ID}"
+wait "id=\"workspace-header-menu-trigger\"" 45000
+wait stable 1000 15000
+press "id=\"workspace-header-menu-trigger\""
+wait "id=\"workspace-header-scripts\"" 10000
+press "id=\"workspace-header-scripts\""
+wait "id=\"workspace-scripts-row-${SCRIPT}\"" 10000
+press "id=\"workspace-scripts-row-${SCRIPT}\""
+wait stable 1000 15000
+wait "id=\"workspace-header-menu-trigger\"" 10000
+press "id=\"workspace-header-menu-trigger\""
+wait "id=\"workspace-header-scripts\"" 10000
+press "id=\"workspace-header-scripts\""
+wait "text" "Running" 10000
+press "id=\"workspace-scripts-row-${SCRIPT}\""
+wait "id=\"workspace-script-${SCRIPT}-stop\"" 10000
+press "id=\"workspace-script-${SCRIPT}-stop\""
+wait "id=\"workspace-script-${SCRIPT}-run\"" 10000
+press "id=\"workspace-script-${SCRIPT}-run\""
+wait stable 1000 15000
+wait "id=\"workspace-header-menu-trigger\"" 10000
+press "id=\"workspace-header-menu-trigger\""
+wait "id=\"workspace-header-scripts\"" 10000
+press "id=\"workspace-header-scripts\""
+wait "text" "Running" 10000
+press "id=\"workspace-scripts-row-${SCRIPT}\""
+wait "id=\"workspace-script-${SCRIPT}-restart\"" 10000
+press "id=\"workspace-script-${SCRIPT}-restart\""
+wait stable 1000 15000
+wait "id=\"workspace-header-menu-trigger\"" 10000
+press "id=\"workspace-header-menu-trigger\""
+wait "id=\"workspace-header-scripts\"" 10000
+press "id=\"workspace-header-scripts\""
+wait "text" "Running" 15000
+press "id=\"workspace-scripts-row-${SCRIPT}\""
+wait "id=\"workspace-script-${SCRIPT}-stop\"" 10000
+press "id=\"workspace-script-${SCRIPT}-stop\""
+wait "id=\"workspace-script-${SCRIPT}-run\"" 10000
+back
+wait stable 1000 15000
+close
