@@ -57,17 +57,23 @@ function SyncItem({ openPopover }) {
   return <SidebarRow icon="RefreshCw" onPress={() => openPopover(SyncDetails)} />;
 }
 
+function InboxScreen({ theme }) {
+  return <View style={{ flex: 1, padding: 24 }}><Text style={{ color: theme.colors.foreground }}>Inbox screen body</Text></View>;
+}
+
 function Broken() {
   throw new Error("Sidebar item exploded");
 }
 
 export default function contribute(client) {
   client.addScreen({ id: "deploys", title: "Deploys", Component: DeploysScreen });
+  client.addScreen({ id: "inbox", title: "Inbox", closable: false, Component: InboxScreen });
   client.addSidebarHeaderItem({ id: "deploys", title: "Deploys", Component: DeploysItem });
   client.addSidebarHeaderItem({ id: "broken", title: "Broken header", Component: Broken });
   client.addSidebarFooterItem({ id: "sync", title: "Sync", Component: SyncItem });
   client.addSidebarFooterItem({ id: "broken", title: "Broken footer", Component: Broken });
   client.addCommandCenterItem({ id: "open-deploys", title: "Open deploys", icon: "Rocket", context: "global", onSelect: (ctx) => ctx.openScreen({ screenId: "deploys" }) });
+  client.addCommandCenterItem({ id: "open-inbox", title: "Open plugin inbox", icon: "Inbox", context: "global", onSelect: (ctx) => ctx.openScreen({ screenId: "inbox" }) });
   return () => {};
 }
 `;

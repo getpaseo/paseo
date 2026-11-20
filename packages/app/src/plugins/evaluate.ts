@@ -212,13 +212,17 @@ export function runPluginClientBundle(
       const normalizedId = requireId(contribution.id, "screen id");
       if (surfaceIds.has(normalizedId)) throw new Error(`Duplicate screen: ${normalizedId}`);
       const title = requireScreenTitle(normalizedId, contribution.title);
+      const closable = contribution.closable ?? true;
+      if (typeof closable !== "boolean") {
+        throw new Error(`Screen ${normalizedId} closable must be a boolean`);
+      }
       if (!isComponentType(contribution.Component)) {
         throw new Error(`Screen ${normalizedId} is not a component`);
       }
       surfaceIds.add(normalizedId);
       return register(
         collector.surfaces,
-        { id: normalizedId, title, Component: contribution.Component },
+        { id: normalizedId, title, closable, Component: contribution.Component },
         () => surfaceIds.delete(normalizedId),
       );
     },

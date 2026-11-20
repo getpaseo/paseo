@@ -923,13 +923,20 @@ export default function contribute(client: PluginClientContext) {
 | `params`     | The params the screen was opened with, as string keys and values. `{}` when none.                                                                                                                                                                                                                                                 |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
-Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the screen body.
+Paseo owns the route, header, close action (unless the screen sets `closable: false`), host picker,
+error boundary, and query client. The plugin owns the screen body.
 
-`addScreen({ id, title, Component })` registers a screen. `title` is the screen header's title: a
-string, or a function that takes the screen's params and returns one, so a bot screen can show the
-bot's name. The function runs again when the params change. Registration throws on an empty title
-or one that is neither a string nor a function. A title function that throws or returns an empty
-string shows the screen ID instead; the screen still renders.
+`addScreen({ id, title, closable, Component })` registers a screen. `title` is the screen header's
+title: a string, or a function that takes the screen's params and returns one, so a bot screen can
+show the bot's name. The function runs again when the params change. Registration throws on an
+empty title or one that is neither a string nor a function. A title function that throws or returns
+an empty string shows the screen ID instead; the screen still renders.
+
+`closable` defaults to `true`: the header has a close button, and a back button on compact layouts.
+Set it to `false` for a screen users stay on, like Schedules: the header has no close button, and
+the sidebar menu takes the back button's place on compact layouts. Back navigation (the browser,
+the Android back button, a swipe) still leaves the screen. Registration throws when `closable` is
+not a boolean.
 
 `openScreen({ screenId, params })` opens a screen with params, such as the bot a bot screen shows.
 Params live in the screen's URL query, so a reload, back and forward, and a link to the screen keep

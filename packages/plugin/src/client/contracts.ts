@@ -179,6 +179,12 @@ export interface PluginScreenContribution {
   id: string;
   title: PluginScreenTitle;
   Component: ComponentType<PluginScreenProps>;
+  /**
+   * Whether the header offers a way to close the screen. Defaults to `true`: a close button, and a
+   * back button on compact layouts. `false` drops the close button and puts the sidebar menu where
+   * the back button was, like Schedules.
+   */
+  closable?: boolean;
 }
 
 export interface PluginSurfaceContribution {

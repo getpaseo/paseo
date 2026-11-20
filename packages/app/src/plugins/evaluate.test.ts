@@ -210,8 +210,28 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.legacySidebarItems).toEqual([]);
   });
 
+  it("keeps whether a screen is closable, closable by default", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      bundle(`
+        function Screen() { return null; }
+        plugin.addScreen({ id: "page", title: "Page", closable: false, Component: Screen });
+        plugin.addScreen({ id: "dialog", title: "Dialog", Component: Screen });
+      `),
+    );
+
+    expect(plugin.surfaces.map(({ id, closable }) => ({ id, closable }))).toEqual([
+      { id: "page", closable: false },
+      { id: "dialog", closable: true },
+    ]);
+  });
+
   it.each([
     [`plugin.addScreen("main", Screen);`, "addScreen takes { id, title, Component }"],
+    [
+      `plugin.addScreen({ id: "main", title: "Main", closable: "no", Component: Screen });`,
+      "Screen main closable must be a boolean",
+    ],
     [`plugin.addScreen({ id: "main", Component: Screen });`, "Screen main needs a title"],
     [
       `plugin.addScreen({ id: "main", title: " ", Component: Screen });`,

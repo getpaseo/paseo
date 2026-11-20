@@ -267,6 +267,42 @@ test.describe("Plugin sidebar items", () => {
     await expect(row).toBeVisible();
   });
 
+  test("a screen that is not closable has no close button or back button", async ({ page }) => {
+    await page.setViewportSize(WIDE);
+    await gotoWorkspace(page, workspaceId);
+    await expect(headerRow(page, SHOWCASE_PLUGIN_ID, "deploys")).toBeVisible({ timeout: 30_000 });
+
+    await test.step("a closable screen keeps the close button", async () => {
+      await runCommand(page, "Open deploys");
+      await expect(screenTitle(page)).toHaveText("Deploys");
+      await expect(visibleTestId(page, "plugin-surface-close")).toBeVisible();
+      await qaScreenshot(page, "closable-wide");
+    });
+
+    await test.step("on a wide layout the screen keeps the sidebar toggle only", async () => {
+      await runCommand(page, "Open plugin inbox");
+      await expect(screenTitle(page)).toHaveText("Inbox");
+      await expect(visibleTestId(page, "menu-button")).toBeVisible();
+      await expect(visibleTestId(page, "plugin-surface-close")).toHaveCount(0);
+      await qaScreenshot(page, "not-closable-wide");
+    });
+
+    await test.step("on a compact layout the menu replaces the back button", async () => {
+      await page.setViewportSize(COMPACT);
+      await expect(screenTitle(page)).toHaveText("Inbox");
+      await expect(visibleTestId(page, "header-back-button")).toHaveCount(0);
+      await expect(visibleTestId(page, "menu-button")).toBeVisible();
+      await qaScreenshot(page, "not-closable-compact");
+    });
+
+    await test.step("a closable screen keeps the back button on compact", async () => {
+      await page.goBack();
+      await expect(screenTitle(page)).toHaveText("Deploys");
+      await expect(visibleTestId(page, "header-back-button")).toBeVisible();
+      await qaScreenshot(page, "closable-compact");
+    });
+  });
+
   test("a header row's shortcut hint presses the row", async ({ page }) => {
     await page.setViewportSize(WIDE);
     await gotoWorkspace(page, workspaceId);

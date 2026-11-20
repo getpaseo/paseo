@@ -327,7 +327,8 @@ state, rejects pending RPCs, closes the plugin's daemon session, and stops the s
 errors are logged and do not interrupt host teardown.
 
 Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
-and render error boundary. The contributed component owns the complete body below the header.
+and render error boundary, except that a screen may opt out of the close action
+([`closable`](../public-docs/plugins/reference.md#screens-and-sidebar-items)). The contributed component owns the complete body below the header.
 The plugin owns the header's text through the screen's `title` (`resolvePluginScreenTitle` in
 `plugins/surface-contribution.ts`). A legacy `addSidebarItem` route (`/sidebar/<id>`) shows the
 item's title and icon instead, as before screens had titles; the `addSurface` alias titles its

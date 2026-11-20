@@ -164,6 +164,7 @@ export function PluginSurfaceScreen() {
     [params, pluginId, sidebarItem, surface],
   );
   const Icon = sidebarItem ? resolvePluginIcon(sidebarItem.icon) : null;
+  const closable = surface?.closable !== false;
   const close = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
@@ -201,26 +202,28 @@ export function PluginSurfaceScreen() {
     () => (
       <>
         {hostFilter}
-        <HeaderToggleButton
-          accessibilityLabel="Close plugin"
-          onPress={close}
-          testID="plugin-surface-close"
-          tooltipKeys={EMPTY_SHORTCUT_KEYS}
-          tooltipLabel="Close"
-          tooltipSide="bottom"
-        >
-          <ThemedX size={18} uniProps={mutedColorMapping} />
-        </HeaderToggleButton>
+        {closable ? (
+          <HeaderToggleButton
+            accessibilityLabel="Close plugin"
+            onPress={close}
+            testID="plugin-surface-close"
+            tooltipKeys={EMPTY_SHORTCUT_KEYS}
+            tooltipLabel="Close"
+            tooltipSide="bottom"
+          >
+            <ThemedX size={18} uniProps={mutedColorMapping} />
+          </HeaderToggleButton>
+        ) : null}
       </>
     ),
-    [close, hostFilter],
+    [close, closable, hostFilter],
   );
 
   return (
     <View style={styles.screen}>
       {compact ? (
         <CompactHeader
-          navigation="back"
+          navigation={closable ? "back" : "menu"}
           onBack={close}
           title={title}
           titleTestID="plugin-surface-title"
