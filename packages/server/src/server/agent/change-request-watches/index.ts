@@ -2,10 +2,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
+import type { ChangeRequestRouter } from "../../../services/change-request-router.js";
 import {
   changeRequestStatusSchema,
   type ChangeRequestSnapshot,
-  type ChangeRequestSource,
 } from "../../../services/change-request-source.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import type {
@@ -15,7 +15,9 @@ import type {
 import { writeJsonFileAtomic } from "../../atomic-file.js";
 
 const DIGEST_WINDOW_MS = 30_000;
+const LEGACY_DEFAULT_FORGE = "github";
 const watchGroupSchema = z.object({
+  forge: z.string().min(1).default(LEGACY_DEFAULT_FORGE),
   url: z.url(),
   snapshot: changeRequestStatusSchema,
   seenActivity: z.array(z.string()),
@@ -35,7 +37,7 @@ interface Observation {
   release(): void;
 }
 interface Dependencies {
-  source: ChangeRequestSource;
+  router: ChangeRequestRouter;
   paseoHome: string;
   logger: Logger;
   isActive(agentId: string): Promise<boolean>;
@@ -73,7 +75,7 @@ function describeUpdate(group: WatchGroup, next: ChangeRequestSnapshot) {
   }
   for (const activity of next.activity) {
     if (seen.has(activity.id)) continue;
-    changes.push(`New ${activity.kind}: ${activity.url}`);
+    changes.push(activity.message ?? `New ${activity.kind}: ${activity.url}`);
     seen.add(activity.id);
   }
   if (next.state !== "open") changes.push(`Change request ${next.state}.`);
@@ -85,6 +87,7 @@ export type ChangeRequestWatches = ReturnType<typeof createChangeRequestWatches>
 export function createChangeRequestWatches(deps: Dependencies) {
   const file = join(deps.paseoHome, "change-request-watches.json");
   const groups = new Map<string, WatchGroup>();
+  const unrestored: WatchGroup[] = [];
   const observations = new Map<string, Observation>();
   const registrations = new Map<string, number>();
   let mutations = Promise.resolve();
@@ -178,10 +181,10 @@ export function createChangeRequestWatches(deps: Dependencies) {
   async function commit(...updates: WatchGroup[]): Promise<void> {
     const next = new Map(groups);
     for (const group of updates) next.set(group.url, group);
-    await writeJsonFileAtomic(
-      file,
-      [...next.values()].filter(({ watchers }) => watchers.length),
-    );
+    await writeJsonFileAtomic(file, [
+      ...[...next.values()].filter(({ watchers }) => watchers.length),
+      ...unrestored,
+    ]);
     for (const group of updates) {
       const previous = groups.get(group.url);
       // An in-flight subscription still needs the committed baseline and its observation.
@@ -195,7 +198,20 @@ export function createChangeRequestWatches(deps: Dependencies) {
     }
   }
 
-  function syncBackgroundWork({ url, watchers }: WatchGroup, previous: Watcher[] = []): void {
+  function describeWatch(forge: string, url: string): string {
+    const source = deps.router.source(forge);
+    if (!source) return url;
+    try {
+      return source.describe(url);
+    } catch {
+      return url;
+    }
+  }
+
+  function syncBackgroundWork(
+    { forge, url, watchers }: WatchGroup,
+    previous: Watcher[] = [],
+  ): void {
     if (previous === watchers) return;
     const current = new Set(watchers);
     for (const watcher of previous) {
@@ -209,7 +225,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       deps.backgroundWork.setDaemonBackgroundWork({
         ...backgroundWorkKey(watcher.agentId, url),
         kind: "monitor",
-        description: deps.source.describe(url),
+        description: describeWatch(forge, url),
         startedAt: watcher.startedAt ?? new Date().toISOString(),
         stop: async () => {
           await unsubscribe(watcher.agentId, url, watcher);
@@ -218,9 +234,13 @@ export function createChangeRequestWatches(deps: Dependencies) {
     }
   }
 
-  function observe(url: string): Observation {
+  function observe(forge: string, url: string): Observation {
     const existing = observations.get(url);
     if (existing) return existing;
+    const source = deps.router.source(forge);
+    if (!source) {
+      throw new Error(`Change request watches are not supported for ${forge}.`);
+    }
     let resolve!: (snapshot: ChangeRequestSnapshot) => void;
     let reject!: (error: unknown) => void;
     const ready = new Promise<ChangeRequestSnapshot>((accept, fail) => {
@@ -228,7 +248,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       reject = fail;
     });
     void ready.catch(() => undefined);
-    const release = deps.source.observe(url, {
+    const release = source.observe(url, {
       knownActivity: () => new Set(groups.get(url)?.seenActivity),
       snapshot: (snapshot) =>
         serialize(async () => {
@@ -266,14 +286,14 @@ export function createChangeRequestWatches(deps: Dependencies) {
         }),
       error(error) {
         if (!observation.stale) {
-          deps.logger.warn({ err: error, url }, "Change request observation became stale");
+          deps.logger.warn({ err: error, url, forge }, "Change request observation became stale");
         }
         observation.stale = true;
         if (!groups.has(url)) {
           reject(error);
           stopObserving(url);
         }
-        deps.logger.debug({ err: error, url }, "Change request observation failed");
+        deps.logger.debug({ err: error, url, forge }, "Change request observation failed");
       },
     });
     const observation: Observation = {
@@ -288,16 +308,62 @@ export function createChangeRequestWatches(deps: Dependencies) {
     return observation;
   }
 
-  async function subscribe(agentId: string, input: string) {
-    if (closed) throw new Error("Change request watches are closed");
-    const url = deps.source.resolve(input);
-    if (recoveryError)
-      throw new Error("Change request watches could not recover.", { cause: recoveryError });
+  function matchActiveGroup(input: string): { forge: string; url: string } | null {
+    const trimmed = input.trim();
+    const direct = groups.get(trimmed);
+    if (direct) return { forge: direct.forge, url: direct.url };
+    const sourcesTried = new Set<string>();
+    for (const group of groups.values()) {
+      if (sourcesTried.has(group.forge)) continue;
+      sourcesTried.add(group.forge);
+      const source = deps.router.source(group.forge);
+      if (!source) continue;
+      try {
+        const canonical = source.resolve(trimmed);
+        const matched = groups.get(canonical);
+        if (matched && matched.forge === group.forge) {
+          return { forge: matched.forge, url: matched.url };
+        }
+      } catch {
+        // Input did not belong to this forge.
+      }
+    }
+    return null;
+  }
+
+  function subscribe(agentId: string, input: string) {
+    if (closed) return Promise.reject(new Error("Change request watches are closed"));
+    if (recoveryError) {
+      return Promise.reject(
+        new Error("Change request watches could not recover.", { cause: recoveryError }),
+      );
+    }
+    const active = matchActiveGroup(input);
+    if (active) {
+      return subscribeResolved(agentId, active.forge, active.url);
+    }
+    return deps.router
+      .resolve(input)
+      .then(({ forge, url }) => subscribeResolved(agentId, forge, url));
+  }
+
+  function subscribeResolved(agentId: string, forge: string, url: string) {
     registrations.set(url, (registrations.get(url) ?? 0) + 1);
-    try {
-      const existing = groups.get(url);
-      const initial = existing ? { ...existing.snapshot, activity: [] } : await observe(url).ready;
-      return await serialize(async () => {
+    const existing = groups.get(url);
+    const finish = () => {
+      const remaining = registrations.get(url)! - 1;
+      if (remaining) {
+        registrations.set(url, remaining);
+      } else {
+        registrations.delete(url);
+        if (!groups.get(url)?.watchers.length) {
+          groups.delete(url);
+          stopObserving(url);
+        }
+      }
+    };
+    const commitSubscription = (initial: ChangeRequestSnapshot) =>
+      serialize(async () => {
         if (closed || !(await deps.isActive(agentId))) throw new Error("Agent is no longer active");
         const group = groups.get(url);
         const { activity, ...initialStatus } = initial;
@@ -305,6 +371,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
         const subscribed = snapshot.state === "open";
         if (subscribed && !group?.watchers.some((watcher) => watcher.agentId === agentId)) {
           await commit({
+            forge: group?.forge ?? forge,
             url,
             snapshot,
             seenActivity: group?.seenActivity ?? activity.map(({ id }) => id),
@@ -322,21 +389,13 @@ export function createChangeRequestWatches(deps: Dependencies) {
           checks: snapshot.checks,
           reviewDecision: snapshot.reviewDecision,
           subscribed,
-          stale: observations.get(url)?.stale ?? false,
+          stale: observations.get(url)?.stale ?? Boolean(existing),
         };
       });
-    } finally {
-      const remaining = registrations.get(url)! - 1;
-      if (remaining) {
-        registrations.set(url, remaining);
-      } else {
-        registrations.delete(url);
-        if (!groups.get(url)?.watchers.length) {
-          groups.delete(url);
-          stopObserving(url);
-        }
-      }
-    }
+    const pending = existing
+      ? commitSubscription({ ...existing.snapshot, activity: [] })
+      : observe(forge, url).ready.then(commitSubscription);
+    return pending.finally(finish);
   }
 
   function removeWatcher(group: WatchGroup, agentId: string): Promise<void> {
@@ -393,7 +452,17 @@ export function createChangeRequestWatches(deps: Dependencies) {
             if (await deps.isActive(watcher.agentId)) watchers.push(watcher);
           }
           pruned ||= watchers.length !== group.watchers.length;
-          if (watchers.length) active.push({ ...group, watchers });
+          if (!watchers.length) continue;
+          const nextGroup = { ...group, watchers };
+          if (!deps.router.source(nextGroup.forge)) {
+            deps.logger.warn(
+              { forge: nextGroup.forge, url: nextGroup.url },
+              "Skipping persisted change request watch for unsupported forge",
+            );
+            unrestored.push(nextGroup);
+            continue;
+          }
+          active.push(nextGroup);
         }
       } catch (error) {
         recoveryError = error;
@@ -402,7 +471,7 @@ export function createChangeRequestWatches(deps: Dependencies) {
       }
       if (pruned) {
         try {
-          await writeJsonFileAtomic(file, active);
+          await writeJsonFileAtomic(file, [...active, ...unrestored]);
         } catch (error) {
           deps.logger.warn({ err: error, file }, "Could not prune archived change request watches");
         }
@@ -410,12 +479,21 @@ export function createChangeRequestWatches(deps: Dependencies) {
       for (const group of active) {
         groups.set(group.url, group);
         syncBackgroundWork(group);
-        observe(group.url);
+        try {
+          observe(group.forge, group.url);
+        } catch (error) {
+          deps.logger.warn(
+            { err: error, forge: group.forge, url: group.url },
+            "Could not start observing restored change request watch",
+          );
+        }
       }
     },
     subscribe,
     unsubscribe(agentId: string, input: string) {
-      return unsubscribe(agentId, deps.source.resolve(input));
+      const active = matchActiveGroup(input);
+      if (active) return unsubscribe(agentId, active.url);
+      return deps.router.resolve(input).then(({ url }) => unsubscribe(agentId, url));
     },
     archive,
     async close() {

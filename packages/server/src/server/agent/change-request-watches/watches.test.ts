@@ -1,16 +1,18 @@
-import { mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, expect, test, vi } from "vitest";
 import { createChangeRequestWatches } from "./index.js";
 import { AgentBackgroundWorkStore } from "../background-work/index.js";
 import { createAgentMessageDelivery, parseAgentMessages } from "../agent-messages/index.js";
+import type { ChangeRequestRouter } from "../../../services/change-request-router.js";
 import type {
   ChangeRequestSnapshot,
   ChangeRequestSource,
 } from "../../../services/change-request-source.js";
 
 const url = "https://github.com/owner/repo/pull/42";
+const gitlabUrl = "https://gitlab.com/org/sub/app/-/merge_requests/9";
 const reviewUrl = url + "#pullrequestreview-1";
 const initial: ChangeRequestSnapshot = {
   state: "open",
@@ -31,13 +33,19 @@ async function createTestHome() {
 
 function createHarness(
   home: string,
-  { isActive = async (_id: string) => true, observationFails = false } = {},
+  {
+    isActive = async (_id: string) => true,
+    observationFails = false,
+    resolveFails = false,
+    extraSources = {} as Record<string, ChangeRequestSource>,
+  } = {},
 ) {
   const observations = new Map<string, Parameters<ChangeRequestSource["observe"]>[1]>();
   const backgroundWork = new AgentBackgroundWorkStore();
   const busy = new Set<string>();
   const turns: { recipientId: string; prompt: string }[] = [];
   const listeners = new Set<(id: string) => void>();
+  const resolveCalls: string[] = [];
   const messages = createAgentMessageDelivery({
     isRunning: (id) => busy.has(id),
     subscribe(listener) {
@@ -52,10 +60,10 @@ function createHarness(
       throw error;
     },
   });
-  const watches = createChangeRequestWatches({
-    source: {
-      resolve: (input) => input,
-      describe: () => "owner/repo #42",
+  function createFakeSource(describe: (address: string) => string): ChangeRequestSource {
+    return {
+      resolve: (input) => input.replace(/\/+$/, ""),
+      describe,
       observe(address, callbacks) {
         observations.set(address, callbacks);
         queueMicrotask(() => {
@@ -64,7 +72,28 @@ function createHarness(
         });
         return () => observations.delete(address);
       },
+    };
+  }
+  const sources: Record<string, ChangeRequestSource> = {
+    github: createFakeSource(() => "owner/repo #42"),
+    gitlab: createFakeSource(() => "org/sub/app !9"),
+    ...extraSources,
+  };
+  const router: ChangeRequestRouter = {
+    async resolve(input) {
+      resolveCalls.push(input);
+      if (resolveFails) throw new Error("Host probe failed");
+      const forge = input.includes("gitlab") ? "gitlab" : "github";
+      const source = sources[forge];
+      if (!source) throw new Error(`Unsupported forge: ${forge}`);
+      return { forge, url: source.resolve(input) };
     },
+    source(forge) {
+      return sources[forge] ?? null;
+    },
+  };
+  const watches = createChangeRequestWatches({
+    router,
     paseoHome: home,
     logger: pino({ enabled: false }),
     isActive,
@@ -78,6 +107,7 @@ function createHarness(
     messages,
     watches,
     backgroundWork,
+    resolveCalls,
     idle(id: string) {
       busy.delete(id);
       for (const listener of listeners) listener(id);
@@ -338,6 +368,105 @@ test("recovers active watches even when pruning archived watchers cannot be writ
     await expect(h.watches.unsubscribe("archived", url)).resolves.toMatchObject({ removed: false });
     await expect(h.watches.subscribe("active", url)).resolves.toMatchObject({ subscribed: true });
     expect(await readFile(backup, "utf8")).toBe(stored);
+  } finally {
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("persists forge ids, restores legacy GitHub watches without probing, and preserves unknown forges", async () => {
+  const home = await createTestHome();
+  const file = join(home, "change-request-watches.json");
+  const legacyRecord = {
+    url,
+    snapshot: {
+      state: "open",
+      headSha: "aaa",
+      checksState: "pending",
+      checks: [],
+      reviewDecision: null,
+    },
+    seenActivity: [],
+    watchers: [{ agentId: "legacy-agent", startedAt: "2026-01-01T00:00:00.000Z" }],
+  };
+  const unknownForgeRecord = {
+    forge: "futureforge",
+    url: "https://future.example.com/team/repo/cr/5",
+    snapshot: legacyRecord.snapshot,
+    seenActivity: [],
+    watchers: [{ agentId: "future-agent", startedAt: "2026-01-01T00:00:00.000Z" }],
+  };
+  await writeFile(file, JSON.stringify([legacyRecord, unknownForgeRecord]), "utf8");
+
+  const h = createHarness(home, { resolveFails: true });
+  try {
+    await h.watches.start();
+    expect(h.resolveCalls).toEqual([]);
+    expect(h.backgroundWork.list("legacy-agent")).toEqual([
+      expect.objectContaining({ description: "owner/repo #42", kind: "monitor" }),
+    ]);
+    expect(h.observations.has(url)).toBe(true);
+
+    // Unsubscribing an active watch succeeds even when host resolution is temporarily down.
+    await expect(h.watches.unsubscribe("legacy-agent", `${url}/`)).resolves.toEqual({
+      url,
+      removed: true,
+    });
+    expect(h.backgroundWork.list("legacy-agent")).toEqual([]);
+    const persisted = JSON.parse(await readFile(file, "utf8")) as Array<{
+      forge?: string;
+      url: string;
+    }>;
+    expect(persisted).toEqual([unknownForgeRecord]);
+  } finally {
+    await h.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("watches multiple forges concurrently with forge-native descriptions and custom approval messages", async () => {
+  vi.useFakeTimers();
+  const home = await createTestHome();
+  const file = join(home, "change-request-watches.json");
+  const h = createHarness(home);
+  try {
+    await h.watches.start();
+    await h.watches.subscribe("agent-1", url);
+    await h.watches.subscribe("agent-1", gitlabUrl);
+    expect(h.backgroundWork.list("agent-1").map((item) => item.description)).toEqual([
+      "owner/repo #42",
+      "org/sub/app !9",
+    ]);
+
+    const persisted = JSON.parse(await readFile(file, "utf8")) as Array<{
+      forge?: string;
+      url: string;
+    }>;
+    expect(persisted.map(({ forge, url: entryUrl }) => ({ forge, url: entryUrl }))).toEqual([
+      { forge: "github", url },
+      { forge: "gitlab", url: gitlabUrl },
+    ]);
+
+    await h.observations.get(gitlabUrl)!.snapshot({
+      ...initial,
+      activity: [
+        {
+          id: "approval-note:77",
+          kind: "approval",
+          url: `${gitlabUrl}#note_77`,
+          message: `Merge request approved by @alice (1/1 approvals): ${gitlabUrl}#note_77`,
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(32_000);
+    expect(h.turns).toEqual([
+      {
+        recipientId: "agent-1",
+        prompt: expect.stringContaining(
+          `Merge request approved by @alice (1/1 approvals): ${gitlabUrl}#note_77`,
+        ),
+      },
+    ]);
   } finally {
     await h.close();
     await rm(home, { recursive: true, force: true });
