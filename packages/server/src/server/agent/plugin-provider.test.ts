@@ -3062,56 +3062,63 @@ test("preserves a wakeup arriving while an idle prompt is refused", async () => 
   }
 });
 
-test("a plugin runtime failure retires its background inventory", async () => {
-  const logger = createTestLogger();
-  const harness = createProviderHarness();
-  const registry = new PluginAgentClientRegistry(logger);
-  registry.replace([harness.registration]);
-  const manager = new AgentManager({ clients: registry.clients(), logger });
-  try {
-    const agent = await manager.createAgent(
-      { provider: harness.registration.id, cwd: tmpdir() },
-      undefined,
-      { workspaceId: undefined },
-    );
-    const opened = harness.inputs.find((input) => input.type === "session.open");
-    if (!opened) throw new Error("Expected the plugin session to open");
-    manager.setDaemonBackgroundWork({
-      agentId: agent.id,
-      namespace: "heartbeat",
-      id: "watch",
-      kind: "heartbeat",
-      description: "Daemon heartbeat",
-      startedAt: "2026-11-20T00:00:00.000Z",
-      stop: async () => {},
-    });
-    harness.emit({
-      type: "session.background_work",
-      sessionId: opened.sessionId,
-      items: [{ id: "command", kind: "shell", description: "Background command" }],
-      canInterruptSession: true,
-    });
-    await expect
-      .poll(() => manager.getAgentBackgroundWorkSummary(agent.id))
-      .toEqual({
-        count: 2,
+test.each(["session.runtime_failed", "session.closed"] as const)(
+  "retires plugin work on %s",
+  async (type) => {
+    const logger = createTestLogger();
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([harness.registration]);
+    const manager = new AgentManager({ clients: registry.clients(), logger });
+    try {
+      const agent = await manager.createAgent(
+        { provider: harness.registration.id, cwd: tmpdir() },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const opened = harness.inputs.find((input) => input.type === "session.open");
+      if (!opened) throw new Error("Expected the plugin session to open");
+      manager.setDaemonBackgroundWork({
+        agentId: agent.id,
+        namespace: "heartbeat",
+        id: "watch",
+        kind: "heartbeat",
+        description: "Daemon heartbeat",
+        startedAt: "2026-11-20T00:00:00.000Z",
+        stop: async () => {},
+      });
+      harness.emit({
+        type: "session.background_work",
+        sessionId: opened.sessionId,
+        items: [{ id: "command", kind: "shell", description: "Background command" }],
         canInterruptSession: true,
       });
+      await expect
+        .poll(() => manager.getAgentBackgroundWorkSummary(agent.id))
+        .toEqual({
+          count: 2,
+          canInterruptSession: true,
+        });
 
-    harness.emit({
-      type: "session.runtime_failed",
-      sessionId: opened.sessionId,
-      error: { message: "Provider process exited" },
-    });
-    await expect
-      .poll(() => ({
-        lifecycle: manager.getAgent(agent.id)?.lifecycle,
-        summary: manager.getAgentBackgroundWorkSummary(agent.id),
-        inventory: manager.listAgentBackgroundWork(agent.id).map((item) => item.id),
-      }))
-      .toEqual({ lifecycle: "error", summary: { count: 1 }, inventory: ["heartbeat:watch"] });
-  } finally {
-    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
-    await registry.shutdown();
-  }
-});
+      harness.emit(
+        type === "session.runtime_failed"
+          ? { type, sessionId: opened.sessionId, error: { message: "Provider process exited" } }
+          : { type, sessionId: opened.sessionId },
+      );
+      await expect
+        .poll(() => ({
+          lifecycle: manager.getAgent(agent.id)?.lifecycle,
+          summary: manager.getAgentBackgroundWorkSummary(agent.id),
+          inventory: manager.listAgentBackgroundWork(agent.id).map((item) => item.id),
+        }))
+        .toEqual({
+          lifecycle: type === "session.runtime_failed" ? "error" : "idle",
+          summary: { count: 1 },
+          inventory: ["heartbeat:watch"],
+        });
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await registry.shutdown();
+    }
+  },
+);

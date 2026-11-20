@@ -1655,12 +1655,11 @@ class PluginAgentSession implements AgentSession {
           },
         ];
       case "session.runtime_failed":
+      case "session.closed":
         return [
           { type: "background_work", provider: this.provider, items: null },
-          this.translateFailure(event.error),
+          ...(event.error ? [this.translateFailure(event.error)] : []),
         ];
-      case "session.closed":
-        return event.error ? [this.translateFailure(event.error)] : [];
       default:
         return [];
     }
