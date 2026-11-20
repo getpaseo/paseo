@@ -740,10 +740,12 @@ class AcpRuntime {
         await this.drainNotifications();
         this.fallbackChunkIds.clear();
         const canceled = this.activePrompt?.cancelling === true;
+        const preserveBackground = !canceled && this.outOfTurnActivity !== null;
         this.terminalizeTransientItems(canceled ? "canceled" : "failed", {
-          preserveBackgroundTools: !canceled,
+          turnId: preserveBackground ? turnId : undefined,
         });
-        if (canceled) this.clearBackgroundWork();
+        if (preserveBackground) this.syncBackgroundWorkFromInProgressTools();
+        else if (canceled) this.clearBackgroundWork();
         this.finishTurnPermissions(turnId);
         if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
         this.emit({
@@ -1278,9 +1280,13 @@ class AcpRuntime {
     if (previous?.settlement === "canceled") return;
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
     const previousStatus = previous?.snapshot.status;
+    const backgroundProgress =
+      this.backgroundToolCalls.has(update.toolCallId) &&
+      (update.status == null || update.status === previousStatus);
     // An already finished tool can receive output without waking the agent.
     const outOfTurn =
       this.isOutOfTurnLive() &&
+      !backgroundProgress &&
       previousStatus !== "completed" &&
       previousStatus !== "failed" &&
       (previous?.settlement === undefined || update.status != null);
@@ -1410,13 +1416,13 @@ class AcpRuntime {
 
   private terminalizeTransientItems(
     state: AcpToolSettlement,
-    options?: { preserveInProgressTools?: boolean; preserveBackgroundTools?: boolean },
+    options?: { preserveInProgressTools?: boolean; turnId?: string },
   ): void {
     for (const [id, record] of this.toolCalls) {
       const { snapshot, turnId, settlement } = record;
       if (settlement === "canceled" || (settlement && state !== "canceled")) continue;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
-      if (options?.preserveBackgroundTools && this.backgroundToolCalls.has(id)) continue;
+      if (options?.turnId && options.turnId !== turnId) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
       this.toolCalls.set(id, { ...record, settlement: state });
       this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);

@@ -61,8 +61,9 @@ function openInput(
 async function waitForEvent(
   events: ProviderEvent[],
   predicate: (event: ProviderEvent) => boolean,
+  timeout = 3_000,
 ): Promise<ProviderEvent> {
-  await expect.poll(() => events.find(predicate), { timeout: 3_000 }).toBeTruthy();
+  await expect.poll(() => events.find(predicate), { timeout }).toBeTruthy();
   return events.find(predicate)!;
 }
 
@@ -3226,6 +3227,13 @@ describe("ACP out-of-turn background activity", () => {
           title: "sleep 10",
           status: "in_progress",
         },
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-2",
+          kind: "execute",
+          title: "Other command",
+          status: "in_progress",
+        },
         { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
       ],
     });
@@ -3302,6 +3310,14 @@ describe("ACP out-of-turn background activity", () => {
       });
       agent.notify("session/update", {
         sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cmd-2",
+          rawOutput: "Background progress",
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
         update: { sessionUpdate: "usage_update", used: 1200, size: 100000 },
       });
       await waitForEvent(
@@ -3310,6 +3326,7 @@ describe("ACP out-of-turn background activity", () => {
           event.type === "session.turn" &&
           event.turnId === autoTurnId &&
           event.state === "completed",
+        1_000,
       );
       const startedAutonomousTurns = events.filter(
         (event) =>
@@ -3336,6 +3353,20 @@ describe("ACP out-of-turn background activity", () => {
         const params = request.params as { prompt?: Array<{ text?: string }> };
         if (request.method !== "session/prompt" || params.prompt?.[0]?.text !== "Second")
           return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-3", status: "in_progress" },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "cmd-4",
+            kind: "execute",
+            title: "Follow-up command",
+            status: "in_progress",
+          },
+        });
         instance.reject(request, "Follow-up rejected");
         return true;
       },
@@ -3357,6 +3388,13 @@ describe("ACP out-of-turn background activity", () => {
                 kind: "execute",
                 title: "cmd-2",
                 status: "in_progress",
+              },
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd-3",
+                kind: "execute",
+                title: "Earlier command",
+                status: "pending",
               },
               {
                 sessionUpdate: "agent_message_chunk",
@@ -3451,7 +3489,20 @@ describe("ACP out-of-turn background activity", () => {
             kind: "shell",
             description: "cmd-2",
           },
+          { id: "cmd-3", kind: "shell", description: "Earlier command" },
         ],
+      });
+      expect(
+        events.findLast((event) => event.type === "timeline.item" && event.item.id === "cmd-3"),
+      ).toMatchObject({
+        turnId: "acp:msg-1",
+        item: { status: "running" },
+      });
+      expect(
+        events.findLast((event) => event.type === "timeline.item" && event.item.id === "cmd-4"),
+      ).toMatchObject({
+        turnId: "acp:msg-2",
+        item: { status: "failed" },
       });
       expect(await queryCanStop(connection, events, "stop-with-cmd2")).toBe(false);
     } finally {
