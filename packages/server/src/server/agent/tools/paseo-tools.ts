@@ -784,9 +784,12 @@ function createToolCatalog(
       handler = async ({ serverId, ...input }, context) => {
         const destination = serverId ?? options.serverId;
         const remoteNotification = await prepareRemoteNotification(name, destination, input);
+        // notifyOn only filters this daemon's own subscription; hosts without it reject unknown fields.
+        const forwarded = { ...input };
+        if (destination !== options.serverId) delete forwarded.notifyOn;
         try {
           const response = await hostResolver.use(serverId, (host) =>
-            host[operation](input, context),
+            host[operation](forwarded, context),
           );
           if (response.isError) await remoteNotification?.reject();
           else remoteNotification?.accept();

@@ -1613,6 +1613,8 @@ test(
       title: "B child",
       provider: "claude/claude-test",
       initialPrompt: "Finish destination delegation",
+      // Applied by this daemon only; the destination's strict create schema must never see it.
+      notifyOn: ["finished", "errored", "closed"],
     });
     expect(self.serverId).toBe(directory.self.serverId);
     expect(remote.serverId).toBe(serverId);
