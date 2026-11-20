@@ -2823,8 +2823,22 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
   const storage = new AgentStorage(join(home, "agents"), logger);
   let cancelCount = 0;
   let promptCount = 0;
+  let currentMode = "default";
   let notifyAgent: ((message: AcpStreamMessage) => void) | null = null;
   let holdNextPrompt: ((release: () => void) => void) | null = null;
+  const modeConfig = () => [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: currentMode,
+      options: [
+        { value: "default", name: "Default" },
+        { value: "plan", name: "Plan" },
+      ],
+    },
+  ];
   const registration = runAcpProvider({
     id: "deferred-acp-daemon",
     label: "Deferred ACP Daemon",
@@ -2852,7 +2866,7 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
             send({
               jsonrpc: "2.0",
               id: message.id,
-              result: { protocolVersion: 1, agentCapabilities: {} },
+              result: { protocolVersion: 1, agentCapabilities: { loadSession: true } },
             });
             return;
           }
@@ -2860,8 +2874,18 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
             send({
               jsonrpc: "2.0",
               id: message.id,
-              result: { sessionId: "acp-s1", configOptions: [] },
+              result: { sessionId: "acp-s1", configOptions: modeConfig() },
             });
+            return;
+          }
+          if (message.method === "session/load") {
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
+            return;
+          }
+          if (message.method === "session/set_config_option") {
+            const params = message.params as { value?: string } | undefined;
+            if (typeof params?.value === "string") currentMode = params.value;
+            send({ jsonrpc: "2.0", id: message.id, result: { configOptions: modeConfig() } });
             return;
           }
           if (message.method === "session/prompt") {
@@ -3036,6 +3060,11 @@ test("preserves a deferred ACP background job on steer and cancels it on explici
     expect(cancelCount).toBe(1);
     await expect.poll(() => manager.getAgent(agent.id)?.lifecycle, { timeout: 3_000 }).toBe("idle");
     expect(promptCount).toBe(promptsBeforeStop);
+
+    // Changing mode immediately after stopping a deferred turn must transparently reopen the session.
+    await manager.setAgentMode(agent.id, "plan");
+    expect(manager.getAgent(agent.id)?.currentModeId).toBe("plan");
+    expect(currentMode).toBe("plan");
   } finally {
     await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
     await plugins.shutdown();
