@@ -2965,3 +2965,99 @@ test.each(["steer", "stop", "interrupt", "refused follow-up"] as const)(
     }
   },
 );
+
+test("preserves a wakeup arriving while an idle prompt is refused", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-wakeup-admission-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const harness = createProviderHarness({
+    handleInput: async (input, emit) => {
+      if (input.type !== "session.prompt") return false;
+      const { sessionId, prompt } = input;
+      if (prompt.clientMessageId === "initial") {
+        emit({
+          type: "session.prompt_result",
+          sessionId,
+          clientMessageId: "initial",
+          result: { type: "turn", turnId: "initial-turn" },
+        });
+        emit({ type: "session.turn", sessionId, turnId: "initial-turn", state: "started" });
+        emit({
+          type: "session.background_work",
+          sessionId,
+          items: [{ id: "command", kind: "shell", description: "Background command" }],
+          canInterruptSession: true,
+        });
+        emit({ type: "session.turn", sessionId, turnId: "initial-turn", state: "completed" });
+      } else {
+        emit({
+          type: "session.turn",
+          sessionId,
+          turnId: "wakeup",
+          state: "started",
+          acceptsFollowUp: true,
+        });
+        emit({ type: "session.background_work", sessionId, items: [] });
+        emit({
+          type: "timeline.item",
+          sessionId,
+          item: {
+            type: "assistant_message",
+            id: "wakeup-reply",
+            text: "The background command finished.",
+          },
+        });
+        emit({
+          type: "session.prompt_result",
+          sessionId,
+          clientMessageId: prompt.clientMessageId,
+          result: { type: "failed", error: { message: "Follow-up refused" } },
+        });
+      }
+      return true;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent(
+      { provider: harness.registration.id, cwd: home },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.runAgent(agent.id, "Start command", { clientMessageId: "initial" });
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.listAgentBackgroundWork(agent.id).map((item) => item.id)).toEqual(["command"]);
+
+    const result = await sendPromptToAgent({
+      agentManager: manager,
+      agentStorage: storage,
+      agentId: agent.id,
+      logger,
+      prompt: "Follow up",
+      messageId: "follow-up",
+    });
+    if (result.disposition !== "turn_started")
+      throw new Error(`Unexpected dispatch: ${result.disposition}`);
+    await expect(result.started).rejects.toThrow("Follow-up refused");
+    await expect
+      .poll(() => ({
+        lifecycle: manager.getAgent(agent.id)?.lifecycle,
+        backgroundWork: manager.listAgentBackgroundWork(agent.id),
+        replies: manager
+          .getTimeline(agent.id)
+          .flatMap((item) => (item.type === "assistant_message" ? [item.text] : [])),
+      }))
+      .toMatchObject({
+        lifecycle: "running",
+        backgroundWork: [],
+        replies: expect.arrayContaining(["The background command finished."]),
+      });
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});

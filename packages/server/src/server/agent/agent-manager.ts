@@ -3180,7 +3180,7 @@ export class AgentManager {
   }): Promise<string | null> {
     const { agent, agentId, pendingRun, prompt, options, promptStart } = params;
     if (promptStart?.admit?.() === false) {
-      if (!(await this.restoreAutonomousRun(agentId, pendingRun))) {
+      if (!(await this.releaseUnstartedRunWithProviderEvents(agentId, pendingRun))) {
         this.runs.settleForegroundRun(agentId, pendingRun.token);
       }
       return null;
@@ -3219,7 +3219,7 @@ export class AgentManager {
           stale: true,
         });
         agent.pendingReplacement = false;
-        if (!(await this.restoreAutonomousRun(agentId, pendingRun))) {
+        if (!(await this.releaseUnstartedRunWithProviderEvents(agentId, pendingRun))) {
           if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
           this.runs.settleForegroundRun(agentId, pendingRun.token);
         }
@@ -3235,7 +3235,7 @@ export class AgentManager {
             messageId: options.clientMessageId,
           });
         }
-        if (await this.restoreAutonomousRun(agentId, pendingRun)) {
+        if (await this.releaseUnstartedRunWithProviderEvents(agentId, pendingRun)) {
           await this.appendSystemErrorTimelineMessage(agent, agent.provider, errorMsg);
           this.emitState(agent);
         } else {
@@ -3254,14 +3254,17 @@ export class AgentManager {
     }
   }
 
-  private async restoreAutonomousRun(
+  private async releaseUnstartedRunWithProviderEvents(
     agentId: string,
     pending: PendingForegroundRun,
   ): Promise<boolean> {
-    if (!this.runs.restoreAutonomousRun(agentId, pending)) return false;
+    const restored = this.runs.restoreAutonomousRun(agentId, pending);
+    if (!restored && pending.stagedEvents.length === 0) return false;
+    // The provider refused this start. Its staged events belong to the existing session.
+    if (!restored) this.runs.settleForegroundRun(agentId, pending.token);
     for (const event of pending.stagedEvents.splice(0)) this.enqueueSessionEvent(agentId, event);
     await this.drainSessionEvents(agentId);
-    return true;
+    return restored || this.runs.hasRun(agentId);
   }
 
   private async ensureInteractiveSession(agentId: string): Promise<ActiveManagedAgent> {
