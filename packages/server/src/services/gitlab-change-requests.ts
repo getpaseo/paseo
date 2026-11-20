@@ -206,7 +206,9 @@ export function resolveGitLabChangeRequest(input: string): string {
 }
 
 export function gitlabChangeRequestHost(url: string): string {
-  return parseGitLabMergeRequestUrl(url).hostWithPort;
+  // glab keys auth and `--hostname` by bare hostname (with custom ports supplied
+  // via `api_host`), matching ForgeResolver.resolveHost(parsed.hostname).
+  return parseGitLabMergeRequestUrl(url).host;
 }
 
 export function describeGitLabChangeRequest(url: string): string {
@@ -218,7 +220,9 @@ export function describeGitLabChangeRequest(url: string): string {
 
 function mapGitLabMrState(mr: GitLabWatchMr): ChangeRequestSnapshot["state"] {
   const state = mr.state.toLowerCase();
-  if (state === "opened") return "open";
+  // GitLab reports "locked" while a merge is actively in progress; treat it as
+  // open so polling continues until GitLab transitions to "merged" (or "closed").
+  if (state === "opened" || state === "locked") return "open";
   if (state === "merged" || mr.merged_at != null) return "merged";
   return "closed";
 }
@@ -753,13 +757,13 @@ export function createGitLabChangeRequestSource(
     isObserved(): boolean;
     pauseHost(untilMs: number): void;
   }): Promise<ChangeRequestSnapshot> {
-    const { hostWithPort, projectPath, iid } = parseGitLabMergeRequestUrl(context.url);
-    await ensureHostAuthenticated(hostWithPort);
+    const { host, projectPath, iid } = parseGitLabMergeRequestUrl(context.url);
+    await ensureHostAuthenticated(host);
     const encodedProject = encodeURIComponent(projectPath);
     const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
 
     const { data: mr } = await apiGet({
-      host: hostWithPort,
+      host,
       endpoint: mrEndpoint,
       schema: gitLabWatchMrSchema,
       pauseHost: context.pauseHost,
@@ -771,7 +775,7 @@ export function createGitLabChangeRequestSource(
     const mrWebUrl = mr.web_url || context.url;
 
     const checks = await readPipelineChecks({
-      host: hostWithPort,
+      host,
       mrEndpoint,
       encodedProject,
       mr,
@@ -780,7 +784,7 @@ export function createGitLabChangeRequestSource(
       pauseHost: context.pauseHost,
     });
     const discussionsResult = await apiGetAllPages({
-      host: hostWithPort,
+      host,
       endpoint: `projects/${encodedProject}/merge_requests/${iid}/discussions`,
       itemSchema: gitLabWatchDiscussionSchema,
       isObserved: context.isObserved,
@@ -802,7 +806,7 @@ export function createGitLabChangeRequestSource(
     // approval transition baselines.
     const approvalCount = hasNewApprovalNote
       ? await readOptionalApprovalCount({
-          host: hostWithPort,
+          host,
           endpoint: `projects/${encodedProject}/merge_requests/${iid}/approvals`,
           pauseHost: context.pauseHost,
         })
