@@ -3260,9 +3260,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
       }
     }
-    if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
-      await this.setThinkingOption(this.config.thinkingOptionId);
-    }
+    await this.applyConfiguredThinkingOption();
     const configuredFeatureValues = this.config.providerOptions ?? {};
     for (const featureOption of this.configFeatureOptions) {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
@@ -3283,6 +3281,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // The options are the state, so every select the session opened with is reported, including
     // ones nobody set (a native default is stored like any other value).
     this.openOptionsPatch = this.featureDifferences(configuredFeatureValues);
+  }
+
+  private async applyConfiguredThinkingOption(): Promise<void> {
+    const requested = this.config.thinkingOptionId;
+    if (!requested || requested === this.thinkingOptionId) {
+      return;
+    }
+
+    try {
+      await this.setThinkingOption(requested);
+    } catch (error) {
+      if (!this.initialHandle || this.thinkingOptionWriter || !isACPInvalidParams(error)) {
+        throw error;
+      }
+
+      const option = findSelectConfigOption({
+        configOptions: this.configOptions,
+        category: "thought_level",
+      });
+      if (
+        !option ||
+        flattenSelectOptions(option.options).some((choice) => choice.value === requested)
+      ) {
+        throw error;
+      }
+
+      this.logger.warn(
+        { requested, current: this.thinkingOptionId, model: this.currentModel },
+        "Saved ACP thinking option is unavailable on resume; keeping the provider's current value",
+      );
+    }
   }
 
   /**

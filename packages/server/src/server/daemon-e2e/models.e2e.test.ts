@@ -576,3 +576,70 @@ test("bundled goose lists configured providers and switches models across provid
     await rm(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("reopens an ACP chat and lets the user replace a rejected saved thinking level", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-acp-thinking-resume-"));
+  const options = {
+    paseoHomeRoot: root,
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    mcpEnabled: false,
+    pluginsEnabled: false,
+    providerOverrides: {
+      "thinking-fixture": {
+        extends: "acp" as const,
+        label: "Thinking fixture",
+        command: [
+          process.execPath,
+          path.join(import.meta.dirname, "acp-thinking-resume-fixture.cjs"),
+        ],
+      },
+    },
+  };
+  try {
+    const first = await createDaemonTestContext(options);
+    let agentId: string;
+    try {
+      const agent = await first.client.createAgent({
+        provider: "thinking-fixture",
+        cwd: root,
+        model: "second-model",
+        thinkingOptionId: "max",
+      });
+      agentId = agent.id;
+      expect(agent.thinkingOptionId).toBe("max");
+      await first.client.sendMessage(agentId, "Save this conversation");
+      expect((await first.client.waitForFinish(agentId, 10_000)).status).toBe("idle");
+    } finally {
+      await first.cleanup();
+    }
+
+    const reopened = await createDaemonTestContext(options);
+    try {
+      const timeline = await reopened.client.fetchAgentTimeline(agentId, { limit: 40 });
+      expect(timeline.entries.map(({ item }) => item)).toContainEqual(
+        expect.objectContaining({
+          type: "assistant_message",
+          text: "Response from the saved session",
+        }),
+      );
+      expect((await reopened.client.fetchAgent(agentId))?.agent.runtimeInfo?.thinkingOptionId).toBe(
+        "high",
+      );
+
+      // Interactive writes still surface a provider rejection.
+      await expect(reopened.client.setAgentThinkingOption(agentId, "max")).rejects.toThrow(
+        "Invalid params",
+      );
+      await reopened.client.setAgentThinkingOption(agentId, "low");
+      expect((await reopened.client.fetchAgent(agentId))?.agent).toMatchObject({
+        thinkingOptionId: "low",
+        runtimeInfo: { thinkingOptionId: "low" },
+      });
+    } finally {
+      await reopened.cleanup();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
