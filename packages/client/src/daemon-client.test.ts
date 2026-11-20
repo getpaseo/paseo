@@ -1623,7 +1623,17 @@ test("defaults session RPC waiters to sixty seconds", async () => {
   await expect(responsePromise).rejects.toThrow("No response to fetch_agent_request after 60000ms");
 });
 
-test("keeps archive pending through the worktree manager's removal budget", async () => {
+test.each([
+  ["archive_workspace_request", (client: DaemonClient) => client.archiveWorkspace("workspace-1")],
+  [
+    "paseo_worktree_archive_request",
+    (client: DaemonClient) => client.archivePaseoWorktree({ worktreePath: "/repo/worktree" }),
+  ],
+  [
+    "create_paseo_worktree_request",
+    (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
+  ],
+] as const)("keeps %s pending through the worktree manager budget", async (type, run) => {
   useHeartbeatClock();
   const transport = createMockTransport();
   const client = new DaemonClient({
@@ -1639,7 +1649,7 @@ test("keeps archive pending through the worktree manager's removal budget", asyn
   transport.triggerOpen();
   await connecting;
 
-  const result = client.archiveWorkspace("workspace-1").catch((error: unknown) => error);
+  const result = run(client).catch((error: unknown) => error);
   await vi.advanceTimersByTimeAsync(149_999);
   let settled = false;
   void result.then(() => {
@@ -1652,7 +1662,7 @@ test("keeps archive pending through the worktree manager's removal budget", asyn
   await vi.advanceTimersByTimeAsync(1);
   expect(await result).toMatchObject({
     code: "DAEMON_REQUEST_TIMEOUT",
-    message: "No response to archive_workspace_request after 150000ms",
+    message: `No response to ${type} after 150000ms`,
   });
 });
 

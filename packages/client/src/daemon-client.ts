@@ -1162,6 +1162,7 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+const WORKTREE_OPERATION_TIMEOUT_MS = 150_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -3319,7 +3320,7 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "archive_workspace_response",
-      timeout: 150_000,
+      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
     });
   }
 
@@ -3842,7 +3843,7 @@ export class DaemonClient {
           type: "workspace.recovery.restore.request",
           workspaceId,
         },
-        timeout: 150_000,
+        timeout: WORKTREE_OPERATION_TIMEOUT_MS,
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
@@ -3859,7 +3860,7 @@ export class DaemonClient {
           workspaceId,
         },
         // Undoing a finished worktree archive recreates the worktree, like recovery does.
-        timeout: 150_000,
+        timeout: WORKTREE_OPERATION_TIMEOUT_MS,
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "The host could not undo the workspace archive");
@@ -5440,6 +5441,7 @@ export class DaemonClient {
         ...(input.scope !== undefined ? { scope: input.scope } : {}),
       },
       responseType: "paseo_worktree_archive_response",
+      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
     });
   }
 
@@ -5463,6 +5465,7 @@ export class DaemonClient {
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
       },
       responseType: "create_paseo_worktree_response",
+      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
     });
   }
 

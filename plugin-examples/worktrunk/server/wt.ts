@@ -1,4 +1,5 @@
 import { lstatSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import {
   execCommand,
@@ -8,6 +9,7 @@ import {
 } from "@getpaseo/plugin/server";
 
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const CREATED_BRANCH_FILE = "paseo-worktrunk-created-branch";
 
 export const WORKING_MARKER = "🤖";
 export const WAITING_MARKER = "💬";
@@ -135,31 +137,64 @@ export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | 
   }
 }
 
-async function cleanupPartiallyCreatedWorktree(repoRoot: string, error: unknown): Promise<void> {
+function failedSwitchOutput(error: unknown): SwitchJsonOutput | null {
   // Worktrunk reports the checkout and whether it created the branch even if a hook fails.
   const stdout =
     error instanceof Error && error.cause && typeof error.cause === "object"
       ? (error.cause as { stdout?: string }).stdout
       : undefined;
-  const parsed = tryParseSwitchOutput(stdout);
-  if (parsed?.action !== "created") return;
-  try {
-    await runWt([
-      "-C",
-      repoRoot,
-      "remove",
-      "--foreground",
-      "--no-delete-branch",
-      "--no-hooks",
-      "--force",
-      parsed.path,
-    ]);
-    if (parsed.createdBranch && parsed.branch) {
-      await execCommand("git", ["branch", "-D", "--", parsed.branch], { cwd: repoRoot });
-    }
-  } catch {
-    // Keep the original setup error.
+  return tryParseSwitchOutput(stdout);
+}
+
+async function createdBranchFile(worktreePath: string): Promise<string> {
+  const { stdout } = await execCommand("git", ["rev-parse", "--absolute-git-dir"], {
+    cwd: worktreePath,
+  });
+  return join(stdout.trim(), CREATED_BRANCH_FILE);
+}
+
+async function cleanupPartiallyCreatedWorktree(
+  repoRoot: string,
+  output: SwitchJsonOutput | null,
+): Promise<void> {
+  if (output?.action !== "created") return;
+  await runWt([
+    "-C",
+    repoRoot,
+    "remove",
+    "--foreground",
+    "--no-delete-branch",
+    "--no-hooks",
+    "--force",
+    output.path,
+  ]);
+  if (output.createdBranch && output.branch) {
+    await execCommand("git", ["branch", "-D", "--", output.branch], { cwd: repoRoot });
   }
+}
+
+async function recordCreatedBranch(repoRoot: string, output: SwitchJsonOutput): Promise<void> {
+  if (output.action !== "created" || !output.createdBranch || !output.branch) return;
+  try {
+    // The linked worktree owns this record until removal. An archive keeps the branch.
+    await writeFile(await createdBranchFile(output.path), output.branch, { flag: "wx" });
+  } catch (error) {
+    await cleanupPartiallyCreatedWorktree(repoRoot, output).catch(() => {});
+    throw error;
+  }
+}
+
+async function hasLocalBranch(
+  repoRoot: string,
+  branch: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const ref = `refs/heads/${branch}`;
+  const { stdout } = await execCommand("git", ["for-each-ref", "--format=%(refname)", ref], {
+    cwd: repoRoot,
+    signal,
+  });
+  return stdout.trim().split(/\r?\n/).includes(ref);
 }
 
 export async function createWithWorktrunk(
@@ -168,20 +203,25 @@ export async function createWithWorktrunk(
 ): Promise<{ type: "created"; path: string } | undefined> {
   const args = buildCreateArgs(request);
   if (!args) return undefined;
-  if (request.kind === "branch-off") {
-    const ref = `refs/heads/${request.branch}`;
-    const { stdout } = await execCommand("git", ["for-each-ref", "--format=%(refname)", ref], {
-      cwd: request.repoRoot,
-      signal,
-    });
-    // Paseo branches from the existing branch tip and chooses a new name on collision.
-    if (stdout.trim().split(/\r?\n/).includes(ref)) return undefined;
+  const sameRepoChangeRequest =
+    (request.kind === "checkout-change-request" || request.kind === "checkout-github-pr") &&
+    !request.untrusted &&
+    !request.headRepositoryOwner;
+  // With a local name collision, Git gives branch-off a new name or fetches the PR head into
+  // a separate branch. Worktrunk's PR shortcut can reuse the local branch at an older commit.
+  let existingBranch: string | undefined;
+  if (request.kind === "branch-off") existingBranch = request.branch;
+  else if (sameRepoChangeRequest) existingBranch = request.headRef;
+  if (existingBranch && (await hasLocalBranch(request.repoRoot, existingBranch, signal))) {
+    return undefined;
   }
   let stdout: string;
   try {
     stdout = await runWt(args, { signal });
   } catch (error) {
-    await cleanupPartiallyCreatedWorktree(request.repoRoot, error);
+    await cleanupPartiallyCreatedWorktree(request.repoRoot, failedSwitchOutput(error)).catch(
+      () => {},
+    );
     throw error;
   }
   const output = parseSwitchOutput(stdout);
@@ -190,6 +230,11 @@ export async function createWithWorktrunk(
   if (output.action !== undefined && output.action !== "created") {
     return undefined;
   }
+  if (sameRepoChangeRequest && output.action === "created" && !output.createdBranch) {
+    await cleanupPartiallyCreatedWorktree(request.repoRoot, output);
+    return undefined;
+  }
+  await recordCreatedBranch(request.repoRoot, output);
   return { type: "created", path: output.path };
 }
 
@@ -211,7 +256,16 @@ export async function removeWithWorktrunk(
     ...(request.force ? ["--force"] : []),
     request.path,
   ];
+  const createdBranch =
+    request.reason === "rollback" && request.repoRoot && request.branch
+      ? await createdBranchFile(request.path)
+          .then((file) => readFile(file, "utf8"))
+          .catch(() => null)
+      : null;
   await runWt(args, { signal });
+  if (createdBranch && createdBranch === request.branch && request.repoRoot) {
+    await execCommand("git", ["branch", "-D", "--", createdBranch], { cwd: request.repoRoot });
+  }
   return { type: "removed" };
 }
 
@@ -241,10 +295,13 @@ export async function restoreWithWorktrunk(
   try {
     stdout = await runWt(args, { signal });
   } catch (error) {
-    await cleanupPartiallyCreatedWorktree(request.repoRoot, error);
+    await cleanupPartiallyCreatedWorktree(request.repoRoot, failedSwitchOutput(error)).catch(
+      () => {},
+    );
     throw error;
   }
   const output = parseSwitchOutput(stdout);
+  await recordCreatedBranch(request.repoRoot, output);
   return { type: "restored", path: output.path };
 }
 

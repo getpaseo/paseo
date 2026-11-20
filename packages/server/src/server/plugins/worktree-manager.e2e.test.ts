@@ -162,11 +162,22 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
   );
   await writeFile(
     path.join(transformPluginDir, "index.server.ts"),
-    `export default function contribute(server) {
-  return server.addHook("worktree.create.before", async ({ request }) => {
+    `import { existsSync } from "node:fs";
+import path from "node:path";
+export default function contribute(server) {
+  const removeBefore = server.addHook("worktree.create.before", async ({ request }) => {
     if (request.kind !== "branch-off") return;
     return { ...request, branch: "team/" + request.branch, baseRef: "release" };
   });
+  const removeAfter = server.addHook("worktree.create.after", async ({ worktree }) => {
+    if (worktree.branch === "team/fail-after" && !existsSync(path.join(worktree.sourceCheckout, ".after-fixed"))) {
+      throw new Error("Paseo after-hook failed");
+    }
+  });
+  return () => {
+    removeBefore();
+    removeAfter();
+  };
 }
 `,
   );
@@ -242,6 +253,20 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
     expect(git(retriedPath, ["branch", "--show-current"])).toBe("team/fail-pre-start");
     expect(await readFile(path.join(retriedPath, ".wt-hook-ran"), "utf8")).toBe("pre-start");
 
+    const rejectedAfter = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, worktreeSlug: "fail-after" },
+    });
+    expect(rejectedAfter.error).toContain("Paseo after-hook failed");
+    expect(git(repository, ["branch", "--list", "team/fail-after"])).toBe("");
+    await writeFile(path.join(repository, ".after-fixed"), "");
+    const retriedAfter = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, worktreeSlug: "fail-after" },
+    });
+    expect(retriedAfter.error).toBeNull();
+    const retriedAfterPath = retriedAfter.workspace!.workspaceDirectory;
+    expect(git(retriedAfterPath, ["branch", "--show-current"])).toBe("team/fail-after");
+    expect(await readFile(path.join(retriedAfterPath, ".wt-hook-ran"), "utf8")).toBe("pre-start");
+
     // Archive delegates removal to `wt remove` (run from repoRoot) AFTER Paseo writes refs/paseo/kept-commits/*.
     const archived = await client.archiveWorkspace(workspaceId);
     expect(archived.error).toBeNull();
@@ -307,6 +332,12 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
         branch: "team/fail-pre-start",
         create: true,
       }),
+      expect.objectContaining({ command: "switch", branch: "team/fail-after", create: true }),
+      expect.objectContaining({
+        command: "remove",
+        target: path.join(path.dirname(repository), "repo.team-fail-after"),
+      }),
+      expect.objectContaining({ command: "switch", branch: "team/fail-after", create: true }),
       expect.objectContaining({
         command: "remove",
         cwd: repository,

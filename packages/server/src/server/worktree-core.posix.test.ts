@@ -28,6 +28,7 @@ import { validateBeforeRequest, validateBeforeResult } from "./plugins/lifecycle
 import { UnknownBranchError } from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
+import { createWithWorktrunk } from "../../../../plugin-examples/worktrunk/server/wt.js";
 
 function createGitHubServiceStub(): ForgeService {
   return {
@@ -1033,6 +1034,66 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.worktree.branchName).toBe("daemon-shutdown-diagnostics");
       expect(readme.replace(/\r\n/g, "\n")).toBe("same repo pr branch\n");
       expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+    });
+
+    test("checks out the fetched PR head when Worktrunk would reuse a stale local branch", async () => {
+      const { tempDir, repoDir, remoteDir, paseoHome } = createSameRepoGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const branch = "daemon-shutdown-diagnostics";
+      const cached = execFileSync("git", ["rev-parse", "main"], {
+        cwd: repoDir,
+        encoding: "utf8",
+      }).trim();
+      execFileSync("git", ["branch", "-f", branch, cached], { cwd: repoDir });
+      const expected = execFileSync(
+        "git",
+        ["--git-dir", remoteDir, "rev-parse", "refs/pull/1790/head"],
+        { encoding: "utf8" },
+      ).trim();
+      expect(cached).not.toBe(expected);
+
+      const wt = path.join(tempDir, "wt");
+      writeFileSync(
+        wt,
+        `#!/bin/sh
+git -C "$2" worktree add "$2-stale-checkout" ${branch} --quiet || exit $?
+printf '{"action":"created","path":"%s"}\\n' "$2-stale-checkout"
+`,
+        { mode: 0o755 },
+      );
+      const previous = process.env.WORKTRUNK_BIN;
+      process.env.WORKTRUNK_BIN = wt;
+      try {
+        const result = await createCoreWorktree(
+          { cwd: repoDir, action: "checkout", refName: branch, githubPrNumber: 1790, paseoHome },
+          {
+            ...createCoreDeps(),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async (request) => {
+                const managed = await createWithWorktrunk(request, new AbortController().signal);
+                return managed ? { pluginId: "worktrunk", path: managed.path } : null;
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        );
+        expect(
+          execFileSync("git", ["rev-parse", "HEAD"], {
+            cwd: result.worktree.worktreePath,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(expected);
+        expect(
+          execFileSync("git", ["rev-parse", `refs/heads/${branch}`], {
+            cwd: repoDir,
+            encoding: "utf8",
+          }).trim(),
+        ).toBe(cached);
+      } finally {
+        if (previous === undefined) delete process.env.WORKTRUNK_BIN;
+        else process.env.WORKTRUNK_BIN = previous;
+      }
     });
 
     test("pushes a deduplicated same-repo GitHub PR branch to the PR head", async () => {
