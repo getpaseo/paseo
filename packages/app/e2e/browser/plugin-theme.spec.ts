@@ -289,26 +289,32 @@ test("reaches the last theme when a plugin contributes more themes than fit", as
 
 const TOKENS_PLUGIN_ID = "plugin-theme-tokens-e2e";
 
-// Two themes with the same palette; the second also sets design tokens, so any difference
-// between them comes from the tokens.
-const TOKENS_SOURCE = `export default function contribute(plugin) {
+const QA_TOKENS = `{
+  radius: { sm: 0, base: 0, md: 0, lg: 0, xl: 0, "2xl": 0 },
+  spacing: { 1: 8, 2: 12, 3: 16 },
+  fontSize: { sm: 13, base: 16 },
+  fontWeight: { normal: "300" },
+  borderWidth: { 2: 1 },
+  opacity: { 50: 0.3 },
+  iconStrokeWidth: 1,
+}`;
+
+// "QA Colors" and "QA Tokens" share a palette, so any difference between them comes from the
+// tokens. "QA Live" starts color-only; the test rewrites its geometry tokens while it is selected.
+// Its font sizes never change, so the font-size part of the appearance key cannot hide a stale
+// geometry class.
+function tokensSource(liveTokens: string): string {
+  return `export default function contribute(plugin) {
   const colors = {
     background: "#1e1e2e", foreground: "#cdd6f4", raised: "#313244", control: "#45475a",
     border: "#45475a", accent: "#cba6f7", mutedForeground: "#a6adc8", ring: "#6c7086",
   };
   plugin.addTheme({ id: "colors", name: "QA Colors", appearance: "dark", colors });
-  plugin.addTheme({
-    id: "tokens", name: "QA Tokens", appearance: "dark", colors,
-    radius: { sm: 0, base: 0, md: 0, lg: 0, xl: 0, "2xl": 0 },
-    spacing: { 1: 8, 2: 12, 3: 16 },
-    fontSize: { sm: 13, base: 16 },
-    fontWeight: { normal: "300" },
-    borderWidth: { 2: 1 },
-    opacity: { 50: 0.3 },
-    iconStrokeWidth: 1,
-  });
+  plugin.addTheme({ id: "tokens", name: "QA Tokens", appearance: "dark", colors, ...${QA_TOKENS} });
+  plugin.addTheme({ id: "live", name: "QA Live", appearance: "dark", colors, ...${liveTokens} });
   return () => {};
 }`;
+}
 
 test("applies a plugin theme's design tokens and leaves a color-only theme on Paseo's", async ({
   page,
@@ -320,46 +326,70 @@ test("applies a plugin theme's design tokens and leaves a color-only theme on Pa
     repoPrefix: "theme-tokens-",
     title: "Theme tokens workspace",
   });
+  const sourcePath = path.join(directory, "index.client.ts");
   await writeFile(
     path.join(directory, "paseo-plugin.json"),
     JSON.stringify({ id: TOKENS_PLUGIN_ID, requirements: pluginRequirements }),
   );
-  await writeFile(path.join(directory, "index.client.ts"), TOKENS_SOURCE);
+  await writeFile(sourcePath, tokensSource("{}"));
+  const thinIcons = page.locator('svg[stroke-width="1"]');
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(directory);
     await page.setViewportSize({ width: 1280, height: 800 });
 
-    // The theme picker tile reads borderRadius.lg and borderWidth[2]; its label reads fontSize.sm.
+    // Settings keeps its form mounted, so reload before reading the picker's geometry.
+    // The tile reads borderRadius.lg and borderWidth[2]; its label reads fontSize.sm.
     const expectTile = async (name: string, radius: string, border: string, font: string) => {
+      await selectTheme(page, name);
+      await page.reload();
+      await openSettingsSection(page, "appearance");
       const tile = page.getByRole("radio", { name, exact: true });
-      await expect(tile).toBeChecked();
+      await expect(tile).toBeChecked({ timeout: 30_000 });
       await page.mouse.move(0, 0);
       await expect(tile).toHaveCSS("border-top-left-radius", radius);
       await expect(tile).toHaveCSS("border-top-width", border);
       await expect(tile.getByText(name, { exact: true })).toHaveCSS("font-size", font);
     };
+    const shootWorkspace = async (prefix: string) => {
+      await openAgentRoute(page, workspace);
+      await qaScreenshot(page, `${prefix}-workspace`);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await qaScreenshot(page, `${prefix}-compact`);
+      await page.setViewportSize({ width: 1280, height: 800 });
+    };
 
-    await selectTheme(page, "QA Colors");
     await expectTile("QA Colors", "8px", "2px", "12px");
     await qaScreenshot(page, "theme-tokens-before-appearance");
-    await openAgentRoute(page, workspace);
-    await expect(page.locator('svg[stroke-width="1.5"]').first()).toBeAttached();
-    await qaScreenshot(page, "theme-tokens-before-workspace");
-    await page.setViewportSize({ width: 390, height: 844 });
-    await qaScreenshot(page, "theme-tokens-before-compact");
-    await page.setViewportSize({ width: 1280, height: 800 });
+    await shootWorkspace("theme-tokens-before");
+    await expect(thinIcons).toHaveCount(0);
 
-    await selectTheme(page, "QA Tokens");
     await expectTile("QA Tokens", "0px", "1px", "13px");
     await qaScreenshot(page, "theme-tokens-after-appearance");
-    await openAgentRoute(page, workspace);
-    await expect(page.locator('svg[stroke-width="1"]').first()).toBeAttached({ timeout: 30_000 });
-    await qaScreenshot(page, "theme-tokens-after-workspace");
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator('svg[stroke-width="1"]').first()).toBeAttached({ timeout: 30_000 });
-    await qaScreenshot(page, "theme-tokens-after-compact");
+    await shootWorkspace("theme-tokens-after");
+    await expect(thinIcons.first()).toBeAttached({ timeout: 30_000 });
+
+    await test.step("geometry tokens refresh mounted web chrome without navigation", async () => {
+      await selectTheme(page, "QA Live");
+      await openAgentRoute(page, workspace);
+      const row = page.getByTestId(
+        `sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`,
+      );
+      await expect(row).toBeVisible({ timeout: 30_000 });
+      await expect(row).not.toHaveCSS("border-top-left-radius", "0px");
+      await expect(thinIcons).toHaveCount(0);
+
+      await writeFile(
+        sourcePath,
+        tokensSource(
+          `{ radius: { sm: 0, base: 0, md: 0, lg: 0, xl: 0, "2xl": 0 }, iconStrokeWidth: 1 }`,
+        ),
+      );
+      await client.reloadPlugin(TOKENS_PLUGIN_ID);
+      await expect(row).toHaveCSS("border-top-left-radius", "0px", { timeout: 30_000 });
+      await expect(thinIcons.first()).toBeAttached();
+    });
   } finally {
     await client.removePlugin(TOKENS_PLUGIN_ID).catch(() => undefined);
     await client
