@@ -131,7 +131,7 @@ function SchedulePrPill() {
         </span>
         <span className="font-mono text-[11px] text-white/45">#2831</span>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5 font-mono text-[10.5px]">
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px]">
         <span className="inline-flex items-center gap-1 rounded bg-[#2BAC76]/15 px-1.5 py-0.5 text-[#6CB17B]">
           <TrendingDown className="h-3 w-3" aria-hidden="true" />
           CI -38%

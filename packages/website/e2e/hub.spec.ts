@@ -111,12 +111,11 @@ test("Hub previews have room for their final rows with larger text", async ({ pa
   await expectPreviewRowFits(page, "Discord", "Message #engineering");
 });
 
-test("the Discord preview shows the complete pull request ID on a narrow phone", async ({
-  page,
-}) => {
+test("preview results fit on a narrow phone with larger text", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openHub(page, 320);
   await page.addStyleTag({ content: "html { font-size: 125%; }" });
   await waitForHydration(page);
   await expectPreviewRowFits(page, "Discord", "getpaseo/paseo#2825");
+  await expectPreviewRowFits(page, "Schedules", "tests passed");
 });
