@@ -39,6 +39,9 @@ import {
   type AgentDraftControls,
   type AgentOptionControl,
   type AgentLaunchContext,
+  type AgentModelDefinition,
+  type ProviderHandoffState,
+  type ProviderPreviousSession,
   type AgentSlashCommand,
   type AgentMode,
   type AgentPermissionRequest,
@@ -75,6 +78,21 @@ import {
   foldHookFeatureValues,
   type ProviderOptionsPatch,
 } from "./option-controls.js";
+import {
+  HANDOFF_CHARS_PER_TOKEN,
+  buildCompactionPrompt,
+  buildHandoffText,
+  buildProviderSwitchConfig,
+  buildSummaryMergePrompt,
+  groupSummaries,
+  planProviderHandoff,
+  stripHandoffEcho,
+  summaryBudgetChars,
+  summaryContextChars,
+  withProviderHandoff,
+  type HandoffBase,
+  type ProviderHandoffPlan,
+} from "./provider-handoff.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -122,7 +140,7 @@ import {
   type DaemonBackgroundWorkKey,
 } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
-import { buildSessionConfig, extractAttention } from "../persistence-hooks.js";
+import { buildSessionConfig, extractAttention, extractTimestamps } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -264,6 +282,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
+  if (record.config.providerHandoff != null) {
+    config.providerHandoff = { ...record.config.providerHandoff };
+  }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   return stripInternalPaseoMcpServer(config);
 }
@@ -374,6 +395,13 @@ export interface CreateAgentOptions {
   owner?: AgentOwner;
   /** Background agents stay out of discovery, tabs, tracks and attention. Fixed at creation. */
   background?: boolean;
+  /** Restore a switched chat whose target has not produced a native session handle yet. */
+  restoreState?: {
+    createdAt: Date;
+    updatedAt: Date;
+    lastUserMessageAt: Date | null;
+    attention: AttentionState;
+  };
 }
 
 export interface AgentManagerOptions {
@@ -846,6 +874,59 @@ export interface RetiredInternalAgent {
   lastMessage: string | null;
 }
 
+/** A validated provider switch, with the history and handoff plan read before the switch. */
+interface ProviderSwitchTarget {
+  provider: AgentProvider;
+  modelId: string | null;
+  client: AgentClient;
+  model: AgentModelDefinition | undefined;
+  history: AgentTimelineRow[];
+  plan: ProviderHandoffPlan;
+  /** The provider's own earlier session in this chat, resumed instead of starting a new one. */
+  resume?: ProviderPreviousSession;
+}
+
+/** What the new session receives, and what the switch notice and the next switch need to know. */
+interface ProviderSwitchHandoff {
+  text: string;
+  /** A sentence for the switch notice about how the conversation went across. */
+  note?: string;
+  /** A summary of the timeline from its start, for later switches to reuse. */
+  compaction?: ProviderHandoffState["compaction"];
+}
+
+interface SwitchCompaction {
+  controller: AbortController;
+  /** Resolves when the summarizing phase has ended and the chat shows the result. */
+  settled: Promise<void>;
+}
+
+/** The newer of two summaries that each cover the chat from its start. */
+function newerCompaction(
+  a: ProviderHandoffState["compaction"],
+  b: ProviderHandoffState["compaction"],
+): ProviderHandoffState["compaction"] {
+  if (!a) return b;
+  if (!b) return a;
+  return b.throughSeq >= a.throughSeq ? b : a;
+}
+
+/** A native session handle without the chat's own switch state, which would nest on every switch. */
+function previousSessionHandle(handle: AgentPersistenceHandle): AgentPersistenceHandle {
+  const metadata = handle.metadata as Record<string, unknown> | undefined;
+  if (!metadata || !("providerHandoff" in metadata)) return handle;
+  const { providerHandoff: _handoff, ...rest } = metadata;
+  return { ...handle, metadata: rest as typeof handle.metadata };
+}
+
+function formatDuration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  return minutes >= 1 ? `${minutes} min` : `${Math.max(1, Math.round(ms / 1000))} s`;
+}
+
+/** A summarizer call that runs longer than this is canceled and the switch fails. */
+const HANDOFF_SUMMARIZER_TIMEOUT_MS = 20 * 60 * 1000;
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
@@ -857,6 +938,9 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore: InMemoryAgentTimelineStore;
+  private readonly providerSwitches = new Set<string>();
+  /** Switch compactions that are still summarizing, by chat; stopping the chat cancels one. */
+  private readonly switchCompactions = new Map<string, SwitchCompaction>();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly backgroundWork = new AgentBackgroundWorkStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -1559,6 +1643,11 @@ export class AgentManager {
           owner: record.owner,
           background: record.background,
           env: record.launchEnv,
+          ...(config.providerHandoff
+            ? {
+                restoreState: { ...extractTimestamps(record), attention: extractAttention(record) },
+              }
+            : {}),
         });
       }),
     );
@@ -1571,7 +1660,8 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     config = this.withConvertedOptions(config);
-    if (this.pluginLifecycle && !config.internal) {
+    const restoring = options.restoreState !== undefined;
+    if (this.pluginLifecycle && !config.internal && !restoring) {
       const sent = exposeFeatureValuesToHook(config);
       const request = await this.pluginLifecycle.before("agent.create.before", {
         config: sent,
@@ -1590,7 +1680,7 @@ export class AgentManager {
       };
       options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
     }
-    await this.deleteAgentState(resolvedAgentId);
+    if (!restoring) await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       config,
       resolvedAgentId,
@@ -1632,8 +1722,10 @@ export class AgentManager {
       background: options.background,
       launchEnv: options.env ? { ...options.env } : undefined,
       historyPrimed: true,
+      ...options.restoreState,
+      restoring,
     });
-    if (!agent.internal) {
+    if (!agent.internal && !restoring) {
       this.pluginLifecycle?.emit("agent.create.after", {
         agent: describeHookAgent({ ...agent, title: agent.config.title }),
       });
@@ -2153,6 +2245,8 @@ export class AgentManager {
   private runtimeHasNoPendingWork(agent: LiveManagedAgent): boolean {
     return (
       agent.lifecycle === "idle" &&
+      // A provider switch reads and replaces this runtime while the chat looks idle.
+      !this.providerSwitches.has(agent.id) &&
       !agent.internal &&
       agent.activeForegroundTurnId === null &&
       !this.runs.hasRun(agent.id) &&
@@ -2463,6 +2557,7 @@ export class AgentManager {
   // reload or close; providers do no sequencing of their own.
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     return this.runLifecycleMutation(agentId, async () => {
       const agent = await this.ensureInteractiveSessionUnlocked(agentId);
       const notice = (await agent.session.setMode(modeId)) ?? null;
@@ -2480,7 +2575,45 @@ export class AgentManager {
     });
   }
 
-  async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
+  async setAgentModel(
+    agentId: string,
+    modelId: string | null,
+    provider?: AgentProvider,
+  ): Promise<void> {
+    if (this.providerSwitches.has(agentId))
+      throw new Error("An agent switch is already in progress");
+    if (provider && provider !== this.requireSessionAgent(agentId).provider) {
+      this.providerSwitches.add(agentId);
+      let compacting = false;
+      try {
+        const target = await this.runLifecycleMutation(agentId, async () => {
+          await this.ensureInteractiveSessionUnlocked(agentId);
+          return this.prepareProviderSwitch(agentId, provider, modelId);
+        });
+        if (target.plan.kind === "full") {
+          const { base } = target.plan;
+          await this.installProviderSwitch(agentId, target, {
+            text: target.plan.text,
+            ...(base
+              ? {
+                  note: ` The earlier conversation went across as ${base.origin}, then word for word.`,
+                  compaction: { throughSeq: base.throughSeq, summary: base.summary },
+                }
+              : {}),
+          });
+          return;
+        }
+        // Compaction can outlast a client's request timeout, so it finishes in the background.
+        // The switch lock stays held, and the chat reports progress and the result.
+        compacting = true;
+        void this.completeCompactedProviderSwitch(agentId, target).finally(() =>
+          this.providerSwitches.delete(agentId),
+        );
+      } finally {
+        if (!compacting) this.providerSwitches.delete(agentId);
+      }
+      return;
+    }
     return this.runLifecycleMutation(agentId, async () => {
       const agent = await this.ensureInteractiveSessionUnlocked(agentId);
       const normalizedModelId =
@@ -2503,10 +2636,544 @@ export class AgentManager {
     });
   }
 
+  private assertProviderSwitchIdle(agentId: string): void {
+    const existing = this.requireSessionAgent(agentId);
+    if (
+      this.hasInFlightRun(agentId) ||
+      existing.lifecycle === "initializing" ||
+      existing.pendingPermissions.size ||
+      existing.inFlightPermissionResponses.size
+    ) {
+      throw new Error(
+        "Wait for the current response and approvals to finish before switching agents",
+      );
+    }
+  }
+
+  private async prepareProviderSwitch(
+    agentId: string,
+    provider: AgentProvider,
+    modelId: string | null,
+  ): Promise<ProviderSwitchTarget> {
+    this.assertAcceptingAgentRegistrations();
+    const existing = this.requireSessionAgent(agentId);
+    this.assertProviderSwitchIdle(agentId);
+    this.requireEnabledProvider(provider);
+    const client = await this.requireAvailableClient({ provider });
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: existing.cwd,
+      force: false,
+    });
+    const model = catalog.models.find(
+      (entry) => entry.id === modelId || entry.aliases?.includes(modelId ?? ""),
+    );
+    if (modelId && catalog.models.length && (!model || model.isSelectable === false)) {
+      throw new Error(`Model '${modelId}' is not available on '${provider}'`);
+    }
+    // Without a model choice the provider's default model decides the window.
+    const windowModel = model ?? catalog.models.find((entry) => entry.isDefault);
+    await this.hydrateTimelineFromProvider(agentId);
+    await this.flush();
+    const history = await this.getTimelineRows(agentId);
+    // Switching back resumes the provider's own session, which already holds the chat up to when it left.
+    const resume = existing.config.providerHandoff?.previousSessions?.[provider];
+    const base = await this.selectHandoffBase(existing, history);
+    const plan = planProviderHandoff({
+      rows: history,
+      contextWindowTokens: windowModel?.contextWindowMaxTokens,
+      ...(resume ? { afterSeq: resume.leftAtSeq, intro: "return" as const } : {}),
+      ...(base ? { base } : {}),
+    });
+    return { provider, modelId, client, model, history, plan, ...(resume ? { resume } : {}) };
+  }
+
+  /**
+   * The newest summary that already covers the chat from its start: the current provider's own
+   * compaction, when it compacted after the chat came to it, or the one an earlier switch wrote.
+   */
+  private async selectHandoffBase(
+    agent: ActiveManagedAgent,
+    history: AgentTimelineRow[],
+  ): Promise<HandoffBase | undefined> {
+    const handoff = agent.config.providerHandoff;
+    const cached: HandoffBase | undefined = handoff?.compaction
+      ? { ...handoff.compaction, origin: "the summary from an earlier switch" }
+      : undefined;
+    const boundary = handoff?.historyBoundary ?? 0;
+    const marker = history.findLast(
+      (row) =>
+        row.seq > boundary && row.item.type === "compaction" && row.item.status === "completed",
+    );
+    if (!marker || !agent.session.readCompactedContext) return cached;
+    if (cached && cached.throughSeq >= marker.seq) return cached;
+    try {
+      const summary = (await agent.session.readCompactedContext())?.trim();
+      if (summary) {
+        return { summary, throughSeq: marker.seq, origin: `${agent.provider}'s own compaction` };
+      }
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: agent.provider },
+        "Could not read the provider's compaction summary",
+      );
+    }
+    return cached;
+  }
+
+  private installProviderSwitch(
+    agentId: string,
+    target: ProviderSwitchTarget,
+    handoff: ProviderSwitchHandoff,
+  ): Promise<void> {
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(agentId, () => this.switchAgentProvider(agentId, target, handoff)),
+    );
+  }
+
+  private async completeCompactedProviderSwitch(
+    agentId: string,
+    target: ProviderSwitchTarget,
+  ): Promise<void> {
+    const { plan } = target;
+    if (plan.kind !== "compact") return;
+    const label = `${target.provider} (${target.model?.id ?? target.modelId ?? "default"})`;
+    const fail = async (error: unknown, canceled: boolean) => {
+      this.logger.warn(
+        { err: error, agentId, provider: target.provider, canceled },
+        "Compacted provider switch failed",
+      );
+      const current = this.agents.get(agentId);
+      if (!current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await this.appendTimelineItem(agentId, {
+          type: "notification",
+          level: canceled ? "info" : "error",
+          message: canceled
+            ? `The switch to ${label} was canceled. The chat stays on ${current.provider}.`
+            : `The switch to ${label} failed: ${message}. The chat stays on ${current.provider}.`,
+        });
+      } catch {
+        // A missing chat cannot receive the switch failure notice.
+      }
+    };
+
+    let settle = () => {};
+    const compaction: SwitchCompaction = {
+      controller: new AbortController(),
+      settled: new Promise<void>((complete) => {
+        settle = complete;
+      }),
+    };
+    this.switchCompactions.set(agentId, compaction);
+    const marker = {
+      type: "compaction",
+      trigger: "auto",
+      preTokens: plan.estimatedTokens,
+    } as const;
+    let markerOpen = false;
+    const previousLifecycle = this.agents.get(agentId)?.lifecycle;
+    let summary: string;
+    try {
+      // A running agent with an open compaction marker is what every client already shows as
+      // "compacting", and its stop button reaches cancelAgentRun. It is running before the switch
+      // request returns.
+      this.setSwitchCompactionLifecycle(agentId, "running");
+      await this.appendTimelineItem(agentId, {
+        type: "notification",
+        level: "info",
+        message:
+          `Compacting before the switch to ${label}: the conversation is about ${plan.estimatedTokens} tokens ` +
+          `and the model takes ${plan.limitTokens}. ` +
+          `${plan.olderRecords} older records go into a summary in ${plan.olderChunks.length} ` +
+          `part${plan.olderChunks.length === 1 ? "" : "s"}` +
+          (plan.base ? `, starting from ${plan.base.origin}` : "") +
+          `; the newest ${plan.recentRecords.length} go across word for word. Stop the agent to cancel.`,
+      });
+      await this.appendTimelineItem(agentId, { ...marker, status: "loading" });
+      markerOpen = true;
+      summary = await this.summarizeForHandoff(agentId, target, plan, compaction);
+      await this.appendTimelineItem(agentId, { ...marker, status: "completed" });
+      markerOpen = false;
+    } catch (error) {
+      if (markerOpen) {
+        await this.appendTimelineItem(agentId, { ...marker, status: "completed" }).catch(
+          () => undefined,
+        );
+      }
+      await fail(error, compaction.controller.signal.aborted);
+      return;
+    } finally {
+      // The cancelable part ends here; installing the switch runs in the lifecycle lane.
+      this.setSwitchCompactionLifecycle(agentId, previousLifecycle);
+      this.switchCompactions.delete(agentId);
+      settle();
+    }
+
+    try {
+      // A summary that started from the chat's start can be reused by later switches.
+      const fromStart = plan.intro === "new" || plan.base !== undefined;
+      await this.installProviderSwitch(agentId, target, {
+        text: buildHandoffText({ intro: plan.intro, records: plan.recentRecords, summary }),
+        note: " The earlier conversation was compacted to fit this model; the full chat history is still available here.",
+        ...(fromStart && summary
+          ? { compaction: { throughSeq: plan.olderThroughSeq, summary } }
+          : {}),
+      });
+    } catch (error) {
+      await fail(error, false);
+    }
+  }
+
+  private setSwitchCompactionLifecycle(
+    agentId: string,
+    lifecycle: ActiveManagedAgent["lifecycle"] | undefined,
+  ): void {
+    const agent = this.agents.get(agentId);
+    if (!agent || !lifecycle || agent.lifecycle === lifecycle) return;
+    agent.lifecycle = lifecycle;
+    this.touchUpdatedAt(agent);
+    this.emitState(agent);
+  }
+
+  /**
+   * Summarizes each chunk of older records on its own and joins the summaries in order, after a
+   * summary that already covers the oldest rows when there is one. Merges them only when they are
+   * too long together.
+   */
+  private async summarizeForHandoff(
+    agentId: string,
+    target: ProviderSwitchTarget,
+    plan: Extract<ProviderHandoffPlan, { kind: "compact" }>,
+    compaction: SwitchCompaction,
+  ): Promise<string> {
+    const { cwd } = this.requireSessionAgent(agentId);
+    const summarize = (prompt: string) => {
+      this.assertAcceptingAgentRegistrations();
+      if (compaction.controller.signal.aborted) throw new Error("canceled");
+      return this.runHandoffSummarizer({
+        provider: target.provider,
+        model: target.model?.id ?? target.modelId ?? undefined,
+        cwd,
+        prompt,
+        compaction,
+      });
+    };
+    const parts = plan.olderChunks.length;
+    const totalChars = plan.olderChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const contextChars = summaryContextChars(plan.limitTokens);
+    const started = Date.now();
+    let doneChars = 0;
+    let summaries = plan.base ? [plan.base.summary] : [];
+    for (const [index, chunk] of plan.olderChunks.entries()) {
+      const context = (summaries.at(-1) ?? "").slice(-contextChars);
+      summaries.push(
+        await summarize(buildCompactionPrompt({ context, chunk, part: index + 1, parts })),
+      );
+      doneChars += chunk.length;
+      if (parts > 1) {
+        const elapsed = Date.now() - started;
+        const left = index + 1 < parts ? (elapsed * (totalChars - doneChars)) / doneChars : 0;
+        await this.appendTimelineItem(agentId, {
+          type: "notification",
+          level: "info",
+          message:
+            `Compacting: part ${index + 1} of ${parts} done (${Math.round((100 * doneChars) / totalChars)} %)` +
+            (left > 0 ? `, about ${formatDuration(left)} left.` : "."),
+        });
+      }
+    }
+
+    const budget = summaryBudgetChars(plan.limitTokens);
+    const groupChars = Math.floor(plan.limitTokens * 0.6) * HANDOFF_CHARS_PER_TOKEN;
+    while (summaries.join("\n\n").length > budget && summaries.length > 1) {
+      const groups = groupSummaries(summaries, groupChars);
+      if (groups.length === summaries.length) break;
+      await this.appendTimelineItem(agentId, {
+        type: "notification",
+        level: "info",
+        message: `Compacting: merging ${summaries.length} part summaries in ${groups.length} group${groups.length === 1 ? "" : "s"}.`,
+      });
+      const merged: string[] = [];
+      for (const [index, group] of groups.entries()) {
+        merged.push(
+          group.length === 1
+            ? group[0]!
+            : await summarize(
+                buildSummaryMergePrompt({
+                  summaries: group,
+                  group: index + 1,
+                  groups: groups.length,
+                }),
+              ),
+        );
+      }
+      summaries = merged;
+    }
+    return summaries.join("\n\n");
+  }
+
+  /**
+   * Runs the summarizer turn. Nobody watches the private helper, so a tool request would wait
+   * forever; each one is denied at once and the model answers from the prompt.
+   */
+  private async streamHandoffSummary(helperId: string, prompt: string): Promise<string> {
+    const timeline: AgentTimelineItem[] = [];
+    for await (const event of this.streamAgent(helperId, prompt)) {
+      if (event.type === "timeline") {
+        timeline.push(event.item);
+      } else if (event.type === "permission_requested") {
+        await this.respondToPermission(helperId, event.request.id, {
+          behavior: "deny",
+          message: "No tools are available for this task. Reply with the summary text only.",
+        });
+      } else if (event.type === "turn_failed") {
+        throw new Error(this.formatTurnFailedMessage(event));
+      } else if (event.type === "turn_canceled") {
+        throw new Error("the summarizer turn was canceled");
+      }
+    }
+    return this.getLastAssistantMessageFromTimeline(timeline) ?? "";
+  }
+
+  /** One prompt on a private helper agent of the target provider, as structured generation does. */
+  private async runHandoffSummarizer(input: {
+    provider: AgentProvider;
+    model: string | undefined;
+    cwd: string;
+    prompt: string;
+    compaction: SwitchCompaction;
+  }): Promise<string> {
+    const { compaction } = input;
+    const helper = await this.createAgent(
+      {
+        provider: input.provider,
+        cwd: input.cwd,
+        ...(input.model ? { model: input.model } : {}),
+        title: "Provider switch compaction",
+        internal: true,
+      },
+      undefined,
+      { persistSession: false, workspaceId: undefined },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    try {
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          void this.cancelAgentRun(helper.id).catch(() => undefined);
+          reject(
+            new Error(
+              `the summarizer did not finish within ${HANDOFF_SUMMARIZER_TIMEOUT_MS / 60_000} minutes`,
+            ),
+          );
+        }, HANDOFF_SUMMARIZER_TIMEOUT_MS);
+      });
+      const canceled = new Promise<never>((_, reject) => {
+        onAbort = () => {
+          void this.cancelAgentRun(helper.id).catch(() => undefined);
+          reject(new Error("canceled"));
+        };
+        if (compaction.controller.signal.aborted) onAbort();
+        else compaction.controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const summary = (
+        await Promise.race([this.streamHandoffSummary(helper.id, input.prompt), timedOut, canceled])
+      ).trim();
+      if (!summary) throw new Error(`${input.provider} returned an empty summary`);
+      return summary;
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (onAbort) compaction.controller.signal.removeEventListener("abort", onAbort);
+      const cleanup = async () => {
+        await this.closeAgent(helper.id).catch(() => undefined);
+        await this.deleteAgentState(helper.id).catch(() => undefined);
+      };
+      // A canceled chat is released at once; its helper closes in the background.
+      if (compaction.controller.signal.aborted) void cleanup();
+      else await cleanup();
+    }
+  }
+
+  private previousProviderSessions(
+    existing: ActiveManagedAgent,
+    history: AgentTimelineRow[],
+    provider: AgentProvider,
+  ): Record<string, ProviderPreviousSession> {
+    const previousSessions: Record<string, ProviderPreviousSession> = {
+      ...existing.config.providerHandoff?.previousSessions,
+    };
+    delete previousSessions[provider];
+    if (existing.persistence) {
+      previousSessions[existing.provider] = {
+        handle: previousSessionHandle(existing.persistence),
+        leftAtSeq: history.at(-1)?.seq ?? 0,
+        ...(existing.config.model ? { model: existing.config.model } : {}),
+      };
+    }
+    return previousSessions;
+  }
+
+  private async rememberResumedHistory(
+    session: AgentSession,
+    storedConfig: AgentSessionConfig,
+    resume: ProviderPreviousSession | undefined,
+  ): Promise<void> {
+    if (resume && storedConfig.providerHandoff) {
+      // The resumed history starts with what the chat already shows before the boundary; a
+      // later replay skips those events and adds only what happened on this session since.
+      let nativeHistorySkip = 0;
+      for await (const event of session.streamHistory()) {
+        if (event.type === "timeline") nativeHistorySkip += 1;
+      }
+      storedConfig.providerHandoff.nativeHistorySkip = nativeHistorySkip;
+    }
+  }
+
+  private async switchAgentProvider(
+    agentId: string,
+    target: ProviderSwitchTarget,
+    handoff: ProviderSwitchHandoff,
+  ): Promise<void> {
+    this.assertAcceptingAgentRegistrations();
+    const existing = this.requireSessionAgent(agentId);
+    this.assertProviderSwitchIdle(agentId);
+    const { provider, modelId, client, model, resume } = target;
+    // Rows the chat gained while the switch was prepared are Paseo notices and compaction
+    // progress; they stay before the new boundary like the rest of the chat.
+    await this.flush();
+    const history = await this.getTimelineRows(agentId);
+    const previousHandoff = existing.config.providerHandoff;
+    const previousSessions = this.previousProviderSessions(existing, history, provider);
+    // Only shared configuration follows the chat; provider-specific controls reset.
+    const switchConfig = buildProviderSwitchConfig({
+      previous: existing.config,
+      provider,
+      modelId,
+      model,
+      history,
+      handoffText: handoff.text,
+      previousSessions,
+      compaction: newerCompaction(previousHandoff?.compaction, handoff.compaction),
+    });
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      switchConfig,
+      agentId,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agentId,
+      client,
+      storedConfig.cwd,
+      paseoToolPolicy,
+      undefined,
+      {
+        reason: resume ? "resume" : "create",
+        purpose: "interactive",
+        workspaceId: existing.workspaceId,
+        title: await this.resolveInitialPersistedTitle(agentId, existing.config, null),
+        labels: existing.labels,
+      },
+    );
+    // Prepare the replacement before releasing the old runtime. Availability and
+    // initialization failures leave the original chat usable.
+    let session: AgentSession;
+    let providerLaunchConfig: AgentSessionConfig;
+    try {
+      providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      session = resume
+        ? await client
+            .resumeSession(resume.handle, providerLaunchConfig, launchContext, {
+              purpose: "interactive",
+            })
+            .catch(async (error: unknown) => {
+              // Forget the session, so the next switch starts a new one with the whole conversation.
+              delete existing.config.providerHandoff?.previousSessions?.[provider];
+              await this.persistSnapshot(existing).catch(() => undefined);
+              throw new Error(
+                `Could not resume the earlier ${provider} session of this chat (${
+                  error instanceof Error ? error.message : String(error)
+                }). Switch again to start a new ${provider} session with the whole conversation`,
+              );
+            })
+        : await client.createSession(providerLaunchConfig, launchContext);
+    } catch (error) {
+      // The launch context attached the target's plugin tools; the next prompt reopens the
+      // original session with its own, as after a failed refresh.
+      this.detachPluginTools(agentId);
+      throw error;
+    }
+    const oldPolicy = this.paseoToolPolicies.get(agentId);
+    let closed: ManagedAgentClosed | undefined;
+    let installed = false;
+    try {
+      await this.rememberResumedHistory(session, storedConfig, resume);
+      await this.requireExternalMcpSupport(session, providerLaunchConfig, launchContext);
+      this.assertAcceptingAgentRegistrations();
+      this.assertProviderSwitchIdle(agentId);
+      await this.registry?.saveProviderHistory(agentId, history);
+      await this.closeReloadedSession(existing.session, agentId);
+      await this.drainSessionEvents(agentId);
+      this.cancelRunningProviderSubagents(agentId);
+      closed = this.prepareAgentForClosure(existing, "agent switched");
+      await this.persistSnapshot(closed);
+      this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+      await this.registerSession(session, storedConfig, agentId, {
+        launchedOptions: this.launchOptionsFor({ client, own: storedConfig.providerOptions }),
+        metadata: existing.metadata,
+        background: existing.background,
+        labels: existing.labels,
+        workspaceId: existing.workspaceId,
+        owner: existing.owner,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+        lastUserMessageAt: existing.lastUserMessageAt,
+        historyPrimed: true,
+        attention: existing.attention,
+        restoring: true,
+        publishWhenReady: true,
+      });
+      installed = true;
+      const notice = await this.appendTimelineItem(agentId, {
+        type: "notification",
+        level: "info",
+        message:
+          `Switched from ${existing.provider} to ${provider} (${storedConfig.model ?? "default"}).` +
+          (resume ? ` Resumed its earlier session of this chat.` : "") +
+          (handoff.note ?? ""),
+      });
+      const switched = this.requireSessionAgent(agentId);
+      if (switched.config.providerHandoff) {
+        await this.flush();
+        await this.registry?.saveProviderHistory(agentId, await this.getTimelineRows(agentId));
+        switched.config.providerHandoff.historyBoundary = notice.seq;
+        await this.persistSnapshot(switched);
+      }
+    } catch (error) {
+      if (!installed && closed) {
+        const failed = this.agents.get(agentId);
+        failed?.unsubscribeSession?.();
+        this.agents.delete(agentId);
+        this.previousStatuses.delete(agentId);
+        await this.persistSnapshot(closed);
+        this.emitClosedAgent(closed, { persist: false });
+      }
+      throw error;
+    } finally {
+      if (!installed) {
+        if (oldPolicy) this.paseoToolPolicies.set(agentId, oldPolicy);
+        else this.paseoToolPolicies.delete(agentId);
+        this.detachPluginTools(agentId);
+        await this.closeUnregisteredSession(session);
+      }
+    }
+  }
+
   async setAgentThinkingOption(
     agentId: string,
     thinkingOptionId: string | null,
   ): Promise<AgentProviderNotice | null> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     return this.runLifecycleMutation(agentId, async () => {
       const agent = await this.ensureInteractiveSessionUnlocked(agentId);
       const normalizedThinkingOptionId =
@@ -2546,6 +3213,7 @@ export class AgentManager {
    * one step once the provider accepts. Patches to one agent run one at a time, in arrival order.
    */
   async setAgentOptions(agentId: string, requested: ProviderOptionsPatch): Promise<void> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     return this.runLifecycleMutation(agentId, async () => {
       const agent = await this.ensureInteractiveSessionUnlocked(agentId);
       const patch = this.convertLegacyOptions(agent.provider, requested);
@@ -3081,6 +3749,7 @@ export class AgentManager {
     options?: AgentRunOptions,
     onAccepted?: () => void,
   ): Promise<boolean> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     if (this.collectingRuntimes.has(agentId) || !this.agents.has(agentId)) {
       await this.waitForAgentClose(agentId);
       await ensureAgentLoaded(agentId, {
@@ -3184,7 +3853,13 @@ export class AgentManager {
       return null;
     }
     try {
-      const result = await agent.session.startTurn(prompt, options);
+      const handoff = agent.config.providerHandoff;
+      const providerPrompt = handoff?.pending ? withProviderHandoff(prompt, handoff.text) : prompt;
+      const result = await agent.session.startTurn(providerPrompt, options);
+      if (handoff?.pending) {
+        agent.config.providerHandoff = { ...handoff, pending: false };
+        this.enqueueBackgroundPersist(agent);
+      }
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -3298,6 +3973,8 @@ export class AgentManager {
     options?: AgentRunOptions,
     promptStart?: ForegroundPromptStart,
   ): AsyncGenerator<AgentStreamEvent> {
+    if (this.providerSwitches.has(agentId))
+      throw new Error("Wait for the agent switch to finish before sending a message");
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options, promptStart);
     const existingAgent = this.requireSessionAgent(agentId);
@@ -3515,6 +4192,8 @@ export class AgentManager {
     options?: AgentRunOptions,
     promptStart?: ForegroundPromptStart,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
+    if (this.providerSwitches.has(agentId))
+      throw new Error("Wait for the agent switch to finish before sending a message");
     this.requireSessionAgent(agentId);
     return this.replaceRunInForegroundLane(agentId, prompt, options, promptStart);
   }
@@ -3925,6 +4604,13 @@ export class AgentManager {
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
+    const switchCompaction = this.switchCompactions.get(agentId);
+    if (switchCompaction) {
+      // The chat shows a switch compaction as its run; stopping it cancels the switch.
+      switchCompaction.controller.abort();
+      await switchCompaction.settled;
+      return { status: "settled" };
+    }
     return this.runForegroundMutation(agentId, () => {
       this.requireSessionAgent(agentId).pendingReplacement = false;
       return this.cancelAgentRunNow(agentId);
@@ -4055,12 +4741,22 @@ export class AgentManager {
   }
 
   async rewind(agentId: string, messageId: string, mode: RewindMode): Promise<void> {
+    if (this.providerSwitches.has(agentId)) throw new Error("Wait for the agent switch to finish");
     let agent = this.requireSessionAgent(agentId);
     if (this.historySessions.has(agent.session)) {
       agent = await this.ensureInteractiveSession(agentId);
     }
     // An interactive session must acquire its rewind lock without yielding.
 
+    const boundary = agent.config.providerHandoff?.historyBoundary;
+    if (boundary !== undefined) {
+      const row = (await this.getTimelineRows(agentId)).find(
+        (entry) => entry.item.type === "user_message" && entry.item.messageId === messageId,
+      );
+      if (!row || row.seq <= boundary) {
+        throw new Error("Messages from a previous agent cannot be rewound by the current agent");
+      }
+    }
     const submittedRow = this.timelineStore
       .getRows(agentId)
       .find(
@@ -4426,6 +5122,7 @@ export class AgentManager {
         agentId: resolvedAgentId,
         now,
         options,
+        providerHistoryBoundary: config.providerHandoff?.historyBoundary,
       });
 
       const managed = this.buildManagedAgentForRegister({
@@ -4546,6 +5243,7 @@ export class AgentManager {
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     now: Date;
+    providerHistoryBoundary?: number;
     options:
       | {
           timeline?: AgentTimelineItem[];
@@ -4568,7 +5266,12 @@ export class AgentManager {
     const durableTimelineHasRows =
       timelineAlreadyPrimed ||
       (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
+    const timelineSeed =
+      explicitTimelineSeed ??
+      durableTimelineSeed ??
+      (timelineAlreadyPrimed
+        ? undefined
+        : await this.loadProviderHistorySeed(agentId, params.providerHistoryBoundary, now));
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
@@ -4576,6 +5279,16 @@ export class AgentManager {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
     }
     return { durableTimelineHasRows };
+  }
+
+  private async loadProviderHistorySeed(
+    agentId: string,
+    boundary: number | undefined,
+    now: Date,
+  ): Promise<SeedAgentTimelineOptions | undefined> {
+    if (boundary === undefined) return undefined;
+    const rows = await this.registry?.loadProviderHistory(agentId, boundary);
+    return rows?.length ? { rows, nextSeq: boundary + 1, timestamp: now.toISOString() } : undefined;
   }
 
   private buildManagedAgentForRegister(params: {
@@ -4986,7 +5699,7 @@ export class AgentManager {
     const broadcast = options?.broadcast ?? false;
     const broadcastTimeline = options?.broadcastTimeline ?? broadcast;
 
-    if (options?.force) {
+    if (options?.force || agent.config.providerHandoff?.historyBoundary !== undefined) {
       await this.forceHydrateTimelineFromLegacyProviderHistory(
         agent,
         typeof broadcast === "function" ? broadcast() : broadcast,
@@ -4998,6 +5711,29 @@ export class AgentManager {
     await this.primeTimelineFromLegacyProviderHistory(agent, broadcast);
   }
 
+  private stripHandoffEchoEvent(
+    agent: ActiveManagedAgent,
+    event: AgentStreamEvent,
+  ): AgentStreamEvent {
+    const handoff = agent.config.providerHandoff;
+    if (!handoff || event.type !== "timeline") return event;
+    return { ...event, item: stripHandoffEcho(event.item, handoff.text) };
+  }
+
+  private async *providerHistoryForHandoff(
+    agent: ActiveManagedAgent,
+  ): AsyncGenerator<AgentStreamEvent> {
+    // A resumed session replays turns the chat already keeps before the boundary.
+    let skip = agent.config.providerHandoff?.nativeHistorySkip ?? 0;
+    for await (const rawEvent of agent.session.streamHistory()) {
+      if (rawEvent.type === "timeline" && skip > 0) {
+        skip -= 1;
+        continue;
+      }
+      yield this.stripHandoffEchoEvent(agent, rawEvent);
+    }
+  }
+
   private async forceHydrateTimelineFromLegacyProviderHistory(
     agent: ActiveManagedAgent,
     broadcast: boolean,
@@ -5005,7 +5741,7 @@ export class AgentManager {
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of agent.session.streamHistory()) {
+    for await (const rawEvent of this.providerHistoryForHandoff(agent)) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         for (const item of projectAgentMessages(event.item)) {
@@ -5017,9 +5753,20 @@ export class AgentManager {
     }
 
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    await this.flush();
+    const boundary = agent.config.providerHandoff?.historyBoundary;
+    const preservedRows =
+      boundary === undefined
+        ? []
+        : (await this.getTimelineRows(agent.id)).filter((row) => row.seq <= boundary);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
-    this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
+    this.timelineStore.initialize(agent.id, {
+      rows: preservedRows,
+      nextSeq: boundary === undefined ? 1 : boundary + 1,
+      timestamp: new Date().toISOString(),
+    });
+    this.enqueueDurableTimelineBulkInsert(agent.id, preservedRows);
     agent.historyPrimed = true;
 
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
@@ -5067,7 +5814,7 @@ export class AgentManager {
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
       for await (const rawEvent of history) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const event = limitAgentStreamEventContent(this.stripHandoffEchoEvent(agent, rawEvent));
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
           continue;
@@ -5164,7 +5911,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    event = limitAgentStreamEventContent(event);
+    event = limitAgentStreamEventContent(this.stripHandoffEchoEvent(agent, event));
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
     const eventTurnId = identified.turnId;

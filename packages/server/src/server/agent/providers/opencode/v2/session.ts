@@ -309,6 +309,21 @@ export class OpenCodeV2Session implements AgentSession {
     });
     yield* events;
   }
+  /** OpenCode's own newest compaction, when it completed: its summary, then what it kept as recent. */
+  async readCompactedContext() {
+    await this.reconnectIfExited();
+    const last = (await messages(this.client, this.id)).findLast(
+      (message) => message.type === "compaction",
+    );
+    if (last?.type !== "compaction" || last.status !== "completed") return null;
+    // OpenCode 2.1.4 leaves `recent` out when it kept nothing, although the client type requires it.
+    const parts: unknown[] = [last.summary, last.recent];
+    return (
+      parts
+        .flatMap((part) => (typeof part === "string" && part.trim() ? [part.trim()] : []))
+        .join("\n\n") || null
+    );
+  }
   async getRuntimeInfo() {
     await this.reconnectIfExited();
     this.info = await this.client.session.get({ sessionID: this.id });

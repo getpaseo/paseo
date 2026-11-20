@@ -14,8 +14,11 @@ import { Settings2 } from "lucide-react-native";
 import { readSelectOption, type ComposerOptionControls } from "@/agent-controls/option-controls";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import {
   buildProviderSelectorProviders,
+  buildSelectableProviderSelectorProviders,
   buildSelectorProvider,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
@@ -356,6 +359,8 @@ function pickDesktopModel({
 }
 
 type AgentControlsSlice = {
+  status: string;
+  hasPendingPermissions: boolean;
   provider: string;
   cwd: string | null;
   runtimeModelId: string | null;
@@ -378,6 +383,8 @@ function selectAgentControlsSlice(
     return null;
   }
   return {
+    status: currentAgent.status,
+    hasPendingPermissions: currentAgent.pendingPermissions.length > 0,
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
@@ -1005,6 +1012,118 @@ function useAgentOptionControls(
   );
 }
 
+function selectProviderSwitchSupport(
+  state: ReturnType<typeof useSessionStore.getState>,
+  serverId: string,
+): boolean {
+  return state.sessions[serverId]?.serverInfo?.features?.agentProviderSwitching === true;
+}
+
+function canSwitchChatProvider(supported: boolean, agent: AgentControlsSlice): boolean {
+  return (
+    supported &&
+    agent !== null &&
+    agent.status !== "running" &&
+    agent.status !== "initializing" &&
+    !agent.hasPendingPermissions
+  );
+}
+
+function useChatModelMutation(
+  serverId: string,
+  agentId: string,
+  agent: AgentControlsSlice,
+  catalogLoading: boolean,
+  providerLoading: boolean,
+) {
+  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const supportsProviderSwitching = useSessionStore((state) =>
+    selectProviderSwitchSupport(state, serverId),
+  );
+  const canSwitchProvider = canSwitchChatProvider(supportsProviderSwitching, agent);
+  const agentProvider = agent?.provider;
+  const { updatePreferences } = useFormPreferences();
+  const [isChangingModel, setIsChangingModel] = useState(false);
+  const modelMutationPending = useRef(false);
+  const [modelChangeError, setModelChangeError] = useState<string | null>(null);
+  const clearModelChangeError = useCallback(() => setModelChangeError(null), []);
+  useEffect(() => {
+    setModelChangeError(null);
+  }, [agentId, serverId]);
+  const handleSelectProviderAndModel = useCallback(
+    async (provider: AgentProvider, modelId: string) => {
+      if (!client || !agentProvider || modelMutationPending.current) return;
+      if (provider !== agentProvider && !canSwitchProvider) return;
+      modelMutationPending.current = true;
+      setIsChangingModel(true);
+      setModelChangeError(null);
+      try {
+        await client.setAgentModel(
+          agentId,
+          modelId,
+          provider !== agentProvider ? provider : undefined,
+        );
+        await updatePreferences((current) =>
+          mergeProviderPreferences({
+            preferences: current,
+            provider,
+            updates: { model: modelId },
+          }),
+        );
+      } catch (error) {
+        setModelChangeError(toErrorMessage(error));
+      } finally {
+        modelMutationPending.current = false;
+        setIsChangingModel(false);
+      }
+    },
+    [agentId, agentProvider, canSwitchProvider, client, updatePreferences],
+  );
+  return {
+    canSwitchProvider,
+    modelIsLoading: isChangingModel || catalogLoading || providerLoading,
+    modelChangeError,
+    clearModelChangeError,
+    handleSelectProviderAndModel,
+    providerSelectionHandler: canSwitchProvider ? handleSelectProviderAndModel : undefined,
+    controlsDisabled: !client || isChangingModel,
+  };
+}
+
+function resolveAgentModelSelectorProviders(input: {
+  canSwitchProvider: boolean;
+  agentProvider: string | undefined;
+  snapshotEntries: ReturnType<typeof useProvidersSnapshot>["entries"];
+  snapshotSelectedEntry: ReturnType<typeof resolveProviderSnapshotEntry>;
+  agentProviderDefinitions: AgentProviderDefinition[];
+  agentProviderModels: Map<string, AgentModelDefinition[]>;
+}): ProviderSelectorProvider[] {
+  if (input.canSwitchProvider) {
+    return buildSelectableProviderSelectorProviders(input.snapshotEntries, {
+      selectedProvider: input.agentProvider ?? null,
+    });
+  }
+  if (input.snapshotSelectedEntry) {
+    return [buildSelectorProvider(input.snapshotSelectedEntry)];
+  }
+  return buildProviderSelectorProviders({
+    providerDefinitions: input.agentProviderDefinitions,
+    modelsByProvider: input.agentProviderModels,
+  });
+}
+
+function ModelChangeError({ error, onDismiss }: { error: string | null; onDismiss: () => void }) {
+  const { t } = useTranslation();
+  if (!error) return null;
+  return (
+    <Alert variant="error" size="sm" description={error} testID="agent-model-change-error">
+      <Button variant="ghost" size="sm" onPress={onDismiss}>
+        {t("common.actions.dismiss")}
+      </Button>
+    </Alert>
+  );
+}
+
 export const AgentControls = memo(function AgentControls({
   showToolbar,
   agentId,
@@ -1037,6 +1156,15 @@ export const AgentControls = memo(function AgentControls({
 
   const models = filterSelectableModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
+  const {
+    canSwitchProvider,
+    modelIsLoading,
+    modelChangeError,
+    clearModelChangeError,
+    handleSelectProviderAndModel,
+    providerSelectionHandler,
+    controlsDisabled,
+  } = useChatModelMutation(serverId, agentId, agent, snapshotIsLoading, selectedProviderIsLoading);
 
   const agentProviderDefinitions = useMemo(
     () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
@@ -1047,15 +1175,25 @@ export const AgentControls = memo(function AgentControls({
     () => buildAgentProviderModels(agent?.provider, models),
     [agent?.provider, models],
   );
-  const agentModelSelectorProviders = useMemo(() => {
-    if (snapshotSelectedEntry) {
-      return [buildSelectorProvider(snapshotSelectedEntry)];
-    }
-    return buildProviderSelectorProviders({
-      providerDefinitions: agentProviderDefinitions,
-      modelsByProvider: agentProviderModels,
-    });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+  const agentModelSelectorProviders = useMemo(
+    () =>
+      resolveAgentModelSelectorProviders({
+        canSwitchProvider,
+        agentProvider: agent?.provider,
+        snapshotEntries,
+        snapshotSelectedEntry,
+        agentProviderDefinitions,
+        agentProviderModels,
+      }),
+    [
+      agent?.provider,
+      agentProviderDefinitions,
+      agentProviderModels,
+      snapshotSelectedEntry,
+      snapshotEntries,
+      canSwitchProvider,
+    ],
+  );
 
   const modelSelection = resolveAgentModelSelection({
     models,
@@ -1080,29 +1218,16 @@ export const AgentControls = memo(function AgentControls({
   const activeModelId = modelSelection.activeModelId;
 
   const handleSelectModel = useCallback(
-    async (modelId: string) => {
-      if (!client || !agentProvider) {
-        return;
-      }
-      try {
-        await client.setAgentModel(agentId, modelId);
-        await updatePreferences((current) =>
-          mergeProviderPreferences({
-            preferences: current,
-            provider: agentProvider,
-            updates: { model: modelId },
-          }),
-        );
-      } catch (error) {
-        console.warn("[AgentControls] setAgentModel or persist preference failed", error);
-        toast.error(toErrorMessage(error));
-      }
+    (modelId: string) => {
+      if (agentProvider) void handleSelectProviderAndModel(agentProvider, modelId);
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [agentProvider, handleSelectProviderAndModel],
   );
   const handleSelectCommandCenterModel = useCallback(
-    (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
-    [handleSelectModel],
+    (provider: AgentProvider, modelId: string) => {
+      void handleSelectProviderAndModel(provider, modelId);
+    },
+    [handleSelectProviderAndModel],
   );
 
   // A running agent is one provider's process, so only that provider's profiles
@@ -1249,8 +1374,8 @@ export const AgentControls = memo(function AgentControls({
   );
 
   const handleModelSelectorOpen = useCallback(() => {
-    refetchSnapshotIfStale(agentProvider);
-  }, [agentProvider, refetchSnapshotIfStale]);
+    refetchSnapshotIfStale(canSwitchProvider ? undefined : agentProvider);
+  }, [agentProvider, canSwitchProvider, refetchSnapshotIfStale]);
 
   const handleRetryModelProvider = useCallback(
     (provider: AgentProvider) => {
@@ -1269,12 +1394,14 @@ export const AgentControls = memo(function AgentControls({
       {showToolbar ? (
         <>
           {profileEditor.element}
+          <ModelChangeError error={modelChangeError} onDismiss={clearModelChangeError} />
           <ControlledAgentControls
             provider={agent.provider}
             modelSelectorProviders={agentModelSelectorProviders}
             modelOptions={modelOptions}
             selectedModelId={modelSelection.activeModelId ?? undefined}
             onSelectModel={handleSelectModel}
+            onSelectProviderAndModel={providerSelectionHandler}
             agentProfiles={agentProfiles}
             onApplyAgentProfile={agentProfiles?.applyProfile}
             onEditAgentProfiles={handleEditAgentProfiles}
@@ -1284,12 +1411,12 @@ export const AgentControls = memo(function AgentControls({
             selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
             onSelectThinkingOption={handleSelectThinkingOption}
             optionControls={agentOptionControls}
-            isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+            isModelLoading={modelIsLoading}
             onModelSelectorOpen={handleModelSelectorOpen}
             onRetryModelProvider={handleRetryModelProvider}
             isRetryingModelProvider={snapshotIsRefreshing}
             onDropdownClose={onDropdownClose}
-            disabled={!client}
+            disabled={controlsDisabled}
             modeControl={modeControl}
             modelSelectorServerId={serverId}
             isCompactLayout={isCompactLayout}

@@ -47,6 +47,7 @@ import type {
   AgentDraftControls,
   AgentOptionControl,
   AgentLaunchContext,
+  AgentPermissionResponse,
   AgentPromptInput,
   AgentProvider,
   AgentPersistenceHandle,
@@ -15836,6 +15837,1052 @@ test("plugin instructions are recomputed for each launch without changing saved 
   expect(client.resumeOverrides.at(-1)?.systemPrompt).toBe("Saved");
   expect(client.resumeOverrides.at(-1)?.daemonAppendSystemPrompt).toBe("Daemon");
   expect((await storage.get(snapshot.id))?.config?.systemPrompt).toBe("Saved");
+});
+
+test("switching providers keeps the chat identity, timeline, and workspace", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-switch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { claude: new TestAgentClient("claude"), codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "claude", cwd: workdir, model: "source", thinkingOptionId: "high" },
+      undefined,
+      { workspaceId: "workspace-provider-switch" },
+    );
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "Remember the migration constraint.",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "Keep the database schema compatible.",
+    });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    const switched = manager.getAgent(agent.id)!;
+    expect(switched.provider).toBe("codex");
+    expect(switched.workspaceId).toBe("workspace-provider-switch");
+    expect(switched.config.thinkingOptionId).toBeUndefined();
+    expect(manager.getTimeline(agent.id).slice(0, 2)).toEqual([
+      { type: "user_message", text: "Remember the migration constraint." },
+      { type: "assistant_message", text: "Keep the database schema compatible." },
+    ]);
+    const persisted = await storage.get(agent.id);
+    expect(persisted?.provider).toBe("codex");
+    expect(persisted?.config?.providerHandoff?.text).toContain(
+      "Remember the migration constraint.",
+    );
+    expect(persisted?.config?.providerHandoff?.pending).toBe(true);
+  } finally {
+    await manager.closeAgent(manager.listAgents()[0]!.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+class HandoffTestSession extends TestAgentSession {
+  readonly prompts: AgentPromptInput[] = [];
+  failStart = false;
+  failClose = false;
+  closed = false;
+  constructor(config: AgentSessionConfig) {
+    super(config);
+    Object.defineProperty(this, "provider", { value: config.provider });
+  }
+  override async startTurn(prompt?: AgentPromptInput) {
+    if (this.failStart) throw new Error("Target rejected the turn");
+    this.prompts.push(prompt ?? "");
+    const result = await super.startTurn();
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId: result.turnId,
+      item: { type: "user_message", text: typeof prompt === "string" ? prompt : "structured" },
+    });
+    return result;
+  }
+  override async close() {
+    if (this.failClose) throw new Error("Runtime is still in use");
+    this.closed = true;
+  }
+}
+class HandoffTestClient extends TestAgentClient {
+  readonly sessions: HandoffTestSession[] = [];
+  failCreate = false;
+  noPersistence = false;
+  override async createSession(config: AgentSessionConfig) {
+    if (this.failCreate) throw new Error("Target could not start");
+    const session = new HandoffTestSession(config);
+    if (this.noPersistence) session.describePersistence = () => null;
+    this.sessions.push(session);
+    return session;
+  }
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ) {
+    return this.createSession({
+      ...config,
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+    });
+  }
+}
+
+test.each([false, true])(
+  "provider handoff survives restart and rejected input without native handle=%s",
+  async (noPersistence) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-provider-restart-"));
+    const registry = new AgentStorage(join(workdir, "agents"), logger);
+    // The production daemon has no durable timeline store configured.
+    const durableTimelineStore = undefined;
+    const source = new HandoffTestClient("claude");
+    const target = new HandoffTestClient();
+    target.noPersistence = noPersistence;
+    const clients = { claude: source, codex: target };
+    const manager = new AgentManager({ clients, registry, durableTimelineStore, logger });
+    const restartedRegistry = new AgentStorage(join(workdir, "agents"), logger);
+    const restarted = new AgentManager({
+      clients,
+      registry: restartedRegistry,
+      durableTimelineStore,
+      logger,
+    });
+    let id = "";
+    try {
+      const created = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+        workspaceId: "same-workspace",
+      });
+      id = created.id;
+      await manager.appendTimelineItem(id, {
+        type: "user_message",
+        text: "Keep the public API compatible.",
+      });
+      await manager.setAgentModel(id, "gpt-5.4", "codex");
+      await manager.closeAgent(id);
+      await manager.flush();
+      const loaded = await ensureAgentLoaded(id, {
+        agentManager: restarted,
+        agentStorage: restartedRegistry,
+        logger,
+      });
+      expect(loaded.provider).toBe("codex");
+      expect(loaded.workspaceId).toBe("same-workspace");
+      const session = target.sessions.at(-1)!;
+      session.failStart = true;
+      await expect(restarted.runAgent(id, "Continue the migration.")).rejects.toThrow(
+        "Target rejected",
+      );
+      expect((await restartedRegistry.get(id))?.config?.providerHandoff?.pending).toBe(true);
+      session.failStart = false;
+      await restarted.runAgent(id, "Continue the migration.");
+      await restarted.flush();
+      expect(session.prompts[0]).toContain("Keep the public API compatible.");
+      expect(session.prompts[0]).toContain("Continue the migration.");
+      expect((await restartedRegistry.get(id))?.config?.providerHandoff?.pending).toBe(false);
+      const visible = (await restarted.getTimelineRows(id)).map((row) => row.item);
+      expect(visible).toContainEqual(
+        expect.objectContaining({ type: "user_message", text: "Continue the migration." }),
+      );
+      expect(
+        visible
+          .filter((item) => item.type === "user_message")
+          .map((item) => item.text)
+          .join("\n"),
+      ).not.toContain("follow as JSON records");
+      await restarted.runAgent(id, "Next step.");
+      expect(session.prompts[1]).toBe("Next step.");
+      expect((await restarted.getTimelineRows(id))[0]?.item).toMatchObject({
+        text: "Keep the public API compatible.",
+      });
+    } finally {
+      if (id) {
+        await manager.closeAgent(id);
+        await restarted.closeAgent(id);
+      }
+      await manager.flush();
+      await restarted.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("switching to a disabled provider leaves the source chat usable", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-disabled-"));
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    providerDefinitions: { codex: { enabled: false } },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow("disabled");
+    expect(target.sessions).toHaveLength(0);
+    expect(manager.getAgent(agent.id)?.provider).toBe("claude");
+    await manager.runAgent(agent.id, "Continue on the source agent");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed provider switch leaves the original runtime and configuration usable", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-failure-"));
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const registry = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { claude: source, codex: target },
+    registry,
+    logger,
+  });
+  const agent = await manager.createAgent(
+    { provider: "claude", cwd: workdir, model: "old-model" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  try {
+    target.failCreate = true;
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Target could not start",
+    );
+    expect(source.sessions[0]?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.config).toMatchObject({
+      provider: "claude",
+      model: "old-model",
+    });
+    target.failCreate = false;
+    source.sessions[0]!.failClose = true;
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Runtime is still in use",
+    );
+    expect(target.sessions[0]?.closed).toBe(true);
+    expect((await registry.get(agent.id))?.provider).toBe("claude");
+    source.sessions[0]!.failClose = false;
+    await manager.runAgent(agent.id, "Continue on the original agent.");
+    expect(source.sessions[0]?.prompts).toEqual(["Continue on the original agent."]);
+  } finally {
+    source.sessions[0]!.failClose = false;
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+/** Answers compaction prompts with a summary once `release` is called; other turns as usual. */
+class CompactingTestSession extends HandoffTestSession {
+  private permissionAnswered: (() => void) | undefined;
+  private pendingSummaryTurn: string | undefined;
+  override async interrupt(): Promise<void> {
+    const turnId = this.pendingSummaryTurn;
+    if (!turnId) return super.interrupt();
+    this.pendingSummaryTurn = undefined;
+    this.pushEvent({
+      type: "turn_canceled",
+      provider: this.provider,
+      turnId,
+      reason: "interrupted",
+    });
+  }
+  constructor(
+    config: AgentSessionConfig,
+    private readonly owner: WindowTestClient,
+  ) {
+    super(config);
+  }
+  override async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<void> {
+    this.owner.permissionResponses.push({ requestId, behavior: response.behavior });
+    this.permissionAnswered?.();
+  }
+  override async startTurn(prompt?: AgentPromptInput) {
+    const text = typeof prompt === "string" ? prompt : "";
+    if (!text.startsWith("You are compacting")) return super.startTurn(prompt);
+    this.owner.summarizerPrompts.push(text);
+    const part = this.owner.summarizerPrompts.length;
+    const turnId = `summary-${part}`;
+    this.pendingSummaryTurn = turnId;
+    void this.owner.gate.then(async () => {
+      if (this.pendingSummaryTurn !== turnId) return undefined;
+      this.pendingSummaryTurn = undefined;
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      if (this.owner.askPermission) {
+        // A model that reaches for a tool must get an answer, or the summary never comes.
+        const answered = new Promise<void>((resolve) => {
+          this.permissionAnswered = resolve;
+        });
+        this.pushEvent({
+          type: "permission_requested",
+          provider: this.provider,
+          turnId,
+          request: { id: `read-${part}`, provider: this.provider, kind: "tool", name: "Read" },
+        });
+        await answered;
+      }
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        turnId,
+        item: {
+          type: "assistant_message",
+          text: this.owner.emptySummary
+            ? ""
+            : `SUMMARY PART ${part}` + "s".repeat(this.owner.summaryPadding),
+        },
+      });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      return undefined;
+    });
+    return { turnId };
+  }
+}
+class WindowTestClient extends HandoffTestClient {
+  readonly summarizerPrompts: string[] = [];
+  readonly permissionResponses: { requestId: string; behavior: string }[] = [];
+  emptySummary = false;
+  summaryPadding = 0;
+  askPermission = false;
+  gate: Promise<void> = Promise.resolve();
+  constructor(
+    provider: AgentProvider,
+    private readonly contextWindowMaxTokens: number,
+  ) {
+    super(provider);
+  }
+  override async fetchCatalog() {
+    return {
+      models: [
+        {
+          provider: this.provider,
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          isDefault: true,
+          contextWindowMaxTokens: this.contextWindowMaxTokens,
+        },
+      ],
+      modes: [],
+    };
+  }
+  override async createSession(config: AgentSessionConfig) {
+    const session = new CompactingTestSession(config, this);
+    this.sessions.push(session);
+    return session;
+  }
+}
+function handoffTestRecord(index: number, size: number): string {
+  return `record-${index}:` + "x".repeat(size);
+}
+
+test("a provider switch sends the whole history when it fits the new model", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-fits-"));
+  const target = new WindowTestClient("codex", 1_000_000);
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    // About 480 000 characters: above the earlier fixed 256 000-character cap, within the window.
+    for (let index = 0; index < 120; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 4_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+    await manager.runAgent(agent.id, "Continue.");
+    const prompt = String(target.sessions.find((s) => s.prompts.length)?.prompts[0]);
+    expect(prompt).toContain("record-0:");
+    expect(prompt).toContain("record-119:");
+    expect(prompt).not.toContain("compacted");
+    expect(target.summarizerPrompts).toEqual([]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a provider switch compacts the oldest history when it does not fit the new model", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-"));
+  // 40 000 tokens leave 8 000 tokens (24 000 characters) for the handoff.
+  const target = new WindowTestClient("codex", 40_000);
+  let release!: () => void;
+  target.gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    // The request returns before the compaction finishes.
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    expect(manager.getAgent(agent.id)?.provider).toBe("claude");
+    // Every client sees a running agent with an open compaction marker while it compacts.
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+    expect(manager.getTimeline(agent.id).at(-1)).toMatchObject({
+      type: "compaction",
+      status: "loading",
+    });
+    await expect(manager.runAgent(agent.id, "Too early.")).rejects.toThrow(
+      "Wait for the agent switch to finish",
+    );
+    release();
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.provider).toBe("codex"));
+    expect(manager.getAgent(agent.id)?.lifecycle).not.toBe("running");
+    expect(
+      manager
+        .getTimeline(agent.id)
+        .flatMap((item) => (item.type === "compaction" ? [item.status] : [])),
+    ).toEqual(["loading", "completed"]);
+    const parts = target.summarizerPrompts.length;
+    expect(parts).toBeGreaterThan(1);
+    expect(target.summarizerPrompts[0]).toContain("record-0:");
+    // The previous part's summary is context; the part summaries are joined, not rewritten.
+    expect(target.summarizerPrompts[1]).toContain("for context only");
+    expect(target.summarizerPrompts[1]).toContain("SUMMARY PART 1");
+
+    // The lock is released just after the provider changes; a refused prompt starts no turn.
+    await vi.waitFor(() => manager.runAgent(agent.id, "Continue."));
+    const main = target.sessions.find((s) =>
+      s.prompts.some((p) => String(p).includes("Continue.")),
+    );
+    const prompt = String(main?.prompts[0]);
+    // Every part's summary reaches the new model, in order.
+    const partSummaries = Array.from({ length: parts }, (_, index) => `SUMMARY PART ${index + 1}`);
+    for (const partSummary of partSummaries) expect(prompt).toContain(partSummary);
+    expect(prompt.indexOf("SUMMARY PART 1")).toBeLessThan(prompt.indexOf(`SUMMARY PART ${parts}`));
+    expect(prompt).toContain("record-29:");
+    expect(prompt).not.toContain("record-0:");
+    const notices = manager
+      .getTimeline(agent.id)
+      .flatMap((item) => (item.type === "notification" ? [item.message] : []));
+    expect(notices.some((message) => message.includes("Compacting before the switch"))).toBe(true);
+    // One progress line per finished part.
+    for (let part = 1; part <= parts; part += 1) {
+      expect(
+        notices.some((message) => message.startsWith(`Compacting: part ${part} of ${parts} done`)),
+      ).toBe(true);
+    }
+    expect(notices.some((message) => message.includes("was compacted to fit"))).toBe(true);
+    // The summary covers the chat from its start, so a later switch can reuse it.
+    expect(manager.getAgent(agent.id)?.config.providerHandoff?.compaction?.summary).toBe(
+      partSummaries.join("\n\n"),
+    );
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a tool request from the summarizer is denied and the compaction completes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-deny-"));
+  const target = new WindowTestClient("codex", 40_000);
+  target.askPermission = true;
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.provider).toBe("codex"));
+    expect(target.permissionResponses.length).toBe(target.summarizerPrompts.length);
+    expect(target.permissionResponses.every((entry) => entry.behavior === "deny")).toBe(true);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed compaction leaves the chat on its original provider", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-fail-"));
+  const source = new HandoffTestClient("claude");
+  const target = new WindowTestClient("codex", 40_000);
+  target.emptySummary = true;
+  const manager = new AgentManager({ clients: { claude: source, codex: target }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await vi.waitFor(() =>
+      expect(
+        manager
+          .getTimeline(agent.id)
+          .some((item) => item.type === "notification" && item.level === "error"),
+      ).toBe(true),
+    );
+    expect(manager.getAgent(agent.id)?.provider).toBe("claude");
+    await vi.waitFor(() => manager.runAgent(agent.id, "Continue on the source agent."));
+    expect(source.sessions[0]?.prompts).toEqual(["Continue on the source agent."]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("stopping a compacting switch cancels it, and a new message does not", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-cancel-"));
+  const source = new HandoffTestClient("claude");
+  // The summarizer never answers until the test cancels.
+  const target = new WindowTestClient("codex", 40_000);
+  target.gate = new Promise<void>(() => {});
+  const manager = new AgentManager({ clients: { claude: source, codex: target }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await vi.waitFor(() => expect(target.summarizerPrompts).toHaveLength(1));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    // Replacing the "running" turn would cancel it; a message must wait instead.
+    await expect(manager.replaceAgentRun(agent.id, "Interrupt it.")).rejects.toThrow(
+      "Wait for the agent switch to finish",
+    );
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.getAgent(agent.id)).toMatchObject({ provider: "claude", lifecycle: "idle" });
+    const items = manager.getTimeline(agent.id);
+    expect(items.flatMap((item) => (item.type === "compaction" ? [item.status] : []))).toEqual([
+      "loading",
+      "completed",
+    ]);
+    expect(items.at(-1)).toMatchObject({
+      type: "notification",
+      message: expect.stringContaining("was canceled. The chat stays on claude."),
+    });
+    await vi.waitFor(() => manager.runAgent(agent.id, "Continue on the source agent."));
+    expect(source.sessions[0]?.prompts).toEqual(["Continue on the source agent."]);
+    expect(target.summarizerPrompts).toHaveLength(1);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("part summaries that are too long together are merged in groups", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-merge-"));
+  // 40 000 tokens leave 8 000 tokens; the summaries may fill 40 % of them (6 400 characters).
+  const target = new WindowTestClient("codex", 40_000);
+  target.summaryPadding = 1_500;
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.provider).toBe("codex"));
+    const merges = target.summarizerPrompts.filter((prompt) =>
+      prompt.startsWith("You are compacting partial summaries"),
+    );
+    expect(merges.length).toBeGreaterThan(0);
+    expect(merges[0]).toContain("SUMMARY PART 1");
+    expect(
+      manager
+        .getTimeline(agent.id)
+        .some(
+          (item) => item.type === "notification" && item.message.startsWith("Compacting: merging"),
+        ),
+    ).toBe(true);
+    await vi.waitFor(() => manager.runAgent(agent.id, "Continue."));
+    const prompt = String(target.sessions.find((s) => s.prompts.length)?.prompts[0]);
+    expect(prompt).toContain("record-29:");
+    // The handoff fits the 8 000-token limit at 2 characters per token.
+    expect(prompt.length).toBeLessThanOrEqual(16_000);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a later switch continues from the summary an earlier switch wrote", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-compact-reuse-"));
+  const first = new WindowTestClient("codex", 40_000);
+  const second = new WindowTestClient("opencode", 40_000);
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: first, opencode: second },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.provider).toBe("codex"));
+    const parts = first.summarizerPrompts.length;
+    await vi.waitFor(() => manager.setAgentModel(agent.id, "gpt-5.4", "opencode"));
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.provider).toBe("opencode"));
+    // The summary plus the newest records fit, so nothing is summarized a second time.
+    expect(second.summarizerPrompts).toEqual([]);
+    await manager.runAgent(agent.id, "Continue.");
+    const prompt = String(second.sessions.find((s) => s.prompts.length)?.prompts[0]);
+    expect(prompt).toContain(`SUMMARY PART ${parts}`);
+    expect(prompt).toContain("record-29:");
+    expect(prompt).not.toContain("record-0:");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a switch reuses the source provider's own compaction instead of compacting again", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-native-summary-"));
+  const source = new HandoffTestClient("claude");
+  const target = new WindowTestClient("codex", 40_000);
+  const manager = new AgentManager({ clients: { claude: source, codex: target }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    Object.assign(source.sessions[0]!, {
+      readCompactedContext: async () => "NATIVE SUMMARY of records 0 to 29",
+    });
+    for (let index = 0; index < 30; index += 1) {
+      await manager.appendTimelineItem(agent.id, {
+        type: "user_message",
+        text: handoffTestRecord(index, 2_000),
+      });
+    }
+    const marker = await manager.appendTimelineItem(agent.id, {
+      type: "compaction",
+      status: "completed",
+      trigger: "auto",
+    });
+    await manager.appendTimelineItem(agent.id, { type: "user_message", text: "after-compaction" });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+    expect(target.summarizerPrompts).toEqual([]);
+    expect(manager.getAgent(agent.id)?.config.providerHandoff?.compaction).toEqual({
+      throughSeq: marker.seq,
+      summary: "NATIVE SUMMARY of records 0 to 29",
+    });
+    await manager.runAgent(agent.id, "Continue.");
+    const prompt = String(target.sessions.find((s) => s.prompts.length)?.prompts[0]);
+    expect(prompt).toContain("NATIVE SUMMARY of records 0 to 29");
+    expect(prompt).toContain("after-compaction");
+    expect(prompt).not.toContain("record-0:");
+    expect(prompt).not.toContain("claude");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+/** Resumes a session by its id and replays `history` as that session's native history. */
+class ResumableHandoffClient extends HandoffTestClient {
+  readonly resumedHandles: AgentPersistenceHandle[] = [];
+  history: AgentTimelineItem[] = [];
+  failResume = false;
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ) {
+    if (this.failResume) throw new Error("session not found");
+    this.resumedHandles.push(handle);
+    const session = (await super.resumeSession(handle, config)) as HandoffTestSession;
+    Object.defineProperty(session, "id", { value: handle.sessionId });
+    session.streamHistory = this.resumedHistory.bind(this, session);
+    return session;
+  }
+  private async *resumedHistory(session: AgentSession): AsyncGenerator<AgentStreamEvent> {
+    for (const item of this.history) yield { type: "timeline", provider: session.provider, item };
+  }
+}
+
+test("switching back resumes the provider's own session and sends only what happened since", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-return-"));
+  const claude = new ResumableHandoffClient("claude");
+  const codex = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude, codex },
+    durableTimelineStore: new RecordingTimelineStore(),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    const original = claude.sessions[0]!;
+    await manager.appendTimelineItem(agent.id, { type: "user_message", text: "Keep A." });
+    await manager.appendTimelineItem(agent.id, { type: "assistant_message", text: "Kept A." });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await manager.runAgent(agent.id, "Do B.");
+    // The native session still holds what it had when the chat left it.
+    claude.history = [
+      { type: "user_message", text: "Keep A." },
+      { type: "assistant_message", text: "Kept A." },
+    ];
+    await manager.setAgentModel(agent.id, "gpt-5.4", "claude");
+    expect(claude.resumedHandles.map((handle) => handle.sessionId)).toEqual([original.id]);
+    const handoff = manager.getAgent(agent.id)?.config.providerHandoff;
+    expect(handoff?.nativeHistorySkip).toBe(2);
+    expect(Object.keys(handoff?.previousSessions ?? {})).toEqual(["codex"]);
+    expect(manager.getTimeline(agent.id).at(-1)).toMatchObject({
+      type: "notification",
+      message: expect.stringContaining("Resumed its earlier session"),
+    });
+
+    await manager.runAgent(agent.id, "Do C.");
+    const prompt = String(claude.sessions.at(-1)!.prompts[0]);
+    expect(prompt).toContain("continued after your last reply");
+    expect(prompt).toContain("Do B.");
+    expect(prompt).not.toContain("Keep A.");
+    expect(prompt).toContain("Do C.");
+
+    // A native replay adds only the new turn; what the chat already shows is not repeated.
+    claude.history.push({ type: "user_message", text: prompt });
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    const texts = (await manager.getTimelineRows(agent.id)).flatMap((row) =>
+      row.item.type === "user_message" ? [row.item.text] : [],
+    );
+    expect(texts.filter((text) => text === "Keep A.")).toHaveLength(1);
+    expect(texts.at(-1)).toBe("Do C.");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a session that cannot be resumed is forgotten, and the next switch starts a new one", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-return-fail-"));
+  const claude = new ResumableHandoffClient("claude");
+  const manager = new AgentManager({
+    clients: { claude, codex: new HandoffTestClient() },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, { type: "user_message", text: "Keep A." });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    claude.failResume = true;
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "claude")).rejects.toThrow(
+      "Could not resume the earlier claude session",
+    );
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+    expect(
+      manager.getAgent(agent.id)?.config.providerHandoff?.previousSessions?.claude,
+    ).toBeUndefined();
+    claude.failResume = false;
+    await manager.setAgentModel(agent.id, "gpt-5.4", "claude");
+    expect(claude.resumedHandles).toEqual([]);
+    await manager.runAgent(agent.id, "Continue.");
+    expect(String(claude.sessions.at(-1)!.prompts[0])).toContain("Keep A.");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a provider switch rejects active turns and outstanding approvals", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-busy-"));
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({ clients: { claude: source, codex: target }, logger });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const session = source.sessions[0]!;
+  try {
+    session.pushEvent({ type: "turn_started", provider: "claude", turnId: "busy-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Wait for the current response",
+    );
+    session.pushEvent({ type: "turn_completed", provider: "claude", turnId: "busy-turn" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle"));
+    session.pushEvent({
+      type: "permission_requested",
+      provider: "claude",
+      request: { id: "approval", provider: "claude", kind: "tool", name: "Write file" },
+    });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1));
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow("approvals");
+    expect(target.sessions).toHaveLength(0);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("provider history refresh preserves earlier segments and blocks cross-provider rewind", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-segments-"));
+  const target = new HandoffTestClient();
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    durableTimelineStore: store,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, {
+      type: "user_message",
+      text: "Original requirements",
+      messageId: "old-message",
+    });
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    await manager.runAgent(agent.id, "Continue here");
+    const session = target.sessions[0]!;
+    session.streamHistory = async function* () {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: String(session.prompts[0]), messageId: "new-message" },
+      };
+    };
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await manager.flush();
+    const rows = await manager.getTimelineRows(agent.id);
+    expect(rows[0]?.item).toMatchObject({ type: "user_message", text: "Original requirements" });
+    expect(rows.at(-1)?.item).toMatchObject({ type: "user_message", text: "Continue here" });
+    expect(rows.map((row) => row.item.type)).toEqual([
+      "user_message",
+      "notification",
+      "user_message",
+    ]);
+    await expect(manager.rewind(agent.id, "old-message", "conversation")).rejects.toThrow(
+      "previous agent",
+    );
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("switching an empty chat preserves switch notices through native history refresh", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-empty-"));
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: new HandoffTestClient("claude"), codex: target },
+    durableTimelineStore: new RecordingTimelineStore(),
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    await manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+    expect(manager.getAgent(agent.id)?.config.providerHandoff?.pending).toBe(false);
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+      expect.objectContaining({
+        type: "notification",
+        message: expect.stringContaining("Switched from claude to codex"),
+      }),
+    ]);
+    await manager.runAgent(agent.id, "First message");
+    expect(target.sessions[0]?.prompts).toEqual(["First message"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an in-progress provider switch blocks overlapping prompts and duplicate switches", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-race-"));
+  const started = deferred<void>();
+  const release = deferred<void>();
+  class SlowTarget extends HandoffTestClient {
+    override async createSession(config: AgentSessionConfig) {
+      started.resolve();
+      await release.promise;
+      return super.createSession(config);
+    }
+  }
+  const source = new HandoffTestClient("claude");
+  const manager = new AgentManager({
+    clients: { claude: source, codex: new SlowTarget() },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const switching = manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+  try {
+    await started.promise;
+    await expect(manager.runAgent(agent.id, "Do not send to the old runtime")).rejects.toThrow(
+      "switch",
+    );
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "already in progress",
+    );
+    expect(source.sessions[0]?.closed).toBe(false);
+    release.resolve();
+    await switching;
+    expect(source.sessions[0]?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+  } finally {
+    release.resolve();
+    await switching;
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle cleanup leaves a chat alone while a provider switch is being prepared", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-idle-cleanup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const catalogRequested = deferred<void>();
+  const release = deferred<void>();
+  // Preparing reads the target's catalog outside the lifecycle lane, while the chat is idle.
+  class SlowCatalogTarget extends HandoffTestClient {
+    override async fetchCatalog() {
+      catalogRequested.resolve();
+      await release.promise;
+      return super.fetchCatalog();
+    }
+  }
+  const source = new HandoffTestClient("claude");
+  const manager = new AgentManager({
+    clients: { claude: source, codex: new SlowCatalogTarget() },
+    registry: storage,
+    logger,
+  });
+  const sweep = runtimeCleanup(manager);
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  Object.assign(source.sessions[0]!, { canStopRuntime: async () => true });
+  const switching = manager.setAgentModel(agent.id, "gpt-5.4", "codex");
+  try {
+    await catalogRequested.promise;
+    await sweep({ now: new Date(Date.now() + 61 * 60_000) });
+    expect(source.sessions[0]?.closed).toBe(false);
+    release.resolve();
+    await switching;
+    expect(manager.getAgent(agent.id)?.provider).toBe("codex");
+  } finally {
+    release.resolve();
+    await switching.catch(() => undefined);
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed replacement registration restores the previous durable session for recovery", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-provider-rollback-"));
+  class FailingTargetStorage extends AgentStorage {
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ) {
+      if (agent.provider === "codex") throw new Error("Target persistence unavailable");
+      return super.applySnapshot(agent, options);
+    }
+  }
+  const registry = new FailingTargetStorage(join(workdir, "agents"), logger);
+  const source = new HandoffTestClient("claude");
+  const target = new HandoffTestClient();
+  const manager = new AgentManager({
+    clients: { claude: source, codex: target },
+    registry,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+    workspaceId: "workspace",
+  });
+  try {
+    await manager.appendTimelineItem(agent.id, { type: "user_message", text: "Keep this history" });
+    await expect(manager.setAgentModel(agent.id, "gpt-5.4", "codex")).rejects.toThrow(
+      "Target persistence unavailable",
+    );
+    expect((await registry.get(agent.id))?.provider).toBe("claude");
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(target.sessions[0]?.closed).toBe(true);
+    const restored = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: registry,
+      logger,
+    });
+    expect(restored.provider).toBe("claude");
+    expect(manager.getTimeline(agent.id)).toContainEqual(
+      expect.objectContaining({ text: "Keep this history" }),
+    );
+    await manager.runAgent(agent.id, "Resume original work");
+    expect(source.sessions.at(-1)?.prompts).toEqual(["Resume original work"]);
+  } finally {
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 function dispatchStarted(dispatch: Awaited<ReturnType<typeof startAgentRun>>): Promise<void> {

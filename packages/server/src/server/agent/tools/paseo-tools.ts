@@ -1114,6 +1114,14 @@ function createToolCatalog(
     .strict();
   const UpdateAgentSettingsInputSchema = z
     .object({
+      provider: z
+        .string()
+        .trim()
+        .min(1)
+        .optional()
+        .describe(
+          "Provider ID to continue this chat on, for example claude or opencode. The agent keeps its ID, labels and history; it must be idle. Pair it with model. Mode, thinking and features reset to the new provider's defaults unless also set here. Switching back to a provider the chat used before resumes that provider's own session and sends only what happened since. The whole history goes to the new model when it fits; when it does not, the switch first compacts the oldest part (reusing an existing summary when there is one) and finishes in the background. The agent shows as running while it compacts, and cancel_agent cancels the switch; check get_agent_status for the new provider before you send a prompt.",
+        ),
       modeId: z.string().optional().describe("Session mode ID."),
       model: z.string().nullable().optional().describe("Model ID. Pass null to clear."),
       thinkingOptionId: z
@@ -2312,10 +2320,23 @@ function createToolCatalog(
       },
     },
     async ({ agentId, name, labels, settings }) => {
+      // Settings change the runtime, which an idle chat may have released; load it first, as a
+      // prompt does. A live agent is used as it is, after any close in progress.
+      if (settings && Object.values(settings).some((value) => value !== undefined)) {
+        await ensureAgentLoaded(agentId, {
+          agentManager,
+          agentStorage,
+          logger: childLogger,
+        });
+      }
+      // A provider switch replaces the session, so it runs before the settings that apply to it.
+      if (settings?.provider !== undefined) {
+        await agentManager.setAgentModel(agentId, settings.model ?? null, settings.provider);
+      }
       if (settings?.modeId !== undefined) {
         await agentManager.setAgentMode(agentId, settings.modeId);
       }
-      if (settings?.model !== undefined) {
+      if (settings?.model !== undefined && settings.provider === undefined) {
         await agentManager.setAgentModel(agentId, settings.model);
       }
       if (settings?.thinkingOptionId !== undefined) {

@@ -5,9 +5,15 @@ import type { Logger } from "pino";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentOptionControlSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentOptionControlSchema,
+  AgentStatusSchema,
+  AgentTimelineItemPayloadSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
+import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
 import { AgentOwnerSchema, daemonExecutionKey, type DaemonAgentOwner } from "./agent-owner.js";
 import { controlsFromFeatures } from "@getpaseo/protocol/option-controls";
@@ -31,6 +37,32 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
       .nullable()
       .optional(),
     systemPrompt: z.string().nullable().optional(),
+    providerHandoff: z
+      .object({
+        text: z.string(),
+        pending: z.boolean(),
+        historyBoundary: z.number().int().nonnegative().optional(),
+        nativeHistorySkip: z.number().int().nonnegative().optional(),
+        previousSessions: z
+          .record(
+            z.string(),
+            z.object({
+              handle: z.object({
+                provider: z.string(),
+                sessionId: z.string(),
+                nativeHandle: z.any().optional(),
+                metadata: z.record(z.string(), z.any()).optional(),
+              }),
+              leftAtSeq: z.number().int().nonnegative(),
+              model: z.string().optional(),
+            }),
+          )
+          .optional(),
+        compaction: z
+          .object({ throughSeq: z.number().int().nonnegative(), summary: z.string() })
+          .optional(),
+      })
+      .optional(),
     mcpServers: z.record(z.string(), z.any()).nullable().optional(),
   })
   .nullable()
@@ -95,6 +127,7 @@ export type SerializableAgentConfig = Pick<
   | "providerOptions"
   | "toolPolicy"
   | "systemPrompt"
+  | "providerHandoff"
   | "mcpServers"
 >;
 
@@ -267,6 +300,39 @@ export class AgentStorage {
     return this.cache.get(agentId) ?? null;
   }
 
+  // Native history covers only the current provider. Keep earlier segments in
+  // a sidecar rather than duplicating the transcript in every agent snapshot.
+  async saveProviderHistory(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    await writeJsonFileAtomic(this.providerHistoryPath(agentId), rows);
+  }
+
+  async loadProviderHistory(agentId: string, boundary: number): Promise<AgentTimelineRow[]> {
+    try {
+      const value: unknown = JSON.parse(
+        await fs.readFile(this.providerHistoryPath(agentId), "utf8"),
+      );
+      return z
+        .array(
+          z.object({
+            seq: z.number().int().positive(),
+            timestamp: z.string(),
+            item: AgentTimelineItemPayloadSchema,
+            turnId: z.string().optional(),
+            providerMessageId: z.string().optional(),
+          }),
+        )
+        .parse(value)
+        .filter((row) => row.seq <= boundary);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+
+  private providerHistoryPath(agentId: string): string {
+    return path.join(this.baseDir, ".provider-history", `${encodeURIComponent(agentId)}.timeline`);
+  }
+
   async listByProviderSession(
     provider: string,
     providerHandleId: string,
@@ -379,6 +445,7 @@ export class AgentStorage {
       this.idsByWorkspace.get(workspaceId)?.delete(agentId);
       this.refreshPromptTime(workspaceId);
     }
+    await fs.rm(this.providerHistoryPath(agentId), { force: true });
     this.cache.delete(agentId);
     this.removeOwnerIndex(agentId);
     this.pathById.delete(agentId);

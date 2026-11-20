@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { LRUCache } from "lru-cache";
 import stripAnsi from "strip-ansi";
 import { createImportDescriptorScheduler } from "./import-descriptor-scheduler.js";
@@ -2925,6 +2926,14 @@ class ClaudeAgentSession implements AgentSession {
       };
     }
     yield* providerSubagentEvents;
+  }
+
+  async readCompactedContext(): Promise<string | null> {
+    const historyPath = this.claudeSessionId
+      ? await this.resolveHistoryPath(this.claudeSessionId)
+      : null;
+    if (!historyPath || !(await transcriptExists(historyPath))) return null;
+    return readClaudeCompactedContext(historyPath);
   }
 
   async getAvailableModes(): Promise<AgentMode[]> {
@@ -6843,6 +6852,133 @@ interface ClaudeHistoryEntry {
   uuid?: unknown;
   message?: { content?: unknown; [key: string]: unknown };
   [key: string]: unknown;
+}
+
+/**
+ * The newest compaction in a Claude Code transcript as plain text: the summary Claude Code wrote,
+ * then the messages it kept word for word. Lines that only make sense inside Claude Code (its tool
+ * list, the transcript path, its resume instruction) are left out, because another model reads it.
+ */
+export async function readClaudeCompactedContext(historyPath: string): Promise<string | null> {
+  // First pass: the newest main-chain boundary and the summary after it. Only those are kept,
+  // because a transcript can be far larger than memory should hold.
+  let boundary: ClaudeHistoryEntry | null = null;
+  let boundaryIndex = -1;
+  let summary = "";
+  let index = 0;
+  for await (const entry of claudeTranscriptEntries(historyPath)) {
+    if (entry.isSidechain !== true) {
+      if (entry.type === "system" && entry.subtype === "compact_boundary") {
+        boundary = entry;
+        boundaryIndex = index;
+        summary = "";
+      } else if (boundary && !summary && entry.isCompactSummary === true) {
+        summary = cleanClaudeCompactSummary(claudeEntryText(entry));
+      }
+    }
+    index += 1;
+  }
+  if (!boundary || !summary) return null;
+  // Second pass: the messages Claude Code kept word for word, which come before the boundary.
+  const metadata = toObjectRecord(boundary.compactMetadata);
+  const preservedUuids = toObjectRecord(metadata?.preservedMessages)?.uuids;
+  const preservedIds = new Set(
+    Array.isArray(preservedUuids) ? preservedUuids.filter((id) => typeof id === "string") : [],
+  );
+  const preserved: string[] = [];
+  if (preservedIds.size) {
+    index = 0;
+    for await (const entry of claudeTranscriptEntries(historyPath)) {
+      if (index++ >= boundaryIndex) break;
+      if (typeof entry.uuid === "string" && preservedIds.has(entry.uuid)) {
+        preserved.push(...claudeEntryRecords(entry));
+      }
+    }
+  }
+  return preserved.length
+    ? [summary, "", "Messages kept word for word after the summary:", ...preserved].join("\n")
+    : summary;
+}
+
+async function* claudeTranscriptEntries(historyPath: string): AsyncGenerator<ClaudeHistoryEntry> {
+  const input = fs.createReadStream(historyPath, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line.trim()) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        // A line being written while we read.
+        continue;
+      }
+      if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+        yield entry as ClaudeHistoryEntry;
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+function cleanClaudeCompactSummary(text: string): string {
+  return text
+    .replace(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>\n?/g, "")
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.startsWith("If you need specific details from before compaction") &&
+        !line.startsWith("Continue the conversation from where it left off"),
+    )
+    .join("\n")
+    .trim();
+}
+
+function claudeEntryText(entry: ClaudeHistoryEntry): string {
+  const content = entry.message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      const block = toObjectRecord(part);
+      return block?.type === "text" && typeof block.text === "string" ? block.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** One JSON record per text, tool input or tool result, without the tool's Claude Code name. */
+function claudeEntryRecords(entry: ClaudeHistoryEntry): string[] {
+  if (entry.type !== "user" && entry.type !== "assistant") return [];
+  const role = entry.type;
+  const content = entry.message?.content;
+  if (typeof content === "string") return content ? [JSON.stringify({ role, text: content })] : [];
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part) => {
+    const block = toObjectRecord(part);
+    if (!block) return [];
+    if (block.type === "text" && typeof block.text === "string" && block.text) {
+      return [JSON.stringify({ role, text: block.text })];
+    }
+    if (block.type === "tool_use") return [JSON.stringify({ tool_input: block.input })];
+    if (block.type === "tool_result") {
+      let result = "";
+      if (typeof block.content === "string") {
+        result = block.content;
+      } else if (Array.isArray(block.content)) {
+        result = block.content
+          .map((item) => {
+            const record = toObjectRecord(item);
+            return typeof record?.text === "string" ? record.text : "";
+          })
+          .join("\n");
+      }
+      return [JSON.stringify({ tool_result: result })];
+    }
+    return [];
+  });
 }
 
 async function mapAssistantHistoryBlocksWithMessageId(
