@@ -326,6 +326,54 @@ describe("Gitea-family ChangeRequestSource polling", () => {
     }
   });
 
+  it.each(["Has been cancelled", "Canceled after 5s"])(
+    "keeps the canceled job neutral without run details (%s)",
+    async (description) => {
+      vi.useFakeTimers();
+      const origin = "https://codeberg.org";
+      const run = `${origin}/Org/Repo/actions/runs/42`;
+      const { runner } = createFakeTeaRunner((args) => {
+        if (args[0] === "login")
+          return { stdout: JSON.stringify([{ name: "cb", url: origin }]), stderr: "" };
+        const endpoint = args.at(-1)!;
+        if (endpoint.endsWith("/pulls/1"))
+          return teaHttp({ number: 1, state: "open", head: { sha: "head" } });
+        if (endpoint.includes("/status?")) {
+          return teaHttp({
+            statuses: [{ id: 4, status: "failure", description, target_url: `${run}/jobs/2` }],
+          });
+        }
+        if (endpoint.includes("/actions/tasks?")) {
+          return teaHttp({
+            workflow_runs: [{ id: 53, head_sha: "head", status: "cancelled", url: run }],
+            total_count: 1,
+          });
+        }
+        if (endpoint.includes("/actions/runs/42/jobs")) {
+          return teaHttp({ message: "Not found" }, { status: "404 Not Found" });
+        }
+        return teaHttp([]);
+      });
+      const service = createGiteaService({ runner, resolveTeaPath: async () => "tea" });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      try {
+        service.changeRequests!.observe(`${origin}/Org/Repo/pulls/1`, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error(error) {
+            throw error;
+          },
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        expect(snapshots[0]?.checksState).toBe("neutral");
+        expect(snapshots[0]?.checks.map(({ state }) => state)).toEqual(["neutral", "neutral"]);
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
+
   it("keeps one check for an Actions job reported as both a commit status and a run task", async () => {
     vi.useFakeTimers();
     const origin = "https://codeberg.org";

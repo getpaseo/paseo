@@ -240,6 +240,13 @@ function mapCommitStatusToWatchState(
   }
 }
 
+function isCanceledActionStatus(status: GiteaCommitStatus): boolean {
+  // Actions writes a generic failure state on cancellation, with a distinct
+  // description in the native job's commit status.
+  const description = status.description ?? "";
+  return description === "Has been cancelled" || description.startsWith("Canceled after ");
+}
+
 function mapActionTaskToWatchState(
   status: string,
 ): ChangeRequestSnapshot["checks"][number]["state"] {
@@ -302,7 +309,10 @@ function combineWatchChecks(
     checks.push({
       id: `status:${status.id}`,
       name: status.context || `status-${status.id}`,
-      state: mapCommitStatusToWatchState(status.status),
+      state:
+        jobUrl && isCanceledActionStatus(status)
+          ? "neutral"
+          : mapCommitStatusToWatchState(status.status),
       ...(url ? { url } : {}),
     });
   }
