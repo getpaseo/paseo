@@ -2884,7 +2884,7 @@ export const ja: TranslationResources = {
         updateTitle: "Paseoスキルを更新しますか？",
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
-          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+          "~/.agents、~/.claude、~/.codex、~/.gemini/configからすべてのPaseoオーケストレーションスキルを削除します。",
         choose: "スキルを選択",
         chooseAll: "すべてのスキル",
         chooseAllHint:
@@ -2893,7 +2893,7 @@ export const ja: TranslationResources = {
         chooseEmpty: "このビルドにはスキルが含まれていません。",
         removeTitle: "選択を外したスキルを削除しますか？",
         removeMessage:
-          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+          "{{skills}} を ~/.agents、~/.claude、~/.codex、~/.gemini/config から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
         saveFailed: "スキルの選択を保存できませんでした。",
         statusFailed: "オーケストレーションスキルのステータスを確認できません。",
         updateFailed: "オーケストレーションスキルを更新できません。",

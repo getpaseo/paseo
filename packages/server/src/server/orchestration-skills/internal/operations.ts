@@ -38,6 +38,7 @@ export interface SkillTargets {
   agentsDir: string;
   claudeDir: string;
   codexDir: string;
+  antigravityDir: string;
 }
 
 // Names the bundle used to ship. They are never selectable, but every scan still
@@ -163,13 +164,14 @@ export async function getSkillsStatus(
 ): Promise<SkillsStatus> {
   const available = await listBundledSkills(targets.sourceDir);
   const names = managedSkillNames(available);
-  const [bundle, agentsDisk, claudeDisk, codexDisk] = await Promise.all([
+  const [bundle, agentsDisk, claudeDisk, codexDisk, antigravityDisk] = await Promise.all([
     hashSkills(targets.sourceDir, available),
     hashSkills(targets.agentsDir, names),
     hashSkills(targets.claudeDir, names),
     hashSkills(targets.codexDir, names),
+    hashSkills(targets.antigravityDir, names),
   ]);
-  const disks = [agentsDisk, claudeDisk];
+  const disks = [agentsDisk, claudeDisk, antigravityDisk];
   const desired = resolveDesiredSkills(selection, available);
   const ops = diff(bundle, disks, names, desired);
   for (const name of codexDisk.keys()) {
@@ -206,6 +208,7 @@ async function applySkills(
       agentsDir: targets.agentsDir,
       claudeDir: targets.claudeDir,
       codexDir: targets.codexDir,
+      antigravityDir: targets.antigravityDir,
       skillNames: writes,
     });
   }
@@ -216,6 +219,7 @@ async function applySkills(
       agentsDir: targets.agentsDir,
       claudeDir: targets.claudeDir,
       codexDir: targets.codexDir,
+      antigravityDir: targets.antigravityDir,
     });
   }
 
@@ -264,6 +268,7 @@ export async function uninstallSkills(
       agentsDir: targets.agentsDir,
       claudeDir: targets.claudeDir,
       codexDir: targets.codexDir,
+      antigravityDir: targets.antigravityDir,
     });
   }
   return getSkillsStatus(targets, selection);

@@ -2919,7 +2919,7 @@ export const fr: TranslationResources = {
         updateTitle: "Mettre à jour les skills Paseo ?",
         uninstallTitle: "Désinstaller les skills Paseo ?",
         uninstallMessage:
-          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude et ~/.codex sur cet hôte.",
+          "Supprime tous les skills d’orchestration Paseo de ~/.agents, ~/.claude, ~/.codex et ~/.gemini/config sur cet hôte.",
         choose: "Choisir les skills",
         chooseAll: "Tous les skills",
         chooseAllHint:
@@ -2928,7 +2928,7 @@ export const fr: TranslationResources = {
         chooseEmpty: "Cet hôte ne fournit aucun skill.",
         removeTitle: "Supprimer les skills décochés ?",
         removeMessage:
-          "{{skills}} seront supprimés de ~/.agents, ~/.claude et ~/.codex sur cet hôte. Tout ce que vous avez ajouté dans ces dossiers de skills sera également supprimé.",
+          "{{skills}} seront supprimés de ~/.agents, ~/.claude, ~/.codex et ~/.gemini/config sur cet hôte. Tout ce que vous avez ajouté dans ces dossiers de skills sera également supprimé.",
         saveFailed: "Impossible d’enregistrer votre sélection de skills.",
         statusFailed: "Impossible de vérifier l’état des skills d’orchestration.",
         updateFailed: "Impossible de mettre à jour les skills d’orchestration.",

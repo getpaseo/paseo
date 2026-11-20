@@ -7,6 +7,7 @@ export interface SkillSyncOptions {
   agentsDir: string;
   claudeDir: string;
   codexDir: string;
+  antigravityDir: string;
   skillNames: readonly string[];
   onSkillError?: (skillName: string, error: unknown) => void;
 }
@@ -174,6 +175,7 @@ export interface RemoveSkillTargets {
   agentsDir: string;
   claudeDir: string;
   codexDir: string;
+  antigravityDir: string;
 }
 
 export async function removeSkill(skillName: string, targets: RemoveSkillTargets): Promise<void> {
@@ -181,6 +183,7 @@ export async function removeSkill(skillName: string, targets: RemoveSkillTargets
     path.join(targets.agentsDir, skillName),
     path.join(targets.claudeDir, skillName),
     path.join(targets.codexDir, skillName),
+    path.join(targets.antigravityDir, skillName),
   ];
   for (const p of paths) {
     await fs.rm(p, { recursive: true, force: true });
@@ -194,7 +197,7 @@ async function isSameDirectory(a: string, b: string): Promise<boolean> {
 
 /**
  * Codex also discovers .agents/skills, so its dedicated copy is a leftover. When
- * the Codex skill directory resolves to the shared or Claude copy, it is that
+ * the Codex skill directory resolves to an active install target, it is that
  * copy, and retiring it would delete the install.
  */
 export async function isLegacyCodexCopy(
@@ -202,7 +205,7 @@ export async function isLegacyCodexCopy(
   targets: RemoveSkillTargets,
 ): Promise<boolean> {
   const codexSkillDir = path.join(targets.codexDir, skillName);
-  for (const root of [targets.agentsDir, targets.claudeDir]) {
+  for (const root of [targets.agentsDir, targets.claudeDir, targets.antigravityDir]) {
     if (await isSameDirectory(codexSkillDir, path.join(root, skillName))) return false;
   }
   return true;
@@ -250,6 +253,11 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
       changedFiles += await syncDirectoryFiles(
         bundleSkillDir,
         path.join(options.claudeDir, skillName),
+      );
+
+      changedFiles += await syncDirectoryFiles(
+        bundleSkillDir,
+        path.join(options.antigravityDir, skillName),
       );
 
       // Retain user edits to the old dedicated Codex copy.

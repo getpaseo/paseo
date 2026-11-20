@@ -20,5 +20,6 @@ export function resolveSkillTargets(home: string = os.homedir()): SkillTargets {
     agentsDir: path.join(home, ".agents", "skills"),
     claudeDir: path.join(home, ".claude", "skills"),
     codexDir: path.join(home, ".codex", "skills"),
+    antigravityDir: path.join(home, ".gemini", "config", "skills"),
   };
 }

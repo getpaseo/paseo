@@ -2909,7 +2909,7 @@ export const ru: TranslationResources = {
         updateTitle: "Обновить навыки Paseo?",
         uninstallTitle: "Удалить навыки Paseo?",
         uninstallMessage:
-          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude и ~/.codex на этом хосте.",
+          "Удаляет все навыки оркестрации Paseo из ~/.agents, ~/.claude, ~/.codex и ~/.gemini/config на этом хосте.",
         choose: "Выбрать навыки",
         chooseAll: "Все навыки",
         chooseAllHint: "Устанавливать все встроенные навыки, включая добавленные позже.",
@@ -2917,7 +2917,7 @@ export const ru: TranslationResources = {
         chooseEmpty: "На этом хосте нет встроенных навыков.",
         removeTitle: "Удалить снятые навыки?",
         removeMessage:
-          "{{skills}} будут удалены из ~/.agents, ~/.claude и ~/.codex на этом хосте. Всё, что вы добавили в эти папки навыков, тоже будет удалено.",
+          "{{skills}} будут удалены из ~/.agents, ~/.claude, ~/.codex и ~/.gemini/config на этом хосте. Всё, что вы добавили в эти папки навыков, тоже будет удалено.",
         saveFailed: "Не удалось сохранить выбор навыков.",
         statusFailed: "Не удалось проверить состояние навыков оркестрации.",
         updateFailed: "Не удалось обновить навыки оркестрации.",

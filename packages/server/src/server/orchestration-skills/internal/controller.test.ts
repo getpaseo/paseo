@@ -38,6 +38,7 @@ async function makeHarness(selectionStore?: SkillSelectionStore): Promise<Harnes
     agentsDir: path.join(root, "home", ".agents", "skills"),
     claudeDir: path.join(root, "home", ".claude", "skills"),
     codexDir: path.join(root, "home", ".codex", "skills"),
+    antigravityDir: path.join(root, "home", ".gemini", "config", "skills"),
   };
   for (const name of BUNDLED_SKILLS) {
     await mkdir(path.join(targets.sourceDir, name), { recursive: true });
@@ -147,7 +148,11 @@ async function installedSkills(dir: string): Promise<string[]> {
 }
 
 async function installedEverywhere(targets: SkillTargets): Promise<string[][]> {
-  return Promise.all([targets.agentsDir, targets.claudeDir, targets.codexDir].map(installedSkills));
+  return Promise.all(
+    [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map(
+      installedSkills,
+    ),
+  );
 }
 
 async function writeUserFile(
@@ -156,7 +161,12 @@ async function writeUserFile(
   relativePath: string,
   contents: string,
 ): Promise<void> {
-  for (const dir of [targets.agentsDir, targets.claudeDir, targets.codexDir]) {
+  for (const dir of [
+    targets.agentsDir,
+    targets.claudeDir,
+    targets.codexDir,
+    targets.antigravityDir,
+  ]) {
     const file = path.join(dir, skill, relativePath);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, contents);
@@ -169,7 +179,7 @@ async function readUserFile(
   relativePath: string,
 ): Promise<Array<string | null>> {
   return Promise.all(
-    [targets.agentsDir, targets.claudeDir, targets.codexDir].map((dir) =>
+    [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map((dir) =>
       readFile(path.join(dir, skill, relativePath), "utf8").catch(() => null),
     ),
   );
@@ -178,16 +188,19 @@ async function readUserFile(
 /** Anything the transaction staged and failed to clean up sits beside the skills tree. */
 async function backupArtifacts(targets: SkillTargets): Promise<string[][]> {
   return Promise.all(
-    [targets.agentsDir, targets.claudeDir, targets.codexDir].map(async (dir) => {
-      const parentEntries = await readdir(path.dirname(dir)).catch(() => []);
-      const rootEntries = await readdir(dir).catch(() => []);
-      return [
-        ...parentEntries.filter(
-          (entry) => entry !== path.basename(dir) && !entry.startsWith(".paseo-skills-recovered-"),
-        ),
-        ...rootEntries.filter((entry) => entry.startsWith(".paseo-skills-transaction-")),
-      ].sort();
-    }),
+    [targets.agentsDir, targets.claudeDir, targets.codexDir, targets.antigravityDir].map(
+      async (dir) => {
+        const parentEntries = await readdir(path.dirname(dir)).catch(() => []);
+        const rootEntries = await readdir(dir).catch(() => []);
+        return [
+          ...parentEntries.filter(
+            (entry) =>
+              entry !== path.basename(dir) && !entry.startsWith(".paseo-skills-recovered-"),
+          ),
+          ...rootEntries.filter((entry) => entry.startsWith(".paseo-skills-transaction-")),
+        ].sort();
+      },
+    ),
   );
 }
 
@@ -210,7 +223,7 @@ async function blockAgentsDir(targets: SkillTargets): Promise<void> {
 }
 
 async function isInstalled(targets: SkillTargets, name: string): Promise<boolean> {
-  const dirs = [targets.agentsDir, targets.claudeDir];
+  const dirs = [targets.agentsDir, targets.claudeDir, targets.antigravityDir];
   const present = await Promise.all(
     dirs.map((dir) =>
       access(path.join(dir, name))
@@ -251,7 +264,7 @@ describe("skills controller", () => {
         selection: { mode: "custom", skills: ["paseo", "paseo-loop"] },
       },
     );
-    expect(await installedEverywhere(harness.targets)).toEqual([[], [], []]);
+    expect(await installedEverywhere(harness.targets)).toEqual([[], [], [], []]);
   });
 
   let harness: Harness;
@@ -296,6 +309,7 @@ describe("skills controller", () => {
     await harness.controller.install();
 
     expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
       "keep this",
       "keep this",
       "keep this",
@@ -455,13 +469,15 @@ describe("skills controller", () => {
       ["paseo", "paseo-loop"],
       ["paseo", "paseo-loop"],
       ["paseo-loop"],
+      ["paseo", "paseo-loop"],
     ]);
     expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/mine.md")).toEqual([
       "hand written",
       "hand written",
       "hand written",
+      "hand written",
     ]);
-    expect(await backupArtifacts(readOnly.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(readOnly.targets)).toEqual([[], [], [], []]);
     await rm(readOnly.root, { recursive: true, force: true });
   });
 
@@ -479,6 +495,7 @@ describe("skills controller", () => {
     await expect(save).rejects.toThrow("selection store is read-only");
 
     expect(await readUserFile(readOnly.targets, "paseo", "notes/concurrent.md")).toEqual([
+      "keep this",
       "keep this",
       "keep this",
       "keep this",
@@ -503,6 +520,7 @@ describe("skills controller", () => {
 
     await readOnly.controller.autoUpdate();
     expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md")).toEqual([
+      "keep this",
       "keep this",
       "keep this",
       "keep this",
@@ -534,8 +552,10 @@ describe("skills controller", () => {
       "restore this",
       "restore this",
       "restore this",
+      "restore this",
     ]);
     expect(await readUserFile(readOnly.targets, "paseo-loop", "notes/concurrent.md")).toEqual([
+      "keep this",
       "keep this",
       "keep this",
       "keep this",
@@ -562,6 +582,7 @@ describe("skills controller", () => {
       "keep this",
       "keep this",
       "keep this",
+      "keep this",
     ]);
     expect(await isInstalled(harness.targets, "paseo-loop")).toBe(true);
   });
@@ -580,6 +601,7 @@ describe("skills controller", () => {
         harness.targets.agentsDir,
         harness.targets.claudeDir,
         harness.targets.codexDir,
+        harness.targets.antigravityDir,
       ].map((root) => path.join(root, "paseo-loop"));
       for (const live of livePaths) await chmod(live, 0o700);
       const before = await Promise.all(livePaths.map(lstat));
@@ -591,7 +613,7 @@ describe("skills controller", () => {
 
       const after = await Promise.all(livePaths.map(lstat));
       expect(after.map((entry) => entry.ino)).toEqual(before.map((entry) => entry.ino));
-      expect(after.map((entry) => entry.mode & 0o777)).toEqual([0o700, 0o700, 0o700]);
+      expect(after.map((entry) => entry.mode & 0o777)).toEqual([0o700, 0o700, 0o700, 0o700]);
     },
   );
 
@@ -622,8 +644,9 @@ describe("skills controller", () => {
       "paseo-loop-v1",
       "paseo-loop-v1",
       null,
+      "paseo-loop-v1",
     ]);
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
@@ -656,8 +679,9 @@ describe("skills controller", () => {
       "keep this",
       "keep this",
       null,
+      "keep this",
     ]);
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
@@ -693,7 +717,7 @@ describe("skills controller", () => {
     expect(
       await readFile(path.join(harness.targets.codexDir, recovered!, "notes", "mine.md"), "utf8"),
     ).toBe("staged notes");
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
@@ -732,8 +756,9 @@ describe("skills controller", () => {
       null,
       "keep this",
       "keep this",
+      "keep this",
     ]);
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
     await expect(harness.controller.status()).resolves.toMatchObject({ selection: previous });
   });
 
@@ -775,7 +800,7 @@ describe("skills controller", () => {
 
     expect(await readFile(entry!.livePath, "utf8")).toBe("external replacement");
     expect(await readFile(path.join(recovered, "notes", "mine.md"), "utf8")).toBe("captured notes");
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it("preserves a directory that replaces a captured file before recovery", async () => {
@@ -806,7 +831,7 @@ describe("skills controller", () => {
     expect(
       await readFile(path.join(path.dirname(harness.targets.agentsDir), recovered!), "utf8"),
     ).toBe("captured file");
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it.skipIf(process.platform !== "linux")(
@@ -926,6 +951,7 @@ describe("skills controller", () => {
         readOnly.targets.agentsDir,
         readOnly.targets.claudeDir,
         readOnly.targets.codexDir,
+        readOnly.targets.antigravityDir,
       ]) {
         const notes = path.join(root, "paseo-loop", "notes");
         await mkdir(notes, { recursive: true });
@@ -946,6 +972,7 @@ describe("skills controller", () => {
         readOnly.targets.agentsDir,
         readOnly.targets.claudeDir,
         readOnly.targets.codexDir,
+        readOnly.targets.antigravityDir,
       ]) {
         const restored = path.join(root, "paseo-loop", "notes", "latest.md");
         expect((await lstat(restored)).isSymbolicLink()).toBe(true);
@@ -970,6 +997,7 @@ describe("skills controller", () => {
         readOnly.targets.agentsDir,
         readOnly.targets.claudeDir,
         readOnly.targets.codexDir,
+        readOnly.targets.antigravityDir,
       ]) {
         await chmod(path.join(root, "paseo-loop", "hooks", "run.sh"), 0o751);
       }
@@ -987,6 +1015,7 @@ describe("skills controller", () => {
         readOnly.targets.agentsDir,
         readOnly.targets.claudeDir,
         readOnly.targets.codexDir,
+        readOnly.targets.antigravityDir,
       ]) {
         const restored = await lstat(path.join(root, "paseo-loop", "hooks", "run.sh"));
         expect(restored.mode & 0o777).toBe(0o751);
@@ -998,7 +1027,7 @@ describe("skills controller", () => {
   it("leaves no backup artifacts behind after a successful save", async () => {
     await harness.controller.save({ mode: "custom", skills: ["paseo"] });
 
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -1025,7 +1054,7 @@ describe("skills controller", () => {
       expect(outcome.ok).toBe(true);
       expect(await gated.store.get()).toEqual(next);
       await blocked.controller.status();
-      expect(await backupArtifacts(blocked.targets)).toEqual([[], [], []]);
+      expect(await backupArtifacts(blocked.targets)).toEqual([[], [], [], []]);
       await rm(blocked.root, { recursive: true, force: true });
     },
   );
@@ -1061,6 +1090,7 @@ describe("skills controller", () => {
       harness.targets.agentsDir,
       harness.targets.claudeDir,
       harness.targets.codexDir,
+      harness.targets.antigravityDir,
     ]) {
       await rm(path.join(root, "paseo-loop"), { recursive: true, force: true });
     }
@@ -1071,8 +1101,9 @@ describe("skills controller", () => {
       "hand written",
       "hand written",
       "hand written",
+      "hand written",
     ]);
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it("does not roll back an interrupted transaction after the selection committed", async () => {
@@ -1092,6 +1123,7 @@ describe("skills controller", () => {
       harness.targets.agentsDir,
       harness.targets.claudeDir,
       harness.targets.codexDir,
+      harness.targets.antigravityDir,
     ]) {
       await rm(path.join(root, "paseo-loop"), { recursive: true, force: true });
     }
@@ -1101,7 +1133,7 @@ describe("skills controller", () => {
 
     expect(snapshot.selection).toEqual(next);
     expect(await isInstalled(harness.targets, "paseo-loop")).toBe(false);
-    expect(await backupArtifacts(harness.targets)).toEqual([[], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it("asks for confirmation naming the directories a save would delete", async () => {
@@ -1119,6 +1151,7 @@ describe("skills controller", () => {
       ["paseo", "paseo-advisor", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-loop"],
       ["paseo-advisor"],
+      ["paseo", "paseo-advisor", "paseo-loop"],
     ]);
     expect(result.selection).toEqual({ mode: "custom", skills: ["paseo", "paseo-loop"] });
   });
@@ -1134,7 +1167,12 @@ describe("skills controller", () => {
 
     expect(result.confirmationRequired).toBeNull();
     expect(result.selection).toEqual({ mode: "custom", skills: ["paseo"] });
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
+    expect(await installedEverywhere(harness.targets)).toEqual([
+      ["paseo"],
+      ["paseo"],
+      [],
+      ["paseo"],
+    ]);
   });
 
   it("asks again when another directory appears before the retry", async () => {
@@ -1154,6 +1192,7 @@ describe("skills controller", () => {
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
       ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
       ["paseo-chat"],
+      ["paseo", "paseo-advisor", "paseo-chat", "paseo-loop"],
     ]);
   });
 
@@ -1175,6 +1214,7 @@ describe("skills controller", () => {
       "hand written",
       "hand written",
       "hand written",
+      "hand written",
     ]);
   });
 
@@ -1182,7 +1222,12 @@ describe("skills controller", () => {
     const result = await harness.controller.save({ mode: "custom", skills: ["paseo"] });
 
     expect(result.confirmationRequired).toBeNull();
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
+    expect(await installedEverywhere(harness.targets)).toEqual([
+      ["paseo"],
+      ["paseo"],
+      [],
+      ["paseo"],
+    ]);
   });
 
   it("preserves a regular file at a skill path when save convergence fails", async () => {
@@ -1193,6 +1238,18 @@ describe("skills controller", () => {
     await expect(harness.controller.save({ mode: "custom", skills: ["paseo"] })).rejects.toThrow();
 
     expect(await readFile(collision, "utf8")).toBe("keep this file");
+  });
+
+  it("rolls back earlier targets when writing to Antigravity fails", async () => {
+    await mkdir(harness.targets.antigravityDir, { recursive: true });
+    const collision = path.join(harness.targets.antigravityDir, "paseo");
+    await writeFile(collision, "keep this file");
+
+    await expect(harness.controller.save({ mode: "custom", skills: ["paseo"] })).rejects.toThrow();
+
+    expect(await readFile(collision, "utf8")).toBe("keep this file");
+    expect(await installedEverywhere(harness.targets)).toEqual([[], [], [], []]);
+    expect(await backupArtifacts(harness.targets)).toEqual([[], [], [], []]);
   });
 
   it("serializes startup convergence with an interactive save", async () => {
@@ -1214,7 +1271,12 @@ describe("skills controller", () => {
     ]);
 
     expect(saved.selection).toEqual({ mode: "custom", skills: ["paseo"] });
-    expect(await installedEverywhere(harness.targets)).toEqual([["paseo"], ["paseo"], []]);
+    expect(await installedEverywhere(harness.targets)).toEqual([
+      ["paseo"],
+      ["paseo"],
+      [],
+      ["paseo"],
+    ]);
     expect(await harness.controller.status()).toEqual({
       state: "up-to-date",
       ops: [],
@@ -1244,6 +1306,7 @@ describe("skills controller", () => {
     await harness.controller.update();
 
     expect(await readUserFile(harness.targets, "paseo-loop", "notes/mine.md")).toEqual([
+      "keep this",
       "keep this",
       "keep this",
       "keep this",
