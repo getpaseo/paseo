@@ -49,6 +49,7 @@ function renderCompletedFooter(timing: TurnTiming): void {
         timing={timing}
         startIndex={0}
         supportsTimelineCursor={false}
+        forkBranchUnavailableReason={null}
       />,
     ),
   );

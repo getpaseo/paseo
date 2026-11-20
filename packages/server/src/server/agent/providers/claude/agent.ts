@@ -91,6 +91,7 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import {
   findSteeredMessageParent,
   realClaudeRewindSdk,
+  findAssistantMessageEnd,
   revertClaudeConversation,
   revertClaudeFiles,
   type ClaudeRewindSdk,
@@ -398,6 +399,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsNativeFork: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -3288,18 +3290,22 @@ class ClaudeAgentSession implements AgentSession {
     if (!this.claudeSessionId) {
       return null;
     }
+    this.persistence = this.persistenceHandle(this.claudeSessionId, this.config.cwd);
+    return this.persistence;
+  }
+
+  private persistenceHandle(sessionId: string, cwd: string): AgentPersistenceHandle {
     const {
       providerOptions: _providerOptions,
       pluginAppendSystemPrompt: _pluginAppendSystemPrompt,
       ...persistedConfig
     } = this.config;
-    this.persistence = {
+    return {
       provider: "claude",
-      sessionId: this.claudeSessionId,
-      nativeHandle: this.claudeSessionId,
-      metadata: { ...persistedConfig },
+      sessionId,
+      nativeHandle: sessionId,
+      metadata: { ...persistedConfig, cwd },
     };
-    return this.persistence;
   }
 
   async canStopRuntime(): Promise<boolean> {
@@ -3433,6 +3439,26 @@ class ClaudeAgentSession implements AgentSession {
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
       setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
     });
+  }
+
+  async forkConversation(input: {
+    messageId: string;
+    cwd: string;
+  }): Promise<AgentPersistenceHandle> {
+    await this.ensureHistoryReady();
+    const sessionId = this.claudeSessionId;
+    const transcriptPath = sessionId ? await this.resolveHistoryPath(sessionId) : null;
+    if (!sessionId || !transcriptPath) {
+      throw new Error("Claude session is not ready for fork");
+    }
+    const upToMessageId = await findAssistantMessageEnd(transcriptPath, input.messageId);
+    if (!upToMessageId) {
+      throw new Error(`Claude fork target ${input.messageId} is not in the transcript`);
+    }
+    // The copy is written beside the source transcript. Claude Code resumes a session by id from
+    // any working directory, so a fork into another directory still finds it.
+    const fork = await this.rewindSdk.forkSession(sessionId, { upToMessageId, transcriptPath });
+    return this.persistenceHandle(fork.sessionId, input.cwd);
   }
 
   async revertFiles(input: { messageId: string }): Promise<void> {

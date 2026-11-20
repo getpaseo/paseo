@@ -3249,6 +3249,8 @@ export class Session {
         return this.handleAgentTimelineSubscription(msg, source);
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.fork.request":
+        return this.handleAgentForkRequest(msg);
       default:
         return undefined;
     }
@@ -9098,6 +9100,42 @@ export class Session {
           boundaryMessageId: msg.boundaryMessageId ?? null,
           error: error instanceof Error ? error.message : String(error),
         },
+      });
+    }
+  }
+
+  private async handleAgentForkRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.fork.request" }>,
+  ): Promise<void> {
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const snapshot = await this.agentManager.fork(msg.agentId, {
+        messageId: msg.boundaryMessageId,
+        cwd: msg.cwd,
+        workspaceId: msg.workspaceId,
+      });
+      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      await this.agentUpdates.forwardLiveAgent(snapshot);
+      this.emit({
+        type: "agent.fork.response",
+        payload: {
+          requestId: msg.requestId,
+          agent: await this.buildAgentPayload(snapshot),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId },
+        "Failed to handle agent.fork.request",
+      );
+      this.emit({
+        type: "agent.fork.response",
+        payload: { requestId: msg.requestId, agent: null, error: getErrorMessage(error) },
       });
     }
   }

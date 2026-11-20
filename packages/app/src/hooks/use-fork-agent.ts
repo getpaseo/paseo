@@ -113,6 +113,53 @@ function buildForkDraftTabTarget(
 }
 
 /**
+ * Branches the provider session after the selected turn. In the same workspace the branch opens
+ * as a new agent tab; for a new workspace the new workspace screen creates the checkout first and
+ * opens the branch once it exists.
+ */
+async function openBranchFork(input: {
+  client: DaemonClient;
+  serverId: string;
+  request: ForkAgentRequest;
+  draftSetup: WorkspaceDraftTabSetup | undefined;
+  sourceDirectory: string | undefined;
+  openNewWorkspace: (draftId: string) => void;
+  labels: { noMessageId: string; missingWorkspace: string };
+}): Promise<void> {
+  const { client, serverId, request, draftSetup, labels } = input;
+  // The menu only offers a branch for a completed turn with a provider message id on a host and
+  // provider that support it.
+  const boundaryMessageId = request.boundary?.boundaryMessageId;
+  if (!boundaryMessageId || !draftSetup) {
+    throw new Error(labels.noMessageId);
+  }
+  if (request.target.destination === "tab") {
+    if (!request.workspaceId) {
+      throw new Error(labels.missingWorkspace);
+    }
+    const forked = await client.forkAgent(request.agentId, { boundaryMessageId });
+    navigateToWorkspace({
+      serverId,
+      workspaceId: request.workspaceId,
+      target: { kind: "agent", agentId: forked.id },
+    });
+    return;
+  }
+  const draftId = generateDraftId();
+  useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+    draftId,
+    setup: draftSetup,
+    sourceDirectory: input.sourceDirectory,
+    branch: {
+      sourceAgentId: request.agentId,
+      sourceCwd: request.agent.cwd,
+      boundaryMessageId,
+    },
+  });
+  input.openNewWorkspace(draftId);
+}
+
+/**
  * Shared fork driver behind both turn-footer fork affordances: the completed
  * turn's footer (which supplies a boundary pinned to that turn) and the
  * in-flight turn's footer next to the progress loader (which omits the boundary
@@ -129,14 +176,43 @@ export function useForkAgent(
 
   return useStableEvent(async ({ agentId, agent, workspaceId, target, boundary }) => {
     try {
-      if (!supportsAgentForkContext) {
-        toast?.error(t("message.actions.forkUnavailable"));
-        return;
-      }
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
       const draftSetup = buildForkDraftSetup(agent);
+      const sourceDirectory =
+        agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+      const openNewWorkspace = (draftId: string) =>
+        router.push(
+          buildNewWorkspaceRoute({
+            serverId,
+            sourceDirectory,
+            displayName: agent.projectPlacement?.projectName,
+            projectId: agent.projectPlacement?.projectKey,
+            draftId,
+          }),
+        );
+
+      if (target.kind === "branch") {
+        await openBranchFork({
+          client,
+          serverId,
+          request: { agentId, agent, workspaceId, target, boundary },
+          draftSetup,
+          sourceDirectory,
+          openNewWorkspace,
+          labels: {
+            noMessageId: t("message.actions.forkBranchNoMessageId"),
+            missingWorkspace: t("message.actions.forkMissingWorkspace"),
+          },
+        });
+        return;
+      }
+
+      if (!supportsAgentForkContext) {
+        toast?.error(t("message.actions.forkUnavailable"));
+        return;
+      }
       const prepareForkDraft = async () => {
         const draftId = generateDraftId();
         const payload = await client.buildAgentForkContext(agentId, boundary);
@@ -154,7 +230,7 @@ export function useForkAgent(
         return draftId;
       };
 
-      if (target === "tab") {
+      if (target.destination === "tab") {
         if (!workspaceId) {
           throw new Error(t("message.actions.forkMissingWorkspace"));
         }
@@ -168,8 +244,6 @@ export function useForkAgent(
       }
 
       const draftId = await prepareForkDraft();
-      const sourceDirectory =
-        agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
       if (draftSetup) {
         useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
           draftId,
@@ -177,15 +251,7 @@ export function useForkAgent(
           sourceDirectory,
         });
       }
-      router.push(
-        buildNewWorkspaceRoute({
-          serverId,
-          sourceDirectory,
-          displayName: agent.projectPlacement?.projectName,
-          projectId: agent.projectPlacement?.projectKey,
-          draftId,
-        }),
-      );
+      openNewWorkspace(draftId);
     } catch (error) {
       toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
     }
