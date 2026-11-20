@@ -1012,22 +1012,64 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("uses a valid bare profile when a port profile cannot read the MR", async () => {
+  it.each(["401 Unauthorized", "403 Forbidden", "404 Not Found"])(
+    "uses a valid bare profile after the port profile returns %s",
+    async (denial) => {
+      vi.useFakeTimers();
+      const host = "gitlab.example.org";
+      const authority = `${host}:3443`;
+      const url = `https://${authority}/team/app/-/merge_requests/1`;
+      const { runner, calls } = createFakeGlabRunner((args, options) => {
+        if (args[0] === "config") {
+          return { stdout: args[2] === "api_host" ? authority : "", stderr: "" };
+        }
+        if (options.envOverlay?.GITLAB_HOST === authority) {
+          return httpJson({ message: denial }, {}, denial);
+        }
+        if (args.at(-1)?.includes("/discussions?")) return httpJson([]);
+        return httpJson({ iid: 1, state: "opened", sha: "valid-profile", web_url: url });
+      });
+      const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      const errors: unknown[] = [];
+      try {
+        service.changeRequests!.observe(url, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error: (error) => errors.push(error),
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        expect(errors).toEqual([]);
+        expect(snapshots[0]?.headSha).toBe("valid-profile");
+        expect(
+          calls
+            .filter(({ args }) => args[0] === "api")
+            .map(({ envOverlay }) => envOverlay?.GITLAB_HOST),
+        ).toEqual([authority, host, host]);
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
+
+  it("lets an admitted poll finish when the MR read leaves one request", async () => {
     vi.useFakeTimers();
-    const host = "gitlab.example.org";
-    const authority = `${host}:3443`;
-    const url = `https://${authority}/team/app/-/merge_requests/1`;
-    const { runner, calls } = createFakeGlabRunner((args, options) => {
-      if (args[0] === "config") {
-        return { stdout: args[2] === "api_host" ? authority : "", stderr: "" };
-      }
-      if (options.envOverlay?.GITLAB_HOST === authority) {
-        return httpJson({ message: "401 Unauthorized" }, {}, "401 Unauthorized");
-      }
+    const now = 1_700_000_000_000;
+    vi.setSystemTime(now);
+    const url = "https://gitlab.com/team/app/-/merge_requests/1";
+    const { runner, calls } = createFakeGlabRunner((args) => {
       if (args.at(-1)?.includes("/discussions?")) return httpJson([]);
-      return httpJson({ iid: 1, state: "opened", sha: "valid-profile", web_url: url });
+      return httpJson(
+        { iid: 1, state: "opened", sha: "head", web_url: url },
+        { "RateLimit-Remaining": "1", "RateLimit-Reset": String(now / 1000 + 90) },
+      );
     });
-    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+    const service = createGitLabService({
+      runner,
+      resolveGlabPath: async () => "glab",
+      watchPollMs: 10_000,
+    });
     const snapshots: ChangeRequestSnapshot[] = [];
     const errors: unknown[] = [];
     try {
@@ -1039,12 +1081,12 @@ describe("GitLab ChangeRequestSource polling", () => {
       });
       await vi.advanceTimersByTimeAsync(25);
       expect(errors).toEqual([]);
-      expect(snapshots[0]?.headSha).toBe("valid-profile");
-      expect(
-        calls
-          .filter(({ args }) => args[0] === "api")
-          .map(({ envOverlay }) => envOverlay?.GITLAB_HOST),
-      ).toEqual([authority, host, host]);
+      expect(snapshots).toHaveLength(1);
+      expect(calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(89_974);
+      expect(calls).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toHaveLength(4);
     } finally {
       service.dispose?.();
     }

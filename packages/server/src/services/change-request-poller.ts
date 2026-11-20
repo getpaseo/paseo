@@ -131,6 +131,7 @@ export interface PerHostReadContext {
   knownActivity(): ReadonlySet<string> | undefined;
   isObserved(): boolean;
   assertHostAvailable(): void;
+  deferPollsUntil(untilMs: number): void;
   pauseHost(untilMs: number): void;
 }
 
@@ -175,7 +176,7 @@ export function createPerHostChangeRequestPoller(
 
   const watches = new Map<string, WatchedEntry>();
   const inFlightByHost = new Map<string, number>();
-  const pausedUntilByHost = new Map<string, number>();
+  const pausesByHost = new Map<string, { pollsUntil: number; requestsUntil: number }>();
   let timer: NodeJS.Timeout | null = null;
   let disposed = false;
 
@@ -186,17 +187,20 @@ export function createPerHostChangeRequestPoller(
     }
   }
 
-  function pauseHost(host: string, untilMs: number): void {
-    const current = pausedUntilByHost.get(host) ?? 0;
-    if (untilMs > current) {
-      pausedUntilByHost.set(host, untilMs);
-    }
+  function deferHost(host: string, untilMs: number, blockRequests: boolean): void {
+    const current = pausesByHost.get(host) ?? { pollsUntil: 0, requestsUntil: 0 };
+    pausesByHost.set(host, {
+      pollsUntil: Math.max(current.pollsUntil, untilMs),
+      requestsUntil: blockRequests
+        ? Math.max(current.requestsUntil, untilMs)
+        : current.requestsUntil,
+    });
   }
 
   function hostPauseUntil(host: string, nowMs: number): number {
-    const until = pausedUntilByHost.get(host) ?? 0;
+    const until = pausesByHost.get(host)?.pollsUntil ?? 0;
     if (until <= nowMs) {
-      pausedUntilByHost.delete(host);
+      pausesByHost.delete(host);
       return 0;
     }
     return until;
@@ -254,12 +258,13 @@ export function createPerHostChangeRequestPoller(
           isObserved,
           assertHostAvailable() {
             const nowMs = now();
-            const resetAtMs = hostPauseUntil(watch.host, nowMs);
+            const resetAtMs = pausesByHost.get(watch.host)?.requestsUntil ?? 0;
             if (resetAtMs > nowMs) {
               throw new ChangeRequestRateLimitError({ host: watch.host, resetAtMs });
             }
           },
-          pauseHost: (untilMs) => pauseHost(watch.host, untilMs),
+          deferPollsUntil: (untilMs) => deferHost(watch.host, untilMs, false),
+          pauseHost: (untilMs) => deferHost(watch.host, untilMs, true),
         });
         if (!isObserved()) return;
         watch.consecutiveErrors = 0;
@@ -272,7 +277,7 @@ export function createPerHostChangeRequestPoller(
         options.onError?.(error, watch.host);
         const nowMs = now();
         if (error instanceof ChangeRequestRateLimitError) {
-          pauseHost(watch.host, error.resetAtMs);
+          deferHost(watch.host, error.resetAtMs, true);
           watch.nextDueAt = Math.max(nowMs + pollIntervalMs, error.resetAtMs);
         } else {
           watch.consecutiveErrors += 1;
@@ -335,7 +340,7 @@ export function createPerHostChangeRequestPoller(
       clearTimer();
       watches.clear();
       inFlightByHost.clear();
-      pausedUntilByHost.clear();
+      pausesByHost.clear();
     },
   };
 }

@@ -593,7 +593,7 @@ export function createGitLabChangeRequestSource(
 
     const proactivePause = parseRetryAfterMs(parsed.headers, now());
     if (proactivePause !== null) {
-      params.poll.pauseHost(proactivePause);
+      params.poll.deferPollsUntil(proactivePause);
     }
 
     const data = parseJsonResponseBody({ args, cwd, body: parsed.body, schema: params.schema });
@@ -820,7 +820,9 @@ export function createGitLabChangeRequestSource(
     try {
       return await readUsing(preferred);
     } catch (error) {
-      if (preferred === identity.host || !options.isAuthError(error)) throw error;
+      const status = commandErrorStatus(error);
+      const accessDenied = options.isAuthError(error) || status === 403 || status === 404;
+      if (preferred === identity.host || !accessDenied) throw error;
       return readUsing(identity.host);
     }
   }
