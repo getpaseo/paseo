@@ -521,7 +521,7 @@ export function createGiteaChangeRequestSource(
       }
 
       const proactivePause = parseRetryAfterMs(parsed.headers, nowMs);
-      if (proactivePause !== null) context.pauseHost(proactivePause);
+      if (proactivePause !== null) context.deferPollsUntil(proactivePause);
 
       const data = parseJsonBody({ args, cwd, body: parsed.body, schema });
       return { data, headers: parsed.headers };
