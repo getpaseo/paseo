@@ -48,12 +48,12 @@ export function SchedulesSourceMockup({ active, reduceMotion }: SourceMockupProp
 function ScheduleChrome() {
   const { t } = useTranslation();
   return (
-    <div className="flex h-9 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#0D1211] px-3.5">
+    <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] bg-[#0D1211] px-3.5 py-1">
       <div className="flex min-w-0 items-center gap-3">
         <WindowTrafficLights />
         <div className="flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-white/65">
           <Clock className="h-3.5 w-3.5 shrink-0 text-accent-text" aria-hidden="true" />
-          <span className="truncate">.paseo/triggers/daily-ci-optimizer.yml</span>
+          <span className="wrap-anywhere">.paseo/triggers/daily-ci-optimizer.yml</span>
         </div>
       </div>
       <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-brand-green/50 bg-brand-green/20 px-2 py-0.5 text-[10.5px] font-medium text-accent-text">
@@ -126,7 +126,7 @@ function SchedulePrPill() {
   return (
     <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.08] bg-[#171E1D] px-3 py-2">
       <div className="flex min-w-0 items-center gap-1.5 text-[12px]">
-        <span className="truncate font-medium text-white/90">
+        <span className="font-medium text-white/90">
           perf(ci): cache cargo target & stabilize e2e wait
         </span>
         <span className="font-mono text-[11px] text-white/45">#2831</span>

@@ -108,7 +108,7 @@ function LinearRunStatusRow() {
             <Trans i18nKey="hub.demo.linear.runningOn" components={LINEAR_COMPONENTS} />
           </span>
         </div>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-[#7D8599]">
+        <p className="mt-0.5 font-mono text-[11px] wrap-anywhere text-[#7D8599]">
           {t("hub.demo.linear.traceLine")}
         </p>
       </div>

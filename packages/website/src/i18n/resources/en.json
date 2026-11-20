@@ -605,7 +605,7 @@
   },
   "hub": {
     "metaTitle": "Paseo Hub - Agent automations on your machines",
-    "metaDescription": "Automate Claude Code, Codex, and OpenCode on your own machines from GitHub, Linear, Slack, Discord, schedules, and webhooks. Self-hosted or hosted.",
+    "metaDescription": "Automate the agents on your Paseo daemons from GitHub, Linear, Slack, Discord, schedules, and webhooks. Self-host Hub or use the hosted service.",
     "title": "Paseo Hub",
     "intro": "Automate coding agents and share daemons across your team. Every run executes on your own machines.",
     "runIt": "Run it yourself under Apache 2.0 or use the hosted service.",
@@ -741,7 +741,7 @@
         "caption": "Run agents on a schedule in your timezone, open pull requests, and post to Slack."
       },
       "webhooks": {
-        "alt": "Terminal curl POST to https://hub.paseo.sh/webhooks/sentry-alert returning 202 Accepted and starting a Codex run on devbox",
+        "alt": "A terminal shows a webhook POST. Hub returns 202 Accepted and starts a Codex run on devbox.",
         "runMeta": "devbox · Codex · getpaseo/paseo",
         "statusDone": "PR opened",
         "trace1": "Checked out <code>v0.19.4</code> in an isolated worktree",
@@ -756,11 +756,11 @@
       "title": "Configure in the dashboard or ship as code",
       "description": "Set up triggers in the browser or commit YAML files to your repository and deploy from the CLI.",
       "dashboardTitle": "Dashboard and run activity",
-      "dashboardDescription": "Pick a daemon, working directory, and agent runtime in the browser. Hub validates every model and mode against the live daemon before saving.",
+      "dashboardDescription": "Pick a daemon and working directory in the browser. Hub checks which providers, models, and modes the daemon offers as you configure a trigger.",
       "triggersLabel": "Triggers:",
       "triggersText": "Create, edit, or pause automations in form or YAML view.",
       "validationLabel": "Live checks:",
-      "validationText": "Validate providers, models, and modes against the connected daemon.",
+      "validationText": "See which providers, models, and modes the connected daemon offers.",
       "activityLabel": "Run activity:",
       "activityText": "Inspect deliveries, routing outcomes, outputs, and errors.",
       "docsLink": "Read configuration docs"
@@ -785,17 +785,17 @@
       "optInTitle": "Opt-in execution",
       "optInDescription": "The <code>hub.execute</code> permission is off by default on every daemon and granted per machine.",
       "scopedTitle": "Scoped triggers",
-      "scopedDescription": "Every trigger requires sender allowlists, resource filters, and explicit per-step GitHub permissions.",
+      "scopedDescription": "Event triggers support sender allowlists and resource filters. You can set GitHub permissions for each step and scope the Slack and Discord tools.",
       "visibilityTitle": "Team visibility",
       "visibilityDescription": "Owners, admins, and members share daemons, triggers, run history, and routing outcomes."
     },
     "agents": {
       "title": "Runs the agents you already have",
-      "description": "Hub runs Claude Code, Codex, and OpenCode on your machines with your own subscriptions, models, and skills."
+      "description": "Hub discovers the providers on each connected Paseo daemon. You can run Claude Code, Codex, OpenCode, Pi, and custom providers, including those from plugins."
     },
     "pricing": {
       "title": "Self-host or hosted",
-      "seatNote": "Run the open-source Hub yourself under Apache 2.0 or use the hosted service. Only Hub dashboard members count as seats.",
+      "seatNote": "Run the open-source Hub yourself under Apache 2.0 or use the hosted service. Hub dashboard members and pending invitations count as seats.",
       "unavailable": "The hosted plan comparison is temporarily unavailable.",
       "selfHost": "Self-host docs",
       "selfHosted": "Self-hosted",
@@ -809,7 +809,7 @@
       "openSourceFeature": "Apache 2.0 open source",
       "unlimitedRuns": "Unlimited agent runs",
       "runsPerMonth": "{{value}} agent runs a month",
-      "unlimitedUnits": "Unlimited {{unit}}s",
+      "noSeatCap": "No seat cap",
       "units_one": "{{value}} {{unit}}",
       "units_other": "{{value}} {{unit}}s",
       "perMonth": "/ month",
@@ -830,13 +830,13 @@
       "needQuestion": "What do I need to run it?",
       "needAnswer": "You need Node.js or Docker and a running Paseo daemon. Hub walks you through connecting your daemons and provider apps.",
       "hostedQuestion": "Is there a hosted version?",
-      "hostedAnswer": "Yes. The <hosted>hosted service</hosted> runs the same open-source Hub software that you can self-host. Only Hub dashboard members count as seats.",
+      "hostedAnswer": "Yes. The <hosted>hosted service</hosted> runs the same open-source Hub software that you can self-host. Hub dashboard members and pending invitations count as seats.",
       "codeQuestion": "Can Hub run code on my machines?",
       "codeAnswer": "Only on daemons where you grant the <code>hub.execute</code> permission. Enrolling a daemon does not enable execution by default, and you can revoke the permission from the machine at any time.",
       "moveQuestion": "Do I have to move my team to a new tool?",
       "moveAnswer": "No. Hub runs from GitHub, Linear, Slack, Discord, schedules, and webhooks on the daemons you already use. When you want to inspect or steer a run directly, open the live session in Paseo on desktop or mobile.",
       "agentsQuestion": "Which agents does it run?",
-      "agentsAnswer": "Hub runs Claude Code, Codex, and OpenCode on your connected daemons using your own subscriptions, models, and skills. Hub ships no agent of its own.",
+      "agentsAnswer": "Hub runs the providers configured on your connected Paseo daemons, including custom providers from plugins. Agents use the subscriptions, models, and skills on those machines.",
       "plannedQuestion": "What else is planned?",
       "plannedIntro": "These capabilities are not built yet, and are listed so you know where Hub is heading.",
       "plannedProvisioning": "Provisioning remote daemons for your team",

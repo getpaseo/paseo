@@ -160,21 +160,28 @@ To keep port `3000` off the public interface, change the `hub` port in `compose.
 
 ## Fly
 
-Clone the repository and create an app and database under names you control:
+Clone the repository and copy the example configuration.
 
 ```sh
 git clone https://github.com/getpaseo/hub.git
 cd hub
+cp fly.example.toml fly.toml
+```
+
+In `fly.toml`, set `app` to your Fly app name, such as `your-hub`. Set `primary_region` to your Fly region. Under `[env]`, set `PASEO_HUB_APP_URL` to your public Hub URL, such as `https://your-hub.fly.dev`.
+
+Create the app and attach a PostgreSQL database. Use the app name you set in `fly.toml`.
+
+```sh
 fly apps create your-hub
 fly postgres create --name your-hub-db
 fly postgres attach your-hub-db -a your-hub
 ```
 
-Deploy the Dockerfile and give Hub its public origin:
+Deploy with your `fly.toml` configuration.
 
 ```sh
-fly deploy -a your-hub \
-  -e PASEO_HUB_APP_URL=https://your-hub.fly.dev
+fly deploy
 ```
 
 Open the Fly URL and complete browser setup, or set the [bootstrap environment](#bootstrap-from-environment) before deploying.

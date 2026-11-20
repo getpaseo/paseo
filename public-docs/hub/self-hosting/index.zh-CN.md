@@ -158,21 +158,28 @@ PASEO_HUB_TRUSTED_CLIENT_IP_HEADER=x-forwarded-for
 
 ## Fly {#fly}
 
-克隆仓库，并用你自己控制的名称创建应用和数据库：
+克隆仓库并复制示例配置。
 
 ```sh
 git clone https://github.com/getpaseo/hub.git
 cd hub
+cp fly.example.toml fly.toml
+```
+
+在 `fly.toml` 中，将 `app` 设为你的 Fly 应用名称，例如 `your-hub`。将 `primary_region` 设为你的 Fly 区域。在 `[env]` 下，将 `PASEO_HUB_APP_URL` 设为 Hub 的公开地址，例如 `https://your-hub.fly.dev`。
+
+创建应用并关联 PostgreSQL 数据库。使用你在 `fly.toml` 中设置的应用名称。
+
+```sh
 fly apps create your-hub
 fly postgres create --name your-hub-db
 fly postgres attach your-hub-db -a your-hub
 ```
 
-部署 Dockerfile，并为 Hub 提供公开地址：
+使用 `fly.toml` 中的配置部署。
 
 ```sh
-fly deploy -a your-hub \
-  -e PASEO_HUB_APP_URL=https://your-hub.fly.dev
+fly deploy
 ```
 
 打开 Fly 地址并完成浏览器设置，或在部署前配置[初始化环境变量](#bootstrap-from-environment)。

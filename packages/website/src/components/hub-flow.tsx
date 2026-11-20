@@ -28,7 +28,7 @@ export const HUB_TRIGGER_SOURCES: readonly HubTriggerSource[] = [
   { id: "webhooks", Icon: Webhook },
 ] as const;
 
-/** The three agent harnesses Hub runs on connected daemons. */
+/** Examples of agent harnesses on connected daemons. */
 export const HUB_AGENT_HARNESSES = [
   { name: "Claude Code", Icon: ClaudeCodeIcon },
   { name: "Codex", Icon: CodexIcon },
