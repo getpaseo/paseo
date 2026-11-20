@@ -1092,7 +1092,7 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("gives a watch that hit the shared quota a turn after reset", async () => {
+  it.each([2, 3])("lets each watch finish across quota windows with %i requests", async (quota) => {
     vi.useFakeTimers();
     const start = 1_700_000_000_000;
     vi.setSystemTime(start);
@@ -1106,7 +1106,7 @@ describe("GitLab ChangeRequestSource polling", () => {
         requests = 0;
       }
       requests += 1;
-      if (requests > 3) {
+      if (requests > quota) {
         return httpJson({}, { "Retry-After": "60" }, "429 Too Many Requests");
       }
       const endpoint = args.at(-1)!;
@@ -1134,11 +1134,10 @@ describe("GitLab ChangeRequestSource polling", () => {
         });
       }
       await vi.advanceTimersByTimeAsync(25);
-      expect(snapshots).toEqual(["1:open"]);
-      expect(failures).toEqual([2]);
-      await vi.advanceTimersByTimeAsync(60_000);
+      expect(snapshots).toEqual(quota === 3 ? ["1:open"] : []);
+      expect(failures).toEqual(quota === 3 ? [2] : [1, 2]);
+      await vi.advanceTimersByTimeAsync(quota === 3 ? 60_000 : 120_000);
       expect(snapshots).toEqual(["1:open", "2:merged"]);
-      expect(failures).toEqual([2, 1]);
     } finally {
       service.dispose?.();
     }

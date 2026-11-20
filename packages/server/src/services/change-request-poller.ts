@@ -198,12 +198,17 @@ export function createPerHostChangeRequestPoller(
   }
 
   function hostPauseUntil(host: string, nowMs: number): number {
-    const until = pausesByHost.get(host)?.pollsUntil ?? 0;
-    if (until <= nowMs) {
-      pausesByHost.delete(host);
-      return 0;
-    }
-    return until;
+    const pause = pausesByHost.get(host);
+    if (!pause) return 0;
+    if (pause.pollsUntil > nowMs) return pause.pollsUntil;
+    if (!pause.requestsUntil) pausesByHost.delete(host);
+    return 0;
+  }
+
+  function pollLimit(host: string): number {
+    // After a 429, admit one poll until it has delivered a full snapshot.
+    // This lets it use the reset quota without competing with another poll.
+    return pausesByHost.get(host)?.requestsUntil ? 1 : maxConcurrencyPerHost;
   }
 
   function armTimer(): void {
@@ -214,7 +219,7 @@ export function createPerHostChangeRequestPoller(
     let earliestDue = Number.POSITIVE_INFINITY;
     for (const watch of watches.values()) {
       if (watch.inFlight) continue;
-      if ((inFlightByHost.get(watch.host) ?? 0) >= maxConcurrencyPerHost) continue;
+      if ((inFlightByHost.get(watch.host) ?? 0) >= pollLimit(watch.host)) continue;
       const dueAt = Math.max(watch.nextDueAt, hostPauseUntil(watch.host, nowMs));
       if (dueAt < earliestDue) {
         earliestDue = dueAt;
@@ -236,7 +241,7 @@ export function createPerHostChangeRequestPoller(
     for (const watch of watches.values()) {
       if (watch.inFlight) continue;
       const inFlightCount = inFlightByHost.get(watch.host) ?? 0;
-      if (inFlightCount >= maxConcurrencyPerHost) continue;
+      if (inFlightCount >= pollLimit(watch.host)) continue;
       const dueAt = Math.max(watch.nextDueAt, hostPauseUntil(watch.host, nowMs));
       if (dueAt > nowMs) continue;
       startPoll(watch);
@@ -271,6 +276,8 @@ export function createPerHostChangeRequestPoller(
         await watch.callbacks.snapshot(snapshot);
         if (!isObserved()) return;
         const nowMs = now();
+        const pause = pausesByHost.get(watch.host);
+        if (pause && pause.requestsUntil <= nowMs) pause.requestsUntil = 0;
         watch.nextDueAt = Math.max(nowMs + pollIntervalMs, hostPauseUntil(watch.host, nowMs));
         // A watch that delivered a snapshot yields priority to watches still
         // waiting for a successful poll after a shared quota reset.
