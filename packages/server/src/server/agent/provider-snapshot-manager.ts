@@ -473,6 +473,12 @@ export class ProviderSnapshotManager {
     return client;
   }
 
+  async resolveUsageLaunch(provider: string) {
+    const definition = this.generation.definitions[provider];
+    if (!definition?.enabled) return undefined;
+    return this.ensureClient(provider, definition).resolveUsageLaunch?.();
+  }
+
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
     const target = resolveProviderSnapshotTarget(input.cwd);
     if (input.wait) {
