@@ -85,3 +85,11 @@ test("source names fit on a narrow phone", async ({ page }) => {
   await expectSourceLabelFits(page, "Schedules");
   await expectSourceLabelFits(page, "Webhooks");
 });
+
+test("source names remain readable with larger text on a phone", async ({ page }) => {
+  await openHub(page, 375);
+  await page.addStyleTag({ content: "html { font-size: 125%; }" });
+  for (const name of ["GitHub", "Discord", "Schedules", "Webhooks"]) {
+    await expectSourceLabelFits(page, name);
+  }
+});
