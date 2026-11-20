@@ -384,7 +384,8 @@ interface ActivePrompt {
   turnId: string;
   settled: Promise<void>;
   cancelling: boolean;
-  wirePromptInFlight: boolean;
+  wirePromptsInFlight: number;
+  wirePromptLane: Promise<void>;
   deferred: DeferredTurnState | null;
 }
 
@@ -643,7 +644,7 @@ class AcpRuntime {
     }
     const active = this.activePrompt;
     if (active) {
-      if (active.deferred && !active.wirePromptInFlight) {
+      if (active.deferred && active.wirePromptsInFlight === 0) {
         // Wire session/prompt already resolved; finish the deferred turn without sending
         // session/cancel so running background tools stay alive into the follow-up turn.
         this.finishDeferredTurn(active, { type: "complete", terminalizeTools: false });
@@ -685,7 +686,8 @@ class AcpRuntime {
       turnId,
       settled: Promise.resolve(),
       cancelling: false,
-      wirePromptInFlight: true,
+      wirePromptsInFlight: 1,
+      wirePromptLane: Promise.resolve(),
       deferred: null,
     };
     // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
@@ -695,7 +697,7 @@ class AcpRuntime {
     ).then(
       async (response): Promise<void> => {
         await this.drainNotifications();
-        activePrompt.wirePromptInFlight = false;
+        activePrompt.wirePromptsInFlight -= 1;
         if (response.usage) {
           this.lastUsage = {
             ...this.lastUsage,
@@ -711,7 +713,7 @@ class AcpRuntime {
           });
         }
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
-        if (state === "completed" && this.shouldDeferTurn(activePrompt)) {
+        if (response.stopReason === "end_turn" && this.shouldDeferTurn(activePrompt)) {
           await this.settleDeferredPrompt(activePrompt);
           return undefined;
         }
@@ -720,7 +722,7 @@ class AcpRuntime {
       },
       async (error): Promise<void> => {
         await this.drainNotifications();
-        activePrompt.wirePromptInFlight = false;
+        activePrompt.wirePromptsInFlight -= 1;
         this.finishPromptTurn(turnId, "failed", { message: describeError(error) });
         return undefined;
       },
@@ -734,14 +736,21 @@ class AcpRuntime {
 
   async interrupt(): Promise<void> {
     const active = this.activePrompt;
-    if (active) active.cancelling = true;
+    if (active) {
+      active.cancelling = true;
+      if (active.deferred) {
+        // Record open tools owned by Stop before writing session/cancel so any failure
+        // update arriving during or after cancel preserves their canceled state.
+        for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
+      }
+    }
     try {
       await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) {
         this.finishTurnPermissions(active.turnId);
-        if (active.deferred && !active.wirePromptInFlight) {
+        if (active.deferred && active.wirePromptsInFlight === 0) {
           this.finishDeferredTurn(active, { type: "cancel" });
         }
       }
@@ -1364,10 +1373,8 @@ class AcpRuntime {
   ): void {
     if (
       update.sessionUpdate === "tool_call_update" &&
-      this.canceledToolCallIds.has(update.toolCallId) &&
-      (update.status === "failed" || update.status === "completed")
+      this.canceledToolCallIds.has(update.toolCallId)
     ) {
-      this.canceledToolCallIds.delete(update.toolCallId);
       return;
     }
     if (update.sessionUpdate === "tool_call") {
@@ -1513,14 +1520,7 @@ class AcpRuntime {
   private steerDeferredPrompt(input: Extract<ProviderInput, { type: "session.prompt" }>): void {
     const active = this.activePrompt;
     const deferred = active?.deferred;
-    if (
-      !active ||
-      !deferred ||
-      active.wirePromptInFlight ||
-      active.cancelling ||
-      this.closing ||
-      this.processFailed
-    ) {
+    if (!active || !deferred || active.cancelling || this.closing || this.processFailed) {
       this.emit({
         type: "session.prompt_result",
         sessionId: this.options.boundarySessionId,
@@ -1542,7 +1542,7 @@ class AcpRuntime {
       deferred.timer = null;
     }
     deferred.replyOpen = false;
-    active.wirePromptInFlight = true;
+    active.wirePromptsInFlight += 1;
     const prompt = toAcpPrompt(input.prompt);
     this.replayWindow = null;
     this.fallbackChunkIds.clear();
@@ -1565,10 +1565,13 @@ class AcpRuntime {
       clientMessageId: input.prompt.clientMessageId,
       result: { type: "steer", turnId: active.turnId },
     });
-    void this.call(this.connection.prompt({ sessionId: this.nativeSessionId, prompt })).then(
-      async (response): Promise<void> => {
+    const runSteer = async (): Promise<void> => {
+      try {
+        if (this.closing || active.cancelling || active.deferred !== deferred) return;
+        const response = await this.call(
+          this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
+        );
         await this.drainNotifications();
-        active.wirePromptInFlight = false;
         if (response.usage) {
           this.lastUsage = {
             ...this.lastUsage,
@@ -1583,28 +1586,38 @@ class AcpRuntime {
             usage: this.lastUsage,
           });
         }
-        if (this.closing || active.deferred !== deferred) return undefined;
+        if (this.closing || active.deferred !== deferred) return;
         if (response.stopReason === "cancelled" || active.cancelling) {
           this.finishDeferredTurn(active, { type: "cancel" });
-          return undefined;
+          return;
         }
         this.fallbackChunkIds.clear();
-        if (!this.hasDeferredBlockers()) {
+        if (response.stopReason !== "end_turn") {
           this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
         }
-        return undefined;
-      },
-      async (error): Promise<void> => {
+      } catch (error) {
         await this.drainNotifications();
-        active.wirePromptInFlight = false;
-        if (this.closing || active.deferred !== deferred) return undefined;
-        this.finishDeferredTurn(active, {
-          type: "fail",
-          error: { message: describeError(error) },
-        });
-        return undefined;
-      },
-    );
+        if (!this.closing && active.deferred === deferred) {
+          this.finishDeferredTurn(active, {
+            type: "fail",
+            error: { message: describeError(error) },
+          });
+        }
+      } finally {
+        active.wirePromptsInFlight -= 1;
+        if (
+          !this.closing &&
+          !this.processFailed &&
+          active.deferred === deferred &&
+          !active.cancelling &&
+          active.wirePromptsInFlight === 0 &&
+          !this.hasDeferredBlockers()
+        ) {
+          this.scheduleDeferredSettle("reply");
+        }
+      }
+    };
+    active.wirePromptLane = active.wirePromptLane.then(runSteer);
   }
 
   private async settleDeferredPrompt(active: ActivePrompt): Promise<void> {
@@ -1644,7 +1657,7 @@ class AcpRuntime {
 
   private hasDeferredBlockers(): boolean {
     return (
-      this.activePrompt?.wirePromptInFlight === true ||
+      (this.activePrompt?.wirePromptsInFlight ?? 0) > 0 ||
       this.hasQualifyingOpenTools() ||
       this.permissions.size > 0 ||
       this.pendingCompactions.size > 0

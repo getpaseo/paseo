@@ -3477,6 +3477,15 @@ describe("deferTurnOnRunningTools", () => {
           rawOutput: { error: "cancelled" },
         },
       });
+      // A subsequent rawOutput-only partial update must also keep the canceled state.
+      deferred.instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-echo",
+          rawOutput: { stderr: "killed" },
+        },
+      });
       await new Promise((resolve) => setTimeout(resolve, 40));
       const toolEvents = deferredEvents.filter(
         (event) =>
@@ -3490,6 +3499,232 @@ describe("deferTurnOnRunningTools", () => {
       });
     } finally {
       await deferredConn.close();
+    }
+  });
+
+  it("does not defer when stopReason is not end_turn", async () => {
+    const { connector } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "limit-tool",
+            name: "run_command",
+            title: "Stopped at limit",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "max_turn_requests" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-stop-reason",
+      label: "Deferred Stop Reason",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "limit-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:limit-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("queues back-to-back steers without cancel and waits for a streaming background reply after steer end_turn", async () => {
+    let promptCount = 0;
+    let cancelCount = 0;
+    let finishFirstSteer: (() => void) | null = null;
+    const { connector, instances } = connectorHarness({
+      handleMessage(_instance, message) {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-multi",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          finishFirstSteer = () => {
+            instance.notify("session/update", {
+              sessionId: "connector-session",
+              update: textChunk("Steer 1 ACK"),
+            });
+            instance.respond(request, { stopReason: "end_turn" });
+          };
+          return true;
+        }
+        // During steer 2, the background tool finishes and begins streaming its reply before end_turn.
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "bg-multi",
+            status: "completed",
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: textChunk("Background reply part 1 "),
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-multi-steer",
+      label: "Deferred Multi Steer",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 120, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "multi-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-multi",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // Send two back-to-back steers while steer 1 is still awaiting its wire response.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-a",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "first follow-up" }] },
+        },
+      });
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "steer-b",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "second follow-up" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "steer-b" &&
+          event.result.type === "steer",
+      );
+      expect(cancelCount).toBe(0);
+
+      // Release steer 1; steer 2 runs next and completes bg-multi while starting its reply.
+      await expect.poll(() => finishFirstSteer).not.toBeNull();
+      finishFirstSteer!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.includes("Background reply part 1"),
+      );
+
+      // Turn must remain open while part 2 of the background reply streams in after end_turn.
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:multi-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("part 2."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 350, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:multi-turn" &&
+          event.state === "completed",
+      );
+      expect(cancelCount).toBe(0);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({
+            type: "assistant_message",
+            text: expect.stringContaining("part 2."),
+          }),
+        }),
+      );
+    } finally {
+      await connection.close();
     }
   });
 });
