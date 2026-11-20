@@ -572,7 +572,12 @@ export default function contribute(server: PluginServerContext) {
 The shim owns the ACP process, capability mapping, session lifecycle, prompts, permissions, and
 timeline conversion. Do not copy that machinery into the plugin.
 
-Use `transformers` only for vendor differences ACP cannot describe. Validate vendor payloads with
+Use `transformers` for vendor differences ACP cannot describe. The
+[goose model transformer](https://github.com/getpaseo/paseo/blob/main/plugins/goose-provider/server/models.ts)
+uses `context.request` to read the agent's model inventory and `config` to prefix session model IDs
+with the active provider. See the [ACP adapter reference](/docs/plugins/reference#providers).
+
+Validate vendor payloads with
 Zod and leave malformed or unrelated values unchanged:
 
 ```ts
