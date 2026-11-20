@@ -9,6 +9,8 @@ import { OmpAgentClient } from "./agent.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 
 test("archived OMP history replays messages and todos without leaving a runtime", async () => {
+  // The todo snapshot comes last; it must carry the session's time, not the time of this
+  // replay, or the last turn's footer reads "Worked for <days>" ending now.
   const directory = await mkdtemp(join(tmpdir(), "paseo-omp-history-purpose-"));
   const sessionFile = join(directory, "session.jsonl");
   const entries = [
@@ -17,12 +19,14 @@ test("archived OMP history replays messages and todos without leaving a runtime"
       type: "message",
       id: "user-1",
       parentId: "root",
+      timestamp: "2026-11-07T11:30:00.000Z",
       message: { role: "user", content: "make a plan" },
     },
     {
       type: "message",
       id: "todo-1",
       parentId: "user-1",
+      timestamp: "2026-11-07T11:31:00.000Z",
       message: {
         role: "toolResult",
         toolName: "todo",
@@ -32,6 +36,13 @@ test("archived OMP history replays messages and todos without leaving a runtime"
           phases: [{ name: "Tasks", tasks: [{ content: "Check history", status: "pending" }] }],
         },
       },
+    },
+    {
+      type: "message",
+      id: "answer-1",
+      parentId: "todo-1",
+      timestamp: "2026-11-07T11:32:16.000Z",
+      message: { role: "assistant", content: [{ type: "text", text: "Plan ready." }] },
     },
   ];
   await writeFile(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n"));
@@ -60,5 +71,6 @@ test("archived OMP history replays messages and todos without leaving a runtime"
       type: "todo",
       items: [{ text: "Check history", status: "pending", completed: false }],
     },
+    timestamp: "2026-11-07T11:32:16.000Z",
   });
 });
