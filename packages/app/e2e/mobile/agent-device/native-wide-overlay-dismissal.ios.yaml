@@ -1,0 +1,40 @@
+appId: sh.paseo.debug
+---
+- launchApp
+- runFlow:
+    when:
+      visible: ".*getRegistrationInfoAsync.*"
+    commands:
+      - tapOn: ".*getRegistrationInfoAsync.*"
+      - tapOn: Dismiss
+- assertNotVisible: ".*getRegistrationInfoAsync.*"
+- extendedWaitUntil:
+    visible:
+      id: workspace-tabs-scroll
+    timeout: 30000
+- tapOn:
+    id: sidebar-workspace-kebab-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-menu-rename-${WORKSPACE_KEY}
+- assertVisible:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}-cancel
+- runFlow:
+    when:
+      visible:
+        id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+    commands:
+      - tapOn:
+          id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}-cancel
+- extendedWaitUntil:
+    notVisible:
+      id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+    timeout: 10000
+- assertNotVisible:
+    id: sidebar-workspace-rename-modal-${WORKSPACE_KEY}
+- tapOn:
+    id: sidebar-workspace-kebab-${WORKSPACE_KEY}
+- assertVisible:
+    id: sidebar-workspace-menu-rename-${WORKSPACE_KEY}
+- stopApp

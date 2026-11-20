@@ -1,5 +1,10 @@
 import { expect, test } from "../support/fixtures";
 import {
+  withSpokenTimeline,
+  captureSpokenTimeline,
+  reloadSpokenTimeline,
+  expectSpokenTimelinePrompt,
+  sendSpokenTimelinePrompt,
   expectStableHistoryStartGutter,
   expectTimelineAtHistoryStart,
   expectTimelinePromptCentered,
@@ -22,11 +27,33 @@ import {
   seedRealisticOlderTimeline,
   sendLiveTurnBeforeHydration,
   expectTimelineViewportAnchoredAfterPrepend,
+  expectToolCallGroupPositionPreserved,
+  rememberToolCallGroupPosition,
+  seedItemPagedToolGroupTimeline,
+  useChatDisplay,
   userNavigatesTimelineToHistoryStartWithKeyboard,
   userScrollsTimelineToHistoryStart,
 } from "../support/helpers/timeline-pagination";
 
 test.describe("Agent timeline pagination", () => {
+  test("shows spoken words without voice instructions in history, live updates and after reload", async ({
+    page,
+  }, testInfo) => {
+    const historyText = "Please check the voice history.";
+    const liveText = "Now check the live voice message.";
+    await withSpokenTimeline(historyText, async (agent) => {
+      await openAgentTimeline(page, agent);
+      await expectSpokenTimelinePrompt(page, historyText);
+      await sendSpokenTimelinePrompt(agent, liveText);
+      await expectSpokenTimelinePrompt(page, liveText);
+      await captureSpokenTimeline(page, testInfo, "desktop");
+      await reloadSpokenTimeline(page);
+      await expectSpokenTimelinePrompt(page, liveText);
+      await captureSpokenTimeline(page, testInfo, "compact");
+      await expectSpokenTimelinePrompt(page, liveText);
+    });
+  });
+
   test("keeps the history-start gutter and visible position stable through the final page", async ({
     page,
   }) => {
@@ -72,6 +99,32 @@ test.describe("Agent timeline pagination", () => {
       await userScrollsTimelineToHistoryStart(page);
       await expectTimelinePromptCentered(page, agent.firstOlderPagePrompt);
       await history.expectRequestedPages(2);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
+  // Hosts paged by items can end a page inside a tool run. The older page extends the group
+  // the reader is on, which changes the row hosting it; the reader must stay with that group
+  // rather than land at history start and drain every older page.
+  test("keeps the reading position when an older item page extends the tool-call group being read", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await useChatDisplay(page, "collapseToolCalls");
+    const agent = await seedItemPagedToolGroupTimeline();
+    try {
+      const history = await holdOlderHistoryPages(page, agent, { itemPagedHost: true });
+      await openAgentTimeline(page, agent);
+      await expectTimelinePromptVisible(page, agent.newestPrompt);
+
+      await userScrollsTimelineToHistoryStart(page);
+      await history.expectRequestedPages(1);
+      const reading = await rememberToolCallGroupPosition(page, agent.loadedCommands);
+
+      history.releasePage(1);
+      await expectToolCallGroupPositionPreserved(page, agent.totalCommands, reading);
+      await history.expectSettledWithRequestedPages(1);
     } finally {
       await agent.cleanup();
     }

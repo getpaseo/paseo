@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
 import type { Logger } from "pino";
 import type { ProcessEnvRecord } from "../server/paseo-env.js";
 import {
@@ -21,7 +20,7 @@ import {
 } from "./git-process-scheduler.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
+export const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_STDERR_LIMIT = 2048;
 
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
@@ -68,8 +67,17 @@ export type RunGitCommand = (
   options: GitCommandOptions,
 ) => Promise<GitCommandResult>;
 
-export function createRunGitCommand(provenance: string): RunGitCommand {
-  return (args, options) => runGitCommandWithProvenance(args, options, provenance);
+export interface GitCommandRunnerOptions {
+  /** Overrides the ambient `runWithGitCommandPriority` lane for every command this runner starts. */
+  priority?: GitProcessPriority;
+}
+
+export function createRunGitCommand(
+  provenance: string,
+  runnerOptions: GitCommandRunnerOptions = {},
+): RunGitCommand {
+  return (args, options) =>
+    executeGitCommand(args, options, decodeUtf8, { provenance, priority: runnerOptions.priority });
 }
 
 export interface GitCommandMetric {
@@ -98,6 +106,7 @@ export interface GitCommandMetricsSnapshot {
 export interface GitCommandSubmissionMetric {
   args: string[];
   cwd: string;
+  priority: GitProcessPriority;
 }
 
 interface GitCommandMetricsState {
@@ -189,8 +198,8 @@ function snapshotGitCommandMetricsState(state: GitCommandMetricsState): GitComma
   return {
     commands: [...state.commands],
     submissions: state.submissions.map((submission) => ({
+      ...submission,
       args: [...submission.args],
-      cwd: submission.cwd,
     })),
     submitted: state.submitted,
     started: state.started,
@@ -210,12 +219,16 @@ export function snapshotGitCommandRuntimeMetrics(): GitCommandRuntimeMetricsSnap
   });
 }
 
-function submitGitCommandMetric(args: string[], cwd: string): GitCommandMetricsState | null {
+function submitGitCommandMetric(
+  args: string[],
+  cwd: string,
+  priority: GitProcessPriority,
+): GitCommandMetricsState | null {
   const state = gitCommandMetricsState;
   if (!state) {
     return null;
   }
-  state.submissions.push({ args: [...args], cwd });
+  state.submissions.push({ args: [...args], cwd, priority });
   state.submitted += 1;
   state.lastSubmittedAtMs = Date.now();
   return state;
@@ -259,12 +272,13 @@ function getEnvOverlayKeys(envOverlay: ProcessEnvRecord | undefined): string[] {
   return Object.keys(envOverlay ?? {}).sort();
 }
 
-function runGitCommandWithProvenance(
-  args: string[],
-  options: GitCommandOptions,
-  provenance?: string,
-): Promise<GitCommandResult> {
-  return executeGitCommand(args, options, (output) => output.toString("utf8"), provenance);
+function decodeUtf8(output: Buffer): string {
+  return output.toString("utf8");
+}
+
+interface GitCommandSubmission {
+  provenance?: string;
+  priority?: GitProcessPriority;
 }
 
 /** Binary stdout preserves cat-file byte framing before text decoding. */
@@ -272,21 +286,22 @@ export function runGitCommandBytes(
   args: string[],
   options: GitCommandOptions,
 ): Promise<GitCommandResult<Buffer>> {
-  return executeGitCommand(args, options, (output) => output);
+  return executeGitCommand(args, options, (output) => output, {});
 }
 
 function executeGitCommand<Output>(
   args: string[],
   options: GitCommandOptions,
   decode: (output: Buffer) => Output,
-  provenance?: string,
+  submission: GitCommandSubmission,
 ): Promise<GitCommandResult<Output>> {
-  const metricsState = submitGitCommandMetric(args, options.cwd);
+  const priority = submission.priority ?? gitCommandPriority.getStore() ?? "normal";
+  const metricsState = submitGitCommandMetric(args, options.cwd, priority);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
-  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), provenance);
+  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), submission.provenance);
   const startCommand = () => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
@@ -311,7 +326,6 @@ function executeGitCommand<Output>(
             command: "git",
             args,
             cwd: options.cwd,
-            cwdExists: existsSync(options.cwd),
             timeout,
             maxOutputBytes,
             acceptExitCodes,
@@ -560,9 +574,7 @@ function executeGitCommand<Output>(
     });
     return { result: resultPromise, exited };
   };
-  const promise = gitProcessScheduler.run(startCommand, {
-    priority: gitCommandPriority.getStore() ?? "normal",
-  });
+  const promise = gitProcessScheduler.run(startCommand, { priority });
   gitRuntimeMetrics.observeLimiter(
     gitProcessScheduler.activeCount,
     gitProcessScheduler.pendingCount,
@@ -570,7 +582,8 @@ function executeGitCommand<Output>(
   return promise;
 }
 
-export const runGitCommand: RunGitCommand = runGitCommandWithProvenance;
+export const runGitCommand: RunGitCommand = (args, options) =>
+  executeGitCommand(args, options, decodeUtf8, {});
 
 function formatGitCommand(args: string[]): string {
   return ["git", ...args].join(" ");

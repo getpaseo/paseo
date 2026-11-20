@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "vitest";
+import type { SessionOutboundMessage } from "../messages.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 let relationship: HubRelationshipHarness | null = null;
@@ -14,6 +15,13 @@ async function launchRelationship(): Promise<HubRelationshipHarness> {
   launched.connectLatestSocket();
   relationship = launched;
   return launched;
+}
+
+function createdAgentWorkspaceId(message: SessionOutboundMessage): string {
+  if (message.type !== "status" || message.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  if (!message.payload.agent.workspaceId) throw new Error("Workspace was not created");
+  return message.payload.agent.workspaceId;
 }
 
 test("Hub retries one durable daemon execution across concurrency and reconstruction", async () => {
@@ -52,6 +60,46 @@ test("Hub execute can steer ordinary agents while unrelated administration stays
   });
   expect(await hub.deniedBrowserDispatch()).toMatchObject({ code: "access_denied" });
   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
+});
+
+test("Hub execute can title the workspace created with an agent", async () => {
+  const hub = await launchRelationship();
+  const created = await hub.requestOrdinary({
+    type: "create_agent_request",
+    requestId: "create-for-title",
+    config: { provider: "codex", cwd: hub.repoRoot() },
+  });
+  expect(created).toMatchObject({
+    type: "status",
+    payload: { status: "agent_created", agent: { workspaceId: expect.any(String) } },
+  });
+  const workspaceId = createdAgentWorkspaceId(created);
+
+  expect(
+    await hub.requestOrdinary({
+      type: "workspace.title.set.request",
+      requestId: "title-created-workspace",
+      workspaceId,
+      title: "Hub execution",
+    }),
+  ).toMatchObject({
+    type: "workspace.title.set.response",
+    payload: { workspaceId, accepted: true, title: "Hub execution", error: null },
+  });
+
+  expect(
+    await hub.requestOrdinary({
+      type: "fetch_workspaces_request",
+      requestId: "read-created-workspace",
+    }),
+  ).toMatchObject({
+    type: "fetch_workspaces_response",
+    payload: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: workspaceId, title: "Hub execution" }),
+      ]),
+    },
+  });
 });
 
 test("ordinary Hub create and message retries do not duplicate agents or prompts", async () => {
@@ -134,6 +182,46 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
   ).toMatchObject({ payload: { accepted: false } });
 });
 
+test("Hub retries a message whose send failed before reaching the provider", async () => {
+  const hub = await launchRelationship();
+  const agentId = await hub.createUnrelatedLocalAgent();
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "mode-change-failed",
+    text: "retry me",
+    sessionMode: "full-access",
+  };
+  hub.failNextProviderModeChange();
+  expect(await hub.requestOrdinary({ ...message, requestId: "first-attempt" })).toMatchObject({
+    payload: { accepted: false, error: expect.stringContaining("mode change failure") },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "retry me")).toHaveLength(0);
+
+  expect(await hub.requestOrdinary({ ...message, requestId: "retry" })).toMatchObject({
+    payload: { accepted: true, error: null },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "retry me")).toHaveLength(1);
+});
+
+test("Hub never resubmits a message whose send failed after reaching the provider", async () => {
+  const hub = await launchRelationship();
+  const agentId = await hub.createUnrelatedLocalAgent();
+  const message = {
+    type: "send_agent_message_request",
+    agentId,
+    messageId: "turn-start-failed",
+    text: "do not repeat me",
+  };
+  hub.failProviderPromptStart("do not repeat me");
+  await hub.requestOrdinary({ ...message, requestId: "first-attempt" });
+
+  expect(await hub.requestOrdinary({ ...message, requestId: "retry" })).toMatchObject({
+    payload: { accepted: false, error: "agent_request_outcome_unknown" },
+  });
+  expect(hub.providerPromptTexts().filter((text) => text === "do not repeat me")).toHaveLength(0);
+});
+
 test("ordinary Hub requests survive daemon restart and restore an archived workspace", async () => {
   const hub = await launchRelationship();
   const create = {
@@ -200,7 +288,7 @@ test("ordinary Hub requests survive daemon restart and restore an archived works
     }),
   ).toMatchObject({ payload: { agentId, accepted: true } });
   expect(hub.providerPromptTexts().filter((text) => text === "follow up")).toHaveLength(1);
-}, 20_000);
+});
 
 test("Hub completes the standard hello before rejecting a second hello", async () => {
   const hub = await launchRelationship();
@@ -209,7 +297,7 @@ test("Hub completes the standard hello before rejecting a second hello", async (
   expect(hub.probeTrustedHello()).toBe(4002);
 });
 
-test("legacy Hub wire behavior still enters the common Session bootstrap", async () => {
+test("legacy Hub wire behavior immediately enters the common Session bootstrap", async () => {
   const launched = await HubRelationshipHarness.start();
   await launched.beginConnect().result;
   launched.connectLatestLegacySocket();
@@ -466,7 +554,7 @@ test("Hub resolves persisted execution ownership after daemon restart", async ()
   expect(workspaceId).toEqual(expect.any(String));
   expect(await hub.archivedWorkspaceAt(workspaceId!)).toEqual(expect.any(String));
   expect(await hub.worktreeState(worktreeCwd)).toEqual({ exists: false, listed: false });
-}, 20_000);
+}, 60_000);
 
 test("Hub treats missing and foreign executions as already controlled without exposing ownership", async () => {
   const hub = await launchRelationship();

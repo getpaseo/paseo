@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -13,8 +14,16 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { createWorktree } from "../../../utils/worktree.js";
+import pino from "pino";
+import { archivePersistedWorkspaceRecord } from "../../workspace-archive-service.js";
+import { getCheckoutStatus } from "../../../utils/checkout-git.js";
 import {
+  readPaseoWorktreeMetadata,
+  writePaseoWorktreeMetadata,
+} from "../../../utils/worktree-metadata.js";
+import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
+import {
+  FileBackedWorkspaceRegistry,
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
   type PersistedProjectRecord,
@@ -145,7 +154,7 @@ describe("workspace recovery", () => {
       cwd: repoDir,
       worktreeSlug: "mixed-project",
       source: { kind: "checkout-branch", branchName: branch },
-      runSetup: false,
+
       paseoHome,
       worktreesRoot,
     });
@@ -201,7 +210,7 @@ describe("workspace recovery", () => {
       cwd: repoDir,
       worktreeSlug: "without-subproject",
       source: { kind: "checkout-branch", branchName: branch },
-      runSetup: false,
+
       paseoHome,
       worktreesRoot,
     });
@@ -286,3 +295,395 @@ function createGitRepository(): { tempDir: string; repoDir: string } {
   execFileSync("git", ["commit", "-m", "initial"], { cwd: repoDir, stdio: "pipe" });
   return { tempDir, repoDir };
 }
+
+async function createBaseRecoveryFixture(baseBranch: string | null) {
+  const { tempDir, repoDir } = createGitRepository();
+  const paseoHome = join(tempDir, "paseo-home");
+  const created = await createWorktree({
+    cwd: repoDir,
+    paseoHome,
+    worktreeSlug: "base-recovery",
+    source: { kind: "branch-off", branchName: "feature", baseBranch: "main" },
+  });
+  writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
+  execFileSync("git", ["add", "."], { cwd: created.worktreePath });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "feature"], {
+    cwd: created.worktreePath,
+    stdio: "pipe",
+  });
+  const workspace = createWorkspace({
+    workspaceId: "base-recovery",
+    cwd: created.worktreePath,
+    worktreeRoot: created.worktreePath,
+    mainRepoRoot: repoDir,
+    branch: "feature",
+    baseBranch,
+    archivedAt: null,
+  });
+  const project = createProject({ rootPath: repoDir });
+  const registry = new FileBackedWorkspaceRegistry(
+    join(tempDir, "workspaces.json"),
+    pino({ level: "silent" }),
+  );
+  await registry.upsert(workspace);
+  const service = createWorkspaceRecoveryService({
+    paseoHome,
+    getWorkspace: (id) => registry.get(id),
+    getProject: async () => project,
+    isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+    unarchiveWorkspace: async (record) => {
+      await registry.update(record.workspaceId, (value) => ({ ...value, archivedAt: null }));
+    },
+  });
+  async function archiveAndRemove(legacy = false) {
+    if (legacy) {
+      await registry.archive(workspace.workspaceId, new Date().toISOString());
+    } else {
+      await archivePersistedWorkspaceRecord({
+        workspaceId: workspace.workspaceId,
+        workspaceRegistry: registry,
+      });
+    }
+    await deletePaseoWorktree({ cwd: repoDir, worktreePath: workspace.cwd, paseoHome });
+    expect(existsSync(workspace.cwd)).toBe(false);
+  }
+  return { workspace, registry, service, paseoHome, repoDir, tempDir, archiveAndRemove };
+}
+
+test("preserves ordinary checkout behavior when no separate base was recorded", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  await writePaseoWorktreeMetadata(fixture.workspace.cwd, { baseRefName: "feature" });
+  await fixture.archiveAndRemove();
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.baseBranch).toBeNull();
+  expect(
+    await getCheckoutStatus(fixture.workspace.cwd, { paseoHome: fixture.paseoHome }),
+  ).toMatchObject({ currentBranch: "feature", baseRef: "feature" });
+});
+
+test("records the full HEAD ref of an archived checkout", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+    head: "refs/heads/feature",
+  });
+});
+
+test("archives a workspace whose worktree Git administration is missing", async () => {
+  const fixture = await createBaseRecoveryFixture(null);
+  const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  rmSync(gitDir, { recursive: true, force: true });
+  await archivePersistedWorkspaceRecord({
+    workspaceId: fixture.workspace.workspaceId,
+    workspaceRegistry: fixture.registry,
+  });
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).toBeTruthy();
+});
+
+test("restores a branch that shares its name with a tag", async () => {
+  const fixture = await createBaseRecoveryFixture("main");
+  execFileSync("git", ["tag", "feature"], { cwd: fixture.repoDir });
+  await fixture.archiveAndRemove();
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.head).toBe(
+    "refs/heads/feature",
+  );
+  expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+  });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(
+    execFileSync("git", ["symbolic-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("refs/heads/feature");
+});
+
+test("restores detached HEAD even when the stored branch is stale", async () => {
+  const fixture = await createBaseRecoveryFixture("main");
+  execFileSync("git", ["switch", "--detach"], { cwd: fixture.workspace.cwd });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+    head: commit,
+  });
+  expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+    branch: null,
+  });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(
+    execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("HEAD");
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(commit);
+});
+
+test.each(["manual", "reconciliation"] as const)(
+  "a later %s archive without a readable HEAD restores the latest recorded branch",
+  async (route) => {
+    const fixture = await createBaseRecoveryFixture("main");
+    await fixture.archiveAndRemove();
+    await fixture.service.restore(fixture.workspace.workspaceId);
+    execFileSync("git", ["switch", "-c", "feature-b"], { cwd: fixture.workspace.cwd });
+    writeFileSync(join(fixture.workspace.cwd, "newer.txt"), "newer\n");
+    execFileSync("git", ["add", "newer.txt"], { cwd: fixture.workspace.cwd });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "newer"], {
+      cwd: fixture.workspace.cwd,
+    });
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim();
+    // Placement reconciliation records the branch observed while the workspace is active.
+    await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+      ...workspace,
+      branch: "feature-b",
+    }));
+    execFileSync("git", ["worktree", "remove", "--force", fixture.workspace.cwd], {
+      cwd: fixture.repoDir,
+    });
+    if (route === "manual") {
+      await archivePersistedWorkspaceRecord({
+        workspaceId: fixture.workspace.workspaceId,
+        workspaceRegistry: fixture.registry,
+      });
+    } else {
+      await fixture.registry.archive(fixture.workspace.workspaceId, new Date().toISOString());
+    }
+
+    expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+      branch: "feature-b",
+      head: undefined,
+    });
+    expect(await fixture.service.inspect(fixture.workspace.workspaceId)).toMatchObject({
+      branch: "feature-b",
+    });
+    await fixture.service.restore(fixture.workspace.workspaceId);
+    expect(
+      execFileSync("git", ["symbolic-ref", "HEAD"], {
+        cwd: fixture.workspace.cwd,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe("refs/heads/feature-b");
+    expect(
+      execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: fixture.workspace.cwd,
+        encoding: "utf8",
+      }).trim(),
+    ).toBe(commit);
+  },
+);
+
+test("restores a branchless workspace from its recorded base so work can continue", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/release");
+  execFileSync("git", ["switch", "-c", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
+  writeFileSync(join(fixture.repoDir, "release.txt"), "release\n");
+  execFileSync("git", ["add", "release.txt"], { cwd: fixture.repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "release"], { cwd: fixture.repoDir, stdio: "pipe" });
+  execFileSync("git", ["switch", "main"], { cwd: fixture.repoDir, stdio: "pipe" });
+  await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+    ...workspace,
+    branch: null,
+  }));
+  await fixture.archiveAndRemove(true);
+
+  await expect(fixture.service.inspect(fixture.workspace.workspaceId)).resolves.toMatchObject({
+    kind: "recoverable",
+    action: "restore",
+    branch: null,
+  });
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+
+  const checkout = await getCheckoutStatus(fixture.workspace.cwd, { paseoHome: fixture.paseoHome });
+  expect(checkout.currentBranch).toBeTruthy();
+  expect(checkout.currentBranch).not.toBe("feature");
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(
+    execFileSync("git", ["rev-parse", "release"], {
+      cwd: fixture.repoDir,
+      encoding: "utf8",
+    }).trim(),
+  );
+});
+
+test("restores a branchless workspace from the repository default when its base is missing", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/deleted-base");
+  await fixture.registry.update(fixture.workspace.workspaceId, (workspace) => ({
+    ...workspace,
+    branch: null,
+  }));
+  await fixture.archiveAndRemove(true);
+
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(
+    execFileSync("git", ["rev-parse", "main"], { cwd: fixture.repoDir, encoding: "utf8" }).trim(),
+  );
+});
+
+test("restores the archived detached checkout at its recorded commit", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/main");
+  execFileSync("git", ["switch", "--detach"], { cwd: fixture.workspace.cwd });
+  writeFileSync(join(fixture.workspace.cwd, "detached.txt"), "detached\n");
+  execFileSync("git", ["add", "detached.txt"], { cwd: fixture.workspace.cwd });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "detached"], {
+    cwd: fixture.workspace.cwd,
+  });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  expect(await fixture.registry.get(fixture.workspace.workspaceId)).toMatchObject({
+    branch: "feature",
+    head: commit,
+  });
+  execFileSync("git", ["reflog", "expire", "--expire=now", "--all"], { cwd: fixture.repoDir });
+  execFileSync("git", ["gc", "--prune=now"], { cwd: fixture.repoDir });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect(await readPaseoWorktreeMetadata(fixture.workspace.cwd)).toMatchObject({
+    baseRefName: "main",
+    baseRef: "refs/heads/main",
+  });
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(commit);
+  expect(
+    execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("HEAD");
+});
+
+test("restores the branch HEAD with a base name when the exact base is missing", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/remotes/upstream/main");
+  const headBeforeArchive = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: fixture.workspace.cwd,
+    encoding: "utf8",
+  }).trim();
+  await fixture.archiveAndRemove();
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).resolves.toEqual({
+    workspaceId: fixture.workspace.workspaceId,
+    action: "restore",
+  });
+  expect(existsSync(fixture.workspace.cwd)).toBe(true);
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).toBeNull();
+  const metadata = await readPaseoWorktreeMetadata(fixture.workspace.cwd);
+  expect(metadata).toMatchObject({ baseRefName: "main" });
+  expect(metadata?.baseRef).toBeUndefined();
+  expect(
+    execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: fixture.workspace.cwd,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe(headBeforeArchive);
+});
+
+test("restore fetches a deleted local branch from origin and retains its base", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/main");
+  const remote = join(fixture.tempDir, "remote.git");
+  execFileSync("git", ["init", "--bare", remote], { stdio: "pipe" });
+  execFileSync("git", ["remote", "add", "origin", remote], { cwd: fixture.repoDir });
+  execFileSync("git", ["push", "origin", "feature"], { cwd: fixture.repoDir, stdio: "pipe" });
+  await fixture.archiveAndRemove();
+  execFileSync("git", ["branch", "-D", "feature"], { cwd: fixture.repoDir });
+  await fixture.service.restore(fixture.workspace.workspaceId);
+  expect((await readPaseoWorktreeMetadata(fixture.workspace.cwd))?.baseRef).toBe("refs/heads/main");
+  expect(
+    await getCheckoutStatus(fixture.workspace.cwd, { paseoHome: fixture.paseoHome }),
+  ).toMatchObject({
+    currentBranch: "feature",
+    baseRef: "main",
+    aheadBehind: { ahead: 1, behind: 0 },
+  });
+});
+
+test("restore rejects a branch checked out elsewhere without inventing another branch", async () => {
+  const fixture = await createBaseRecoveryFixture("refs/heads/main");
+  await fixture.archiveAndRemove();
+  execFileSync("git", ["switch", "feature"], { cwd: fixture.repoDir, stdio: "pipe" });
+  await expect(fixture.service.restore(fixture.workspace.workspaceId)).rejects.toThrow(
+    /already checked out/,
+  );
+  expect(existsSync(fixture.workspace.cwd)).toBe(false);
+  expect((await fixture.registry.get(fixture.workspace.workspaceId))?.archivedAt).not.toBeNull();
+  expect(
+    execFileSync("git", ["branch", "--list", "feature*"], {
+      cwd: fixture.repoDir,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("* feature");
+});
+
+test("restores a user-created worktree at its recorded path outside Paseo's root", async () => {
+  const { tempDir, repoDir } = createGitRepository();
+  const worktreeRoot = join(realpathSync(tempDir), "external-worktree");
+  execFileSync("git", ["worktree", "add", "-b", "external-feature", worktreeRoot], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  const workspace = createWorkspace({
+    cwd: worktreeRoot,
+    worktreeRoot,
+    mainRepoRoot: repoDir,
+    branch: "external-feature",
+    baseBranch: "main",
+    isPaseoOwnedWorktree: false,
+  });
+  execFileSync("git", ["worktree", "remove", worktreeRoot], { cwd: repoDir, stdio: "pipe" });
+  const unarchived: string[] = [];
+  const service = createWorkspaceRecoveryService({
+    paseoHome: join(tempDir, "paseo-home"),
+    getWorkspace: async () => workspace,
+    getProject: async () => createProject({ rootPath: repoDir }),
+    isDirectory: async (target) => existsSync(target) && statSync(target).isDirectory(),
+    unarchiveWorkspace: async (record) => {
+      unarchived.push(record.workspaceId);
+    },
+  });
+  await expect(service.restore(workspace.workspaceId)).resolves.toEqual({
+    workspaceId: workspace.workspaceId,
+    action: "restore",
+  });
+  expect(readFileSync(join(worktreeRoot, "README.md"), "utf8").trim()).toBe("initial");
+  expect(
+    execFileSync("git", ["branch", "--show-current"], {
+      cwd: worktreeRoot,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("external-feature");
+  expect(unarchived).toEqual([workspace.workspaceId]);
+});

@@ -9,29 +9,16 @@ import {
   PullRequestPane,
   PullRequestPaneError,
   PullRequestPaneSkeleton,
-  usePrPaneData,
 } from "@/git/pull-request-panel";
 import type { UsePrPaneDataResult } from "@/git/pull-request-panel/use-data";
-import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 
-import { getPullRequestIdentity, resolvePullRequestContentState } from "./state";
-
-/**
- * Whether this workspace's branch has a pull request. Detection only offers the
- * pull request as something the user can open; it never opens a tab on its own.
- */
-export function useHasPullRequest(input: {
-  serverId: string;
-  cwd: string | null;
-  enabled: boolean;
-}): boolean {
-  const status = useCheckoutPrStatusQuery({
-    serverId: input.serverId,
-    cwd: input.cwd || "",
-    enabled: input.enabled,
-  }).status;
-  return getPullRequestIdentity(status) !== null;
-}
+import { resolvePullRequestContentState } from "./state";
+export {
+  useWorkspacePullRequestDiscovery,
+  useHasPullRequest,
+  usePullRequestAutoAdd,
+} from "./discovery";
+export { usePullRequestData } from "./data";
 
 export function PullRequestContent(input: {
   serverId: string;
@@ -76,15 +63,6 @@ export function PullRequestContent(input: {
       <Text style={styles.emptyDescription}>{t("panels.pullRequest.emptyDescription")}</Text>
     </View>
   );
-}
-
-export function usePullRequestData(input: {
-  serverId: string;
-  cwd: string;
-  enabled?: boolean;
-  timelineEnabled?: boolean;
-}) {
-  return usePrPaneData(input);
 }
 
 const styles = StyleSheet.create((theme) => ({

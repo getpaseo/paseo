@@ -1,14 +1,25 @@
 import { z } from "zod";
 import type { SplitNode, WorkspaceLayout } from "./workspace-layout-actions";
 
-const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
-  provider: z.string(),
-  cwd: z.string(),
-  modeId: z.string().nullable(),
-  model: z.string().nullable(),
-  thinkingOptionId: z.string().nullable(),
-  featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
-});
+// COMPAT(providerOptionControls): added in v0.15.0, remove after 2027-05-01. Layouts saved before
+// the rename stored the same record as `featureValues`.
+function renameLegacyFeatureValues(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || !("featureValues" in value)) return value;
+  const { featureValues, ...rest } = value as { featureValues: unknown } & Record<string, unknown>;
+  return "providerOptions" in rest ? rest : { ...rest, providerOptions: featureValues };
+}
+
+const WorkspaceDraftTabSetupStorageSchema = z.preprocess(
+  renameLegacyFeatureValues,
+  z.strictObject({
+    provider: z.string(),
+    cwd: z.string(),
+    modeId: z.string().nullable(),
+    model: z.string().nullable(),
+    thinkingOptionId: z.string().nullable(),
+    providerOptions: z.record(z.string(), z.json()),
+  }),
+);
 const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("new_tab") }),
   z.strictObject({
@@ -108,6 +119,7 @@ export const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   explorerSidebarPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   sidePaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
+  pullRequestTabAutoOpenedByWorkspace: z.record(z.string(), z.literal(true)).optional(),
   // COMPAT(pullRequestAutoAdd): PR detection stopped opening a tab in v0.5; accepted
   // and ignored so upgrading does not discard the layout. Remove after 2027-08-20.
   acknowledgedPullRequestByWorkspace: z.record(z.string(), z.string()).optional(),

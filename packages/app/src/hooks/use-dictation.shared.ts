@@ -1,6 +1,7 @@
+import type { AudioCaptureStartFailure } from "@/audio";
 import { i18n } from "@/i18n/i18next";
 
-export type DictationStatus = "idle" | "recording" | "uploading" | "failed";
+export type DictationStatus = "idle" | "recording" | "paused" | "uploading" | "failed";
 
 export interface UseDictationOptions {
   client: import("@getpaseo/client/internal/daemon-client").DaemonClient | null;
@@ -21,6 +22,8 @@ export interface UseDictationResult {
   volume: number;
   duration: number;
   error: string | null;
+  startError: AudioCaptureStartFailure | null;
+  clearStartError: () => void;
   status: DictationStatus;
   startDictation: () => Promise<void>;
   cancelDictation: () => Promise<void>;

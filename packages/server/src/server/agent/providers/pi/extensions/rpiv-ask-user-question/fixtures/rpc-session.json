@@ -1,0 +1,134 @@
+{
+  "provenance": {
+    "package": "@juicesharp/rpiv-ask-user-question",
+    "version": "2.11.0",
+    "sourceCommit": "61904e69e1a50e12585bdf15f0310e633a62ba36",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23",
+    "model": "openrouter/google/gemini-3.6-flash"
+  },
+  "frames": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_1400136",
+      "toolName": "ask_user_question",
+      "args": {
+        "questions": [
+          {
+            "options": [
+              {
+                "label": "Apple",
+                "description": "Fresh fruit"
+              },
+              {
+                "description": "Sweet treat",
+                "label": "Cookie"
+              }
+            ],
+            "question": "Which snack?",
+            "header": "Snack"
+          },
+          {
+            "multiSelect": true,
+            "question": "Which colors?",
+            "options": [
+              {
+                "description": "Warm",
+                "label": "Red"
+              },
+              {
+                "description": "Cool",
+                "label": "Blue"
+              }
+            ],
+            "header": "Colors"
+          },
+          {
+            "header": "Project",
+            "options": [
+              {
+                "description": "Map theme",
+                "label": "Atlas"
+              },
+              {
+                "description": "Light theme",
+                "label": "Beacon"
+              }
+            ],
+            "question": "What project name?"
+          }
+        ]
+      }
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "8b00ad15-da50-42d8-ab9c-6cbc1a4d31a5",
+      "method": "select",
+      "title": "[Snack] Which snack?",
+      "options": [
+        "1. Apple \u2014 Fresh fruit",
+        "2. Cookie \u2014 Sweet treat",
+        "3. Type something."
+      ]
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "ade366ea-0cfd-4e9d-9fd0-0690736947c8",
+      "method": "input",
+      "title": "[Colors] Which colors?\n\n1. Red \u2014 Warm\n2. Blue \u2014 Cool\n\nEnter the numbers of all that apply, comma-separated (e.g. \"1,3\"), or type a custom answer as plain text.",
+      "placeholder": "1,3"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "be2fd390-c4e3-4dcb-b14e-3aaf0a64ca70",
+      "method": "select",
+      "title": "[Project] What project name?",
+      "options": ["1. Atlas \u2014 Map theme", "2. Beacon \u2014 Light theme", "3. Type something."]
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "8b34e9ca-75d4-4cc2-8439-0bb9836ad128",
+      "method": "input",
+      "title": "[Project] What project name?\n\nType your answer:",
+      "placeholder": ""
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_1400136",
+      "toolName": "ask_user_question",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "User has answered your questions: \"Which snack?\"=\"Cookie\". \"Which colors?\"=\"Red, Blue\". \"What project name?\"=\"Nebula\". You can now continue with the user's answers in mind."
+          }
+        ],
+        "details": {
+          "answers": [
+            {
+              "questionIndex": 0,
+              "question": "Which snack?",
+              "kind": "option",
+              "answer": "Cookie"
+            },
+            {
+              "questionIndex": 1,
+              "question": "Which colors?",
+              "kind": "multi",
+              "answer": null,
+              "selected": ["Red", "Blue"]
+            },
+            {
+              "questionIndex": 2,
+              "question": "What project name?",
+              "kind": "custom",
+              "answer": "Nebula"
+            }
+          ],
+          "cancelled": false
+        }
+      },
+      "isError": false
+    }
+  ]
+}

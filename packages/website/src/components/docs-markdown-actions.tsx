@@ -1,5 +1,6 @@
 import { Check, Copy, FileText } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface DocsMarkdownActionsProps {
   content: string;
@@ -7,6 +8,7 @@ interface DocsMarkdownActionsProps {
 }
 
 export function DocsMarkdownActions({ content, markdownHref }: DocsMarkdownActionsProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export function DocsMarkdownActions({ content, markdownHref }: DocsMarkdownActio
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
       >
         {copied ? <Check size={14} /> : <Copy size={14} />}
-        {copied ? "Copied" : "Copy as markdown"}
+        {copied ? t("docs.copied") : t("docs.copyMarkdown")}
       </button>
       <a
         href={markdownHref}
@@ -36,7 +38,7 @@ export function DocsMarkdownActions({ content, markdownHref }: DocsMarkdownActio
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
       >
         <FileText size={14} />
-        View as markdown
+        {t("docs.viewMarkdown")}
       </a>
     </div>
   );

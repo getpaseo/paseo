@@ -9,7 +9,7 @@ argument-hint: "[--profile <name>] <question or topic>"
 
 Single agent. Reads the situation you're in. Gives a judgment. You decide what to do — the advisor doesn't drive the work.
 
-**User's request:** $ARGUMENTS
+Use the user's request and current conversation as input, including any arguments supplied with the skill invocation. Optional syntax: `[--profile <name>] <question or topic>`.
 
 ## Prerequisites
 
@@ -40,13 +40,15 @@ This is analysis only. Do NOT edit, create, or delete any files. Do NOT write co
 
 ## Forwarded skills
 
-If `$ARGUMENTS` contains another skill reference — `/unslop`, `/unslop-risk`, `$unslop`, etc. — the user is asking the advisor to run that skill against the current task. Examples:
+If the user's request contains another skill reference, such as `/unslop`, `/skill:unslop`, or `$unslop`, the user is asking the advisor to run that skill against the current task. Examples:
 
 - `/paseo-advisor /unslop` → advisor runs `/unslop` on the current diff.
 - `/paseo-advisor /unslop-risk` → advisor does an unslop-risk review.
 - `/paseo-advisor $diagnose this build failure` → advisor invokes `/diagnose`.
+- `/skill:paseo-advisor /skill:unslop` → advisor runs the `unslop` skill on the current diff in Pi.
+- `$paseo-advisor $unslop` → advisor runs the `unslop` skill on the current diff in Codex.
 
-Parse the forwarded skill name out of `$ARGUMENTS` (`/<name>` or `$<name>`). In the briefing, tell the advisor explicitly:
+Parse the forwarded skill name from the user's request (`/<name>`, `/skill:<name>`, or `$<name>`), excluding this skill's own invocation. In the briefing, tell the advisor explicitly:
 
 ```
 Invoke the `<name>` skill against this task. Load it via the Skill tool before doing anything else.

@@ -1,0 +1,4 @@
+Fixed
+- Fixed intermittent text clipping in iOS chats and Markdown previews
+
+Full notes: https://paseo.sh/changelog

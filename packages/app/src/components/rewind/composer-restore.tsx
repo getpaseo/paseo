@@ -1,21 +1,14 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from "react";
+import type { ComposerTextSource } from "@/composer/text-source";
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 
 interface RewindComposerRestoreContextValue {
   completeRewind: (text: string) => void;
 }
 
 interface RewindComposerRestoreProviderProps {
-  text: string;
+  textSource: ComposerTextSource;
   setText: (text: string) => void;
-  onRewindComplete: () => void;
+  onRewindComplete: (restoredComposerText: boolean) => void;
   children: ReactNode;
 }
 
@@ -32,29 +25,25 @@ export function restoreComposerTextIfEmpty(input: {
 }
 
 export function RewindComposerRestoreProvider({
-  text,
+  textSource,
   setText,
   onRewindComplete,
   children,
 }: RewindComposerRestoreProviderProps) {
-  const textRef = useRef(text);
-
-  useEffect(() => {
-    textRef.current = text;
-  }, [text]);
-
   const completeRewind = useCallback(
     (rewoundText: string) => {
+      const currentText = textSource.getSnapshot();
       const nextText = restoreComposerTextIfEmpty({
-        currentText: textRef.current,
+        currentText: currentText,
         rewoundText,
       });
-      if (nextText !== textRef.current) {
+      const restoredComposerText = nextText !== currentText;
+      if (restoredComposerText) {
         setText(nextText);
       }
-      onRewindComplete();
+      onRewindComplete(restoredComposerText);
     },
-    [onRewindComplete, setText],
+    [onRewindComplete, setText, textSource],
   );
 
   const value = useMemo(() => ({ completeRewind }), [completeRewind]);

@@ -6,6 +6,7 @@ import {
   isSubPageOpen,
   MENU_ROOT_PATH,
   openSubPage,
+  pruneMissingPages,
 } from "./menu-navigation";
 
 describe("openSubPage", () => {
@@ -71,5 +72,17 @@ describe("isSubPageOpen", () => {
     // Right id, wrong level — a different trigger that happens to share a name.
     expect(isSubPageOpen(path, { id: "colors", depth: 0 })).toBe(false);
     expect(isSubPageOpen(path, { id: "grouping", depth: 0 })).toBe(false);
+  });
+});
+
+describe("pruneMissingPages", () => {
+  it("falls back to the deepest page that still exists", () => {
+    expect(pruneMissingPages(["list", "row"], (id) => id === "list")).toEqual(["list"]);
+    expect(pruneMissingPages(["list", "row"], (id) => id === "row")).toEqual([]);
+  });
+
+  it("returns the same path when every page exists", () => {
+    const path = ["list", "row"];
+    expect(pruneMissingPages(path, () => true)).toBe(path);
   });
 });

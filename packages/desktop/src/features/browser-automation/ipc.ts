@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, nativeImage } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
   BrowserAutomationConsoleLogEntry,
@@ -15,7 +15,7 @@ import {
   promptShimInstallScript,
   promptShimRestoreScript,
 } from "./dialog-handling.js";
-import { BrowserTabClosedError, executeAutomationCommand } from "./service.js";
+import { BrowserTabClosedError, executeAutomationCommand, hasPaintedPixels } from "./service.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -111,6 +111,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   getBackgroundThrottling(): boolean;
   setBackgroundThrottling(allowed: boolean): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  insertText(text: string): Promise<void>;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
@@ -132,6 +133,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
     captureFrame: (signal) => captureViewportFrame(contents, signal),
+    decodePng: (png) => nativeImage.createFromBuffer(Buffer.from(png)),
     invalidate: () => contents.invalidate(),
     withFrameProduction: async (capture) => {
       const previous = contents.getBackgroundThrottling();
@@ -143,6 +145,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
       }
     },
     sendInputEvent: (event) => contents.sendInputEvent(event),
+    insertText: (text) => contents.insertText(text),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -180,6 +183,9 @@ function captureViewportFrame(
       // A resized resident guest can paint while capturePage's surface-copy
       // request remains pending. Subscribe to its rendered frames instead.
       contents.beginFrameSubscription(false, (image) => {
+        // Keep the subscription open until the page has painted; the capture
+        // budget turns a page that never paints into screenshot_no_frame.
+        if (!hasPaintedPixels(image)) return;
         stop();
         resolve(image);
       });

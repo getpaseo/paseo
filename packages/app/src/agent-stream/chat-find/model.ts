@@ -1,26 +1,59 @@
 import type { AgentTimelineSearchPayload } from "@getpaseo/client/internal/daemon-client";
 import type { StreamItem } from "@/types/stream";
 
-type Location = AgentTimelineSearchPayload["locations"][number];
+/**
+ * A message the host says contains the query. `count` is the host's estimate of its
+ * occurrences until a reveal replaces it with the rendered count, so the whole-chat
+ * position the widget shows is exact for every message that has been on screen. The
+ * wire field is optional; the search boundary fills it in, so the interior trusts it.
+ */
+type Location = Omit<AgentTimelineSearchPayload["locations"][number], "count"> & {
+  count: number;
+};
 interface Target {
   id: string;
   seq: number;
   before: number;
 }
+/**
+ * Why a search stopped, so the widget can say something true. `connection` is the
+ * host call itself failing, `historyChanged` is the timeline moving under a result
+ * set, and `reveal` is a located match that never made it onto the screen.
+ */
+export type ChatFindFailure = "connection" | "historyChanged" | "reveal";
+
+class ChatFindFailureError extends Error {
+  constructor(
+    readonly failure: ChatFindFailure,
+    options?: { cause: unknown },
+  ) {
+    super(`Chat find failed: ${failure}`, options);
+  }
+}
+
+function tagged<T>(failure: ChatFindFailure, operation: Promise<T>): Promise<T> {
+  return operation.catch((cause: unknown) => {
+    throw cause instanceof ChatFindFailureError
+      ? cause
+      : new ChatFindFailureError(failure, { cause });
+  });
+}
+
 interface Snapshot {
   open: boolean;
   query: string;
   phase: "idle" | "searching" | "loading" | "ready" | "error";
   selectedItemId: string | null;
+  /** Position across the whole chat: the search scope, not the selected message. */
   occurrence: number;
   count: number;
-  error: string | null;
+  failure: ChatFindFailure | null;
 }
 export interface ChatFindOperations {
   search(query: string, cursor?: number): Promise<AgentTimelineSearchPayload>;
   load(epoch: string, seq: number): Promise<unknown>;
   reveal(
-    itemId: string,
+    messageId: string,
     query: string,
     occurrence: number,
     signal: AbortSignal,
@@ -36,7 +69,7 @@ export class ChatFindModel {
     selectedItemId: null,
     occurrence: 0,
     count: 0,
-    error: null,
+    failure: null,
   };
   private listeners = new Set<() => void>();
   private historyListeners = new Set<() => void>();
@@ -46,6 +79,7 @@ export class ChatFindModel {
   private locations: Location[] = [];
   private resolved = new Map<Location, Target>();
   private current = -1;
+  private inMessage = { occurrence: 0, count: 0 };
   private abort = new AbortController();
   private timer: ReturnType<typeof setTimeout> | undefined;
   constructor(private operations: ChatFindOperations) {}
@@ -73,7 +107,7 @@ export class ChatFindModel {
   };
   readonly close = () => {
     this.cancel();
-    this.publish({ open: false, phase: "idle", selectedItemId: null, count: 0, error: null });
+    this.publish({ open: false, phase: "idle", selectedItemId: null, count: 0, failure: null });
   };
   readonly setQuery = (query: string) => {
     this.cancel();
@@ -81,13 +115,14 @@ export class ChatFindModel {
     this.resultEpoch = null;
     this.resolved.clear();
     this.current = -1;
+    this.inMessage = { occurrence: 0, count: 0 };
     this.publish({
       query,
       phase: query.trim() ? "searching" : "idle",
       selectedItemId: null,
       occurrence: 0,
       count: 0,
-      error: null,
+      failure: null,
     });
     if (!query.trim()) return;
     const signal = this.abort.signal;
@@ -102,20 +137,30 @@ export class ChatFindModel {
     this.publish({
       phase: "error",
       selectedItemId: null,
-      error: error instanceof Error ? error.message : String(error),
+      // Every operation call site is tagged, so an untagged failure is a bug here
+      // rather than a known outcome; `connection` is the least misleading thing to
+      // say about one, and its copy already asks the reader to check and retry.
+      failure: error instanceof ChatFindFailureError ? error.failure : "connection",
     });
   }
   private async search(signal: AbortSignal) {
     try {
       let cursor: number | undefined;
       do {
-        const result = await this.operations.search(this.state.query, cursor);
+        const result = await tagged("connection", this.operations.search(this.state.query, cursor));
         if (signal.aborted) return;
         const historyChanged = this.epoch !== null && result.epoch !== this.epoch;
         const searchChanged = this.resultEpoch !== null && result.epoch !== this.resultEpoch;
-        if (historyChanged || searchChanged) throw new Error("History changed; search again");
+        if (historyChanged || searchChanged) throw new ChatFindFailureError("historyChanged");
         this.resultEpoch = result.epoch;
-        this.locations.push(...result.locations);
+        this.locations.push(
+          ...result.locations.map((location) => ({
+            seq: location.seq,
+            role: location.role,
+            // COMPAT(timelineSearchCount): hosts before v0.9.0 send no count; remove after 2027-09-22.
+            count: location.count ?? 1,
+          })),
+        );
         cursor = result.nextCursor ?? undefined;
       } while (cursor !== undefined);
       await this.navigate(0, 1, signal);
@@ -130,7 +175,7 @@ export class ChatFindModel {
       epoch !== this.resultEpoch &&
       this.state.open
     ) {
-      this.fail(new Error("History changed; search again"), this.abort.signal);
+      this.fail(new ChatFindFailureError("historyChanged"), this.abort.signal);
     }
     this.epoch = epoch;
     this.items = items;
@@ -159,7 +204,7 @@ export class ChatFindModel {
         this.historyListeners.delete(check);
         signal.removeEventListener("abort", cancelled);
         if (target) resolve(target);
-        else reject(new Error("Could not load this search location; retry"));
+        else reject(new ChatFindFailureError("reveal"));
       };
       const check = () => {
         const target = this.target(location, false);
@@ -176,7 +221,7 @@ export class ChatFindModel {
   private async navigate(index: number, direction: 1 | -1, signal: AbortSignal) {
     const epoch = this.resultEpoch;
     if (epoch === null) return;
-    this.publish({ phase: "loading", error: null });
+    this.publish({ phase: "loading", failure: null });
     let remaining = this.locations.length;
     while (remaining-- > 0 && this.locations.length) {
       index = (index + this.locations.length) % this.locations.length;
@@ -187,7 +232,7 @@ export class ChatFindModel {
         this.items.some((item) => item.id === cached.id && item.timelineCursor?.seq === cached.seq);
       let target = stillLoaded ? cached : this.target(location, true);
       if (!target) {
-        await this.operations.load(epoch, location.seq);
+        await tagged("connection", this.operations.load(epoch, location.seq));
         if (signal.aborted) return;
         target = await this.waitForTarget(location, signal);
       }
@@ -204,16 +249,14 @@ export class ChatFindModel {
       );
       index = this.locations.indexOf(location);
       this.publish({ selectedItemId: target.id });
-      const result = await this.operations.reveal(
-        target.id,
-        this.state.query,
-        direction === 1 ? 0 : -1,
-        signal,
+      const result = await tagged(
+        "reveal",
+        this.operations.reveal(target.id, this.state.query, direction === 1 ? 0 : -1, signal),
       );
       if (signal.aborted) return;
       if (result.count) {
         this.current = index;
-        this.publish({ phase: "ready", ...result });
+        this.publish({ phase: "ready", ...this.position(location, result) });
         return;
       }
       this.locations.splice(index, 1);
@@ -222,23 +265,32 @@ export class ChatFindModel {
     this.operations.clear();
     this.publish({ phase: "ready", selectedItemId: null, count: 0, occurrence: 0 });
   }
+  private position(location: Location, revealed: { occurrence: number; count: number }) {
+    this.inMessage = revealed;
+    location.count = revealed.count;
+    let before = 0;
+    let total = 0;
+    for (const candidate of this.locations) {
+      if (candidate === location) before = total;
+      total += candidate.count;
+    }
+    return { occurrence: before + revealed.occurrence, count: total };
+  }
   private async move(direction: 1 | -1) {
     if (this.state.phase !== "ready" || !this.state.count) return;
     this.cancel();
     const signal = this.abort.signal;
     try {
-      const occurrence = this.state.occurrence + direction;
-      if (occurrence >= 0 && occurrence < this.state.count && this.state.selectedItemId) {
+      const occurrence = this.inMessage.occurrence + direction;
+      if (occurrence >= 0 && occurrence < this.inMessage.count && this.state.selectedItemId) {
         this.publish({ phase: "loading" });
-        const result = await this.operations.reveal(
-          this.state.selectedItemId,
-          this.state.query,
-          occurrence,
-          signal,
+        const result = await tagged(
+          "reveal",
+          this.operations.reveal(this.state.selectedItemId, this.state.query, occurrence, signal),
         );
         if (signal.aborted) return;
         if (result.count) {
-          this.publish({ phase: "ready", ...result });
+          this.publish({ phase: "ready", ...this.position(this.locations[this.current]!, result) });
           return;
         }
       }

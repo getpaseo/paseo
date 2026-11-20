@@ -93,7 +93,7 @@ async function fixture() {
       calls.push("agent");
       await onReady(agent);
       calls.push("prompt");
-      return agent;
+      return { agent, initialPromptStarted: true };
     },
   };
   const updates: CreationSnapshot[] = [];
@@ -129,7 +129,7 @@ test("a failed agent startup retries only that stage with the reserved IDs", asy
     expect(readyWorkspace).toEqual(workspace);
     if (attempts === 1) throw new Error("provider unavailable");
     await onReady(agent);
-    return agent;
+    return { agent, initialPromptStarted: true };
   };
   expect(await f.service.create(f.input)).toMatchObject({
     phase: "failed",
@@ -210,7 +210,7 @@ test("omitted resource IDs are generated once and preserved on replay", async ()
   f.input.createAgent = async (id, createdWorkspace, onReady) => {
     const created = { ...agent, id, workspaceId: createdWorkspace!.id };
     await onReady(created);
-    return created;
+    return { agent: created, initialPromptStarted: true };
   };
   const result = await f.service.create(f.input);
   expect(result.workspaceId).toMatch(/^wks_[a-f0-9]{16}$/);
@@ -231,7 +231,7 @@ test("restart after a committed agent without a prompt completes without recreat
     await onReady(agent);
     // Capture the durable state at the exact milestone a process could stop after.
     await cp(f.directory, recoveredDirectory, { recursive: true });
-    return agent;
+    return { agent, initialPromptStarted: false };
   };
   await f.service.create(f.input);
   const recovered = await new CreationService(recoveredDirectory, silentLogger).create(f.input);

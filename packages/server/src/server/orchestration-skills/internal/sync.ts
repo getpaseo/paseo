@@ -4,8 +4,7 @@ import path from "node:path";
 
 export interface SkillSyncOptions {
   sourceDir: string;
-  agentsDir: string;
-  claudeDir: string;
+  installDirs: readonly string[];
   codexDir: string;
   skillNames: readonly string[];
   onSkillError?: (skillName: string, error: unknown) => void;
@@ -51,7 +50,9 @@ export async function listFilesRecursive(rootDir: string): Promise<string[]> {
   return out;
 }
 
-async function readManagedFilesManifest(dstDir: string): Promise<ManagedFilesManifest | null> {
+export async function readManagedFilesManifest(
+  dstDir: string,
+): Promise<ManagedFilesManifest | null> {
   const raw = await fs
     .readFile(path.join(dstDir, MANAGED_FILES_MANIFEST), "utf-8")
     .catch(() => null);
@@ -169,25 +170,80 @@ async function syncDirectoryFiles(srcDir: string, dstDir: string): Promise<numbe
 }
 
 export interface RemoveSkillTargets {
-  agentsDir: string;
-  claudeDir: string;
+  installDirs: readonly string[];
   codexDir: string;
 }
 
 export async function removeSkill(skillName: string, targets: RemoveSkillTargets): Promise<void> {
-  const paths = [
-    path.join(targets.agentsDir, skillName),
-    path.join(targets.claudeDir, skillName),
-    path.join(targets.codexDir, skillName),
-  ];
+  const paths = [...targets.installDirs, targets.codexDir].map((root) =>
+    path.join(root, skillName),
+  );
+  let hasError = false;
+  let firstError: unknown = null;
   for (const p of paths) {
-    await fs.rm(p, { recursive: true, force: true });
+    try {
+      await fs.rm(p, { recursive: true, force: true });
+    } catch (error) {
+      // If an ancestor is a regular file, no skill directory can exist below it.
+      if ((error as NodeJS.ErrnoException).code === "ENOTDIR") continue;
+      if (!hasError) {
+        hasError = true;
+        firstError = error;
+      }
+    }
   }
+  if (hasError) throw firstError;
+}
+
+async function isSameDirectory(a: string, b: string): Promise<boolean> {
+  const [realA, realB] = await Promise.all([a, b].map((p) => fs.realpath(p).catch(() => null)));
+  return realA !== null && realA === realB;
+}
+
+/**
+ * Codex also discovers .agents/skills, so its dedicated copy is a leftover. When
+ * the Codex skill directory resolves to an active install target, it is that
+ * copy, and retiring it would delete the install.
+ */
+export async function isLegacyCodexCopy(
+  skillName: string,
+  targets: RemoveSkillTargets,
+): Promise<boolean> {
+  const codexSkillDir = path.join(targets.codexDir, skillName);
+  for (const root of targets.installDirs) {
+    if (await isSameDirectory(codexSkillDir, path.join(root, skillName))) return false;
+  }
+  return true;
+}
+
+async function retireManagedSkill(dstDir: string): Promise<number> {
+  const info = await fs.lstat(dstDir).catch(() => null);
+  if (!info?.isDirectory()) return 0;
+  const manifest = await readManagedFilesManifest(dstDir);
+  if (!manifest) return 0;
+  const files = Object.keys(manifest.files);
+  await assertManagedPathsStayInsideSkill(dstDir, [MANAGED_FILES_MANIFEST, ...files]);
+  const removed: string[] = [];
+  for (const [rel, previousHash] of Object.entries(manifest.files)) {
+    const filePath = path.join(dstDir, rel);
+    const currentHash = await hashFile(filePath).catch(() => null);
+    if (currentHash !== previousHash) continue;
+    await fs.rm(filePath);
+    removed.push(rel);
+  }
+  await pruneEmptyParentDirs(dstDir, removed);
+  await fs.rm(path.join(dstDir, MANAGED_FILES_MANIFEST));
+  await fs.rmdir(dstDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOTEMPTY" && error.code !== "ENOENT") throw error;
+  });
+  return removed.length + 1;
 }
 
 export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {
   let changedFiles = 0;
   let processedSkills = 0;
+  let hasError = false;
+  let firstError: unknown = null;
 
   for (const skillName of options.skillNames) {
     const bundleSkillDir = path.join(options.sourceDir, skillName);
@@ -195,28 +251,47 @@ export async function syncSkills(options: SkillSyncOptions): Promise<SkillSyncRe
     const bundleStat = await fs.stat(bundleSkillDir).catch(() => null);
     if (!bundleStat?.isDirectory()) continue;
 
-    try {
-      changedFiles += await syncDirectoryFiles(
-        bundleSkillDir,
-        path.join(options.agentsDir, skillName),
-      );
+    let skillFailed = false;
+    let skillError: unknown = null;
 
-      changedFiles += await syncDirectoryFiles(
-        bundleSkillDir,
-        path.join(options.claudeDir, skillName),
-      );
+    // Attempt every install root for every skill before throwing so one
+    // unwritable target does not stop updates from reaching healthy targets.
+    for (const installDir of options.installDirs) {
+      try {
+        changedFiles += await syncDirectoryFiles(bundleSkillDir, path.join(installDir, skillName));
+      } catch (error) {
+        if (!skillFailed) {
+          skillFailed = true;
+          skillError = error;
+        }
+      }
+    }
 
-      changedFiles += await syncDirectoryFiles(
-        bundleSkillDir,
-        path.join(options.codexDir, skillName),
-      );
+    if (!skillFailed) {
+      try {
+        // Retain user edits to the old dedicated Codex copy.
+        if (await isLegacyCodexCopy(skillName, options)) {
+          changedFiles += await retireManagedSkill(path.join(options.codexDir, skillName));
+        }
+      } catch (error) {
+        skillFailed = true;
+        skillError = error;
+      }
+    }
 
+    if (skillFailed) {
+      if (options.onSkillError) {
+        options.onSkillError(skillName, skillError);
+      } else if (!hasError) {
+        hasError = true;
+        firstError = skillError;
+      }
+    } else {
       processedSkills++;
-    } catch (error) {
-      if (!options.onSkillError) throw error;
-      options.onSkillError(skillName, error);
     }
   }
+
+  if (hasError) throw firstError;
 
   return { changedFiles, processedSkills };
 }

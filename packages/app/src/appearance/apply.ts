@@ -5,6 +5,7 @@ import {
   DEFAULT_MONO_FONT_STACK,
   FONT_SIZE,
   REGISTERED_THEMES,
+  themeContentMaxWidth,
   type Theme,
 } from "@/styles/theme";
 import { applyRootUiFont } from "./apply-root-font";
@@ -17,6 +18,7 @@ export interface AppearanceInput {
   uiBaseFontSize: number; // already clamped
   contentFontSize: number; // already clamped
   codeFontSize: number; // already clamped
+  contentMaxWidth: number | undefined; // undefined fills the available width
   syntaxTheme: SyntaxThemeId;
 }
 
@@ -55,7 +57,7 @@ function scaleFontSize(
  * always current and makes ordering vs `setTheme`/`setAdaptiveThemes` irrelevant.
  *
  * The updater preserves the active theme wholesale (surfaces, accents,
- * terminal) and only patches the font ramp and syntax palette.
+ * terminal) and only patches the font ramp, content width, and syntax palette.
  * `updateTheme` replaces the stored theme rather than merging, so we spread
  * `...t` first.
  */
@@ -63,6 +65,7 @@ export function applyAppearance(input: AppearanceInput): void {
   const ui = input.uiFontFamily.trim() || DEFAULT_UI_FONT_STACK;
   const mono = input.monoFontFamily.trim() || DEFAULT_MONO_FONT_STACK;
   const diffLineHeight = Math.round(input.codeFontSize * 1.5); // couple to code size
+  const contentMaxWidth = themeContentMaxWidth(input.contentMaxWidth);
   const activeTheme = UnistylesRuntime.themeName;
   // Unistyles web emits after each registry patch. Updating the mounted theme
   // first ensures subscribers receive its new numeric tokens in this render;
@@ -86,6 +89,7 @@ export function applyAppearance(input: AppearanceInput): void {
           fontFamily,
           fontSize,
           lineHeight,
+          contentMaxWidth,
           colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
         };
       }
@@ -94,6 +98,7 @@ export function applyAppearance(input: AppearanceInput): void {
         fontFamily,
         fontSize,
         lineHeight,
+        contentMaxWidth,
         colors: { ...t.colors, syntax: resolveSyntaxColors(input.syntaxTheme, t.colorScheme) },
       };
     });

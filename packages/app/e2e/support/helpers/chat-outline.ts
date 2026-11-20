@@ -1,8 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
-import { openSettingsSection } from "./settings";
+import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
 import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
 import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { loadSessionMessageReaders } from "./new-workspace";
 
 export async function withStreamingMarkdownOutline(
   run: (agent: MockAgentWorkspace) => Promise<void>,
@@ -80,12 +81,13 @@ export async function splitCurrentPanelRight(page: Page): Promise<void> {
   await runWorkspaceActionFromCommandCenter(page, "Split pane right");
 }
 
-export async function disableChatOutlineFromAppearance(page: Page): Promise<void> {
-  const timelineUrl = page.url();
+export async function disableChatOutline(page: Page): Promise<void> {
   await openSettings(page);
-  await openSettingsSection(page, "appearance");
-  await page.getByRole("switch", { name: "Chat outline" }).click();
-  await page.goto(timelineUrl);
+  await openSettingsSection(page, "chat");
+  const outlineSwitch = page.getByRole("switch", { name: "Chat outline" });
+  await outlineSwitch.click();
+  await expect(outlineSwitch).not.toBeChecked();
+  await clickSettingsBackToWorkspace(page);
 }
 
 /** Parks the pointer in the middle of the transcript, clear of the rail. */
@@ -228,4 +230,23 @@ async function requireBoundingBox(
     throw new Error("Expected the chat outline element to have a layout box");
   }
   return box;
+}
+
+export async function observePromptIndexRequests(page: Page) {
+  const frames = await loadSessionMessageReaders();
+  const agentIds: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const request = frames.client(payload);
+      if (request?.type === "agent.timeline.list_prompts.request") {
+        agentIds.push(request.agentId);
+      }
+    });
+  });
+  return {
+    async waitForRequestFor(agentId: string) {
+      await expect.poll(() => agentIds).toContain(agentId);
+    },
+    requestedAgentIds: () => [...new Set(agentIds)],
+  };
 }

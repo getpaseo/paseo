@@ -1,20 +1,10 @@
-// The iPhone frame every mobile mockup sits inside. Authored at a fixed
-// "design" size — iPhone 17 Pro points, 402 x 874 — and scaled to whatever
-// width its column gives it. The scale is pure CSS (`tan(atan2(100cqw, …))`,
-// the same trick the desktop hero uses), so the frame stays crisp at any width
-// with no JS and a correct server-rendered first paint.
-
 import type * as React from "react";
+import { ScaledMockup } from "../scaled-mockup";
 
 export const PHONE_W = 402;
 export const PHONE_H = 874;
 
 const FRAME_ASPECT = { aspectRatio: `${PHONE_W} / ${PHONE_H}` };
-const SCREEN_SCALE = {
-  width: PHONE_W,
-  height: PHONE_H,
-  transform: `scale(tan(atan2(100cqw, ${PHONE_W}px)))`,
-};
 type PhoneDepth = "front" | "left" | "right";
 
 const SLAB_STYLE: Record<Exclude<PhoneDepth, "front">, React.CSSProperties> = {
@@ -122,8 +112,8 @@ export function PhoneFrame({
       )}
 
       <div className="absolute inset-0 overflow-hidden rounded-[13.5%/6.2%] border-[3px] border-black bg-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)] outline outline-[1px] outline-white/25">
-        <div className="absolute -inset-[3px] [container-type:inline-size]">
-          <div className="absolute top-0 left-0 origin-top-left" style={SCREEN_SCALE}>
+        <div className="absolute -inset-[3px]">
+          <ScaledMockup width={PHONE_W} height={PHONE_H}>
             <div className="relative flex h-[874px] w-[402px] flex-col overflow-hidden bg-mock-surface0 text-mock-fg antialiased">
               <StatusBar time={time} />
               <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -131,7 +121,7 @@ export function PhoneFrame({
               </div>
               <HomeIndicator />
             </div>
-          </div>
+          </ScaledMockup>
         </div>
         <div className="pointer-events-none absolute inset-0 z-20" style={GLASS_STYLE} />
       </div>

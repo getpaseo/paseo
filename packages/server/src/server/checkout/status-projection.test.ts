@@ -1,13 +1,52 @@
 import { describe, expect, test } from "vitest";
 
-import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
+import { CheckoutPrStatusSchema, CheckoutStatusResponseSchema } from "@getpaseo/protocol/messages";
 import type { WorkspaceGitRuntimeSnapshot } from "../workspace-git-service.js";
 import {
   buildCheckoutPrStatusPayloadFromSnapshot,
+  buildCheckoutStatusPayloadFromSnapshot,
   normalizeCheckoutPrStatusPayload,
 } from "./status-projection.js";
 
 describe("checkout status projection", () => {
+  test("publishes where the forge is on the web with the checkout status", () => {
+    const snapshot: WorkspaceGitRuntimeSnapshot = {
+      cwd: "/repo",
+      git: {
+        isGit: true,
+        repoRoot: "/repo",
+        mainRepoRoot: null,
+        currentBranch: "main",
+        remoteUrl: "git@github.com-work:fork-owner/repo.git",
+        isPaseoOwnedWorktree: false,
+        isDirty: false,
+        baseRef: "main",
+        aheadBehind: null,
+        upstreamRef: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: true,
+        diffStat: null,
+      },
+      forge: { featuresEnabled: true, authState: "authenticated", pullRequest: null, error: null },
+      forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+    };
+
+    const payload = buildCheckoutStatusPayloadFromSnapshot({
+      cwd: "/repo",
+      requestId: "req-1",
+      snapshot,
+    });
+
+    expect(payload.forgeWeb).toEqual({
+      host: "github.com",
+      referenceRepository: "main-owner/repo",
+    });
+    expect(
+      CheckoutStatusResponseSchema.parse({ type: "checkout_status_response", payload }).payload,
+    ).toMatchObject({ forgeWeb: payload.forgeWeb });
+  });
+
   test("includes repository identity fields on the PR status wire payload", () => {
     const payload = normalizeCheckoutPrStatusPayload(
       {

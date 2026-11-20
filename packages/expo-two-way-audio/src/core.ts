@@ -17,6 +17,16 @@ export function toggleRecording(val: boolean): boolean {
   return ExpoTwoWayAudioModule.toggleRecording(val);
 }
 
+/** Capture speech without treating another app's playback focus as a microphone failure. */
+export function startDictation(): boolean {
+  // COMPAT(dictationCapture): added after v0.11.2, remove after 2027-01-16 once
+  // the native binary floor includes startDictation. Older OTA clients retain legacy capture.
+  if (typeof ExpoTwoWayAudioModule.startDictation !== "function") {
+    return ExpoTwoWayAudioModule.toggleRecording(true);
+  }
+  return ExpoTwoWayAudioModule.startDictation();
+}
+
 export function isRecording(): boolean {
   return ExpoTwoWayAudioModule.isRecording();
 }

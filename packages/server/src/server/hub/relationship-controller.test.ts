@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { hostname, platform } from "node:os";
+import { platform } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
+import { getHostName } from "../host-name.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 async function captureUnhandledRejections(action: () => Promise<void>): Promise<unknown[]> {
@@ -88,7 +89,7 @@ describe("Hub relationship", () => {
         .update(secret ?? "")
         .digest("base64url"),
     );
-    expect(enrollment.hostname).toBe(hostname());
+    expect(enrollment.hostname).toBe(getHostName());
     relationship.completeEnrollment();
     await connecting.result;
     await relationship.socketDialed();
@@ -150,6 +151,40 @@ describe("Hub relationship", () => {
         code: "access_denied",
       },
     });
+  });
+
+  test.each([false, true])(
+    "reconnect advertises the current execution grant (initially %s)",
+    async (initiallyGranted) => {
+      relationship = await HubRelationshipHarness.start();
+      await relationship.beginConnect("token", "https://hub.example", initiallyGranted).result;
+      relationship.connectLatestSocket();
+      if (initiallyGranted) await relationship.revokePermission("hub.execute");
+      else await relationship.grantPermission("hub.execute");
+      relationship.closeLatestSocket(1006);
+      await relationship.retry();
+      relationship.connectLatestSocket();
+
+      expect(relationship.serverInfoPermissions().at(-1)).toEqual(
+        initiallyGranted ? [] : ["hub.execute"],
+      );
+    },
+  );
+
+  test("a permission mismatch retries the handshake with the same enrollment", async () => {
+    relationship = await HubRelationshipHarness.start();
+    await relationship.beginConnect().result;
+    relationship.connectLatestSocket();
+    const reason = "daemon session permissions do not match enrollment";
+    relationship.closeLatestSocket(4403, reason);
+    expect(await relationship.status()).toMatchObject({
+      state: "reconnecting",
+      lastError: expect.stringContaining("paseo hub permissions"),
+    });
+    await relationship.retry();
+    await relationship.revokePermission("hub.execute");
+    relationship.connectLatestSocket();
+    expect(relationship.serverInfoPermissions().at(-1)).toEqual([]);
   });
 
   test("Hub enrollment cannot widen the daemon's locally granted permissions", async () => {
@@ -772,8 +807,12 @@ describe("Hub relationship", () => {
     const second = await relationship.ownedCreateResult("second-create");
 
     expect(relationship.relationshipFile()?.relationship.daemonId).toBe(daemonId);
-    expect(first).toMatchObject({ payload: { success: true, executionId: "first-execution" } });
-    expect(second).toMatchObject({ payload: { success: true, executionId: "second-execution" } });
+    expect(first).toMatchObject({
+      payload: { success: true, executionId: "first-execution", error: null },
+    });
+    expect(second).toMatchObject({
+      payload: { success: true, executionId: "second-execution", error: null },
+    });
     expect(await relationship.durableOwnedAgentIds()).toHaveLength(2);
   });
 

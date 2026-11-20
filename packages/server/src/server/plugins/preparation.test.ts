@@ -1,6 +1,8 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
+import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { runPluginBuild } from "./preparation.js";
@@ -115,6 +117,52 @@ describe("runPluginBuild", () => {
         logger,
       ),
     ).rejects.toThrow(/Plugin build command failed \(exit 2\)/);
+  });
+
+  it("forwards build progress and output from the worker to the caller's logger", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-build-"));
+    directories.push(directory);
+    const records: Array<{ msg: string; output?: string }> = [];
+    const logger = pino(
+      new Writable({
+        write(chunk, _encoding, callback) {
+          records.push(JSON.parse(chunk.toString()));
+          callback();
+        },
+      }),
+    );
+    await runPluginBuild(
+      directory,
+      [[process.execPath, "-e", 'console.log("prepared"); console.error("diagnostic");']],
+      logger,
+    );
+    expect(records).toMatchObject([
+      { msg: "Running plugin build command" },
+      { msg: "Plugin build stdout", output: "prepared\n" },
+      { msg: "Plugin build stderr", output: expect.stringContaining("diagnostic\n") },
+    ]);
+  });
+
+  it("uses the caller's current environment across consecutive builds", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-build-"));
+    directories.push(directory);
+    const previous = process.env.PASEO_PLUGIN_TEST_BUILD_VALUE;
+    const command = [
+      process.execPath,
+      "-e",
+      'require("node:fs").writeFileSync(process.argv[1], process.env.PASEO_PLUGIN_TEST_BUILD_VALUE);',
+    ];
+    try {
+      process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = "first";
+      await runPluginBuild(directory, [[...command, "first.txt"]], createTestLogger());
+      process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = "second";
+      await runPluginBuild(directory, [[...command, "second.txt"]], createTestLogger());
+      expect(await readFile(path.join(directory, "first.txt"), "utf8")).toBe("first");
+      expect(await readFile(path.join(directory, "second.txt"), "utf8")).toBe("second");
+    } finally {
+      if (previous === undefined) delete process.env.PASEO_PLUGIN_TEST_BUILD_VALUE;
+      else process.env.PASEO_PLUGIN_TEST_BUILD_VALUE = previous;
+    }
   });
 
   it("handles empty or undefined build commands gracefully", async () => {

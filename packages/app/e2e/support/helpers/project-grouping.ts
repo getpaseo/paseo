@@ -134,3 +134,19 @@ export async function expectProjectSettingsName(page: Page, projectName: string)
     timeout: PROJECT_VISIBILITY_TIMEOUT,
   });
 }
+
+export async function openGroupedProjectWorkspace(
+  page: Page,
+  projectName: string,
+  workspaceName: string,
+): Promise<void> {
+  await projectGroup(page, projectName)
+    .getByRole("button")
+    .filter({ hasText: workspaceName })
+    .click();
+  await expect(page).toHaveURL(/\/workspace\//);
+}
+
+export async function expectWorkspaceHost(page: Page, hostName: string): Promise<void> {
+  await expect(page.getByRole("button", { name: "Host", exact: true })).toContainText(hostName);
+}

@@ -1,3 +1,4 @@
+import { getServerId } from "../support/helpers/server-id";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { spawnSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
@@ -199,6 +200,49 @@ async function quitVim(page: Page) {
   });
 }
 
+interface TerminalChord {
+  key: string;
+  bytes: string;
+}
+
+async function openKeyboardCapture(page: Page) {
+  await test.step("Open a real terminal process that reports received bytes", async () => {
+    const terminal = await harness.createTerminal({
+      name: "Keyboard bytes",
+      command: process.execPath,
+      args: [
+        "-e",
+        `
+        process.stdin.setRawMode(true);
+        let received = Buffer.alloc(0);
+        process.stdin.on('data', chunk => {
+          received = Buffer.concat([received, chunk]);
+          process.stdout.write('\\r\\nBYTES:' + received.toString('hex') + ':END\\r\\n');
+        });
+        console.log('KEYBOARD_READY');
+      `,
+      ],
+    });
+    await harness.openTerminal(page, { terminalId: terminal.id });
+    await expect.poll(() => getTerminalBufferText(page)).toContain("KEYBOARD_READY");
+  });
+}
+
+async function expectTerminalChords(page: Page, chords: TerminalChord[]) {
+  let received = "";
+  for (const chord of chords) {
+    await test.step(`${chord.key} sends ${JSON.stringify(chord.bytes)}`, async () => {
+      await pressTerminalShortcut(page, chord.key);
+      // A printable sentinel proves delivery even for chords expected to send nothing.
+      await input(page).pressSequentially("x");
+      received += Buffer.from(chord.bytes + "x").toString("hex");
+      await expect.poll(() => getTerminalBufferText(page)).toContain(`BYTES:${received}:END`);
+    });
+  }
+  await recordTerminalEvidence("keyboard-bytes", await getTerminalBufferText(page));
+  await page.screenshot({ path: test.info().outputPath("keyboard-chords.png") });
+}
+
 let harness: TerminalE2EHarness;
 test.beforeEach(async () => {
   harness = await TerminalE2EHarness.create({ tempPrefix: "terminal-find-" });
@@ -211,6 +255,28 @@ test.describe("macOS terminal shortcuts", () => {
   test.use({
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  });
+
+  test("encodes editing chords without confusing Control and Command", async ({ page }) => {
+    await openKeyboardCapture(page);
+    await expectTerminalChords(page, [
+      { key: "Meta+ArrowLeft", bytes: "\x01" },
+      { key: "Meta+ArrowRight", bytes: "\x05" },
+      { key: "Alt+ArrowLeft", bytes: "\x1bb" },
+      { key: "Alt+ArrowRight", bytes: "\x1bf" },
+      { key: "Meta+Backspace", bytes: "\x15" },
+      { key: "Control+c", bytes: "\x03" },
+      { key: "Control+a", bytes: "\x01" },
+      { key: "Control+e", bytes: "\x05" },
+      { key: "Control+v", bytes: "\x16" },
+      { key: "Control+f", bytes: "\x06" },
+      { key: "ArrowLeft", bytes: "\x1b[D" },
+      { key: "ArrowRight", bytes: "\x1b[C" },
+      { key: "Alt+Backspace", bytes: "\x1b\x7f" },
+      { key: "Control+Alt+ArrowLeft", bytes: "\x1b[1;7D" },
+    ]);
+    await pressTerminalShortcut(page, "Meta+f");
+    await expect(query(page)).toBeFocused();
   });
 
   test("sends Control+f to cat and opens Find with Meta+f", async ({ page }) => {
@@ -232,7 +298,40 @@ test.describe("macOS terminal shortcuts", () => {
   });
 });
 
+async function useLinuxKeyboardPlatform(page: Page) {
+  // A user agent alone leaves navigator.platform as MacIntel on macOS hosts.
+  // Emulate both browser identity fields before the app reads its keyboard policy.
+  const session = await page.context().newCDPSession(page);
+  await session.send("Emulation.setUserAgentOverride", {
+    userAgent:
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    platform: "Linux x86_64",
+  });
+}
+
+test("Linux terminal chords keep Control, Alt and Meta distinct", async ({ page }) => {
+  await useLinuxKeyboardPlatform(page);
+  await openKeyboardCapture(page);
+  await expectTerminalChords(page, [
+    { key: "Meta+ArrowLeft", bytes: "" },
+    { key: "Meta+ArrowRight", bytes: "" },
+    { key: "Alt+ArrowLeft", bytes: "\x1b[1;3D" },
+    { key: "Alt+ArrowRight", bytes: "\x1b[1;3C" },
+    { key: "Meta+Backspace", bytes: "\x7f" },
+    { key: "Control+c", bytes: "\x03" },
+    { key: "Control+a", bytes: "\x01" },
+    { key: "Control+e", bytes: "\x05" },
+    { key: "Control+ArrowLeft", bytes: "\x1b[1;5D" },
+    { key: "Control+ArrowRight", bytes: "\x1b[1;5C" },
+    { key: "Control+Backspace", bytes: "\x08" },
+    { key: "Alt+Backspace", bytes: "\x1b\x7f" },
+  ]);
+  await pressTerminalShortcut(page, "Control+f");
+  await expect(query(page)).toBeFocused();
+});
+
 test("opens Find with Control+f on Linux without sending ^F to cat", async ({ page }) => {
+  await useLinuxKeyboardPlatform(page);
   await openControlCharacterTerminal(page);
   await pressTerminalShortcut(page, "Control+f");
   await expect(query(page)).toBeFocused();
@@ -315,6 +414,8 @@ test("searches retained output without sending Find input to the shell", async (
 test("keeps terminal Find owned by retained tabs and the focused split pane", async ({
   page,
 }, testInfo) => {
+  // This journey selects tabs from the full rails in both split panes.
+  await page.setViewportSize({ width: 1600, height: 900 });
   const first = await harness.createTerminal({
     name: "First search",
     command: "bash",
@@ -389,3 +490,142 @@ test("keeps the shared Find controls usable in a compact dark browser", async ({
   await page.getByRole("button", { name: "Close Find" }).click();
   await expect(input(page)).toBeFocused();
 });
+
+// A phone browser installs xterm's document-level touch gesture listener too.
+// Keep this journey touch-enabled so it catches duplicate scroll handling.
+test.describe("terminal history with a finger", () => {
+  test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test("scrolls history once per finger drag", async ({ page }) => {
+    await openPhoneTerminalHistory(page);
+    await expectSingleFingerScroll(page, 24);
+    await expectSingleFingerScroll(page, 1);
+    await expectMouseWheelScrollsHistory(page);
+  });
+
+  for (const mode of ["alternate", "mouse"] as const) {
+    test(`preserves finger navigation in ${mode} input mode`, async ({ page }) => {
+      await openPhoneInputCapture(page, mode);
+      await expectFingerNavigationInput(page, mode);
+    });
+  }
+});
+
+async function expectFingerNavigationInput(page: Page, mode: "alternate" | "mouse") {
+  await dragTerminalWithFinger(page, 24, async () => {
+    const prefix = mode === "alternate" ? "TOUCH_BYTES:1b4f41" : "TOUCH_BYTES:1b5b3c3634";
+    await expect.poll(() => getTerminalBufferText(page)).toContain(prefix);
+  });
+}
+
+async function openPhoneTerminalHistory(page: Page) {
+  await harness.createTerminal({
+    name: "Finger scroll history",
+    command: "bash",
+    args: [
+      "--noprofile",
+      "--norc",
+      "-c",
+      "for i in $(seq 1 150); do echo HISTORY_$i; done; exec sleep 300",
+    ],
+  });
+  await openPhoneTerminal(page);
+  await expect.poll(() => getTerminalBufferText(page)).toContain("HISTORY_150");
+}
+
+async function openPhoneInputCapture(page: Page, mode: "alternate" | "mouse") {
+  const escapes = mode === "alternate" ? "\x1b[?1049h\x1b[?1h" : "\x1b[?1000h\x1b[?1006h";
+  await harness.createTerminal({
+    name: "Touch application input",
+    command: process.execPath,
+    args: [
+      "-e",
+      `
+      process.stdin.setRawMode(true);
+      process.stdin.once("data", () => {
+        process.stdin.on("data", chunk => {
+          process.stdout.write("\\r\\nTOUCH_BYTES:" + chunk.toString("hex") + ":END\\r\\n");
+        });
+        process.stdout.write(${JSON.stringify(escapes)} + "TOUCH_INPUT_READY\\r\\n");
+      });
+      process.stdout.write("TOUCH_START_READY\\r\\n");
+    `,
+    ],
+  });
+  await openPhoneTerminal(page);
+  await expect.poll(() => getTerminalBufferText(page)).toContain("TOUCH_START_READY");
+  await input(page).press("x");
+  await expect.poll(() => getTerminalBufferText(page)).toContain("TOUCH_INPUT_READY");
+  await expect
+    .poll(() => page.evaluate(() => window.__paseoTerminal!.buffer.active.type))
+    .toBe(mode === "alternate" ? "alternate" : "normal");
+  await expect
+    .poll(() => page.evaluate(() => window.__paseoTerminal!.modes.mouseTrackingMode))
+    .toBe(mode === "mouse" ? "vt200" : "none");
+}
+
+async function openPhoneTerminal(page: Page) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open menu", exact: true }).click();
+  await page.getByTestId(`sidebar-workspace-row-${getServerId()}:${harness.workspaceId}`).click();
+  await expect(page.getByRole("textbox", { name: "Terminal input" })).toBeVisible();
+  await expect(page.getByTestId("terminal-surface").filter({ visible: true })).toBeVisible();
+}
+
+async function expectMouseWheelScrollsHistory(page: Page) {
+  const beforeWheel = (await viewport(page))!;
+  await page.mouse.move(200, 300);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(() => viewport(page)).toBeLessThan(beforeWheel);
+}
+
+async function expectSingleFingerScroll(page: Page, moves: number) {
+  await dragTerminalWithFinger(page, moves, async ({ lineHeight, before }) => {
+    await expect.poll(async () => before - (await viewport(page))!).toBeGreaterThan(0);
+    const moved = before - (await viewport(page))!;
+    await test.info().attach("finger-scroll", {
+      body: JSON.stringify({ moves, distancePx: 120, lineHeight, rowsMoved: moved }),
+      contentType: "application/json",
+    });
+    expect(moved, "one gesture must not scroll twice its physical distance").toBeLessThanOrEqual(
+      Math.ceil(120 / lineHeight),
+    );
+  });
+}
+
+async function dragTerminalWithFinger(
+  page: Page,
+  moves: number,
+  inspect: (state: { lineHeight: number; before: number }) => Promise<void>,
+) {
+  await test.step(`Drag history with ${moves} touch moves`, async () => {
+    const screen = page
+      .getByTestId("terminal-surface")
+      .filter({ visible: true })
+      .locator(".xterm-screen");
+    const box = await screen.boundingBox();
+    if (!box) throw new Error("Terminal screen is not visible");
+    const rows = await page.evaluate(() => window.__paseoTerminal!.rows);
+    const lineHeight = box.height / rows;
+    const before = (await viewport(page))!;
+    const session = await page.context().newCDPSession(page);
+    try {
+      const start = { x: box.x + box.width / 2, y: box.y + box.height / 3 };
+      await session.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [{ ...start, id: 1 }],
+      });
+      for (let step = 1; step <= moves; step++) {
+        await session.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [{ x: start.x, y: start.y + (120 * step) / moves, id: 1 }],
+        });
+      }
+      // Check before lifting the finger to exclude inertial scrolling.
+      await inspect({ lineHeight, before });
+    } finally {
+      await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await session.detach();
+    }
+  });
+}

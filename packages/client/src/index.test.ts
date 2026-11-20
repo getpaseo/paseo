@@ -267,6 +267,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "agents",
     "config",
     "dispose",
+    "hosts",
     "observeEvents",
     "projects",
     "providers",
@@ -606,6 +607,29 @@ test("workspace handles keep identity and refresh snapshots through existing dri
     }),
   );
   await expect(titlePromise).resolves.toEqual({ title: "SDK review" });
+  const basePromise = workspace.setBaseBranch({
+    baseRef: "refs/heads/release",
+    requestId: "workspace-base-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.base_branch.set.request",
+    workspaceId: "workspace_sdk",
+    baseRef: "refs/heads/release",
+    requestId: "workspace-base-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.base_branch.set.response",
+      payload: {
+        requestId: "workspace-base-request",
+        workspaceId: "workspace_sdk",
+        accepted: true,
+        baseRef: "refs/heads/release",
+        error: null,
+      },
+    }),
+  );
+  await expect(basePromise).resolves.toEqual({ baseRef: "refs/heads/release" });
 
   unsubscribe();
   ws.message(
@@ -691,6 +715,143 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
   await client.close();
 });
 
+test("agents.create forwards internal on the request, outside the agent config", async () => {
+  const { client, ws } = await connectClient({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+
+  const createPromise = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    title: "Summary helper",
+    background: true,
+    autoArchive: true,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "create_agent_request",
+    config: { provider: "codex", model: "gpt-5.4", cwd: "/repo/sdk", title: "Summary helper" },
+    background: true,
+    autoArchive: true,
+  });
+  expect(request.config).not.toHaveProperty("internal");
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_helper",
+        agent: createAgent({ id: "agent_helper" }),
+      },
+    }),
+  );
+
+  const agent = await createPromise;
+  expect(agent.id).toBe("agent_helper");
+  await client.close();
+});
+
+test("agents.create with internal fails before sending on a host without internal agents", async () => {
+  const { client, ws } = await connectClient();
+  const sentBefore = ws.sent.length;
+
+  await expect(
+    client.agents.create({
+      config: { provider: "codex/gpt-5.4" },
+      cwd: "/repo/sdk",
+      background: true,
+    }),
+  ).rejects.toThrow("Update the host to use background workspaces.");
+  expect(ws.sent).toHaveLength(sentBefore);
+  await client.close();
+});
+
+async function createWorkspaceHandle(features: Record<string, boolean>) {
+  const { client, ws } = await connectClient(features);
+  const creating = client.workspaces.create({
+    source: { kind: "directory", path: "/repo/sdk" },
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.create.response",
+      payload: {
+        requestId: request.requestId,
+        workspace: createWorkspace({ id: "workspace_open" }),
+        setupTerminalId: null,
+        error: null,
+      },
+    }),
+  );
+  return { client, ws, workspace: await creating };
+}
+
+test("a background agent in an existing workspace fails before sending on a host without background agents", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+  });
+  const sentBefore = ws.sent.length;
+
+  await expect(
+    workspace.agents.create({ config: { provider: "codex/gpt-5.4" }, background: true }),
+  ).rejects.toThrow("Update the host to use background agents.");
+  expect(ws.sent).toHaveLength(sentBefore);
+
+  const creating = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    background: true,
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "create_agent_request",
+    background: true,
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).not.toHaveProperty("workspaceId");
+  creating.catch(() => {});
+  await client.close();
+});
+
+test("a background agent in an existing workspace is sent to a host with background agents", async () => {
+  const { client, ws, workspace } = await createWorkspaceHandle({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    backgroundWorkspaces: true,
+    backgroundAgents: true,
+  });
+
+  const creating = workspace.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    background: true,
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "create_agent_request",
+    workspaceId: "workspace_open",
+    background: true,
+  });
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_background",
+        agent: createAgent({ id: "agent_background", workspaceId: "workspace_open" }),
+      },
+    }),
+  );
+  expect((await creating).id).toBe("agent_background");
+  await client.close();
+});
+
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();
   const createdAgent = createAgent();
@@ -744,13 +905,17 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(updatedAgents).toEqual(["Updated"]);
   expect(agent.current()).toEqual(updatedAgent);
 
-  const sendPromise = agent.send("hello", { messageId: "message-sdk" });
+  const sendPromise = agent.send("hello", {
+    messageId: "message-sdk",
+    activeTurnBehavior: "steer",
+  });
   const sendRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(sendRequest).toMatchObject({
     type: "send_agent_message_request",
     agentId: "agent_sdk",
     text: "hello",
     messageId: "message-sdk",
+    activeTurnBehavior: "steer",
   });
 
   ws.message(
@@ -768,6 +933,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
 
   const runPromise = agent.run("finish the task", {
     messageId: "run-message-sdk",
+    activeTurnBehavior: "interrupt",
     timeoutMs: 30_000,
   });
   const runSendRequest = parseSentSessionMessage(ws.sent.at(-1));
@@ -776,6 +942,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
     agentId: "agent_sdk",
     text: "finish the task",
     messageId: "run-message-sdk",
+    activeTurnBehavior: "interrupt",
   });
   ws.message(
     sessionMessage({
@@ -1539,7 +1706,12 @@ test("config actions delegate to existing daemon config RPCs", async () => {
 });
 
 test("agent config maps provider/model and provider-native options to the daemon", async () => {
-  const { client, ws } = await connectClient();
+  const { client, ws } = await connectClient({
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+    ownedSubscriptions: true,
+    providerOptionControls: true,
+  });
   const createdAgent = createAgent({
     model: "gpt-5.4",
     currentModeId: "full-access",
@@ -1571,8 +1743,8 @@ test("agent config maps provider/model and provider-native options to the daemon
       model: "gpt-5.4",
       modeId: "full-access",
       thinkingOptionId: "high",
-      featureValues: { webSearch: true },
       providerOptions: {
+        webSearch: true,
         approval_policy: "never",
         sandbox_mode: "workspace-write",
         sandbox_workspace_write: {
@@ -1673,3 +1845,354 @@ test("canceled timeline handles and captured state are collectible while their A
   );
   expect(result.stdout).toContain('"phase":"API alive"');
 }, 20000);
+
+test("qualified parents preserve foreign identity without resolving an equal local agent ID", async () => {
+  const { client, ws } = await connectClient();
+  const localParent = client.agents.ref("same-parent");
+  expect(localParent.address).toEqual({ serverId: "srv_sdk_test", agentId: "same-parent" });
+  const creating = client.agents.create({
+    config: { provider: "codex/gpt-5.4" },
+    cwd: "/repo/sdk",
+    parent: { serverId: "srv_parent_elsewhere", agentId: "same-parent" },
+    labels: { task: "preserved" },
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).not.toHaveProperty("callerAgentId");
+  expect(request).toMatchObject({
+    labels: {
+      task: "preserved",
+      "paseo.parent-agent-id": "same-parent",
+      "paseo.parent-server-id": "srv_parent_elsewhere",
+    },
+  });
+  ws.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_created",
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: createAgent(),
+      },
+    }),
+  );
+  await creating;
+  await client.close();
+  expect(localParent.address).toEqual({ serverId: "srv_sdk_test", agentId: "same-parent" });
+});
+
+test("agent reload reopens through the daemon RPC then returns the observed snapshot; refresh remains a read", async () => {
+  const { client, ws } = await connectClient();
+  try {
+    const agent = client.agents.ref("agent_sdk");
+    const snapshot = createAgent();
+    const reloaded = agent.reload({ requestId: "reload-sdk" });
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "refresh_agent_request",
+      agentId: "agent_sdk",
+      requestId: "reload-sdk",
+    });
+    ws.message(
+      sessionMessage({
+        type: "status",
+        payload: {
+          status: "agent_refreshed",
+          requestId: "reload-sdk",
+          agentId: "agent_sdk",
+          timelineSize: 0,
+        },
+      }),
+    );
+    await expect
+      .poll(() => parseSentSessionMessage(ws.sent.at(-1)).type)
+      .toBe("fetch_agent_request");
+    const fetched = parseSentSessionMessage(ws.sent.at(-1));
+    ws.message(
+      sessionMessage({
+        type: "fetch_agent_response",
+        payload: {
+          requestId: fetched.requestId,
+          agentId: "agent_sdk",
+          agent: snapshot,
+          project: null,
+          error: null,
+        },
+      }),
+    );
+    expect(await reloaded).toEqual({ agent: snapshot, project: null });
+    expect(agent.current()).toEqual(snapshot);
+    const read = agent.refresh("snapshot-read");
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "fetch_agent_request",
+      requestId: "snapshot-read",
+    });
+    ws.message(
+      sessionMessage({
+        type: "fetch_agent_response",
+        payload: {
+          requestId: "snapshot-read",
+          agentId: "agent_sdk",
+          agent: snapshot,
+          project: null,
+          error: null,
+        },
+      }),
+    );
+    expect(await read).toEqual({ agent: snapshot, project: null });
+  } finally {
+    await client.close();
+  }
+});
+
+const BACKGROUND_WORK_FEATURES = { ownedSubscriptions: true, agentBackgroundWork: true };
+const SHELL_ITEM = {
+  id: "bash-1",
+  kind: "shell",
+  description: "sleep 20",
+  startedAt: "2026-10-06T10:00:00.000Z",
+};
+
+function answerBackgroundWorkList(ws: FakeWebSocket, items: unknown[]): void {
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: request.requestId, agentId: "agent-a", items, error: null },
+    }),
+  );
+}
+
+test("agent handles list background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+
+  const pending = client.agents.ref("agent-a").backgroundWork.list();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "agent.background_work.list.request", agentId: "agent-a" });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(pending).resolves.toEqual([SHELL_ITEM]);
+  await client.close();
+});
+
+test("agent handles follow only their own background work", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  const unsubscribe = client.agents
+    .ref("agent-a")
+    .backgroundWork.subscribe((items) => received.push(items));
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["agent.background_work.update"],
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+  answerBackgroundWorkList(ws, []);
+  await vi.waitFor(() => expect(received).toEqual([[]]));
+
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-b", items: [SHELL_ITEM] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [SHELL_ITEM] },
+    }),
+  );
+  await vi.waitFor(() => expect(received).toEqual([[], [SHELL_ITEM]]));
+
+  unsubscribe();
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  expect(received).toEqual([[], [SHELL_ITEM]]);
+  await client.close();
+});
+
+test("background work subscriptions list the current work again after a reconnect", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-first");
+  answerBackgroundWorkList(ws, [SHELL_ITEM]);
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM]]));
+
+  ws.readyState = 3;
+  ws.onclose?.({ code: 1006, reason: "Connection lost" });
+  const reconnecting = client.connect();
+  const next = FakeWebSocket.instances[1];
+  next.open();
+  next.message(
+    sessionMessage({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "srv_sdk_test",
+        hostname: null,
+        version: null,
+        features: BACKGROUND_WORK_FEATURES,
+      },
+    }),
+  );
+  await reconnecting;
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(next.sent.at(-1))).toMatchObject({
+      type: "session.events.set_subscription.request",
+    }),
+  );
+  acknowledgeObservation(next, "background-work-second");
+  answerBackgroundWorkList(next, []);
+
+  await vi.waitFor(() => expect(received).toEqual([[SHELL_ITEM], []]));
+  await client.close();
+});
+
+test("background work subscriptions keep an update that overtakes their list", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items));
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.update",
+      payload: { subscriptionId: "background-work-sdk", agentId: "agent-a", items: [] },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: {
+        requestId: listRequest.requestId,
+        agentId: "agent-a",
+        items: [SHELL_ITEM],
+        error: null,
+      },
+    }),
+  );
+
+  await vi.waitFor(() => expect(received).toEqual([[]]));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(received).toEqual([[]]);
+  await client.close();
+});
+
+test("background work subscriptions report a failed setup to onError", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items), {
+    onError: (error) => errors.push(error),
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "session.events.set_subscription.response",
+      payload: { requestId: request.requestId },
+    }),
+  );
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect((errors[0] as Error).message).toContain("subscription ID");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
+test("background work subscriptions report a failed list to onError", async () => {
+  const { client, ws } = await connectClient(BACKGROUND_WORK_FEATURES);
+  const received: unknown[] = [];
+  const errors: unknown[] = [];
+
+  client.agents.ref("agent-a").backgroundWork.subscribe((items) => received.push(items), {
+    onError: (error) => errors.push(error),
+  });
+  acknowledgeObservation(ws, "background-work-sdk");
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "agent.background_work.list.request",
+    }),
+  );
+  const listRequest = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.list.response",
+      payload: { requestId: listRequest.requestId, agentId: "agent-a", items: [], error: "boom" },
+    }),
+  );
+
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toBeInstanceOf(Error);
+  expect((errors[0] as Error).message).toContain("boom");
+  expect(received).toEqual([]);
+  await client.close();
+});
+
+test("background work asks for a host update when the daemon lacks it", async () => {
+  const { client } = await connectClient({ ownedSubscriptions: true });
+  const handle = client.agents.ref("agent-a");
+
+  await expect(handle.backgroundWork.list()).rejects.toThrow("Update the host");
+  expect(() => handle.backgroundWork.subscribe(() => {})).toThrow("Update the host");
+  await client.close();
+});
+
+test("background stop sends the live item token and waits for the response", async () => {
+  const { client, ws } = await connectClient({
+    ...BACKGROUND_WORK_FEATURES,
+    agentBackgroundWorkStop: true,
+  });
+  const item = { ...SHELL_ITEM, canStop: true, stopToken: "generation-1" };
+  const pending = client.agents.ref("agent-a").backgroundWork.stop(item);
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "agent.background_work.stop.request",
+    agentId: "agent-a",
+    itemId: item.id,
+    stopToken: item.stopToken,
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.background_work.stop.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-a",
+        itemId: item.id,
+        error: "rejected",
+      },
+    }),
+  );
+  await expect(pending).rejects.toThrow("rejected");
+  await client.close();
+});
+
+test("background stop rejects when the host does not advertise the operation", async () => {
+  const { client } = await connectClient(BACKGROUND_WORK_FEATURES);
+  await expect(
+    client.agents
+      .ref("agent-a")
+      .backgroundWork.stop({ ...SHELL_ITEM, canStop: true, stopToken: "generation" }),
+  ).rejects.toThrow("Update the host");
+  await client.close();
+});

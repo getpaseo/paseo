@@ -11,6 +11,7 @@ import { defaultHostAppearance } from "@/hosts/appearance";
 function makeHost(): HostProfile {
   return {
     serverId: "srv-secret",
+    password: "tcp-password",
     label: "Secret host",
     appearance: defaultHostAppearance(),
     lifecycle: {},
@@ -23,7 +24,6 @@ function makeHost(): HostProfile {
         type: "directTcp",
         endpoint: "secret.example.test:6767",
         useTls: true,
-        password: "tcp-password",
       },
       {
         id: "relay:relay.secret.test:443",
@@ -46,6 +46,31 @@ function makeHost(): HostProfile {
   };
 }
 
+function makeSnapshot(host: HostProfile): HostRuntimeSnapshot {
+  return {
+    serverId: host.serverId,
+    activeConnectionId: "relay:relay.secret.test:443",
+    activeConnection: {
+      type: "relay",
+      endpoint: "relay.secret.test:443",
+      display: "relay",
+    },
+    connectionStatus: "online",
+    client: null,
+    lastError: null,
+    lastOnlineAt: "2026-06-25T00:00:00.000Z",
+    agentDirectoryStatus: "ready",
+    agentDirectoryError: null,
+    hasEverLoadedAgentDirectory: true,
+    probeByConnectionId: new Map([
+      ["direct:secret.example.test:6767", { status: "available", latencyMs: 42 }],
+      ["relay:relay.secret.test:443", { status: "available", latencyMs: 8 }],
+    ]),
+    clientGeneration: 1,
+    connectionEpoch: 1,
+  };
+}
+
 describe("app diagnostics report", () => {
   test("reports whether the connected daemon is managed by Paseo Desktop", () => {
     const report = formatServerInfoSection({
@@ -61,31 +86,11 @@ describe("app diagnostics report", () => {
 
   test("formats connection rows without raw connection details", () => {
     const host = makeHost();
-    const snapshot: HostRuntimeSnapshot = {
-      serverId: host.serverId,
-      activeConnectionId: "relay:relay.secret.test:443",
-      activeConnection: {
-        type: "relay",
-        endpoint: "relay.secret.test:443",
-        display: "relay",
-      },
-      connectionStatus: "online",
-      client: null,
-      lastError: null,
-      lastOnlineAt: "2026-06-25T00:00:00.000Z",
-      agentDirectoryStatus: "ready",
-      agentDirectoryError: null,
-      hasEverLoadedAgentDirectory: true,
-      probeByConnectionId: new Map([
-        ["direct:secret.example.test:6767", { status: "available", latencyMs: 42 }],
-        ["relay:relay.secret.test:443", { status: "available", latencyMs: 8 }],
-      ]),
-      clientGeneration: 1,
-      connectionEpoch: 1,
-    };
+    const snapshot = makeSnapshot(host);
 
     const report = formatHostRuntimeSection({ host, snapshot });
 
+    expect(report).toContain("Last online: 2026-06-25T00:00:00.000Z");
     expect(report).toContain("direct TCP");
     expect(report).toContain("relay");
     expect(report).toContain("local socket");
@@ -96,6 +101,58 @@ describe("app diagnostics report", () => {
     expect(report).not.toContain("/tmp/paseo-secret.sock");
     expect(report).not.toContain("tcp-password");
   });
+
+  test.each(["connecting", "offline", "error"] as const)(
+    "does not claim a previously connected host was never online while %s",
+    (connectionStatus) => {
+      const host = makeHost();
+      const snapshot = makeSnapshot(host);
+      const report = formatHostRuntimeSection({
+        host,
+        snapshot: { ...snapshot, connectionStatus, lastOnlineAt: null },
+      });
+
+      expect(report).toContain("Last online: unknown");
+      expect(report).not.toContain("Last online: never");
+    },
+  );
+
+  test("does not infer connection history when the runtime has not started", () => {
+    const report = formatHostRuntimeSection({ host: makeHost(), snapshot: null });
+
+    expect(report).toContain("Last online: unknown");
+  });
+
+  test.each(["online", "error"] as const)(
+    "identifies a routed connection while %s",
+    (connectionStatus) => {
+      const host = makeHost();
+      host.connections.push({ id: "routed-origin", type: "routed", originServerId: "srv-origin" });
+      const snapshot: HostRuntimeSnapshot = {
+        serverId: host.serverId,
+        activeConnectionId: "routed-origin",
+        activeConnection: { type: "routed", endpoint: "srv-origin", display: "via srv-origin" },
+        connectionStatus,
+        client: null,
+        lastError: connectionStatus === "error" ? "Host disconnected" : null,
+        lastOnlineAt: null,
+        agentDirectoryStatus: "ready",
+        agentDirectoryError: null,
+        hasEverLoadedAgentDirectory: true,
+        probeByConnectionId: new Map(),
+        clientGeneration: 1,
+        connectionEpoch: 1,
+      };
+
+      const report = formatHostRuntimeSection({ host, snapshot });
+
+      expect(report).toContain("Active connection: routed");
+      expect(report).toContain("Connection 5: routed, active, probe=unknown");
+      expect(report).toContain(`Status: ${connectionStatus}`);
+      expect(report).toContain(`Last error: ${snapshot.lastError ?? "none"}`);
+      expect(report).not.toContain("srv-origin");
+    },
+  );
 
   test("redacts saved connection secrets from collected daemon and desktop text", () => {
     const host = makeHost();

@@ -1,16 +1,16 @@
 import React, { createContext, useContext, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
-import { View, Text, Pressable } from "react-native";
+import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { useTranslation } from "react-i18next";
-import { BottomSheetScrollView, BottomSheetBackdrop } from "@gorhom/bottom-sheet";
-import { X } from "lucide-react-native";
+import { BottomSheetScrollView } from "@gorhom/bottom-sheet";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   IsolatedBottomSheetModal,
   type ContextBridge,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
+import { SheetHeaderView, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import { ICON_SIZE } from "@/styles/theme";
 import type { ToolCallIconComponent } from "@/utils/tool-call-icon";
 import { ToolCallDetailsContent } from "./tool-call-details";
 
@@ -66,9 +66,6 @@ function ToolCallHeaderIcon({ icon: Icon, size, color }: ToolCallHeaderIconProps
 const ThemedToolCallHeaderIcon = withUnistyles(ToolCallHeaderIcon, (theme) => ({
   color: theme.colors.foreground,
 }));
-const ThemedCloseIcon = withUnistyles(X, (theme) => ({
-  color: theme.colors.foregroundMuted,
-}));
 
 export const ToolCallSheetModal = withUnistyles(IsolatedBottomSheetModal, (theme) => ({
   backgroundStyle: {
@@ -115,13 +112,6 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
     setSheetData(null);
   }, [handleSheetDismiss]);
 
-  const renderBackdrop = useCallback(
-    (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
-      <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} opacity={0.5} />
-    ),
-    [],
-  );
-
   const contextValue = useMemo(
     () => ({ openToolCall, closeToolCall }),
     [openToolCall, closeToolCall],
@@ -138,7 +128,7 @@ export function ToolCallSheetProvider({ children }: ToolCallSheetProviderProps) 
         enableDynamicSizing={false}
         onChange={handleSheetChange}
         onDismiss={handleToolCallSheetDismiss}
-        backdropComponent={renderBackdrop}
+        backdropOpacity={0.5}
         enablePanDownToClose
       >
         {sheetData && <ToolCallSheetContent data={sheetData} onClose={closeToolCall} />}
@@ -155,7 +145,6 @@ interface ToolCallSheetContentProps {
 }
 
 function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
-  const { t } = useTranslation();
   const {
     toolName,
     displayName,
@@ -164,27 +153,17 @@ function ToolCallSheetContent({ data, onClose }: ToolCallSheetContentProps) {
     icon: IconComponent,
     showLoadingSkeleton,
   } = data;
+  const header = useMemo<SheetHeader>(
+    () => ({
+      title: displayName,
+      leading: <ThemedToolCallHeaderIcon icon={IconComponent} size={ICON_SIZE.md} />,
+    }),
+    [IconComponent, displayName],
+  );
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <ThemedToolCallHeaderIcon icon={IconComponent} size={20} />
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {displayName}
-          </Text>
-        </View>
-        <Pressable
-          onPress={onClose}
-          style={styles.closeButton}
-          accessibilityRole="button"
-          accessibilityLabel={t("common.actions.close")}
-          testID="tool-call-sheet-close"
-        >
-          <ThemedCloseIcon size={20} />
-        </Pressable>
-      </View>
+      <SheetHeaderView header={header} onClose={onClose} closeTestID="tool-call-sheet-close" />
 
       {/* Content */}
       <BottomSheetScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -206,30 +185,6 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     backgroundColor: theme.colors.surface2,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: theme.spacing[4],
-    paddingVertical: theme.spacing[3],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.foreground,
-    flex: 1,
-  },
-  closeButton: {
-    padding: theme.spacing[2],
   },
   content: {
     flex: 1,

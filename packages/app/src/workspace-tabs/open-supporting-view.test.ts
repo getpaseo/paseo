@@ -13,24 +13,34 @@ import { usePanelStore } from "@/stores/panel-store";
 import {
   collectAllTabs,
   findPaneById,
+  selectExplorerSidebarPaneId,
   useWorkspaceLayoutStore,
 } from "@/stores/workspace-layout-store";
 import {
+  autoOpenWorkspacePullRequest,
   openComposerChanges,
   openWorkspaceChanges,
   openWorkspacePullRequest,
 } from "@/workspace-tabs/open-supporting-view";
 
 const WORKSPACE_KEY = "server-1:workspace-1";
-const CHECKOUT = { serverId: "server-1", cwd: "/tmp/repo", isGit: true };
+
+function activeExplorerKind() {
+  const state = useWorkspaceLayoutStore.getState();
+  const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+  const paneId = selectExplorerSidebarPaneId(state, WORKSPACE_KEY);
+  const pane = paneId ? findPaneById(layout.root, paneId) : null;
+  return collectAllTabs(layout.root).find((tab) => tab.tabId === pane?.focusedTabId)?.target.kind;
+}
 
 beforeEach(() => {
   usePanelStore.setState({
     mobilePanel: { target: "agent", revision: 0 },
-    explorerTab: "files",
-    explorerTabByCheckout: {},
   });
   useWorkspaceLayoutStore.setState({
+    layoutMode: "split-panes",
+    sheetsByWorkspace: {},
+    pullRequestTabAutoOpenedByWorkspace: {},
     layoutByWorkspace: {},
     explorerSidebarPaneIdByWorkspace: {},
     sidePaneIdByWorkspace: {},
@@ -40,15 +50,15 @@ beforeEach(() => {
 
 describe("openWorkspaceChanges", () => {
   it("opens Changes in the compact Explorer", () => {
+    useWorkspaceLayoutStore.getState().setLayoutMode("compact");
     openWorkspaceChanges({
       isCompact: true,
       workspaceKey: WORKSPACE_KEY,
-      checkout: CHECKOUT,
       preferences: DEFAULT_APP_SETTINGS.openInSidePane,
     });
 
     expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-    expect(usePanelStore.getState().explorerTab).toBe("changes");
+    expect(activeExplorerKind()).toBe("changes_tree");
   });
 });
 
@@ -57,7 +67,6 @@ describe("openComposerChanges", () => {
     isCompact: false,
     supportsPaneSplits: true,
     workspaceKey: WORKSPACE_KEY,
-    checkout: CHECKOUT,
     preferences: DEFAULT_APP_SETTINGS.openInSidePane,
   };
 
@@ -103,12 +112,12 @@ describe("openComposerChanges", () => {
   });
 
   it("keeps opening the compact Explorer on Changes", () => {
+    useWorkspaceLayoutStore.getState().setLayoutMode("compact");
     openComposerChanges({ ...input, isCompact: true });
     openComposerChanges({ ...input, isCompact: true });
 
     expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-    expect(usePanelStore.getState().explorerTab).toBe("changes");
-    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+    expect(activeExplorerKind()).toBe("changes_tree");
   });
 });
 
@@ -117,17 +126,16 @@ describe("openWorkspacePullRequest", () => {
     isCompact: false,
     supportsPaneSplits: true,
     workspaceKey: WORKSPACE_KEY,
-    checkout: CHECKOUT,
   };
 
   it.each(["main", "side", "explorer"] as const)(
     "opens the compact PR view in Explorer when the desktop preference is %s",
     (destination) => {
+      useWorkspaceLayoutStore.getState().setLayoutMode("compact");
       openWorkspacePullRequest({ ...input, isCompact: true, destination });
 
       expect(usePanelStore.getState().mobilePanel.target).toBe("file-explorer");
-      expect(usePanelStore.getState().explorerTab).toBe("pr");
-      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toBeUndefined();
+      expect(activeExplorerKind()).toBe("pull_request");
     },
   );
 
@@ -176,5 +184,154 @@ describe("openWorkspacePullRequest", () => {
       : null;
 
     expect(sidePane?.tabIds).toContain(pullRequestTab?.tabId);
+  });
+});
+
+describe("autoOpenWorkspacePullRequest", () => {
+  it("silently adds the PR after Changes once, and never restores it after closing", () => {
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    store.openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "terminal", terminalId: "terminal-1" },
+      intent: "background",
+      placement: { mode: "prefer", paneId: "explorer" },
+    });
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+    const input = { workspaceKey: WORKSPACE_KEY, destination: "explorer" as const };
+    autoOpenWorkspacePullRequest(input);
+    const after = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+    const explorer = findPaneById(after.root, "explorer")!;
+    expect(explorer.tabIds).toEqual([
+      "files",
+      "changes_tree",
+      "pull_request",
+      "terminal_terminal-1",
+    ]);
+    expect(explorer.hidden).toBe(true);
+    expect(explorer.focusedTabId).toBe(findPaneById(before.root, "explorer")!.focusedTabId);
+    expect(after.focusedPaneId).toBe(before.focusedPaneId);
+    store.closeTab(WORKSPACE_KEY, "pull_request");
+    autoOpenWorkspacePullRequest(input);
+    expect(
+      collectAllTabs(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY].root).map(
+        (tab) => tab.target.kind,
+      ),
+    ).not.toContain("pull_request");
+  });
+});
+
+describe("automatic PR placement", () => {
+  it.each(["main", "side"] as const)(
+    "silently appends to the configured %s pane",
+    (destination) => {
+      const store = useWorkspaceLayoutStore.getState();
+      store.openTab({
+        workspaceKey: WORKSPACE_KEY,
+        target: { kind: "agent", agentId: "agent-1" },
+        intent: "reveal",
+      });
+      const paneId = destination === "main" ? "main" : store.ensureSidePane(WORKSPACE_KEY)!;
+      store.openTab({
+        workspaceKey: WORKSPACE_KEY,
+        target: { kind: "terminal", terminalId: "terminal-1" },
+        intent: "background",
+        placement: { mode: "prefer", paneId },
+      });
+      const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+      autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination });
+      const after = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+      expect(findPaneById(after.root, paneId)!.tabIds).toEqual([
+        ...findPaneById(before.root, paneId)!.tabIds,
+        "pull_request",
+      ]);
+      expect(findPaneById(after.root, paneId)!.focusedTabId).toBe(
+        findPaneById(before.root, paneId)!.focusedTabId,
+      );
+      expect(after.focusedPaneId).toBe(before.focusedPaneId);
+      expect(findPaneById(after.root, "explorer")!.hidden).toBe(true);
+    },
+  );
+
+  it("creates a side pane without stealing workspace focus", () => {
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "side" });
+    const state = useWorkspaceLayoutStore.getState();
+    const layout = state.layoutByWorkspace[WORKSPACE_KEY];
+    expect(findPaneById(layout.root, state.sidePaneIdByWorkspace[WORKSPACE_KEY])!.tabIds).toEqual([
+      "pull_request",
+    ]);
+    expect(layout.focusedPaneId).toBe("main");
+  });
+
+  it.each(["main", "side", "explorer"] as const)(
+    "leaves a manually moved PR in main when detection prefers %s",
+    (destination) => {
+      const store = useWorkspaceLayoutStore.getState();
+      store.openTab({
+        workspaceKey: WORKSPACE_KEY,
+        target: { kind: "pull_request" },
+        intent: "background",
+        placement: { mode: "prefer", paneId: "explorer" },
+      });
+      store.moveTabToPane(WORKSPACE_KEY, "pull_request", "main");
+      const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+      autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination });
+      expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toEqual(before);
+      expect(
+        useWorkspaceLayoutStore.getState().sidePaneIdByWorkspace[WORKSPACE_KEY],
+      ).toBeUndefined();
+      store.closeTab(WORKSPACE_KEY, "pull_request");
+      autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination });
+      expect(
+        collectAllTabs(
+          useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY].root,
+        ).map((tab) => tab.target.kind),
+      ).not.toContain("pull_request");
+      expect(
+        useWorkspaceLayoutStore.getState().sidePaneIdByWorkspace[WORKSPACE_KEY],
+      ).toBeUndefined();
+    },
+  );
+
+  it("preserves reordering before and after detection", () => {
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "pull_request" },
+      intent: "background",
+      placement: { mode: "prefer", paneId: "explorer" },
+    });
+    store.reorderTabsInPane(WORKSPACE_KEY, "explorer", ["pull_request", "files", "changes_tree"]);
+    const before = useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY];
+    autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "explorer" });
+    autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "side" });
+    expect(useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY]).toEqual(before);
+  });
+
+  it("appends in Explorer when Changes was closed", () => {
+    const store = useWorkspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: WORKSPACE_KEY,
+      target: { kind: "agent", agentId: "agent-1" },
+      intent: "reveal",
+    });
+    store.closeTab(WORKSPACE_KEY, "changes_tree");
+    autoOpenWorkspacePullRequest({ workspaceKey: WORKSPACE_KEY, destination: "explorer" });
+    expect(
+      findPaneById(
+        useWorkspaceLayoutStore.getState().layoutByWorkspace[WORKSPACE_KEY].root,
+        "explorer",
+      )!.tabIds,
+    ).toEqual(["files", "pull_request"]);
   });
 });

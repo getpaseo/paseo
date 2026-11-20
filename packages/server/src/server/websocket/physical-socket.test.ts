@@ -120,3 +120,96 @@ test("the awaitable physical send rejects callback errors", async () => {
     }),
   ).rejects.toThrow("send failed");
 });
+
+test("ordinary frames expose a paused real socket's backlog and terminate at the physical backstop", async () => {
+  const { once } = await import("node:events");
+  const { WebSocket, WebSocketServer } = await import("ws");
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const connected = once(server, "connection");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw new Error("Missing server address");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [socket] = (await connected) as [InstanceType<typeof WebSocket>];
+  const tcp = (socket as unknown as { _socket: import("node:net").Socket })._socket;
+  let terminated = false;
+  const transport = new ChunkedTransport({
+    frameBytes: 32 * 1024 * 1024,
+    deliver: () => {},
+    send: (frame, wait) => {
+      const options = {
+        socket,
+        frame,
+        onHighWater: () => {
+          terminated = true;
+          socket.terminate();
+        },
+      };
+      if (wait) return sendBoundedPhysicalFrameAndWait(options).then(() => undefined);
+      sendBoundedPhysicalFrame(options);
+    },
+  });
+  try {
+    client.pause();
+    tcp.cork();
+    const frame = new Uint8Array(256 * 1024);
+    for (let count = 0; count < 200; count++) await transport.send(frame);
+    expect(socket.bufferedAmount).toBeGreaterThan(4 * 1024 * 1024);
+    expect(transport.queuedByteLength).toBe(0);
+    for (let count = 0; count < 100; count++) {
+      if (terminated) break;
+      await transport.send(frame);
+    }
+    expect(terminated).toBe(true);
+  } finally {
+    transport.close();
+    client.terminate();
+    socket.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("an awaited framing failure terminates its real socket immediately", async () => {
+  const { once } = await import("node:events");
+  const { WebSocket, WebSocketServer } = await import("ws");
+  const { ChunkedTransport } = await import("@getpaseo/protocol/chunked-transport");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const connected = once(server, "connection");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw new Error("Missing server address");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [socket] = (await connected) as [InstanceType<typeof WebSocket>];
+  const tcp = (socket as unknown as { _socket: import("node:net").Socket })._socket;
+  const transport = new ChunkedTransport({
+    frameBytes: 32 * 1024 * 1024,
+    deliver: () => {},
+    onFailure: () => socket.terminate(),
+    send: (frame) =>
+      sendBoundedPhysicalFrameAndWait({
+        socket,
+        frame,
+        onHighWater: () => socket.terminate(),
+      }).then(() => undefined),
+  });
+  transport.enabled = true;
+  try {
+    client.pause();
+    tcp.cork();
+    const closed = once(socket, "close");
+    const first = transport.send(new Uint8Array(100 * 1024 * 1024), { waitForDrain: true });
+    const overflow = transport.send(new Uint8Array([1]), { waitForDrain: true });
+    const settled = Promise.allSettled([first, overflow]);
+    await closed;
+    expect(socket.readyState).toBe(WebSocket.CLOSED);
+    expect((await settled).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+  } finally {
+    transport.close();
+    client.terminate();
+    socket.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

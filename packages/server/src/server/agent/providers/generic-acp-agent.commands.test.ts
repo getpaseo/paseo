@@ -1,0 +1,123 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { describe, expect, test } from "vitest";
+
+import { createTestLogger } from "../../../test-utils/test-logger.js";
+import { GenericACPAgentClient } from "./generic-acp-agent.js";
+
+describe("GenericACPAgentClient slash commands", () => {
+  test("preserves argument hints in commands advertised right after session/new", async () => {
+    await withFakeACPAgent("commands-after-session-new", async (command, cwd) => {
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command,
+        initialCommandsWaitTimeoutMs: 1_500,
+      });
+      const session = await client.createSession({ provider: "acp", cwd });
+      try {
+        const commands = [
+          {
+            name: "review",
+            description: "Review the diff",
+            argumentHint: "query",
+            kind: "command",
+          },
+          { name: "status", description: "Show status", argumentHint: "", kind: "command" },
+        ];
+        await expect(session.listCommands?.()).resolves.toEqual(commands);
+        await expect(session.listCommands?.()).resolves.toEqual(commands);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
+  test("answers with no commands for an agent that never advertises any", async () => {
+    await withFakeACPAgent("silent", async (command, cwd) => {
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command,
+        initialCommandsWaitTimeoutMs: 50,
+      });
+      const session = await client.createSession({ provider: "acp", cwd });
+      try {
+        await expect(session.listCommands?.()).resolves.toEqual([]);
+      } finally {
+        await session.close();
+      }
+    });
+  });
+});
+
+async function withFakeACPAgent(
+  mode: "commands-after-session-new" | "silent",
+  run: (command: [string, ...string[]], cwd: string) => Promise<void>,
+): Promise<void> {
+  const testDir = await mkdtemp(path.join(tmpdir(), "paseo-acp-commands-"));
+  try {
+    const scriptPath = path.join(testDir, "fake-acp-agent.cjs");
+    await writeFile(scriptPath, fakeACPAgentScript, "utf8");
+    await run([process.execPath, scriptPath, mode], testDir);
+  } finally {
+    await rm(testDir, { recursive: true, force: true });
+  }
+}
+
+const fakeACPAgentScript = `
+const readline = require("node:readline");
+
+const mode = process.argv[2];
+const rl = readline.createInterface({ input: process.stdin });
+
+function write(message) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+}
+
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    write({
+      id: message.id,
+      result: {
+        protocolVersion: message.params?.protocolVersion ?? 1,
+        agentCapabilities: { sessionCapabilities: { close: {} } },
+      },
+    });
+    return;
+  }
+
+  if (message.method === "session/new") {
+    if (mode === "commands-after-session-new") {
+      process.stdout.write(
+        [
+          { id: message.id, result: { sessionId: "session-1" } },
+          {
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: {
+                sessionUpdate: "available_commands_update",
+                availableCommands: [
+                  { name: "review", description: "Review the diff", input: { hint: "query" } },
+                  { name: "status", description: "Show status" },
+                ],
+              },
+            },
+          },
+        ]
+          .map((entry) => JSON.stringify({ jsonrpc: "2.0", ...entry }) + "\\n")
+          .join(""),
+      );
+    } else {
+      write({ id: message.id, result: { sessionId: "session-1" } });
+    }
+    return;
+  }
+
+  if (message.id !== undefined) {
+    write({ id: message.id, result: {} });
+  }
+});
+`;

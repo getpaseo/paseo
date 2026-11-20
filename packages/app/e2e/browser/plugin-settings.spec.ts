@@ -14,7 +14,17 @@ import {
   expectConflictPreservesDraft,
   discardTitle,
   returnAndReopenSettings,
+  returnToPluginsPage,
   expectSettingsUnavailable,
+  openPluginsPage,
+  expectActionsMenuWithoutSettings,
+  expectSettingsFollowPluginSwitch,
+  expectSettingsHidden,
+  expectSettingsTab,
+  openTabbedSettings,
+  selectSettingsTab,
+  openTabbedSettingsLink,
+  expectNamedPluginRow,
 } from "../support/helpers/plugin-settings";
 
 test("display preferences survive a reload", async ({ page }) => {
@@ -43,6 +53,43 @@ test("another client's save preserves a conflicting draft", async ({ page }) => 
   await discardTitle(page);
 });
 
+test("Back to plugins returns from a plugin page", async ({ page }) => {
+  await openDisplaySettings(page);
+  await returnToPluginsPage(page);
+});
+
+test("plugin pages open from their row and show a tab per settings screen", async ({ page }) => {
+  await openPluginsPage(page);
+  await test.step("plugin rows show the display name", async () => {
+    await expectNamedPluginRow(page);
+  });
+  await test.step("the row opens the plugin's page", async () => {
+    await openTabbedSettings(page);
+  });
+  await test.step("the page's menu keeps only plugin actions", async () => {
+    await expectActionsMenuWithoutSettings(page);
+  });
+  await test.step("tabs switch between the plugin's settings screens", async () => {
+    await selectSettingsTab(page, "Advanced");
+    await selectSettingsTab(page, "General");
+    await returnToPluginsPage(page);
+  });
+  await test.step("turning a plugin off removes its settings from its page", async () => {
+    await expectSettingsFollowPluginSwitch(page);
+  });
+});
+
+test("a settings screen link opens its tab, unavailable while the plugin is off", async ({
+  page,
+  settingsPlugin,
+}) => {
+  await openTabbedSettingsLink(page, "Advanced");
+  await settingsPlugin.disablePlugin("settings-tabs");
+  await expectSettingsUnavailable(page);
+  await settingsPlugin.enablePlugin("settings-tabs");
+  await expectSettingsTab(page, "Advanced");
+});
+
 test.describe("compact plugin settings", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -55,7 +102,7 @@ test.describe("compact plugin settings", () => {
     await hideMetadata(page);
     await returnAndReopenSettings(page);
     await settingsPlugin.disablePlugin("settings-example");
-    await expectSettingsUnavailable(page);
+    await expectSettingsHidden(page);
     await settingsPlugin.enablePlugin("settings-example");
     await reloadSavedDisplaySettings(page);
   });

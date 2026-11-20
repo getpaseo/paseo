@@ -30,7 +30,7 @@ test.describe("New tab keyboard launcher", () => {
       await waitForWorkspaceTabsVisible(page);
 
       const explorer = await openExplorerWithKeyboard(page);
-      await expect(explorer.getByTestId("explorer-sidebar-tab-changes_tree")).toBeVisible();
+      await expect(explorer.getByTestId("workspace-tab-changes_tree")).toBeVisible();
       await expect(explorer.getByTestId("changes-tree-panel")).toBeVisible();
     } finally {
       await workspace.cleanup();
@@ -56,9 +56,9 @@ test.describe("New tab keyboard launcher", () => {
       await expectLauncherSelection(launcher, "Diff");
       await page.keyboard.press("Enter");
 
-      await expect(
-        page.getByTestId("workspace-tab-working_diff").filter({ visible: true }),
-      ).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("working-diff-panel").filter({ visible: true })).toBeVisible({
+        timeout: 30_000,
+      });
     } finally {
       await workspace.cleanup();
     }

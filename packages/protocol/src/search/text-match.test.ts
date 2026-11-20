@@ -7,6 +7,7 @@ import {
   scoreMatch,
   scorePathMatch,
   scoreTextFields,
+  textFieldsMatchClass,
 } from "./text-match.js";
 
 function markUp(query: string, text: string, options?: Parameters<typeof scoreMatch>[2]): string {
@@ -52,6 +53,24 @@ describe("scoreMatch", () => {
 
   it("returns tier 4 for substring inside a word", () => {
     expect(scoreMatch("art", "party")).toEqual({ tier: 4, offset: 1 });
+  });
+
+  it("does not assemble one query word across whitespace-separated words", () => {
+    for (const separator of [" ", "\t", "\n", "\u00a0"]) {
+      expect(scoreMatch("terminal", `term${separator}inal`)).toBeNull();
+    }
+    expect(
+      scoreMatch("terminal", "Let me diagnose this problem in a diagnose this problem and", {
+        fuzzy: fuzzyPolicyForToken("terminal"),
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps subsequences within a word, including names and later words", () => {
+    expect(scoreMatch("trmnl", "Fix terminal resizing")).toEqual({ tier: 5, offset: 4, spread: 8 });
+    expect(scoreMatch("abc", "AgentBrowserConfig")?.tier).toBe(5);
+    expect(scoreMatch("pasbab", "paseo-babysit")?.tier).toBe(5);
+    expect(scoreMatch("confg", "check configuration")?.offset).toBe(6);
   });
 
   it("returns null when query is not found", () => {
@@ -225,7 +244,26 @@ describe("scoreTextFields", () => {
     // Splitting on whitespace is what the opt-out keeps; only the run-together form goes.
     expect(scoreTextFields("lab des", fields, { subsequence: false })).not.toBeNull();
     expect(scoreTextFields("labdes", fields, { subsequence: false })).toBeNull();
-    expect(scoreTextFields("labdes", fields)).not.toBeNull();
+    expect(scoreTextFields("labdes", fields)).toBeNull();
+    expect(scoreTextFields("lbl dsgn", fields)).not.toBeNull();
+  });
+});
+
+describe("textFieldsMatchClass", () => {
+  it("keeps positional tier differences inside one class", () => {
+    expect(textFieldsMatchClass("lo", ["fix-login-bug"])).toBe("word");
+    expect(textFieldsMatchClass("lo", ["Login page fix"])).toBe("word");
+  });
+
+  it("takes the loosest token's class", () => {
+    expect(textFieldsMatchClass("auth", ["oauth-refactor"])).toBe("inside-word");
+    expect(textFieldsMatchClass("fix auth", ["fix", "oauth"])).toBe("inside-word");
+    expect(textFieldsMatchClass("fix lgn", ["fix", "login"])).toBe("scattered");
+    expect(textFieldsMatchClass("stipe", ["stripe"], { typoTolerant: true })).toBe("scattered");
+  });
+
+  it("returns null when a token matches no field", () => {
+    expect(textFieldsMatchClass("fix zebra", ["fix"])).toBeNull();
   });
 });
 
@@ -256,6 +294,10 @@ describe("matchRanges", () => {
 
   it("marks the scattered characters a subsequence walked", () => {
     expect(markUp("confg", "configuration")).toBe("[conf]i[g]uration");
+  });
+
+  it("highlights only the word selected after an earlier partial subsequence", () => {
+    expect(markUp("confg", "check configuration")).toBe("check [conf]i[g]uration");
   });
 
   it("marks the whole word a typo resolved to", () => {

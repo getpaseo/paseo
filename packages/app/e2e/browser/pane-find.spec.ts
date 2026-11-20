@@ -25,14 +25,21 @@ async function findInSource(page: Page, text: string) {
   await expect(query(page)).toBeFocused();
   await query(page).fill(text);
 }
+function querySelection(page: Page) {
+  return query(page).evaluate((input: HTMLInputElement) => [
+    input.selectionStart,
+    input.selectionEnd,
+  ]);
+}
+/** The query box keeps the caret where the user left it, with nothing reselected. */
+async function expectQueryCaretKept(page: Page, text: string) {
+  await expect.poll(() => querySelection(page)).toEqual([text.length, text.length]);
+  await expect(query(page)).toHaveValue(text);
+}
 async function expectQuerySelected(page: Page, text: string) {
   await expect(query(page)).toBeFocused();
   await expect(query(page)).toHaveValue(text);
-  await expect
-    .poll(() =>
-      query(page).evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd]),
-    )
-    .toEqual([0, text.length]);
+  await expect.poll(() => querySelection(page)).toEqual([0, text.length]);
 }
 async function closeFind(page: Page) {
   await query(page).press("Escape");
@@ -426,5 +433,43 @@ test("Go to line keeps its dialog with Find closed and open", async ({
     await expect(page.getByLabel("Line 30, column 1")).toBeVisible();
     await expect(query(page)).toHaveValue("line 3");
     await expect(status(page)).toHaveText("11 matches");
+  });
+});
+
+test.describe("macOS", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  });
+
+  // Control+F moves the caret forward on macOS, so Find must only claim Command+F.
+  test("opens Find with Meta+f and leaves Control+f to text editing", async ({
+    page,
+    withWorkspace,
+  }, testInfo) => {
+    const workspace = await withWorkspace({ prefix: "pane-find-mac-" });
+    await writeFile(path.join(workspace.repoPath, "source.txt"), "needle first\nneedle second\n");
+    await workspace.navigateTo();
+    await openSource(page, "source.txt");
+
+    await source(page).focus();
+    await source(page).press("Control+f");
+    await expect(query(page)).toHaveCount(0);
+
+    await source(page).press("Meta+f");
+    await expect(query(page)).toBeFocused();
+    await query(page).fill("needle");
+    await expect(status(page)).toHaveText("1 of 2");
+
+    await test.step("Control+f inside the query box does not reclaim the field", async () => {
+      await query(page).press("End");
+      await query(page).press("Control+f");
+      await expectQueryCaretKept(page, "needle");
+    });
+
+    await page.screenshot({ path: testInfo.outputPath("mac-find.png") });
+    await query(page).press("Meta+f");
+    await expectQuerySelected(page, "needle");
+    await closeFind(page);
   });
 });

@@ -46,6 +46,30 @@ describe("resolveWorkspaceIdForPath", () => {
     ).toEqual("ws-archived");
   });
 
+  test("prefers the reopened active workspace to archived history at the same path", () => {
+    const archived = createWorkspaceRecord("/workspace/project", "old", {
+      archivedAt: "2026-03-05T00:00:00.000Z",
+    });
+    const active = createWorkspaceRecord("/workspace/project", "current");
+    for (const records of [
+      [archived, active],
+      [active, archived],
+    ]) {
+      expect(resolveWorkspaceIdForPath("/workspace/project", records)).toBe("current");
+    }
+  });
+
+  test("prefers an archived exact match to an active enclosing directory", () => {
+    expect(
+      resolveWorkspaceIdForPath("/workspace/project/sub", [
+        createWorkspaceRecord("/workspace/project", "parent"),
+        createWorkspaceRecord("/workspace/project/sub", "archived-child", {
+          archivedAt: "2026-03-05T00:00:00.000Z",
+        }),
+      ]),
+    ).toBe("archived-child");
+  });
+
   test("resolves the deepest enclosing workspace for a subdirectory path", () => {
     expect(
       resolveWorkspaceIdForPath("/workspace/project/packages/app", [
