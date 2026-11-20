@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import {
   AgentSideConnection,
   PROTOCOL_VERSION,
@@ -89,6 +90,7 @@ interface ConnectorHarnessOptions {
   /** Session updates the agent streams for a prompt (keyed by its text) before ending the turn. */
   promptUpdates?(promptText: string): unknown[];
   handleMessage?(instance: ConnectorInstance, message: AcpStreamMessage): boolean;
+  afterMessage?(instance: ConnectorInstance, message: AcpStreamMessage): Promise<void>;
   handleRequest?(instance: ConnectorInstance, request: AcpRequestMessage): boolean;
 }
 
@@ -202,6 +204,7 @@ function connectorHarness(options?: ConnectorHarnessOptions) {
           return;
         }
         receiveConnectorMessage(instance, message, options);
+        return options?.afterMessage?.(instance, message);
       },
       close() {
         instance.writesClosed = true;
@@ -2454,6 +2457,91 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
 });
 
 describe("ACP out-of-turn background activity", () => {
+  it.each(["interrupt", "disconnect"] as const)(
+    "settles a background command on %s while the agent is idle",
+    async (action) => {
+      const { connector, instances } = connectorHarness({
+        promptUpdates: () => [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "cmd",
+            kind: "execute",
+            title: "sleep 60",
+            status: "in_progress",
+          },
+        ],
+        async afterMessage(instance, message) {
+          if (!("method" in message) || message.method !== "session/cancel") return;
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: { sessionUpdate: "tool_call_update", toolCallId: "cmd", status: "failed" },
+          });
+          await nextTurn();
+        },
+      });
+      const registration = runAcpProvider({
+        id: "out-of-turn-idle-stop",
+        label: "Idle ACP Stop",
+        connector,
+        acpOptions: { outOfTurnActivity: true },
+      });
+      const connection = await registration.connect({
+        versions: [1],
+        capabilities: ["prompt.message", "session.can_stop_runtime"],
+      });
+      const events: ProviderEvent[] = [];
+      connection.onEvent((event) => events.push(event));
+      try {
+        await connection.send(openInput());
+        await waitForEvent(events, (event) => event.type === "session.ready");
+        await connection.send({
+          type: "session.prompt",
+          sessionId: "session-1",
+          prompt: {
+            clientMessageId: "command",
+            delivery: "auto",
+            input: { type: "message", content: [{ type: "text", text: "Start" }] },
+          },
+        });
+        await waitForEvent(
+          events,
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:command" &&
+            event.state === "completed",
+        );
+        if (action === "interrupt") {
+          await connection.send({
+            type: "session.interrupt",
+            requestId: "interrupt",
+            sessionId: "session-1",
+          });
+          await waitForEvent(
+            events,
+            (event) => event.type === "request.completed" && event.requestId === "interrupt",
+          );
+          expect(await queryCanStop(connection, events, "after-stop")).toBe(true);
+        } else {
+          instances[1].closeFromAgent();
+          await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+        }
+        expect(
+          events.findLast((event) => event.type === "timeline.item" && event.item.id === "cmd"),
+        ).toMatchObject({
+          turnId: "acp:command",
+          item: { status: action === "interrupt" ? "canceled" : "failed" },
+        });
+        expect(events.findLast((event) => event.type === "session.background_work")).toMatchObject({
+          items: action === "interrupt" ? [] : null,
+        });
+        expect(
+          events.filter((event) => event.type === "session.turn").map((event) => event.turnId),
+        ).toEqual(["acp:command", "acp:command"]);
+      } finally {
+        await connection.close();
+      }
+    },
+  );
   async function queryCanStop(
     connection: ProviderConnection,
     events: ProviderEvent[],

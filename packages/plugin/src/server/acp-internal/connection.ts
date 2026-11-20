@@ -527,27 +527,12 @@ class AcpRuntime {
       () => client,
       routeVendorNotifications(stream, (method, params) => this.vendorNotification(method, params)),
     );
-    if (!child) void this.connection.closed.then(() => this.handleUnexpectedTransportClose());
-    child?.on("error", (error) => {
-      this.processFailed = true;
-      this.settlePendingWork();
-      if (this.closing || !this.nativeSessionId) return;
-      this.emit({
-        type: "session.runtime_failed",
-        sessionId: this.options.boundarySessionId,
-        error: { message: describeError(error) },
-      });
-    });
-    child?.once("close", (code, signal) => {
-      if (this.closing || this.processFailed || !this.nativeSessionId) return;
-      this.processFailed = true;
-      this.settlePendingWork();
-      this.emit({
-        type: "session.runtime_failed",
-        sessionId: this.options.boundarySessionId,
-        error: { message: `ACP process exited (${signal ?? code ?? "unknown"})` },
-      });
-    });
+    if (!child)
+      void this.connection.closed.then(() => this.failRuntime("ACP transport closed unexpectedly"));
+    child?.on("error", (error) => this.failRuntime(describeError(error)));
+    child?.once("close", (code, signal) =>
+      this.failRuntime(`ACP process exited (${signal ?? code ?? "unknown"})`),
+    );
   }
 
   async open(
@@ -764,17 +749,27 @@ class AcpRuntime {
     });
   }
 
-  async interrupt(): Promise<void> {
-    const active = this.activePrompt;
-    const autonomous = this.autonomousTurn;
-    if (active) active.cancelling = true;
-    if (autonomous) {
-      autonomous.cancelling = true;
-      this.cancelAutonomousSettle();
-    }
-    try {
-      await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
-    } finally {
+  interrupt(): Promise<void> {
+    // A peer can publish cancellation updates before the outbound write finishes.
+    // Settle the owned tools before reducing those updates.
+    return this.enqueueNotification(async () => {
+      const active = this.activePrompt;
+      const autonomous = this.autonomousTurn;
+      if (active) active.cancelling = true;
+      if (autonomous) {
+        autonomous.cancelling = true;
+        this.cancelAutonomousSettle();
+      }
+      try {
+        await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
+      } catch (error) {
+        if (active) active.cancelling = false;
+        if (autonomous && this.autonomousTurn === autonomous) {
+          autonomous.cancelling = false;
+          this.syncAutonomousTimer();
+        }
+        throw error;
+      }
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) this.finishTurnPermissions(active.turnId);
       if (autonomous && this.autonomousTurn?.turnId === autonomous.turnId) {
@@ -783,7 +778,7 @@ class AcpRuntime {
         this.terminalizeTransientItems("canceled");
         this.clearBackgroundWork();
       }
-    }
+    });
   }
 
   listSessions(cwd?: string) {
@@ -1129,6 +1124,7 @@ class AcpRuntime {
     if (
       this.closing ||
       this.processFailed ||
+      this.toolCalls.get(request.toolCall.toolCallId)?.canceled ||
       this.activePrompt?.cancelling ||
       this.autonomousTurn?.cancelling
     ) {
@@ -1180,7 +1176,7 @@ class AcpRuntime {
   }
 
   private sessionUpdate(notification: SessionNotification): void {
-    if (notification.sessionId !== this.nativeSessionId) return;
+    if (notification.sessionId !== this.nativeSessionId || this.processFailed) return;
     if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
     if (this.replayWindow === "skip") {
       const update = notification.update;
@@ -1643,21 +1639,22 @@ class AcpRuntime {
     ]);
   }
 
-  private enqueueNotification(operation: () => void): Promise<void> {
+  private enqueueNotification(operation: () => void | Promise<void>): Promise<void> {
     const result = this.notificationLane.then(operation);
     this.notificationLane = result.catch(() => undefined);
     return result;
   }
 
-  private handleUnexpectedTransportClose(): void {
+  private failRuntime(message: string): void {
     if (this.closing || this.processFailed) return;
     this.processFailed = true;
+    if (this.outOfTurnActivity) this.terminalizeTransientItems("failed");
     this.settlePendingWork();
     if (!this.nativeSessionId) return;
     this.emit({
       type: "session.runtime_failed",
       sessionId: this.options.boundarySessionId,
-      error: { message: "ACP transport closed unexpectedly" },
+      error: { message },
     });
   }
 
