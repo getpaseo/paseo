@@ -193,14 +193,14 @@ function SourceTabButton({
 
       <span className="min-w-0 flex-1">
         <span
-          className={`block text-xs leading-5 font-medium [overflow-wrap:anywhere] lg:text-sm ${
+          className={`block text-xs leading-5 font-medium wrap-anywhere lg:text-sm ${
             isSelected ? "text-white" : "text-white/80 group-hover:text-white"
           }`}
         >
           {t(`hub.sources.${id}.name`)}
         </span>
         <span
-          className={`mt-0.5 hidden truncate text-xs leading-4 lg:block ${
+          className={`mt-0.5 hidden text-xs leading-4 wrap-anywhere lg:block ${
             isSelected ? "text-white/65" : "text-muted-foreground"
           }`}
         >
