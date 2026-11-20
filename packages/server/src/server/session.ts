@@ -246,7 +246,11 @@ import {
   matchesAgentUpdatesFilter,
   type AgentUpdatesService,
 } from "./session/agent-updates/agent-updates-service.js";
-import { expandTilde } from "../utils/path.js";
+import {
+  createRealpathAwarePathMatcher,
+  expandTilde,
+  isRealpathInsideRoot,
+} from "../utils/path.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -1048,6 +1052,25 @@ export class Session {
       isDirectory: (path) => this.filesystem.isDirectory(path),
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
+      },
+      syncCheckoutWorktreeManager: async ({
+        worktreeRoot,
+        worktreeManagerPluginId,
+        excludeWorkspaceId,
+      }) => {
+        const matchesCheckout = createRealpathAwarePathMatcher(worktreeRoot);
+        const workspaces = await this.workspaceRegistry.listAll();
+        const timestamp = new Date().toISOString();
+        for (const candidate of workspaces) {
+          if (candidate.workspaceId === excludeWorkspaceId) continue;
+          if (!matchesCheckout(candidate.worktreeRoot ?? candidate.cwd)) continue;
+          if ((candidate.worktreeManagerPluginId ?? null) === worktreeManagerPluginId) continue;
+          const { worktreeManagerPluginId: _previous, ...withoutManager } = candidate;
+          const updated: PersistedWorkspaceRecord = worktreeManagerPluginId
+            ? { ...withoutManager, worktreeManagerPluginId, updatedAt: timestamp }
+            : { ...withoutManager, updatedAt: timestamp };
+          await this.workspaceRegistry.upsert(updated);
+        }
       },
     });
     this.diffSession = new DiffSession(checkoutDiffManager.streams, this.sessionLogger);
@@ -6528,6 +6551,31 @@ export class Session {
     return this.workspaceArchiveOperations.withCheckout(checkoutPath, run);
   }
 
+  private async withCheckoutForDirectory<T>(cwd: string, run: () => Promise<T>): Promise<T> {
+    const normalizedCwd = resolve(cwd);
+    const matchesCwd = createRealpathAwarePathMatcher(normalizedCwd);
+    const workspaces = await this.workspaceRegistry.listAll();
+    const matchingWorkspace = workspaces.find(
+      (workspace) =>
+        matchesCwd(workspace.cwd) ||
+        (workspace.worktreeRoot !== null &&
+          isRealpathInsideRoot(workspace.worktreeRoot, normalizedCwd)),
+    );
+    let checkoutPath = normalizedCwd;
+    if (matchingWorkspace) {
+      checkoutPath = await resolveWorkspaceBackingPath(matchingWorkspace, {
+        paseoHome: this.paseoHome,
+        paseoWorktreesBaseRoot: this.worktreesRoot,
+      });
+    } else {
+      const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
+      if (checkout.isGit && checkout.worktreeRoot) {
+        checkoutPath = resolve(checkout.worktreeRoot);
+      }
+    }
+    return this.workspaceArchiveOperations.withCheckout(checkoutPath, run);
+  }
+
   private async restoreWorkspaceAndEmit(workspaceId: string): Promise<void> {
     await this.workspaceArchiveOperations.restore(workspaceId, () =>
       this.withWorkspaceCheckout(workspaceId, async () => {
@@ -7468,24 +7516,29 @@ export class Session {
     }
 
     const cwd = expandTilde(request.source.path);
-    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
-    if (!directoryExists) {
-      throw new SessionRequestError("directory_not_found", `Directory not found: ${cwd}`);
-    }
-
     const explicitTitle = request.title?.trim() || null;
     const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
-    const workspace = await this.workspaceProvisioning.createWorkspaceForDirectory(
-      cwd,
-      explicitTitle ?? promptTitle,
-      request.source.projectId,
-      {
-        expectsInitialAgent: Boolean(request.firstAgentContext),
-        workspaceId,
-        metadata: request.metadata,
-        ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
-      },
+    const backgroundIntent = await this.workspaceBackgroundIntent(
+      request.background,
+      request.callerAgentId,
     );
+    const workspace = await this.withCheckoutForDirectory(cwd, async () => {
+      const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+      if (!directoryExists) {
+        throw new SessionRequestError("directory_not_found", `Directory not found: ${cwd}`);
+      }
+      return this.workspaceProvisioning.createWorkspaceForDirectory(
+        cwd,
+        explicitTitle ?? promptTitle,
+        request.source.projectId,
+        {
+          expectsInitialAgent: Boolean(request.firstAgentContext),
+          workspaceId,
+          metadata: request.metadata,
+          ...backgroundIntent,
+        },
+      );
+    });
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
     await this.emitCreatedWorkspaceUpdate(
@@ -7567,34 +7620,41 @@ export class Session {
   ): Promise<void> {
     const requestedCwd = request.cwd;
     const cwd = expandTilde(requestedCwd);
-    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
-    if (!directoryExists) {
-      this.sessionLogger.info(
-        { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
-        "Open project rejected",
-      );
-      this.emit({
-        type: "open_project_response",
-        payload: {
-          requestId: request.requestId,
-          workspace: null,
-          error: `Directory not found: ${cwd}`,
-          errorCode: "directory_not_found",
-        },
-      });
-      return;
-    }
 
     try {
-      const projectsBefore = new Map<string, PersistedProjectRecord>();
-      for (const project of await this.projectRegistry.list()) {
-        projectsBefore.set(project.projectId, project);
+      const opened = await this.withCheckoutForDirectory(cwd, async () => {
+        const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+        if (!directoryExists) {
+          return null;
+        }
+        const projectsBefore = new Map<string, PersistedProjectRecord>();
+        for (const project of await this.projectRegistry.list()) {
+          projectsBefore.set(project.projectId, project);
+        }
+        const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
+        for (const workspaceRecord of await this.workspaceRegistry.listActive()) {
+          workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
+        }
+        const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
+        return { workspace, projectsBefore, workspacesBefore };
+      });
+      if (!opened) {
+        this.sessionLogger.info(
+          { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
+          "Open project rejected",
+        );
+        this.emit({
+          type: "open_project_response",
+          payload: {
+            requestId: request.requestId,
+            workspace: null,
+            error: `Directory not found: ${cwd}`,
+            errorCode: "directory_not_found",
+          },
+        });
+        return;
       }
-      const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
-      for (const workspaceRecord of await this.workspaceRegistry.listActive()) {
-        workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
-      }
-      const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
+      const { workspace, projectsBefore, workspacesBefore } = opened;
       const project = await this.projectRegistry.get(workspace.projectId);
       await this.syncWorkspaceGitObserverForWorkspace(workspace);
       const descriptor = await this.describeWorkspaceRecord(workspace);

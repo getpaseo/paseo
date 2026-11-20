@@ -694,7 +694,7 @@ The source icon is a file path with the same rules as a provider icon.
 
 ## Worktree managers {#worktree-managers}
 
-**Requires Paseo 0.16.** Register a worktree manager from `index.server.ts` with
+**Requires Paseo 0.17.** Register a worktree manager from `index.server.ts` with
 `server.registerWorktreeManager()` when an external tool such as Worktrunk should own creating,
 removing, and restoring Git worktrees instead of Paseo running `git worktree add` and
 `git worktree remove` directly.

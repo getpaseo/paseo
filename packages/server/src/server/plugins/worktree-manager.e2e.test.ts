@@ -376,7 +376,7 @@ test("worktree manager supports decline fallback, rollback delegation, and disab
   await mkdir(pluginDir);
   await writeFile(
     path.join(pluginDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "custom-manager", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "custom-manager", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(pluginDir, "index.server.ts"),
@@ -514,7 +514,7 @@ test("worktree manager rejects pre-existing worktrees, detached HEAD, wrong repo
   await mkdir(pluginDir);
   await writeFile(
     path.join(pluginDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "bad-manager", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "bad-manager", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(pluginDir, "index.server.ts"),
@@ -630,7 +630,7 @@ test("worktree manager rejects duplicate registration and fails removal when the
   await mkdir(dupPluginDir);
   await writeFile(
     path.join(dupPluginDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "dup-manager", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "dup-manager", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(dupPluginDir, "index.server.ts"),
@@ -646,7 +646,7 @@ test("worktree manager rejects duplicate registration and fails removal when the
   await mkdir(leakyRemoveDir);
   await writeFile(
     path.join(leakyRemoveDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "leaky-remove", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "leaky-remove", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(leakyRemoveDir, "index.server.ts"),
@@ -826,7 +826,7 @@ test("concurrent restores across two daemon clients wait for the in-flight manag
   await mkdir(pluginDir);
   await writeFile(
     path.join(pluginDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "slow-restore-manager", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "slow-restore-manager", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(pluginDir, "index.server.ts"),
@@ -899,11 +899,13 @@ export default function contribute(server) {
     // Start first restore and wait until the worktree directory exists on disk while setup is still paused.
     const firstRestore = client1.restoreWorkspace(workspaceId);
     await expect
-      .poll(() =>
-        stat(dirCreatedMarker).then(
-          () => true,
-          () => false,
-        ),
+      .poll(
+        () =>
+          stat(dirCreatedMarker).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
       )
       .toBe(true);
     expect((await stat(worktreePath)).isDirectory()).toBe(true);
@@ -954,7 +956,7 @@ test("restore waits for an in-flight CLI worktree archive remove before recreati
   await mkdir(pluginDir);
   await writeFile(
     path.join(pluginDir, "paseo-plugin.json"),
-    JSON.stringify({ id: "slow-remove-manager", requirements: { paseo: ">=0.16.0" } }),
+    JSON.stringify({ id: "slow-remove-manager", requirements: { paseo: ">=0.17.0" } }),
   );
   await writeFile(
     path.join(pluginDir, "index.server.ts"),
@@ -1013,18 +1015,35 @@ export default function contribute(server) {
     const workspaceId = created.workspace!.id;
     const worktreePath = created.workspace!.workspaceDirectory;
 
-    // Client 1 starts a CLI worktree archive; pause inside manager.remove after the record is archived.
-    const cliArchive = client1.archivePaseoWorktree({ worktreePath });
+    // Client 1 starts a CLI worktree archive (scope: "worktree"); pause inside manager.remove after the record is archived.
+    const cliArchive = client1.archivePaseoWorktree({ worktreePath, scope: "worktree" });
     await expect
-      .poll(() =>
-        stat(removeStartedMarker).then(
-          () => true,
-          () => false,
-        ),
+      .poll(
+        () =>
+          stat(removeStartedMarker).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
       )
       .toBe(true);
 
-    // Client 2 restores while manager.remove still holds the checkout: restore must wait, not unarchive early.
+    // Client 2 opens the project path while manager.remove holds the checkout: openProject must wait,
+    // then reject with directory_not_found instead of unarchiving a deleted checkout.
+    let openSettled = false;
+    const openPromise = client2.openProject(worktreePath);
+    void openPromise.then(
+      () => {
+        openSettled = true;
+        return undefined;
+      },
+      () => {
+        openSettled = true;
+        return undefined;
+      },
+    );
+
+    // Client 2 also restores while manager.remove still holds the checkout: restore must wait, not unarchive early.
     let restoreSettled = false;
     const restorePromise = client2.restoreWorkspace(workspaceId);
     void restorePromise.then(
@@ -1038,12 +1057,16 @@ export default function contribute(server) {
       },
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(openSettled).toBe(false);
     expect(restoreSettled).toBe(false);
 
-    // Release manager.remove to delete the checkout; restore then runs and recreates it cleanly.
+    // Release manager.remove to delete the checkout; openProject sees it gone, and restore recreates it cleanly.
     await writeFile(releaseRemoveMarker, "go");
     const archiveResult = await cliArchive;
     expect(archiveResult.success).toBe(true);
+    const openResult = await openPromise;
+    expect(openResult.workspace).toBeNull();
+    expect(openResult.errorCode).toBe("directory_not_found");
     await restorePromise;
 
     expect((await stat(worktreePath)).isDirectory()).toBe(true);
@@ -1051,6 +1074,95 @@ export default function contribute(server) {
   } finally {
     await client1.close();
     await client2.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("git fallback restore clears manager ownership across sibling workspaces sharing a checkout", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktree-sibling-owner-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  await mkdir(path.join(repository, "packages", "sub"), { recursive: true });
+  await writeFile(path.join(repository, "packages", "sub", "README.md"), "sub");
+  git(repository, ["add", "."]);
+  git(repository, ["commit", "-m", "add subpackage"]);
+  const removeCallsFile = path.join(root, "remove-calls.log");
+
+  const pluginDir = path.join(root, "owner-tracking-manager");
+  await mkdir(pluginDir);
+  await writeFile(
+    path.join(pluginDir, "paseo-plugin.json"),
+    JSON.stringify({ id: "owner-tracking-manager", requirements: { paseo: ">=0.17.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDir, "index.server.ts"),
+    `import { execFileSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import path from "node:path";
+
+export default function contribute(server) {
+  return server.registerWorktreeManager({
+    async create(request) {
+      const target = path.join(path.dirname(request.repoRoot), "managed-" + request.branch);
+      execFileSync("git", ["worktree", "add", "-b", request.branch, target, request.baseRef], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "created", path: target };
+    },
+    async remove(request) {
+      appendFileSync(${JSON.stringify(removeCallsFile)}, request.path + "\\n");
+      execFileSync("git", ["worktree", "remove", request.path, "--force"], {
+        cwd: request.repoRoot,
+        stdio: "pipe",
+      });
+      return { type: "removed" };
+    },
+  });
+}
+`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(pluginDir)).status).toBe("running");
+
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "shared-checkout" },
+    });
+    expect(created.error).toBeNull();
+    const firstWorkspaceId = created.workspace!.id;
+    const worktreePath = created.workspace!.workspaceDirectory;
+
+    // Create a second workspace on a subdirectory of the same managed checkout, sharing ownership.
+    const secondCreated = await client.createWorkspace({
+      source: { kind: "directory", path: path.join(worktreePath, "packages", "sub") },
+    });
+    expect(secondCreated.error).toBeNull();
+    const secondWorkspaceId = secondCreated.workspace!.id;
+
+    // Persist the same manager owner on both records, disable the plugin, archive both, and restore via Git fallback.
+    await client.disablePlugin("owner-tracking-manager");
+    const archived = await client.archivePaseoWorktree({ worktreePath, scope: "worktree" });
+    expect(archived.success).toBe(true);
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // First restore recreates via Git fallback; second restore joins the existing checkout.
+    await client.restoreWorkspace(firstWorkspaceId);
+    await client.restoreWorkspace(secondWorkspaceId);
+    expect((await stat(worktreePath)).isDirectory()).toBe(true);
+
+    // Re-enable the plugin and archive both workspaces: neither should invoke the former manager's remove.
+    await client.enablePlugin("owner-tracking-manager");
+    expect((await client.archiveWorkspace(firstWorkspaceId)).error).toBeNull();
+    expect((await client.archiveWorkspace(secondWorkspaceId)).error).toBeNull();
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(removeCallsFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await client.close();
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
@@ -1100,11 +1212,13 @@ while (!existsSync(${JSON.stringify(releaseTeardownMarker)})) {
 
     const archivePromise = client1.archiveWorkspace(workspaceId);
     await expect
-      .poll(() =>
-        stat(teardownStartedMarker).then(
-          () => true,
-          () => false,
-        ),
+      .poll(
+        () =>
+          stat(teardownStartedMarker).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 10_000 },
       )
       .toBe(true);
 

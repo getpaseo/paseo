@@ -75,6 +75,11 @@ export function createWorkspaceRecoveryService(deps: {
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  syncCheckoutWorktreeManager?: (input: {
+    worktreeRoot: string;
+    worktreeManagerPluginId: string | null;
+    excludeWorkspaceId: string;
+  }) => Promise<void>;
 }): WorkspaceRecoveryService {
   async function resolveRecovery(
     workspaceId: string,
@@ -148,26 +153,31 @@ export function createWorkspaceRecoveryService(deps: {
     }
 
     let workspaceToUnarchive = resolved.workspace;
+    let recreated: { worktreePath: string; pluginId: string | null } | null = null;
     if (resolved.kind === "restore") {
-      const restoredByPluginId = await recreateArchivedWorktree(
-        resolved.workspace,
-        resolved.sourceRepoRoot,
-      );
-      if ((resolved.workspace.worktreeManagerPluginId ?? null) !== restoredByPluginId) {
+      recreated = await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      if ((resolved.workspace.worktreeManagerPluginId ?? null) !== recreated.pluginId) {
         const { worktreeManagerPluginId: _previous, ...withoutManager } = resolved.workspace;
-        workspaceToUnarchive = restoredByPluginId
-          ? { ...withoutManager, worktreeManagerPluginId: restoredByPluginId }
+        workspaceToUnarchive = recreated.pluginId
+          ? { ...withoutManager, worktreeManagerPluginId: recreated.pluginId }
           : withoutManager;
       }
     }
     await deps.unarchiveWorkspace(workspaceToUnarchive);
+    if (recreated) {
+      await deps.syncCheckoutWorktreeManager?.({
+        worktreeRoot: recreated.worktreePath,
+        worktreeManagerPluginId: recreated.pluginId,
+        excludeWorkspaceId: workspaceId,
+      });
+    }
     return { workspaceId, action: resolved.kind };
   }
 
   async function recreateArchivedWorktree(
     workspace: PersistedWorkspaceRecord,
     sourceRepoRoot: string,
-  ): Promise<string | null> {
+  ): Promise<{ worktreePath: string; pluginId: string | null }> {
     let source: WorktreeSource;
     const checkout = parseWorkspaceHead(workspace);
     if (checkout.kind === "branch") {
@@ -261,7 +271,7 @@ export function createWorkspaceRecoveryService(deps: {
         error,
       );
     }
-    return restoredByPluginId;
+    return { worktreePath: recreatedWorktreePath, pluginId: restoredByPluginId };
   }
 
   async function recreateWorktreeCheckout(options: {

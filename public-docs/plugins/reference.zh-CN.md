@@ -544,7 +544,7 @@ export default function contribute(server: PluginServerContext) {
 
 ## worktree 管理器 {#worktree-managers}
 
-**需要 Paseo 0.16**。在服务端入口 `index.server.ts` 中调用 `server.registerWorktreeManager()`，可将 Git worktree 的创建、移除和恢复委托给 Worktrunk 等外部工具，而无需由 Paseo 直接运行 `git worktree add` 和 `git worktree remove`。
+**需要 Paseo 0.17**。在服务端入口 `index.server.ts` 中调用 `server.registerWorktreeManager()`，可将 Git worktree 的创建、移除和恢复委托给 Worktrunk 等外部工具，而无需由 Paseo 直接运行 `git worktree add` 和 `git worktree remove`。
 
 ```ts
 import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";

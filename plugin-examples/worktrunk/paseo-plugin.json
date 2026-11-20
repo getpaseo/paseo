@@ -2,5 +2,5 @@
   "id": "worktrunk",
   "name": "Worktrunk",
   "description": "Manage Git worktrees and agent activity markers through Worktrunk (wt).",
-  "requirements": { "paseo": ">=0.16.0" }
+  "requirements": { "paseo": ">=0.17.0" }
 }

@@ -1162,7 +1162,6 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
-const WORKTREE_OPERATION_TIMEOUT_MS = 150_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -3320,7 +3319,9 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "archive_workspace_response",
-      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
+      // Archive may wait for a queued checkout operation and then run teardown/manager removal,
+      // each bounded on the daemon; wait for the terminal response or transport disconnect.
+      timeout: 0,
     });
   }
 
@@ -3843,7 +3844,9 @@ export class DaemonClient {
           type: "workspace.recovery.restore.request",
           workspaceId,
         },
-        timeout: WORKTREE_OPERATION_TIMEOUT_MS,
+        // Restore may wait behind an active archive/removal before running a bounded restore stage;
+        // wait for the terminal response or transport disconnect instead of timing out mid-workflow.
+        timeout: 0,
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "Workspace recovery was rejected by the host");
@@ -3859,8 +3862,9 @@ export class DaemonClient {
           type: "workspace.archive.undo.request",
           workspaceId,
         },
-        // Undoing a finished worktree archive recreates the worktree, like recovery does.
-        timeout: WORKTREE_OPERATION_TIMEOUT_MS,
+        // Undo may wait for an in-flight archive to settle and then recreate the worktree;
+        // wait for the terminal response or transport disconnect.
+        timeout: 0,
       });
     if (!payload.accepted) {
       throw new Error(payload.error ?? "The host could not undo the workspace archive");
@@ -5441,7 +5445,9 @@ export class DaemonClient {
         ...(input.scope !== undefined ? { scope: input.scope } : {}),
       },
       responseType: "paseo_worktree_archive_response",
-      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
+      // Archive may wait for a queued checkout operation and then run teardown/manager removal,
+      // each bounded on the daemon; wait for the terminal response or transport disconnect.
+      timeout: 0,
     });
   }
 

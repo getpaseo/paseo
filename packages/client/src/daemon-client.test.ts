@@ -1624,90 +1624,96 @@ test("defaults session RPC waiters to sixty seconds", async () => {
 });
 
 test.each([
-  ["archive_workspace_request", (client: DaemonClient) => client.archiveWorkspace("workspace-1")],
+  [
+    "archive_workspace_request",
+    (client: DaemonClient) => client.archiveWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "archive_workspace_response" as const,
+      payload: {
+        requestId,
+        workspaceId: "workspace-1",
+        archivedAt: "2026-01-01T00:00:00.000Z",
+        error: null,
+      },
+    }),
+  ],
   [
     "paseo_worktree_archive_request",
     (client: DaemonClient) => client.archivePaseoWorktree({ worktreePath: "/repo/worktree" }),
-  ],
-] as const)("keeps %s pending through the worktree manager budget", async (type, run) => {
-  useHeartbeatClock();
-  const transport = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "archive-timeout-test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => transport.transport,
-  });
-  clients.push(client);
-
-  const connecting = client.connect();
-  transport.triggerOpen();
-  await connecting;
-
-  const result = run(client).catch((error: unknown) => error);
-  await vi.advanceTimersByTimeAsync(149_999);
-  let settled = false;
-  void result.then(() => {
-    settled = true;
-    return undefined;
-  });
-  await Promise.resolve();
-  expect(settled).toBe(false);
-
-  await vi.advanceTimersByTimeAsync(1);
-  expect(await result).toMatchObject({
-    code: "DAEMON_REQUEST_TIMEOUT",
-    message: `No response to ${type} after 150000ms`,
-  });
-});
-
-test("waits on create_paseo_worktree_request across manager and hook stages until response or disconnect", async () => {
-  useHeartbeatClock();
-  const transport = createMockTransport();
-  const client = new DaemonClient({
-    url: "ws://test",
-    clientId: "worktree-create-wait-test",
-    logger: createMockLogger(),
-    reconnect: { enabled: false },
-    transportFactory: () => transport.transport,
-  });
-  clients.push(client);
-
-  const connecting = client.connect();
-  transport.triggerOpen();
-  await connecting;
-
-  const pending = client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" });
-  const sentFrame = JSON.parse(assertStr(transport.sent.at(-1))) as {
-    message: { requestId: string };
-  };
-  let settled = false;
-  void pending.then(() => {
-    settled = true;
-    return undefined;
-  });
-  await vi.advanceTimersByTimeAsync(200_000);
-  await Promise.resolve();
-  expect(settled).toBe(false);
-
-  transport.triggerMessage(
-    wrapSessionMessage({
-      type: "create_paseo_worktree_response",
-      payload: {
-        requestId: sentFrame.message.requestId,
-        workspace: null,
-        error: null,
-        setupTerminalId: null,
-      },
+    (requestId: string) => ({
+      type: "paseo_worktree_archive_response" as const,
+      payload: { requestId, success: true, removedAgents: [], error: null },
     }),
-  );
-  expect(await pending).toMatchObject({ requestId: sentFrame.message.requestId, error: null });
+  ],
+  [
+    "workspace.recovery.restore.request",
+    (client: DaemonClient) => client.restoreWorkspace("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.recovery.restore.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "workspace.archive.undo.request",
+    (client: DaemonClient) => client.undoWorkspaceArchive("workspace-1"),
+    (requestId: string) => ({
+      type: "workspace.archive.undo.response" as const,
+      payload: { requestId, workspaceId: "workspace-1", accepted: true, error: null },
+    }),
+  ],
+  [
+    "create_paseo_worktree_request",
+    (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
+    (requestId: string) => ({
+      type: "create_paseo_worktree_response" as const,
+      payload: { requestId, workspace: null, error: null, setupTerminalId: null },
+    }),
+  ],
+] as const)(
+  "waits on %s across queued and bounded daemon stages until response or disconnect",
+  async (_type, run, buildResponse) => {
+    useHeartbeatClock();
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "worktree-lifecycle-wait-test",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
 
-  const disconnected = client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "drop" });
-  transport.triggerClose({ code: 1006, reason: "gone" });
-  await expect(disconnected).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
-});
+    const connecting = client.connect();
+    transport.triggerOpen();
+    await connecting;
+
+    const pending = run(client);
+    const sentFrame = JSON.parse(assertStr(transport.sent.at(-1))) as {
+      message: { requestId: string };
+    };
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(200_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    transport.triggerMessage(wrapSessionMessage(buildResponse(sentFrame.message.requestId)));
+    await expect(pending).resolves.not.toThrow();
+
+    const disconnected = run(client);
+    transport.triggerClose({ code: 1006, reason: "gone" });
+    await expect(disconnected).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
+  },
+);
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {
   useHeartbeatClock();
