@@ -2900,6 +2900,12 @@ describe("ACP out-of-turn background activity", () => {
   });
 
   it("cancels an active out-of-turn wakeup and clears background work on interrupt", async () => {
+    const approval = (toolCallId: string) => ({
+      sessionId: "connector-session",
+      toolCall: { toolCallId, title: "Pending command", rawInput: {} },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    });
+    let approvalDuringStop: Promise<unknown> | undefined;
     const { connector, instances } = connectorHarness({
       async afterMessage(instance, message) {
         if (!("method" in message) || message.method !== "session/cancel") return;
@@ -2907,6 +2913,19 @@ describe("ACP out-of-turn background activity", () => {
           sessionId: "connector-session",
           update: textChunk("Reply chunk during Stop"),
         });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "announced-during-stop",
+            title: "Late command",
+            status: "in_progress",
+          },
+        });
+        approvalDuringStop = instance.request(
+          "session/request_permission",
+          approval("requested-during-stop"),
+        );
         await nextTurn();
       },
       promptUpdates: (text) =>
@@ -2988,6 +3007,11 @@ describe("ACP out-of-turn background activity", () => {
           event.state === "started",
       );
       const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+      const approvalBeforeStop = agent.request(
+        "session/request_permission",
+        approval("requested-before-stop"),
+      );
+      await waitForEvent(events, (event) => event.type === "session.permission");
 
       await connection.send({
         type: "session.interrupt",
@@ -3001,6 +3025,9 @@ describe("ACP out-of-turn background activity", () => {
           event.turnId === autoTurnId &&
           event.state === "canceled",
       );
+      const canceledApproval = { outcome: { outcome: "cancelled" } };
+      await expect(approvalBeforeStop).resolves.toEqual(canceledApproval);
+      await expect(approvalDuringStop).resolves.toEqual(canceledApproval);
       expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
         type: "session.background_work",
         sessionId: "session-1",
@@ -3049,14 +3076,18 @@ describe("ACP out-of-turn background activity", () => {
         update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", status: "failed" },
       });
       agent.notify("session/update", output);
-      agent.notify("session/update", {
-        sessionId: "connector-session",
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId: "pending-before-stop",
-          status: "failed",
-        },
-      });
+      const stoppedToolIds = [
+        "pending-before-stop",
+        "announced-during-stop",
+        "requested-before-stop",
+        "requested-during-stop",
+      ];
+      for (const toolCallId of stoppedToolIds) {
+        agent.notify("session/update", {
+          sessionId: "connector-session",
+          update: { sessionUpdate: "tool_call_update", toolCallId, status: "failed" },
+        });
+      }
       await new Promise((resolve) => setTimeout(resolve, 60));
       expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
         turnCountAfterCancel,
@@ -3072,13 +3103,11 @@ describe("ACP out-of-turn background activity", () => {
         ),
       ).toEqual(["running", "completed"]);
 
-      const permission = agent.request("session/request_permission", {
-        sessionId: "connector-session",
-        toolCall: { toolCallId: "pending-before-stop", title: "Pending command", rawInput: {} },
-        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
-      });
-      await expect(permission).resolves.toEqual({ outcome: { outcome: "cancelled" } });
-      expect(events.some((event) => event.type === "session.permission")).toBe(false);
+      for (const toolCallId of stoppedToolIds) {
+        const permission = agent.request("session/request_permission", approval(toolCallId));
+        await expect(permission).resolves.toEqual(canceledApproval);
+      }
+      expect(events.filter((event) => event.type === "session.permission")).toHaveLength(1);
       expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
         turnCountAfterCancel,
       );

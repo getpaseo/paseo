@@ -76,7 +76,6 @@ interface AcpToolCallRecord {
   snapshot: AcpToolCallSnapshot;
   turnId?: string;
   settlement?: AcpToolSettlement;
-  stopped?: boolean;
 }
 
 export async function createAcpProviderConnection(
@@ -399,6 +398,7 @@ class AcpRuntime {
   private emit: (event: ProviderEvent) => void;
   private readonly messages = new Map<string, string>();
   private readonly toolCalls = new Map<string, AcpToolCallRecord>();
+  private readonly stoppedToolCalls = new Set<string>();
   // Running tool rows published by transformers; the turn's terminal closes any left open.
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
@@ -793,6 +793,11 @@ class AcpRuntime {
         }
         throw error;
       }
+      if (this.outOfTurnActivity) {
+        for (const { request } of this.permissions.values()) {
+          this.stoppedToolCalls.add(request.toolCall.toolCallId);
+        }
+      }
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) this.finishTurnPermissions(active.turnId);
       if (autonomous && this.autonomousTurn?.turnId === autonomous.turnId) {
@@ -1145,11 +1150,15 @@ class AcpRuntime {
   ): Promise<RequestPermissionResponse> {
     const interrupt = this.interruption;
     await this.notificationLane;
+    const { toolCallId } = request.toolCall;
+    if (interrupt?.sent && request.sessionId === this.nativeSessionId) {
+      this.stoppedToolCalls.add(toolCallId);
+    }
     if (
       this.closing ||
       this.processFailed ||
       interrupt?.sent ||
-      this.toolCalls.get(request.toolCall.toolCallId)?.stopped ||
+      this.stoppedToolCalls.has(toolCallId) ||
       this.activePrompt?.cancelling ||
       this.autonomousTurn?.cancelling
     ) {
@@ -1159,21 +1168,11 @@ class AcpRuntime {
       this.ensureAutonomousTurn();
       this.onAutonomousNonReplyActivity();
     }
-    if (
-      this.autoAccept &&
-      request.sessionId === this.nativeSessionId &&
-      this.nativeModeId() === this.options.options.acpOptions?.autoAcceptMode?.nativeMode
-    ) {
-      const allowOptions = request.options.filter((option) => option.kind.startsWith("allow"));
-      const allowOnce = allowOptions.find((option) => option.kind === "allow_once");
-      if (
-        allowOnce &&
-        new Set(allowOptions.map((option) => option.kind)).size === allowOptions.length
-      ) {
-        return { outcome: { outcome: "selected", optionId: allowOnce.optionId } };
-      }
+    const optionId = this.autoAcceptOptionId(request);
+    if (optionId !== undefined) {
+      return { outcome: { outcome: "selected", optionId } };
     }
-    const permissionId = `permission:${request.toolCall.toolCallId}`;
+    const permissionId = `permission:${toolCallId}`;
     return new Promise((resolve) => {
       this.permissions.set(permissionId, {
         request,
@@ -1200,11 +1199,32 @@ class AcpRuntime {
     });
   }
 
+  private autoAcceptOptionId(request: RequestPermissionRequest): string | undefined {
+    if (
+      !this.autoAccept ||
+      request.sessionId !== this.nativeSessionId ||
+      this.nativeModeId() !== this.options.options.acpOptions?.autoAcceptMode?.nativeMode
+    ) {
+      return undefined;
+    }
+    const allowOptions = request.options.filter((option) => option.kind.startsWith("allow"));
+    if (new Set(allowOptions.map((option) => option.kind)).size !== allowOptions.length) {
+      return undefined;
+    }
+    return allowOptions.find((option) => option.kind === "allow_once")?.optionId;
+  }
+
   private sessionUpdate(notification: SessionNotification, interrupted: boolean): void {
     if (notification.sessionId !== this.nativeSessionId || this.processFailed) return;
     if (this.replayWindow) this.lastLoadUpdateAt = performance.now();
+    const { update } = notification;
     if (this.replayWindow === "skip" || interrupted) {
-      const update = notification.update;
+      if (
+        interrupted &&
+        (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+      ) {
+        this.stoppedToolCalls.add(update.toolCallId);
+      }
       if (
         update.sessionUpdate === "available_commands_update" ||
         update.sessionUpdate === "config_option_update" ||
@@ -1215,14 +1235,11 @@ class AcpRuntime {
       }
       return;
     }
-    if (
-      this.replayWindow === "replay" &&
-      notification.update.sessionUpdate === "user_message_chunk"
-    ) {
-      this.reduceUserMessageChunk(notification.update);
+    if (this.replayWindow === "replay" && update.sessionUpdate === "user_message_chunk") {
+      this.reduceUserMessageChunk(update);
       return;
     }
-    this.reduceUpdate(notification.update);
+    this.reduceUpdate(update);
   }
 
   private reduceUpdate(update: SessionUpdate): void {
@@ -1276,9 +1293,9 @@ class AcpRuntime {
   private reduceLiveToolUpdate(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
   ): void {
-    const previous = this.toolCalls.get(update.toolCallId);
     // A stopped tool can still report output and terminal echoes after the next prompt.
-    if (previous?.stopped) return;
+    if (this.stoppedToolCalls.has(update.toolCallId)) return;
+    const previous = this.toolCalls.get(update.toolCallId);
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
     const previousStatus = previous?.snapshot.status;
     const backgroundProgress =
@@ -1420,20 +1437,17 @@ class AcpRuntime {
     options?: { preserveInProgressTools?: boolean; turnId?: string },
   ): void {
     for (const [id, record] of this.toolCalls) {
-      const { snapshot, turnId, settlement, stopped } = record;
-      if (stopped) continue;
+      const { snapshot, turnId, settlement } = record;
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (options?.turnId && options.turnId !== turnId) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
       // Antigravity can send more tool input after Stop even if its row already settled.
-      if (settlement && (state !== "canceled" || !this.outOfTurnActivity)) continue;
-      this.toolCalls.set(id, {
-        ...record,
-        settlement: settlement ?? state,
-        stopped: state === "canceled",
-      });
-      if (!settlement)
-        this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
+      if (state === "canceled" && (!settlement || this.outOfTurnActivity)) {
+        this.stoppedToolCalls.add(id);
+      }
+      if (settlement) continue;
+      this.toolCalls.set(id, { ...record, settlement: state });
+      this.emitToolCall(terminalToolItem(toolTimelineItem(snapshot), state), turnId);
     }
     for (const item of this.vendorToolCalls.values()) {
       this.emit({
