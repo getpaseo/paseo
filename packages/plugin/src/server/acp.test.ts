@@ -4621,4 +4621,90 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("releases a deferred turn when a running tool is later reclassified as an excluded daemon", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "late-daemon",
+            name: "run_command",
+            title: "Dev server",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-late-daemon",
+      label: "Deferred Late Daemon",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 25,
+          quietLimitMs: 60,
+          keepsTurnOpen(toolCall) {
+            const input = toolCall.input;
+            return !(
+              typeof input === "object" &&
+              input !== null &&
+              !Array.isArray(input) &&
+              input.IsDaemon === true
+            );
+          },
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "late-daemon-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start dev server" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "late-daemon",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // Late update supplies IsDaemon: true -> leaves qualifying work and arms quietLimitMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "late-daemon",
+          rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:late-daemon-turn" &&
+          event.state === "completed",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
 });
