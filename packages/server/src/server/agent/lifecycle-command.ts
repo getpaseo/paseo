@@ -102,8 +102,13 @@ async function requestAgentRunCancellation(
 export async function cancelAgentRunCommand(
   dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager" | "logger">,
   agentId: string,
+  options?: { includeBackgroundWork?: boolean },
 ): Promise<CancelAgentRunResult> {
-  const result = await requestAgentRunCancellation(dependencies, agentId, true);
+  const result = await requestAgentRunCancellation(
+    dependencies,
+    agentId,
+    options?.includeBackgroundWork,
+  );
   if (result.cancellation.status === "refused") {
     dependencies.logger.warn(
       { agentId },

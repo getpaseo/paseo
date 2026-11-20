@@ -5334,6 +5334,7 @@ export class Session {
       await cancelAgentRunCommand(
         { agentManager: this.agentManager, logger: this.sessionLogger },
         agentId,
+        { includeBackgroundWork: true },
       );
       if (requestId) {
         const agent = this.agentManager.getAgent(agentId);

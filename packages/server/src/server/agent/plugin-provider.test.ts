@@ -2947,9 +2947,17 @@ test.each(["steer", "stop", "interrupt", "refused follow-up"] as const)(
         await expect.poll(() => calls).toEqual(["Start two commands", "session/cancel"]);
         expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
       } else {
+        const foregroundOnly = await cancelAgentRunCommand(
+          { agentManager: manager, logger },
+          agent.id,
+        );
+        expect(foregroundOnly.cancelled).toBe(false);
+        expect(calls).toEqual(["Start two commands"]);
+
         const { cancelled } = await cancelAgentRunCommand(
           { agentManager: manager, logger },
           agent.id,
+          { includeBackgroundWork: true },
         );
         expect(cancelled).toBe(true);
         await expect.poll(() => calls).toEqual(["Start two commands", "session/cancel"]);
