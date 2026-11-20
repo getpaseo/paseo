@@ -13,6 +13,10 @@ import type {
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { runAcpProvider } from "@getpaseo/plugin/server/acp";
+import { AgentSideConnection, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+import { sendPromptToAgent } from "./agent-prompt.js";
+import { cancelAgentRunCommand } from "./lifecycle-command.js";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -2815,83 +2819,112 @@ test("resumes a goose session saved by the generic ACP provider", async () => {
   }
 });
 
-test("plugin background work and autonomous turns update AgentManager state", async () => {
-  const home = await mkdtemp(join(tmpdir(), "plugin-bg-work-"));
-  const logger = createTestLogger();
-  const storage = new AgentStorage(join(home, "agents"), logger);
-  let emitEvent: ((event: ProviderEvent) => void) | null = null;
-  let openSessionId = "";
-  const harness = createProviderHarness({
-    capabilities: [...CAPABILITIES, "session.can_stop_runtime"],
-    handleInput: async (input, emit) => {
-      emitEvent = emit;
-      if (input.type === "session.open") openSessionId = input.sessionId;
-      return false;
-    },
-  });
-  const registry = new PluginAgentClientRegistry(logger);
-  registry.replace([harness.registration]);
-  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
-  const agent = await manager.createAgent(
-    { provider: harness.registration.id, cwd: home },
-    undefined,
-    { workspaceId: undefined },
-  );
-  try {
-    expect(openSessionId).not.toBe("");
-    emitEvent!({
-      type: "session.background_work",
-      sessionId: openSessionId,
-      items: [
-        {
-          id: "cmd-1",
-          kind: "shell",
-          description: "Typecheck workspace",
-          command: "npm run typecheck",
-          canStop: false,
-        },
-      ],
-    });
-    await expect.poll(() => manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1 });
-    expect(manager.listAgentBackgroundWork(agent.id)).toMatchObject([
-      {
-        id: "cmd-1",
-        kind: "shell",
-        description: "Typecheck workspace",
-        command: "npm run typecheck",
+test.each(["steer", "stop"] as const)(
+  "Antigravity ACP background work through the daemon's %s command",
+  async (action) => {
+    const home = await mkdtemp(join(tmpdir(), "plugin-bg-work-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(join(home, "agents"), logger);
+    const calls: string[] = [];
+    let wake!: () => Promise<void>;
+    const registration = runAcpProvider({
+      id: "test-antigravity",
+      label: "Test Antigravity",
+      acpOptions: { outOfTurnActivity: true },
+      connector: () => {
+        const clientToAgent = new TransformStream();
+        const agentToClient = new TransformStream();
+        const acp = new AgentSideConnection(
+          () => ({
+            initialize: async () => ({ protocolVersion: PROTOCOL_VERSION, agentCapabilities: {} }),
+            newSession: async () => ({ sessionId: "native-session" }),
+            prompt: async ({ sessionId, prompt }) => {
+              const text = prompt[0]?.type === "text" ? prompt[0].text : "";
+              calls.push(text);
+              if (text === "Start two commands") {
+                for (const toolCallId of ["cmd-1", "cmd-2"]) {
+                  await acp.sessionUpdate({
+                    sessionId,
+                    update: {
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title: toolCallId,
+                      kind: "execute",
+                      status: "in_progress",
+                    },
+                  });
+                }
+                wake = () =>
+                  acp.sessionUpdate({
+                    sessionId,
+                    update: {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "cmd-1",
+                      status: "completed",
+                    },
+                  });
+              }
+              return { stopReason: "end_turn" };
+            },
+            cancel: async () => {
+              calls.push("session/cancel");
+            },
+          }),
+          { writable: agentToClient.writable, readable: clientToAgent.readable },
+        );
+        return { writable: clientToAgent.writable, readable: agentToClient.readable };
       },
-    ]);
+    });
+    const registry = new PluginAgentClientRegistry(logger);
+    registry.replace([registration]);
+    const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+    try {
+      const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+        workspaceId: undefined,
+      });
+      const send = async (prompt: string, activeTurnBehavior?: "steer") => {
+        const result = await sendPromptToAgent({
+          agentManager: manager,
+          agentStorage: storage,
+          agentId: agent.id,
+          logger,
+          prompt,
+          activeTurnBehavior,
+        });
+        if (result.disposition !== "turn_started")
+          throw new Error(`Unexpected dispatch: ${result.disposition}`);
+        await result.started;
+        await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+      };
+      await send("Start two commands");
+      expect(manager.listAgentBackgroundWork(agent.id)).toMatchObject([
+        { id: "cmd-1", kind: "shell" },
+        { id: "cmd-2", kind: "shell" },
+      ]);
 
-    emitEvent!({
-      type: "session.background_work",
-      sessionId: openSessionId,
-      items: [],
-    });
-    emitEvent!({
-      type: "session.turn",
-      sessionId: openSessionId,
-      turnId: "acp:autonomous:1",
-      state: "started",
-    });
-    emitEvent!({
-      type: "timeline.item",
-      sessionId: openSessionId,
-      item: { type: "assistant_message", id: "auto-msg-1", text: "All checks passed." },
-    });
-    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
-    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 0 });
-
-    emitEvent!({
-      type: "session.turn",
-      sessionId: openSessionId,
-      turnId: "acp:autonomous:1",
-      state: "completed",
-    });
-    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
-  } finally {
-    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
-    await registry.shutdown();
-    await storage.flush();
-    await rm(home, { recursive: true, force: true });
-  }
-});
+      if (action === "steer") {
+        await wake();
+        await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+        await send("Follow up", "steer");
+        expect(calls).toEqual(["Start two commands", "Follow up"]);
+        expect(manager.listAgentBackgroundWork(agent.id)).toEqual([
+          { id: "cmd-2", kind: "shell", description: "cmd-2", startedAt: expect.any(String) },
+        ]);
+      } else {
+        const { cancelled } = await cancelAgentRunCommand(
+          { agentManager: manager, logger },
+          agent.id,
+        );
+        expect(cancelled).toBe(true);
+        await expect.poll(() => calls).toEqual(["Start two commands", "session/cancel"]);
+        expect(manager.listAgentBackgroundWork(agent.id)).toEqual([]);
+        expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+      }
+    } finally {
+      await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+      await registry.shutdown();
+      await storage.flush();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

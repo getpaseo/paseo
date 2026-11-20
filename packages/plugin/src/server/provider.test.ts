@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { ProviderInputSchema, type ProviderInput } from "./provider.js";
+import { ProviderEventSchema, ProviderInputSchema, type ProviderInput } from "./provider.js";
+
+it("advertises session interruption for background work without granting an item Stop", () => {
+  const item = { id: "tool", kind: "shell", description: "Build" };
+  const inventory = {
+    type: "session.background_work",
+    sessionId: "session-1",
+    canInterruptSession: true,
+  };
+  expect(ProviderEventSchema.parse({ ...inventory, items: [{ ...item, canStop: true }] })).toEqual({
+    ...inventory,
+    items: [item],
+  });
+});
 
 type ReviewMode = "uncommitted" | "base" | "all";
 type Delivery = "auto" | "steer";

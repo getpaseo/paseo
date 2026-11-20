@@ -8,6 +8,7 @@ interface BackgroundWorkClient {
     features?: { agentBackgroundWork?: boolean; agentBackgroundWorkStop?: boolean } | null;
   } | null;
   stopAgentBackgroundWork(agentId: string, item: PaseoAgentBackgroundWorkItem): Promise<void>;
+  cancelAgent(agentId: string): Promise<void>;
   listAgentBackgroundWork(agentId: string): Promise<PaseoAgentBackgroundWorkItem[]>;
   observeAgentBackgroundWork(): {
     subscribe(observer: {
@@ -45,6 +46,10 @@ export function createHostBackgroundWorkModel(
     return items.map(({ canStop: _canStop, stopToken: _stopToken, ...item }) => item);
   };
   return createBackgroundWorkModel({
+    interruptSession: () => {
+      if (!client) return Promise.reject(new Error("Host disconnected"));
+      return client.cancelAgent(agentId);
+    },
     stop: (item) => {
       if (!client) return Promise.reject(new Error("Host disconnected"));
       return client.stopAgentBackgroundWork(agentId, item);

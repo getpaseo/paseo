@@ -3317,7 +3317,8 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    const acceptsFollowUp = this.runs.acceptsFollowUp(agentId);
+    if (existingAgent.activeForegroundTurnId || (this.runs.hasRun(agentId) && !acceptsFollowUp)) {
       this.logger.trace(
         {
           agentId,
@@ -3336,6 +3337,8 @@ export class AgentManager {
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
 
+    // The provider settles this autonomous turn when it admits the new prompt.
+    if (acceptsFollowUp) this.runs.clearAgentRun(agentId);
     const pendingRun = this.runs.createPendingRun(agentId);
     promptStart?.bind(pendingRun);
 
@@ -3717,7 +3720,7 @@ export class AgentManager {
           return { status: "starting" as const, run: starting };
         }
         assertAdmission?.(agent);
-        if (!this.hasInFlightRun(agent.id)) {
+        if (!this.hasInFlightRun(agent.id) || this.runs.acceptsFollowUp(agent.id)) {
           return {
             status: "reserved" as const,
             iterator: this.streamAgent(agent.id, prompt, options, promptStart),
@@ -3924,8 +3927,21 @@ export class AgentManager {
     }
   }
 
-  async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => {
+  async cancelAgentRun(
+    agentId: string,
+    options?: { includeBackgroundWork?: boolean },
+  ): Promise<AgentRunCancellationResult> {
+    return this.runForegroundMutation(agentId, async () => {
+      if (options?.includeBackgroundWork) {
+        await this.drainSessionEvents(agentId);
+        if (!this.hasInFlightRun(agentId)) {
+          if (!this.backgroundWork.canInterruptSession(agentId)) return { status: "not_running" };
+          const { session } = this.requireSessionAgent(agentId);
+          const acknowledged = await this.interruptSession(session, agentId);
+          await this.drainSessionEvents(agentId);
+          return { status: acknowledged ? "settled" : "refused" };
+        }
+      }
       this.requireSessionAgent(agentId).pendingReplacement = false;
       return this.cancelAgentRunNow(agentId);
     });
@@ -4825,7 +4841,7 @@ export class AgentManager {
       const items =
         event.items === null
           ? this.backgroundWork.clear(agent.id)
-          : this.backgroundWork.apply(agent.id, event.items);
+          : this.backgroundWork.apply(agent.id, event.items, undefined, event.canInterruptSession);
       this.publishBackgroundWork(agent.id, items);
       return;
     }
@@ -5391,7 +5407,13 @@ export class AgentManager {
         });
         return undefined;
       case "turn_started":
-        this.onStreamTurnStarted({ agent, eventTurnId, isForegroundEvent, flags });
+        this.onStreamTurnStarted({
+          agent,
+          eventTurnId,
+          isForegroundEvent,
+          flags,
+          acceptsFollowUp: event.acceptsFollowUp,
+        });
         return undefined;
       case "permission_requested":
         this.onStreamPermissionRequested(agent, event);
@@ -5570,6 +5592,7 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     flags: StreamEventFlags;
+    acceptsFollowUp?: boolean;
   }): void {
     const { agent, eventTurnId, isForegroundEvent, flags } = params;
     this.logger.trace(
@@ -5593,7 +5616,7 @@ export class AgentManager {
       flags.shouldNotifyWaiters = false;
       return;
     }
-    this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null);
+    this.runs.trackAutonomousRun(agent.id, eventTurnId ?? null, params.acceptsFollowUp);
     if (eventTurnId) {
       this.openActiveTurn(agent, eventTurnId, new Date());
     }

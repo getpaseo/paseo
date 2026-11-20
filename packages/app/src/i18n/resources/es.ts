@@ -411,6 +411,7 @@ export const es: TranslationResources = {
       notRunning: "Ya no está en ejecución",
       dismiss: "Cerrar",
       stop: "Detener",
+      stopSession: "Detener el agente y su trabajo en segundo plano",
       stopping: "Deteniendo…",
       stopError: "No se pudo confirmar la detención.",
       label: "Segundo plano",

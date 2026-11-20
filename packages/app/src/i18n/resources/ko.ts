@@ -407,6 +407,7 @@ export const ko: TranslationResources = {
       notRunning: "더 이상 실행 중이 아님",
       dismiss: "닫기",
       stop: "중지",
+      stopSession: "에이전트와 백그라운드 작업 중지",
       stopping: "중지 중…",
       stopError: "중지를 확인하지 못했습니다.",
       label: "백그라운드",

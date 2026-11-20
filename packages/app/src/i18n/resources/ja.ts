@@ -411,6 +411,7 @@ export const ja: TranslationResources = {
       notRunning: "実行は終了しました",
       dismiss: "閉じる",
       stop: "停止",
+      stopSession: "エージェントとそのバックグラウンド処理を停止",
       stopping: "停止中…",
       stopError: "停止を確認できませんでした。",
       label: "バックグラウンド",

@@ -52,10 +52,10 @@ export const AgentTracks = memo(function AgentTracks({
     rows: subagentRows,
   });
   const { tabId } = usePaneContext();
-  const backgroundWorkCount = useSessionStore((state) => {
+  const backgroundWork = useSessionStore((state) => {
     const session = state.sessions[serverId];
     const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
-    return agent?.backgroundWork?.count ?? 0;
+    return agent?.backgroundWork;
   });
   const backgroundModel = useMemo(
     () => createHostBackgroundWorkModel(serverId, agentId),
@@ -121,7 +121,11 @@ export const AgentTracks = memo(function AgentTracks({
 
   return (
     <ComposerTrackBar>
-      <BackgroundWorkTrack model={backgroundModel} count={backgroundWorkCount} />
+      <BackgroundWorkTrack
+        model={backgroundModel}
+        count={backgroundWork?.count ?? 0}
+        canInterruptSession={backgroundWork?.canInterruptSession === true}
+      />
       {parentAgentId ? <ParentAgentPill serverId={serverId} parentAgentId={parentAgentId} /> : null}
       <AgentTaskList tasks={tasks} />
       <SubagentsTrack

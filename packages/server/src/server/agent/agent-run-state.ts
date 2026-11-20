@@ -31,6 +31,7 @@ export interface AutonomousAgentRun {
   token: string;
   kind: "autonomous";
   turnId: string | null;
+  acceptsFollowUp: boolean;
   started: true;
   settled: boolean;
   settledPromise: Promise<void>;
@@ -99,7 +100,16 @@ export class AgentRunState {
     return run.start.status === "started" ? run.start.turnId : null;
   }
 
-  trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {
+  acceptsFollowUp(agentId: string): boolean {
+    const run = this.runs.get(agentId);
+    return run?.kind === "autonomous" && run.acceptsFollowUp;
+  }
+
+  trackAutonomousRun(
+    agentId: string,
+    turnId: string | null,
+    acceptsFollowUp = false,
+  ): TrackedAgentRun {
     const current = this.runs.get(agentId);
     if (current) {
       return current;
@@ -109,6 +119,7 @@ export class AgentRunState {
       ...createTrackedRunState(),
       kind: "autonomous",
       turnId,
+      acceptsFollowUp,
       started: true,
     };
     this.runs.set(agentId, run);

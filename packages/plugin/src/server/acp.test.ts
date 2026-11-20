@@ -2534,13 +2534,13 @@ describe("ACP out-of-turn background activity", () => {
       expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
         type: "session.background_work",
         sessionId: "session-1",
+        canInterruptSession: true,
         items: [
           {
             id: "cmd-1",
             kind: "shell",
             description: "Typecheck workspace",
             command: "npm run typecheck",
-            canStop: false,
           },
         ],
       });
@@ -2614,13 +2614,13 @@ describe("ACP out-of-turn background activity", () => {
       expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
         type: "session.background_work",
         sessionId: "session-1",
+        canInterruptSession: true,
         items: [
           {
             id: "cmd-2",
             kind: "shell",
             description: "npm run lint",
             command: "npm run lint",
-            canStop: false,
           },
         ],
       });
@@ -2664,17 +2664,20 @@ describe("ACP out-of-turn background activity", () => {
 
   it("cancels an active out-of-turn wakeup and clears background work on interrupt", async () => {
     const { connector, instances } = connectorHarness({
-      promptUpdates: () => [
-        {
-          sessionUpdate: "tool_call",
-          toolCallId: "cmd-1",
-          name: "run_command",
-          kind: "execute",
-          title: "sleep 30",
-          status: "in_progress",
-        },
-        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
-      ],
+      promptUpdates: (text) =>
+        text === "Start"
+          ? [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd-1",
+                name: "run_command",
+                kind: "execute",
+                title: "sleep 30",
+                status: "in_progress",
+              },
+              { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
+            ]
+          : [],
     });
     const registration = runAcpProvider({
       id: "out-of-turn-cancel",
@@ -2753,7 +2756,24 @@ describe("ACP out-of-turn background activity", () => {
       });
       expect(await queryCanStop(connection, events, "stop-after-cancel")).toBe(true);
 
-      // A late tool_call_update echoing the canceled tool's failure must not open a phantom turn.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Follow-up" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-2" &&
+          event.state === "completed",
+      );
+
+      // The canceled tool's terminal echo can arrive after the next prompt finishes.
       const turnCountAfterCancel = events.filter((event) => event.type === "session.turn").length;
       agent.notify("session/update", {
         sessionId: "connector-session",
@@ -2966,6 +2986,28 @@ describe("ACP out-of-turn background activity", () => {
           event.state === "completed",
       );
       expect(await queryCanStop(connection, events, "stop-after-thought-only")).toBe(true);
+
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-2",
+          kind: "execute",
+          title: "Long command",
+          status: "in_progress",
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:autonomous:3" &&
+          event.state === "completed",
+      );
+      expect(events.findLast((event) => event.type === "session.background_work")).toMatchObject({
+        items: [{ id: "cmd-2", description: "Long command" }],
+      });
+      expect(await queryCanStop(connection, events, "stop-with-detached-command")).toBe(false);
     } finally {
       await connection.close();
     }
@@ -3079,7 +3121,7 @@ describe("ACP out-of-turn background activity", () => {
     }
   });
 
-  it("preserves other background work without sending cancel when a follow-up prompt arrives mid-wakeup", async () => {
+  it("preserves earlier background work when a follow-up is rejected", async () => {
     let cancelCount = 0;
     const { connector, instances } = connectorHarness({
       handleMessage: (_instance, message) => {
@@ -3087,6 +3129,13 @@ describe("ACP out-of-turn background activity", () => {
           cancelCount += 1;
         }
         return false;
+      },
+      handleRequest: (instance, request) => {
+        const params = request.params as { prompt?: Array<{ text?: string }> };
+        if (request.method !== "session/prompt" || params.prompt?.[0]?.text !== "Second")
+          return false;
+        instance.reject(request, "Follow-up rejected");
+        return true;
       },
       promptUpdates: (text) =>
         text === "First"
@@ -3112,12 +3161,7 @@ describe("ACP out-of-turn background activity", () => {
                 content: { type: "text", text: "Waiting on both." },
               },
             ]
-          : [
-              {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "Handled follow-up." },
-              },
-            ],
+          : [],
     });
     const registration = runAcpProvider({
       id: "out-of-turn-followup",
@@ -3186,9 +3230,7 @@ describe("ACP out-of-turn background activity", () => {
       await waitForEvent(
         events,
         (event) =>
-          event.type === "session.turn" &&
-          event.turnId === "acp:msg-2" &&
-          event.state === "completed",
+          event.type === "session.turn" && event.turnId === "acp:msg-2" && event.state === "failed",
       );
       expect(events).toContainEqual({
         type: "session.turn",
@@ -3200,12 +3242,12 @@ describe("ACP out-of-turn background activity", () => {
       expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
         type: "session.background_work",
         sessionId: "session-1",
+        canInterruptSession: true,
         items: [
           {
             id: "cmd-2",
             kind: "shell",
             description: "cmd-2",
-            canStop: false,
           },
         ],
       });

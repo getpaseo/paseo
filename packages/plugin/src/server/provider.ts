@@ -510,7 +510,6 @@ export interface ProviderBackgroundWorkItem {
   kind: string;
   description: string | null;
   command?: string;
-  canStop?: boolean;
 }
 
 export interface ProviderPermissionAction {
@@ -731,6 +730,8 @@ export type ProviderEvent =
       sessionId: string;
       turnId: string;
       state: "started" | "completed" | "failed" | "canceled";
+      /** On an autonomous start, signals that a new prompt can take over without interrupting. */
+      acceptsFollowUp?: boolean;
       error?: ProviderError;
     }
   | { type: "session.usage"; sessionId: string; turnId?: string; usage: ProviderUsage }
@@ -744,6 +745,8 @@ export type ProviderEvent =
       sessionId: string;
       /** Full replacement of the session's live background work, or null to clear. */
       items: ProviderBackgroundWorkItem[] | null;
+      /** The session's interrupt operation also stops its background work. */
+      canInterruptSession?: boolean;
     }
   | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
 
@@ -1560,6 +1563,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       sessionId: idSchema,
       turnId: idSchema,
       state: z.enum(["started", "completed", "failed", "canceled"]),
+      acceptsFollowUp: z.boolean().optional(),
       error: providerErrorSchema.optional(),
     })
     .strip(),
@@ -1610,11 +1614,11 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
               kind: z.string().min(1),
               description: z.string().nullable(),
               command: z.string().optional(),
-              canStop: z.boolean().optional(),
             })
             .strip(),
         )
         .nullable(),
+      canInterruptSession: z.boolean().optional(),
     })
     .strip(),
   z

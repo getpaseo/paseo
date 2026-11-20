@@ -420,7 +420,7 @@ export type AgentTimelineItem =
 
 export type AgentStreamEvent =
   | { type: "thread_started"; sessionId: string; provider: AgentProvider }
-  | { type: "turn_started"; provider: AgentProvider; turnId?: string }
+  | { type: "turn_started"; provider: AgentProvider; turnId?: string; acceptsFollowUp?: boolean }
   | { type: "turn_completed"; provider: AgentProvider; usage?: AgentUsage; turnId?: string }
   | { type: "usage_updated"; provider: AgentProvider; usage: AgentUsage; turnId?: string }
   | {
@@ -488,6 +488,7 @@ export type AgentStreamEvent =
       type: "background_work";
       provider: AgentProvider;
       items: import("./background-work/index.js").AgentBackgroundWorkInput[] | null;
+      canInterruptSession?: boolean;
     };
 
 export function getAgentStreamEventTurnId(event: AgentStreamEvent): string | undefined {

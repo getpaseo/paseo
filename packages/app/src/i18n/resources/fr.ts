@@ -411,6 +411,7 @@ export const fr: TranslationResources = {
       notRunning: "N’est plus en cours",
       dismiss: "Fermer",
       stop: "Arrêter",
+      stopSession: "Arrêter l’agent et son travail en arrière-plan",
       stopping: "Arrêt…",
       stopError: "Impossible de confirmer l’arrêt.",
       label: "Arrière-plan",

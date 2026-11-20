@@ -406,6 +406,7 @@ export const zhCN: TranslationResources = {
       notRunning: "已不再运行",
       dismiss: "关闭",
       stop: "停止",
+      stopSession: "停止智能体及其后台任务",
       stopping: "正在停止…",
       stopError: "无法确认已停止。",
       label: "后台",

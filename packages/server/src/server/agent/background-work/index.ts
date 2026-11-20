@@ -61,16 +61,20 @@ function encodeProviderItemId(id: string): string {
  * Daemon services publish individual items that outlive provider sessions.
  */
 export class AgentBackgroundWorkStore {
-  private readonly providerItems = new Map<string, AgentBackgroundWorkItem[]>();
+  private readonly providerWork = new Map<
+    string,
+    { items: AgentBackgroundWorkItem[]; canInterruptSession: boolean }
+  >();
   private readonly daemonItems = new Map<string, Map<string, DaemonBackgroundWork>>();
 
   apply(
     agentId: string,
     inputs: readonly AgentBackgroundWorkInput[],
     timestamp: string = new Date().toISOString(),
+    canInterruptSession = false,
   ): AgentBackgroundWorkItem[] | null {
-    const previous = this.providerItems.get(agentId);
-    const previousById = new Map(previous?.map((item) => [item.id, item]));
+    const previous = this.providerWork.get(agentId);
+    const previousById = new Map(previous?.items.map((item) => [item.id, item]));
     const seen = new Set<string>();
     const next: AgentBackgroundWorkItem[] = [];
     for (const input of inputs) {
@@ -88,8 +92,9 @@ export class AgentBackgroundWorkStore {
         startedAt: previousById.get(id)?.startedAt ?? timestamp,
       });
     }
-    if (previous && sameItems(previous, next)) return null;
-    this.providerItems.set(agentId, next);
+    if (previous?.canInterruptSession === canInterruptSession && sameItems(previous.items, next))
+      return null;
+    this.providerWork.set(agentId, { items: next, canInterruptSession });
     return this.list(agentId);
   }
 
@@ -130,7 +135,7 @@ export class AgentBackgroundWorkStore {
   }
 
   authorizeProviderStop(agentId: string, itemId: string, stopToken: string): string {
-    const item = this.providerItems.get(agentId)?.find(({ id }) => id === itemId);
+    const item = this.providerWork.get(agentId)?.items.find(({ id }) => id === itemId);
     if (!item?.canStop || item.stopToken !== stopToken) {
       throw new Error("Background work is no longer available to stop");
     }
@@ -138,15 +143,20 @@ export class AgentBackgroundWorkStore {
   }
 
   list(agentId: string): AgentBackgroundWorkItem[] {
-    const items = [...(this.providerItems.get(agentId) ?? [])];
+    const items = [...(this.providerWork.get(agentId)?.items ?? [])];
     for (const { item } of this.daemonItems.get(agentId)?.values() ?? []) {
       items.push(item);
     }
     return items;
   }
 
+  canInterruptSession(agentId: string): boolean {
+    const work = this.providerWork.get(agentId);
+    return work?.canInterruptSession === true && work.items.length > 0;
+  }
+
   summary(agentId: string): AgentBackgroundWorkSummary | undefined {
-    const items = this.providerItems.get(agentId);
+    const items = this.providerWork.get(agentId)?.items;
     const daemonItems = this.daemonItems.get(agentId);
     if (!items && !daemonItems) return undefined;
 
@@ -155,11 +165,15 @@ export class AgentBackgroundWorkStore {
     for (const work of daemonItems?.values() ?? []) {
       if (work.countsAsRunning) runningCount++;
     }
-    return runningCount === count ? { count } : { count, runningCount };
+    return {
+      count,
+      ...(runningCount === count ? {} : { runningCount }),
+      ...(this.canInterruptSession(agentId) ? { canInterruptSession: true } : {}),
+    };
   }
 
   clear(agentId: string): AgentBackgroundWorkItem[] | null {
-    if (!this.providerItems.delete(agentId)) return null;
+    if (!this.providerWork.delete(agentId)) return null;
     return this.list(agentId);
   }
 }

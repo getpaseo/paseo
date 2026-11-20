@@ -1650,7 +1650,8 @@ class PluginAgentSession implements AgentSession {
           {
             type: "background_work",
             provider: this.provider,
-            items: event.items ? event.items.map((item) => ({ ...item })) : null,
+            items: event.items,
+            canInterruptSession: event.canInterruptSession,
           },
         ];
       case "session.runtime_failed":
@@ -1665,7 +1666,12 @@ class PluginAgentSession implements AgentSession {
   private translateTurn(event: Extract<ProviderEvent, { type: "session.turn" }>): AgentStreamEvent {
     if (event.state === "started") {
       this.currentTurnId = event.turnId;
-      return { type: "turn_started", provider: this.provider, turnId: event.turnId };
+      return {
+        type: "turn_started",
+        provider: this.provider,
+        turnId: event.turnId,
+        ...(event.acceptsFollowUp ? { acceptsFollowUp: true } : {}),
+      };
     }
     if (this.currentTurnId === event.turnId) this.currentTurnId = null;
     if (event.state === "completed") {

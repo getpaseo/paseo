@@ -3,6 +3,7 @@ import type { PaseoAgentBackgroundWorkItem as AgentBackgroundWorkItem } from "@g
 interface Port {
   list(): Promise<AgentBackgroundWorkItem[]>;
   stop?(item: AgentBackgroundWorkItem): Promise<void>;
+  interruptSession?(): Promise<void>;
   observe(callbacks: {
     snapshot(): void;
     disconnected(): void;
@@ -15,6 +16,7 @@ interface BackgroundWorkState {
   status: "loading" | "stale" | "ready" | "error";
   items: AgentBackgroundWorkItem[] | null;
   stops?: Record<string, { status: "pending" | "error"; item: AgentBackgroundWorkItem }>;
+  sessionStop?: "pending" | "error";
 }
 
 export function createBackgroundWorkModel(port: Port) {
@@ -25,10 +27,7 @@ export function createBackgroundWorkModel(port: Port) {
   let observationFailed = false;
   const listeners = new Set<() => void>();
   const publish = (next: BackgroundWorkState) => {
-    state =
-      next.stops === undefined && state.stops === undefined
-        ? next
-        : { ...next, stops: next.stops ?? state.stops };
+    state = { ...state, ...next };
     for (const listener of listeners) listener();
   };
   const refresh = async () => {
@@ -58,7 +57,12 @@ export function createBackgroundWorkModel(port: Port) {
               { ...entry, status: "error" as const },
             ]),
           );
-        publish({ status: state.items === null ? "loading" : "stale", items: state.items, stops });
+        publish({
+          status: state.items === null ? "loading" : "stale",
+          items: state.items,
+          ...(stops ? { stops } : {}),
+          ...(state.sessionStop === "pending" ? { sessionStop: "error" } : {}),
+        });
       },
       failed: () => {
         observationFailed = true;
@@ -93,6 +97,18 @@ export function createBackgroundWorkModel(port: Port) {
       } catch {
         if (generation === stopGeneration)
           publish({ ...state, stops: { ...state.stops, [token]: { status: "error", item } } });
+      }
+    },
+    interruptSession: async () => {
+      if (!port.interruptSession || state.status !== "ready" || state.sessionStop === "pending")
+        return;
+      const generation = stopGeneration;
+      publish({ ...state, sessionStop: "pending" });
+      try {
+        await port.interruptSession();
+        if (generation === stopGeneration) publish({ ...state, sessionStop: undefined });
+      } catch {
+        if (generation === stopGeneration) publish({ ...state, sessionStop: "error" });
       }
     },
     retry: () => {

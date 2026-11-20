@@ -410,6 +410,7 @@ export const ptBR: TranslationResources = {
       notRunning: "Não está mais em execução",
       dismiss: "Dispensar",
       stop: "Parar",
+      stopSession: "Parar o agente e seu trabalho em segundo plano",
       stopping: "Parando…",
       stopError: "Não foi possível confirmar a parada.",
       label: "Segundo plano",

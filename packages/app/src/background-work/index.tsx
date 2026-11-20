@@ -18,12 +18,14 @@ function kindKey(kind: string): "shell" | "monitor" | "heartbeat" | "other" {
 export function BackgroundWorkTrack({
   model,
   count,
+  canInterruptSession,
 }: {
   model: ReturnType<typeof createHostBackgroundWorkModel>;
   count: number;
+  canInterruptSession: boolean;
 }) {
   const { t } = useTranslation();
-  const { items, status, stops } = useSyncExternalStore(
+  const { items, status, stops, sessionStop } = useSyncExternalStore(
     model.subscribe,
     model.getSnapshot,
     model.getSnapshot,
@@ -77,6 +79,25 @@ export function BackgroundWorkTrack({
           stopStatus={stops?.[item.stopToken ?? ""]?.status}
         />
       ))}
+      {canInterruptSession && status === "ready" ? (
+        <ComposerTrackRow>
+          <View style={styles.row}>
+            {sessionStop === "error" ? (
+              <Text style={styles.facts}>{t("message.backgroundWork.stopError")}</Text>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={sessionStop === "pending"}
+              onPress={model.interruptSession}
+            >
+              {sessionStop === "pending"
+                ? t("message.backgroundWork.stopping")
+                : t("message.backgroundWork.stopSession")}
+            </Button>
+          </View>
+        </ComposerTrackRow>
+      ) : null}
     </ComposerTrackPill>
   );
 }

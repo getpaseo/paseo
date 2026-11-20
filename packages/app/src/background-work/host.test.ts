@@ -10,6 +10,7 @@ test("retries a failed observation and receives subsequent updates", async () =>
   }
   const observers: Observer[] = [];
   let releases = 0;
+  const interrupted: string[] = [];
   const item = {
     id: "shell",
     kind: "shell",
@@ -19,6 +20,10 @@ test("retries a failed observation and receives subsequent updates", async () =>
   const client = {
     getLastServerInfoMessage: () => ({ features: { agentBackgroundWork: true } }),
     stopAgentBackgroundWork: async () => {},
+    cancelAgent: async (agentId: string) => {
+      interrupted.push(agentId);
+      if (interrupted.length === 1) throw new Error("Stop failed");
+    },
     listAgentBackgroundWork: async () => [item],
     observeAgentBackgroundWork: () => ({
       subscribe: (observer: Observer) => {
@@ -54,6 +59,13 @@ test("retries a failed observation and receives subsequent updates", async () =>
     payload: { agentId: "agent", items: [] },
   });
   expect(model.getSnapshot()).toEqual({ status: "ready", items: [] });
+  const firstStop = model.interruptSession();
+  expect(model.getSnapshot().sessionStop).toBe("pending");
+  await firstStop;
+  expect(model.getSnapshot().sessionStop).toBe("error");
+  await model.interruptSession();
+  expect(model.getSnapshot().sessionStop).toBeUndefined();
+  expect(interrupted).toEqual(["agent", "agent"]);
   unsubscribe();
 });
 
@@ -71,6 +83,7 @@ test("starts observing after the same client reconnects", async () => {
     getLastServerInfoMessage: () =>
       connected ? { features: { agentBackgroundWork: true } } : null,
     stopAgentBackgroundWork: async () => {},
+    cancelAgent: async () => {},
     listAgentBackgroundWork: async () => [item],
     observeAgentBackgroundWork: () => ({
       subscribe: (observer: { snapshot(): void }) => {

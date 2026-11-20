@@ -907,6 +907,8 @@ export const AgentBackgroundWorkSummarySchema = z.object({
   count: z.number().int().nonnegative(),
   /** Defaults to the total count when omitted. */
   runningCount: z.number().int().nonnegative().optional(),
+  /** The session interrupt command also stops its current background work. */
+  canInterruptSession: z.boolean().optional(),
 });
 
 export type AgentBackgroundWorkSummary = z.infer<typeof AgentBackgroundWorkSummarySchema>;

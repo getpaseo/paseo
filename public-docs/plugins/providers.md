@@ -331,6 +331,9 @@ turn or finish as a side effect with a `completed` prompt result.
 Advertise only capabilities you implement. If steering is unsupported, omit `prompt.steer`; Paseo
 can replace the active turn instead.
 
+For a turn the session starts on its own, set `acceptsFollowUp: true` on the started
+`session.turn` event if the next ordinary prompt can take over without an interrupt.
+
 ## Permit idle runtime cleanup
 
 Paseo can release an idle resumable session after one hour when its daemon baseline allows cleanup.
@@ -368,6 +371,10 @@ case "session.can_stop_runtime": {
 queued completion reports, or pending autonomous replies. This query must not stop or mutate the
 session. Return `false` while work remains. A rejected query, invalid response, or timeout also
 keeps the runtime alive. Never respond with `request.completed` for this query.
+
+Publish `session.background_work` to replace the live background-work list. Set
+`canInterruptSession: true` when `session.interrupt` also stops that work. Paseo offers a
+session-wide Stop action while the list contains work. Publish an empty list when the work stops.
 
 Paseo always checks foreground work, permissions, queued deliveries, lifecycle operations,
 working managed/native descendants, and outstanding local or remote finish subscriptions for the

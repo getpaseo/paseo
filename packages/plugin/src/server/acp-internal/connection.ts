@@ -669,7 +669,6 @@ class AcpRuntime {
     }
     const prompt = toAcpPrompt(input.prompt);
     this.replayWindow = null;
-    this.canceledToolCalls.clear();
     const turnId = `acp:${input.prompt.clientMessageId}`;
     this.fallbackChunkIds.clear();
     this.emit({
@@ -737,8 +736,11 @@ class AcpRuntime {
       async (error): Promise<void> => {
         await this.drainNotifications();
         this.fallbackChunkIds.clear();
-        this.terminalizeTransientItems("failed");
-        this.clearBackgroundWork();
+        const canceled = this.activePrompt?.cancelling === true;
+        this.terminalizeTransientItems(canceled ? "canceled" : "failed", {
+          preserveBackgroundTools: !canceled,
+        });
+        if (canceled) this.clearBackgroundWork();
         this.finishTurnPermissions(turnId);
         if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
         this.emit({
@@ -1384,10 +1386,11 @@ class AcpRuntime {
 
   private terminalizeTransientItems(
     state: "completed" | "failed" | "canceled",
-    options?: { preserveInProgressTools?: boolean },
+    options?: { preserveInProgressTools?: boolean; preserveBackgroundTools?: boolean },
   ): void {
     for (const [id, snapshot] of this.toolCalls) {
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
+      if (options?.preserveBackgroundTools && this.backgroundToolCalls.has(id)) continue;
       if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
       const completed: AcpToolCallSnapshot = {
         ...snapshot,
@@ -1463,6 +1466,7 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       turnId,
       state: "started",
+      acceptsFollowUp: true,
     });
   }
 
@@ -1480,15 +1484,6 @@ class AcpRuntime {
     this.syncAutonomousTimer();
   }
 
-  private hasForegroundInProgressTool(): boolean {
-    for (const [id, snapshot] of this.toolCalls) {
-      if (snapshot.status === "in_progress" && !this.backgroundToolCalls.has(id)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private syncAutonomousTimer(): void {
     const turn = this.autonomousTurn;
     if (!turn || !this.outOfTurnActivity) return;
@@ -1498,10 +1493,6 @@ class AcpRuntime {
     }
     if (!turn.replyOpen && turn.sawAssistantMessage) {
       this.scheduleAutonomousSettle(this.outOfTurnActivity.settleDelayMs);
-      return;
-    }
-    if (!turn.replyOpen && this.hasForegroundInProgressTool()) {
-      this.cancelAutonomousSettle();
       return;
     }
     this.scheduleAutonomousSettle(this.outOfTurnActivity.quietLimitMs);
@@ -1593,6 +1584,7 @@ class AcpRuntime {
       type: "session.background_work",
       sessionId: this.options.boundarySessionId,
       items,
+      ...(items.length > 0 ? { canInterruptSession: true } : {}),
     });
   }
 
@@ -2012,7 +2004,6 @@ function toBackgroundWorkItem(snapshot: AcpToolCallSnapshot): ProviderBackground
     kind,
     description: summary ?? snapshot.title ?? snapshot.name ?? null,
     ...(command ? { command } : {}),
-    canStop: false,
   };
 }
 

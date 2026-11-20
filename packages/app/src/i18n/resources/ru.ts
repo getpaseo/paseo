@@ -410,6 +410,7 @@ export const ru: TranslationResources = {
       notRunning: "Больше не выполняется",
       dismiss: "Закрыть",
       stop: "Остановить",
+      stopSession: "Остановить агента и его фоновые задачи",
       stopping: "Остановка…",
       stopError: "Не удалось подтвердить остановку.",
       label: "В фоне",

@@ -405,6 +405,7 @@ export const en = {
       notRunning: "No longer running",
       dismiss: "Dismiss",
       stop: "Stop",
+      stopSession: "Stop agent and its background work",
       stopping: "Stopping…",
       stopError: "Could not confirm stop.",
       label: "Background",

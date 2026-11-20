@@ -406,6 +406,7 @@ export const ar: TranslationResources = {
       notRunning: "لم يعد قيد التشغيل",
       dismiss: "إغلاق",
       stop: "إيقاف",
+      stopSession: "إيقاف الوكيل وعمله في الخلفية",
       stopping: "جارٍ الإيقاف…",
       stopError: "تعذر تأكيد الإيقاف.",
       label: "في الخلفية",

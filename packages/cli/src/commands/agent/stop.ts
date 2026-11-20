@@ -23,7 +23,7 @@ export const stopSchema: OutputSchema<StopResult> = {
 
 export function addStopOptions(cmd: Command): Command {
   return cmd
-    .description("Interrupt an agent if it is running (no-op for idle agents)")
+    .description("Interrupt an active agent or its cancellable session background work")
     .argument("[id]", "Agent ID (or prefix) - optional if --all or --cwd specified")
     .option("--all", "Stop all agents")
     .option("--cwd <path>", "Stop all agents in directory");
@@ -81,10 +81,11 @@ export async function runStopCommand(
       agents = [fetchResult.agent];
     }
 
-    // Interrupt each running agent. Idle agents are a no-op.
     const stopResults = await Promise.all(
       agents.map(async (agent) => {
-        if (agent.status !== "running") return { ok: true as const, id: agent.id, stopped: false };
+        if (agent.status !== "running" && !agent.backgroundWork?.canInterruptSession) {
+          return { ok: true as const, id: agent.id, stopped: false };
+        }
         try {
           await client.cancelAgent(agent.id);
           return { ok: true as const, id: agent.id, stopped: true };
