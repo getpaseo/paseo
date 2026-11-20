@@ -114,7 +114,7 @@ function HubHero() {
   return (
     <header className="space-y-6">
       <h1>
-        <PaseoHubLockup className="h-10 w-auto text-foreground md:h-12" />
+        <PaseoHubLockup size="display" className="h-10 w-auto text-foreground md:h-12" />
         <span className="sr-only">{t("hub.title")}</span>
       </h1>
       <p className="max-w-2xl text-lg leading-relaxed text-white/70">{t("hub.intro")}</p>
