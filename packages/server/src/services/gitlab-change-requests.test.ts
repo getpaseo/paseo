@@ -78,7 +78,7 @@ describe("GitLab change request URL resolution and description", () => {
       gitlabChangeRequestHost(
         "https://gitlab.example.internal:8443/Group/Repo/-/merge_requests/12",
       ),
-    ).toBe("gitlab.example.internal");
+    ).toBe("gitlab.example.internal:8443");
   });
 
   it("rejects invalid GitLab MR URLs", () => {
@@ -717,40 +717,48 @@ describe("GitLab ChangeRequestSource polling", () => {
     }
   });
 
-  it("looks up the project relative to the configured GitLab API prefix", async () => {
-    vi.useFakeTimers();
-    const url = "https://gitlab.example.org/gitlab/team/app/-/merge_requests/1";
-    const { runner } = createFakeGlabRunner((args) => {
-      if (args[0] === "auth") return { stdout: "Logged in", stderr: "" };
-      if (args[0] === "config") {
-        expect(args).toEqual(["config", "get", "api_host", "--host", "gitlab.example.org"]);
-        return { stdout: "gitlab.example.org/gitlab\n", stderr: "" };
-      }
-      if (args.at(-1) === "projects/team%2Fapp/merge_requests/1") {
-        return httpJson({ iid: 1, state: "opened", web_url: url, sha: "intended-project" });
-      }
-      if (args.at(-1)?.startsWith("projects/team%2Fapp/merge_requests/1/discussions?")) {
-        return httpJson([]);
-      }
-      return httpJson({ message: "404 Project Not Found" }, {}, "404 Not Found");
-    });
-    const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
-    const snapshots: ChangeRequestSnapshot[] = [];
-    const errors: unknown[] = [];
-    try {
-      service.changeRequests!.observe(url, {
-        async snapshot(snapshot) {
-          snapshots.push(snapshot);
-        },
-        error: (error) => errors.push(error),
+  it.each([
+    { subfolder: "/apps/gitlab/", apiHost: "gitlab.example.org" },
+    { subfolder: "", apiHost: "gitlab.example.org/apps/gitlab" },
+  ])(
+    "looks up the GitLab project with profile $subfolder $apiHost",
+    async ({ subfolder, apiHost }) => {
+      vi.useFakeTimers();
+      const url = "https://gitlab.example.org/apps/gitlab/team/app/-/merge_requests/1";
+      const { runner } = createFakeGlabRunner((args) => {
+        if (args[0] === "auth") return { stdout: "Logged in", stderr: "" };
+        if (args[0] === "config") {
+          expect(args.slice(-2)).toEqual(["--host", "gitlab.example.org"]);
+          if (args[2] === "subfolder") return { stdout: subfolder, stderr: "" };
+          if (args[2] === "api_host") return { stdout: apiHost, stderr: "" };
+          throw new Error(`Unexpected profile key: ${args[2]}`);
+        }
+        if (args.at(-1) === "projects/team%2Fapp/merge_requests/1") {
+          return httpJson({ iid: 1, state: "opened", web_url: url, sha: "intended-project" });
+        }
+        if (args.at(-1)?.startsWith("projects/team%2Fapp/merge_requests/1/discussions?")) {
+          return httpJson([]);
+        }
+        return httpJson({ message: "404 Project Not Found" }, {}, "404 Not Found");
       });
-      await vi.advanceTimersByTimeAsync(25);
-      expect(errors).toEqual([]);
-      expect(snapshots).toEqual([expect.objectContaining({ headSha: "intended-project" })]);
-    } finally {
-      service.dispose?.();
-    }
-  });
+      const service = createGitLabService({ runner, resolveGlabPath: async () => "glab" });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      const errors: unknown[] = [];
+      try {
+        service.changeRequests!.observe(url, {
+          async snapshot(snapshot) {
+            snapshots.push(snapshot);
+          },
+          error: (error) => errors.push(error),
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        expect(errors).toEqual([]);
+        expect(snapshots).toEqual([expect.objectContaining({ headSha: "intended-project" })]);
+      } finally {
+        service.dispose?.();
+      }
+    },
+  );
 
   it("rejects a different GitLab project on the same origin", async () => {
     vi.useFakeTimers();
@@ -906,7 +914,7 @@ describe("GitLab ChangeRequestSource polling", () => {
         expect.objectContaining({ message: expect.stringContaining("web origin") }),
       ]);
       expect(snapshots).toEqual([]);
-      expect(calls.map(({ args }) => args[0])).toEqual(["auth", "config", "api"]);
+      expect(calls.filter(({ args }) => args[0] === "api")).toHaveLength(1);
     } finally {
       service.dispose?.();
     }
@@ -970,75 +978,92 @@ describe("GitLab ChangeRequestSource polling", () => {
     },
   );
 
-  it("keeps polling through GitLab locked state until merged and uses bare hostname for custom-port self-hosted instances", async () => {
-    vi.useFakeTimers();
-    const mrUrl = "https://gitlab.example.org:3443/team/app/-/merge_requests/1";
-    const encoded = encodeURIComponent("team/app");
-    const states = ["opened", "locked", "merged"] as const;
-    let poll = 0;
+  it.each(["bare", "port"])(
+    "watches a custom-port instance with a %s CLI profile",
+    async (profile) => {
+      vi.useFakeTimers();
+      const mrUrl = "https://gitlab.example.org:3443/team/app/-/merge_requests/1";
+      const bare = "gitlab.example.org";
+      const authority = `${bare}:3443`;
+      const profileHost = profile === "port" ? authority : bare;
+      const encoded = encodeURIComponent("team/app");
+      const states = ["opened", "locked", "merged"] as const;
+      let poll = 0;
 
-    const { runner, calls } = createFakeGlabRunner((args) => {
-      if (args[0] === "auth" && args[1] === "status") {
-        expect(args).toEqual(["auth", "status", "--hostname", "gitlab.example.org"]);
-        return { stdout: "Logged in", stderr: "" };
-      }
-      if (args[0] === "config") return { stdout: "gitlab.example.org:3443", stderr: "" };
-      expect(args.slice(0, 4)).toEqual(["api", "--hostname", "gitlab.example.org", "-i"]);
-      const endpoint = args.at(-1) ?? "";
-      if (endpoint === `projects/${encoded}/merge_requests/1`) {
-        const state = states[Math.min(poll, states.length - 1)]!;
-        poll += 1;
-        return httpJson({
-          iid: 1,
-          state,
-          merged_at: state === "merged" ? "2026-11-20T08:00:00Z" : null,
-          sha: "sha-merge",
-          web_url: mrUrl,
-          head_pipeline: null,
-        });
-      }
-      if (endpoint.includes("/discussions")) {
-        return httpJson([], { "X-Next-Page": "" });
-      }
-      throw new Error(`Unexpected: ${args.join(" ")}`);
-    });
-
-    const service = createGitLabService({
-      runner,
-      resolveGlabPath: async () => "glab",
-      watchPollMs: 10_000,
-    });
-    const probedHosts: string[] = [];
-    const forgeResolver = createForgeResolver({
-      probeForge: async (host) => {
-        probedHosts.push(host);
-        return host === "gitlab.example.org" ? "gitlab" : null;
-      },
-      createService: (forge) => (forge === "gitlab" ? service : null),
-    });
-    const router = createChangeRequestRouter({ forgeResolver });
-    const snapshots: ChangeRequestSnapshot[] = [];
-    try {
-      const resolved = await router.resolve(`${mrUrl}/diffs`);
-      expect(resolved).toEqual({ forge: "gitlab", url: mrUrl });
-      expect(probedHosts).toEqual(["gitlab.example.org"]);
-
-      const release = router.source(resolved.forge)!.observe(resolved.url, {
-        async snapshot(s) {
-          snapshots.push(s);
-        },
-        error(err) {
-          throw err;
-        },
+      const { runner, calls } = createFakeGlabRunner((args, options) => {
+        if (args[0] === "auth" && args[1] === "status") {
+          expect(args).toEqual(["auth", "status", "--hostname", profileHost]);
+          return { stdout: "Logged in", stderr: "" };
+        }
+        if (args[0] === "config") {
+          const apiHost = args[2] === "api_host" && args.at(-1) === profileHost ? authority : "";
+          return { stdout: apiHost, stderr: "" };
+        }
+        const expected =
+          profile === "port" ? ["api", "-i"] : ["api", "--hostname", profileHost, "-i"];
+        expect(args.slice(0, -1)).toEqual(expected);
+        expect(options.envOverlay?.GITLAB_HOST).toBe(profileHost);
+        const endpoint = args.at(-1) ?? "";
+        if (endpoint === `projects/${encoded}/merge_requests/1`) {
+          const state = states[Math.min(poll, states.length - 1)]!;
+          poll += 1;
+          return httpJson({
+            iid: 1,
+            state,
+            merged_at: state === "merged" ? "2026-11-20T08:00:00Z" : null,
+            sha: "sha-merge",
+            web_url: mrUrl,
+            head_pipeline: null,
+          });
+        }
+        if (endpoint.includes("/discussions")) {
+          return httpJson([], { "X-Next-Page": "" });
+        }
+        throw new Error(`Unexpected: ${args.join(" ")}`);
       });
-      await vi.advanceTimersByTimeAsync(25);
-      await vi.advanceTimersByTimeAsync(10_000);
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(snapshots.map((s) => s.state)).toEqual(["open", "open", "merged"]);
-      expect(calls[0]?.args).toEqual(["auth", "status", "--hostname", "gitlab.example.org"]);
-      release();
-    } finally {
-      forgeResolver.dispose();
-    }
-  });
+
+      const service = createGitLabService({
+        runner,
+        resolveGlabPath: async () => "glab",
+        watchPollMs: 10_000,
+      });
+      const probedHosts: string[] = [];
+      const forgeResolver = createForgeResolver({
+        probeForge: async (host) => {
+          probedHosts.push(host);
+          return host === profileHost ? "gitlab" : null;
+        },
+        createService: (forge) => (forge === "gitlab" ? service : null),
+      });
+      const router = createChangeRequestRouter({ forgeResolver });
+      const snapshots: ChangeRequestSnapshot[] = [];
+      try {
+        const resolved = await router.resolve(`${mrUrl}/diffs`);
+        expect(resolved).toEqual({ forge: "gitlab", url: mrUrl });
+        expect(probedHosts).toEqual(profile === "port" ? [authority] : [authority, bare]);
+
+        const release = router.source(resolved.forge)!.observe(resolved.url, {
+          async snapshot(s) {
+            snapshots.push(s);
+          },
+          error(err) {
+            throw err;
+          },
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(snapshots.map((s) => s.state)).toEqual(["open", "open", "merged"]);
+        expect(calls.find(({ args }) => args[0] === "auth")?.args).toEqual([
+          "auth",
+          "status",
+          "--hostname",
+          profileHost,
+        ]);
+        release();
+      } finally {
+        forgeResolver.dispose();
+      }
+    },
+  );
 });

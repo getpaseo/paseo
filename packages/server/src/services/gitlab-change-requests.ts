@@ -205,9 +205,7 @@ export function resolveGitLabChangeRequest(input: string): string {
 }
 
 export function gitlabChangeRequestHost(url: string): string {
-  // glab keys auth and `--hostname` by bare hostname (with custom ports supplied
-  // via `api_host`), matching ForgeResolver.resolveHost(parsed.hostname).
-  return parseGitLabMergeRequestUrl(url).host;
+  return parseGitLabMergeRequestUrl(url).hostWithPort;
 }
 
 export function describeGitLabChangeRequest(url: string): string {
@@ -442,26 +440,43 @@ export function createGitLabChangeRequestSource(
   options: CreateGitLabChangeRequestSourceOptions,
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
-  const apiPrefixByHost = new Map<string, string>();
+  const profiles = new Map<string, { host: string; prefix: string }>();
 
-  async function resolveApiPrefix(host: string): Promise<string> {
-    if (host === GITLAB_CLOUD_HOST) return "";
-    const cached = apiPrefixByHost.get(host);
-    if (cached !== undefined) return cached;
+  async function readConfig(host: string, key: string): Promise<string> {
+    const config = await options.runCommand(["config", "get", key, "--host", host], {
+      cwd: process.cwd(),
+      envOverlay: { GITLAB_HOST: host },
+    });
+    return config.stdout.trim();
+  }
 
-    const commandOptions = { cwd: process.cwd(), envOverlay: { GITLAB_HOST: host } };
-    await options.runCommand(["auth", "status", "--hostname", host], commandOptions);
-    const config = await options.runCommand(
-      ["config", "get", "api_host", "--host", host],
-      commandOptions,
-    );
-    const apiHost = config.stdout.trim();
-    const apiUrl = apiHost
-      ? new URL(apiHost.includes("://") ? apiHost : `https://${apiHost}`)
-      : null;
-    const prefix = apiUrl ? decodeURI(apiUrl.pathname).replace(/^\/+|\/+$/g, "") : "";
-    apiPrefixByHost.set(host, prefix);
-    return prefix;
+  async function resolveWatchProfile(identity: GitLabMergeRequestIdentity) {
+    const { host, hostWithPort } = identity;
+    const cached = profiles.get(hostWithPort);
+    if (cached) return cached;
+    if (hostWithPort === GITLAB_CLOUD_HOST) return { host, prefix: "" };
+
+    // glab login records the API host under the profile key. A port in the web
+    // URL can have its own profile or use a bare-host profile with an API port.
+    const exactApiHost = hostWithPort !== host ? await readConfig(hostWithPort, "api_host") : "";
+    const profileHost = exactApiHost ? hostWithPort : host;
+    await options.runCommand(["auth", "status", "--hostname", profileHost], {
+      cwd: process.cwd(),
+      envOverlay: { GITLAB_HOST: profileHost },
+    });
+
+    const trimSlashes = /^\/+|\/+$/g;
+    let prefix = (await readConfig(profileHost, "subfolder")).replace(trimSlashes, "");
+    if (!prefix) {
+      const apiHost = exactApiHost || (await readConfig(profileHost, "api_host"));
+      if (apiHost) {
+        const apiUrl = new URL(apiHost.includes("://") ? apiHost : `https://${apiHost}`);
+        prefix = apiUrl.pathname.replace(trimSlashes, "");
+      }
+    }
+    const profile = { host: profileHost, prefix: decodeURI(prefix) };
+    profiles.set(hostWithPort, profile);
+    return profile;
   }
 
   function parseJsonResponseBody<T>(params: {
@@ -533,7 +548,10 @@ export function createGitLabChangeRequestSource(
     schema: z.ZodType<T>;
     pauseHost(untilMs: number): void;
   }): Promise<{ data: T; headers: ReadonlyMap<string, string> }> {
-    const args = ["api", "--hostname", params.host, "-i", params.endpoint];
+    // glab api rejects a port in --hostname. GITLAB_HOST selects that profile.
+    const args = params.host.includes(":")
+      ? ["api", "-i", params.endpoint]
+      : ["api", "--hostname", params.host, "-i", params.endpoint];
     const cwd = process.cwd();
     let result: { stdout: string; stderr: string };
     try {
@@ -635,12 +653,13 @@ export function createGitLabChangeRequestSource(
   }
 
   async function readMergeRequestMetadata(params: {
+    host: string;
     identity: GitLabMergeRequestIdentity;
     endpoint: string;
     pauseHost(untilMs: number): void;
   }): Promise<GitLabWatchMr> {
     const { data: mr } = await apiGet({
-      host: params.identity.host,
+      host: params.host,
       endpoint: params.endpoint,
       schema: gitLabWatchMrSchema,
       pauseHost: params.pauseHost,
@@ -667,6 +686,7 @@ export function createGitLabChangeRequestSource(
   }
 
   async function readPipelineChecks(params: {
+    host: string;
     identity: GitLabMergeRequestIdentity;
     mrEndpoint: string;
     encodedProject: string;
@@ -682,7 +702,7 @@ export function createGitLabChangeRequestSource(
     let jobsResult: { items: GitLabWatchJob[]; pagesRead: number };
     try {
       jobsResult = await apiGetAllPages({
-        host: params.identity.host,
+        host: params.host,
         endpoint: `projects/${pipelineProject}/pipelines/${pipeline.id}/jobs`,
         itemSchema: gitLabWatchJobSchema,
         isObserved: params.isObserved,
@@ -707,7 +727,7 @@ export function createGitLabChangeRequestSource(
     ) {
       fetchedBridges = true;
       await appendFailedBridgeOrPipelineChecks({
-        host: params.identity.host,
+        host: params.host,
         pipelineProject,
         pipeline,
         checks,
@@ -719,6 +739,7 @@ export function createGitLabChangeRequestSource(
     // Guard against headSha or head_pipeline shifting while paginating check pages.
     if (jobsResult.pagesRead > 1 || fetchedBridges) {
       const recheck = await readMergeRequestMetadata({
+        host: params.host,
         identity: params.identity,
         endpoint: params.mrEndpoint,
         pauseHost: params.pauseHost,
@@ -789,8 +810,8 @@ export function createGitLabChangeRequestSource(
     pauseHost(untilMs: number): void;
   }): Promise<ChangeRequestSnapshot> {
     const identity = parseGitLabMergeRequestUrl(context.url);
-    const { host, projectPath, iid } = identity;
-    const prefix = await resolveApiPrefix(host);
+    const { projectPath, iid } = identity;
+    const { host, prefix } = await resolveWatchProfile(identity);
     const relativePath =
       prefix && projectPath.startsWith(`${prefix}/`)
         ? projectPath.slice(prefix.length + 1)
@@ -801,6 +822,7 @@ export function createGitLabChangeRequestSource(
     const mrEndpoint = `projects/${encodedProject}/merge_requests/${iid}`;
 
     const mr = await readMergeRequestMetadata({
+      host,
       identity,
       endpoint: mrEndpoint,
       pauseHost: context.pauseHost,
@@ -811,6 +833,7 @@ export function createGitLabChangeRequestSource(
     }
 
     const checks = await readPipelineChecks({
+      host,
       identity,
       mrEndpoint,
       encodedProject,
@@ -876,7 +899,7 @@ export function createGitLabChangeRequestSource(
     initialDelayMs: options.initialDelayMs,
     onError(error, host) {
       if (options.isAuthError(error)) {
-        apiPrefixByHost.delete(host);
+        profiles.delete(host);
       }
     },
   });
@@ -888,7 +911,7 @@ export function createGitLabChangeRequestSource(
       return poller.observe(url, callbacks);
     },
     dispose() {
-      apiPrefixByHost.clear();
+      profiles.clear();
       poller.dispose();
     },
   };

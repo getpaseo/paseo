@@ -18,7 +18,7 @@ export interface CreateChangeRequestRouterOptions {
   forgeResolver: Pick<ForgeResolver, "resolveHost" | "getService">;
 }
 
-function extractUrlHost(input: string): { trimmed: string; host: string } {
+function extractUrlHost(input: string): { trimmed: string; host: string; authority: string } {
   const trimmed = input.trim();
   if (!trimmed || /\s/.test(trimmed)) {
     throw new Error("Enter a supported change request URL.");
@@ -40,7 +40,7 @@ function extractUrlHost(input: string): { trimmed: string; host: string } {
   if (!host) {
     throw new Error("Enter a supported change request URL.");
   }
-  return { trimmed, host };
+  return { trimmed, host, authority: parsed.port ? `${host}:${parsed.port}` : host };
 }
 
 /**
@@ -54,8 +54,10 @@ export function createChangeRequestRouter({
 }: CreateChangeRequestRouterOptions): ChangeRequestRouter {
   return {
     async resolve(input: string): Promise<ResolvedChangeRequest> {
-      const { trimmed, host } = extractUrlHost(input);
-      const resolution = await forgeResolver.resolveHost(host);
+      const { trimmed, host, authority } = extractUrlHost(input);
+      const resolution =
+        (await forgeResolver.resolveHost(authority)) ??
+        (authority === host ? null : await forgeResolver.resolveHost(host));
       if (!resolution) {
         throw new Error(
           `Could not recognize a supported forge for host ${host}. Authenticate the forge CLI for this host first.`,
