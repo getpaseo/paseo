@@ -1701,7 +1701,6 @@ export class DaemonClient {
               event && typeof event === "object" && "code" in event ? event.code : "unknown",
             ),
           });
-          this.clearConnectionAttempt();
           if (this.pendingGenericTransportErrorTimeout) {
             clearTimeout(this.pendingGenericTransportErrorTimeout);
             this.pendingGenericTransportErrorTimeout = null;
@@ -1780,7 +1779,6 @@ export class DaemonClient {
       ];
     } catch (error) {
       if (this.connectionAttempt !== attempt) return;
-      this.clearConnectionAttempt();
       const message = error instanceof Error ? error.message : "Failed to connect";
       this.lastErrorValue = message;
       this.scheduleReconnect({
@@ -7872,6 +7870,7 @@ export class DaemonClient {
     // Attempt now instead of after the backoff delay. Failures of that attempt back off as usual.
     immediate?: boolean;
   }): void {
+    this.clearConnectionAttempt();
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;

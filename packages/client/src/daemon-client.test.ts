@@ -709,6 +709,13 @@ class FakeDaemon {
     );
   }
 
+  socketFailsOnHello(): void {
+    this.transport.send = () => {
+      throw new Error("WebSocket not open");
+    };
+    this.onOpen();
+  }
+
   daemonAnswersPingsAfter(delay: "fast" | `${number}s`): void {
     this.pongMode = {
       kind: "answer",
@@ -2819,6 +2826,33 @@ test("connection timeout includes credential lookup", async () => {
   expect(await outcome).toMatchObject({ message: "Connection timed out" });
 });
 
+test("a failed hello retires the deadline of the foreground replacement", async () => {
+  useHeartbeatClock();
+  const stalled = new FakeDaemon();
+  const closing = new FakeDaemon();
+  const healthy = new FakeDaemon();
+  const { client, attempts } = connectThroughReplacements(
+    "foreground-failed-hello",
+    [stalled, closing, healthy],
+    { connectTimeoutMs: 4_000 },
+  );
+  const connection = client.connect();
+  void connection.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(3_100);
+  client.ensureConnected({ verify: true });
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(3_900);
+  closing.socketFailsOnHello();
+
+  await vi.advanceTimersByTimeAsync(1_499);
+  expect(client.lastError).toBe("WebSocket not open");
+  expect(attempts()).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(attempts()).toBe(3);
+  healthy.openConnection();
+  await connection;
+});
+
 test("foreground keeps a connect attempt that just started", async () => {
   useHeartbeatClock();
   const pending = new FakeDaemon();
@@ -2995,14 +3029,14 @@ test("chunk progress beyond the daemon lease keeps sending heartbeat pings", asy
 function connectThroughReplacements(
   clientId: string,
   daemons: FakeDaemon[],
-  options?: { reconnect?: { enabled: boolean } },
+  options?: { reconnect?: { enabled: boolean }; connectTimeoutMs?: number },
 ): { client: DaemonClient; attempts: () => number } {
   let attempts = 0;
   const client = new DaemonClient({
     url: "ws://test",
     clientId,
     logger: noopLogger,
-    ...(options?.reconnect ? { reconnect: options.reconnect } : {}),
+    ...options,
     transportFactory: () => {
       const daemon = daemons[Math.min(attempts, daemons.length - 1)]!;
       attempts += 1;
