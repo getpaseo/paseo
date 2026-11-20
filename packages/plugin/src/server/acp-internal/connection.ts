@@ -657,6 +657,9 @@ class AcpRuntime {
         await this.interrupt();
       }
       await active.settled;
+      if (this.closing || this.processFailed) {
+        throw new Error("ACP session is closed");
+      }
     }
     const prompt = toAcpPrompt(input.prompt);
     this.replayWindow = null;
@@ -1601,7 +1604,7 @@ class AcpRuntime {
           this.finishDeferredTurn(active, { type: "cancel" });
           return;
         }
-        this.fallbackChunkIds.clear();
+        if (this.hasQualifyingOpenTools()) this.fallbackChunkIds.clear();
         if (response.stopReason !== "end_turn" && active.wirePromptsInFlight === 1) {
           this.finishDeferredTurn(active, { type: "complete", terminalizeTools: true });
         }

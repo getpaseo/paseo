@@ -3726,7 +3726,7 @@ describe("deferTurnOnRunningTools", () => {
           type: "timeline.item",
           item: expect.objectContaining({
             type: "assistant_message",
-            text: expect.stringContaining("part 2."),
+            text: "Background reply part 1 part 2.",
           }),
         }),
       );
@@ -4507,9 +4507,13 @@ describe("deferTurnOnRunningTools", () => {
       );
 
       await connection.send({
-        type: "session.interrupt",
-        requestId: "wedged-stop",
+        type: "session.prompt",
         sessionId: "session-1",
+        prompt: {
+          clientMessageId: "wedged-replacement",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "replace wedged turn" }] },
+        },
       });
       await waitForEvent(
         events,
@@ -4519,6 +4523,18 @@ describe("deferTurnOnRunningTools", () => {
           event.state === "canceled",
       );
       await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.prompt_result" &&
+          event.clientMessageId === "wedged-replacement" &&
+          event.result.type === "failed",
+      );
+      expect(
+        events.some(
+          (event) => event.type === "session.turn" && event.turnId === "acp:wedged-replacement",
+        ),
+      ).toBe(false);
 
       // The wedged child process must actually be terminated.
       await expect
