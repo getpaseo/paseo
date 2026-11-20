@@ -68,12 +68,12 @@ export function HubLandingFlow() {
 
       <FlowArrow />
 
-      <div className="rounded-xl border border-white/20 bg-white/[0.06] px-5 py-5 text-center">
+      <div className="rounded-xl border border-brand-green/50 bg-brand-green/[0.12] px-5 py-5 text-center">
         <p className="flex justify-center">
           <HubLockup className="h-5 w-auto text-foreground" />
           <span className="sr-only">{t("hub.shape.hub")}</span>
         </p>
-        <p className="mt-2 text-xs text-muted-foreground">{t("hub.shape.hubHosting")}</p>
+        <p className="mt-2 text-xs text-white/70">{t("hub.shape.hubHosting")}</p>
       </div>
 
       <FlowArrow />
@@ -124,7 +124,7 @@ function CompactDaemonRow({
 export function HubArchitectureDiagram() {
   const { t } = useTranslation();
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-6 md:p-8">
       <div className="flex flex-col items-center">
         <DiagramRow label={t("hub.shape.triggersRow")}>
           {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
@@ -134,12 +134,12 @@ export function HubArchitectureDiagram() {
 
         <Connector label={t("hub.shape.webhooks")} />
 
-        <div className="w-full max-w-xs rounded-xl border border-white/20 bg-white/[0.06] px-6 py-5 text-center">
+        <div className="w-full max-w-xs rounded-xl border border-brand-green/50 bg-brand-green/[0.12] px-6 py-5 text-center">
           <p className="flex justify-center">
             <HubLockup className="h-[22px] w-auto text-foreground" />
             <span className="sr-only">{t("hub.shape.hub")}</span>
           </p>
-          <p className="mt-1.5 text-xs text-muted-foreground">{t("hub.shape.hubHosting")}</p>
+          <p className="mt-1.5 text-xs text-white/70">{t("hub.shape.hubHosting")}</p>
         </div>
 
         <Connector label={t("hub.shape.sameRpcs")} />
