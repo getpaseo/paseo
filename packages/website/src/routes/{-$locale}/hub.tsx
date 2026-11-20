@@ -503,7 +503,7 @@ function PlanCard({
       className={`flex flex-col p-6 first:rounded-t-[inherit] last:rounded-b-[inherit] md:p-7 md:first:rounded-tr-none md:first:rounded-bl-[inherit] md:last:rounded-tr-[inherit] md:last:rounded-bl-none ${featured ? "bg-brand-green/[0.08]" : "bg-background"}`}
     >
       <h3 className="text-lg font-medium text-white/90">{name}</h3>
-      <div className="mt-5 flex items-end gap-2">
+      <div className="relative mt-5 flex items-end gap-2">
         <span className="text-4xl font-medium tracking-tight">{price}</span>
         <span className="mb-1 inline-flex items-center gap-1 text-sm text-white/45">
           {priceQualifier}
@@ -513,7 +513,7 @@ function PlanCard({
       {features.length > 0 ? (
         <ul className="mt-6 grid flex-1 content-start gap-3 text-sm text-white/70">
           {features.map((feature) => (
-            <li key={feature.key} className="flex items-start gap-2.5">
+            <li key={feature.key} className="relative flex items-start gap-2.5">
               <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-accent-text" />
               <span>{feature.label}</span>
               {feature.tooltip !== null ? <InfoTip text={feature.tooltip} /> : null}
@@ -537,11 +537,11 @@ function PlanCard({
 
 function InfoTip({ text }: { text: string }) {
   return (
-    <span className="group relative inline-flex shrink-0" tabIndex={0}>
+    <span className="group inline-flex shrink-0" tabIndex={0}>
       <CircleHelp aria-label={text} className="size-3.5 text-white/35" />
       <span
         role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden w-56 -translate-x-1/2 rounded-md border border-white/10 bg-[#17201f] px-3 py-2 text-xs leading-relaxed text-white/75 shadow-xl group-hover:block group-focus:block"
+        className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 hidden w-full max-w-56 rounded-md border border-white/10 bg-[#17201f] px-3 py-2 text-xs leading-relaxed text-white/75 shadow-xl group-hover:block group-focus:block"
       >
         {text}
       </span>
