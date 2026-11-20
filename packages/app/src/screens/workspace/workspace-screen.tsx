@@ -3796,9 +3796,10 @@ function WorkspaceScreenContent({
               onReorderTabsInPane={handleReorderTabsInPane}
               onSplitPane={handleSplitPane}
             >
-              {explorerControls.titlebarAction}
               {workspaceCenterColumn}
               {sharedExplorer}
+              {/* Electron applies drag and no-drag regions in document order. */}
+              {explorerControls.titlebarAction}
             </WorkspaceTabDragScope>
           </FloatingPanelPortalHostNameProvider>
           <FloatingPanelPortalHost name={workspaceFloatingPanelPortalHostName} />

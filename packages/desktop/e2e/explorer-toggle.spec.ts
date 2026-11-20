@@ -76,8 +76,32 @@ async function recordExplorerToggle(button: Locator) {
   }
 }
 
+async function expectExplorerToggleAboveDragRegions(toggle: Locator) {
+  const dragRegions = await toggle.evaluate((button) => {
+    const rect = button.getBoundingClientRect();
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    const overlapping = [...document.querySelectorAll('[style*="app-region"]')].filter((region) => {
+      if (getComputedStyle(region).getPropertyValue("-webkit-app-region") !== "drag") return false;
+      const bounds = region.getBoundingClientRect();
+      return bounds.left <= x && x < bounds.right && bounds.top <= y && y < bounds.bottom;
+    });
+    return {
+      overlapping: overlapping.length,
+      afterToggle: overlapping.filter(
+        (region) => button.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).length,
+    };
+  });
+  expect(dragRegions.overlapping).toBeGreaterThan(0);
+  expect(dragRegions.afterToggle).toBe(0);
+}
+
 async function expectExplorerToggleToHoldPosition(page: Page, expanded: boolean) {
-  const { before, frames } = await recordExplorerToggle(explorerToggle(page, expanded));
+  const toggle = explorerToggle(page, expanded);
+  await expect(toggle).toBeVisible();
+  await expectExplorerToggleAboveDragRegions(toggle);
+  const { before, frames } = await recordExplorerToggle(toggle);
   await expect(explorerToggle(page, !expanded)).toBeVisible();
   expect(before.width).toBeGreaterThan(0);
   expect(frames.find((frame) => JSON.stringify(frame) !== JSON.stringify(before))).toBeUndefined();
