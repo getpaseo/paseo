@@ -359,12 +359,33 @@ for (const [bundleName, isDev] of [
     assert.equal(buttonGrants, 1, "first tap on sibling button must receive responder grant");
 
     // 5. Two-finger gesture cancelled by a single synthetic topTouchCancel (e.g. RNGH pinch takeover)
-    //    must reconcile trackedTouchCount to 0 immediately.
+    //    must reconcile trackedTouchCount to 0 and mark every touchBank contact inactive before
+    //    onResponderTerminate runs.
+    let terminatedHistory = null;
+    const gestureFiber = createHostFiber(
+      "RCTView",
+      {
+        onStartShouldSetResponder: () => true,
+        onResponderTerminate: (event) => {
+          terminatedHistory = {
+            numberActiveTouches: event.touchHistory.numberActiveTouches,
+            activeBankIds: Array.from(event.touchHistory.touchBank, (record, index) =>
+              record?.touchActive ? index : -1,
+            ).filter((index) => index >= 0),
+          };
+        },
+      },
+      rootFiber,
+    );
     const p0 = makeTouch(3, 4);
     const p1 = makeTouch(4, 5);
-    dispatchEvent(rootFiber, "topTouchStart", { touches: [p0], changedTouches: [p0] });
-    dispatchEvent(rootFiber, "topTouchStart", { touches: [p0, p1], changedTouches: [p1] });
-    dispatchEvent(rootFiber, "topTouchCancel", { touches: [], changedTouches: [p0] });
+    dispatchEvent(gestureFiber, "topTouchStart", { touches: [p0], changedTouches: [p0] });
+    dispatchEvent(gestureFiber, "topTouchStart", { touches: [p0, p1], changedTouches: [p1] });
+    dispatchEvent(gestureFiber, "topTouchCancel", { touches: [], changedTouches: [p0] });
+    assert.deepEqual(terminatedHistory, {
+      numberActiveTouches: 0,
+      activeBankIds: [],
+    });
     dispatchEvent(inputFiber, "topSelectionChange", { selection: { start: 2, end: 2 } });
     assert.equal(
       inputGrants,

@@ -82,10 +82,11 @@ const patchedPackages = [
     patchPrefix: "react-native-svg+",
     cwd: "packages/app",
   },
-  // Reconcile ResponderEventPlugin trackedTouchCount with nativeEvent.touches.length so an
-  // unmatched touch start (e.g. Modal dismiss while touching or double ACTION_DOWN in
-  // ReactRootView/ReactModalHostView) self-heals instead of leaving trackedTouchCount > 0 for
-  // the rest of the session. Remove once upstream React/React Native reconciles trackedTouchCount.
+  // Reconcile ResponderEventPlugin trackedTouchCount and ResponderTouchHistoryStore touchBank with
+  // nativeEvent.touches.length so an unmatched touch start or single-pointer synthetic cancel
+  // (e.g. Modal dismiss while touching, RNGH pinch takeover, or double ACTION_DOWN in
+  // ReactRootView/ReactModalHostView) self-heals instead of leaving trackedTouchCount > 0 or stale
+  // active contacts in touchBank. Remove once upstream React/React Native reconciles both.
   {
     nodeModulesPath: "node_modules/react-native",
     patchPrefix: "react-native+",
