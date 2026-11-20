@@ -1437,6 +1437,7 @@ const [state, setState] = useTabState(tab, schema, { view: "preview" });
 | `statusEnteredAt`    | ISO 时间戳或 `null`                                               |
 | `archivingAt`        | ISO 时间戳或 `null`                                               |
 | `diffStat`           | `{ additions: number; deletions: number } \| null`                |
+| `parentWorkspaceId`  | `string \| null`                                                  |
 
 Agent 快照字段：
 
