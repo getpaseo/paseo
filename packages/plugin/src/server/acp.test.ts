@@ -4805,4 +4805,104 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("settles on the reply timer when reply text starts before the last background tool completes", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-a",
+            name: "run_command",
+            title: "Job A",
+            status: "in_progress",
+          },
+        });
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "bg-b",
+            name: "run_command",
+            title: "Job B",
+            status: "in_progress",
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-overlap-reply",
+      label: "Deferred Overlap Reply",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: {
+          settleDelayMs: 30,
+          quietLimitMs: 1_500,
+        },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "overlap-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run both jobs" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-b",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Job A finishes and assistant starts streaming the reply while Job B is still running.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-a", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Both jobs are finishing up."),
+      });
+      // Job B completes, then the reply's usage_update arrives -> should settle via settleDelayMs.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "bg-b", status: "completed" },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 300, size: 1000 },
+      });
+
+      const startedAt = Date.now();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:overlap-turn" &&
+          event.state === "completed",
+        400,
+      );
+      expect(Date.now() - startedAt).toBeLessThan(400);
+    } finally {
+      await connection.close();
+    }
+  });
 });

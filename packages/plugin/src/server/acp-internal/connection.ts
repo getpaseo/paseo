@@ -1236,7 +1236,10 @@ class AcpRuntime {
         },
       });
       if (this.activePrompt?.deferred) {
-        if (update.sessionUpdate === "agent_message_chunk" && !this.hasDeferredBlockers()) {
+        if (
+          update.sessionUpdate === "agent_message_chunk" &&
+          this.activePrompt.wirePromptsInFlight === 0
+        ) {
           this.activePrompt.deferred.replyOpen = true;
         }
         this.activePrompt.deferred.replySettled = false;
@@ -1443,8 +1446,8 @@ class AcpRuntime {
     });
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
-    if (this.activePrompt?.deferred && (wasOpenQualifying || isOpenQualifying)) {
-      this.activePrompt.deferred.replyOpen = false;
+    if (this.activePrompt?.deferred && wasOpenQualifying !== isOpenQualifying) {
+      if (isOpenQualifying) this.activePrompt.deferred.replyOpen = false;
       this.activePrompt.deferred.replySettled = false;
       this.scheduleDeferredSettle();
     }
@@ -1735,8 +1738,11 @@ class AcpRuntime {
   }
 
   private noteDeferredUsageUpdate(): void {
-    const deferred = this.activePrompt?.deferred;
-    if (!deferred?.replyOpen || this.hasDeferredBlockers()) return;
+    const active = this.activePrompt;
+    const deferred = active?.deferred;
+    if (!active || !deferred || active.wirePromptsInFlight > 0 || !deferred.replyOpen) return;
+    deferred.replyOpen = false;
+    if (this.hasDeferredBlockers()) return;
     deferred.replySettled = true;
     this.scheduleDeferredSettle();
   }
