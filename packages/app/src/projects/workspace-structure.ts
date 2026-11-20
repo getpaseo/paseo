@@ -221,7 +221,10 @@ function addProjectToView(input: {
   } else {
     viewKey = allocatePlacementViewKey(input.allocatedViewKeys, serverId, project.projectId);
   }
-  const effectiveProjectKey = projectLinkOverride?.kind === "linked" ? null : sharedKey;
+  // A local link owns this placement's cross-host equivalence while it is being verified.
+  // Blocked links must not expose the daemon key either: picker reconciliation may otherwise
+  // use it to silently select a counterpart whose latest Git facts no longer match.
+  const effectiveProjectKey = projectLinkOverride === undefined ? sharedKey : null;
   const placement: WorkspaceStructureHostPlacement = {
     serverId,
     projectId: project.projectId,

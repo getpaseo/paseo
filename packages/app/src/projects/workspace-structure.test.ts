@@ -271,6 +271,77 @@ describe("buildWorkspaceStructureProjects", () => {
     });
   });
 
+  test("clears daemon equivalence keys when a saved local link is blocked", () => {
+    const key = "remote:github.com/acme/app#subdir:packages/web";
+    const projectA = project({ id: "prj_a", key, root: "/repos/app/packages/web" });
+    const projectB = project({ id: "prj_b", key, root: "/work/app/packages/web" });
+    const workspaceWithGitFacts = (input: {
+      id: string;
+      project: ProjectDescriptor;
+      worktreeRoot: string;
+      remoteUrl: string;
+    }): WorkspaceDescriptor => ({
+      ...workspace(input.id, input.project.projectId, input.project.projectRootPath),
+      gitRuntime: { remoteUrl: input.remoteUrl },
+      project: {
+        projectKey: input.project.projectKey ?? "legacy-placement-key",
+        projectName: "acme/app",
+        checkout: {
+          cwd: input.project.projectRootPath,
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: input.worktreeRoot,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [projectA],
+          workspaces: [
+            workspaceWithGitFacts({
+              id: "ws-a",
+              project: projectA,
+              worktreeRoot: "/repos/app",
+              remoteUrl: "https://github.com/acme/app.git",
+            }),
+          ],
+        },
+        {
+          serverId: "host-b",
+          projects: [projectB],
+          workspaces: [
+            workspaceWithGitFacts({
+              id: "ws-b",
+              project: projectB,
+              worktreeRoot: "/work/app",
+              remoteUrl: "https://github.com/acme/other.git",
+            }),
+          ],
+        },
+      ],
+      localProjectLinks: [
+        {
+          id: "local-link",
+          members: [
+            { serverId: "host-a", projectId: "prj_a" },
+            { serverId: "host-b", projectId: "prj_b" },
+          ],
+          identity: { repository: "github.com/acme/app", subdirectory: "packages/web" },
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result.map((item) => item.projectKey)).toEqual([null, null]);
+    expect(new Set(result.map((item) => item.viewKey)).size).toBe(2);
+  });
+
   test("keeps opaque project keys separate from placement view keys", () => {
     const placementShapedKey = createProjectViewKey({
       kind: "placement",
