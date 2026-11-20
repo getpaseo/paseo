@@ -219,8 +219,12 @@ async function tryCreateWithWorktreeManager(options: {
     paseoHome: input.paseoHome,
     worktreesBaseRoot: input.worktreesRoot,
     worktreeManagers: deps.worktreeManagers,
-    run: async () => {
-      let request: PluginWorktreeCreateInput = { ...transformed, untrusted };
+    run: async ({ changeRequestHeadSha }) => {
+      let request: PluginWorktreeCreateInput = {
+        ...transformed,
+        untrusted,
+        ...(changeRequestHeadSha ? { headSha: changeRequestHeadSha } : {}),
+      };
       if (request.kind === "branch-off" && intent.kind === "branch-off") {
         preparedBranchOff = await prepareWorktreeBranchOff(repoRoot, intent);
         request = { ...request, baseRef: preparedBranchOff.baseRef };

@@ -609,8 +609,12 @@ describe("worktree manager SDK boundary", () => {
         const manager: WorktreeManagerRegistration = {
           async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
             const untrusted: boolean = request.untrusted;
+            const headSha: string | undefined = request.headSha;
+            void headSha;
             // @ts-expect-error untrusted is read-only
             request.untrusted = true;
+            // @ts-expect-error headSha is read-only
+            request.headSha = "deadbeef";
             if (request.kind === "branch-off") {
               const start: string = request.startPoint ?? request.baseRef;
               // @ts-expect-error startPoint is read-only

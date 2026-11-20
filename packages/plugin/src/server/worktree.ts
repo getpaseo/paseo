@@ -7,6 +7,8 @@ export type PluginWorktreeContext = PluginHookContext;
 export type PluginWorktreeCreateInput = PluginWorktreeCreateRequest & {
   /** True when the worktree comes from an untrusted source such as a fork change request; skip repository-defined hooks. */
   readonly untrusted: boolean;
+  /** Resolved remote head commit SHA for change-request checkouts when available. */
+  readonly headSha?: string;
 };
 
 /** Return `{ type: "created", path }` to claim creation, or `undefined` to decline. */

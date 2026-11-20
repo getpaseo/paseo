@@ -1225,13 +1225,15 @@ export async function listPaseoWorktrees({
 
 /** Normalized paths of all currently registered worktrees for the repo containing `cwd`. */
 async function listGitWorktreePaths(cwd: string): Promise<Set<string>> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain", "-z"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
   });
   const paths = new Set<string>();
-  for (const entry of parseWorktreeList(stdout)) {
-    paths.add(normalizePathForIdentity(entry.path));
+  for (const token of stdout.split("\0")) {
+    if (token.startsWith("worktree ")) {
+      paths.add(normalizePathForIdentity(token.slice("worktree ".length)));
+    }
   }
   return paths;
 }
@@ -1685,6 +1687,8 @@ interface AdoptPluginWorktreeOptions {
   worktreeManagerPluginId: string;
   /** Worktree paths that existed before creation; an overlap fails instead of hijacking user worktrees. */
   existingWorktreePaths?: ReadonlySet<string>;
+  /** Remote head commit resolved before invoking the manager for change-request checkouts (`null` if unresolvable). */
+  expectedChangeRequestHeadSha?: string | null;
 }
 
 export interface RunPluginWorktreeManagerCheckoutOptions<
@@ -1698,7 +1702,9 @@ export interface RunPluginWorktreeManagerCheckoutOptions<
   paseoHome?: string;
   worktreesBaseRoot?: string;
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "hasWorktreeManager" | "removeWorktree">;
-  run: () => Promise<{ pluginId: string; path: string } | null>;
+  run: (context: {
+    changeRequestHeadSha?: string;
+  }) => Promise<{ pluginId: string; path: string } | null>;
   verifyValidatedPath?: (validatedPath: string, pluginId: string) => void;
 }
 
@@ -1736,7 +1742,14 @@ export async function runPluginWorktreeManagerCheckout(
     return null;
   }
   const existingWorktreePaths = await listGitWorktreePaths(cwd);
-  const managed = await run();
+  const expectedChangeRequestHeadSha =
+    operation === "create" &&
+    (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr")
+      ? await resolveRemoteChangeRequestHeadSha(cwd, source)
+      : undefined;
+  const managed = await run(
+    expectedChangeRequestHeadSha ? { changeRequestHeadSha: expectedChangeRequestHeadSha } : {},
+  );
   if (!managed) return null;
   try {
     const validatedPath = await validateWorktreePath({
@@ -1751,6 +1764,7 @@ export async function runPluginWorktreeManagerCheckout(
       worktreePath: validatedPath,
       worktreeManagerPluginId: managed.pluginId,
       existingWorktreePaths,
+      expectedChangeRequestHeadSha,
     });
   } catch (error) {
     return cleanupFailedPluginWorktree(
@@ -1803,7 +1817,7 @@ async function cleanupFailedPluginWorktree(
     const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
       cwd: candidatePath,
     });
-    rootPath = await normalizePathForOwnership(stdout.trim());
+    rootPath = await normalizePathForOwnership(stdout.replace(/\r?\n$/, ""));
   } catch {
     throw cause;
   }
@@ -1849,7 +1863,14 @@ async function cleanupFailedPluginWorktree(
 async function adoptPluginWorktree(
   options: AdoptPluginWorktreeOptions,
 ): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }> {
-  const { cwd, source, worktreePath, worktreeManagerPluginId, existingWorktreePaths } = options;
+  const {
+    cwd,
+    source,
+    worktreePath,
+    worktreeManagerPluginId,
+    existingWorktreePaths,
+    expectedChangeRequestHeadSha,
+  } = options;
   const normalizedPath = await normalizePathForOwnership(worktreePath);
   if (existingWorktreePaths?.has(normalizePathForIdentity(normalizedPath))) {
     throw new Error(
@@ -1863,7 +1884,7 @@ async function adoptPluginWorktree(
       `Plugin ${worktreeManagerPluginId} did not create a Git worktree at: ${normalizedPath}`,
     );
   });
-  if (!createRealpathAwarePathMatcher(rootStdout.trim())(normalizedPath)) {
+  if (!createRealpathAwarePathMatcher(rootStdout.replace(/\r?\n$/, ""))(normalizedPath)) {
     throw new Error(
       `Plugin ${worktreeManagerPluginId} created a worktree whose root is not the returned path: ${normalizedPath}`,
     );
@@ -1895,6 +1916,7 @@ async function adoptPluginWorktree(
     worktreePath: normalizedPath,
     branchName,
     worktreeManagerPluginId,
+    expectedChangeRequestHeadSha,
   });
 
   const metadata = await resolveWorktreeMetadata({ cwd, source, branchName });
@@ -1945,30 +1967,62 @@ async function resolveRemoteChangeRequestHeadSha(
   return null;
 }
 
+async function verifyPluginChangeRequestHead(options: {
+  cwd: string;
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>;
+  worktreePath: string;
+  worktreeManagerPluginId: string;
+  expectedChangeRequestHeadSha?: string | null;
+}): Promise<void> {
+  const { cwd, source, worktreePath, worktreeManagerPluginId, expectedChangeRequestHeadSha } =
+    options;
+  const preResolvedHead =
+    expectedChangeRequestHeadSha !== undefined
+      ? expectedChangeRequestHeadSha
+      : await resolveRemoteChangeRequestHeadSha(cwd, source);
+  if (!preResolvedHead) {
+    throw new Error(
+      `Unable to resolve remote change request head commit to verify plugin ${worktreeManagerPluginId}`,
+    );
+  }
+  const { stdout: headStdout } = await runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], {
+    cwd: worktreePath,
+  });
+  const actualHead = headStdout.trim();
+  if (actualHead === preResolvedHead) return;
+  // Allow the remote PR head advancing between Paseo's pre-call lookup and the manager's fetch.
+  const latestHead = await resolveRemoteChangeRequestHeadSha(cwd, source);
+  if (actualHead !== latestHead) {
+    throw new Error(
+      `Plugin ${worktreeManagerPluginId} checked out ${actualHead}, expected change request head ${preResolvedHead}`,
+    );
+  }
+}
+
 async function verifyPluginCheckoutTarget(options: {
   cwd: string;
   source: WorktreeSource;
   worktreePath: string;
   branchName: string | null;
   worktreeManagerPluginId: string;
+  expectedChangeRequestHeadSha?: string | null;
 }): Promise<void> {
-  const { cwd, source, worktreePath, branchName, worktreeManagerPluginId } = options;
+  const {
+    cwd,
+    source,
+    worktreePath,
+    branchName,
+    worktreeManagerPluginId,
+    expectedChangeRequestHeadSha,
+  } = options;
   if (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr") {
-    const expectedHead = await resolveRemoteChangeRequestHeadSha(cwd, source);
-    if (expectedHead) {
-      const { stdout: headStdout } = await runGitCommand(
-        ["rev-parse", "--verify", "HEAD^{commit}"],
-        {
-          cwd: worktreePath,
-        },
-      );
-      if (headStdout.trim() !== expectedHead) {
-        throw new Error(
-          `Plugin ${worktreeManagerPluginId} checked out ${headStdout.trim()}, expected change request head ${expectedHead}`,
-        );
-      }
-    }
-    return;
+    return verifyPluginChangeRequestHead({
+      cwd,
+      source,
+      worktreePath,
+      worktreeManagerPluginId,
+      expectedChangeRequestHeadSha,
+    });
   }
   if (source.kind === "restore" || source.kind === "restore-from-base") {
     if (branchName !== source.branchName) {

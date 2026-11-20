@@ -1629,10 +1629,6 @@ test.each([
     "paseo_worktree_archive_request",
     (client: DaemonClient) => client.archivePaseoWorktree({ worktreePath: "/repo/worktree" }),
   ],
-  [
-    "create_paseo_worktree_request",
-    (client: DaemonClient) => client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" }),
-  ],
 ] as const)("keeps %s pending through the worktree manager budget", async (type, run) => {
   useHeartbeatClock();
   const transport = createMockTransport();
@@ -1664,6 +1660,53 @@ test.each([
     code: "DAEMON_REQUEST_TIMEOUT",
     message: `No response to ${type} after 150000ms`,
   });
+});
+
+test("waits on create_paseo_worktree_request across manager and hook stages until response or disconnect", async () => {
+  useHeartbeatClock();
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "worktree-create-wait-test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+
+  const connecting = client.connect();
+  transport.triggerOpen();
+  await connecting;
+
+  const pending = client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "topic" });
+  const sentFrame = JSON.parse(assertStr(transport.sent.at(-1))) as {
+    message: { requestId: string };
+  };
+  let settled = false;
+  void pending.then(() => {
+    settled = true;
+    return undefined;
+  });
+  await vi.advanceTimersByTimeAsync(200_000);
+  await Promise.resolve();
+  expect(settled).toBe(false);
+
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "create_paseo_worktree_response",
+      payload: {
+        requestId: sentFrame.message.requestId,
+        workspace: null,
+        error: null,
+        setupTerminalId: null,
+      },
+    }),
+  );
+  expect(await pending).toMatchObject({ requestId: sentFrame.message.requestId, error: null });
+
+  const disconnected = client.createPaseoWorktree({ cwd: "/repo", worktreeSlug: "drop" });
+  transport.triggerClose({ code: 1006, reason: "gone" });
+  await expect(disconnected).rejects.toMatchObject({ code: "DAEMON_CONNECTION_LOST" });
 });
 
 test("honors explicit fetchAgent timeout below the session RPC default", async () => {

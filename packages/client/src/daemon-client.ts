@@ -5465,7 +5465,10 @@ export class DaemonClient {
         ...(input.githubPrNumber !== undefined ? { githubPrNumber: input.githubPrNumber } : {}),
       },
       responseType: "create_paseo_worktree_response",
-      timeout: WORKTREE_OPERATION_TIMEOUT_MS,
+      // Every daemon stage (before hooks, shared 120s manager budget, Git, after hooks) enforces
+      // its own deadline, and transport heartbeats/close reject if the host drops, so wait for the
+      // terminal worktree response instead of aborting prematurely mid-workflow.
+      timeout: 0,
     });
   }
 

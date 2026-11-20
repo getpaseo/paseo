@@ -1588,6 +1588,150 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
       expect(existsSync(staleWorktreePath)).toBe(false);
     });
 
+    test("rejects a managed fork PR checkout when the remote PR ref cannot be resolved", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const staleBranch = "offline-fork-pr-526";
+      const staleWorktreePath = path.join(tempDir, "offline-fork-pr");
+      git(repoDir, "branch", staleBranch, "main");
+      git(repoDir, "remote", "set-url", "origin", path.join(tempDir, "missing-remote.git"));
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      await expect(
+        createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "fork-pr-offline",
+            action: "checkout",
+            githubPrNumber: 526,
+            refName: "main",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps({ github }),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async (request) => {
+                expect(request.headSha).toBeUndefined();
+                git(repoDir, "worktree", "add", staleWorktreePath, staleBranch);
+                return { pluginId: "offline-manager", path: staleWorktreePath };
+              },
+              removeWorktree: async () => null,
+            },
+          },
+        ),
+      ).rejects.toThrow("Unable to resolve remote change request head commit");
+      expect(existsSync(staleWorktreePath)).toBe(false);
+    });
+
+    test("accepts a managed fork PR checkout matching the pre-call PR head even if the remote advances mid-setup", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const baseRemoteDir = path.join(tempDir, "base.git");
+      const initialPrHead = git(repoDir, "ls-remote", "origin", "refs/pull/526/head").split(
+        /\s+/,
+      )[0];
+      const managedPath = path.join(tempDir, "mid-push-fork-pr");
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "fork-pr-mid-push",
+          action: "checkout",
+          githubPrNumber: 526,
+          refName: "main",
+          paseoHome,
+        },
+        {
+          ...createCoreDeps({ github }),
+          worktreeManagers: {
+            hasWorktreeManager: () => true,
+            createWorktree: async (request) => {
+              expect(request.headSha).toBe(initialPrHead);
+              git(repoDir, "fetch", "origin", "refs/pull/526/head:refs/heads/pr-526-snap");
+              git(repoDir, "worktree", "add", managedPath, "pr-526-snap");
+              // Simulate the PR author pushing a newer commit while setup hooks run.
+              const headCloneDir = path.join(tempDir, "therainisme-clone");
+              writeFileSync(path.join(headCloneDir, "README.md"), "fork pr pushed mid-setup\n");
+              git(headCloneDir, "add", "README.md");
+              git(headCloneDir, "-c", "commit.gpgsign=false", "commit", "-m", "mid-setup push");
+              const newerHead = git(headCloneDir, "rev-parse", "HEAD");
+              git(headCloneDir, "push", "origin", "main");
+              execFileSync("git", [`--git-dir=${baseRemoteDir}`, "fetch", headRemoteDir, "main"], {
+                stdio: "pipe",
+              });
+              execFileSync(
+                "git",
+                [`--git-dir=${baseRemoteDir}`, "update-ref", "refs/pull/526/head", newerHead],
+                { stdio: "pipe" },
+              );
+              return { pluginId: "mid-push-manager", path: managedPath };
+            },
+            removeWorktree: async () => null,
+          },
+        },
+      );
+
+      expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(initialPrHead);
+    });
+
+    test("rejects an existing linked worktree whose directory name contains a line break", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const newlineWorktree = path.join(tempDir, "manual\nworktree");
+      git(repoDir, "worktree", "add", "-b", "newline-branch", newlineWorktree, "main");
+      writeFileSync(path.join(newlineWorktree, "keep.txt"), "uncommitted\n");
+
+      await expect(
+        createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "newline-hijack",
+            action: "branch-off",
+            branchName: "newline-hijack",
+            paseoHome,
+          },
+          {
+            ...createCoreDeps(),
+            worktreeManagers: {
+              hasWorktreeManager: () => true,
+              createWorktree: async () => ({
+                pluginId: "bad-manager",
+                path: newlineWorktree,
+              }),
+              removeWorktree: async () => null,
+            },
+          },
+        ),
+      ).rejects.toThrow("already-existing worktree");
+
+      expect(readFileSync(path.join(newlineWorktree, "keep.txt"), "utf8")).toBe("uncommitted\n");
+      expect(await readPaseoWorktreeMetadata(newlineWorktree)).toBeNull();
+    });
+
     test("declines a Worktrunk fork PR checkout that reuses an archived local branch so Git checks out the latest PR head", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
