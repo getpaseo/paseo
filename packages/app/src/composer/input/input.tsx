@@ -200,6 +200,8 @@ export interface MessageInputProps {
   sendShortcut: SendShortcut;
   /** Callback for queue button when agent is running */
   onQueue?: (payload: MessagePayload) => void;
+  /** Sends all queued messages. Returns whether it started a send. */
+  onSendQueued?: () => boolean;
   /** Optional handler used when submit button is in loading state. */
   onSubmitLoadingPress?: () => void;
   /** Intercept key press events before default handling. Return true to prevent default. */
@@ -905,10 +907,10 @@ type PrimaryActionKind = "send" | "active" | "voiceMode" | "none";
 
 function hasSendableComposerContent(input: {
   hasText: boolean;
-  attachments: readonly ComposerAttachment[];
+  hasAttachments: boolean;
   hasExternalContent: boolean;
 }): boolean {
-  return input.hasText || input.attachments.length > 0 || input.hasExternalContent;
+  return input.hasText || input.hasAttachments || input.hasExternalContent;
 }
 
 function resolvePrimaryActionKind(input: {
@@ -1271,7 +1273,7 @@ function resolvePresentationSendDisabled(input: {
   standsIn: boolean;
   disabled: boolean;
   hasText: boolean;
-  attachments: ComposerAttachment[];
+  hasAttachments: boolean;
   hasExternalContent: boolean;
   allowEmpty: boolean;
 }): boolean {
@@ -1337,6 +1339,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       textReplacement,
       submitLabel,
     } = resolveMessageInputProps(props);
+    const onSendQueued = props.onSendQueued;
     const { isPaneFocused } = useComposerKeyboardScope();
     const mode = resolveComposerInputMode(inputMode);
     const { t } = useTranslation();
@@ -1825,11 +1828,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        hasSendableContent:
+          allowEmptySubmit ||
+          hasSendableComposerContent({
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            hasAttachments: attachments.length > 0,
+            hasExternalContent,
+          }),
+        onSendQueued,
       });
       if (hasFinePointer()) {
         textInputRef.current?.focus();
       }
-    }, [defaultSendBehavior, isAgentRunning, onQueue, handleQueueMessage, handleSendMessage]);
+    }, [
+      allowEmptySubmit,
+      attachments,
+      defaultSendBehavior,
+      hasExternalContent,
+      isAgentRunning,
+      onQueue,
+      onSendQueued,
+      handleQueueMessage,
+      handleSendMessage,
+    ]);
 
     const handleAlternateSendAction = useCallback(() => {
       runAlternateSendAction({
@@ -1838,8 +1859,26 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         onQueue,
         handleSendMessage,
         handleQueueMessage,
+        hasSendableContent:
+          allowEmptySubmit ||
+          hasSendableComposerContent({
+            hasText: (textInputRef.current?.getText() ?? valueRef.current).trim().length > 0,
+            hasAttachments: attachments.length > 0,
+            hasExternalContent,
+          }),
+        onSendQueued,
       });
-    }, [defaultSendBehavior, isAgentRunning, handleSendMessage, handleQueueMessage, onQueue]);
+    }, [
+      allowEmptySubmit,
+      attachments,
+      defaultSendBehavior,
+      hasExternalContent,
+      isAgentRunning,
+      handleSendMessage,
+      handleQueueMessage,
+      onQueue,
+      onSendQueued,
+    ]);
 
     const alternateSendAction = resolveAlternateSendAction({
       defaultSendBehavior,
@@ -1915,7 +1954,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const primaryActionKind = resolvePrimaryActionKind({
       hasSendableContent: hasSendableComposerContent({
         hasText: hasLiveText,
-        attachments,
+        hasAttachments: attachments.length > 0,
         hasExternalContent,
       }),
       allowEmptySubmit,
@@ -2064,7 +2103,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       standsIn: sendStandsIn,
       disabled: isSendButtonDisabled,
       hasText: hasLiveText,
-      attachments,
+      hasAttachments: attachments.length > 0,
       hasExternalContent,
       allowEmpty: allowEmptySubmit,
     });

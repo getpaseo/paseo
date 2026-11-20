@@ -150,6 +150,7 @@ export const ptBR: TranslationResources = {
       sendAndInterrupt: "Enviar e interromper",
       sendAndSteer: "Enviar e orientar",
       sendMessage: "Enviar mensagem",
+      sendQueue: "Enviar fila",
       longPressToQueue: "Mantenha pressionado para enfileirar",
       longPressToSendNow: "Mantenha pressionado para enviar agora",
       queue: "Fila",
@@ -2546,6 +2547,11 @@ export const ptBR: TranslationResources = {
           steer: "Orientar",
           queue: "Fila",
         },
+      },
+      queueDrain: {
+        label: "Envio da fila",
+        description: "Envie as mensagens da fila juntas ou uma por vez",
+        options: { all: "Enviar toda a fila", next: "Enviar a próxima" },
       },
       sendShortcut: {
         label: "Atalho de envio",

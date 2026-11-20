@@ -232,8 +232,8 @@ describe("loadAppSettingsFromStorage", () => {
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.sendShortcut).toBe("enter");
-    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("enter");
+    expect(result.sendShortcut).toBe("mod-enter");
+    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("mod-enter");
   });
 
   it("loads the modifier Enter send preference", async () => {
@@ -257,7 +257,7 @@ describe("loadAppSettingsFromStorage", () => {
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.sendShortcut).toBe("enter");
+    expect(result.sendShortcut).toBe("mod-enter");
   });
 
   it("defaults sidebar navigation items to an empty preference list", async () => {
