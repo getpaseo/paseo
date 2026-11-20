@@ -133,11 +133,9 @@ export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | 
     case "checkout-branch":
       return [...common, request.branch];
     case "checkout-change-request":
-      if (request.forge === "github") return [...common, `pr:${request.changeRequestNumber}`];
-      if (request.forge === "gitlab") return [...common, `mr:${request.changeRequestNumber}`];
-      return null;
     case "checkout-github-pr":
-      return [...common, `pr:${request.githubPrNumber}`];
+      if (!request.headSha) return null;
+      return [...common, "--create", request.branch, "--base", request.headSha];
   }
 }
 
@@ -207,16 +205,13 @@ export async function createWithWorktrunk(
 ): Promise<{ type: "created"; path: string } | undefined> {
   const args = buildCreateArgs(request);
   if (!args) return undefined;
-  const isChangeRequest =
-    request.kind === "checkout-change-request" || request.kind === "checkout-github-pr";
-  const sameRepoChangeRequest =
-    isChangeRequest && !request.untrusted && !request.headRepositoryOwner;
-  // With a local name collision, Git gives branch-off a new name or fetches the PR head into
-  // a separate branch. Worktrunk's PR shortcut can reuse a local branch at an older commit.
-  let existingBranch: string | undefined;
-  if (request.kind === "branch-off") existingBranch = request.branch;
-  else if (sameRepoChangeRequest) existingBranch = request.headRef;
-  if (existingBranch && (await hasLocalBranch(request.repoRoot, existingBranch, signal))) {
+  // With a local branch collision, decline so Paseo's Git checkout allocates a unique branch
+  // name without disturbing the existing local branch.
+  const createsLocalBranch =
+    request.kind === "branch-off" ||
+    request.kind === "checkout-change-request" ||
+    request.kind === "checkout-github-pr";
+  if (createsLocalBranch && (await hasLocalBranch(request.repoRoot, request.branch, signal))) {
     return undefined;
   }
   let stdout: string;
@@ -232,13 +227,6 @@ export async function createWithWorktrunk(
   // If Worktrunk switched to an already-existing checkout instead of creating one,
   // decline so Paseo falls back to Git (which creates a unique branch).
   if (output.action !== undefined && output.action !== "created") {
-    return undefined;
-  }
-  // For any change request (same-repo or fork), if Worktrunk reused a pre-existing local branch
-  // instead of fetching a fresh branch from the remote PR/MR head, decline so Paseo's Git
-  // checkout fetches the latest head commit into a unique branch.
-  if (isChangeRequest && output.action === "created" && !output.createdBranch) {
-    await cleanupPartiallyCreatedWorktree(request.repoRoot, output);
     return undefined;
   }
   await recordCreatedBranch(request.repoRoot, output);

@@ -25,7 +25,12 @@ import {
   readPaseoWorktreeMetadata,
 } from "../utils/worktree-metadata.js";
 import { validateBeforeRequest, validateBeforeResult } from "./plugins/lifecycle/index.js";
-import { UnknownBranchError } from "../utils/worktree.js";
+import {
+  isPaseoOwnedWorktreeCwd,
+  listGitWorktrees,
+  listPaseoWorktrees,
+  UnknownBranchError,
+} from "../utils/worktree.js";
 import { createWorktreeCore as createCoreWorktree } from "./worktree-core.js";
 import { isPlatform } from "../test-utils/platform.js";
 import { createWithWorktrunk } from "../../../../plugin-examples/worktrunk/server/wt.js";
@@ -1061,14 +1066,20 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
 if [ "$3" = remove ]; then
   exec git -C "$2" worktree remove --force "$2-pr-checkout"
 fi
-if git -C "$2" show-ref --verify --quiet refs/heads/${branch}; then
-  git -C "$2" worktree add --quiet "$2-pr-checkout" ${branch} || exit $?
-  printf '{"action":"created","path":"%s","branch":"${branch}","created_branch":false}\\n' "$2-pr-checkout"
-else
-  git -C "$2" worktree add --quiet -b ${branch} "$2-pr-checkout" origin/${branch} || exit $?
-  printf '{"action":"created","path":"%s","branch":"${branch}","created_branch":false,"from_remote":"origin/${branch}"}\\n' "$2-pr-checkout"
-fi
-printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
+repo="$2"
+shift 2
+branch=""
+base=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --create) branch="$2"; shift 2 ;;
+    --base) base="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+git -C "$repo" worktree add --quiet -b "$branch" "$repo-pr-checkout" "$base" || exit $?
+printf '{"action":"created","path":"%s","branch":"%s","created_branch":true}\\n' "$repo-pr-checkout" "$branch"
+printf 'setup' > "$repo-pr-checkout/.worktrunk-setup"
 `,
           { mode: 0o755 },
         );
@@ -1588,12 +1599,10 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
       expect(existsSync(staleWorktreePath)).toBe(false);
     });
 
-    test("rejects a managed fork PR checkout when the remote PR ref cannot be resolved", async () => {
+    test("fails before calling the manager when the remote PR ref cannot be fetched", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
-      const staleBranch = "offline-fork-pr-526";
-      const staleWorktreePath = path.join(tempDir, "offline-fork-pr");
-      git(repoDir, "branch", staleBranch, "main");
+      let managerCalled = false;
       git(repoDir, "remote", "set-url", "origin", path.join(tempDir, "missing-remote.git"));
       const github = {
         ...createGitHubServiceStub(),
@@ -1622,20 +1631,19 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
             ...createCoreDeps({ github }),
             worktreeManagers: {
               hasWorktreeManager: () => true,
-              createWorktree: async (request) => {
-                expect(request.headSha).toBeUndefined();
-                git(repoDir, "worktree", "add", staleWorktreePath, staleBranch);
-                return { pluginId: "offline-manager", path: staleWorktreePath };
+              createWorktree: async () => {
+                managerCalled = true;
+                return null;
               },
               removeWorktree: async () => null,
             },
           },
         ),
-      ).rejects.toThrow("Unable to resolve remote change request head commit");
-      expect(existsSync(staleWorktreePath)).toBe(false);
+      ).rejects.toThrow("Unable to fetch change request refs");
+      expect(managerCalled).toBe(false);
     });
 
-    test("accepts a managed fork PR checkout matching the pre-call PR head even if the remote advances mid-setup", async () => {
+    test("accepts a managed fork PR checkout matching the pre-fetched headSha even after multiple mid-setup pushes", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
       const baseRemoteDir = path.join(tempDir, "base.git");
@@ -1656,6 +1664,23 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
         }),
       };
 
+      const pushCommit = (message: string) => {
+        const headCloneDir = path.join(tempDir, "therainisme-clone");
+        writeFileSync(path.join(headCloneDir, "README.md"), `${message}\n`);
+        git(headCloneDir, "add", "README.md");
+        git(headCloneDir, "-c", "commit.gpgsign=false", "commit", "-m", message);
+        const head = git(headCloneDir, "rev-parse", "HEAD");
+        git(headCloneDir, "push", "origin", "main");
+        execFileSync("git", [`--git-dir=${baseRemoteDir}`, "fetch", headRemoteDir, "main"], {
+          stdio: "pipe",
+        });
+        execFileSync(
+          "git",
+          [`--git-dir=${baseRemoteDir}`, "update-ref", "refs/pull/526/head", head],
+          { stdio: "pipe" },
+        );
+      };
+
       const result = await createCoreWorktree(
         {
           cwd: repoDir,
@@ -1671,23 +1696,10 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
             hasWorktreeManager: () => true,
             createWorktree: async (request) => {
               expect(request.headSha).toBe(initialPrHead);
-              git(repoDir, "fetch", "origin", "refs/pull/526/head:refs/heads/pr-526-snap");
-              git(repoDir, "worktree", "add", managedPath, "pr-526-snap");
-              // Simulate the PR author pushing a newer commit while setup hooks run.
-              const headCloneDir = path.join(tempDir, "therainisme-clone");
-              writeFileSync(path.join(headCloneDir, "README.md"), "fork pr pushed mid-setup\n");
-              git(headCloneDir, "add", "README.md");
-              git(headCloneDir, "-c", "commit.gpgsign=false", "commit", "-m", "mid-setup push");
-              const newerHead = git(headCloneDir, "rev-parse", "HEAD");
-              git(headCloneDir, "push", "origin", "main");
-              execFileSync("git", [`--git-dir=${baseRemoteDir}`, "fetch", headRemoteDir, "main"], {
-                stdio: "pipe",
-              });
-              execFileSync(
-                "git",
-                [`--git-dir=${baseRemoteDir}`, "update-ref", "refs/pull/526/head", newerHead],
-                { stdio: "pipe" },
-              );
+              // Two pushes happen while the manager creates the worktree from request.headSha.
+              pushCommit("mid-setup push B");
+              git(repoDir, "worktree", "add", "-b", "pr-526-snap", managedPath, request.headSha!);
+              pushCommit("mid-setup push C");
               return { pluginId: "mid-push-manager", path: managedPath };
             },
             removeWorktree: async () => null,
@@ -1698,7 +1710,7 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
       expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(initialPrHead);
     });
 
-    test("rejects an existing linked worktree whose directory name contains a line break", async () => {
+    test("protects pre-existing and discovers newly managed worktrees whose paths contain a line break", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);
       const newlineWorktree = path.join(tempDir, "manual\nworktree");
@@ -1730,14 +1742,49 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
 
       expect(readFileSync(path.join(newlineWorktree, "keep.txt"), "utf8")).toBe("uncommitted\n");
       expect(await readPaseoWorktreeMetadata(newlineWorktree)).toBeNull();
+
+      // A newly created managed worktree inside a directory containing a line break must remain
+      // visible to discovery and marker-based ownership checks.
+      const managedNewlineDir = path.join(tempDir, "parent\nbreak", "managed-wt");
+      mkdirSync(path.dirname(managedNewlineDir), { recursive: true });
+      const created = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "newline-managed",
+          action: "branch-off",
+          branchName: "newline-managed",
+          paseoHome,
+        },
+        {
+          ...createCoreDeps(),
+          worktreeManagers: {
+            hasWorktreeManager: () => true,
+            createWorktree: async (request) => {
+              git(repoDir, "worktree", "add", "-b", request.branch, managedNewlineDir, "main");
+              return { pluginId: "newline-manager", path: managedNewlineDir };
+            },
+            removeWorktree: async () => null,
+          },
+        },
+      );
+
+      const expectedPath = realpathSync(managedNewlineDir);
+      expect(created.worktree.worktreePath).toBe(expectedPath);
+      const allGitWorktrees = await listGitWorktrees({ cwd: repoDir });
+      expect(allGitWorktrees.map((entry) => entry.path)).toContain(expectedPath);
+      const paseoWorktrees = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+      expect(paseoWorktrees.map((entry) => entry.path)).toContain(expectedPath);
+      const ownership = await isPaseoOwnedWorktreeCwd(expectedPath, { paseoHome });
+      expect(ownership.allowed).toBe(true);
+      expect(ownership.worktreePath).toBe(expectedPath);
     });
 
-    test("declines a Worktrunk fork PR checkout that reuses an archived local branch so Git checks out the latest PR head", async () => {
+    test("declines a Worktrunk fork PR checkout when the archived local branch already exists so Git checks out the latest PR head", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);
-      const staleBranch = "therainisme-pr-526";
+      const archivedBranch = "therainisme/main";
       const archivedTip = git(repoDir, "rev-parse", "main");
-      git(repoDir, "branch", staleBranch, archivedTip);
+      git(repoDir, "branch", archivedBranch, archivedTip);
       const latestPrHead = git(repoDir, "ls-remote", "origin", "refs/pull/526/head").split(
         /\s+/,
       )[0];
@@ -1747,11 +1794,8 @@ printf 'setup' > "$2-pr-checkout/.worktrunk-setup"
       writeFileSync(
         wt,
         `#!/bin/sh
-if [ "$3" = remove ]; then
-  exec git -C "$2" worktree remove --force "$2-fork-pr"
-fi
-git -C "$2" worktree add --quiet "$2-fork-pr" ${staleBranch} || exit $?
-printf '{"action":"created","path":"%s","branch":"${staleBranch}","created_branch":false}\\n' "$2-fork-pr"
+echo "wt should not be invoked when local branch already exists" >&2
+exit 1
 `,
         { mode: 0o755 },
       );
@@ -1787,6 +1831,7 @@ printf '{"action":"created","path":"%s","branch":"${staleBranch}","created_branc
               hasWorktreeManager: () => true,
               createWorktree: async (request) => {
                 expect(request.untrusted).toBe(true);
+                expect(request.headSha).toBe(latestPrHead);
                 const managed = await createWithWorktrunk(request, new AbortController().signal);
                 return managed ? { pluginId: "worktrunk", path: managed.path } : null;
               },
@@ -1795,8 +1840,7 @@ printf '{"action":"created","path":"%s","branch":"${staleBranch}","created_branc
           },
         );
         expect(git(result.worktree.worktreePath, "rev-parse", "HEAD")).toBe(latestPrHead);
-        expect(existsSync(`${repoDir}-fork-pr`)).toBe(false);
-        expect(git(repoDir, "rev-parse", `refs/heads/${staleBranch}`)).toBe(archivedTip);
+        expect(git(repoDir, "rev-parse", `refs/heads/${archivedBranch}`)).toBe(archivedTip);
       } finally {
         if (previous === undefined) delete process.env.WORKTRUNK_BIN;
         else process.env.WORKTRUNK_BIN = previous;

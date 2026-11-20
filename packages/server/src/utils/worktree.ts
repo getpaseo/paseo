@@ -1072,11 +1072,8 @@ async function resolveMetadataOwnedWorktree(
     const candidate = await normalizePathForOwnership(root);
     if (repoRoot !== undefined && candidate === (await normalizePathForOwnership(repoRoot)))
       return null;
-    const { stdout: listOutput } = await runGitCommand(["worktree", "list", "--porcelain"], {
-      cwd: candidate,
-      envOverlay: READ_ONLY_GIT_ENV,
-    });
-    for (const entry of parseWorktreeList(listOutput)) {
+    const entries = await readGitWorktreeEntries(candidate);
+    for (const entry of entries) {
       if ((await normalizePathForOwnership(entry.path)) === candidate) {
         return { worktreePath: candidate, worktreeRoot: dirname(candidate) };
       }
@@ -1094,20 +1091,42 @@ interface ParsedWorktreeEntry extends ParsedPaseoWorktreeInfo {
   unusable?: true;
 }
 
-function parseWorktreeList(output: string): ParsedPaseoWorktreeInfo[] {
-  return parseWorktreeEntries(output).map(({ unusable: _unusable, ...entry }) => entry);
+/**
+ * Single worktree-list reader shared by adoption snapshots, discovery, and marker ownership.
+ * Uses Git 2.36+'s NUL-delimited `-z` output to preserve paths containing line breaks,
+ * falling back to line-delimited `--porcelain` on Git 2.35 and earlier.
+ */
+async function readGitWorktreeEntries(cwd: string): Promise<ParsedWorktreeEntry[]> {
+  const nulResult = await runGitCommand(["worktree", "list", "--porcelain", "-z"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+    acceptExitCodes: [0, 129],
+  });
+  if (nulResult.exitCode === 0) {
+    return parseWorktreeEntriesTokens(nulResult.stdout.split("\0"), false);
+  }
+  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
+    cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
+  return parseWorktreeEntriesTokens(stdout.split("\n"), true);
 }
 
-function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
+function parseWorktreeEntriesTokens(
+  tokens: readonly string[],
+  trimPath: boolean,
+): ParsedWorktreeEntry[] {
   const entries: ParsedWorktreeEntry[] = [];
   let current: ParsedWorktreeEntry | null = null;
 
-  for (const line of output.split("\n")) {
-    if (line.startsWith("worktree ")) {
+  for (const rawToken of tokens) {
+    const token = trimPath ? rawToken.replace(/\r$/, "") : rawToken;
+    if (token.startsWith("worktree ")) {
       if (current?.path) {
         entries.push(current);
       }
-      current = { path: line.slice("worktree ".length).trim() };
+      const pathValue = token.slice("worktree ".length);
+      current = { path: trimPath ? pathValue.trim() : pathValue };
       continue;
     }
 
@@ -1115,14 +1134,14 @@ function parseWorktreeEntries(output: string): ParsedWorktreeEntry[] {
       continue;
     }
 
-    if (line.startsWith("branch ")) {
-      const ref = line.slice("branch ".length).trim();
+    if (token.startsWith("branch ")) {
+      const ref = token.slice("branch ".length).trim();
       current.branchName = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
-    } else if (line.startsWith("HEAD ")) {
-      current.head = line.slice("HEAD ".length).trim();
-    } else if (line === "bare" || line.startsWith("prunable")) {
+    } else if (token.startsWith("HEAD ")) {
+      current.head = token.slice("HEAD ".length).trim();
+    } else if (token === "bare" || token.startsWith("prunable")) {
       current.unusable = true;
-    } else if (line.trim().length === 0) {
+    } else if ((trimPath ? token.trim() : token).length === 0) {
       if (current.path) {
         entries.push(current);
       }
@@ -1166,17 +1185,14 @@ export interface GitWorktree {
  * Unlike `listPaseoWorktrees`, ownership plays no part.
  */
 export async function listGitWorktrees({ cwd }: { cwd: string }): Promise<GitWorktree[]> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const entries = await readGitWorktreeEntries(cwd);
   const { stdout: toplevel } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd,
     envOverlay: READ_ONLY_GIT_ENV,
   });
-  const cwdWorktree = await normalizePathForOwnership(toplevel.trim());
+  const cwdWorktree = await normalizePathForOwnership(toplevel.replace(/\r?\n$/, ""));
   const worktrees: GitWorktree[] = [];
-  for (const entry of parseWorktreeEntries(stdout)) {
+  for (const entry of entries) {
     if (entry.unusable) continue;
     // A locked worktree whose directory was deleted is neither prunable nor workable.
     if (!(await pathExists(entry.path))) continue;
@@ -1202,16 +1218,13 @@ export async function listPaseoWorktrees({
   worktreesRoot?: string;
 }): Promise<PaseoWorktreeInfo[]> {
   const projectWorktreesRoot = await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot);
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const entries = await readGitWorktreeEntries(cwd);
 
   const mainCheckoutPath = await resolveRepoRootFromGitCommonDir(await getGitCommonDir(cwd));
   const roots = await ownershipPathVariants(projectWorktreesRoot);
   const worktrees: PaseoWorktreeInfo[] = [];
   // Inspect foreign paths sequentially; a large worktree list must not consume the FS pool.
-  for (const entry of parseWorktreeList(stdout)) {
+  for (const { unusable: _unusable, ...entry } of entries) {
     const path = await normalizePathForOwnership(entry.path);
     if (
       !roots.some((root) => getRelativePathInsideRoot(root, path) !== null) &&
@@ -1225,15 +1238,10 @@ export async function listPaseoWorktrees({
 
 /** Normalized paths of all currently registered worktrees for the repo containing `cwd`. */
 async function listGitWorktreePaths(cwd: string): Promise<Set<string>> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain", "-z"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
+  const entries = await readGitWorktreeEntries(cwd);
   const paths = new Set<string>();
-  for (const token of stdout.split("\0")) {
-    if (token.startsWith("worktree ")) {
-      paths.add(normalizePathForIdentity(token.slice("worktree ".length)));
-    }
+  for (const entry of entries) {
+    paths.add(normalizePathForIdentity(entry.path));
   }
   return paths;
 }
@@ -1745,7 +1753,7 @@ export async function runPluginWorktreeManagerCheckout(
   const expectedChangeRequestHeadSha =
     operation === "create" &&
     (source.kind === "checkout-change-request" || source.kind === "checkout-github-pr")
-      ? await resolveRemoteChangeRequestHeadSha(cwd, source)
+      ? await fetchChangeRequestHeadSha(cwd, source)
       : undefined;
   const managed = await run(
     expectedChangeRequestHeadSha ? { changeRequestHeadSha: expectedChangeRequestHeadSha } : {},
@@ -1938,33 +1946,28 @@ async function adoptPluginWorktree(
   };
 }
 
-async function resolveRemoteChangeRequestHeadSha(
+/**
+ * Fetch the remote change-request head once into `refs/paseo/change-requests/<n>` so both the
+ * worktree manager (via `request.headSha`) and adoption verification agree on one commit.
+ */
+async function fetchChangeRequestHeadSha(
   cwd: string,
   source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
-): Promise<string | null> {
+): Promise<string> {
   const changeRequestNumber =
     source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
-  const refs = source.checkoutRefs ?? [
-    { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-  ];
-  for (const ref of refs) {
-    try {
-      const { stdout } = await runGitCommand(
-        ["ls-remote", ref.remoteName ?? "origin", ref.remoteRef],
-        {
-          cwd,
-          envOverlay: READ_ONLY_GIT_ENV,
-        },
-      );
-      const sha = stdout.trim().split(/\s+/)[0];
-      if (sha && /^[0-9a-f]{40,64}$/i.test(sha)) {
-        return sha;
-      }
-    } catch {
-      // Try next candidate ref.
-    }
-  }
-  return null;
+  const destination = `refs/paseo/change-requests/${changeRequestNumber}`;
+  await fetchFirstAvailableRef({
+    cwd,
+    destination,
+    sources: source.checkoutRefs ?? [
+      { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+    ],
+  });
+  const { stdout } = await runGitCommand(["rev-parse", "--verify", `${destination}^{commit}`], {
+    cwd,
+  });
+  return stdout.trim();
 }
 
 async function verifyPluginChangeRequestHead(options: {
@@ -1976,25 +1979,15 @@ async function verifyPluginChangeRequestHead(options: {
 }): Promise<void> {
   const { cwd, source, worktreePath, worktreeManagerPluginId, expectedChangeRequestHeadSha } =
     options;
-  const preResolvedHead =
-    expectedChangeRequestHeadSha !== undefined
-      ? expectedChangeRequestHeadSha
-      : await resolveRemoteChangeRequestHeadSha(cwd, source);
-  if (!preResolvedHead) {
-    throw new Error(
-      `Unable to resolve remote change request head commit to verify plugin ${worktreeManagerPluginId}`,
-    );
-  }
+  const expectedHead =
+    expectedChangeRequestHeadSha ?? (await fetchChangeRequestHeadSha(cwd, source));
   const { stdout: headStdout } = await runGitCommand(["rev-parse", "--verify", "HEAD^{commit}"], {
     cwd: worktreePath,
   });
   const actualHead = headStdout.trim();
-  if (actualHead === preResolvedHead) return;
-  // Allow the remote PR head advancing between Paseo's pre-call lookup and the manager's fetch.
-  const latestHead = await resolveRemoteChangeRequestHeadSha(cwd, source);
-  if (actualHead !== latestHead) {
+  if (actualHead !== expectedHead) {
     throw new Error(
-      `Plugin ${worktreeManagerPluginId} checked out ${actualHead}, expected change request head ${preResolvedHead}`,
+      `Plugin ${worktreeManagerPluginId} checked out ${actualHead}, expected change request head ${expectedHead}`,
     );
   }
 }
@@ -2724,9 +2717,6 @@ async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string
 }
 
 async function isBranchCheckedOut(cwd: string, branchName: string): Promise<boolean> {
-  const { stdout } = await runGitCommand(["worktree", "list", "--porcelain"], {
-    cwd,
-    envOverlay: READ_ONLY_GIT_ENV,
-  });
-  return parseWorktreeList(stdout).some((entry) => entry.branchName === branchName);
+  const entries = await readGitWorktreeEntries(cwd);
+  return entries.some((entry) => entry.branchName === branchName);
 }
