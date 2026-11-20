@@ -139,12 +139,26 @@ export interface DesktopBrowserNewTabRequestEvent {
 }
 
 export interface DesktopAttachedBrowserRegistration {
+  partition: string;
   browserId: string;
   workspaceId: string;
   webContentsId: number;
 }
 
+export type BrowserProfileGroup = { serverId: string; projectId: string } | null;
+export interface BrowserProfileEntry {
+  group: BrowserProfileGroup;
+  slug: string;
+  name: string;
+}
+
 export interface DesktopBrowserBridge {
+  listProfiles?: () => Promise<BrowserProfileEntry[]>;
+  createProfile?: (input: {
+    group: BrowserProfileGroup;
+    name: string;
+  }) => Promise<BrowserProfileEntry>;
+  retirePristineGuest?: (browserId: string, webContentsId: number) => boolean;
   setShortcutPolicy?: (input: BrowserKeyboardPolicy) => Promise<void>;
   readonly profilePartition?: string;
   registerAttachedBrowser?: (input: DesktopAttachedBrowserRegistration) => Promise<void>;

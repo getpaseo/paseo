@@ -28,6 +28,7 @@ function readWindowChromeMode(): DesktopWindowChromeMode {
 }
 
 interface AttachedBrowserRegistration {
+  partition: string;
   browserId: string;
   workspaceId: string;
   webContentsId: number;
@@ -124,6 +125,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     setShortcutPolicy: (input: BrowserKeyboardPolicy) =>
       ipcRenderer.invoke("paseo:browser:set-shortcut-policy", input),
     profilePartition: PASEO_BROWSER_PROFILE_PARTITION,
+    listProfiles: () => ipcRenderer.invoke("paseo:browser:list-profiles"),
+    createProfile: (input: unknown) => ipcRenderer.invoke("paseo:browser:create-profile", input),
+    retirePristineGuest: (browserId: string, webContentsId: number) =>
+      ipcRenderer.sendSync("paseo:browser:retire-pristine", browserId, webContentsId),
     registerAttachedBrowser: (input: AttachedBrowserRegistration) =>
       ipcRenderer.invoke("paseo:browser:register-attached", input),
     unregisterWorkspaceBrowser: (browserId: string) =>

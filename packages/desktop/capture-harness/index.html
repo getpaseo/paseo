@@ -117,7 +117,12 @@
         const attached = new Promise((resolve) => {
           webview.addEventListener(
             "did-attach",
-            () => resolve({ browserId, webContentsId: webview.getWebContentsId() }),
+            () =>
+              webview.addEventListener(
+                "dom-ready",
+                () => resolve({ browserId, webContentsId: webview.getWebContentsId() }),
+                { once: true },
+              ),
             { once: true },
           );
         });
@@ -127,15 +132,15 @@
         return attached;
       }
 
-      const profilePartition = params.get("profilePartition");
+      const profilePartitions = (params.get("profilePartitions") || "").split(",");
       const profileBrowserIds = (params.get("profileBrowserIds") || "").split(",").filter(Boolean);
       let profileAttachSequence = Promise.resolve();
-      if (profilePartition && profileBrowserIds.length > 0) {
+      if (profileBrowserIds.length > 0) {
         profileAttachSequence = (async () => {
-          for (const browserId of profileBrowserIds) {
+          for (const [index, browserId] of profileBrowserIds.entries()) {
             await appendProfileHarnessWebview({
               browserId,
-              partition: profilePartition,
+              partition: profilePartitions[index],
               sourceUrl: params.get("targetUrl") || "bright.html",
             });
           }

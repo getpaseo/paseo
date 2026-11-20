@@ -9,6 +9,9 @@ log.initialize({ spyRendererConsole: true });
 
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
+import { createBrowserProfileCatalog } from "./features/browser-profile-catalog.js";
+import { retirePristineGuest } from "./features/browser-webviews/index.js";
+import { getBrowserPopupWindowOptions } from "./features/browser-webviews/window-open.js";
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -80,8 +83,8 @@ import {
 import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
-  PASEO_BROWSER_PROFILE_PARTITION,
-  getPaseoBrowserProfileSession,
+  isPaseoBrowserPartition,
+  listBrowserPartitionDirectories,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
   readLegacyPaseoBrowserIds,
@@ -146,6 +149,7 @@ log.info("[desktop] app startup", {
 });
 
 interface AttachedBrowserInput {
+  partition: string;
   browserId: string;
   workspaceId: string;
   webContentsId: number;
@@ -156,6 +160,7 @@ function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
     return null;
   }
   const record = input as Record<string, unknown>;
+  if (!isPaseoBrowserPartition(record.partition)) return null;
   if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
     return null;
   }
@@ -170,6 +175,7 @@ function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
     return null;
   }
   return {
+    partition: record.partition,
     browserId: record.browserId.trim(),
     workspaceId: record.workspaceId.trim(),
     webContentsId: record.webContentsId,
@@ -227,27 +233,6 @@ function showBrowserWebviewContextMenu(
   menu.popup({ window: win });
 }
 
-function getBrowserPopupWindowOptions(
-  mainWindow: BrowserWindow,
-): Electron.BrowserWindowConstructorOptions {
-  return {
-    parent: mainWindow,
-    show: true,
-    autoHideMenuBar: true,
-    webPreferences: {
-      partition: PASEO_BROWSER_PROFILE_PARTITION,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      nodeIntegrationInWorker: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      webviewTag: false,
-      allowRunningInsecureContent: false,
-    },
-  };
-}
-
 function installBrowserWindowOpenHandler(input: {
   contents: Electron.WebContents;
   sourceContents: Electron.WebContents;
@@ -270,7 +255,7 @@ function installBrowserWindowOpenHandler(input: {
     if (decision.kind === "popup") {
       return {
         action: "allow",
-        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow),
+        overrideBrowserWindowOptions: getBrowserPopupWindowOptions(mainWindow, contents),
       };
     }
 
@@ -393,6 +378,16 @@ ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
 });
 
+const profileCatalog = createBrowserProfileCatalog(app.getPath("userData"));
+ipcMain.handle("paseo:browser:list-profiles", () => profileCatalog.list());
+ipcMain.handle("paseo:browser:create-profile", (_event, input: unknown) =>
+  profileCatalog.create(input),
+);
+ipcMain.on("paseo:browser:retire-pristine", (event, browserId: string, guestId: number) => {
+  const guest = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
+  event.returnValue = guest?.id === guestId && retirePristineGuest(guest);
+});
+
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
   const input = readAttachedBrowserInput(rawInput);
   if (!input) {
@@ -401,7 +396,7 @@ ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => 
   const registered = registerAttachedPaseoBrowser({
     ...input,
     sender: event.sender,
-    profileSession: getPaseoBrowserProfileSession(session),
+    sessionFromPartition: (partition) => session.fromPartition(partition),
     findWebContents: (webContentsId) => webContents.fromId(webContentsId) ?? null,
   });
   if (!registered) {
@@ -518,13 +513,14 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
   const profileSessions = getPaseoBrowserProfileSessions(
     session,
     readLegacyPaseoBrowserIds(rawLegacyBrowserIds),
+    await listBrowserPartitionDirectories(app.getPath("userData")),
   );
-  const profileSession = profileSessions[0];
+  const sessionsToReload = new Set(profileSessions);
   await clearPaseoBrowserProfile({
     profileSessions,
     listGuests: () =>
       listPaseoBrowserProfileGuests({
-        profileSession,
+        profileSessions: sessionsToReload,
         webContents: webContents.getAllWebContents(),
       }),
     logReloadError: (webContentsId, error) => {

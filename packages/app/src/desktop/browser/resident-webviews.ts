@@ -64,6 +64,7 @@ function registerBrowserWhenAttached(
     const webContentsId = webview.getWebContentsId();
     void browser
       .registerAttachedBrowser({
+        partition: browser.profilePartition,
         browserId: identity.browserId,
         workspaceId: identity.workspaceId,
         webContentsId,
