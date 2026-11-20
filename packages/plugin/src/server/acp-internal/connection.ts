@@ -1605,24 +1605,25 @@ class AcpRuntime {
         }
       } catch (error) {
         await this.drainNotifications();
-        if (!this.closing && active.deferred === deferred) {
-          if (!this.processFailed && !active.cancelling && active.wirePromptsInFlight > 1) {
-            this.emit({
-              type: "session.notice",
-              sessionId: this.options.boundarySessionId,
-              notice: {
-                id: `acp:steer-error:${input.prompt.clientMessageId}`,
-                severity: "error",
-                title: "Follow-up prompt failed",
-                description: describeError(error),
-              },
-            });
-          } else {
-            this.finishDeferredTurn(active, {
-              type: "fail",
-              error: { message: describeError(error) },
-            });
-          }
+        if (this.closing || active.deferred !== deferred) return;
+        if (active.cancelling) {
+          this.finishDeferredTurn(active, { type: "cancel" });
+        } else if (this.processFailed) {
+          this.finishDeferredTurn(active, {
+            type: "fail",
+            error: { message: describeError(error) },
+          });
+        } else {
+          this.emit({
+            type: "session.notice",
+            sessionId: this.options.boundarySessionId,
+            notice: {
+              id: `acp:steer-error:${input.prompt.clientMessageId}`,
+              severity: "error",
+              title: "Follow-up prompt failed",
+              description: describeError(error),
+            },
+          });
         }
       } finally {
         active.wirePromptsInFlight -= 1;

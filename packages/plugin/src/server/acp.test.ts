@@ -4210,4 +4210,181 @@ describe("deferTurnOnRunningTools", () => {
       await connection.close();
     }
   });
+
+  it("keeps the background job running when a lone steer rejects and cancels cleanly if Stop raced the rejection", async () => {
+    let promptCount = 0;
+    let rejectHeldSteer: (() => void) | null = null;
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        promptCount += 1;
+        if (promptCount === 1) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-keep-alive",
+              name: "run_command",
+              title: "Background job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        if (promptCount === 2) {
+          instance.reject(request, "Steer rejected");
+          return true;
+        }
+        if (promptCount === 3) {
+          instance.notify("session/update", {
+            sessionId: "connector-session",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "bg-cancel-race",
+              name: "run_command",
+              title: "Cancelable job",
+              status: "in_progress",
+            },
+          });
+          instance.respond(request, { stopReason: "end_turn" });
+          return true;
+        }
+        rejectHeldSteer = () => instance.reject(request, "Request aborted");
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "deferred-lone-steer-reject",
+      label: "Deferred Lone Steer Reject",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+      },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+
+      // Case 1: Lone steer rejects while bg-keep-alive is still running -> notice emitted, turn stays open.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "keep-alive-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-keep-alive",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "lone-steer-fail",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "status?" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.notice" &&
+          event.notice.severity === "error" &&
+          event.notice.description?.includes("Steer rejected") === true,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === "acp:keep-alive-turn" &&
+            event.state !== "started",
+        ),
+      ).toBe(false);
+
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-keep-alive",
+          status: "completed",
+        },
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Job finished."),
+      });
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 200, size: 1000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:keep-alive-turn" &&
+          event.state === "completed",
+      );
+
+      // Case 2: Explicit Stop before steer rejects -> turn reports canceled, not failed.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "cancel-race-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start 2" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "bg-cancel-race",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "raced-steer",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "follow up" }] },
+        },
+      });
+      await expect.poll(() => rejectHeldSteer).not.toBeNull();
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-race",
+        sessionId: "session-1",
+      });
+      rejectHeldSteer!();
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:cancel-race-turn" &&
+          event.state === "canceled",
+      );
+    } finally {
+      await connection.close();
+    }
+  });
 });
