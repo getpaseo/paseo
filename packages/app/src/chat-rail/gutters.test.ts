@@ -4,7 +4,7 @@ import { CHAT_COLUMN_BASE_GUTTER, resolveChatColumnGutters } from "./gutters";
 import {
   CHAT_COLUMN_RAIL_DATASET as NATIVE_CHAT_COLUMN_RAIL_DATASET,
   ChatColumnRailSurface as NativeChatColumnRailSurface,
-  useChatOutlineInset as useNativeChatOutlineInset,
+  useChatOutlineRail as useNativeChatOutlineRail,
 } from "./index.native";
 import { CHAT_COLUMN_RAIL_DATASET as WEB_CHAT_COLUMN_RAIL_DATASET } from "./index.web";
 
@@ -66,7 +66,7 @@ describe("native and web chat-rail boundaries", () => {
   it("keeps native as a zero-overhead pass-through with no dataset or outline inset", () => {
     const sentinel = "child";
     expect(NATIVE_CHAT_COLUMN_RAIL_DATASET).toBeUndefined();
-    expect(useNativeChatOutlineInset()).toBe(0);
+    expect(useNativeChatOutlineRail()).toEqual({ enabled: false, inset: 0 });
     expect(NativeChatColumnRailSurface({ serverId: "srv-1", children: sentinel })).toBe(sentinel);
   });
 

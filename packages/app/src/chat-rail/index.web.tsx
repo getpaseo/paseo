@@ -14,9 +14,9 @@ import {
 import { resolveContentMaxWidth, useSettings } from "@/hooks/use-settings";
 import { useSessionStore } from "@/stores/session-store";
 import { CHAT_COLUMN_BASE_GUTTER, resolveChatColumnGutters } from "./gutters";
-import type { ChatColumnRailSurfaceProps } from "./index";
+import type { ChatColumnRailSurfaceProps, ChatOutlineRailState } from "./index";
 
-export type { ChatColumnRailSurfaceProps };
+export type { ChatColumnRailSurfaceProps, ChatOutlineRailState };
 
 const STYLE_ID = "paseo-chat-column-rail";
 // React Native Web turns `dataSet={{ chatRailLane: "true" }}` into `data-chat-rail-lane="true"`.
@@ -34,7 +34,12 @@ const BASE_SURFACE_STYLE: CSSProperties = {
   minHeight: 0,
 };
 
-const ChatOutlineInsetContext = createContext(0);
+const DISABLED_CHAT_OUTLINE_RAIL: ChatOutlineRailState = Object.freeze({
+  enabled: false,
+  inset: 0,
+});
+
+const ChatOutlineRailContext = createContext<ChatOutlineRailState>(DISABLED_CHAT_OUTLINE_RAIL);
 
 export const CHAT_COLUMN_RAIL_DATASET: Record<string, string> | undefined = Object.freeze({
   chatRailLane: "true",
@@ -58,8 +63,8 @@ function cssLength(value: number | string): string {
  *
  * Measures the pane width once against `CHAT_OUTLINE_MIN_PANEL_WIDTH` (ignoring 0px
  * measurements from hidden retained tabs) and publishes the resolved horizontal gutters
- * via CSS custom properties to the composer, track bar, and callouts. Only the boolean
- * inset value (`0` or `44`) enters React context for `AgentStreamView`.
+ * via CSS custom properties to the composer, track bar, and callouts. Only the outline
+ * enabled flag and reserved inset (`0` or `44`) enter React context for `AgentStreamView`.
  */
 export function ChatColumnRailSurface({ serverId, children }: ChatColumnRailSurfaceProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -90,22 +95,27 @@ export function ChatColumnRailSurface({ serverId, children }: ChatColumnRailSurf
     return () => observer.disconnect();
   }, []);
 
-  const outlineInset =
-    supportsChatOutline && chatOutlineEnabled && !isBelow ? CHAT_OUTLINE_GUTTER_INSET : 0;
+  const enabled = supportsChatOutline && chatOutlineEnabled;
+  const inset = enabled && !isBelow ? CHAT_OUTLINE_GUTTER_INSET : 0;
 
   useLayoutEffect(() => {
-    if (outlineInset > 0) {
+    if (inset > 0) {
       ensureChatColumnRailStyle();
     }
-  }, [outlineInset]);
+  }, [inset]);
+
+  const outlineRail = useMemo<ChatOutlineRailState>(
+    () => (enabled ? { enabled, inset } : DISABLED_CHAT_OUTLINE_RAIL),
+    [enabled, inset],
+  );
 
   const surfaceStyle = useMemo((): CSSProperties => {
-    if (outlineInset === 0) {
+    if (inset === 0) {
       return BASE_SURFACE_STYLE;
     }
     const gutters = resolveChatColumnGutters({
       gutter: CHAT_COLUMN_BASE_GUTTER,
-      outlineInset,
+      outlineInset: inset,
       contentMaxWidth,
     });
     return {
@@ -113,21 +123,21 @@ export function ChatColumnRailSurface({ serverId, children }: ChatColumnRailSurf
       "--paseo-chat-rail-left": cssLength(gutters.paddingLeft),
       "--paseo-chat-rail-right": cssLength(gutters.paddingRight),
     } as CSSProperties;
-  }, [contentMaxWidth, outlineInset]);
+  }, [contentMaxWidth, inset]);
 
   return (
-    <ChatOutlineInsetContext.Provider value={outlineInset}>
+    <ChatOutlineRailContext.Provider value={outlineRail}>
       <div
         ref={surfaceRef}
         style={surfaceStyle}
-        data-chat-rail-active={outlineInset > 0 ? "true" : undefined}
+        data-chat-rail-active={inset > 0 ? "true" : undefined}
       >
         {children}
       </div>
-    </ChatOutlineInsetContext.Provider>
+    </ChatOutlineRailContext.Provider>
   );
 }
 
-export function useChatOutlineInset(): number {
-  return useContext(ChatOutlineInsetContext);
+export function useChatOutlineRail(): ChatOutlineRailState {
+  return useContext(ChatOutlineRailContext);
 }
