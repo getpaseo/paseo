@@ -40,7 +40,6 @@ const SOURCE_MOCKUPS: Record<HubTriggerSourceId, React.ComponentType<SourceMocku
   webhooks: WebhooksSourceMockup,
 };
 
-const ACTIVE_BAR_TRANSITION = { type: "spring", stiffness: 460, damping: 36 } as const;
 const PANEL_INITIAL = { opacity: 0, y: 4 } as const;
 const PANEL_ANIMATE = { opacity: 1, y: 0 } as const;
 const PANEL_EXIT = { opacity: 0, y: -4 } as const;
@@ -88,7 +87,7 @@ export function HubAutomationsShowcase() {
   }, []);
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)] lg:gap-7">
+    <div className="grid items-start gap-6 lg:grid-cols-[292px_minmax(0,1fr)] lg:gap-6">
       <div className="space-y-2.5">
         <div
           role="tablist"
@@ -101,7 +100,6 @@ export function HubAutomationsShowcase() {
               source={source}
               index={index}
               isSelected={source.id === selected}
-              reduceMotion={reduceMotion}
               onSelect={setSelected}
               onNavigate={handleNavigate}
               registerRef={registerTabRef}
@@ -146,7 +144,6 @@ function SourceTabButton({
   source,
   index,
   isSelected,
-  reduceMotion,
   onSelect,
   onNavigate,
   registerRef,
@@ -154,7 +151,6 @@ function SourceTabButton({
   source: HubTriggerSource;
   index: number;
   isSelected: boolean;
-  reduceMotion: boolean;
   onSelect: (id: HubTriggerSourceId) => void;
   onNavigate: (index: number, key: string) => boolean;
   registerRef: (id: HubTriggerSourceId, node: HTMLButtonElement | null) => void;
@@ -193,21 +189,12 @@ function SourceTabButton({
       tabIndex={isSelected ? 0 : -1}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
-      className={`group relative flex min-h-[42px] cursor-pointer items-center justify-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:min-h-0 lg:items-start lg:justify-start lg:gap-3 lg:px-3.5 lg:py-3 ${
+      className={`group flex min-h-[42px] cursor-pointer items-center justify-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-text lg:min-h-0 lg:items-start lg:justify-start lg:gap-3 lg:px-3.5 lg:py-3 ${
         isSelected
           ? "border-brand-green/55 bg-brand-green/[0.13] text-white"
           : "border-white/[0.07] bg-white/[0.015] text-white/70 hover:border-white/[0.14] hover:bg-white/[0.035] hover:text-white/90 lg:border-transparent lg:bg-transparent"
       }`}
     >
-      {isSelected ? (
-        <motion.span
-          layoutId={reduceMotion ? undefined : "hub-source-active-bar"}
-          transition={ACTIVE_BAR_TRANSITION}
-          aria-hidden="true"
-          className="pointer-events-none absolute top-2.5 bottom-2.5 left-0 hidden w-[3px] rounded-full bg-accent-text lg:block"
-        />
-      ) : null}
-
       <span
         className={`shrink-0 transition-colors lg:mt-0.5 ${
           isSelected ? "text-accent-text" : "text-white/55 group-hover:text-white/80"
@@ -218,14 +205,14 @@ function SourceTabButton({
 
       <span className="min-w-0 flex-1">
         <span
-          className={`block truncate text-xs font-medium lg:text-sm ${
+          className={`block truncate text-xs leading-5 font-medium lg:text-sm ${
             isSelected ? "text-white" : "text-white/80 group-hover:text-white"
           }`}
         >
           {t(`hub.sources.${id}.name`)}
         </span>
         <span
-          className={`mt-0.5 hidden text-xs leading-snug lg:block ${
+          className={`mt-0.5 hidden truncate text-xs leading-4 lg:block ${
             isSelected ? "text-white/65" : "text-muted-foreground"
           }`}
         >
