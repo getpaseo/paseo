@@ -486,7 +486,7 @@ export class ProviderSnapshotManager {
     }
     const providerFilter = input.providers ? new Set(input.providers) : null;
     const snapshot = input.wait
-      ? this.getOrCreateTarget(target.snapshotCwd).snapshot
+      ? this.snapshotForTarget(target)
       : this.getSnapshotForTarget(target, input.providers);
     const entries = snapshot.records.map(({ entry }) => entry);
     return providerFilter ? entries.filter((entry) => providerFilter.has(entry.provider)) : entries;
@@ -790,7 +790,7 @@ export class ProviderSnapshotManager {
     if (providersToWarm.length > 0) {
       void this.warmUp(target, providersToWarm);
     }
-    return this.getOrCreateTarget(target.snapshotCwd).snapshot;
+    return this.snapshotForTarget(target);
   }
 
   private async getReadyProvider(
@@ -1132,6 +1132,49 @@ export class ProviderSnapshotManager {
         }
       }
     }
+  }
+
+  /**
+   * Some providers discover modes where they run, not in the daemon's home
+   * directory (OpenCode project agents, for example). Profiles are host-wide, so
+   * the host snapshot lists every mode the host has seen, first definition per id.
+   * The merged list is derived on read: the stored snapshot stays what the host
+   * itself fetched, so a mode disappears when its workspace stops reporting it.
+   */
+  private withWorkspaceModes(records: readonly ProviderSnapshotRecord[]): ProviderSnapshotRecord[] {
+    const discovered = new Map<AgentProvider, AgentMode[]>();
+    for (const cwd of [...this.targets.keys()].sort()) {
+      if (cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY) continue;
+      for (const { entry } of this.targets.get(cwd)!.snapshot.records) {
+        if (!entry.modes?.length) continue;
+        const modes = discovered.get(entry.provider) ?? [];
+        modes.push(...entry.modes);
+        discovered.set(entry.provider, modes);
+      }
+    }
+    if (discovered.size === 0) return [...records];
+    return records.map((record) => {
+      const extra = discovered.get(record.entry.provider);
+      if (!extra?.length) return record;
+      const existing = record.entry.modes ?? [];
+      const modes = [...existing];
+      const known = new Set(modes.map((mode) => mode.id));
+      for (const mode of extra) {
+        if (known.has(mode.id)) continue;
+        known.add(mode.id);
+        modes.push(mode);
+      }
+      return modes.length === existing.length ? record : identifyEntry({ ...record.entry, modes });
+    });
+  }
+
+  private snapshotForTarget(target: ProviderSnapshotTarget): ProviderSnapshot {
+    const snapshot = this.getOrCreateTarget(target.snapshotCwd).snapshot;
+    if (target.snapshotCwd !== GLOBAL_PROVIDER_SNAPSHOT_KEY) return snapshot;
+    const records = this.withWorkspaceModes(snapshot.records);
+    return sameSnapshotRecords(snapshot.records, records)
+      ? snapshot
+      : { cwd: snapshot.cwd, records };
   }
 
   private getOrCreateTarget(cwd: string): Target {

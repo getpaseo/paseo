@@ -171,6 +171,142 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
+  test("lists modes discovered in any workspace on the host snapshot", async () => {
+    const mode = (id: string): AgentMode => ({ id, label: id });
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => {
+            if (options.scope !== "workspace") return { models: [], modes: [] };
+            const modes =
+              options.cwd === "/project/one"
+                ? [mode("review"), mode("shared")]
+                : [mode("shared"), mode("ship")];
+            return { models: [], modes };
+          },
+        }),
+      },
+    });
+    try {
+      await manager.refreshSettingsSnapshot({ providers: ["opencode"] });
+      await manager.refreshSnapshotForCwd({ cwd: "/project/one", providers: ["opencode"] });
+      await manager.refreshSnapshotForCwd({ cwd: "/project/two", providers: ["opencode"] });
+      const host = await manager.getProvider({ provider: "opencode", wait: false });
+      expect(host.modes?.map((entry) => entry.id)).toEqual(["review", "shared", "ship"]);
+      // The two read APIs a profile and the mode picker go through.
+      expect((await manager.listModes({ provider: "opencode" })).map((entry) => entry.id)).toEqual([
+        "review",
+        "shared",
+        "ship",
+      ]);
+      expect(
+        manager
+          .getSnapshot()
+          .records.find(({ entry }) => entry.provider === "opencode")
+          ?.entry.modes?.map((entry) => entry.id),
+      ).toEqual(["review", "shared", "ship"]);
+      const workspace = await manager.listProviders({
+        cwd: "/project/one",
+        providers: ["opencode"],
+      });
+      expect(workspace[0]?.modes?.map((entry) => entry.id)).toEqual(["review", "shared"]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("drops a discovered mode when its workspace stops reporting it", async () => {
+    const mode = (id: string): AgentMode => ({ id, label: id });
+    let reported: AgentMode[] = [mode("review")];
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: [], modes: reported }),
+        }),
+      },
+    });
+    try {
+      await manager.refreshSnapshotForCwd({ cwd: "/project/one", providers: ["opencode"] });
+      expect((await manager.getProvider({ provider: "opencode", wait: false })).modes).toEqual([
+        mode("review"),
+      ]);
+      reported = [];
+      await manager.refreshSnapshotForCwd({ cwd: "/project/one", providers: ["opencode"] });
+      expect((await manager.getProvider({ provider: "opencode", wait: false })).modes).toEqual([]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("keeps the host definition when a workspace repeats a mode id", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => ({
+            models: [],
+            modes:
+              options.scope === "global"
+                ? [{ id: "shared", label: "Host shared" }]
+                : [
+                    { id: "shared", label: "Project shared" },
+                    { id: "review", label: "Review" },
+                  ],
+          }),
+        }),
+      },
+    });
+    try {
+      await manager.refreshSettingsSnapshot({ providers: ["opencode"] });
+      await manager.refreshSnapshotForCwd({ cwd: "/project/one", providers: ["opencode"] });
+      const host = await manager.getProvider({ provider: "opencode", wait: false });
+      expect(host.modes).toEqual([
+        { id: "shared", label: "Host shared" },
+        { id: "review", label: "Review" },
+      ]);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("does not attribute one provider's workspace modes to another provider", async () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      extraClients: {
+        opencode: createExtraClient("opencode", {
+          isAvailable: async () => true,
+          fetchCatalog: async (options) => ({
+            models: [],
+            modes: options.scope === "workspace" ? [{ id: "review", label: "Review" }] : [],
+          }),
+        }),
+        claude: createExtraClient("claude", {
+          isAvailable: async () => true,
+          fetchCatalog: async () => ({ models: [], modes: [] }),
+        }),
+      },
+    });
+    try {
+      await manager.refreshSnapshotForCwd({
+        cwd: "/project/one",
+        providers: ["opencode", "claude"],
+      });
+      expect((await manager.getProvider({ provider: "opencode", wait: false })).modes).toEqual([
+        { id: "review", label: "Review" },
+      ]);
+      expect((await manager.getProvider({ provider: "claude", wait: false })).modes ?? []).toEqual(
+        [],
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("normalizes plugin model catalogs at the same publication boundary", async () => {
     const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
     manager.replacePluginProviders([

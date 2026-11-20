@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
@@ -17,7 +17,18 @@ export function useAgentProfileFormCatalog(input: {
   serverId: string;
   model: AgentProfileFormModel;
 }): void {
-  const { entries } = useProvidersSnapshot(input.serverId, { cwd: null });
+  const { entries, refresh } = useProvidersSnapshot(input.serverId, { cwd: null });
+
+  // The host snapshot lists modes discovered in workspaces, so ask the daemon to
+  // refresh every known target before the form decides which fields to show.
+  const refreshed = useRef(false);
+  useEffect(() => {
+    if (refreshed.current) {
+      return;
+    }
+    refreshed.current = true;
+    void refresh();
+  }, [refresh]);
 
   useEffect(() => {
     if (!entries) {

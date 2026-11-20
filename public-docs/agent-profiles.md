@@ -21,7 +21,7 @@ Save the settings you use together as a named profile. Choose **UI work**, **Pla
 4. Fill in **When to use** with the kind of work this profile should handle.
 5. Select **Save**.
 
-Profiles are saved on that host. The available settings depend on the provider and model you choose.
+Profiles are saved on that host. The available settings depend on the provider and model you choose. Modes include every mode the host has discovered for that provider, including modes that exist in only one workspace; where a workspace does not report a saved mode, Paseo uses the provider's default.
 
 ## Apply settings in one click
 
