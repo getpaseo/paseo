@@ -847,6 +847,11 @@ export function BrowserPane({
       syncNavigationState();
     };
     const handleNavigate = (event: Event) => {
+      if (
+        !webview.isConnected ||
+        (event as Event & { isMainFrame?: boolean }).isMainFrame === false
+      )
+        return;
       const nextUrl =
         typeof (event as Event & { url?: unknown }).url === "string"
           ? ((event as Event & { url?: string }).url ?? "")

@@ -53,7 +53,8 @@ export function createBrowserProfileCatalog(userData: string) {
     let slug = base;
     for (let n = 2; siblings.some((row) => row.slug === slug); n++) {
       const suffix = `-${n}`;
-      slug = base.slice(0, 48 - suffix.length).replace(/-+$/, "") + suffix;
+      const stem = group && base === "ws" ? "profile-ws" : base;
+      slug = stem.slice(0, 48 - suffix.length).replace(/-+$/, "") + suffix;
     }
     const entry = { group, name, slug };
     const temp = file + "." + randomUUID();

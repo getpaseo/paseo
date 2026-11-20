@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -117,7 +117,7 @@ export function ProfileSelector({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" scrollable maxHeight={400}>
             {groups.map(({ group, name }) => (
-              <Fragment key={JSON.stringify(group)}>
+              <div role="group" aria-label={name} key={JSON.stringify(group)}>
                 <DropdownMenuLabel>{name}</DropdownMenuLabel>
                 {entries
                   .filter((entry) => sameProfileGroup(entry.group, group))
@@ -131,7 +131,7 @@ export function ProfileSelector({
                     />
                   ))}
                 <ProfileMenuRow value={group} name={action(group)} onPick={setCreating} />
-              </Fragment>
+              </div>
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -153,6 +153,7 @@ export function ProfileSelector({
           submitLabel={t("workspace.browser.profiles.create")}
           testID="browser-create-profile"
           maxLength={80}
+          validateOnChange
           onClose={close}
           onSubmit={submit}
         />
@@ -161,9 +162,9 @@ export function ProfileSelector({
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  trigger: { flexShrink: 1, maxWidth: 220, paddingHorizontal: theme.spacing[1] },
+  trigger: { flexShrink: 1, maxWidth: 340, paddingHorizontal: theme.spacing[1] },
   label: {
-    maxWidth: 220,
+    maxWidth: 340,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,

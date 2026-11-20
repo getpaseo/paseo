@@ -20,6 +20,7 @@ export interface AdaptiveRenameModalProps {
   onClose: () => void;
   onSubmit: (value: string) => Promise<void> | void;
   validate?: (value: string) => string | null;
+  validateOnChange?: boolean;
   maxLength?: number;
   testID?: string;
 }
@@ -33,6 +34,7 @@ export function AdaptiveRenameModal({
   onClose,
   onSubmit,
   validate,
+  validateOnChange = false,
   maxLength,
   testID,
 }: AdaptiveRenameModalProps) {
@@ -73,10 +75,13 @@ export function AdaptiveRenameModal({
     [validate, t],
   );
 
-  const handleChange = useCallback((value: string) => {
-    setDraft(value);
-    setError(null);
-  }, []);
+  const handleChange = useCallback(
+    (value: string) => {
+      setDraft(value);
+      setError(validateOnChange ? computeError(value) : null);
+    },
+    [validateOnChange, computeError],
+  );
 
   const handleSubmit = useCallback(async () => {
     if (isPending) return;

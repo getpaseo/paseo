@@ -1,9 +1,13 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   clearPaseoBrowserProfile,
   getLegacyPaseoBrowserProfileSession,
   getPaseoBrowserProfileSessions,
   listPaseoBrowserProfileGuests,
+  listBrowserPartitionDirectories,
   readLegacyPaseoBrowserIds,
 } from "./browser-profile.js";
 
@@ -226,4 +230,37 @@ describe("clearPaseoBrowserProfile", () => {
     ).rejects.toBe(clearError);
     expect(guest.reloads).toBe(0);
   });
+});
+
+test("disk discovery includes closed named, automatic and old per-tab sessions", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "browser-partitions-"));
+  const project = "paseo-project-" + "a".repeat(32);
+  const names = [
+    "paseo-shared-work",
+    project + "-customer",
+    project + "-ws-" + "b".repeat(32),
+    "paseo-browser-1700000000001-ef",
+  ];
+  const opened: string[] = [];
+  try {
+    expect(await listBrowserPartitionDirectories(directory)).toEqual([]);
+    for (const name of [...names, "unrelated"])
+      await mkdir(path.join(directory, "Partitions", name), { recursive: true });
+    await writeFile(path.join(directory, "Partitions", "paseo-shared-file"), "");
+    getPaseoBrowserProfileSessions(
+      {
+        fromPartition(partition) {
+          opened.push(partition);
+          return new FakeProfileSession();
+        },
+      },
+      [],
+      await listBrowserPartitionDirectories(directory),
+    );
+    expect(opened.sort()).toEqual(
+      ["persist:paseo-browser", ...names.map((name) => "persist:" + name)].sort(),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

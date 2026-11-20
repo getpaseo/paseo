@@ -131,11 +131,12 @@ export function createBrowserRecord(input: {
   initialUrl: string | null | undefined;
   now: number;
 }): BrowserRecord {
+  const url = input.initialUrl == null ? "about:blank" : normalizeBrowserUrl(input.initialUrl);
   return {
     browserId: input.browserId,
     profile: "pending",
-    phase: !input.initialUrl || input.initialUrl === "about:blank" ? "pristine" : "in-flight",
-    url: input.initialUrl == null ? "about:blank" : normalizeBrowserUrl(input.initialUrl),
+    phase: url === "about:blank" ? "pristine" : "in-flight",
+    url,
     title: "",
     isLoading: false,
     canGoBack: false,

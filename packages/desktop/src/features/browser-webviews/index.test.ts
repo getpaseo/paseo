@@ -65,9 +65,13 @@ describe("browser webview attachment", () => {
   test("admits only complete lowercase scoped names on allowed URLs", () => {
     const prefix = "persist:paseo-project-";
     const valid = prefix + "ab".repeat(16) + "-work";
-    expect(isPaseoBrowserWebviewAttach({ src: "https://example.com", partition: valid })).toBe(
-      true,
-    );
+    for (const partition of [
+      valid,
+      "persist:paseo-shared-" + "a".repeat(48),
+      prefix + "ab".repeat(16) + "-ws-" + "ab".repeat(16),
+    ]) {
+      expect(isPaseoBrowserWebviewAttach({ src: "about:blank", partition })).toBe(true);
+    }
     expect(isPaseoBrowserWebviewAttach({ src: "file:///tmp/local", partition: valid })).toBe(false);
     for (const partition of [
       undefined,
@@ -75,6 +79,9 @@ describe("browser webview attachment", () => {
       valid + "-",
       valid + "x".repeat(49),
       "persist:paseo-shared-default",
+      "persist:paseo-shared-" + "a".repeat(49),
+      "persist:paseo-shared-Work",
+      valid + "\n",
       "persist:paseo-shared-a--b",
       prefix + "ab".repeat(16) + "-ws-invalid",
       prefix + "AB".repeat(16),

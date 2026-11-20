@@ -46,3 +46,11 @@ test("rejects bad or duplicate names and preserves an unreadable catalog", async
   await expect(catalog.create({ group, name: "Next" })).rejects.toThrow();
   await expect(catalog.list()).rejects.toThrow();
 });
+
+test("collisions with the bare project slug ws never allocate a reserved workspace key", async () => {
+  const catalog = createBrowserProfileCatalog(directory);
+  const first = await catalog.create({ group, name: "ws" });
+  const second = await catalog.create({ group, name: "wś" });
+  expect([first.slug, second.slug]).toEqual(["ws", "profile-ws-2"]);
+  expect(await catalog.list()).toEqual([first, second]);
+});

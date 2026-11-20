@@ -385,7 +385,7 @@ ipcMain.handle("paseo:browser:create-profile", (_event, input: unknown) =>
 );
 ipcMain.on("paseo:browser:retire-pristine", (event, browserId: string, guestId: number) => {
   const guest = getPaseoBrowserWebContentsForHostWindow(browserId, event.sender.id);
-  event.returnValue = guest?.id === guestId && retirePristineGuest(guest);
+  event.returnValue = guest !== null && guest.id === guestId && retirePristineGuest(guest);
 });
 
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
