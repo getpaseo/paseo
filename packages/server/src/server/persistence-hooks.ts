@@ -76,6 +76,7 @@ export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSe
     providerOptions: record.config?.providerOptions ?? undefined,
     toolPolicy: record.config?.toolPolicy ?? undefined,
     systemPrompt: record.config?.systemPrompt ?? undefined,
+    providerHandoff: record.config?.providerHandoff ?? undefined,
     mcpServers: record.config?.mcpServers ?? undefined,
   });
 }
@@ -97,6 +98,7 @@ export function buildSessionConfig(
     providerOptions: overrides.providerOptions,
     toolPolicy: overrides.toolPolicy,
     systemPrompt: overrides.systemPrompt,
+    providerHandoff: overrides.providerHandoff,
     mcpServers: overrides.mcpServers,
   });
 }

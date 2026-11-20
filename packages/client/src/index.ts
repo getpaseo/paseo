@@ -466,6 +466,12 @@ export interface PaseoAgentHandle {
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
+  /**
+   * Sets the agent's model. With `provider`, the chat continues on that provider and model
+   * under the same agent ID. That needs an idle agent and a host that advertises
+   * `features.agentProviderSwitching`.
+   */
+  setModel(modelId: string | null, options?: { provider?: string }): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -1195,6 +1201,7 @@ function createAgentHandleFactory(
       detach: async () => {
         await daemonClient.detachAgent(id);
       },
+      setModel: (modelId, options) => daemonClient.setAgentModel(id, modelId, options?.provider),
       subscribe: (handler) =>
         listen((update) => {
           if (update.kind === "upsert" && update.agent.id === id) {

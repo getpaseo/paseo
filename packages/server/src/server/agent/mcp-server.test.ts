@@ -4720,6 +4720,7 @@ describe("update_agent MCP tool", () => {
 
   it("updates runtime settings before metadata", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1" });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
@@ -4755,6 +4756,43 @@ describe("update_agent MCP tool", () => {
     expect(response.structuredContent).toEqual({ success: true });
   });
 
+  it("switches the provider before applying settings for the new provider", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1" });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "update_agent");
+    const calls: string[] = [];
+    spies.agentManager.setAgentModel.mockImplementation(async () => {
+      calls.push("model");
+    });
+    spies.agentManager.setAgentMode.mockImplementation(async () => {
+      calls.push("mode");
+      return null;
+    });
+    const input = {
+      agentId: "agent-1",
+      settings: { provider: "claude", model: "claude-sonnet-5-5", modeId: "auto" },
+    };
+
+    const parsed = await tool.inputSchema.safeParseAsync(input);
+    expect(parsed.success).toBe(true);
+
+    await tool.handler(input);
+
+    expect(spies.agentManager.setAgentModel).toHaveBeenCalledTimes(1);
+    expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith(
+      "agent-1",
+      "claude-sonnet-5-5",
+      "claude",
+    );
+    expect(calls).toEqual(["model", "mode"]);
+  });
+
   it("reports success for a no-op update with neither metadata nor settings", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     const server = await createAgentMcpServer({
@@ -4775,8 +4813,33 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentOptions).not.toHaveBeenCalled();
   });
 
+  it("loads an agent whose idle runtime was released before changing its settings", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    // Not live and not stored: the load fails before any setting is applied.
+    spies.agentManager.getAgent.mockReturnValue(null);
+    spies.agentStorage.get.mockResolvedValue(null);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "update_agent");
+
+    await expect(
+      tool.handler({
+        agentId: "agent-1",
+        settings: { provider: "claude", model: "claude-sonnet-5-5" },
+      }),
+    ).rejects.toThrow("Agent not found");
+
+    expect(spies.agentStorage.get).toHaveBeenCalledWith("agent-1");
+    expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
+  });
+
   it("does not update metadata when runtime settings fail", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1" });
     spies.agentManager.setAgentOptions.mockRejectedValue(new Error("unsupported feature"));
     const server = await createAgentMcpServer({
       agentManager,

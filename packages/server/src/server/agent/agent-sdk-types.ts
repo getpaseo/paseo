@@ -622,6 +622,26 @@ export interface ImportedProviderSession {
   providerSubagentEvents?: Extract<AgentStreamEvent, { type: "provider_subagent" }>[];
 }
 
+/** The native session a provider had when the chat left it, so that switching back resumes it. */
+export interface ProviderPreviousSession {
+  handle: AgentPersistenceHandle;
+  /** The last timeline row the provider saw; rows after it happened on other providers. */
+  leftAtSeq: number;
+  model?: string;
+}
+
+/** Manager-owned state of a chat that changed providers. */
+export interface ProviderHandoffState {
+  text: string;
+  pending: boolean;
+  historyBoundary?: number;
+  /** Timeline events at the start of a resumed native history that the chat already shows. */
+  nativeHistorySkip?: number;
+  previousSessions?: Record<string, ProviderPreviousSession>;
+  /** A summary of the timeline through `throughSeq`, written by an earlier switch, reused by later ones. */
+  compaction?: { throughSeq: number; summary: string };
+}
+
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
@@ -630,6 +650,8 @@ export interface AgentSessionConfig {
    * Mapped by each provider to its native instruction field.
    */
   systemPrompt?: string;
+  /** Manager-owned context for the first accepted turn after changing providers. */
+  providerHandoff?: ProviderHandoffState;
   /**
    * Daemon-level instructions appended at runtime. This is deliberately not
    * persisted into agent config so daemon setting changes apply cleanly.
@@ -730,6 +752,12 @@ export interface AgentSession {
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  /**
+   * The text this session's own latest compaction left in its context: the summary plus any
+   * messages the provider kept word for word. Null when the session never compacted or keeps the
+   * summary in a form other providers cannot read.
+   */
+  readCompactedContext?(): Promise<string | null>;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;

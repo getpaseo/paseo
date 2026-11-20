@@ -454,6 +454,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
       preapproved: config.toolPolicy.preapproved.map((grant) => ({ ...grant })),
     };
   }
+  if (config.providerHandoff) {
+    serializable.providerHandoff = { ...config.providerHandoff };
+  }
   if (config.systemPrompt) {
     serializable.systemPrompt = config.systemPrompt;
   }

@@ -10237,3 +10237,9 @@ test("disposing a route before its deferred close does not reopen it on origin r
   expect(opened).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledTimes(1);
 });
+
+test("provider switching refuses an older host before sending an ambiguous model request", async () => {
+  const client = new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "switch-compat-test" });
+  await expect(client.setAgentModel("chat", "target", "codex")).rejects.toThrow("Update this host");
+  await client.close();
+});
