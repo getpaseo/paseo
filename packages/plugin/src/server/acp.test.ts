@@ -4263,7 +4263,7 @@ describe("deferTurnOnRunningTools", () => {
       label: "Deferred Lone Steer Reject",
       connector,
       acpOptions: {
-        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500 },
+        deferTurnOnRunningTools: { settleDelayMs: 25, quietLimitMs: 500, cancelTimeoutMs: 80 },
       },
     });
     const connection = await registration.connect({
@@ -4379,6 +4379,8 @@ describe("deferTurnOnRunningTools", () => {
         requestId: "stop-race",
         sessionId: "session-1",
       });
+      // Unanswered steer past cancelTimeoutMs cancels the turn and fails the wedged runtime
+      // so the session is recovered instead of overlapping late updates with a new prompt.
       await waitForEvent(
         events,
         (event) =>
@@ -4386,26 +4388,8 @@ describe("deferTurnOnRunningTools", () => {
           event.turnId === "acp:cancel-race-turn" &&
           event.state === "canceled",
       );
-      // Even before the old steer settles (or if it never answers), a new prompt starts cleanly.
-      await connection.send({
-        type: "session.prompt",
-        sessionId: "session-1",
-        prompt: {
-          clientMessageId: "after-unanswered-steer",
-          delivery: "auto",
-          input: { type: "message", content: [{ type: "text", text: "fresh prompt" }] },
-        },
-      });
-      await waitForEvent(
-        events,
-        (event) =>
-          event.type === "session.turn" &&
-          event.turnId === "acp:after-unanswered-steer" &&
-          event.state === "completed",
-      );
-      // Late rejection of the old steer after the new prompt is ignored cleanly.
-      rejectHeldSteer!();
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await waitForEvent(events, (event) => event.type === "session.runtime_failed");
+      expect(instances[1].readsCanceled).toBe(true);
     } finally {
       await connection.close();
     }

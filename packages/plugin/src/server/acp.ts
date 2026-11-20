@@ -62,6 +62,8 @@ export interface AcpOptions {
     settleDelayMs?: number;
     /** Quiet limit after qualifying tools finish if no reply settles via `usage_update`. Defaults to 120_000ms. */
     quietLimitMs?: number;
+    /** Bounded wait for an in-flight steered prompt to settle after `session/cancel` before closing the wedged runtime. Defaults to 1_000ms. */
+    cancelTimeoutMs?: number;
     /** Predicate deciding whether an open tool call keeps the turn open. Defaults to all running tools. */
     keepsTurnOpen?: (toolCall: AcpToolCallSnapshot) => boolean;
   };

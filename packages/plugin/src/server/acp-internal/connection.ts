@@ -392,6 +392,7 @@ interface ActivePrompt {
 
 const DEFAULT_DEFERRED_SETTLE_DELAY_MS = 500;
 const DEFAULT_DEFERRED_QUIET_LIMIT_MS = 120_000;
+const DEFAULT_DEFERRED_CANCEL_TIMEOUT_MS = 1_000;
 
 class AcpRuntime {
   readonly connection: ClientSideConnection;
@@ -751,9 +752,7 @@ class AcpRuntime {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) {
         this.finishTurnPermissions(active.turnId);
-        if (active.deferred) {
-          this.finishDeferredTurn(active, { type: "cancel" });
-        }
+        if (active.deferred) await this.settleCanceledDeferredTurn(active);
       }
     }
   }
@@ -1580,6 +1579,7 @@ class AcpRuntime {
           this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
         );
         await this.drainNotifications();
+        if (this.closing || active.deferred !== deferred) return;
         if (response.usage) {
           this.lastUsage = {
             ...this.lastUsage,
@@ -1594,7 +1594,6 @@ class AcpRuntime {
             usage: this.lastUsage,
           });
         }
-        if (this.closing || active.deferred !== deferred) return;
         if (response.stopReason === "cancelled" || active.cancelling) {
           this.finishDeferredTurn(active, { type: "cancel" });
           return;
@@ -1681,6 +1680,32 @@ class AcpRuntime {
     if (!this.options.options.acpOptions?.deferTurnOnRunningTools) return false;
     if (active.cancelling || this.closing || this.processFailed) return false;
     return this.hasQualifyingOpenTools();
+  }
+
+  private async settleCanceledDeferredTurn(active: ActivePrompt): Promise<void> {
+    if (active.wirePromptsInFlight > 0) {
+      const timeoutMs =
+        this.options.options.acpOptions?.deferTurnOnRunningTools?.cancelTimeoutMs ??
+        DEFAULT_DEFERRED_CANCEL_TIMEOUT_MS;
+      const settled = await settlesWithin(active.wirePromptLane, timeoutMs);
+      if (!settled && active.deferred) {
+        this.finishDeferredTurn(active, { type: "cancel" });
+        await active.settled;
+        if (!this.closing && !this.processFailed) {
+          this.processFailed = true;
+          this.emit({
+            type: "session.runtime_failed",
+            sessionId: this.options.boundarySessionId,
+            error: { message: "ACP session did not settle canceled prompt" },
+          });
+          await this.close();
+        }
+        return;
+      }
+    }
+    if (active.deferred) {
+      this.finishDeferredTurn(active, { type: "cancel" });
+    }
   }
 
   private finishDeferredTurn(active: ActivePrompt, outcome: DeferredTurnOutcome): void {
