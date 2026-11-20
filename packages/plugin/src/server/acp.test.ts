@@ -318,7 +318,7 @@ describe("runAcpProvider", () => {
                 {
                   type: "session.turn",
                   sessionId: "session-1",
-                  turnId: "acp:autonomous:1",
+                  turnId: expect.stringMatching(/^acp:autonomous:/),
                   state: "started",
                   acceptsFollowUp: true,
                 },
@@ -2633,7 +2633,7 @@ describe("ACP out-of-turn background activity", () => {
         "acp:start started",
         "FOREGROUND. ",
         "acp:start completed",
-        "acp:autonomous:1 started",
+        expect.stringMatching(/^acp:autonomous:.* started$/),
         "WAKEUP.",
       ]);
     } finally {
@@ -3485,12 +3485,12 @@ describe("ACP out-of-turn background activity", () => {
           content: { type: "text", text: "Nothing else needed." },
         },
       });
-      await waitForEvent(
+      const secondAuto = await waitForEvent(
         events,
         (event) =>
           event.type === "session.turn" &&
           event.turnId.startsWith("acp:autonomous:") &&
-          event.turnId !== (firstAuto.type === "session.turn" ? firstAuto.turnId : "") &&
+          event !== firstAuto &&
           event.state === "completed",
       );
       expect(await queryCanStop(connection, events, "stop-after-thought-only")).toBe(true);
@@ -3507,7 +3507,9 @@ describe("ACP out-of-turn background activity", () => {
         events,
         (event) =>
           event.type === "session.turn" &&
-          event.turnId === "acp:autonomous:3" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event !== firstAuto &&
+          event !== secondAuto &&
           event.state === "completed",
       );
       expect(events.findLast((event) => event.type === "session.background_work")).toMatchObject({

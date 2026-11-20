@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
@@ -438,7 +439,6 @@ class AcpRuntime {
   private readonly outOfTurnActivity: { settleDelayMs: number; quietLimitMs: number } | null;
   private readonly backgroundToolCalls = new Set<string>();
   private publishedBackgroundWork = false;
-  private autonomousTurnSequence = 0;
   private autonomousTurn: {
     turnId: string;
     cancelling: boolean;
@@ -1525,7 +1525,7 @@ class AcpRuntime {
 
   private ensureAutonomousTurn(): void {
     if (this.autonomousTurn) return;
-    const turnId = `acp:autonomous:${++this.autonomousTurnSequence}`;
+    const turnId = `acp:autonomous:${randomUUID()}`;
     this.fallbackChunkIds.clear();
     this.autonomousTurn = {
       turnId,

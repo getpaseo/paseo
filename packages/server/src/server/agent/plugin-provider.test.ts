@@ -2819,6 +2819,80 @@ test("resumes a goose session saved by the generic ACP provider", async () => {
   }
 });
 
+test("keeps Antigravity wakeup replies separate after reloading the agent", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-wakeup-reload-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  const sessionId = "native-session";
+  let wake!: (text: string) => Promise<void>;
+  const registration = runAcpProvider({
+    id: "test-antigravity",
+    label: "Test Antigravity",
+    acpOptions: { outOfTurnActivity: { settleDelayMs: 10 } },
+    connector: () => {
+      const clientToAgent = new TransformStream();
+      const agentToClient = new TransformStream();
+      const bindWakeup = () => {
+        wake = async (text) => {
+          await acp.sessionUpdate({
+            sessionId,
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+          });
+          await acp.sessionUpdate({
+            sessionId,
+            update: { sessionUpdate: "usage_update", used: 10, size: 100 },
+          });
+        };
+      };
+      const acp = new AgentSideConnection(
+        () => ({
+          initialize: async () => ({
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities: { loadSession: true },
+          }),
+          newSession: async () => {
+            bindWakeup();
+            return { sessionId };
+          },
+          loadSession: async () => {
+            bindWakeup();
+            return {};
+          },
+          unstable_closeSession: async () => ({}),
+          prompt: async () => ({ stopReason: "end_turn" }),
+          cancel: async () => {},
+        }),
+        { writable: agentToClient.writable, readable: clientToAgent.readable },
+      );
+      return { writable: clientToAgent.writable, readable: agentToClient.readable };
+    },
+  });
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([registration]);
+  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+  try {
+    const agent = await manager.createAgent({ provider: registration.id, cwd: home }, undefined, {
+      workspaceId: undefined,
+    });
+    const replies = () =>
+      manager
+        .getTimeline(agent.id)
+        .flatMap((item) => (item.type === "assistant_message" ? [item.text] : []));
+
+    await wake("First wakeup.");
+    await expect.poll(replies).toEqual(["First wakeup."]);
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    await manager.reloadAgentSession(agent.id);
+    await wake("Second wakeup.");
+    await expect.poll(replies).toEqual(["First wakeup.", "Second wakeup."]);
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test.each(["steer", "stop", "interrupt", "refused follow-up"] as const)(
   "Antigravity ACP background work through the daemon's %s command",
   async (action) => {
