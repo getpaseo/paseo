@@ -27,7 +27,9 @@ function configOptions() {
       "effort",
       "thought_level",
       effort,
-      loaded ? ["minimal", "low", "medium", "high", "xhigh"] : ["low", "high", "max"],
+      loaded && model === "second-model"
+        ? ["minimal", "low", "medium", "high", "xhigh"]
+        : ["low", "high", "max"],
     ),
   ];
 }
@@ -58,14 +60,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       break;
     case "session/load":
       loaded = true;
-      model = "second-model";
-      effort = "high";
+      model = process.env.ACP_TEST_LOAD_MODEL;
+      effort = model === "second-model" ? "high" : "low";
       assistantMessage("Response from the saved session");
       result = { configOptions: configOptions() };
       break;
     case "session/set_config_option":
       if (params.configId === "model") {
         model = params.value;
+        if (loaded && model === "second-model") effort = "high";
       } else if (loaded && params.value === "max") {
         send({
           id,

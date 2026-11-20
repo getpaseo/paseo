@@ -2501,6 +2501,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modelId,
       label: "model",
     });
+    this.thinkingOptionId =
+      deriveCurrentConfigValue(this.configOptions, "thought_level") ?? this.thinkingOptionId;
     this.reportFeatureChanges(before);
     this.pushEvent({
       type: "model_changed",
@@ -3300,10 +3302,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         configOptions: this.configOptions,
         category: "thought_level",
       });
-      if (
-        !option ||
-        flattenSelectOptions(option.options).some((choice) => choice.value === requested)
-      ) {
+      if (!option || findSelectConfigChoice({ option, value: requested })) {
         throw error;
       }
 
