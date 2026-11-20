@@ -42,55 +42,53 @@ const DIAGRAM_DAEMONS = [
 
 const DIAGRAM_CLIENTS = ["desktop", "web", "mobile", "cli"] as const;
 
-/** Compact flow card for the homepage Paseo Hub section. */
+/** Compact flow diagram for the homepage Paseo Hub section, sitting directly on the page background. */
 export function HubLandingFlow() {
   const { t } = useTranslation();
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-5 md:p-6">
-      <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1.25fr)_auto_minmax(0,11.5rem)_auto_minmax(0,1fr)]">
-        <div className="space-y-2.5">
-          <p className="text-[11px] uppercase tracking-wide text-white/35">
-            {t("landing.hubSection.flowTriggers")}
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
-              <div
-                key={id}
-                className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2"
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0 text-white/70" />
-                <span className="truncate text-xs font-medium text-white/85">
-                  {t(`hub.sources.${id}.name`)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <FlowArrow />
-
-        <div className="rounded-xl border border-white/20 bg-white/[0.06] px-5 py-5 text-center">
-          <p className="flex justify-center">
-            <HubLockup className="h-5 w-auto text-foreground" />
-            <span className="sr-only">{t("hub.shape.hub")}</span>
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground">{t("hub.shape.hubHosting")}</p>
-        </div>
-
-        <FlowArrow />
-
-        <div className="space-y-2.5">
-          <p className="text-[11px] uppercase tracking-wide text-white/35">
-            {t("landing.hubSection.flowDaemons")}
-          </p>
-          <div className="space-y-2">
-            {DIAGRAM_DAEMONS.map((daemon) => (
-              <CompactDaemonRow key={daemon.name} name={daemon.name} agents={daemon.agents} />
-            ))}
-            <div className="flex items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.015] px-3 py-2 text-xs text-white/60">
-              <PaseoMark className="h-3.5 w-3.5 shrink-0 text-white/75" />
-              <span className="truncate">{t("landing.hubSection.flowOpenSession")}</span>
+    <div className="grid items-center gap-5 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,12rem)_auto_minmax(0,1fr)]">
+      <div className="space-y-2.5">
+        <p className="text-[11px] uppercase tracking-wide text-white/35">
+          {t("landing.hubSection.flowTriggers")}
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {HUB_TRIGGER_SOURCES.map(({ id, Icon }) => (
+            <div
+              key={id}
+              className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0 text-white/70" />
+              <span className="truncate text-xs font-medium text-white/85">
+                {t(`hub.sources.${id}.name`)}
+              </span>
             </div>
+          ))}
+        </div>
+      </div>
+
+      <FlowArrow />
+
+      <div className="rounded-xl border border-white/20 bg-white/[0.06] px-5 py-5 text-center">
+        <p className="flex justify-center">
+          <HubLockup className="h-5 w-auto text-foreground" />
+          <span className="sr-only">{t("hub.shape.hub")}</span>
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">{t("hub.shape.hubHosting")}</p>
+      </div>
+
+      <FlowArrow />
+
+      <div className="space-y-2.5">
+        <p className="text-[11px] uppercase tracking-wide text-white/35">
+          {t("landing.hubSection.flowDaemons")}
+        </p>
+        <div className="space-y-2">
+          {DIAGRAM_DAEMONS.map((daemon) => (
+            <CompactDaemonRow key={daemon.name} name={daemon.name} agents={daemon.agents} />
+          ))}
+          <div className="flex items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.015] px-3 py-2 text-xs text-white/60">
+            <PaseoMark className="h-3.5 w-3.5 shrink-0 text-white/75" />
+            <span className="truncate">{t("landing.hubSection.flowOpenSession")}</span>
           </div>
         </div>
       </div>

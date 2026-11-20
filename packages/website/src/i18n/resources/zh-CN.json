@@ -381,11 +381,6 @@
       "flowTriggers": "触发来源",
       "flowDaemons": "已连接的 daemon",
       "flowOpenSession": "在 Paseo 中打开实时会话",
-      "highlights": {
-        "machines": "使用你的机器和订阅",
-        "authoring": "仪表盘或 YAML（<code>paseo hub deploy</code>）",
-        "hosting": "自托管（Apache 2.0）或托管服务"
-      },
       "exploreCta": "了解 Paseo Hub",
       "docsCta": "自托管文档"
     },

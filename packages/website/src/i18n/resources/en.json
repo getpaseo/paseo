@@ -381,11 +381,6 @@
       "flowTriggers": "Trigger sources",
       "flowDaemons": "Your connected daemons",
       "flowOpenSession": "Open live session in Paseo",
-      "highlights": {
-        "machines": "Your machines and subscriptions",
-        "authoring": "Dashboard or YAML (<code>paseo hub deploy</code>)",
-        "hosting": "Self-hosted (Apache 2.0) or hosted"
-      },
       "exploreCta": "Explore Paseo Hub",
       "docsCta": "Self-host docs"
     },
