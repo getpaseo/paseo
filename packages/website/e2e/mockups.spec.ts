@@ -149,7 +149,7 @@ test("the opening scene waits until most of the mockup is on screen", async ({ p
 });
 
 test("the opening scene starts in a window shorter than most of the mockup", async ({ page }) => {
-  await openHomepage(page, { width: 1400, height: 400 });
+  await openHomepage(page, { width: 1400, height: 320 });
   const mockup = page.getByRole("img", { name: desktopName, exact: true });
   const request = mockup.getByText("Fix the issues labeled ready, one worktree each.");
   await mockup.scrollIntoViewIfNeeded();

@@ -12,6 +12,9 @@ export const PAGE_RAIL_CLASS = "mx-auto w-full max-w-[1160px] md:border-x md:bor
 /** Shared inner horizontal padding so every page element shares one left/right rail. */
 export const PAGE_INSET_CLASS = "px-5 sm:px-8 md:px-14";
 
+/** Extend scrollable content from the mobile inset to the viewport edges. */
+export const MOBILE_PAGE_BLEED_CLASS = "-mx-5 px-5";
+
 /** Full-width header band locking logo and navigation to the same (x, y) across pages. */
 export function PageHeaderBand({ framed = false }: { framed?: boolean }) {
   return (
