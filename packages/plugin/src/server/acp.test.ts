@@ -3318,6 +3318,15 @@ describe("ACP out-of-turn background activity", () => {
       });
       agent.notify("session/update", {
         sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cmd-2",
+          status: null,
+          rawOutput: "More background progress",
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
         update: { sessionUpdate: "usage_update", used: 1200, size: 100000 },
       });
       await waitForEvent(
@@ -3335,6 +3344,9 @@ describe("ACP out-of-turn background activity", () => {
           event.state === "started",
       );
       expect(startedAutonomousTurns).toHaveLength(1);
+      expect(events.findLast((event) => event.type === "session.background_work")).toMatchObject({
+        items: [{ id: "cmd-2", description: "Other command" }],
+      });
     } finally {
       await connection.close();
     }

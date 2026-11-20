@@ -1835,7 +1835,7 @@ function mergeToolCallSnapshot(
     name: firstText(update.name, current?.name),
     title: firstText(update.title, current?.title, update.name) ?? "Tool call",
     kind: firstText(update.kind, current?.kind),
-    status: firstDefined(update.status, current?.status, "pending") ?? "pending",
+    status: update.status ?? current?.status ?? "pending",
     input: jsonValue(firstDefined(update.rawInput, current?.input, null)),
     output: jsonValue(firstDefined(update.rawOutput, current?.output, null)),
     locations: update.locations?.map((location) => location.path) ?? current?.locations ?? [],
