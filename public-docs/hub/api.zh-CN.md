@@ -120,7 +120,10 @@ API 错误返回 RFC 9457 `application/problem+json` 格式并带有 `X-Request-
 
 - `deliveryKey` 提供限定在组织和项目内的持久去重。
 - `input` 接受以声明的 `inputs` 对应的 `key=value` 头部开头，后接提示词文本。
-- `expectedVersionId` 为可选项，当该版本不再处于激活状态时拒绝派发。
+
+派发独立触发器时，请省略 `expectedVersionId`。如果传入安装触发器时返回的 `revisionId`，即使触发器没有变化，Hub 也会返回 HTTP `409`（`configuration_changed`）。
+
+对于旧版项目配置包，`expectedVersionId` 为可选项。将它设为当前生效的项目配置修订 ID，配置变更后 Hub 就会拒绝派发。
 
 成功后 Hub 返回 `200`：
 

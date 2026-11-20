@@ -30,8 +30,17 @@ run:
     mode: new
   max_runtime: 1h
   idle_timeout: 10m
+  output:
+    schema:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+      additionalProperties: false
   prompt: |
-    Investigate this alert, identify the root cause, and call finish_execution with your summary.
+    Investigate the alert and identify its root cause.
+    Call finish_execution with a short summary in output.summary.
 ```
 
 `webhook.received` 不接受 `connection` 或 `filters`。webhook 触发器不能声明 `required: true` 的输入。

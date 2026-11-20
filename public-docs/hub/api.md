@@ -122,7 +122,10 @@ Each call replaces any previous secret immediately and shows the new secret only
 
 - `deliveryKey` provides durable deduplication scoped to your organization and project.
 - `input` accepts leading `key=value` tokens for declared `inputs` followed by prompt text.
-- `expectedVersionId` is optional and rejects the dispatch if that revision is no longer active.
+
+Omit `expectedVersionId` for standalone triggers. Passing the `revisionId` from trigger installation returns HTTP `409` (`configuration_changed`), even when the trigger is unchanged.
+
+For legacy project bundles, `expectedVersionId` is optional. Set it to the active project configuration revision ID to reject dispatch if the configuration changes.
 
 On success, Hub returns `200`:
 

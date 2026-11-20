@@ -189,6 +189,8 @@ Hub also accepts raw webhook event names (`github.issues`, `github.issue_comment
 
 Every GitHub trigger requires a non-empty `from_users` allowlist. All supplied filters compose with AND.
 
+Use `from_users: ["*"]` to accept pushes from any sender. Hub does not extract the sender login from push events, so a list of named logins never matches.
+
 | Filter             | Applies to                                                    | Meaning                                                                    |
 | ------------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `from_users`       | All GitHub events                                             | GitHub logins allowed to trigger the run.                                  |

@@ -32,8 +32,17 @@ run:
     mode: new
   max_runtime: 1h
   idle_timeout: 10m
+  output:
+    schema:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+      additionalProperties: false
   prompt: |
-    Investigate this alert, identify the root cause, and call finish_execution with your summary.
+    Investigate the alert and identify its root cause.
+    Call finish_execution with a short summary in output.summary.
 ```
 
 `webhook.received` accepts no `connection` or `filters`. A webhook trigger cannot declare `required: true` inputs.
