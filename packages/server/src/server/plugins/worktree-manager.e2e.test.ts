@@ -63,7 +63,7 @@ if (command === "switch") {
   const base = baseIdx !== -1 ? args[baseIdx + 1] : undefined;
   const pathIdx = args.indexOf("--path");
   const explicitPath = pathIdx !== -1 ? args[pathIdx + 1] : undefined;
-  const skip = new Set(["switch", "--create", "--no-cd", "--yes", "--format=json"]);
+  const skip = new Set(["switch", "--create", "--no-cd", "--yes", "--no-hooks", "--format=json"]);
   if (baseIdx !== -1) {
     skip.add("--base");
     skip.add(base);
@@ -77,6 +77,14 @@ if (command === "switch") {
     console.error("missing branch");
     process.exit(1);
   }
+  if (!create && !explicitPath && branch === "main") {
+    appendFileSync(
+      ${JSON.stringify(logFile)},
+      JSON.stringify({ command: "switch", cwd, branch, action: "existing", args }) + "\\n",
+    );
+    process.stdout.write(JSON.stringify({ path: cwd, branch, action: "existing" }) + "\\n");
+    process.exit(0);
+  }
   const repoName = path.basename(cwd);
   const target =
     explicitPath ?? path.join(path.dirname(cwd), \`\${repoName}.\${branch.replaceAll("/", "-")}\`);
@@ -88,9 +96,13 @@ if (command === "switch") {
   writeFileSync(path.join(target, ".wt-hook-ran"), create ? "pre-start" : "reopen");
   appendFileSync(
     ${JSON.stringify(logFile)},
-    JSON.stringify({ command: "switch", cwd, branch, base, create, explicitPath, target }) + "\\n",
+    JSON.stringify({ command: "switch", cwd, branch, base, create, explicitPath, target, args }) + "\\n",
   );
-  process.stdout.write(JSON.stringify({ path: target, branch }) + "\\n");
+  process.stdout.write(JSON.stringify({ path: target, branch, action: "created" }) + "\\n");
+  if (branch.endsWith("fail-pre-start")) {
+    console.error("pre-start hook failed");
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -185,7 +197,7 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
     expect(metadata).toMatchObject({
       baseRefName: "release",
       baseRef: "refs/heads/release",
-      managedByPluginId: "worktrunk",
+      worktreeManagerPluginId: "worktrunk",
       changeRequestLookupTarget: {
         headRef: "team/feat-one",
         localBranchName: "team/feat-one",
@@ -198,7 +210,30 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
         : undefined,
     ).toBeUndefined();
 
-    // Archive delegates removal to `wt remove` AFTER Paseo writes refs/paseo/kept-commits/*.
+    // Checking out a branch already checked out in the main repo causes wt to return
+    // action="existing", so the example declines and Paseo falls back to Git.
+    const checkedOutMain = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, action: "checkout", refName: "main" },
+    });
+    expect(checkedOutMain.error).toBeNull();
+    expect(
+      (await readPaseoWorktreeMetadata(checkedOutMain.workspace!.workspaceDirectory))
+        ?.worktreeManagerPluginId,
+    ).toBeUndefined();
+    await client.archiveWorkspace(checkedOutMain.workspace!.id);
+
+    // If wt exits non-zero after creating the worktree (e.g. pre-start hook failure),
+    // the example cleans up the partial worktree from stdout before rethrowing.
+    const failedPreStart = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, worktreeSlug: "fail-pre-start" },
+    });
+    expect(failedPreStart.workspace).toBeNull();
+    expect(failedPreStart.error).toContain("pre-start hook failed");
+    await expect(
+      stat(path.join(path.dirname(repository), "repo.team-fail-pre-start")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    // Archive delegates removal to `wt remove` (run from repoRoot) AFTER Paseo writes refs/paseo/kept-commits/*.
     const archived = await client.archiveWorkspace(workspaceId);
     expect(archived.error).toBeNull();
     await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -222,7 +257,7 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
     expect(git(worktreePath, ["branch", "--show-current"])).toBe("team/feat-one");
     expect(await readFile(path.join(worktreePath, ".wt-hook-ran"), "utf8")).toBe("reopen");
     expect(await readPaseoWorktreeMetadata(worktreePath)).toMatchObject({
-      managedByPluginId: "worktrunk",
+      worktreeManagerPluginId: "worktrunk",
       baseRefName: "release",
     });
 
@@ -238,7 +273,29 @@ test("plugin-examples/worktrunk manages create, before-hook chaining, archive wi
         create: true,
       }),
       expect.objectContaining({
+        command: "switch",
+        branch: "main",
+        action: "existing",
+      }),
+      expect.objectContaining({
+        command: "switch",
+        branch: "team/fail-pre-start",
+        create: true,
+      }),
+      expect.objectContaining({
         command: "remove",
+        cwd: repository,
+        args: expect.arrayContaining([
+          "remove",
+          "--foreground",
+          "--no-delete-branch",
+          "--no-hooks",
+          "--force",
+        ]),
+      }),
+      expect.objectContaining({
+        command: "remove",
+        cwd: repository,
         keptRefsCount: 1,
         args: expect.arrayContaining([
           "remove",
@@ -331,7 +388,7 @@ export default function contribute(server) {
     });
     expect(declined.error).toBeNull();
     const declinedMeta = await readPaseoWorktreeMetadata(declined.workspace!.workspaceDirectory);
-    expect(declinedMeta?.managedByPluginId).toBeUndefined();
+    expect(declinedMeta?.worktreeManagerPluginId).toBeUndefined();
 
     // 2. Failure in worktree.create.after rolls back through the manager's remove(reason: "rollback").
     const aborted = await client.createWorkspace({
@@ -359,6 +416,10 @@ export default function contribute(server) {
 
     await client.restoreWorkspace(managed.workspace!.id);
     expect(git(managedPath, ["branch", "--show-current"])).toBe("survive-disable");
+    // Re-enabling the plugin must not route removal of a Git-restored worktree back to the plugin.
+    await client.enablePlugin("custom-manager");
+    await client.archiveWorkspace(managed.workspace!.id);
+    await expect(stat(managedPath)).rejects.toMatchObject({ code: "ENOENT" });
 
     const events = (await readFile(eventsFile, "utf8"))
       .trim()
@@ -456,6 +517,9 @@ export default function contribute(server) {
     // The pre-existing manual worktree must stay untouched and un-owned by Paseo.
     expect(await readPaseoWorktreeMetadata(existingManual)).toBeNull();
     expect((await stat(existingManual)).isDirectory()).toBe(true);
+    // The newly created detached worktree failed adoption and must be rolled back cleanly.
+    await expect(stat(path.join(root, "detached-wt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(git(repository, ["worktree", "list", "--porcelain"])).not.toContain("detached-wt");
   } finally {
     await client.close();
     await daemon.close();
@@ -535,6 +599,92 @@ export default function contribute(server) {
     // Removal failure keeps the directory instead of silently deleting behind the manager.
     expect((await stat(worktreePath)).isDirectory()).toBe(true);
   } finally {
+    await client.close();
+    await daemon.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}, 60_000);
+
+test("untrusted workspaces pass untrusted=true to worktree manager remove and restore, and worktrunk skips hooks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-worktrunk-untrusted-"));
+  const repository = await createRepo(path.join(root, "repo"));
+  const wtLog = path.join(root, "wt-log.jsonl");
+  const fakeWt = await createFakeWorktrunkCli(root, wtLog);
+  const previousBin = process.env.WORKTRUNK_BIN;
+  process.env.WORKTRUNK_BIN = fakeWt;
+
+  const stateDir = path.join(root, "state");
+  let daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: stateDir,
+    cleanup: false,
+  });
+  let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    expect((await client.installDirectoryPlugin(WORKTRUNK_EXAMPLE)).status).toBe("running");
+
+    const created = await client.createWorkspace({
+      source: { kind: "worktree", cwd: repository, branchName: "fork-pr-branch" },
+    });
+    expect(created.error).toBeNull();
+    const workspaceId = created.workspace!.id;
+    const worktreePath = created.workspace!.workspaceDirectory;
+
+    // Mark the persisted workspace record as originating from an untrusted fork PR and reload daemon.
+    await client.close();
+    await daemon.close();
+    const workspacesPath = path.join(daemon.paseoHome, "projects", "workspaces.json");
+    const records = JSON.parse(await readFile(workspacesPath, "utf8")) as Array<
+      Record<string, unknown>
+    >;
+    for (const record of records) {
+      if (record.workspaceId === workspaceId) {
+        record.untrustedSource = {
+          kind: "change_request",
+          forge: "github",
+          number: 42,
+          headRepository: "fork-owner/repo",
+        };
+      }
+    }
+    await writeFile(workspacesPath, JSON.stringify(records, null, 2));
+
+    daemon = await createTestPaseoDaemon({
+      paseoHomeRoot: stateDir,
+      cleanup: false,
+      pluginsEnabled: true,
+      plugins: {
+        worktrunk: { source: "directory", path: WORKTRUNK_EXAMPLE, enabled: true },
+      },
+    });
+    client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    await client.connect();
+
+    const archived = await client.archiveWorkspace(workspaceId);
+    expect(archived.error).toBeNull();
+    await expect(stat(worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await client.restoreWorkspace(workspaceId);
+    expect(git(worktreePath, ["branch", "--show-current"])).toBe("fork-pr-branch");
+
+    const events = (await readFile(wtLog, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { command: string; cwd: string; args: string[] });
+    const removeEvent = events.find((event) => event.command === "remove");
+    expect(removeEvent).toBeDefined();
+    expect(removeEvent!.cwd).toBe(repository);
+    expect(removeEvent!.args).toContain("--no-hooks");
+    expect(removeEvent!.args).not.toContain("--yes");
+
+    const restoreEvent = events.at(-1);
+    expect(restoreEvent?.command).toBe("switch");
+    expect(restoreEvent?.args).toContain("--no-hooks");
+    expect(restoreEvent?.args).not.toContain("--yes");
+  } finally {
+    if (previousBin === undefined) delete process.env.WORKTRUNK_BIN;
+    else process.env.WORKTRUNK_BIN = previousBin;
     await client.close();
     await daemon.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

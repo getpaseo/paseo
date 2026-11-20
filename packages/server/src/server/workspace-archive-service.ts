@@ -29,6 +29,7 @@ export type ActiveWorkspaceRef = Pick<
   "workspaceId" | "cwd" | "kind" | "worktreeRoot" | "isPaseoOwnedWorktree" | "mainRepoRoot"
 > & {
   worktreeManagerPluginId?: string | null;
+  untrustedSource?: PersistedWorkspaceRecord["untrustedSource"];
 };
 
 export interface ArchiveDependencies {
@@ -124,6 +125,7 @@ interface BackingDirectory {
   mainRepoRoot: string | null;
   paseoWorktreesRoot: string | null;
   worktreeManagerPluginId: string | null;
+  untrusted: boolean;
 }
 
 interface ArchiveTarget {
@@ -319,6 +321,7 @@ async function resolveWorkspaceBackingDirectory(
   dependencies: Pick<ArchiveDependencies, "paseoHome" | "paseoWorktreesBaseRoot">,
 ): Promise<BackingDirectory> {
   const worktreeManagerPluginId = workspace.worktreeManagerPluginId ?? null;
+  const untrusted = Boolean(workspace.untrustedSource);
   if (workspace.isPaseoOwnedWorktree === false) {
     return {
       path: resolve(workspace.worktreeRoot ?? workspace.cwd),
@@ -328,6 +331,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
+      untrusted,
     };
   }
   if (workspace.isPaseoOwnedWorktree && workspace.worktreeRoot && workspace.mainRepoRoot) {
@@ -339,6 +343,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
+      untrusted,
     };
   }
   if (workspace.kind !== "worktree") {
@@ -350,6 +355,7 @@ async function resolveWorkspaceBackingDirectory(
       mainRepoRoot: workspace.mainRepoRoot ?? null,
       paseoWorktreesRoot: null,
       worktreeManagerPluginId,
+      untrusted,
     };
   }
 
@@ -363,6 +369,7 @@ async function resolveWorkspaceBackingDirectory(
     ...backing,
     mainRepoRoot: workspace.mainRepoRoot ?? backing.mainRepoRoot,
     worktreeManagerPluginId: worktreeManagerPluginId ?? backing.worktreeManagerPluginId,
+    untrusted: untrusted || backing.untrusted,
   };
 }
 
@@ -383,6 +390,7 @@ async function resolveBackingDirectory(
     mainRepoRoot: ownership.repoRoot ?? null,
     paseoWorktreesRoot: ownership.worktreeRoot ?? null,
     worktreeManagerPluginId: null,
+    untrusted: false,
   };
 }
 
@@ -467,11 +475,15 @@ async function maybeRemoveDirectory(
       teardownTarget.workspaceId === null || archivedWorkspaceIdSet.has(teardownTarget.workspaceId),
   );
 
+  let untrustedBacking = backing.untrusted;
   try {
     const allowedTeardownTargets = await filterAllowedTeardownTargets(
       dependencies,
       teardownTargets,
     );
+    if (allowedTeardownTargets.length < teardownTargets.length) {
+      untrustedBacking = true;
+    }
     for (const teardownTarget of uniqueTeardownTargets(allowedTeardownTargets)) {
       request.checkpoint();
       await runWorktreeTeardownCommands({
@@ -516,8 +528,9 @@ async function maybeRemoveDirectory(
       worktreesBaseRoot: dependencies.paseoWorktreesBaseRoot,
       registryProven: backing.registryProven,
       worktreeManagers: dependencies.worktreeManagers,
-      managedByPluginId: backing.worktreeManagerPluginId,
+      worktreeManagerPluginId: backing.worktreeManagerPluginId,
       removeReason: "archive",
+      untrusted: untrustedBacking,
     });
     dependencies.workspaceGitService.invalidateWorktrees();
     dependencies.github.invalidate({ cwd: backing.path });

@@ -18,6 +18,8 @@ export interface PluginWorktreeRemoveRequest {
   readonly branch: string | null;
   readonly reason: "archive" | "rollback";
   readonly force: boolean;
+  /** True when the worktree came from an untrusted source such as a fork change request; skip repository-defined hooks. */
+  readonly untrusted: boolean;
 }
 
 /** Return `{ type: "removed" }` after removing the worktree, or `undefined` to fall back to Git. */
@@ -36,6 +38,8 @@ export interface PluginWorktreeRestoreRequest {
   readonly path: string;
   readonly target: PluginWorktreeRestoreTarget;
   readonly baseRef: string | null;
+  /** True when the worktree came from an untrusted source such as a fork change request; skip repository-defined hooks. */
+  readonly untrusted: boolean;
 }
 
 /** Return `{ type: "restored", path }` after recreating the worktree, or `undefined` to fall back to Git. */

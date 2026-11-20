@@ -63,7 +63,7 @@ export interface WorktreeConfig {
 
 export interface CreatedWorktree extends WorktreeConfig {
   comparisonBaseRef: string | null;
-  managedByPluginId?: string;
+  worktreeManagerPluginId?: string;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -1241,8 +1241,9 @@ export interface DeletePaseoWorktreeOptions {
   // this when the record was matched against the path by the caller.
   registryProven?: boolean;
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
-  managedByPluginId?: string | null;
+  worktreeManagerPluginId?: string | null;
   removeReason?: "archive" | "rollback";
+  untrusted?: boolean;
   signal?: AbortSignal;
 }
 
@@ -1300,8 +1301,9 @@ export async function deletePaseoWorktree({
   worktreesBaseRoot,
   registryProven,
   worktreeManagers,
-  managedByPluginId,
+  worktreeManagerPluginId,
   removeReason = "archive",
+  untrusted = false,
   signal,
 }: DeletePaseoWorktreeOptions): Promise<void> {
   if (!worktreePath && !worktreeSlug) {
@@ -1348,8 +1350,9 @@ export async function deletePaseoWorktree({
       resolvedWorktree,
       teardownCwds,
       worktreeManagers,
-      managedByPluginId,
+      worktreeManagerPluginId,
       removeReason,
+      untrusted,
       signal,
     });
     if (removedByPlugin) {
@@ -1390,8 +1393,9 @@ async function prepareAndTryPluginWorktreeRemove(options: {
   resolvedWorktree: string;
   teardownCwds?: string[];
   worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
-  managedByPluginId?: string | null;
+  worktreeManagerPluginId?: string | null;
   removeReason: "archive" | "rollback";
+  untrusted: boolean;
   signal?: AbortSignal;
 }): Promise<boolean> {
   const {
@@ -1399,8 +1403,9 @@ async function prepareAndTryPluginWorktreeRemove(options: {
     resolvedWorktree,
     teardownCwds,
     worktreeManagers,
-    managedByPluginId,
+    worktreeManagerPluginId,
     removeReason,
+    untrusted,
     signal,
   } = options;
   for (const teardownCwd of teardownCwds ?? [resolvedWorktree]) {
@@ -1409,11 +1414,12 @@ async function prepareAndTryPluginWorktreeRemove(options: {
       teardownCwd,
     });
   }
-  const effectiveManagedByPluginId =
-    managedByPluginId ??
-    (await readPaseoWorktreeMetadata(resolvedWorktree).catch(() => null))?.managedByPluginId ??
-    null;
-  const branch = effectiveManagedByPluginId
+  const effectiveManagerPluginId =
+    worktreeManagerPluginId !== undefined
+      ? worktreeManagerPluginId
+      : ((await readPaseoWorktreeMetadata(resolvedWorktree).catch(() => null))
+          ?.worktreeManagerPluginId ?? null);
+  const branch = effectiveManagerPluginId
     ? await getCurrentBranch(resolvedWorktree).catch(() => null)
     : null;
   const commit = await readWorktreeHead(resolvedWorktree);
@@ -1422,7 +1428,7 @@ async function prepareAndTryPluginWorktreeRemove(options: {
       cwd: resolvedWorktree,
     });
   }
-  if (!effectiveManagedByPluginId || !worktreeManagers) {
+  if (!effectiveManagerPluginId || !worktreeManagers) {
     return false;
   }
   const removedByPlugin = await worktreeManagers.removeWorktree(
@@ -1432,8 +1438,9 @@ async function prepareAndTryPluginWorktreeRemove(options: {
       branch,
       reason: removeReason,
       force: true,
+      untrusted,
     },
-    { preferredPluginId: effectiveManagedByPluginId, signal },
+    { preferredPluginId: effectiveManagerPluginId, signal },
   );
   if (removedByPlugin === null) {
     return false;
@@ -1659,9 +1666,72 @@ export interface AdoptPluginWorktreeOptions {
   cwd: string;
   source: WorktreeSource;
   worktreePath: string;
-  managedByPluginId: string;
+  worktreeManagerPluginId: string;
   /** Worktree paths that existed before creation; an overlap fails instead of hijacking user worktrees. */
   existingWorktreePaths?: ReadonlySet<string>;
+}
+
+/**
+ * Roll back a newly created worktree that failed adoption or path verification.
+ * Only touches a directory that was absent from `existingWorktreePaths` and
+ * shares the source repository's Git common dir.
+ */
+export async function cleanupFailedPluginWorktree(options: {
+  cwd: string;
+  candidatePath: string;
+  existingWorktreePaths?: ReadonlySet<string>;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "removeWorktree">;
+  worktreeManagerPluginId: string;
+  untrusted?: boolean;
+  paseoHome?: string;
+  worktreesBaseRoot?: string;
+}): Promise<void> {
+  const {
+    cwd,
+    candidatePath,
+    existingWorktreePaths,
+    worktreeManagers,
+    worktreeManagerPluginId,
+    untrusted,
+    paseoHome,
+    worktreesBaseRoot,
+  } = options;
+  let rootPath: string;
+  try {
+    const { stdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
+      cwd: candidatePath,
+    });
+    rootPath = await normalizePathForOwnership(stdout.trim());
+  } catch {
+    return;
+  }
+  if (existingWorktreePaths?.has(rootPath)) {
+    return;
+  }
+  const [worktreeCommonDir, repoCommonDir] = await Promise.all([
+    getGitCommonDir(rootPath).catch(() => null),
+    getGitCommonDir(cwd).catch(() => null),
+  ]);
+  if (
+    !worktreeCommonDir ||
+    !repoCommonDir ||
+    (await normalizePathForOwnership(worktreeCommonDir)) !==
+      (await normalizePathForOwnership(repoCommonDir))
+  ) {
+    return;
+  }
+  await deletePaseoWorktree({
+    cwd,
+    worktreePath: rootPath,
+    teardownCwds: [],
+    paseoHome,
+    worktreesBaseRoot,
+    registryProven: true,
+    worktreeManagers,
+    worktreeManagerPluginId,
+    removeReason: "rollback",
+    untrusted,
+  });
 }
 
 /**
@@ -1680,23 +1750,23 @@ export function adoptPluginWorktree(
 export async function adoptPluginWorktree(
   options: AdoptPluginWorktreeOptions,
 ): Promise<Omit<CreatedWorktree, "branchName"> & { branchName: string | null }> {
-  const { cwd, source, worktreePath, managedByPluginId, existingWorktreePaths } = options;
+  const { cwd, source, worktreePath, worktreeManagerPluginId, existingWorktreePaths } = options;
   const normalizedPath = await normalizePathForOwnership(worktreePath);
   if (existingWorktreePaths?.has(normalizedPath)) {
     throw new Error(
-      `Plugin ${managedByPluginId} returned an already-existing worktree: ${normalizedPath}`,
+      `Plugin ${worktreeManagerPluginId} returned an already-existing worktree: ${normalizedPath}`,
     );
   }
   const { stdout: rootStdout } = await runGitCommand(["rev-parse", "--show-toplevel"], {
     cwd: normalizedPath,
   }).catch(() => {
     throw new Error(
-      `Plugin ${managedByPluginId} did not create a Git worktree at: ${normalizedPath}`,
+      `Plugin ${worktreeManagerPluginId} did not create a Git worktree at: ${normalizedPath}`,
     );
   });
   if ((await normalizePathForOwnership(rootStdout.trim())) !== normalizedPath) {
     throw new Error(
-      `Plugin ${managedByPluginId} created a worktree whose root is not the returned path: ${normalizedPath}`,
+      `Plugin ${worktreeManagerPluginId} created a worktree whose root is not the returned path: ${normalizedPath}`,
     );
   }
   const [worktreeCommonDir, repoCommonDir] = await Promise.all([
@@ -1708,7 +1778,7 @@ export async function adoptPluginWorktree(
     (await normalizePathForOwnership(repoCommonDir))
   ) {
     throw new Error(
-      `Plugin ${managedByPluginId} created a worktree outside the repository: ${normalizedPath}`,
+      `Plugin ${worktreeManagerPluginId} created a worktree outside the repository: ${normalizedPath}`,
     );
   }
   const { stdout: branchStdout } = await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], {
@@ -1718,7 +1788,7 @@ export async function adoptPluginWorktree(
   const detached = !rawBranch || rawBranch === "HEAD";
   if (detached && source.kind !== "restore-commit") {
     throw new Error(
-      `Plugin ${managedByPluginId} created a worktree with a detached HEAD: ${normalizedPath}`,
+      `Plugin ${worktreeManagerPluginId} created a worktree with a detached HEAD: ${normalizedPath}`,
     );
   }
   const branchName = detached ? null : rawBranch;
@@ -1730,7 +1800,7 @@ export async function adoptPluginWorktree(
     ...(metadata.changeRequestLookupTarget
       ? { changeRequestLookupTarget: metadata.changeRequestLookupTarget }
       : {}),
-    managedByPluginId,
+    worktreeManagerPluginId,
   });
   await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: normalizedPath });
 
@@ -1738,7 +1808,7 @@ export async function adoptPluginWorktree(
     branchName,
     worktreePath: normalizedPath,
     comparisonBaseRef: metadata.baseRef ?? metadata.baseRefName,
-    managedByPluginId,
+    worktreeManagerPluginId,
   };
 }
 

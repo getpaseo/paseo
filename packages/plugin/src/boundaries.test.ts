@@ -622,13 +622,16 @@ describe("worktree manager SDK boundary", () => {
           async remove(request: PluginWorktreeRemoveRequest, { signal }) {
             const reason: "archive" | "rollback" = request.reason;
             const force: boolean = request.force;
+            const untrusted: boolean = request.untrusted;
             // @ts-expect-error remove request fields are read-only
             request.path = "/other";
-            if (!reason || !force || signal.aborted) return;
+            if (!reason || !force || untrusted || signal.aborted) return;
             const result: PluginWorktreeRemoveResult = { type: "removed" };
             return result;
           },
           async restore(request: PluginWorktreeRestoreRequest) {
+            const untrusted: boolean = request.untrusted;
+            void untrusted;
             if (request.target.type === "commit") return;
             if (request.target.type === "from-base") {
               const base: string = request.target.baseRef;

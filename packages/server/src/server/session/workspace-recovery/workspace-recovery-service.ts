@@ -6,6 +6,7 @@ import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import {
   adoptPluginWorktree,
+  cleanupFailedPluginWorktree,
   createWorktree,
   isPaseoOwnedWorktreeCwd,
   listGitWorktreePaths,
@@ -146,17 +147,27 @@ export function createWorkspaceRecoveryService(deps: {
       throw new Error(resolved.message);
     }
 
+    let workspaceToUnarchive = resolved.workspace;
     if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      const restoredByPluginId = await recreateArchivedWorktree(
+        resolved.workspace,
+        resolved.sourceRepoRoot,
+      );
+      if ((resolved.workspace.worktreeManagerPluginId ?? null) !== restoredByPluginId) {
+        const { worktreeManagerPluginId: _previous, ...withoutManager } = resolved.workspace;
+        workspaceToUnarchive = restoredByPluginId
+          ? { ...withoutManager, worktreeManagerPluginId: restoredByPluginId }
+          : withoutManager;
+      }
     }
-    await deps.unarchiveWorkspace(resolved.workspace);
+    await deps.unarchiveWorkspace(workspaceToUnarchive);
     return { workspaceId, action: resolved.kind };
   }
 
   async function recreateArchivedWorktree(
     workspace: PersistedWorkspaceRecord,
     sourceRepoRoot: string,
-  ): Promise<void> {
+  ): Promise<string | null> {
     let source: WorktreeSource;
     const checkout = parseWorkspaceHead(workspace);
     if (checkout.kind === "branch") {
@@ -243,12 +254,14 @@ export function createWorkspaceRecoveryService(deps: {
           paseoHome: deps.paseoHome,
           worktreesBaseRoot: deps.worktreesRoot,
           worktreeManagers: deps.worktreeManagers,
-          managedByPluginId: restoredByPluginId,
+          worktreeManagerPluginId: restoredByPluginId,
           removeReason: "rollback",
+          untrusted: Boolean(workspace.untrustedSource),
         },
         error,
       );
     }
+    return restoredByPluginId;
   }
 
   async function recreateWorktreeCheckout(options: {
@@ -261,6 +274,7 @@ export function createWorkspaceRecoveryService(deps: {
     const { workspace, sourceRepoRoot, source, previousWorktreePath, hasRecordedWorktreePath } =
       options;
     const managerPluginId = workspace.worktreeManagerPluginId;
+    const untrusted = Boolean(workspace.untrustedSource);
     if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
       const existingWorktreePaths = await listGitWorktreePaths(sourceRepoRoot);
       const managed = await deps.worktreeManagers.restoreWorktree(
@@ -269,29 +283,44 @@ export function createWorkspaceRecoveryService(deps: {
           path: previousWorktreePath,
           target: restoreTargetFromWorktreeSource(source),
           baseRef: workspace.baseBranch,
+          untrusted,
         },
         { preferredPluginId: managerPluginId },
       );
       if (managed) {
-        const validatedPath = await validateWorktreePath({
-          candidate: managed.path,
-          repoPath: sourceRepoRoot,
-          allowExistingPath: true,
-        });
-        if (!createRealpathAwarePathMatcher(previousWorktreePath)(validatedPath)) {
-          throw new WorktreeRequestError({
-            code: "unknown",
-            message: `Plugin ${managed.pluginId} restored worktree to ${validatedPath}, expected ${previousWorktreePath}`,
+        try {
+          const validatedPath = await validateWorktreePath({
+            candidate: managed.path,
+            repoPath: sourceRepoRoot,
+            allowExistingPath: true,
           });
+          if (!createRealpathAwarePathMatcher(previousWorktreePath)(validatedPath)) {
+            throw new WorktreeRequestError({
+              code: "unknown",
+              message: `Plugin ${managed.pluginId} restored worktree to ${validatedPath}, expected ${previousWorktreePath}`,
+            });
+          }
+          const adopted = await adoptPluginWorktree({
+            cwd: sourceRepoRoot,
+            source,
+            worktreePath: validatedPath,
+            worktreeManagerPluginId: managed.pluginId,
+            existingWorktreePaths,
+          });
+          return { worktreePath: adopted.worktreePath, pluginId: managed.pluginId };
+        } catch (error) {
+          await cleanupFailedPluginWorktree({
+            cwd: sourceRepoRoot,
+            candidatePath: managed.path,
+            existingWorktreePaths,
+            worktreeManagers: deps.worktreeManagers,
+            worktreeManagerPluginId: managed.pluginId,
+            untrusted,
+            paseoHome: deps.paseoHome,
+            worktreesBaseRoot: deps.worktreesRoot,
+          }).catch(() => {});
+          throw error;
         }
-        const adopted = await adoptPluginWorktree({
-          cwd: sourceRepoRoot,
-          source,
-          worktreePath: validatedPath,
-          managedByPluginId: managed.pluginId,
-          existingWorktreePaths,
-        });
-        return { worktreePath: adopted.worktreePath, pluginId: managed.pluginId };
       }
     }
 

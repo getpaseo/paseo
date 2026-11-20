@@ -280,6 +280,7 @@ export function createWorkspaceProvisioningService(deps: {
         projectId: project.projectId,
         ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
         baseBranch: baseMetadata?.baseRef ?? baseMetadata?.baseRefName ?? null,
+        worktreeManagerPluginId: baseMetadata?.worktreeManagerPluginId ?? null,
         title: title?.trim() || null,
         metadata: context?.metadata,
         createdAt: timestamp,

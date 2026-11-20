@@ -88,11 +88,7 @@ const PersistedWorkspaceRecordSchema = z.object({
     .transform((value) => value ?? null),
   isPaseoOwnedWorktree: z.boolean().default(false),
   mainRepoRoot: z.string().nullable().default(null),
-  worktreeManagerPluginId: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? null),
+  worktreeManagerPluginId: z.string().min(1).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   archivedAt: z.string().nullable(),
@@ -714,7 +710,7 @@ export function createPersistedWorkspaceRecord(input: {
   untrustedSource?: UntrustedWorkspaceSource;
   background?: boolean;
 }): PersistedWorkspaceRecord {
-  const { background, ...rest } = input;
+  const { background, worktreeManagerPluginId, ...rest } = input;
   return PersistedWorkspaceRecordSchema.parse({
     ...rest,
     background: background ?? false,
@@ -724,7 +720,7 @@ export function createPersistedWorkspaceRecord(input: {
     baseBranch: input.baseBranch ?? null,
     isPaseoOwnedWorktree: input.isPaseoOwnedWorktree ?? false,
     mainRepoRoot: input.mainRepoRoot ?? null,
-    worktreeManagerPluginId: input.worktreeManagerPluginId ?? null,
+    ...(worktreeManagerPluginId ? { worktreeManagerPluginId } : {}),
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,

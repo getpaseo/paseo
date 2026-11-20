@@ -12,6 +12,11 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const WORKING_MARKER = "🤖";
 export const WAITING_MARKER = "💬";
 
+interface SwitchJsonOutput {
+  path: string;
+  action?: string;
+}
+
 /**
  * Resolve the Worktrunk CLI executable.
  * Honors `WORKTRUNK_BIN` first; on Windows prefers `git-wt.exe` and skips the
@@ -65,16 +70,46 @@ async function runWt(
   }
 }
 
-function parseSwitchPath(stdout: string): string {
-  const parsed = JSON.parse(stdout) as { path?: unknown };
-  if (typeof parsed.path !== "string" || parsed.path.length === 0) {
+function tryParseSwitchOutput(stdout: string | undefined): SwitchJsonOutput | null {
+  if (!stdout?.trim()) return null;
+  try {
+    const parsed = JSON.parse(stdout) as { path?: unknown; action?: unknown };
+    if (typeof parsed.path !== "string" || parsed.path.length === 0) return null;
+    return {
+      path: parsed.path,
+      ...(typeof parsed.action === "string" ? { action: parsed.action } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSwitchOutput(stdout: string): SwitchJsonOutput {
+  const parsed = tryParseSwitchOutput(stdout);
+  if (!parsed) {
     throw new Error("wt switch --format=json output did not include a worktree path");
   }
-  return parsed.path;
+  return parsed;
+}
+
+function isUntrustedCreate(request: PluginWorktreeCreateInput): boolean {
+  return request.kind === "checkout-change-request" && Boolean(request.headRepository);
+}
+
+function hookFlags(untrusted: boolean): string[] {
+  // Never approve repository-defined hooks on untrusted checkouts such as fork PRs.
+  return untrusted ? ["--no-hooks"] : ["--yes"];
 }
 
 export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | null {
-  const common = ["-C", request.repoRoot, "switch", "--no-cd", "--yes", "--format=json"];
+  const common = [
+    "-C",
+    request.repoRoot,
+    "switch",
+    "--no-cd",
+    ...hookFlags(isUntrustedCreate(request)),
+    "--format=json",
+  ];
   switch (request.kind) {
     case "branch-off":
       return [
@@ -95,28 +130,63 @@ export function buildCreateArgs(request: PluginWorktreeCreateInput): string[] | 
   }
 }
 
+async function cleanupPartiallyCreatedWorktree(repoRoot: string, error: unknown): Promise<void> {
+  // Worktrunk prints `{ path, action: "created" }` on stdout even when a later hook exits non-zero.
+  const stdout =
+    error instanceof Error && error.cause && typeof error.cause === "object"
+      ? (error.cause as { stdout?: string }).stdout
+      : undefined;
+  const parsed = tryParseSwitchOutput(stdout);
+  if (!parsed || (parsed.action !== undefined && parsed.action !== "created")) return;
+  await runWt([
+    "-C",
+    repoRoot,
+    "remove",
+    "--foreground",
+    "--no-delete-branch",
+    "--no-hooks",
+    "--force",
+    parsed.path,
+  ]).catch(() => {});
+}
+
 export async function createWithWorktrunk(
   request: PluginWorktreeCreateInput,
   signal: AbortSignal,
 ): Promise<{ type: "created"; path: string } | undefined> {
   const args = buildCreateArgs(request);
   if (!args) return undefined;
-  const stdout = await runWt(args, { signal });
-  return { type: "created", path: parseSwitchPath(stdout) };
+  let stdout: string;
+  try {
+    stdout = await runWt(args, { signal });
+  } catch (error) {
+    await cleanupPartiallyCreatedWorktree(request.repoRoot, error);
+    throw error;
+  }
+  const output = parseSwitchOutput(stdout);
+  // If Worktrunk switched to an already-existing checkout instead of creating one,
+  // decline so Paseo falls back to Git (which creates a unique branch).
+  if (output.action !== undefined && output.action !== "created") {
+    return undefined;
+  }
+  return { type: "created", path: output.path };
 }
 
 export async function removeWithWorktrunk(
   request: PluginWorktreeRemoveRequest,
   signal: AbortSignal,
 ): Promise<{ type: "removed" }> {
-  // Keep the local branch on archive so Paseo's restore flow can recreate the worktree.
+  // Run from the main repository root when available and skip repository hooks for
+  // untrusted workspaces (or when repoRoot is unknown) so fork PRs cannot run hooks.
+  const runDir = request.repoRoot ?? request.path;
+  const skipHooks = request.untrusted || request.repoRoot === null;
   const args = [
     "-C",
-    request.path,
+    runDir,
     "remove",
     "--foreground",
     "--no-delete-branch",
-    "--yes",
+    ...hookFlags(skipHooks),
     ...(request.force ? ["--force"] : []),
     request.path,
   ];
@@ -139,15 +209,22 @@ export async function restoreWithWorktrunk(
     "--path",
     request.path,
     "--no-cd",
-    "--yes",
+    ...hookFlags(request.untrusted),
     "--format=json",
   ];
   const args =
     request.target.type === "branch"
       ? [...common, request.target.branch]
       : [...common, "--create", request.target.branch, "--base", request.target.baseRef];
-  const stdout = await runWt(args, { signal });
-  return { type: "restored", path: parseSwitchPath(stdout) };
+  let stdout: string;
+  try {
+    stdout = await runWt(args, { signal });
+  } catch (error) {
+    await cleanupPartiallyCreatedWorktree(request.repoRoot, error);
+    throw error;
+  }
+  const output = parseSwitchOutput(stdout);
+  return { type: "restored", path: output.path };
 }
 
 export async function setActivityMarker(

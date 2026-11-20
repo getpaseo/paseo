@@ -6,6 +6,7 @@ import { createNameId } from "mnemonic-id";
 import type { ForgeService } from "../services/forge-service.js";
 import {
   adoptPluginWorktree,
+  cleanupFailedPluginWorktree,
   createWorktree,
   fetchFirstAvailableRef,
   listGitWorktreePaths,
@@ -40,7 +41,7 @@ export interface CreateWorktreeCoreInput {
 
 export interface CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "before">;
-  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree">;
+  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree" | "removeWorktree">;
   github: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -154,25 +155,16 @@ async function createWorktreeCoreWithPriority(
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
 
-  const existingWorktreePaths = deps.worktreeManagers
-    ? await listGitWorktreePaths(repoRoot)
-    : undefined;
-  const managed = await deps.worktreeManagers?.createWorktree(transformed);
-  if (managed) {
-    const validatedPath = await validateWorktreePath({
-      candidate: managed.path,
-      repoPath: repoRoot,
-      allowExistingPath: true,
-    });
-    const adopted = await adoptPluginWorktree({
-      cwd: repoRoot,
-      source: intent,
-      worktreePath: validatedPath,
-      managedByPluginId: managed.pluginId,
-      existingWorktreePaths,
-    });
+  const managedWorktree = await tryCreateWithWorktreeManager({
+    repoRoot,
+    transformed,
+    intent,
+    input,
+    deps,
+  });
+  if (managedWorktree) {
     return {
-      worktree: adopted,
+      worktree: managedWorktree,
       intent,
       repoRoot,
       created: true,
@@ -192,6 +184,47 @@ async function createWorktreeCoreWithPriority(
     repoRoot,
     created: true,
   };
+}
+
+async function tryCreateWithWorktreeManager(options: {
+  repoRoot: string;
+  transformed: PluginWorktreeCreateRequest;
+  intent: WorktreeCreationIntent;
+  input: Pick<CreateWorktreeCoreInput, "paseoHome" | "worktreesRoot">;
+  deps: Pick<CreateWorktreeCoreDeps, "worktreeManagers">;
+}): Promise<CreatedWorktree | null> {
+  const { repoRoot, transformed, intent, input, deps } = options;
+  if (!deps.worktreeManagers) return null;
+  const existingWorktreePaths = await listGitWorktreePaths(repoRoot);
+  const managed = await deps.worktreeManagers.createWorktree(transformed);
+  if (!managed) return null;
+  const untrusted = intent.kind === "checkout-change-request" && Boolean(intent.headRepository);
+  try {
+    const validatedPath = await validateWorktreePath({
+      candidate: managed.path,
+      repoPath: repoRoot,
+      allowExistingPath: true,
+    });
+    return await adoptPluginWorktree({
+      cwd: repoRoot,
+      source: intent,
+      worktreePath: validatedPath,
+      worktreeManagerPluginId: managed.pluginId,
+      existingWorktreePaths,
+    });
+  } catch (error) {
+    await cleanupFailedPluginWorktree({
+      cwd: repoRoot,
+      candidatePath: managed.path,
+      existingWorktreePaths,
+      worktreeManagers: deps.worktreeManagers,
+      worktreeManagerPluginId: managed.pluginId,
+      untrusted,
+      paseoHome: input.paseoHome,
+      worktreesBaseRoot: input.worktreesRoot,
+    }).catch(() => {});
+    throw error;
+  }
 }
 
 function describeCreationRequest(

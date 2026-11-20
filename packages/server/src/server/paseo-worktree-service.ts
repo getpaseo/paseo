@@ -116,7 +116,7 @@ async function createPaseoWorktreeWithPriority(
       worktreeRoot: createdWorktree.worktree.worktreePath,
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: createdWorktree.worktree.comparisonBaseRef,
-      worktreeManagerPluginId: createdWorktree.worktree.managedByPluginId ?? null,
+      worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       metadata: input.metadata,
       expectsInitialAgent: Boolean(input.firstAgentContext),
@@ -156,8 +156,11 @@ async function createPaseoWorktreeWithPriority(
         paseoHome: input.paseoHome,
         worktreesBaseRoot: input.worktreesRoot,
         worktreeManagers: deps.worktreeManagers,
-        managedByPluginId: createdWorktree.worktree.managedByPluginId ?? null,
+        worktreeManagerPluginId: createdWorktree.worktree.worktreeManagerPluginId ?? null,
         removeReason: "rollback",
+        untrusted:
+          createdWorktree.intent.kind === "checkout-change-request" &&
+          Boolean(createdWorktree.intent.headRepository),
       },
       error,
     );
@@ -293,7 +296,7 @@ async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
     return;
   }
   // A worktree manager plugin owns branch and directory naming, so skip silent renames.
-  if (createdWorktree.worktree.managedByPluginId) {
+  if (createdWorktree.worktree.worktreeManagerPluginId) {
     return;
   }
   // A branch the caller named is their choice; only a placeholder slug is replaced.
