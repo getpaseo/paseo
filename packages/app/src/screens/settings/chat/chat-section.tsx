@@ -8,9 +8,10 @@ import {
   SettingsSwitch,
 } from "@/components/settings";
 import { isNative } from "@/constants/platform";
-import { useAppSettings, type ChatDisplay } from "@/hooks/use-settings";
+import { useAppSettings, type ChatDisplay, type ItemTimesPreferences } from "@/hooks/use-settings";
 
 const CHAT_DISPLAYS: readonly ChatDisplay[] = ["full", "collapseToolCalls", "collapseTurns"];
+const ITEM_TIME_KINDS = ["assistant", "toolCalls", "thinking", "user"] as const;
 
 export function ChatSection() {
   const { t } = useTranslation();
@@ -36,6 +37,24 @@ export function ChatSection() {
   const changeChatOutline = useCallback(
     (chatOutlineEnabled: boolean) => void updateSettings({ chatOutlineEnabled }),
     [updateSettings],
+  );
+  const changeItemTimes = useCallback(
+    (patch: Partial<ItemTimesPreferences>) =>
+      void updateSettings((current) => ({ itemTimes: { ...current.itemTimes, ...patch } })),
+    [updateSettings],
+  );
+  const changeItemTimesEnabled = useCallback(
+    (enabled: boolean) => changeItemTimes({ enabled }),
+    [changeItemTimes],
+  );
+  const changeItemTimeKinds = useMemo(
+    () => ({
+      assistant: (value: boolean) => changeItemTimes({ assistant: value }),
+      toolCalls: (value: boolean) => changeItemTimes({ toolCalls: value }),
+      thinking: (value: boolean) => changeItemTimes({ thinking: value }),
+      user: (value: boolean) => changeItemTimes({ user: value }),
+    }),
+    [changeItemTimes],
   );
 
   return (
@@ -63,6 +82,25 @@ export function ChatSection() {
               onValueChange={changeChatOutline}
             />
           )}
+        </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title={t("settings.general.itemTimes.title")}>
+        <SettingsCard>
+          <SettingsSwitch
+            label={t("settings.general.itemTimes.enabled.label")}
+            hint={t("settings.general.itemTimes.enabled.description")}
+            value={settings.itemTimes.enabled}
+            onValueChange={changeItemTimesEnabled}
+          />
+          {ITEM_TIME_KINDS.map((kind) => (
+            <SettingsSwitch
+              key={kind}
+              label={t(`settings.general.itemTimes.${kind}`)}
+              value={settings.itemTimes[kind]}
+              disabled={!settings.itemTimes.enabled}
+              onValueChange={changeItemTimeKinds[kind]}
+            />
+          ))}
         </SettingsCard>
       </SettingsSection>
     </View>

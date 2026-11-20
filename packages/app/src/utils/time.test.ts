@@ -5,6 +5,7 @@ import {
   formatCompactTimeAgo,
   formatCompactTimeAgoAsProse,
   formatDuration,
+  formatItemTimestamp,
   formatMessageTimestamp,
   formatTimeAgo,
 } from "./time";
@@ -151,5 +152,32 @@ describe("formatMessageTimestamp", () => {
     const formatted = formatMessageTimestamp(date, now);
     expect(formatted).toMatch(/Apr|April/);
     expect(formatted).toMatch(/2026/);
+  });
+});
+
+describe("formatItemTimestamp", () => {
+  it("shows clock time with seconds for same-day timestamps", () => {
+    const now = new Date(2026, 4, 14, 17, 30, 0);
+    const date = new Date(2026, 4, 14, 12, 23, 45);
+    const formatted = formatItemTimestamp(date, now);
+    expect(formatted).toMatch(/12:23:45/);
+    expect(formatted).not.toMatch(/Thursday|Wednesday/);
+  });
+
+  it("includes weekday and seconds for timestamps within the last 6 days", () => {
+    const now = new Date(2026, 4, 14, 17, 30, 0);
+    const date = new Date(2026, 4, 11, 22, 12, 9);
+    const formatted = formatItemTimestamp(date, now);
+    expect(formatted).toMatch(/Monday/);
+    expect(formatted).toMatch(/10:12:09 PM|22:12:09/);
+  });
+
+  it("includes full date and seconds for older timestamps", () => {
+    const now = new Date(2026, 4, 14, 17, 30, 0);
+    const date = new Date(2026, 3, 1, 9, 5, 7);
+    const formatted = formatItemTimestamp(date, now);
+    expect(formatted).toMatch(/Apr|April/);
+    expect(formatted).toMatch(/2026/);
+    expect(formatted).toMatch(/05:07/);
   });
 });
