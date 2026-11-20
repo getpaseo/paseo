@@ -4,12 +4,13 @@ import { normalizeHost } from "@getpaseo/protocol/git-remote";
 import {
   ChangeRequestRateLimitError,
   createPerHostChangeRequestPoller,
+  type PerHostReadContext,
   parseCliHttpResponse,
   parseRetryAfterMs,
 } from "./change-request-poller.js";
 import type { ChangeRequestSnapshot, ChangeRequestSource } from "./change-request-source.js";
 import {
-  findTeaLoginNameForOrigin,
+  findTeaLoginNameForBaseUrl,
   getGiteaActionTaskName,
   GITEA_ACTION_MAX_PAGES,
   GITEA_ACTION_PAGE_LIMIT,
@@ -73,10 +74,8 @@ type GiteaWatchPr = z.infer<typeof giteaWatchPrSchema>;
 type GiteaReview = z.infer<typeof giteaReviewSchema>;
 
 interface GiteaPullRequestIdentity {
-  protocol: "http:" | "https:";
-  host: string;
-  port: string;
-  hostWithPort: string;
+  baseUrl: string;
+  displayBase: string | null;
   owner: string;
   repo: string;
   number: number;
@@ -139,48 +138,56 @@ function decodeRepoSegment(raw: string): string {
 
 function parseGiteaPullRequestUrl(input: string): GiteaPullRequestIdentity {
   const origin = parseGiteaUrlOrigin(input);
-  const segments = origin.pathname.split("/").filter((segment) => segment.length > 0);
+  const segments = origin.pathname.split("/").filter(Boolean);
 
   if (
-    segments.length === 5 &&
-    GITEA_PR_TABS.has(segments[4]!.toLowerCase()) &&
-    /^\d+$/.test(segments[3]!)
+    segments.length >= 5 &&
+    GITEA_PR_TABS.has(segments.at(-1)!.toLowerCase()) &&
+    /^\d+$/.test(segments.at(-2)!)
   ) {
     segments.pop();
   }
 
+  const rawNumber = segments.pop();
+  const number = Number(rawNumber);
+  const resource = segments.pop();
+  const repo = segments.pop();
+  const owner = segments.pop();
   if (
-    segments.length !== 4 ||
-    segments[2]!.toLowerCase() !== "pulls" ||
-    !/^\d+$/.test(segments[3]!)
+    resource?.toLowerCase() !== "pulls" ||
+    !owner ||
+    !repo ||
+    !rawNumber ||
+    !/^\d+$/.test(rawNumber) ||
+    !Number.isInteger(number) ||
+    number < 1 ||
+    number > 2_147_483_647
   ) {
     invalidGiteaUrl();
   }
-  const number = Number(segments[3]!);
-  if (!Number.isInteger(number) || number < 1 || number > 2_147_483_647) {
-    invalidGiteaUrl();
-  }
 
+  const path = segments.length ? `/${segments.join("/")}` : "";
+  const displayBase =
+    !path && !origin.port && GITEA_CLOUD_HOSTS.has(origin.host)
+      ? null
+      : `${origin.hostWithPort}${path}`;
   return {
-    protocol: origin.protocol,
-    host: origin.host,
-    port: origin.port,
-    hostWithPort: origin.hostWithPort,
-    owner: decodeRepoSegment(segments[0]!),
-    repo: decodeRepoSegment(segments[1]!),
+    baseUrl: `${origin.protocol}//${origin.hostWithPort}${path}`,
+    displayBase,
+    owner: decodeRepoSegment(owner),
+    repo: decodeRepoSegment(repo),
     number,
   };
 }
 
 export function resolveGiteaChangeRequest(input: string): string {
-  const { protocol, hostWithPort, owner, repo, number } = parseGiteaPullRequestUrl(input);
-  return `${protocol}//${hostWithPort}/${owner}/${repo}/pulls/${number}`;
+  const { baseUrl, owner, repo, number } = parseGiteaPullRequestUrl(input);
+  return `${baseUrl}/${owner}/${repo}/pulls/${number}`;
 }
 
 export function describeGiteaChangeRequest(url: string): string {
-  const { host, port, hostWithPort, owner, repo, number } = parseGiteaPullRequestUrl(url);
-  const project =
-    !port && GITEA_CLOUD_HOSTS.has(host) ? `${owner}/${repo}` : `${hostWithPort}/${owner}/${repo}`;
+  const { displayBase, owner, repo, number } = parseGiteaPullRequestUrl(url);
+  const project = displayBase ? `${displayBase}/${owner}/${repo}` : `${owner}/${repo}`;
   return `${project} #${number}`;
 }
 
@@ -239,14 +246,14 @@ function computeAggregateChecksState(
   return "neutral";
 }
 
-function actionJobUrl(value: string | null | undefined, origin: string): string | null {
+function nativeActionRun(value: string | null | undefined, origin: string, jobOnly: boolean) {
   if (!value) return null;
   try {
     const url = new URL(value, origin);
-    const path = url.pathname.replace(/\/$/, "");
-    return url.origin === origin && /\/actions\/runs\/\d+\/jobs\/\d+$/.test(path)
-      ? `${url.origin}${path}`
-      : null;
+    if (url.origin !== origin) return null;
+    const match = /^(.*\/actions\/runs\/\d+)(\/jobs\/\d+)?\/?$/.exec(url.pathname);
+    if (!match || (jobOnly && !match[2])) return null;
+    return match[1]!;
   } catch {
     return null;
   }
@@ -257,12 +264,11 @@ function combineWatchChecks(
   actionTasks: GiteaActionTask[],
   origin: string,
 ): ChangeRequestSnapshot["checks"] {
-  // A task with only a run URL tells us nothing about its sibling jobs.
-  const taskJobUrls = new Set(
-    actionTasks.flatMap((task) => {
-      const url = actionJobUrl(task.url, origin);
-      return url ? [url] : [];
-    }),
+  // Use the forge's commit statuses for runs that publish per-job statuses on
+  // this head. The task endpoint identifies the run and also includes jobs
+  // from runs that don't publish statuses on this commit.
+  const runsWithJobStatuses = new Set(
+    commitStatuses.map((status) => nativeActionRun(status.target_url, origin, true)),
   );
   const checks: ChangeRequestSnapshot["checks"] = [];
   const seenStatusIds = new Set<number>();
@@ -270,8 +276,6 @@ function combineWatchChecks(
   for (const status of commitStatuses) {
     if (seenStatusIds.has(status.id)) continue;
     seenStatusIds.add(status.id);
-    const jobUrl = actionJobUrl(status.target_url, origin);
-    if (jobUrl && taskJobUrls.has(jobUrl)) continue;
     const url = checkUrlSchema.safeParse(status.target_url).data;
     checks.push({
       id: `status:${status.id}`,
@@ -284,6 +288,8 @@ function combineWatchChecks(
   const seenTaskIds = new Set<number>();
   for (const task of actionTasks) {
     if (seenTaskIds.has(task.id)) continue;
+    const run = nativeActionRun(task.url, origin, false);
+    if (run && runsWithJobStatuses.has(run)) continue;
     seenTaskIds.add(task.id);
     const url = checkUrlSchema.safeParse(task.url).data;
     checks.push({
@@ -350,6 +356,11 @@ function isOptionalEndpointStatus(error: unknown): boolean {
   );
 }
 
+type TeaApiGet = <T>(
+  endpoint: string,
+  schema: z.ZodType<T>,
+) => Promise<{ data: T; headers: ReadonlyMap<string, string> }>;
+
 interface CachedReviewComments {
   count: number;
   items: ChangeRequestSnapshot["activity"];
@@ -378,22 +389,22 @@ export function createGiteaChangeRequestSource(
   options: CreateGiteaChangeRequestSourceOptions,
 ): ChangeRequestSource & { dispose(): void } {
   const now = options.now ?? Date.now;
-  const loginByOrigin = new Map<string, string>();
+  const loginByBaseUrl = new Map<string, string>();
   const cachedReviewCommentsByUrl = new Map<string, Map<number, CachedReviewComments>>();
   const reviewCommentLimit = pLimit(GITEA_REVIEW_COMMENT_CONCURRENCY);
 
-  async function resolveLogin(origin: string): Promise<string> {
-    const cached = loginByOrigin.get(origin);
+  async function resolveLogin(baseUrl: string): Promise<string> {
+    const cached = loginByBaseUrl.get(baseUrl);
     if (cached) return cached;
 
     const result = await options.runCommand(["login", "list", "-o", "json"], {
       cwd: process.cwd(),
     });
-    const loginName = findTeaLoginNameForOrigin(result.stdout, origin);
+    const loginName = findTeaLoginNameForBaseUrl(result.stdout, baseUrl);
     if (!loginName) {
-      throw options.createAuthError(`No tea login configured for ${origin}`);
+      throw options.createAuthError(`No tea login configured for ${baseUrl}`);
     }
-    loginByOrigin.set(origin, loginName);
+    loginByBaseUrl.set(baseUrl, loginName);
     return loginName;
   }
 
@@ -426,105 +437,99 @@ export function createGiteaChangeRequestSource(
     return parsed.data;
   }
 
-  async function teaApiGet<T>(params: {
-    origin: string;
-    loginName: string;
-    endpoint: string;
-    schema: z.ZodType<T>;
-    pauseHost(untilMs: number): void;
-  }): Promise<{ data: T; headers: ReadonlyMap<string, string> }> {
-    const args = ["api", "--login", params.loginName, "-i", params.endpoint];
-    const cwd = process.cwd();
-    const result = await options.runCommand(args, { cwd });
-    const parsed = parseTeaHttpStreams(result.stdout, result.stderr);
-    const nowMs = now();
+  function bindTeaApi(context: PerHostReadContext, baseUrl: string, loginName: string): TeaApiGet {
+    return async (endpoint, schema) => {
+      if (!context.isObserved()) throw new Error("Change request observation ended");
+      context.assertHostAvailable();
+      const args = ["api", "--login", loginName, "-i", endpoint];
+      const cwd = process.cwd();
+      let result: { stdout: string; stderr: string };
+      try {
+        result = await options.runCommand(args, { cwd });
+      } catch (error) {
+        if (options.isAuthError(error)) loginByBaseUrl.delete(baseUrl);
+        throw error;
+      }
+      const parsed = parseTeaHttpStreams(result.stdout, result.stderr);
+      const nowMs = now();
 
-    // tea api exits 0 even on HTTP 4xx/5xx; never trust exit code 0 without a 2xx status line.
-    if (parsed.status === null) {
-      throw options.createCommandError({
-        args,
-        cwd,
-        exitCode: 0,
-        stderr: "tea api -i did not return an HTTP status line",
-        stdout: result.stdout,
-      });
-    }
-    if (parsed.status === 429) {
-      const resetAtMs = parseRetryAfterMs(parsed.headers, nowMs, {
-        forceOnMissing: true,
-        defaultPauseMs: 60_000,
-      })!;
-      params.pauseHost(resetAtMs);
-      throw new ChangeRequestRateLimitError({ host: params.origin, resetAtMs });
-    }
-    if (parsed.status === 401) {
-      loginByOrigin.delete(params.origin);
-      throw options.createAuthError(parsed.body || "401 Unauthorized");
-    }
-    if (parsed.status < 200 || parsed.status >= 300) {
-      throw new TeaHttpStatusError(
-        parsed.status,
-        `Gitea API returned HTTP ${parsed.status} for ${params.endpoint}: ${parsed.body}`.trim(),
-      );
-    }
+      // tea api can exit 0 on an HTTP failure, so always check the status line.
+      if (parsed.status === null) {
+        throw options.createCommandError({
+          args,
+          cwd,
+          exitCode: 0,
+          stderr: "tea api -i did not return an HTTP status line",
+          stdout: result.stdout,
+        });
+      }
+      if (parsed.status === 429) {
+        const resetAtMs = parseRetryAfterMs(parsed.headers, nowMs, {
+          forceOnMissing: true,
+          defaultPauseMs: 60_000,
+        })!;
+        context.pauseHost(resetAtMs);
+        throw new ChangeRequestRateLimitError({ host: context.host, resetAtMs });
+      }
+      if (parsed.status === 401) {
+        loginByBaseUrl.delete(baseUrl);
+        throw options.createAuthError(parsed.body || "401 Unauthorized");
+      }
+      if (parsed.status < 200 || parsed.status >= 300) {
+        throw new TeaHttpStatusError(
+          parsed.status,
+          `Gitea API returned HTTP ${parsed.status} for ${endpoint}: ${parsed.body}`.trim(),
+        );
+      }
 
-    const proactivePause = parseRetryAfterMs(parsed.headers, nowMs);
-    if (proactivePause !== null) {
-      params.pauseHost(proactivePause);
-    }
+      const proactivePause = parseRetryAfterMs(parsed.headers, nowMs);
+      if (proactivePause !== null) context.pauseHost(proactivePause);
 
-    const data = parseJsonBody({ args, cwd, body: parsed.body, schema: params.schema });
-    return { data, headers: parsed.headers };
+      const data = parseJsonBody({ args, cwd, body: parsed.body, schema });
+      return { data, headers: parsed.headers };
+    };
   }
 
   async function teaApiGetAllPages<T>(params: {
-    origin: string;
-    loginName: string;
+    get: TeaApiGet;
     endpoint: string;
     itemSchema: z.ZodType<T>;
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
   }): Promise<T[]> {
     const items: T[] = [];
     const schema = z.array(params.itemSchema);
-    let page = 1;
-
-    while (true) {
-      if (!params.isObserved()) return items;
+    let minPageSize = 1;
+    for (let page = 1; ; page += 1) {
       const sep = params.endpoint.includes("?") ? "&" : "?";
-      const response = await teaApiGet({
-        origin: params.origin,
-        loginName: params.loginName,
-        endpoint: `${params.endpoint}${sep}page=${page}&limit=${GITEA_PAGE_SIZE}`,
+      const { data, headers } = await params.get(
+        `${params.endpoint}${sep}page=${page}&limit=${GITEA_PAGE_SIZE}`,
         schema,
-        pauseHost: params.pauseHost,
-      });
-      if (response.data.length === 0) break;
-      items.push(...response.data);
+      );
+      items.push(...data);
+      if (headers.has("link")) {
+        if (hasNextLinkHeader(headers)) continue;
+        break;
+      }
 
-      const totalCount = parseTotalCountHeader(response.headers);
+      const totalCount = parseTotalCountHeader(headers);
       if (totalCount !== null) {
-        if (items.length >= totalCount) break;
-        page += 1;
-        continue;
+        // Gitea can cap limit below the requested value and filter pending
+        // reviews after pagination. The largest page is a lower bound on
+        // the number of records advanced on every page.
+        minPageSize = Math.max(minPageSize, data.length);
+        if (page * minPageSize < totalCount) continue;
+        break;
       }
-      if (hasNextLinkHeader(response.headers) || response.data.length >= GITEA_PAGE_SIZE) {
-        page += 1;
-        continue;
-      }
-      break;
+      if (data.length < GITEA_PAGE_SIZE) break;
     }
 
     return items;
   }
 
   async function readCommitStatuses(params: {
-    origin: string;
-    loginName: string;
+    get: TeaApiGet;
     repoPrefix: string;
     headSha: string;
     isObserved(): boolean;
-    pauseHost(untilMs: number): void;
   }): Promise<{ statuses: GiteaCommitStatus[]; pagesRead: number }> {
     const statuses: GiteaCommitStatus[] = [];
     let page = 1;
@@ -532,13 +537,10 @@ export function createGiteaChangeRequestSource(
 
     while (true) {
       if (!params.isObserved()) return { statuses, pagesRead };
-      const response = await teaApiGet({
-        origin: params.origin,
-        loginName: params.loginName,
-        endpoint: `${params.repoPrefix}/commits/${encodeURIComponent(params.headSha)}/status?limit=${GITEA_PAGE_SIZE}&page=${page}`,
-        schema: GiteaCombinedCommitStatusSchema,
-        pauseHost: params.pauseHost,
-      });
+      const response = await params.get(
+        `${params.repoPrefix}/commits/${encodeURIComponent(params.headSha)}/status?limit=${GITEA_PAGE_SIZE}&page=${page}`,
+        GiteaCombinedCommitStatusSchema,
+      );
       pagesRead += 1;
       const pageStatuses = response.data.statuses;
       if (pageStatuses.length === 0) break;
@@ -563,11 +565,9 @@ export function createGiteaChangeRequestSource(
   }
 
   async function readBoundedActionTasks(params: {
-    origin: string;
-    loginName: string;
+    get: TeaApiGet;
     repoPrefix: string;
     isObserved(): boolean;
-    pauseHost(untilMs: number): void;
   }): Promise<{ items: unknown[]; pagesRead: number }> {
     const items: unknown[] = [];
     let fetched = 0;
@@ -577,13 +577,10 @@ export function createGiteaChangeRequestSource(
       if (!params.isObserved()) return { items, pagesRead };
       let response: { data: z.infer<typeof GiteaActionsListResponseSchema> };
       try {
-        response = await teaApiGet({
-          origin: params.origin,
-          loginName: params.loginName,
-          endpoint: `${params.repoPrefix}/actions/tasks?limit=${GITEA_PAGE_SIZE}&page=${page}`,
-          schema: GiteaActionsListResponseSchema,
-          pauseHost: params.pauseHost,
-        });
+        response = await params.get(
+          `${params.repoPrefix}/actions/tasks?limit=${GITEA_PAGE_SIZE}&page=${page}`,
+          GiteaActionsListResponseSchema,
+        );
       } catch (error) {
         if (page === 1 && isOptionalEndpointStatus(error)) {
           return { items: [], pagesRead: 0 };
@@ -602,13 +599,12 @@ export function createGiteaChangeRequestSource(
   }
 
   async function readChecks(params: {
+    get: TeaApiGet;
     origin: string;
-    loginName: string;
     repoPrefix: string;
     prEndpoint: string;
     headSha: string;
     isObserved(): boolean;
-    pauseHost(untilMs: number): void;
   }): Promise<ChangeRequestSnapshot["checks"]> {
     const [statusResult, tasksResult] = await Promise.all([
       readCommitStatuses(params),
@@ -624,13 +620,7 @@ export function createGiteaChangeRequestSource(
     const latestTasks = latestGiteaActionTasksByWorkflow(matchingTasks);
 
     if (statusResult.pagesRead > 1 || tasksResult.pagesRead > 1) {
-      const { data: recheck } = await teaApiGet({
-        origin: params.origin,
-        loginName: params.loginName,
-        endpoint: params.prEndpoint,
-        schema: giteaWatchPrSchema,
-        pauseHost: params.pauseHost,
-      });
+      const { data: recheck } = await params.get(params.prEndpoint, giteaWatchPrSchema);
       if (recheck.head.sha !== params.headSha) {
         throw new Error("The pull request head changed during pagination.");
       }
@@ -641,31 +631,23 @@ export function createGiteaChangeRequestSource(
 
   async function readActivity(params: {
     url: string;
-    origin: string;
-    loginName: string;
+    get: TeaApiGet;
     repoPrefix: string;
     number: number;
     prWebUrl: string;
     knownActivity(): ReadonlySet<string> | undefined;
     isObserved(): boolean;
-    pauseHost(untilMs: number): void;
   }): Promise<ChangeRequestSnapshot["activity"]> {
     const [comments, reviews] = await Promise.all([
       teaApiGetAllPages({
-        origin: params.origin,
-        loginName: params.loginName,
+        get: params.get,
         endpoint: `${params.repoPrefix}/issues/${params.number}/comments`,
         itemSchema: giteaIssueCommentSchema,
-        isObserved: params.isObserved,
-        pauseHost: params.pauseHost,
       }),
       teaApiGetAllPages({
-        origin: params.origin,
-        loginName: params.loginName,
+        get: params.get,
         endpoint: `${params.repoPrefix}/pulls/${params.number}/reviews`,
         itemSchema: giteaReviewSchema,
-        isObserved: params.isObserved,
-        pauseHost: params.pauseHost,
       }),
     ]);
     if (!params.isObserved()) {
@@ -719,13 +701,10 @@ export function createGiteaChangeRequestSource(
           if (!params.isObserved()) {
             return { reviewId: review.id, count: review.comments_count, items: [] };
           }
-          const { data: inlineComments } = await teaApiGet({
-            origin: params.origin,
-            loginName: params.loginName,
-            endpoint: `${params.repoPrefix}/pulls/${params.number}/reviews/${review.id}/comments`,
-            schema: z.array(giteaReviewCommentSchema),
-            pauseHost: params.pauseHost,
-          });
+          const { data: inlineComments } = await params.get(
+            `${params.repoPrefix}/pulls/${params.number}/reviews/${review.id}/comments`,
+            z.array(giteaReviewCommentSchema),
+          );
           const items: ChangeRequestSnapshot["activity"] = inlineComments.map((comment) => ({
             id: `inline:${comment.id}`,
             kind: "inline comment",
@@ -752,50 +731,35 @@ export function createGiteaChangeRequestSource(
     return activity;
   }
 
-  async function readPullRequest(context: {
-    url: string;
-    host: string;
-    knownActivity(): ReadonlySet<string> | undefined;
-    isObserved(): boolean;
-    pauseHost(untilMs: number): void;
-  }): Promise<ChangeRequestSnapshot> {
-    const { owner, repo, number } = parseGiteaPullRequestUrl(context.url);
-    const origin = context.host;
-    const loginName = await resolveLogin(origin);
+  async function readPullRequest(context: PerHostReadContext): Promise<ChangeRequestSnapshot> {
+    const { baseUrl, owner, repo, number } = parseGiteaPullRequestUrl(context.url);
+    const loginName = await resolveLogin(baseUrl);
+    const get = bindTeaApi(context, baseUrl, loginName);
     const repoPrefix = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const prEndpoint = `${repoPrefix}/pulls/${number}`;
 
-    const { data: pr } = await teaApiGet({
-      origin,
-      loginName,
-      endpoint: prEndpoint,
-      schema: giteaWatchPrSchema,
-      pauseHost: context.pauseHost,
-    });
+    const { data: pr } = await get(prEndpoint, giteaWatchPrSchema);
     if (!pr.head.sha) {
       throw new Error(`Gitea pull request #${number} did not include a head commit SHA.`);
     }
     const prWebUrl = pr.html_url || context.url;
 
     const checks = await readChecks({
-      origin,
-      loginName,
+      get,
+      origin: context.host,
       repoPrefix,
       prEndpoint,
       headSha: pr.head.sha,
       isObserved: context.isObserved,
-      pauseHost: context.pauseHost,
     });
     const activity = await readActivity({
       url: context.url,
-      origin,
-      loginName,
+      get,
       repoPrefix,
       number,
       prWebUrl,
       knownActivity: context.knownActivity,
       isObserved: context.isObserved,
-      pauseHost: context.pauseHost,
     });
 
     return {
@@ -814,11 +778,6 @@ export function createGiteaChangeRequestSource(
     now,
     pollIntervalMs: options.pollIntervalMs,
     initialDelayMs: options.initialDelayMs,
-    onError(error, host) {
-      if (options.isAuthError(error)) {
-        loginByOrigin.delete(host);
-      }
-    },
   });
 
   return {
@@ -833,7 +792,7 @@ export function createGiteaChangeRequestSource(
     },
     dispose() {
       cachedReviewCommentsByUrl.clear();
-      loginByOrigin.clear();
+      loginByBaseUrl.clear();
       poller.dispose();
     },
   };

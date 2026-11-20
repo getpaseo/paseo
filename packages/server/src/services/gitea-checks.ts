@@ -223,10 +223,16 @@ function parseTeaLogins(stdout: string): z.infer<typeof GiteaLoginSchema>[] {
   }
 }
 
-export function findTeaLoginNameForOrigin(stdout: string, origin: string): string | null {
-  const match = parseTeaLogins(stdout).find(
-    (login) => login.name && getUrlOrigin(login.url) === origin,
-  );
+export function findTeaLoginNameForBaseUrl(stdout: string, baseUrl: string): string | null {
+  const match = parseTeaLogins(stdout).find((login) => {
+    if (!login.name || !login.url) return false;
+    try {
+      const url = new URL(login.url);
+      return `${url.origin}${url.pathname.replace(/\/+$/, "")}` === baseUrl;
+    } catch {
+      return false;
+    }
+  });
   return match?.name ?? null;
 }
 
