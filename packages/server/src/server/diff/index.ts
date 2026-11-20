@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { TOTAL_DIFF_MAX_BYTES } from "../../utils/checkout-git.js";
 import { DEFAULT_MAX_OUTPUT_BYTES, runGitCommand } from "../../utils/run-git-command.js";
 import { expandTilde, createRealpathAwarePathMatcher } from "../../utils/path.js";
@@ -19,13 +20,15 @@ import type {
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   listComparison,
+  isMovingRevision,
   validateCompare,
   worktreeRoot,
   DiffReadError,
   type Compare,
   type Comparison,
+  type ComparisonRevisions,
 } from "./git.js";
-import { DiffDependencyObserver } from "./dependencies.js";
+import { DiffDependencyObserver, type DiffDependencySubscription } from "./dependencies.js";
 
 interface RecordCache {
   identity: string;
@@ -42,6 +45,7 @@ interface Target {
   compare: Compare;
   listeners: Set<Listener>;
   revision: number;
+  revisions: ComparisonRevisions | null;
   committed: number;
   cache: Map<string, RecordCache>;
   entries: DiffEntry[];
@@ -53,7 +57,7 @@ interface Target {
   checkInterpretation: (() => Promise<boolean>) | null;
   interpretationCheck: Promise<void> | null;
   interpretationDirty: boolean;
-  release: (() => Promise<void>) | null;
+  dependencies: DiffDependencySubscription | null;
   opening: Promise<void> | null;
   closed: boolean;
   timer: ReturnType<typeof setTimeout> | null;
@@ -73,16 +77,18 @@ export class DiffSubscriptions {
   private dependencies: DiffDependencyObserver;
   private computations = 0;
   private highlightCalls = 0;
-  constructor(workspaceGit: Pick<WorkspaceGitService, "requestWorkingTreeWatch">) {
-    this.dependencies = new DiffDependencyObserver(workspaceGit);
+  constructor(
+    workspaceGit: Pick<WorkspaceGitService, "requestWorkingTreeWatch">,
+    logger?: Pick<Logger, "warn">,
+  ) {
+    this.dependencies = new DiffDependencyObserver(workspaceGit, logger);
   }
   getMetrics() {
+    const targets = [...this.targets.values()];
     return {
-      targets: this.targets.size,
-      subscriptions: [...this.targets.values()].reduce(
-        (sum, target) => sum + target.listeners.size,
-        0,
-      ),
+      targets: targets.length,
+      subscriptions: targets.reduce((sum, target) => sum + target.listeners.size, 0),
+      fallbackTargets: targets.filter((target) => target.dependencies?.isPolling()).length,
       computations: this.computations,
       highlightCalls: this.highlightCalls,
       metadataObservers: this.dependencies.getObservationCount(),
@@ -141,6 +147,7 @@ export class DiffSubscriptions {
         compare,
         listeners: new Set(),
         revision: 0,
+        revisions: null,
         committed: 0,
         cache: new Map(),
         entries: [],
@@ -152,7 +159,7 @@ export class DiffSubscriptions {
         checkInterpretation: null,
         interpretationCheck: null,
         interpretationDirty: false,
-        release: null,
+        dependencies: null,
         opening: null,
         closed: false,
         timer: null,
@@ -164,11 +171,11 @@ export class DiffSubscriptions {
           .declareDependencies(
             {
               cwd: compare.cwd,
-              refs: [compare.base, compare.head].flatMap((endpoint) =>
-                endpoint.kind === "rev" && !/^[a-f0-9]{40,64}$/.test(endpoint.rev)
-                  ? [endpoint.rev]
-                  : [],
+              movingRevision: [compare.base, compare.head].some(
+                (endpoint) => endpoint.kind === "rev" && isMovingRevision(endpoint.rev),
               ),
+              checkoutBase: compare.checkoutBase,
+              getRevisions: () => captured.revisions,
               index: compare.base.kind === "index" || compare.head.kind !== "rev",
               worktree: compare.head.kind === "worktree",
             },
@@ -177,8 +184,8 @@ export class DiffSubscriptions {
               else this.invalidate(captured);
             },
           )
-          .then((release) => {
-            captured.release = release;
+          .then((dependencies) => {
+            captured.dependencies = dependencies;
             return undefined;
           });
       } catch (error) {
@@ -219,7 +226,7 @@ export class DiffSubscriptions {
         current.closed = true;
         if (current.timer) clearTimeout(current.timer);
         this.targets.delete(key);
-        await current.release?.();
+        await current.dependencies?.release();
         await current.refresh;
         await current.interpretationCheck;
       },
@@ -329,7 +336,9 @@ export class DiffSubscriptions {
       let began = false;
       try {
         this.computations++;
-        comparison = await listComparison(target.compare);
+        const revisions: ComparisonRevisions = { refs: new Map() };
+        target.revisions = revisions;
+        comparison = await listComparison(target.compare, revisions);
         target.checkInterpretation = comparison.hasInterpretationChanged;
         const resolved = {
           baseSha: comparison.baseSha,
@@ -450,7 +459,7 @@ export class DiffSubscriptions {
       target.closed = true;
       if (target.timer) clearTimeout(target.timer);
       await target.opening;
-      await target.release?.();
+      await target.dependencies?.release();
       await target.refresh;
       await target.interpretationCheck;
     }

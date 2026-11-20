@@ -106,6 +106,7 @@ function fakeInput(initial: UserComposerAttachment[] = [], locked = false) {
     isLive: () => true,
     revealed: true,
     isRevealed: () => view.revealed,
+    isFocused: () => false,
     focus: async (options) => {
       view.focused.push(options);
     },

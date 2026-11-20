@@ -1,5 +1,6 @@
 import { Fragment, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { usePanelStore } from "@/stores/panel-store";
 import { CompactHeader } from "@/components/headers/compact-header";
 import {
   EXPLORER_TOGGLE_KEYS,
@@ -29,7 +30,8 @@ interface CompactWorkspaceHeaderProps {
   /** Workspace overflow menu. */
   children: ReactNode;
   headerVariant: "compact" | "full";
-  actionsActive: boolean;
+  isRouteFocused: boolean;
+  isCompact: boolean;
 }
 
 /** The compact header with the workspace's project row and controls. */
@@ -45,7 +47,8 @@ export function CompactWorkspaceHeader({
   tabSwitcher,
   serverId,
   headerVariant,
-  actionsActive,
+  isRouteFocused,
+  isCompact,
 }: CompactWorkspaceHeaderProps) {
   const { t } = useTranslation();
   const actionsInBar = resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
@@ -89,7 +92,26 @@ export function CompactWorkspaceHeader({
           actions={actionsInBar ? undefined : actions}
         />
       ) : null}
-      <WindowLayoutActions active={actionsActive}>{actions}</WindowLayoutActions>
+      <WorkspaceWindowActions isRouteFocused={isRouteFocused} isCompact={isCompact}>
+        {actions}
+      </WorkspaceWindowActions>
     </IconButtonChromeProvider>
   );
+}
+
+// Panel changes only affect the portaled controls. Keep their subscription below the
+// workspace and header so opening a sidebar does not render the chat or rebuild its actions.
+function WorkspaceWindowActions({
+  isRouteFocused,
+  isCompact,
+  children,
+}: {
+  isRouteFocused: boolean;
+  isCompact: boolean;
+  children: ReactNode;
+}) {
+  const active = usePanelStore(
+    (state) => isRouteFocused && (!isCompact || state.mobilePanel.target === "agent"),
+  );
+  return <WindowLayoutActions active={active}>{children}</WindowLayoutActions>;
 }

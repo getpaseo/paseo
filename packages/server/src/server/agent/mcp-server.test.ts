@@ -266,6 +266,7 @@ function buildAgentManagerSpies() {
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
+    getAgentBackgroundWorkSummary: vi.fn().mockReturnValue(undefined),
     listAgents: vi.fn().mockReturnValue([]),
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
@@ -6195,6 +6196,51 @@ describe("agent snapshot MCP serialization", () => {
     expect(structured.agents[0]).not.toHaveProperty("persistence");
     expect(structured.agents[0]).not.toHaveProperty("pendingPermissions");
   });
+
+  it.each(["loaded", "stored"])(
+    "reports background work for a %s agent from get_agent_status and list_agents",
+    async (source) => {
+      const { agentManager, agentStorage, spies } = createTestDeps();
+      const agent = createManagedAgent({ id: "agent-with-shell", cwd: REPO_CWD });
+      if (source === "stored") {
+        const record = createStoredRecord({
+          id: agent.id,
+          cwd: agent.cwd,
+          archivedAt: null,
+          lastStatus: "idle",
+          updatedAt: new Date().toISOString(),
+        });
+        spies.agentStorage.get.mockResolvedValue(record);
+        spies.agentStorage.listActive.mockResolvedValue([record]);
+      } else {
+        spies.agentManager.getAgent.mockReturnValue(agent);
+        spies.agentManager.listAgents.mockReturnValue([agent]);
+      }
+      spies.agentManager.getAgentBackgroundWorkSummary.mockReturnValue({ count: 1 });
+
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createClaudeOnlyManager(),
+        logger,
+      });
+      const status = await registeredTool(server, "get_agent_status").handler({
+        agentId: "agent-with-shell",
+      });
+      const list = await registeredTool(server, "list_agents").handler({});
+
+      expect(status.structuredContent).toEqual({
+        status: "idle",
+        snapshot: expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } }),
+      });
+      expect(list.structuredContent).toEqual({
+        agents: [expect.objectContaining({ status: "idle", backgroundWork: { count: 1 } })],
+      });
+      expect(spies.agentManager.getAgentBackgroundWorkSummary).toHaveBeenCalledWith(
+        "agent-with-shell",
+      );
+    },
+  );
 
   it("returns archived agent snapshots from storage for get_agent_status", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();

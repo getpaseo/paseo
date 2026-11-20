@@ -2,6 +2,7 @@ import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { expect, type Page } from "../fixtures";
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
+import { escapeRegex } from "./regex";
 
 /**
  * Settings → Host → Plugins: the Installed and Browse tabs, the page menu, the install sheet and a
@@ -28,8 +29,17 @@ function pluginSwitch(page: Page, name: string, action: "Disable" | "Enable") {
   });
 }
 
+/**
+ * A toast that times out stays in the page while it fades, so the next toast can share the screen
+ * with it, even when both have the same text. The pattern matches case, so "Installed x" does not
+ * match "Uninstalled x".
+ */
 export async function expectToast(page: Page, message: string): Promise<void> {
-  await expect(page.getByTestId("app-toast-message")).toContainText(message);
+  const toast = page
+    .getByTestId("app-toast-message")
+    .filter({ hasText: new RegExp(escapeRegex(message)) })
+    .first();
+  await expect(toast).toBeVisible();
 }
 
 // Tabs and search

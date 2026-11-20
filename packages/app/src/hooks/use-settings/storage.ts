@@ -73,8 +73,11 @@ export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
 export { DEFAULT_CONTENT_MAX_WIDTH };
-export const MIN_CONTENT_MAX_WIDTH = 600;
-export const MAX_CONTENT_MAX_WIDTH = 4000;
+const WIDE_CONTENT_MAX_WIDTH = 1200;
+const legacyContentMaxWidthSchema = clampedNumber(600, 4000);
+const contentWidthPresetSchema = z.enum(["default", "wide", "full"]);
+export type ContentWidthPreset = z.infer<typeof contentWidthPresetSchema>;
+type ContentWidth = ContentWidthPreset | number;
 
 export interface AppSettings {
   theme: ThemePreference;
@@ -89,8 +92,8 @@ export interface AppSettings {
   uiBaseFontSize: number; // clamped px, platform default 14 or 15
   contentFontSize: number; // clamped px, platform default 15 or 16
   codeFontSize: number; // clamped px, default 12
-  /** Max width of chat and markdown content in px; null follows the current default. */
-  contentMaxWidth: number | null;
+  /** Numbers preserve widths saved before presets were introduced. */
+  contentWidth: ContentWidth;
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
@@ -152,7 +155,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   uiBaseFontSize: DEFAULT_UI_BASE_FONT_SIZE,
   contentFontSize: DEFAULT_CONTENT_FONT_SIZE,
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
-  contentMaxWidth: null,
+  contentWidth: "default",
   syntaxTheme: "one",
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "timestamp",
@@ -244,10 +247,12 @@ const StoredAppSettingsSchema = z
     codeFontSize: clampedNumber(MIN_CODE_FONT_SIZE, MAX_CODE_FONT_SIZE).catch(
       DEFAULT_CODE_FONT_SIZE,
     ),
-    contentMaxWidth: z
-      .null()
-      .or(clampedNumber(MIN_CONTENT_MAX_WIDTH, MAX_CONTENT_MAX_WIDTH))
-      .catch(null),
+    contentWidth: contentWidthPresetSchema
+      .or(legacyContentMaxWidthSchema)
+      .optional()
+      .catch(undefined),
+    // COMPAT(contentMaxWidth): preserve the previous numeric preference.
+    contentMaxWidth: legacyContentMaxWidthSchema.nullish().catch(undefined),
     syntaxTheme: z.string().refine(isSyntaxThemeId).catch("one"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),
@@ -303,9 +308,10 @@ const StoredAppSettingsSchema = z
     manageBuiltInDaemon: z.boolean().optional().catch(undefined),
     releaseChannel: z.enum(["stable", "beta"]).optional().catch(undefined),
   })
-  .transform((stored) => {
+  .transform(({ contentMaxWidth, ...stored }) => {
     const { legacyPullRequestsInSidePane, ...openInSidePane } = stored.openInSidePane;
     const needsWrite =
+      contentMaxWidth !== undefined ||
       (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
       stored.contentFontSize === undefined;
     const uiBaseFontSize =
@@ -324,6 +330,7 @@ const StoredAppSettingsSchema = z
     const chatDisplay = stored.chatDisplay ?? (groupsToolCalls ? "collapseToolCalls" : "full");
     return {
       ...stored,
+      contentWidth: stored.contentWidth ?? contentMaxWidth ?? "default",
       openInSidePane,
       pullRequestOpenLocation:
         stored.pullRequestOpenLocation ?? (legacyPullRequestsInSidePane ? "side" : "explorer"),
@@ -497,12 +504,19 @@ export function parseTerminalScrollbackLines(value: unknown): number | null {
   );
 }
 
-export function parseContentMaxWidth(value: unknown): number | null {
-  return parseClampedFontSize(value, { min: MIN_CONTENT_MAX_WIDTH, max: MAX_CONTENT_MAX_WIDTH });
-}
-
-export function resolveContentMaxWidth(settings: Pick<AppSettings, "contentMaxWidth">): number {
-  return settings.contentMaxWidth ?? DEFAULT_CONTENT_MAX_WIDTH;
+export function resolveContentMaxWidth({
+  contentWidth,
+}: Pick<AppSettings, "contentWidth">): number | undefined {
+  switch (contentWidth) {
+    case "default":
+      return DEFAULT_CONTENT_MAX_WIDTH;
+    case "wide":
+      return WIDE_CONTENT_MAX_WIDTH;
+    case "full":
+      return undefined;
+    default:
+      return contentWidth;
+  }
 }
 
 export function parseClampedFontSize(

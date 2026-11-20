@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z, type ZodType } from "zod";
+import { ProviderLaunchSchema } from "./provider.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 export interface UsageWindow {
@@ -65,12 +66,13 @@ export interface UsageAccount {
 }
 
 export const UsageScopeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("global") }),
+  z.object({ kind: z.literal("global"), launch: ProviderLaunchSchema.optional() }),
   z.object({
     kind: z.literal("session"),
     provider: z.string(),
     model: z.string().optional(),
     env: z.record(z.string(), z.string()),
+    launch: ProviderLaunchSchema.optional(),
   }),
 ]);
 export type UsageScope = z.infer<typeof UsageScopeSchema>;
@@ -79,6 +81,8 @@ export interface UsageSourceRegistration {
   id: string;
   label: string;
   icon?: string;
+  /** Provider whose resolved launch is needed for discovery. */
+  provider?: string;
   input: ZodType;
   /** Accounts for this scope only. The same key in any scope identifies the same account. */
   discover(scope: UsageScope): Promise<UsageAccount[]>;

@@ -46,6 +46,15 @@ Scheduled runs archive their workspaces when they finish by default. Turn off **
 
 ## Create a worktree-backed workspace
 
+In the app, set **Isolation** to **New worktree**, then pick a branch or a pull request. Next to the list, choose what the new worktree does with your pick:
+
+- **Branch off** starts a new branch from it. Branches use this by default.
+- **Check out** works on the branch itself. Pull requests use this by default.
+
+When you branch off a pull request, the new branch starts at the pull request's latest commit and has no upstream. A push does not go to the pull request's branch. The workspace's base branch is the pull request's branch. For a pull request from a fork, it is the branch that the pull request merges into.
+
+Git keeps a branch in one worktree at a time. If you check out a branch that a worktree already has, Paseo selects that worktree under **Existing worktree** instead of making a copy.
+
 The examples below use the current directory as the source checkout. Pass `--path ~/dev/my-app` to create the workspace from another checkout.
 
 Branch off from a base branch:
@@ -81,6 +90,16 @@ paseo workspace create \
 ```
 
 Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
+
+## Work in an existing worktree
+
+To continue in a worktree that is already on disk, set **Isolation** to **Existing worktree** and pick it. The list shows every git worktree of the repository, including worktrees that you made with `git worktree add`. The workspace works on the branch that the worktree has checked out. Paseo does not create a branch or run setup.
+
+From the CLI, create a local workspace at the worktree's directory:
+
+```bash
+paseo workspace create --isolation local --path ~/dev/my-app-feature
+```
 
 ## Copy local files with .worktreeinclude
 
@@ -121,6 +140,19 @@ Plugins can use [`worktree.create.after`](/docs/plugins/hooks#worktreecreateafte
 Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
+
+Teardown commands share a one minute limit. Set `teardownTimeoutMs` to change it, in milliseconds:
+
+```json
+{
+  "worktree": {
+    "teardown": "docker compose down",
+    "teardownTimeoutMs": 300000
+  }
+}
+```
+
+At the limit, Paseo tries to stop the command and its child processes and stops waiting for output. If teardown fails or reaches the limit, the workspace still archives and the worktree stays on disk. `teardownTimeoutMs` accepts whole numbers from 1 to 2147483647. Other values use the default.
 
 ## Scripts and services
 

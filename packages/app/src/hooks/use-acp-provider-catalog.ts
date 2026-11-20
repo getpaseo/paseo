@@ -9,6 +9,11 @@ export function getAcpProviderCatalog(): AcpProviderCatalogItem[] {
   return ACP_PROVIDER_CATALOG;
 }
 
+/** The catalog's install guide for a provider added from it, or null for any other provider. */
+export function readAcpProviderInstallGuide(provider: string): string | null {
+  return ACP_PROVIDER_CATALOG.find((entry) => entry.id === provider)?.installLink ?? null;
+}
+
 export function buildAcpProviderConfigPatch(
   entry: AcpProviderCatalogItem,
   hostSupports: (feature: HostFeatureName) => boolean = () => false,

@@ -1,7 +1,7 @@
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/contexts/toast-context";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { RewindMode } from "./use-rewind-capabilities";
@@ -29,7 +29,14 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
   const toast = useToast();
   const { t } = useTranslation();
   const composerRestore = useRewindComposerRestore();
-  const { isPending, mutateAsync } = useMutation({
+  const queryClient = useQueryClient();
+  const mutationKey = useMemo(
+    () => ["agent-rewind", input.serverId, input.agentId],
+    [input.serverId, input.agentId],
+  );
+  const isPending = useIsMutating({ mutationKey, exact: true }) > 0;
+  const { mutateAsync } = useMutation({
+    mutationKey,
     mutationFn: async ({ mode }: RewindAgentInput) => {
       if (!input.client || !input.agentId || !input.messageId) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
@@ -61,12 +68,12 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
 
   const rewindAgent = useCallback(
     async (rewindInput: RewindAgentInput) => {
-      if (isPending) {
+      if (queryClient.isMutating({ mutationKey, exact: true }) > 0) {
         return;
       }
       await mutateAsync(rewindInput);
     },
-    [isPending, mutateAsync],
+    [mutateAsync, mutationKey, queryClient],
   );
 
   return {

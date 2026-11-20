@@ -52,6 +52,36 @@ Pick the contribution that matches the request. Each row names the registration,
 | Inject launch-only MCP servers and save Codex sandbox/approval options | [agent-configuration](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-configuration) |
 | Attach a tool to selected agents                                       | [agent-tools](https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-tools)                 |
 
+## Develop plugins in a local folder
+
+Develop a plugin in a local folder that you own, the same way you develop an npm package. Install
+that folder by path. Paseo runs the plugin from that folder, `paseo plugin reload <id>` loads your
+edits, and `paseo plugin update` does not change it.
+
+Do not edit, build, or commit inside the installation of a Git or npm plugin. That folder is
+Paseo's managed storage in the `plugins/` directory of the daemon home. `paseo plugin update`
+replaces it, and `paseo plugin remove` deletes it. Both commands discard every edit and commit in
+that folder.
+
+Before you edit an installed plugin, run `paseo plugin ls <id>` and read the SOURCE column. A
+`git:` source, an `npm:` source, or a registry source such as `<registry host>/owner/slug` is a
+managed installation. Its DIRECTORY column shows the managed folder.
+
+To develop a plugin that is installed from Git or npm:
+
+1. Clone the source repository of the plugin into a folder outside the daemon home. For an npm
+   plugin, find the repository in its `package.json`.
+2. If SOURCE ends with `:<path>`, use that subfolder of the clone as the plugin folder.
+3. If the managed folder holds edits or commits, move them into the plugin folder.
+4. In the plugin folder, install the dependencies and run the `build` commands from
+   `paseo-plugin.json`. Paseo runs `build` only for managed installations.
+5. Ask the user before you remove the managed installation. `paseo plugin remove <id>` also
+   deletes the saved settings of the plugin.
+6. Run `paseo plugin remove <id>`.
+7. Run `paseo plugin install /absolute/path/to/plugin-folder --id <id>` to keep the runtime ID.
+8. Edit the plugin folder, and run `paseo plugin reload <id>` after each change. If a change needs
+   a `build` command, run that command before `reload`.
+
 ## Create the project
 
 Use an absolute path on the daemon machine. `init` writes files but does not install packages.
