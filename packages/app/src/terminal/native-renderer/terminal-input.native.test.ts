@@ -6,7 +6,7 @@ import {
   TERMINAL_INPUT_CONTEXT_MENU_HIDDEN,
   TERMINAL_INPUT_HITBOX_SIZE,
 } from "./terminal-input.native";
-import { forwardNativeTerminalKey, type NativeTerminalKeyEvent } from "./terminal-key-events";
+import { createNativeTerminalKeyEvent, resolveHardwareTerminalKey } from "./terminal-key-events";
 
 describe("native terminal typed input", () => {
   function inputData(change: { data: string; shouldClear: boolean }): string {
@@ -149,25 +149,18 @@ describe("native terminal typed input", () => {
     });
   });
 
-  it("forwards native arrow key events to the terminal key path", () => {
-    const events: NativeTerminalKeyEvent[] = [];
-
-    forwardNativeTerminalKey({
-      key: "ArrowUp",
-      onTerminalKey: (event) => {
-        events.push(event);
-      },
+  it("identifies hardware arrows by code and keeps their modifiers", () => {
+    // UIKit leaves `key` as a sentinel for Left/Right, so the code leads.
+    expect(resolveHardwareTerminalKey({ key: "\uF702", code: "ArrowLeft" })).toBe("ArrowLeft");
+    expect(resolveHardwareTerminalKey({ key: "ArrowUp", code: "" })).toBe("ArrowUp");
+    expect(resolveHardwareTerminalKey({ key: "a", code: "KeyA" })).toBeNull();
+    expect(createNativeTerminalKeyEvent("ArrowDown", { shift: true, alt: true })).toEqual({
+      key: "ArrowDown",
+      ctrl: false,
+      shift: true,
+      alt: true,
+      meta: false,
     });
-
-    expect(events).toEqual([
-      {
-        key: "ArrowUp",
-        ctrl: false,
-        shift: false,
-        alt: false,
-        meta: false,
-      },
-    ]);
   });
 
   it("keeps the hidden input from owning terminal long-press selection", () => {

@@ -2,7 +2,12 @@ import {
   PluginRegistryIdentitySchema,
   parsePluginRegistryReference,
 } from "@getpaseo/protocol/plugin-registry";
-import { resolveRegistryPlugin, type RegistryOptions } from "./managed-source/registry.js";
+import {
+  getRegistryPlugin,
+  listRegistryPlugins,
+  resolveRegistryPlugin,
+  type RegistryOptions,
+} from "./managed-source/registry.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, realpath, rename, rm } from "node:fs/promises";
@@ -22,7 +27,13 @@ import {
 import { runGitCommand } from "../../utils/run-git-command.js";
 import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
 import { readPluginManifest, type PluginManifest } from "./manifest.js";
-import { acquireNpm, isNpmSource, readNpmArtifact, resolveNpm } from "./managed-source/npm.js";
+import {
+  acquireNpm,
+  isNpmSource,
+  isSameNpmArtifact,
+  readNpmArtifact,
+  resolveNpm,
+} from "./managed-source/npm.js";
 
 const GIT_TIMEOUT_MS = 120_000;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: "0" } as const;
@@ -346,13 +357,17 @@ export class ManagedPluginSources {
       throw new Error("Preparation changed the reviewed Git commit");
     if (target?.kind === "npm" && location.identity.kind === "npm") {
       const artifact = await readNpmArtifact(location.versionRoot, location.identity.packageName);
-      if (
-        artifact.version !== target.version ||
-        artifact.integrity !== target.integrity ||
-        artifact.resolved !== target.resolved
-      )
+      if (!isSameNpmArtifact({ installed: artifact, target }))
         throw new Error("Preparation changed the reviewed npm artifact");
     }
+  }
+
+  listRegistry() {
+    return listRegistryPlugins(this.registryOptions);
+  }
+
+  getRegistryPlugin(id: string) {
+    return getRegistryPlugin(id, this.registryOptions);
   }
 
   async status(pluginId: string, configuredPath: string): Promise<PluginSourceStatusItem> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCommandCenterInteraction } from "./interaction";
 import { projectCommandCenterRows, type CommandCenterFileResult } from "./results";
-import type { CommandCenterScope } from "@/stores/keyboard-shortcuts-store";
+import type { CommandCenterTab } from "./tabs";
 
 function results(ids = ["a", "b", "c", "d"]) {
   return projectCommandCenterRows(
@@ -21,17 +21,17 @@ function results(ids = ["a", "b", "c", "d"]) {
         })),
       },
     ],
-    { singleLineRow: 40, twoLineRow: 60, sectionTitle: 20, sectionDivider: 10 },
+    { singleLineRow: 40, twoLineRow: 60, threeLineRow: 80, sectionTitle: 20, sectionDivider: 10 },
   );
 }
 
-function setup(options: { scope?: CommandCenterScope; measured?: boolean } = {}) {
+function setup(options: { tab?: CommandCenterTab; measured?: boolean } = {}) {
   const offsets: number[] = [];
   const model = createCommandCenterInteraction((offset) => offsets.push(offset));
   const publish = (ids = ["a", "b", "c", "d"], loading = false) =>
     model.update({
       open: true,
-      scope: options.scope ?? null,
+      tab: options.tab ?? "all",
       query: model.getSnapshot().query,
       projection: results(ids),
       loading,
@@ -51,6 +51,45 @@ describe("Command Center interaction", () => {
     model.layout(60);
     expect(model.getSnapshot().activeId).toBe("b");
     expect(offsets).toEqual([]);
+  });
+
+  it("follows the first result while results load, so Enter does not run what rendered first", () => {
+    const { model, publish } = setup();
+    model.setQuery("");
+    // Recent workspaces lead All and arrive after the actions below them.
+    publish(["new-workspace", "settings"], true);
+    expect(model.getSnapshot().activeId).toBe("new-workspace");
+    publish(["recent", "new-workspace", "settings"]);
+    expect(model.getSnapshot().activeId).toBe("recent");
+  });
+
+  it("keeps the selected row when settled results reorder", () => {
+    const { model, publish } = setup();
+    expect(model.getSnapshot().activeId).toBe("a");
+    // Another workspace's agent changed status, so it moves to the top of Recent workspaces.
+    publish(["b", "a", "c", "d"]);
+    expect(model.getSnapshot().activeId).toBe("a");
+  });
+
+  it("keeps the selected row when results land above it after the query settled", () => {
+    const { model, publish } = setup();
+    model.setQuery("invoice");
+    // Files arrive while archived workspaces are still being searched.
+    publish(["file-1", "file-2"], true);
+    expect(model.getSnapshot().activeId).toBe("file-1");
+    publish(["archived", "file-1", "file-2"]);
+    expect(model.getSnapshot().activeId).toBe("archived");
+    publish(["archived-2", "archived", "file-1", "file-2"]);
+    expect(model.getSnapshot().activeId).toBe("archived");
+  });
+
+  it("keeps the user's pick while results are still loading", () => {
+    const { model, publish } = setup();
+    model.setQuery("q");
+    publish(["a", "b"], true);
+    model.move("next");
+    publish(["z", "a", "b"], true);
+    expect(model.getSnapshot().activeId).toBe("b");
   });
 
   it("reveals only clipped keyboard selections and wraps around", () => {
@@ -120,7 +159,7 @@ describe("Command Center interaction", () => {
   });
 
   it("waits for scoped search results instead of revealing the previous query's rows", () => {
-    const { model, offsets, publish } = setup({ scope: "files" });
+    const { model, offsets, publish } = setup({ tab: "files" });
     model.scrolled(100);
     model.setQuery("new");
     publish(["a", "b"], true);
@@ -132,7 +171,7 @@ describe("Command Center interaction", () => {
   });
 
   it("manual interaction cancels a reveal awaiting search results", () => {
-    const { model, offsets, publish } = setup({ scope: "files" });
+    const { model, offsets, publish } = setup({ tab: "files" });
     model.setQuery("new");
     publish([], true);
     model.beginManualScroll();
@@ -153,13 +192,29 @@ describe("Command Center interaction", () => {
     expect(offsets).toEqual([]);
   });
 
-  it("scope changes reset selection and request a reveal", () => {
+  it("tab changes select the first result and return the list to the top", () => {
     const { model, offsets } = setup();
     model.move("next");
+    model.move("next");
+    model.move("next");
     model.scrolled(100);
-    model.update({ open: true, scope: "files", query: "", projection: results(), loading: false });
+    model.update({ open: true, tab: "files", query: "", projection: results(), loading: false });
     expect(model.getSnapshot().activeId).toBe("a");
-    expect(offsets).toEqual([20, 20]);
+    expect(offsets.at(-1)).toBe(0);
+  });
+
+  it("tab changes keep the query", () => {
+    const { model, publish } = setup();
+    model.setQuery("b");
+    publish(["b"]);
+    model.update({
+      open: true,
+      tab: "workspaces",
+      query: "b",
+      projection: results(["b"]),
+      loading: false,
+    });
+    expect(model.getSnapshot()).toEqual({ query: "b", activeId: "b" });
   });
 
   it("close discards the old query, metrics, and deferred reveal", () => {
@@ -167,7 +222,7 @@ describe("Command Center interaction", () => {
     model.setQuery("old");
     publish();
     model.move("previous");
-    model.update({ open: false, scope: null, query: "old", projection: results(), loading: false });
+    model.update({ open: false, tab: "all", query: "old", projection: results(), loading: false });
     model.layout(80);
     expect(model.getSnapshot()).toEqual({ query: "", activeId: null });
     expect(offsets).toEqual([]);

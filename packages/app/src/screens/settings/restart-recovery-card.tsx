@@ -59,7 +59,7 @@ export function RestartRecoveryCard({ serverId }: { serverId: string }) {
 
   if (!isConnected || !isSupported || !config) return null;
 
-  const isEnabled = config.resumeOnStartup !== false;
+  const isEnabled = config.resumeOnStartup === true;
 
   return (
     <>
@@ -87,7 +87,6 @@ export function RestartRecoveryCard({ serverId }: { serverId: string }) {
           <View style={styles.trailing}>
             <Button
               variant="outline"
-              size="sm"
               onPress={handleOpen}
               disabled={!isEnabled || mutation.isPending}
               accessibilityLabel={t("settings.host.agents.resumeOnStartup.editAccessibilityLabel")}
@@ -163,12 +162,11 @@ function ResumePromptSheet({
         </Text>
       ) : null}
       <View style={styles.sheetActions}>
-        <Button variant="ghost" size="sm" onPress={onClose} disabled={isSaving}>
+        <Button variant="ghost" onPress={onClose} disabled={isSaving}>
           {t("common.actions.cancel")}
         </Button>
         <Button
           variant="default"
-          size="sm"
           onPress={handleSave}
           disabled={!canSave}
           testID="host-page-restart-recovery-save"

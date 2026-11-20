@@ -16,6 +16,7 @@ import {
   compareTimelineItems,
   createUnavailableSearchResult,
   normalizeForgeSearchKinds,
+  isOnDefaultBranch,
   parseOptionalTime,
 } from "./forge-service.js";
 import type {
@@ -246,6 +247,17 @@ const GitLabApprovalsSchema = z
     approvals_required: z.number().nullable().optional(),
     approvals_left: z.number().nullable().optional(),
     approved_by: z.array(z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+const GitLabProjectSchema = z
+  .object({
+    path_with_namespace: z.string(),
+    default_branch: z.string().nullish(),
+    forked_from_project: z
+      .object({ path_with_namespace: z.string().optional() })
+      .nullable()
+      .optional(),
   })
   .passthrough();
 
@@ -728,6 +740,7 @@ function toCurrentPullRequestStatus(
     state: mapMergeRequestState(mr.state),
     baseRefName: mr.target_branch,
     headRefName: mr.source_branch,
+    ...(mr.sha ? { headSha: mr.sha } : {}),
     isMerged: mr.state === "merged" || mr.merged_at != null,
     isDraft: mr.draft ?? mr.work_in_progress ?? false,
     mergeable: mapMergeable(mr),
@@ -987,6 +1000,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
         (mr) =>
           mapMergeRequestState(mr.state) !== "open" && headSha !== undefined && mr.sha === headSha,
       ) ??
+      candidates[0] ??
       null;
     return match ? viewMergeRequest(cwd, String(match.iid)) : null;
   }
@@ -1130,6 +1144,19 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
     return issues.map(toIssueSummary);
   }
 
+  async function readOriginProject(cwd: string) {
+    const remoteUrl = await resolveRemoteUrl(cwd);
+    const projectPath = remoteUrl ? parseGitRemoteLocation(remoteUrl)?.path : null;
+    if (!projectPath) {
+      return null;
+    }
+    return runJson(
+      ["api", `projects/${encodeURIComponent(projectPath)}`],
+      { cwd: cwd },
+      GitLabProjectSchema,
+    );
+  }
+
   return {
     async isAuthenticated(input: { cwd: string } & ForgeReadOptions): Promise<boolean> {
       const glabPath = await resolveGlab();
@@ -1149,11 +1176,22 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
       }
     },
 
+    async getReferenceRepository(input): Promise<string | null> {
+      const project = await readOriginProject(input.cwd);
+      return project?.forked_from_project?.path_with_namespace ?? null;
+    },
+
     async getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
       try {
         const mr = await resolveCurrentMergeRequest(input.cwd, input.headRef, input.headSha);
         if (!mr) {
           return null;
+        }
+        if (mapMergeRequestState(mr.state) !== "open") {
+          const project = await readOriginProject(input.cwd).catch(() => null);
+          if (isOnDefaultBranch(input, project?.default_branch)) {
+            return null;
+          }
         }
         const [approvals, pipelineChecks] = await Promise.all([
           fetchApprovals(input.cwd, mr),

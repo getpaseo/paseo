@@ -108,10 +108,7 @@ test.describe("Question option text", () => {
     }
   });
 
-  test("selecting description text never answers, and the label still does", async ({
-    page,
-    context,
-  }) => {
+  test("selecting description text keeps the question open", async ({ page, context }) => {
     test.setTimeout(180_000);
     const { session, card } = await openLinkedQuestions(page, context);
     try {
@@ -120,16 +117,13 @@ test.describe("Question option text", () => {
 
       await dragAcross(page, description);
       await expect.poll(() => selectedText(page)).toBe(DONE_DESCRIPTION);
-      await expectChecked(done, false);
-
       await description.getByText("Logs are at", { exact: false }).dblclick({
         position: { x: 4, y: 4 },
       });
       await expect.poll(() => selectedText(page)).toBe("Logs");
       await expectCurrentQuestion(page, { index: 1, total: 2, question: LINKED_QUESTION });
-      await expectChecked(done, false);
-
-      await done.getByText("Done", { exact: true }).click();
+      await expectChecked(done, true);
+      await continueToNextQuestion(page);
       await expectCurrentQuestion(page, { index: 2, total: 2, question: CHECKS_QUESTION });
       await openQuestion(page, { index: 1, total: 2 });
       await expectChecked(done, true);
@@ -138,11 +132,17 @@ test.describe("Question option text", () => {
     }
   });
 
-  test("double-clicking a single-select label answers once", async ({ page, context }) => {
+  test("double-clicking a single-select label selects once without advancing", async ({
+    page,
+    context,
+  }) => {
     test.setTimeout(180_000);
     const { session, card } = await openLinkedQuestions(page, context);
     try {
       await card.getByRole("radio", { name: "Done" }).getByText("Done", { exact: true }).dblclick();
+      await expectCurrentQuestion(page, { index: 1, total: 2, question: LINKED_QUESTION });
+      await expectChecked(card.getByRole("radio", { name: "Done" }), true);
+      await continueToNextQuestion(page);
 
       await expectCurrentQuestion(page, { index: 2, total: 2, question: CHECKS_QUESTION });
       await expectChecked(card.getByRole("checkbox", { name: "Lint" }), false);
@@ -154,14 +154,12 @@ test.describe("Question option text", () => {
     }
   });
 
-  test("multi-select description links and selection leave the option unchanged", async ({
-    page,
-    context,
-  }) => {
+  test("multi-select descriptions support links and text selection", async ({ page, context }) => {
     test.setTimeout(180_000);
     const { session, card } = await openLinkedQuestions(page, context);
     try {
       await card.getByRole("radio", { name: "Done" }).getByText("Done", { exact: true }).click();
+      await continueToNextQuestion(page);
       await expectCurrentQuestion(page, { index: 2, total: 2, question: CHECKS_QUESTION });
 
       const lint = card.getByRole("checkbox", { name: "Lint" });
@@ -177,18 +175,16 @@ test.describe("Question option text", () => {
 
       await dragAcross(page, description);
       await expect.poll(() => selectedText(page)).toBe(LINT_DESCRIPTION);
-      await expectChecked(lint, false);
-
       await description.getByText("Rules:", { exact: false }).dblclick({
         position: { x: 4, y: 4 },
       });
       await expect.poll(() => selectedText(page)).toBe("Rules");
-      await expectChecked(lint, false);
+      await expectChecked(lint, true);
 
       await typecheck.getByText("Typecheck", { exact: true }).dblclick();
       await expectChecked(typecheck, true);
       await lint.getByText("Lint", { exact: true }).click();
-      await expectChecked(lint, true);
+      await expectChecked(lint, false);
     } finally {
       await session.cleanup();
     }
@@ -268,6 +264,7 @@ test.describe("Question prompt pagination", () => {
       await expectQuestionHidden(page, SUCCESS_QUESTION);
 
       await chooseQuestionOption(page, "App");
+      await continueToNextQuestion(page);
       await expectCurrentQuestion(page, {
         index: 2,
         total: TOTAL_QUESTIONS,
@@ -288,6 +285,7 @@ test.describe("Question prompt pagination", () => {
         preview: 'flags.enabled("new-surface")',
       });
       await chooseQuestionOption(page, "Behind feature flag");
+      await continueToNextQuestion(page);
       await expectCurrentQuestion(page, {
         index: 3,
         total: TOTAL_QUESTIONS,
@@ -466,7 +464,9 @@ retryTest(
     retryTest.setTimeout(180_000);
     const card = page.getByTestId("question-form-card");
     await chooseQuestionOption(page, "App");
+    await continueToNextQuestion(page);
     await chooseQuestionOption(page, "Behind feature flag");
+    await continueToNextQuestion(page);
     await fillQuestionAnswer(page, {
       question: SUCCESS_QUESTION,
       answer: "Preserve my answers after a failed submission.",
@@ -520,7 +520,9 @@ retryTest(
     const card = page.getByTestId("question-form-card");
     questionClient.releaseFirstResponse();
     await chooseQuestionOption(page, "App");
+    await continueToNextQuestion(page);
     await chooseQuestionOption(page, "Behind feature flag");
+    await continueToNextQuestion(page);
     await fillQuestionAnswer(page, {
       question: SUCCESS_QUESTION,
       answer: "Start with the internal team.",

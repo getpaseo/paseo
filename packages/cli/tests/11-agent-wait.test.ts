@@ -20,6 +20,7 @@
 
 import assert from "node:assert";
 import { getAvailablePort } from "./helpers/network.ts";
+import { runPaseoCli, startTestDaemon } from "./helpers/test-daemon.ts";
 import { $ } from "zx";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -176,6 +177,28 @@ try {
       "help should mention timeout default is no limit",
     );
     console.log("timeout option documents no default limit\n");
+  }
+
+  // Test 13: wait reports AGENT_NOT_FOUND for an unknown ID
+  {
+    console.log("Test 13: wait reports AGENT_NOT_FOUND for an unknown ID");
+    const daemon = await startTestDaemon();
+    try {
+      const result = await runPaseoCli(daemon, [
+        "wait",
+        "does-not-exist",
+        "--host",
+        `127.0.0.1:${daemon.port}`,
+        "--json",
+      ]);
+      assert.notStrictEqual(result.exitCode, 0, "wait should fail for an unknown ID");
+      const { error } = JSON.parse(result.stderr);
+      assert.strictEqual(error.code, "AGENT_NOT_FOUND", result.stderr);
+      assert.match(error.details, /paseo ls/);
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ wait reports AGENT_NOT_FOUND for an unknown ID\n");
   }
 } finally {
   // Clean up temp directory

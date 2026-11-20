@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { webSocketProxyAgent } from "../network/index.js";
 import type { WebSocketLike } from "../websocket-server.js";
 
 const SOCKET_PING_INTERVAL_MS = 10_000;
@@ -45,7 +46,7 @@ export interface HubSocketCredentials {
 export interface HubSocketEvents {
   connected(socket: WebSocketLike, sessionProtocol: "legacy" | "session-v1"): void;
   rejected(statusCode: 401 | 403): void;
-  closed(code: number): void;
+  closed(code: number, reason?: string): void;
   failed(error: Error): void;
 }
 
@@ -166,6 +167,7 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
   openSocket(input: HubSocketCredentials, events: HubSocketEvents): HubSocketConnection {
     let sessionProtocol: "legacy" | "session-v1" = "legacy";
     const socket = new WebSocket(input.webSocketUrl, {
+      agent: webSocketProxyAgent(input.webSocketUrl),
       handshakeTimeout: this.requestTimeoutMs,
       headers: {
         authorization: `Bearer ${input.credential}`,
@@ -225,11 +227,11 @@ export class DirectHubRelationshipRemote implements HubRelationshipRemote {
       }
       events.closed(1006);
     });
-    socket.once("close", (code) => {
+    socket.once("close", (code, reason) => {
       stopHeartbeat();
       if (settled) return;
       settled = true;
-      events.closed(code);
+      events.closed(code, reason.toString());
     });
     socket.once("error", fail);
     return socket;

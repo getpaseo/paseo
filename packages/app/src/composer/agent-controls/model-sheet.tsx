@@ -1,20 +1,42 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Keyboard, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Keyboard,
+  ScrollView,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { AgentProfilePicker, AgentProfileSeed } from "@/agent-profiles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
+import type { ContextBridge } from "@/components/ui/isolated-bottom-sheet-modal";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
+import { TailEllipsisText } from "@/components/ui/tail-ellipsis-text";
 import { useProviderIcon } from "@/components/provider-icons";
 import { ModelBrowser, useModelBrowser } from "@/components/model-browser";
 import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
+import { resolveModelTriggerLabels } from "@/composer/agent-controls/layout";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import { readMeasuredWidth } from "@/hooks/use-container-width";
+import {
+  toolbarContentSlot,
+  toolbarSlot,
+  type ToolbarGlyphs,
+} from "@/components/ui/control-geometry";
+import { getAgentControlHintKey, shortModelLabel } from "./utils";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { useKeyboardToggle } from "@/hooks/use-keyboard-toggle";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ControlTooltipHint } from "./composer-control";
+import { useModelPickerShortcut } from "./control-items";
 
 const SNAP_POINTS = ["80%", "90%"];
 const MODEL_LIST_TOP_INSET = 4;
@@ -28,6 +50,7 @@ interface CompactModelSheetProps {
   selectedProvider: string;
   selectedModel: string;
   thinkingLabel: string | null;
+  effortKeys: ReturnType<typeof useShortcutKeys>;
   onSelect: (provider: string, modelId: string) => void;
   isLoading: boolean;
   profiles?: AgentProfilePicker | null;
@@ -41,14 +64,13 @@ interface CompactModelSheetProps {
   isRetryingProvider?: boolean;
   disabled?: boolean;
   serverId?: string | null;
-  glyphSize: number;
+  glyphs: ToolbarGlyphs;
+  /** False when the toolbar is too narrow for labels: the trigger shows the provider glyph only. */
+  showLabels: boolean;
   canSwitchProvider: boolean;
+  /** Carries the composer's contexts into the sheets, which draw away from it. */
+  contextBridge?: ContextBridge | null;
   children: ReactNode;
-}
-
-function shortModelLabel(label: string): string {
-  const separatorIndex = label.lastIndexOf("/");
-  return separatorIndex === -1 ? label : label.slice(separatorIndex + 1);
 }
 
 function resolveModelSheetProfileActions(
@@ -75,11 +97,49 @@ function resolveModelSheetProfileActions(
   };
 }
 
+/**
+ * Measures the folded model control and decides which labels it shows; see
+ * `resolveModelTriggerLabels`. The full width is keyed by what was measured, so a new label is
+ * `measuring` until its own width is known instead of reusing the previous label's.
+ */
+function useModelTriggerLabels(input: {
+  modelLabel: string;
+  thinkingLabel: string | null;
+  glyphSize: number;
+}) {
+  const { modelLabel, thinkingLabel, glyphSize } = input;
+  const measuredKey = `${glyphSize}\n${modelLabel}\n${thinkingLabel ?? ""}`;
+  const [availableWidth, setAvailableWidth] = useState<number | undefined>(undefined);
+  const [fullWidth, setFullWidth] = useState<{ key: string; width: number } | null>(null);
+
+  const onFrameLayout = useCallback((event: LayoutChangeEvent) => {
+    const width = readMeasuredWidth(event);
+    if (width !== null) setAvailableWidth(width);
+  }, []);
+  const onFullLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const width = readMeasuredWidth(event);
+      if (width !== null) setFullWidth({ key: measuredKey, width });
+    },
+    [measuredKey],
+  );
+
+  const labels = resolveModelTriggerLabels({
+    hasThinking: thinkingLabel !== null,
+    measurements: {
+      availableWidth,
+      fullWidth: fullWidth?.key === measuredKey ? fullWidth.width : undefined,
+    },
+  });
+  return { labels, measuredKey, onFrameLayout, onFullLayout };
+}
+
 export function CompactModelSheet({
   providers,
   selectedProvider,
   selectedModel,
   thinkingLabel,
+  effortKeys,
   onSelect,
   isLoading,
   profiles = null,
@@ -93,8 +153,10 @@ export function CompactModelSheet({
   isRetryingProvider = false,
   disabled = false,
   serverId = null,
-  glyphSize,
+  glyphs,
+  showLabels,
   canSwitchProvider,
+  contextBridge = null,
   children,
 }: CompactModelSheetProps) {
   const { t } = useTranslation();
@@ -229,15 +291,6 @@ export function CompactModelSheet({
     open();
   }, [close, isOpen, open]);
 
-  const triggerStyle = useCallback(
-    ({ hovered, pressed }: PressableStateCallbackType) => [
-      styles.trigger,
-      hovered && styles.triggerHovered,
-      (pressed || isOpen) && styles.triggerPressed,
-      disabled && styles.triggerDisabled,
-    ],
-    [disabled, isOpen],
-  );
   const mobileRootContent = useMemo(
     () => (
       <View style={styles.mobileRootContent} testID="agent-controls-settings-list">
@@ -263,34 +316,21 @@ export function CompactModelSheet({
 
   return (
     <>
-      <ComboboxTrigger
-        collapsable={false}
+      <ModelSheetTrigger
+        ModelIcon={hasSelectedProvider ? ModelIcon : null}
+        modelLabel={shortModelLabel(rootBrowser.triggerLabel)}
+        thinkingLabel={thinkingLabel}
+        glyphs={glyphs}
+        iconOnly={!showLabels && hasSelectedProvider}
+        isOpen={isOpen}
+        searchFocused={rootBrowser.isSearchFocused || modelBrowser.isSearchFocused}
         disabled={disabled}
         onPress={toggle}
-        style={triggerStyle}
-        accessibilityRole="button"
         accessibilityLabel={t("modelSelector.selectedModel", {
           model: rootBrowser.selectedModelLabel,
         })}
-        testID="combined-model-selector"
-        chevron={null}
-      >
-        {hasSelectedProvider ? (
-          <ComposerToolbarGlyph size={glyphSize}>
-            <ModelIcon size={glyphSize} color={styles.providerIcon.color} />
-          </ComposerToolbarGlyph>
-        ) : null}
-        <View style={styles.triggerLabels}>
-          <Text style={styles.triggerText} numberOfLines={1}>
-            {shortModelLabel(rootBrowser.triggerLabel)}
-          </Text>
-          {thinkingLabel ? (
-            <Text style={styles.triggerThinking} numberOfLines={1}>
-              {thinkingLabel}
-            </Text>
-          ) : null}
-        </View>
-      </ComboboxTrigger>
+        effortKeys={effortKeys}
+      />
 
       <AdaptiveModalSheet
         header={rootHeader}
@@ -299,6 +339,7 @@ export function CompactModelSheet({
         snapPoints={SNAP_POINTS}
         scrollable={false}
         contentStyle={styles.sheetBody}
+        contextBridge={contextBridge}
         testID="agent-controls-model-sheet"
       >
         <View
@@ -347,6 +388,7 @@ export function CompactModelSheet({
           scrollable={false}
           presentation="push"
           contentStyle={styles.sheetBody}
+          contextBridge={contextBridge}
           testID="agent-controls-model-browser-sheet"
         >
           <View
@@ -372,23 +414,179 @@ export function CompactModelSheet({
   );
 }
 
+/**
+ * The folded model control in the toolbar: the provider glyph, then the model and thinking
+ * labels for as long as they fit.
+ */
+interface ModelSheetTriggerProps {
+  /** The selected provider's glyph, or null before a provider is selected. */
+  ModelIcon: ReturnType<typeof useProviderIcon> | null;
+  modelLabel: string;
+  thinkingLabel: string | null;
+  glyphs: ToolbarGlyphs;
+  iconOnly: boolean;
+  isOpen: boolean;
+  searchFocused: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  accessibilityLabel: string;
+  effortKeys: ReturnType<typeof useShortcutKeys>;
+}
+
+function ModelSheetTrigger({
+  ModelIcon,
+  modelLabel,
+  thinkingLabel,
+  glyphs,
+  iconOnly,
+  isOpen,
+  searchFocused,
+  disabled,
+  onPress,
+  accessibilityLabel,
+  effortKeys,
+}: ModelSheetTriggerProps) {
+  const { t } = useTranslation();
+  const { action: toggleAction, keys: modelKeys } = useModelPickerShortcut(disabled);
+  useKeyboardToggle({
+    action: toggleAction,
+    disabled,
+    open: isOpen,
+    searchFocused,
+    onToggle: onPress,
+  });
+
+  const glyphRole = iconOnly ? "icon" : "label";
+  const glyph = glyphs[glyphRole];
+  const triggerLabels = useModelTriggerLabels({
+    modelLabel,
+    thinkingLabel: iconOnly ? null : thinkingLabel,
+    glyphSize: glyph.size,
+  });
+  const providerIconColor =
+    glyph.tone === "foreground" ? styles.providerIconForeground.color : styles.providerIcon.color;
+  const triggerStyle = useCallback(
+    ({ hovered, pressed }: PressableStateCallbackType) => [
+      styles.trigger,
+      iconOnly && styles.triggerIconOnly,
+      hovered && styles.triggerHovered,
+      (pressed || isOpen) && styles.triggerPressed,
+      disabled && styles.triggerDisabled,
+    ],
+    [disabled, iconOnly, isOpen],
+  );
+
+  const trigger = (
+    <View style={styles.triggerFrame} onLayout={triggerLabels.onFrameLayout}>
+      <ComboboxTrigger
+        collapsable={false}
+        disabled={disabled}
+        onPress={onPress}
+        style={triggerStyle}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        testID="combined-model-selector"
+        chevron={null}
+      >
+        {ModelIcon ? (
+          <ComposerToolbarGlyph role={glyphRole}>
+            <ModelIcon
+              size={glyph.size}
+              strokeWidth={glyph.strokeWidth}
+              color={providerIconColor}
+            />
+          </ComposerToolbarGlyph>
+        ) : null}
+        {!iconOnly ? (
+          <View
+            style={[
+              styles.triggerLabels,
+              triggerLabels.labels === "measuring" && styles.triggerLabelsMeasuring,
+            ]}
+          >
+            <TailEllipsisText
+              text={modelLabel}
+              style={styles.triggerText}
+              testID="combined-model-selector-model-label"
+            />
+            {thinkingLabel && triggerLabels.labels !== "model" ? (
+              <Text
+                style={styles.triggerThinking}
+                numberOfLines={1}
+                testID="combined-model-selector-thinking-label"
+              >
+                {thinkingLabel}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </ComboboxTrigger>
+      {!iconOnly && thinkingLabel ? (
+        <View
+          // Keyed by what it measures: a retained node whose size does not change emits no new
+          // layout event, so new labels would never be measured.
+          key={triggerLabels.measuredKey}
+          style={[styles.trigger, styles.triggerMeasurer]}
+          onLayout={triggerLabels.onFullLayout}
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          aria-hidden
+        >
+          {ModelIcon ? <ComposerToolbarGlyph role={glyphRole}>{null}</ComposerToolbarGlyph> : null}
+          <View style={styles.triggerLabels}>
+            <Text style={[styles.triggerText, styles.triggerMeasuredText]} numberOfLines={1}>
+              {modelLabel}
+            </Text>
+            <Text style={styles.triggerThinking} numberOfLines={1}>
+              {thinkingLabel}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        {trigger}
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <ControlTooltipHint label={t(getAgentControlHintKey("model"))} shortcutKeys={modelKeys} />
+        {effortKeys ? (
+          <ControlTooltipHint
+            label={t("settings.shortcuts.help.cycleEffort")}
+            shortcutKeys={effortKeys}
+          />
+        ) : null}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   trigger: {
-    height: 28,
     minWidth: 0,
     flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
+    ...toolbarContentSlot(),
+    borderRadius: theme.borderRadius.full,
     backgroundColor: "transparent",
+  },
+  triggerIconOnly: {
+    ...toolbarSlot(),
+    flexShrink: 0,
+    paddingHorizontal: 0,
+    justifyContent: "center",
   },
   triggerHovered: {
     backgroundColor: theme.colors.surface2,
   },
   triggerPressed: {
-    backgroundColor: theme.colors.surface0,
+    backgroundColor: theme.colors.surface2,
   },
   triggerDisabled: {
     opacity: 0.5,
@@ -407,6 +605,28 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  triggerLabelsMeasuring: {
+    opacity: 0,
+  },
+  /** The space the trigger may take; the trigger itself stays as wide as its content. */
+  triggerFrame: {
+    minWidth: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  /** An invisible copy of the trigger with both labels untruncated. */
+  triggerMeasurer: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    flexShrink: 0,
+    opacity: 0,
+  },
+  triggerMeasuredText: {
+    flexShrink: 0,
+  },
   triggerThinking: {
     flexShrink: 0,
     color: theme.colors.foregroundExtraMuted,
@@ -415,6 +635,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   providerIcon: {
     color: theme.colors.foregroundMuted,
+  },
+  providerIconForeground: {
+    color: theme.colors.foreground,
   },
   sheetBody: {
     paddingHorizontal: 0,

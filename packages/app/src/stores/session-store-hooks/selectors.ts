@@ -5,11 +5,9 @@ import {
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
-import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
-export type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 export type { WorkspaceStructure, WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 export interface SessionsSnapshot {
@@ -307,21 +305,17 @@ export function selectRecommendedProjectPaths(
     .filter((path) => path.length > 0);
 }
 
+export function selectProjectRootPaths(state: SessionsSnapshot, serverId: string | null): string[] {
+  const projects = serverId ? state.sessions[serverId]?.projects : undefined;
+  if (!projects || projects.size === 0) {
+    return EMPTY_WORKSPACE_KEYS;
+  }
+  return Array.from(projects.values(), (project) => project.projectRootPath);
+}
+
 export function selectHasWorkspaces(state: SessionsSnapshot, serverId: string | null): boolean {
   if (!serverId) {
     return false;
   }
   return (state.sessions[serverId]?.workspaces?.size ?? 0) > 0;
-}
-
-export function selectWorkspaceStatusesForBadges(
-  state: SessionsSnapshot,
-): DesktopBadgeWorkspaceStatus[] {
-  const statuses: DesktopBadgeWorkspaceStatus[] = [];
-  for (const session of Object.values(state.sessions)) {
-    for (const workspace of session.workspaces.values()) {
-      statuses.push(workspace.status);
-    }
-  }
-  return statuses;
 }

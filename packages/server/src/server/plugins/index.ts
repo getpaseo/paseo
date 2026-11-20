@@ -3,7 +3,7 @@ import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { ProviderInstallation, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -25,8 +25,12 @@ import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
+import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
-import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import type {
+  PluginProviderInstallationMetadata,
+  PluginProviderMetadata,
+} from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
 import {
   type AgentUsageLookup,
@@ -48,6 +52,7 @@ interface PluginRuntimePort {
   wait?: PluginLifecycle["wait"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  startSubscription: PluginRuntime["startSubscription"];
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -57,6 +62,9 @@ interface PluginRuntimePort {
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
+  inspectProviderInstallation?: PluginRuntime["inspectProviderInstallation"];
+  checkProviderUpdates?: PluginRuntime["checkProviderUpdates"];
+  updateProvider?: PluginRuntime["updateProvider"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -230,11 +238,18 @@ export class PluginService {
       }
     });
     if (config.pluginsEnabled === true) {
-      for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
-        if (source.enabled === false) continue;
-        await this.startConfigured(pluginId);
-        this.notify(pluginId);
-      }
+      let earlierPublished: Promise<unknown> = Promise.resolve();
+      await Promise.all(
+        Object.entries(config.plugins ?? {})
+          .filter(([, source]) => source.enabled !== false)
+          .map(async ([pluginId]) => {
+            const publishTurn = earlierPublished;
+            const starting = this.startConfigured(pluginId, publishTurn);
+            earlierPublished = Promise.all([publishTurn, starting]);
+            await starting;
+            this.notify(pluginId);
+          }),
+      );
     }
     this.configStore.onFieldChange("pluginsEnabled", (value) => {
       this.handleGlobalSwitch(value === true);
@@ -387,6 +402,15 @@ export class PluginService {
     });
   }
 
+  /** Reads the default registry's directory. Not queued: it touches no local state. */
+  listRegistry() {
+    return this.requireManagedSources().listRegistry();
+  }
+
+  getRegistryPlugin(id: string) {
+    return this.requireManagedSources().getRegistryPlugin(id);
+  }
+
   async statusSources(pluginId?: string): Promise<PluginSourceStatusItem[]> {
     return this.enqueue(async () => {
       const sources = this.configStore.get().plugins ?? {};
@@ -532,6 +556,10 @@ export class PluginService {
     return this.runtime.invoke(pluginId, method, input);
   }
 
+  subscribePluginRpc(pluginId: string, method: string, input: unknown): PluginRuntimeSubscription {
+    return this.runtime.startSubscription(pluginId, method, input);
+  }
+
   async stopAllPlugins(): Promise<void> {
     this.globalStartsBlocked = true;
     const stopping = this.stopAll();
@@ -560,12 +588,12 @@ export class PluginService {
     }).catch((error) => this.logger.error({ err: error }, "Failed to enable plugins"));
   }
 
-  private async startConfigured(pluginId: string): Promise<void> {
+  private async startConfigured(pluginId: string, publishTurn?: Promise<unknown>): Promise<void> {
     const source = this.configStore.get().plugins?.[pluginId];
     if (!source || source.enabled === false || !this.canPublish(pluginId)) return;
     this.errors.delete(pluginId);
     try {
-      await this.startPlugin(pluginId, source.path);
+      await this.startPlugin(pluginId, source.path, publishTurn);
     } catch (error) {
       if (this.canPublish(pluginId)) this.recordFailure(pluginId, error);
     }
@@ -594,8 +622,13 @@ export class PluginService {
     );
   }
 
-  private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
+  private async startPlugin(
+    pluginId: string,
+    sourcePath: string,
+    publishTurn?: Promise<unknown>,
+  ): Promise<void> {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+    await publishTurn;
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
       this.publishUsageSources(pluginId);
@@ -700,6 +733,9 @@ export class PluginService {
                 return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
               }
             : undefined,
+          installation: provider.installation
+            ? this.providerInstallation(pluginId, provider.id, provider.installation)
+            : undefined,
           icon: provider.iconPath
             ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
             : undefined,
@@ -717,6 +753,38 @@ export class PluginService {
       this.providerIdsByPlugin.set(pluginId, ids);
       this.notifyProviderRegistrations();
     }
+  }
+
+  private providerInstallation(
+    pluginId: string,
+    providerId: string,
+    metadata: PluginProviderInstallationMetadata,
+  ): ProviderInstallation {
+    return {
+      installUrl: metadata.installUrl,
+      updateUrl: metadata.updateUrl,
+      inspect: metadata.hasInspect
+        ? (context) => {
+            if (!this.runtime.inspectProviderInstallation)
+              throw new Error("Plugin runtime cannot inspect provider installations");
+            return this.runtime.inspectProviderInstallation(pluginId, providerId, context);
+          }
+        : undefined,
+      checkForUpdates: metadata.hasCheckForUpdates
+        ? (context) => {
+            if (!this.runtime.checkProviderUpdates)
+              throw new Error("Plugin runtime cannot check provider updates");
+            return this.runtime.checkProviderUpdates(pluginId, providerId, context);
+          }
+        : undefined,
+      update: metadata.hasUpdate
+        ? (context) => {
+            if (!this.runtime.updateProvider)
+              throw new Error("Plugin runtime cannot update providers");
+            return this.runtime.updateProvider(pluginId, providerId, context);
+          }
+        : undefined,
+    };
   }
 
   private removeProviderRegistrations(pluginId: string): void {

@@ -33,7 +33,7 @@ GitHub 会使用以下 Hub URL：
 
 ## 连接仓库 {#connect-repositories}
 
-Hub 验证 App 之后，选择 **Install on GitHub**。选择 App 可以访问的账号或组织以及仓库。
+Hub 验证 App 之后，选择 **Connect GitHub**。选择 App 可以访问的账号或组织以及仓库。
 
 请从 Hub 发起安装，而不是使用 GitHub 自己的安装按钮。这一来一回会把安装绑定到当前的 Hub 组织。
 

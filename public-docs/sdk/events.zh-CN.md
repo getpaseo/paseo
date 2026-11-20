@@ -40,6 +40,25 @@ await directory.subscription.release();
 
 `client.agents.subscribe()` 和 Agent 句柄上的 `subscribe()` 会为该 API 实例持有的观察添加本地监听器。它们不会请求数据。当多个带过滤条件的视图需要各自的更新时，请使用返回的订阅上的回调。
 
+## 跟踪 Agent 的后台工作 {#follow-an-agents-background-work}
+
+后台工作是 Agent 的工具调用返回后仍在运行的工作，例如使用 `run_in_background` 启动的 Claude shell 或 `Monitor` 监控。子 Agent 和 workflow 显示在子 Agent 中。
+
+```ts
+const agent = client.agents.ref(agentId);
+
+const unsubscribe = agent.backgroundWork.subscribe((items) => render(items));
+
+// When this view closes:
+unsubscribe();
+```
+
+订阅建立后，`subscribe()` 会向监听器投递当前列表；每次重连后和每次变化时，也会投递完整列表。用 `list()` 执行单次读取。每项包含 `id`、`kind`（`"shell"`、`"monitor"` 或 `"other"`，未知值按 `"other"` 处理）、可为 `null` 的 `description`、可选的 `command`，以及 Paseo 首次观察到该项的时间 `startedAt`。列表属于当前 Provider 会话，不会持久化。运行时丢失后，旧项会被清除。列表不可用时会报告错误，而不是返回空列表。
+
+传入 `subscribe(listener, { onError })` 可接收读取当前列表失败的错误；此时不会调用监听器，下次重连时会重新读取。未提供 `onError` 时会记录错误。
+
+主机未声明 `features.agentBackgroundWork` 时，`list()` 会 reject，`subscribe()` 会抛出错误；请让用户更新主机。对具有 `canStop` 的项目调用 `backgroundWork.stop(item)`，等待提供方确认。停止操作需要 `features.agentBackgroundWorkStop`。
+
 ## 跟踪时间线事件 {#follow-timeline-events}
 
 ```ts

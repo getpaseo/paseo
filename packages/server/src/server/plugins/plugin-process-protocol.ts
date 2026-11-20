@@ -1,3 +1,4 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
@@ -5,9 +6,12 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
+  ProviderInstallationLaunch,
   ProviderStatusRequest,
+  ProviderUpdateReport,
 } from "@getpaseo/plugin/server/provider";
 import {
+  ProviderUpdateReportSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderLaunchSchema,
@@ -18,11 +22,20 @@ export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
+  installation?: PluginProviderInstallationMetadata;
   command?: readonly [string, ...string[]];
   id: string;
   label: string;
   description?: string;
   iconPath?: string;
+}
+
+export interface PluginProviderInstallationMetadata {
+  installUrl?: string;
+  updateUrl?: string;
+  hasInspect: boolean;
+  hasCheckForUpdates: boolean;
+  hasUpdate?: boolean;
 }
 
 export interface PluginUsageSourceMetadata {
@@ -42,6 +55,19 @@ export type PluginProcessRequest =
       request: ProviderStatusRequest;
     }
   | {
+      type: "provider.installation.inspect" | "provider.installation.update";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch };
+    }
+  | {
+      type: "provider.installation.check_updates";
+      requestId: string;
+      providerId: string;
+      request: { launch?: ProviderInstallationLaunch; installedVersion?: string };
+    }
+  | { type: "provider.installation.cancel"; requestId: string }
+  | {
       type: "initialize";
       pluginId: string;
       bundle: string;
@@ -60,6 +86,14 @@ export type PluginProcessRequest =
   | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
   | { type: "usage.discover"; requestId: string; sourceId: string; scope: UsageScope }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
+  | {
+      type: "subscribe";
+      requestId: string;
+      subscriptionId: string;
+      method: string;
+      input: unknown;
+    }
+  | { type: "unsubscribe"; subscriptionId: string }
   | {
       type: "provider.connect";
       providerId: string;
@@ -83,13 +117,17 @@ export type PluginProcessMessage =
   | {
       type: "ready";
       methods: string[];
+      subscriptions?: string[];
       providers: PluginProviderMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
+  | { type: "provider.installation.report"; requestId: string; report: ProviderUpdateReport }
   | { type: "fatal"; error: string }
+  | { type: "subscription.event"; subscriptionId: string; event: unknown }
+  | { type: "subscription.closed"; subscriptionId: string; error?: string }
   | {
       type: "provider.connected";
       connectionId: string;
@@ -120,6 +158,16 @@ const providerMetadataSchema = z
     requiresConfiguration: z.boolean().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
     hasStatus: z.boolean().optional(),
+    installation: z
+      .object({
+        installUrl: z.string().optional(),
+        updateUrl: z.string().optional(),
+        hasInspect: z.boolean(),
+        hasCheckForUpdates: z.boolean(),
+        hasUpdate: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
@@ -130,6 +178,10 @@ const usageSourceMetadataSchema = z
     icon: z.string().optional(),
   })
   .strict();
+const ProviderInstallationLaunchSchema = ProviderLaunchSchema.extend({
+  resolved: z.boolean(),
+}).strict();
+
 const providerConnectRequestSchema = z
   .object({
     launch: ProviderLaunchSchema.optional(),
@@ -157,6 +209,8 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
             provider: z.string(),
             cwd: z.string(),
             title: z.string().nullable(),
+            background: z.boolean(),
+            metadata: z.record(z.string(), z.custom<JsonValue>()),
           })
           .strict(),
         name: z.string(),
@@ -173,6 +227,28 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
       })
       .strict(),
+    z
+      .object({
+        type: z.enum(["provider.installation.inspect", "provider.installation.update"]),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z.object({ launch: ProviderInstallationLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.check_updates"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z
+          .object({
+            launch: ProviderInstallationLaunchSchema.optional(),
+            installedVersion: z.string().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
+    z.object({ type: z.literal("provider.installation.cancel"), requestId: z.string() }).strict(),
     z
       .object({
         type: z.literal("initialize"),
@@ -242,6 +318,16 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       .strict(),
     z
       .object({
+        type: z.literal("subscribe"),
+        requestId: z.string().min(1),
+        subscriptionId: z.string().min(1),
+        method: z.string().min(1),
+        input: z.unknown(),
+      })
+      .strict(),
+    z.object({ type: z.literal("unsubscribe"), subscriptionId: z.string().min(1) }).strict(),
+    z
+      .object({
         type: z.literal("provider.connect"),
         providerId: z.string().min(1),
         connectionId: z.string().min(1),
@@ -272,6 +358,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .object({
         type: z.literal("ready"),
         methods: z.array(z.string()),
+        subscriptions: z.array(z.string()).optional(),
         providers: z.array(providerMetadataSchema),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
@@ -283,7 +370,28 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
     z
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
       .strict(),
+    z
+      .object({
+        type: z.literal("provider.installation.report"),
+        requestId: z.string().min(1),
+        report: ProviderUpdateReportSchema,
+      })
+      .strict(),
     z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("subscription.event"),
+        subscriptionId: z.string().min(1),
+        event: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("subscription.closed"),
+        subscriptionId: z.string().min(1),
+        error: z.string().optional(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("provider.connected"),

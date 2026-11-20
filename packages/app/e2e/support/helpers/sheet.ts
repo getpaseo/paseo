@@ -112,3 +112,15 @@ export async function expectDeclinedDiscardPrompt(
   await close();
   expect(await prompt).toContain("discard the draft");
 }
+
+/** A seeded prompt the mock agent echoes, so the chat shows `target` as a tappable file link. */
+export function promptMentioning(target: string): string {
+  return [
+    "Generate a title and a git branch name for a coding agent from the user prompt and attachments.",
+    "Return JSON only with fields 'title' and 'branch'.",
+    "",
+    "<user-prompt>",
+    `Open \`${target}\` now`,
+    "</user-prompt>",
+  ].join("\n");
+}

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { TimelineProjection, type ProjectedTimelineRow } from "./timeline-projection.js";
+import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type {
   AgentTimelineFetchOptions,
@@ -88,6 +89,11 @@ export class InMemoryAgentTimelineStore {
     return this.requireState(agentId).epoch;
   }
 
+  getHead(agentId: string): { epoch: string; seq: number } {
+    const state = this.requireState(agentId);
+    return { epoch: state.epoch, seq: state.nextSeq - 1 };
+  }
+
   fetch(agentId: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     const state = this.requireState(agentId);
     const direction = options?.direction ?? "tail";
@@ -120,7 +126,12 @@ export class InMemoryAgentTimelineStore {
       hasNewer: page.hasNewer,
       startSeq: page.startSeq,
       endSeq: page.endSeq,
-      rows: page.entries.map((entry) => Object.assign({ seq: entry.seqEnd }, entry)),
+      // Stored rows are already within budget; this bounds assistant and reasoning merges.
+      rows: page.entries.map((entry) =>
+        Object.assign({ seq: entry.seqEnd }, entry, {
+          item: limitAgentTimelineItemContent(entry.item),
+        }),
+      ),
     };
   }
 

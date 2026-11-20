@@ -49,7 +49,7 @@ than downloading a published desktop release.
 - The **server itself** (e.g. when launched by the desktop app or `npm run start`) defaults to `~/.paseo` (see `packages/server/src/server/paseo-home.ts`).
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
-- **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
+- **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying agent and project JSON metadata and configuration. Both this setup and `PASEO_DEV_SEED_HOME` use the same seeder, which disables `agents.resumeOnStartup` in the copied config. Startup repairs copied running records without resuming agents or sending recovery prompts. Schedules and heartbeats (stored under `schedules/`), runtime files, identities, sockets, and logs are not copied. Existing nonempty homes are left unchanged unless explicitly reset. Copied agents still reference the original provider sessions and working directories: manually prompting one reaches that real session.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
 Override knobs:
@@ -593,7 +593,17 @@ rerun passes only by landing elsewhere.
 
 To confirm, fetch the URL from several runners and compare `content-length`, the `cf-ray` colo
 suffix, and the number of `attestations` entries (#7730 has the probe). To fix, remove or
-replace that version in the lockfile and report the URL to npm so they purge it.
+replace that version in the lockfile. If the dependent’s range cannot be changed, pin a clean
+version in root `overrides`. Report the URL to npm so they purge it.
+
+A lockfile regeneration is itself how new bad versions enter: the pkijs fix re-resolved the
+electron-builder tree and pulled in `semver` 5.7.3 and 6.3.2, published two days earlier, and
+5.7.3 then failed the same way. After editing `overrides`, run `npm install --package-lock-only`
+and check that the changed `resolved` lines in `package-lock.json` are only the ones you meant.
+
+A per-parent override such as `"tiny-async-pool": { "semver": "5.7.2" }` applies to that
+parent's whole subtree, so it can also downgrade a grandchild that needs a different major. Key
+the child by range (`{ "semver@^5": "5.7.2" }`) so only matching edges are replaced.
 
 ## ACP provider catalog versions
 

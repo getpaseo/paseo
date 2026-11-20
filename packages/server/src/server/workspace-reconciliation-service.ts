@@ -1,6 +1,7 @@
 import { watch as watchPath } from "node:fs";
 import { stat } from "node:fs/promises";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
+import pLimit from "p-limit";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 import type pino from "pino";
 import type {
@@ -22,6 +23,9 @@ import { deriveProjectKey } from "./project-key.js";
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
 const INSPECTION_CONCURRENCY = 2;
+// Each checkout read runs ~15 Git commands. Reading every sibling at once
+// queued ~1,300 commands per rescan on a project with ~90 worktrees.
+const CHECKOUT_READ_CONCURRENCY = 4;
 const DEFAULT_INSPECTION_TIMEOUT_MS = 5000;
 
 export type ProjectUpdate =
@@ -213,7 +217,7 @@ export class WorkspaceReconciliationService {
     const changes: ReconciliationChange[] = [];
     const [projects, workspaces] = await Promise.all([
       this.projectRegistry.list(),
-      this.workspaceRegistry.list(),
+      this.workspaceRegistry.listActive(),
     ]);
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     const workspaceStates = await mapBounded(
@@ -245,7 +249,7 @@ export class WorkspaceReconciliationService {
     const changes: ReconciliationChange[] = [];
 
     const allProjects = await this.projectRegistry.list();
-    const allWorkspaces = await this.workspaceRegistry.list();
+    const allWorkspaces = await this.workspaceRegistry.listActive();
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
     const activeProjectsById = new Map(
@@ -346,10 +350,11 @@ export class WorkspaceReconciliationService {
     changes: ReconciliationChange[],
   ): Promise<void> {
     const checkoutReads: CachedCheckoutRead[] = [];
+    const checkoutReadLimit = pLimit(CHECKOUT_READ_CONCURRENCY);
     const readCheckout = (cwd: string): Promise<ProjectCheckoutLitePayload> => {
       const existing = checkoutReads.find((read) => areEquivalentPaths(read.cwd, cwd));
       if (existing) return existing.checkout;
-      const checkout = this.readCheckout(cwd);
+      const checkout = checkoutReadLimit(() => this.readCheckout(cwd));
       checkoutReads.push({ cwd, checkout });
       return checkout;
     };
@@ -391,8 +396,7 @@ export class WorkspaceReconciliationService {
     const workspaceCheckouts = await Promise.all(
       siblings.map(async (workspace) => {
         const current = await this.workspaceRegistry.get(workspace.workspaceId);
-        if (!current || current.cwd !== workspace.cwd || current.projectId !== workspace.projectId)
-          return null;
+        if (!current || !isStillReconcilable(current, workspace)) return null;
         return { workspace: current, checkout: await readCheckout(current.cwd) };
       }),
     );
@@ -441,8 +445,9 @@ export class WorkspaceReconciliationService {
           return;
         let fields: Partial<MutableWorkspacePlacement> | null = null;
         await this.workspaceRegistry.update(workspace.workspaceId, (current) => {
-          if (current.cwd !== workspace.cwd || current.projectId !== workspace.projectId)
-            return current;
+          // Archive removes a worktree only after archiving its record, so a read
+          // that raced the archive may have seen the directory mid-deletion.
+          if (!isStillReconcilable(current, workspace)) return current;
           const update = reconcileWorkspacePlacement({
             workspace: current,
             checkout: wsGit,
@@ -547,7 +552,7 @@ export class WorkspaceReconciliationService {
         if (change.kind === "project_updated") projectIds.add(change.projectId);
       }
       if (projectIds.size > 0) {
-        const workspaces = await this.workspaceRegistry.list();
+        const workspaces = await this.workspaceRegistry.listActive();
         for (const workspaceId of workspaceIdsForProjects(workspaces, projectIds)) {
           workspaceIds.add(workspaceId);
         }
@@ -581,7 +586,9 @@ export class WorkspaceReconciliationService {
         mainRepoRoot: null,
       };
     }
-    return this.workspaceGitService.getCheckout(cwd);
+    // Reconciliation converges in the background; it must not queue ahead of
+    // Git work a user is waiting for.
+    return this.workspaceGitService.getCheckout(cwd, { priority: "background" });
   }
 
   private wakeInspectionWaiters(): void {
@@ -677,4 +684,14 @@ async function mapBounded<T, R>(items: T[], visit: (item: T) => Promise<R>): Pro
     }),
   );
   return results;
+}
+
+/** An archived record keeps the placement its restore depends on. */
+function isStillReconcilable(
+  current: PersistedWorkspaceRecord,
+  scanned: PersistedWorkspaceRecord,
+): boolean {
+  return (
+    !current.archivedAt && current.cwd === scanned.cwd && current.projectId === scanned.projectId
+  );
 }

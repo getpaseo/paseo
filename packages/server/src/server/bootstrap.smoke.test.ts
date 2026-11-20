@@ -670,11 +670,11 @@ describe("paseo daemon bootstrap", () => {
 
   test("rolls back standalone listener without starting plugins when main listen fails", async () => {
     const mainPort = await findFreePort();
-    const standalonePort = await findFreePort();
     const occupiedMain = http.createServer((_req, res) => {
       res.end("occupied-main");
     });
     await new Promise<void>((resolve) => occupiedMain.listen(mainPort, "127.0.0.1", resolve));
+    const standalonePort = await findFreePort();
 
     const paseoHomeRoot = await mkdtemp(path.join(os.tmpdir(), "paseo-main-rollback-"));
     const paseoHome = path.join(paseoHomeRoot, ".paseo");
@@ -1109,6 +1109,7 @@ test("disabled recovery closes stale active records without resuming sessions", 
       lastStatus: status as StoredAgentRecord["lastStatus"],
       title: `Keep ${status}`,
       labels: { "paseo.parent-agent-id": "parent", custom: "keep" },
+      metadata: {},
       persistence: { provider: "codex", sessionId: `session-${index}` },
       config: { modeId: "full-access" },
       requiresAttention: true,
@@ -1139,11 +1140,13 @@ test("disabled recovery closes stale active records without resuming sessions", 
           : record.lastStatus,
     }));
     expect(
-      (await handle.daemon.agentStorage.list()).sort((a, b) => a.id.localeCompare(b.id)),
+      (await handle.daemon.agentStorage.listAll()).sort((a, b) => a.id.localeCompare(b.id)),
     ).toEqual(expected.sort((a, b) => a.id.localeCompare(b.id)));
     // A fresh reader proves the repaired states were written, rather than projected only in memory.
     expect(
-      (await new AgentStorage(storagePath, logger).list()).sort((a, b) => a.id.localeCompare(b.id)),
+      (await new AgentStorage(storagePath, logger).listAll()).sort((a, b) =>
+        a.id.localeCompare(b.id),
+      ),
     ).toEqual(expected);
     expect(handle.daemon.agentManager.listAgents()).toEqual([]);
     expect(sessionsCreated).toBe(0);

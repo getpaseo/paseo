@@ -59,6 +59,84 @@ it("skips unchanged reconciliations and immediately saves real layout changes", 
   );
 });
 
+it("hydrates a saved preview collision and persists the repaired identities", async () => {
+  const workspaceKey = "server:workspace";
+  const duplicateId = "file_a.ts";
+  const values = new Map([
+    [
+      "workspace-layout-state",
+      JSON.stringify({
+        version: 2,
+        state: {
+          layoutByWorkspace: {
+            [workspaceKey]: {
+              root: {
+                kind: "group",
+                group: {
+                  id: "split",
+                  direction: "horizontal",
+                  sizes: [0.5, 0.5],
+                  children: [
+                    { id: "main", path: "b.ts" },
+                    { id: "right", path: "a.ts" },
+                  ].map(({ id, path }) => ({
+                    kind: "pane",
+                    pane: {
+                      id,
+                      tabIds: [duplicateId],
+                      focusedTabId: duplicateId,
+                      tabs: [{ tabId: duplicateId, target: { kind: "file", path }, createdAt: 1 }],
+                    },
+                  })),
+                },
+              },
+              focusedPaneId: "right",
+            },
+          },
+        },
+      }),
+    ],
+  ]);
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  const layout = store.getState().layoutByWorkspace[workspaceKey];
+  const tabs = collectAllTabs(layout.root);
+
+  expect(tabs.filter((tab) => tab.target.kind === "file").map((tab) => tab.tabId)).toEqual([
+    "file_b.ts",
+    "file_a.ts",
+  ]);
+  expect(
+    deriveWorkspacePaneState({ layout, tabs, paneId: "main" }).activeTab?.descriptor.target,
+  ).toEqual({
+    kind: "file",
+    path: "b.ts",
+  });
+  expect(
+    deriveWorkspacePaneState({ layout, tabs, paneId: "right" }).activeTab?.descriptor.target,
+  ).toEqual({
+    kind: "file",
+    path: "a.ts",
+  });
+  store.getState().focusTab(workspaceKey, "file_b.ts");
+  expect(store.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe("main");
+
+  const reloaded = createWorkspaceLayoutStore(undefined, storage);
+  await reloaded.persist.rehydrate();
+  expect(reloaded.getState().layoutByWorkspace[workspaceKey]).toEqual(
+    store.getState().layoutByWorkspace[workspaceKey],
+  );
+});
+
 it("keeps the saved layout when the shell publishes its layout mode before hydration", async () => {
   const values = new Map<string, string>();
   const storage: StateStorage = {
@@ -92,6 +170,53 @@ it("keeps the saved layout when the shell publishes its layout mode before hydra
   await reloaded.persist.rehydrate();
   expect(reloaded.getState().layoutByWorkspace[workspaceKey]).toEqual(
     saved.getState().layoutByWorkspace[workspaceKey],
+  );
+});
+
+it("keeps every saved layout when a draft tab's setup carries a nested provider option", async () => {
+  const values = new Map<string, string>();
+  const storage: StateStorage = {
+    getItem: (name) => values.get(name) ?? null,
+    setItem: (name, value) => {
+      values.set(name, value);
+    },
+    removeItem: (name) => {
+      values.delete(name);
+    },
+  };
+  const store = createWorkspaceLayoutStore(undefined, storage);
+  await store.persist.rehydrate();
+  store.getState().openTab({
+    workspaceKey: "server:kept",
+    target: { kind: "agent", agentId: "agent-1" },
+    intent: "reveal",
+  });
+  store.getState().openTab({
+    workspaceKey: "server:forked",
+    target: {
+      kind: "draft",
+      draftId: "draft-1",
+      setup: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: null,
+        model: null,
+        thinkingOptionId: null,
+        providerOptions: { sandbox_workspace_write: { network_access: true }, max_turns: 3 },
+      },
+    },
+    intent: "reveal",
+  });
+
+  const restored = createWorkspaceLayoutStore(undefined, storage);
+  await restored.persist.rehydrate();
+
+  expect(Object.keys(restored.getState().layoutByWorkspace).sort()).toEqual([
+    "server:forked",
+    "server:kept",
+  ]);
+  expect(JSON.stringify(restored.getState().layoutByWorkspace["server:forked"])).toContain(
+    "network_access",
   );
 });
 

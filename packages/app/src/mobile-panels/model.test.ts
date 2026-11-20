@@ -17,6 +17,7 @@ class MobilePanelsScenario {
   private startedRevision = -1;
   private state: MobilePanelMotionState;
   readonly commits: MobilePanelCommit[] = [];
+  readonly animations: MobilePanelView[] = [];
 
   constructor(target: MobilePanelView = "agent") {
     this.state = createMobilePanelMotionState({ target, revision: this.nextRevision });
@@ -73,6 +74,9 @@ class MobilePanelsScenario {
     this.state = transition.state;
     if (transition.commit) {
       this.commits.push(transition.commit);
+    }
+    if (transition.animationTarget) {
+      this.animations.push(transition.animationTarget);
     }
   }
 }
@@ -237,6 +241,29 @@ describe("mobile panel ownership", () => {
     expect(panels.commits).toEqual([]);
   });
 
+  it("returns an interrupted drag to the anchor when the command keeps its target", () => {
+    const panels = new MobilePanelsScenario();
+
+    panels.beginGesture("agent").command("agent").finishGesture("agent-list");
+
+    expect(panels.animations).toEqual(["agent"]);
+    expect(panels.snapshot()).toEqual({
+      target: "agent",
+      motionTarget: "agent",
+      settledTarget: "agent",
+      revision: 1,
+    });
+    expect(panels.commits).toEqual([]);
+  });
+
+  it("lets the command for a completed drag adopt the drag's finishing motion", () => {
+    const panels = new MobilePanelsScenario();
+
+    panels.beginGesture("agent").finishGesture("agent-list").command("agent-list");
+
+    expect(panels.animations).toEqual(["agent-list"]);
+  });
+
   it("keeps the latest rapid command when position reaches a stale anchor", () => {
     const panels = new MobilePanelsScenario();
 
@@ -276,5 +303,24 @@ describe("mobile panel ownership", () => {
       rightBackdropOpacity: 0.25,
       rightTranslateX: 600,
     });
+  });
+});
+
+it("lands an explicit destination while the sidebar is suspended without a slide", () => {
+  const state = createMobilePanelMotionState({ target: "agent-list", revision: 1 });
+  const result = transitionMobilePanel(state, {
+    type: "command",
+    selection: { target: "agent", revision: 2 },
+    immediate: true,
+  });
+  expect(result).toEqual({
+    immediateTarget: "agent",
+    state: {
+      target: "agent",
+      revision: 2,
+      gesture: null,
+      motionTarget: "agent",
+      settledTarget: "agent",
+    },
   });
 });

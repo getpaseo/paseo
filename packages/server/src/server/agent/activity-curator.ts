@@ -1,4 +1,4 @@
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type { AgentTimelineItem, ToolCallTimelineItem } from "./agent-sdk-types.js";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
@@ -13,6 +13,12 @@ const MAX_TOOL_SUMMARY_CHARS = 200;
 const MAX_FORK_CONTEXT_CHARS = 100_000;
 const MAX_FORK_METADATA_CHARS = 1_000;
 const FORK_HISTORY_OMITTED = "[Earlier chat history omitted]\n";
+// A fork copies only these kinds.
+const FORK_CONTEXT_KINDS: readonly AgentTimelineItem["type"][] = [
+  "user_message",
+  "assistant_message",
+  "tool_call",
+];
 
 interface ActivityCuratorOptions {
   maxItems?: number;
@@ -164,9 +170,6 @@ function curateProjectedActivityEntries(
           break;
         }
         entries.push(formatToolCallEntry(item, options));
-        if (item.detail.type === "sub_agent" && item.detail.log.trim()) {
-          entries.push(activityEntry(item.detail.log.trim()));
-        }
         break;
       }
       case "todo":
@@ -272,18 +275,25 @@ function selectForkContextRows(input: {
     );
   }
   const boundarySeq = projectedRows[boundaryIndex].seqEnd;
-  if (projectedRows.some((row) => row.seqStart <= boundarySeq && row.seqEnd > boundarySeq)) {
-    throw new Error(
-      "This checkpoint changed after it was created. Fork from a later completed response instead.",
-    );
-  }
-  const projected = projectedRows.filter((row) => row.seqEnd <= boundarySeq);
+  // Only tool calls and plugin cards fold later updates into an earlier row, and a fork doesn't
+  // copy plugin cards. So the only row that spans the checkpoint and still reaches the fork is a
+  // tool call.
+  const items = projectedRows.flatMap((row) => {
+    if (row.seqEnd <= boundarySeq) return [row.item];
+    if (row.seqStart > boundarySeq || row.item.type !== "tool_call") return [];
+    return [toolCallAtCheckpoint(row.item)];
+  });
 
-  return {
-    items: projected.map((entry) => entry.item),
-    boundaryCursor,
-    boundaryMessageId,
-  };
+  return { items, boundaryCursor, boundaryMessageId };
+}
+
+/**
+ * A tool call that started before the checkpoint and changed after it, such as background work
+ * that outlives a reply. The projection keeps only its latest payload, so the fork copies it as
+ * still running.
+ */
+function toolCallAtCheckpoint(item: ToolCallTimelineItem): ToolCallTimelineItem {
+  return { ...item, status: "running", error: null };
 }
 
 function trimContextMetadata(value: string | null | undefined): string | null {
@@ -352,7 +362,7 @@ export function buildAgentForkContextAttachment(input: {
   const entries = curateProjectedActivityEntries(selected.items, {
     maxItems: 0,
     labelAssistantMessages: true,
-    includeKinds: ["user_message", "assistant_message", "tool_call"],
+    includeKinds: FORK_CONTEXT_KINDS,
     includeExternalToolInput: false,
   });
   const metadata = { agentTitle: input.agentTitle, cwd: input.cwd };

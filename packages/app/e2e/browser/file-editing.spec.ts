@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import {
+  downloadFileFromPreview,
   expandFolder,
   openFileExplorer,
   openFileFromExplorer,
@@ -61,6 +62,24 @@ function htmlPreview(page: Page) {
     host: page.getByTestId("file-html-preview"),
     document: page.frameLocator('[data-testid="file-html-preview"]'),
   };
+}
+
+async function followHtmlPreviewLink(page: Page, name: string): Promise<void> {
+  await htmlPreview(page).document.getByRole("link", { name, exact: true }).click();
+}
+
+async function expectPageHandlesFragment(
+  page: Page,
+  handler: "Document" | "Window",
+): Promise<void> {
+  const preview = htmlPreview(page);
+  await followHtmlPreviewLink(page, `${handler} handled jump`);
+  await expect(preview.document.getByRole("status")).toHaveText(`${handler} handled click`);
+  await expect(
+    preview.document.getByRole("heading", { name: "Target section" }),
+  ).not.toBeInViewport();
+  expect(await preview.document.locator("body").evaluate(() => location.hash)).toBe("");
+  expect(await preview.document.locator("body").evaluate(() => window.scrollY)).toBe(0);
 }
 
 async function selectFileView(page: Page, view: "Preview" | "Source"): Promise<void> {
@@ -123,6 +142,29 @@ async function seedAgentWithFileLink(input: LinkedFile) {
 }
 
 test.describe("CodeMirror workspace file editing", () => {
+  test("downloads an assistant-linked binary outside the workspace", async ({ page }, testInfo) => {
+    const filePath = testInfo.outputPath("outside.bin");
+    const source = Buffer.from([0, 1, 128, 255]);
+    await writeFile(filePath, source);
+    const session = await seedMockAgentWorkspace({
+      repoPrefix: "outside-binary-",
+      title: "Outside binary",
+      initialPrompt: "Show the file",
+      featureValues: { mockAssistantResponse: `[Open binary](${filePath})` },
+    });
+    try {
+      await openAgentRoute(page, session);
+      await openAssistantMarkdownLink(page, "Open binary");
+      const downloaded = await downloadFileFromPreview(page);
+      expect(downloaded.suggestedFilename()).toBe("outside.bin");
+      const savedFile = testInfo.outputPath("downloaded.bin");
+      await downloaded.saveAs(savedFile);
+      expect(await readFile(savedFile)).toEqual(source);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
   test("opens explicit screenshot links and explains missing files", async ({ page }) => {
     const session = await seedMockAgentWorkspace({
       repoPrefix: "screenshot-markdown-link-",
@@ -417,7 +459,8 @@ test.describe("CodeMirror workspace file editing", () => {
     });
 
     try {
-      await page.setViewportSize({ width: 1280, height: 900 });
+      // Keep both tab rails available alongside the docked Explorer.
+      await page.setViewportSize({ width: 1900, height: 900 });
       await openAgentRoute(page, session);
 
       await openWorkspaceFile(page, "target.ts");
@@ -734,7 +777,9 @@ test.describe("CodeMirror workspace file editing", () => {
     await replaceEditorText(page, "# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).toBeVisible();
     await selectFileView(page, "Preview");
-    await expect(visibleFilePane.getByText("Saved from source", { exact: true })).toBeVisible();
+    await expect(
+      visibleFilePane.getByRole("heading", { name: "Saved from source", exact: true }),
+    ).toBeVisible();
     await expect(toolbar.getByLabel("Line 1, column 1")).toHaveCount(0);
     await expect.poll(() => readFile(markdownPath, "utf8")).toBe("# Saved from source\n");
     await expect(page.getByTestId("workspace-tab-modified-file_notes.md")).not.toBeVisible();
@@ -821,9 +866,236 @@ test.describe("CodeMirror workspace file editing", () => {
 
     await selectFileView(page, "Source");
     await expect(page.getByTestId("file-source-editor")).toBeVisible();
-    await expect(preview.host).toHaveCount(0);
+    await expect(preview.host).toBeHidden();
     await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
+  });
+
+  test("shows the changed HTML page after the file changes on disk while Source shows", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-html-hidden-change-" });
+    const htmlPath = path.join(workspace.repoPath, "plan.html");
+    await writeFile(htmlPath, "<!doctype html><html><body><h1>First plan</h1></body></html>");
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("heading", { name: "First plan" })).toBeVisible();
+
+    await selectFileView(page, "Source");
+    await writeFile(htmlPath, "<!doctype html><html><body><h1>Changed on disk</h1></body></html>");
+    await expect(editor(page)).toContainText("Changed on disk");
+    await selectFileView(page, "Preview");
+
+    await expect(preview.document.getByRole("heading", { name: "Changed on disk" })).toBeVisible();
+  });
+
+  test("shows the HTML page edited in Source when Preview shows again", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "file-editing-html-hidden-edit-" });
+    await writeFile(
+      path.join(workspace.repoPath, "plan.html"),
+      "<!doctype html><html><body><h1>First plan</h1></body></html>",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "plan.html");
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("heading", { name: "First plan" })).toBeVisible();
+
+    await selectFileView(page, "Source");
+    await replaceEditorText(page, "<!doctype html><html><body><h1>Edited plan</h1></body></html>");
+    await selectFileView(page, "Preview");
+
+    await expect(preview.document.getByRole("heading", { name: "Edited plan" })).toBeVisible();
+  });
+
+  test("keeps HTML fragment links in the preview and scrolls to the target", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "html-fragments-" });
+    await writeFile(
+      path.join(workspace.repoPath, "fragments.html"),
+      `<!doctype html><html><body>
+<a href="#section">Jump to section</a>
+<div style="height: 1200px"></div>
+<h2 id="section">Target section</h2>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "fragments.html");
+
+    const preview = htmlPreview(page);
+    await expect(preview.document.getByRole("link", { name: "Jump to section" })).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath("fragment-before-click.png") });
+    await preview.document.getByRole("link", { name: "Jump to section" }).click();
+
+    await expect(
+      preview.document.getByRole("heading", { name: "Target section" }),
+    ).toBeInViewport();
+    expect(await preview.document.locator("body").evaluate(() => location.hash)).toBe("#section");
+    expect(await preview.document.locator("body").evaluate(() => window.scrollY)).toBeGreaterThan(
+      0,
+    );
+    await page.screenshot({ path: test.info().outputPath("fragment-after-click.png") });
+  });
+
+  test("lets an HTML page prevent fragment navigation", async ({ page, withWorkspace }) => {
+    const workspace = await withWorkspace({ prefix: "html-fragment-handler-" });
+    await writeFile(
+      path.join(workspace.repoPath, "handled.html"),
+      `<!doctype html><html><body>
+<a href="#section" onclick="event.preventDefault(); document.querySelector('output').textContent = 'Page handled click'">Handled jump</a>
+<output>Waiting for click</output>
+<div style="height: 1200px"></div><h2 id="section">Target section</h2>
+</body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "handled.html");
+
+    const preview = htmlPreview(page);
+    await preview.document.getByRole("link", { name: "Handled jump" }).click();
+    await expect(preview.document.locator("output")).toHaveText("Page handled click");
+    await expect(
+      preview.document.getByRole("heading", { name: "Target section" }),
+    ).not.toBeInViewport();
+    expect(await preview.document.locator("body").evaluate(() => location.hash)).toBe("");
+    expect(await preview.document.locator("body").evaluate(() => window.scrollY)).toBe(0);
+  });
+
+  test("respects delegated HTML fragment handlers and normal URL parsing", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "html-fragment-defaults-" });
+    await writeFile(
+      path.join(workspace.repoPath, "defaults.html"),
+      `<!doctype html><html><body>
+<nav style="position: fixed; top: 0; background: white">
+<a href="#section" id="document-handler">Document handled jump</a>
+<a href="#section" id="window-handler">Window handled jump</a>
+<a href=" \t#section\n">Whitespace jump</a>
+<a href="#100%">Percent jump</a>
+<output>Waiting for click</output>
+</nav>
+<div style="height: 1200px"></div><h2 id="section">Target section</h2>
+<div style="height: 1200px"></div><h2 id="100%">Percent target</h2>
+<div style="height: 1200px"></div>
+<script>
+document.addEventListener('click', function(event) {
+  if (event.target.id === 'document-handler') {
+    event.preventDefault(); document.querySelector('output').textContent = 'Document handled click';
+  }
+});
+window.addEventListener('click', function(event) {
+  if (event.target.id === 'window-handler') {
+    event.preventDefault(); document.querySelector('output').textContent = 'Window handled click';
+  }
+});
+</script></body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "defaults.html");
+
+    const preview = htmlPreview(page);
+    await expectPageHandlesFragment(page, "Document");
+    await expectPageHandlesFragment(page, "Window");
+
+    await followHtmlPreviewLink(page, "Whitespace jump");
+    await expect(
+      preview.document.getByRole("heading", { name: "Target section" }),
+    ).toBeInViewport();
+    await followHtmlPreviewLink(page, "Percent jump");
+    await expect(
+      preview.document.getByRole("heading", { name: "Percent target" }),
+    ).toBeInViewport();
+  });
+
+  test("handles HTML fragment targets, empty and missing fragments, and modified clicks", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "html-fragment-targets-" });
+    await writeFile(
+      path.join(workspace.repoPath, "targets.html"),
+      `<!doctype html><html><head><style>:target { color: rgb(255, 0, 0); }</style></head><body>
+<nav style="position: fixed; top: 0; background: white">
+<a href="#section"><span>Nested jump</span></a>
+<a href="#legacy">Named jump</a>
+<a href="#encoded%20section">Encoded jump</a>
+<a href="#missing">Missing jump</a>
+<a href="#">Empty jump</a>
+<output>Waiting for hashchange</output><output id="modified">Waiting for modified click</output>
+</nav>
+<div style="height: 1200px"></div><h2 id="section">Target section</h2>
+<div style="height: 1200px"></div><a name="legacy">Named target</a>
+<div style="height: 1200px"></div><h2 id="encoded section">Encoded target</h2>
+<div style="height: 1200px"></div>
+<script>
+window.addEventListener('hashchange', function () { document.querySelector('output').textContent = location.hash || '(empty)'; });
+function modifiedClick(event) {
+  if (event.button === 1 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+    document.getElementById('modified').textContent = String(event.defaultPrevented);
+    event.preventDefault();
+  }
+}
+window.addEventListener('click', modifiedClick);
+window.addEventListener('auxclick', modifiedClick);
+window.addEventListener('contextmenu', modifiedClick);
+</script></body></html>`,
+      "utf8",
+    );
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "targets.html");
+
+    const preview = htmlPreview(page);
+    const body = preview.document.locator("body");
+    const nested = preview.document.getByText("Nested jump", { exact: true });
+    await nested.click();
+    await expect(preview.document.locator("output").first()).toHaveText("#section");
+    await expect(
+      preview.document.getByRole("heading", { name: "Target section" }),
+    ).toBeInViewport();
+    await expect(preview.document.locator("#section")).toHaveCSS("color", "rgb(255, 0, 0)");
+
+    await body.evaluate(() => window.scrollTo(0, 0));
+    await nested.click();
+    await expect(
+      preview.document.getByRole("heading", { name: "Target section" }),
+    ).toBeInViewport();
+
+    await preview.document.getByRole("link", { name: "Named jump" }).click();
+    await expect(preview.document.getByText("Named target", { exact: true })).toBeInViewport();
+    await expect(preview.document.locator("output").first()).toHaveText("#legacy");
+
+    await preview.document.getByRole("link", { name: "Encoded jump" }).click();
+    await expect(
+      preview.document.getByRole("heading", { name: "Encoded target" }),
+    ).toBeInViewport();
+    await expect(preview.document.locator("output").first()).toHaveText("#encoded%20section");
+    const scrollY = await body.evaluate(() => window.scrollY);
+    await preview.document.getByRole("link", { name: "Missing jump" }).click();
+    expect(await body.evaluate(() => location.hash)).toBe("#missing");
+    expect(await body.evaluate(() => window.scrollY)).toBe(scrollY);
+
+    await preview.document.getByRole("link", { name: "Empty jump" }).click();
+    await expect(preview.document.locator("output").first()).toHaveText("(empty)");
+    expect(await body.evaluate(() => window.scrollY)).toBe(0);
+
+    for (const modifier of ["Control", "Meta", "Shift", "Alt"] as const) {
+      await nested.click({ modifiers: [modifier] });
+      await expect(preview.document.locator("#modified")).toHaveText("false");
+    }
+    await nested.click({ button: "middle" });
+    await expect(preview.document.locator("#modified")).toHaveText("false");
+    expect(await body.evaluate(() => location.hash)).toBe("");
+    expect(await body.evaluate(() => window.scrollY)).toBe(0);
   });
 
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {

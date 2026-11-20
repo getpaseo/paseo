@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "../support/fixtures";
+import { expect, test, daemonTest as cleanupTest } from "../support/fixtures";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import {
   openDaemonOverview,
@@ -13,6 +14,10 @@ import {
   readWorkerPid,
   openLongLivedTerminal,
   listTerminalIds,
+  suspendDaemonProcess,
+  resumeDaemonProcess,
+  daemonProcessCanWrite,
+  readTerminalProcessIds,
 } from "../support/helpers/daemon-lifecycle";
 
 test("settings restart waits for a replacement worker while retaining the supervisor", async ({
@@ -119,3 +124,51 @@ async function createHomeWithSlowProvider(versionDelayMs: number): Promise<strin
   );
   return paseoHome;
 }
+
+// Cleanup has no renderer demand: drive the same isolated daemon owner directly.
+// A stopped worker deterministically outlives the old helper's five-second
+// supervisor-only kill and logs into its deleted home when resumed.
+cleanupTest(
+  "isolated cleanup prevents a stopped worker from recreating its deleted home",
+  async () => {
+    cleanupTest.skip(process.platform === "win32", "POSIX stopped-process failure injection");
+    const daemon = await startIsolatedHostDaemon(randomUUID());
+    const workerPid = await readWorkerPid(daemon);
+    try {
+      suspendDaemonProcess(workerPid);
+      await daemon.close();
+      resumeDaemonProcess(workerPid);
+      await expect.poll(() => daemonProcessCanWrite(workerPid)).toBe(false);
+      expect(existsSync(daemon.paseoHome)).toBe(false);
+    } finally {
+      resumeDaemonProcess(workerPid);
+      await daemon.close();
+      await rm(daemon.paseoHome, { recursive: true, force: true });
+    }
+  },
+);
+
+cleanupTest(
+  "isolated cleanup force-stops a frozen supervisor and its detached terminal writers",
+  async () => {
+    cleanupTest.skip(process.platform === "win32", "POSIX stopped-process failure injection");
+    const daemon = await startIsolatedHostDaemon(randomUUID());
+    const supervisorPid = daemon.getPid()!;
+    const workerPid = await readWorkerPid(daemon);
+    try {
+      await openLongLivedTerminal(daemon);
+      const terminalProcesses = await readTerminalProcessIds(daemon);
+      expect(terminalProcesses.length).toBeGreaterThanOrEqual(2);
+      suspendDaemonProcess(supervisorPid);
+      await daemon.close();
+      const writerStates = await Promise.all(
+        [supervisorPid, workerPid, ...terminalProcesses].map(daemonProcessCanWrite),
+      );
+      expect(writerStates).toEqual(Array(terminalProcesses.length + 2).fill(false));
+      expect(existsSync(daemon.paseoHome)).toBe(false);
+    } finally {
+      resumeDaemonProcess(supervisorPid);
+      await daemon.close();
+    }
+  },
+);

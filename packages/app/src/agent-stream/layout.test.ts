@@ -289,7 +289,7 @@ describe("layoutStream", () => {
     expect(layout.auxiliaryTurnFooter).toBeNull();
     expect(assistantRow.completedFooter?.itemId).toBe(assistant.id);
     expect(assistantRow.belowItem?.id).toBe("u2");
-    expect(assistantRow.frameOrder).toBe("footer-then-content");
+    expect(assistantRow.frameOrder).toBe("content-then-footer");
   });
 
   it("keeps an accepted steer inline while its canonical turn is active", () => {

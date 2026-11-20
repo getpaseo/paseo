@@ -637,7 +637,7 @@ describe("OMP history mapper", () => {
             subAgentType: "explore",
             description: "Inspect files",
             childSessionId: "/tmp/omp-task/Explore.jsonl",
-            log: "done\ntranscript: /tmp/omp-task/Explore.jsonl",
+            log: "",
           },
           error: null,
         },

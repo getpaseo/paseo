@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  pluginCombobox: {
+    searching: "検索中…",
+    empty: "結果がありません",
+    failed: "検索に失敗しました: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
@@ -86,14 +91,23 @@ export const ja: TranslationResources = {
       close: "メニューを閉じる",
     },
     commandCenter: {
-      placeholder: "コマンド、ファイル、ワークスペース、エージェントを検索...",
+      placeholder: "ワークスペース、ファイル、アクションを検索...",
+      placeholderWithoutFiles: "ワークスペースとアクションを検索...",
       filePlaceholder: "ファイルを検索...",
+      workspacePlaceholder: "ワークスペースを検索...",
+      actionPlaceholder: "アクションを検索...",
       searchingFiles: "ファイルを検索中...",
       noMatches: "一致なし",
       actions: "アクション",
       files: "ファイル",
       workspaces: "ワークスペース",
-      agents: "エージェント",
+      recentWorkspaces: "最近のワークスペース",
+      tabs: {
+        all: "すべて",
+        workspaces: "ワークスペース",
+        files: "ファイル",
+        actions: "アクション",
+      },
       newAgent: "新しいエージェント",
       open: "{{name}}を開く",
       openInSidePane: "{{name}}をサイドパネルで開く",
@@ -102,6 +116,7 @@ export const ja: TranslationResources = {
       home: "ホーム",
       groupByProject: "プロジェクトでグループ化",
       groupByStatus: "ステータスでグループ化",
+      copyBrowserHostName: "ブラウザホスト名をコピー",
       modelGroupLabel: "モデル",
       modelSearchKeywords: "モデルを切り替え モデルを変更 モデルを設定 モデルを選択",
       thinkingGroupLabel: "思考",
@@ -258,7 +273,7 @@ export const ja: TranslationResources = {
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
-      reconnecting: "ホストに再接続中",
+      reconnecting: "再接続中",
       updating: "メッセージを更新中",
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
       timelineSyncRetrying: "再試行しています…",
@@ -368,6 +383,11 @@ export const ja: TranslationResources = {
       details: "詳細",
     },
     dictation: {
+      insecureContext: "マイクを使用するには、HTTPS または localhost で Paseo を開いてください。",
+      unsupported: "このブラウザーでは音声入力を利用できません。",
+      noMicrophone: "マイクを接続して、もう一度お試しください。",
+      permissionDenied: "マイクへのアクセスを許可して、もう一度お試しください。",
+      startFailed: "音声入力を開始できませんでした。もう一度お試しください。",
       paused: "マイクが中断されました。再開を待っています…",
       start: "音声入力を開始",
       cancel: "音声入力をキャンセル",
@@ -383,6 +403,25 @@ export const ja: TranslationResources = {
       next: "次へ",
       answerPlaceholder: "回答を入力...",
       otherPlaceholder: "その他...",
+    },
+    backgroundWork: {
+      heartbeat: "ハートビート",
+      pillOne: "バックグラウンドタスク1件",
+      pillMany: "バックグラウンドタスク{{count}}件",
+      notRunning: "実行は終了しました",
+      dismiss: "閉じる",
+      stop: "停止",
+      stopping: "停止中…",
+      stopError: "停止を確認できませんでした。",
+      label: "バックグラウンド",
+      title: "バックグラウンド作業",
+      waiting: "作業の詳細を待っています",
+      error: "バックグラウンド作業を読み込めませんでした",
+      retry: "再試行",
+      running: "バックグラウンド作業を実行中",
+      shell: "シェル",
+      monitor: "監視",
+      other: "その他の作業",
     },
     todo: {
       title: "タスク",
@@ -457,8 +496,7 @@ export const ja: TranslationResources = {
         archivedTitle: "ワークスペースはアーカイブ済みです",
         restoreDescription:
           "{{workspaceName}} を復元してエージェントに戻ります。worktree ではブランチ {{branch}} を使用します。",
-        restoreWithoutBranchDescription:
-          "{{workspaceName}} を復元してエージェントに戻ります。保存されたベース、またはリポジトリのデフォルトブランチから新しいブランチを作成します。",
+        restoreWithoutBranchDescription: "{{workspaceName}} を復元してエージェントに戻ります。",
         unarchiveDescription:
           "{{workspaceName}} はアーカイブされています。再度開くにはアーカイブを解除してください。",
         restoreAction: "復元",
@@ -623,6 +661,7 @@ export const ja: TranslationResources = {
     terminal: {
       hostDisconnected: "ホストが接続されていません",
       updateHost: "ネイティブターミナルを使用するにはホストを更新してください。",
+      restoreRequiresUpdate: "ターミナルを表示するにはホストを更新してください。",
       unableToSubscribe: "ターミナルに接続できません",
       fileUploaded: "ファイルをアップロードしました",
       pasteFileFailed: "ファイルを貼り付けられませんでした: {{reason}}",
@@ -942,6 +981,9 @@ export const ja: TranslationResources = {
         },
       },
       diff: {
+        baseBranch: {
+          title: "ベースブランチ",
+        },
         openChangesTab: "変更タブを開く",
         openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
@@ -1163,6 +1205,8 @@ export const ja: TranslationResources = {
     title: "新着情報",
     installed: "インストール済み",
     showMore: "もっと見る",
+    showAllChanges: "すべての変更を表示",
+    hideAllChanges: "すべての変更を非表示",
     openWebsite: "変更履歴をすべて表示",
     error: {
       title: "変更履歴を読み込めません",
@@ -1170,6 +1214,14 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "サイドバーのビューを読み込めませんでした。",
+      useDefault: "デフォルトのビューを使用",
+      readFailed: "サイドバーのビュー設定を読み込めませんでした。",
+      agentUnavailable: "このエージェントは利用できなくなりました",
+      terminalUnavailable: "このターミナルは利用できなくなりました",
+      projectUnavailable: "このプロジェクトは利用できなくなりました",
+    },
     statusGroupAccessibility: "{{label}} グループ",
     statusBucket: {
       needsInput: "入力待ち",
@@ -1246,6 +1298,7 @@ export const ja: TranslationResources = {
       hosts: "ホスト",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
+      moreActions: "その他のアクション",
     },
     footer: {
       usage: "使用状況",
@@ -1350,6 +1403,9 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         hideFailed: "ワークスペースの非表示に失敗しました",
         archiveFailed: "ワークスペースのアーカイブに失敗しました",
+        archived: "ワークスペースをアーカイブしました",
+        undoArchive: "元に戻す",
+        undoArchiveFailed: "アーカイブを元に戻せませんでした",
       },
     },
   },
@@ -1357,8 +1413,9 @@ export const ja: TranslationResources = {
     title: "新しいワークスペース",
     create: "作成",
     isolation: {
-      local: "ローカル",
+      local: "プロジェクトディレクトリ",
       worktree: "新しいワークツリー",
+      existing: "既存のワークツリー",
       label: "分離方法",
     },
     fields: {
@@ -1373,12 +1430,17 @@ export const ja: TranslationResources = {
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
+      branchInProjectDirectory:
+        "{{branch}} はプロジェクトディレクトリでチェックアウト済みです。そこで作業するにはプロジェクトディレクトリを選ぶか、そこから新しいブランチを作成してください。",
+      branchInWorktree:
+        "{{branch}} は {{path}} でチェックアウト済みです。既存のワークツリーでそのワークツリーを選ぶか、そこから新しいブランチを作成してください。",
     },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
       isolation: "Choose the isolation level",
       startingRef: "開始点を選択",
+      worktree: "作業するワークツリーを選択",
       launch: "Choose what to launch",
     },
     refPicker: {
@@ -1386,8 +1448,31 @@ export const ja: TranslationResources = {
       intoBase: "{{baseRef}}に",
       searching: "検索中...",
       noMatchingRefs: "一致するRefがありません。",
-      searchPlaceholder: "ブランチとPRを検索",
+      searchBranches: "ブランチを検索",
+      searchPullRequests: "プルリクエストを検索",
+      searchPullRequests_mr: "MRを検索",
+      branches: "ブランチ",
+      pullRequests: "プルリクエスト",
+      pullRequests_mr: "マージリクエスト",
+      pullRequestsShort: "PR",
+      pullRequestsShort_mr: "MR",
+      branchOff: "新しいブランチ",
+      checkout: "チェックアウト",
+      branchOffHint: "ここから新しいブランチを作成します",
+      checkoutHint: "直接作業します",
+      base: "ベース",
+      from: "起点",
+      branch: "ブランチ",
+      pullRequest: "プルリクエスト",
+      pullRequest_mr: "マージリクエスト",
+      inProjectDirectory: "プロジェクトディレクトリ内",
+      inWorktree: "ワークツリー内",
       title: "開始点",
+    },
+    worktreePicker: {
+      title: "ワークツリー",
+      searchPlaceholder: "ワークツリーを検索",
+      empty: "一致するワークツリーがありません。",
     },
     launch: {
       title: "What to launch",
@@ -1556,6 +1641,9 @@ export const ja: TranslationResources = {
       cli: {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
+        uninstallFailed: "Paseo CLI をアンインストールできません。",
+        keptForeign:
+          "Paseoがインストールしていないpaseoコマンドは残しました。アンインストールするには手動で削除してください。",
       },
     },
   },
@@ -1607,6 +1695,7 @@ export const ja: TranslationResources = {
     openPath: "パスを開く",
   },
   branchSwitcher: {
+    failedToLoad: "ブランチを読み込めませんでした。選択画面を開き直してお試しください。",
     triggerTooltip: "ワークスペースのブランチを切り替え",
     currentBranch: "現在のブランチ: {{branchName}}。押してブランチを切り替えてください。",
     placeholder: "ブランチを切り替え...",
@@ -1630,7 +1719,11 @@ export const ja: TranslationResources = {
     loadingCommands: "コマンドを読み込み中...",
     noFiles: "ファイルまたはディレクトリが見つかりません",
     noCommands: "コマンドが見つかりません",
-    failedToLoad: "読み込みに失敗しました",
+    loadingProviderCommands: "{{provider}} のコマンドを読み込み中...",
+    commandsFailed: "コマンドを読み込めませんでした",
+    providerCommandsFailed: "{{provider}} のコマンドを読み込めませんでした",
+    filesFailed: "ファイルを検索できませんでした",
+    skillTag: "スキル",
     chooseProjectForCommands: "コマンドを表示するにはプロジェクトを選択してください",
     chooseModelForCommands: "コマンドを表示するにはモデルを選択してください",
   },
@@ -1657,6 +1750,61 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
+    setup: {
+      title: "Paseo",
+      stepCounter: "ステップ {{current}}/{{total}}",
+      skip: "セットアップをスキップ",
+      continue: "続ける",
+      finish: "完了",
+      steps: {
+        appearance: {
+          label: "外観",
+          title: "Paseo へようこそ",
+          description: "まずは外観を選びましょう",
+        },
+        providers: {
+          label: "プロバイダー",
+          title: "プロバイダー",
+          description: "Paseo はこのコンピューターにインストール済みのエージェント CLI を使います",
+        },
+        projects: {
+          label: "プロジェクト",
+          title: "プロジェクトを追加",
+          description: "エージェントにどこで作業させますか",
+          addProject: "プロジェクトを追加",
+          added: "追加済み",
+          suggestions: {
+            loading: "作業したフォルダーを探しています",
+            empty: "最近のプロジェクトは見つかりませんでした",
+            lastUsed: "最終使用 {{time}}",
+            addSelected_one: "{{count}} 件のプロジェクトを追加",
+            addSelected_other: "{{count}} 件のプロジェクトを追加",
+            adding: "追加しています…",
+            addFailed: "このフォルダーを追加できませんでした",
+          },
+        },
+        orchestration: {
+          label: "オーケストレーション",
+          title: "エージェントに Paseo を使わせる",
+          description:
+            "エージェントがワークスペースを作成し、ほかのエージェントとやり取りできるようにします",
+        },
+        phone: {
+          label: "モバイル",
+          title: "エージェントを持ち歩く",
+          description:
+            "フル機能のネイティブモバイルアプリで、スマートフォンからどの Paseo コンピューターでも操作できます",
+          appStore: "App Store",
+          googlePlay: "Google Play",
+          connectTitle: "接続方法を選択",
+          connectDocs: "ドキュメント",
+          openConnectDocs: "接続のドキュメントを開く",
+          recommended: "おすすめ",
+          relay: { title: "リレー", hint: "エンドツーエンド暗号化、QR コードをスキャン" },
+          tailscale: { title: "Tailscale", hint: "少し設定が必要です" },
+        },
+      },
+    },
     title: "Paseoへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
@@ -1877,6 +2025,8 @@ export const ja: TranslationResources = {
       notNow: "今はしない",
       directConnectionHint:
         "リレーを使わない場合は、TCP、Tailscale、または別の VPN で直接接続してください。QR コードは作成されません。",
+      tailscaleDocs: "Tailscale を設定",
+      tailscaleDocsAccessibility: "Tailscale で接続する方法を読む",
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
@@ -1923,6 +2073,7 @@ export const ja: TranslationResources = {
     hostUnavailable: "ダウンロードホストが利用できません。",
     cancelled: "ダウンロードがキャンセルされました。",
     failed: "ファイルのダウンロードに失敗しました。",
+    httpFailed: "ファイルのダウンロードに失敗しました (HTTP {{status}}).",
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
   },
@@ -2033,7 +2184,6 @@ export const ja: TranslationResources = {
   toolCallDetails: {
     error: "エラー",
     empty: "追加の詳細はありません",
-    subAgentActivity: "サブエージェントアクティビティ",
     input: "入力",
     output: "出力",
   },
@@ -2113,7 +2263,13 @@ export const ja: TranslationResources = {
     },
   },
   providerUsage: {
+    checkUsage: "使用状況を確認",
+    checkUsageHint: "すべてのデバイスで {{host}} に適用",
+    off: "{{host}} の使用状況確認はオフです。",
+    turnOn: "オンにする",
+
     options: "設定",
+    host: "ホスト",
     refreshFailed: "使用状況を更新できません",
     noHosts: "接続中のホストがありません",
     agentError: "使用状況を読み込めません: {{reason}}",
@@ -2130,6 +2286,8 @@ export const ja: TranslationResources = {
     loginExpired: "ログインは{{relativeTime}}に期限切れになりました。{{remedy}}",
     title: "プラン使用量",
     refresh: "更新",
+    reorderCard: "{{source}} を並べ替え",
+    showCard: "{{source}} を表示",
     refreshAll: "すべて更新",
     refreshing: "更新中...",
     loading: "使用状況を読み込み中...",
@@ -2338,6 +2496,12 @@ export const ja: TranslationResources = {
     general: {
       title: "一般",
       sending: "送信",
+      setup: {
+        label: "初回セットアップ",
+        description:
+          "外観、プロバイダー、プロジェクト、スマートフォンのペアリングをもう一度設定します",
+        action: "セットアップを再表示",
+      },
       browserData: {
         title: "ブラウザーデータ",
         siteData: "Cookie とサイトデータ",
@@ -2493,6 +2657,13 @@ export const ja: TranslationResources = {
         description: "プロンプト間を移動するためのアウトラインを表示します",
       },
       sidebar: {
+        view: {
+          title: "サイドバーのビュー",
+          label: "ビュー",
+          default: "デフォルトのビュー",
+          unavailable:
+            "選択したビューは利用できないか無効です。デフォルトのビューを表示しています。",
+        },
         header: {
           title: "ヘッダー",
           description: "サイドバー上部に表示する項目とその順序を選択します",
@@ -2529,10 +2700,11 @@ export const ja: TranslationResources = {
       layout: {
         title: "レイアウト",
         contentWidth: "コンテンツ幅",
-        contentWidthHint: "ワイド画面でのチャットと Markdown ファイルの最大幅",
-        contentWidthAccessibility: "コンテンツ幅 (ピクセル)",
-        reset: "リセット",
-        resetAccessibility: "コンテンツ幅をデフォルトに戻す",
+        contentWidthHint: "チャット、入力欄、Markdown プレビューの幅",
+        contentWidthDefault: "標準",
+        contentWidthWide: "ワイド",
+        contentWidthFull: "全幅",
+        contentWidthCustom: "カスタム幅 · {{width}} px",
       },
       syntax: {
         title: "構文ハイライト",
@@ -2603,6 +2775,8 @@ export const ja: TranslationResources = {
         toggleFocusMode: "フォーカスモードを切り替え",
         cycleTheme: "テーマを順に切り替え",
         focusMessageInput: "メッセージ入力にフォーカス",
+        toggleModelPicker: "モデル選択を開く／閉じる",
+        cycleEffort: "推論の強度を順に切り替え",
         cycleAgentMode: "エージェントモードを順に切り替え",
         toggleVoiceMode: "音声モードを切り替え",
         startStopDictation: "音声入力を開始/停止",
@@ -2626,11 +2800,7 @@ export const ja: TranslationResources = {
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
-      },
-      actions: {
-        install: "インストール",
-        installing: "インストール中...",
-        installed: "インストール済み",
+        accessibilityLabel: "Paseo CLI をインストール",
       },
     },
     permissions: {
@@ -2709,10 +2879,9 @@ export const ja: TranslationResources = {
         ...en.settings.host.skills,
         sectionTitle: "オーケストレーションスキル",
         title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        description: "エージェントに Paseo ツールの使い方を教えます",
         updateAvailable: "更新が利用可能",
         updateTitle: "Paseoスキルを更新しますか？",
-        updateFallback: "バンドルされたスキルをマシンに同期します。",
         uninstallTitle: "Paseoスキルをアンインストールしますか？",
         uninstallMessage:
           "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
@@ -2731,9 +2900,6 @@ export const ja: TranslationResources = {
         uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
         saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
         actions: {
-          install: "インストール",
-          installing: "インストール中...",
-          installed: "インストール済み",
           update: "更新",
           working: "処理中...",
           remove: "削除",
@@ -2755,6 +2921,7 @@ export const ja: TranslationResources = {
           title: "Paseoツールを有効にする",
           hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
           accessibilityLabel: "Paseoツールを有効にする",
+          updateFailed: "Paseoツールを更新できませんでした。",
         },
         systemPrompt: {
           title: "システムプロンプト",
@@ -2928,6 +3095,22 @@ export const ja: TranslationResources = {
     providers: {
       title: "プロバイダー",
       addProvider: "プロバイダーを追加",
+      list: {
+        add: "プロバイダー",
+        updatingTo: "{{version}} に更新中...",
+      },
+      detail: {
+        backToProviders: "プロバイダーに戻る",
+        notOnHost: "このホストにはこのプロバイダーがありません",
+        enabled: "有効",
+        unavailableTitle: "{{name}} は利用できません",
+        troubleshooting: "トラブルシューティング",
+        status: "プロバイダーの状態",
+        checked: "{{time}}に確認",
+        diagnosticReport: "診断レポート",
+        dangerZone: "危険な操作",
+        removeHint: "このプロバイダーを config.json から削除します",
+      },
       providerDetails: "{{name}}プロバイダーの詳細",
       enableProvider: "{{name}}を有効にする",
       unavailable: "プロバイダーを見るにはこのホストに接続してください",
@@ -2969,9 +3152,30 @@ export const ja: TranslationResources = {
         retrying: "再試行中...",
         noSearchMatches: "検索に一致するモデルがありません",
         noneDetected: "モデルが検出されませんでした",
+        noCustom: "カスタムモデルはありません",
         discovered: "検出済み",
         custom: "カスタムモデル",
         updated: "{{time}}に更新",
+      },
+      installation: {
+        title: "インストール",
+        version: "バージョン",
+        installed: "インストール済み",
+        notInstalled: "未インストール",
+        install: "インストール",
+        checking: "確認中...",
+        failed: "インストールを確認できませんでした",
+        updates: "アップデート",
+        upToDate: "最新です",
+        updateAvailable: "アップデートがあります",
+        updateInstructions: "アップデート手順",
+        update: "アップデート",
+        updating: "アップデート中...",
+        updated: "アップデート済み",
+        updateFailed: "アップデートに失敗しました",
+        outputTruncated: "以前の出力は破棄されました。",
+        updatesFailed: "アップデートを確認できませんでした",
+        installInstructions: "インストール手順",
       },
       diagnostic: {
         title: "診断",

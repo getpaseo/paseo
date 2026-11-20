@@ -27,7 +27,7 @@ import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 
 interface WorkspaceOpenInEditorButtonProps {
@@ -297,10 +297,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
-    height: {
-      xs: buttonControlHeight.xs,
-      md: HEADER_CONTROL_HEIGHT,
-    },
+    height: HEADER_CONTROL_HEIGHT,
     flexDirection: "row",
     alignItems: "stretch",
     borderRadius: theme.borderRadius.md,
@@ -317,10 +314,7 @@ const styles = StyleSheet.create((theme) => ({
     position: "relative",
   },
   splitButtonPrimaryIconOnly: {
-    width: {
-      xs: buttonControlHeight.xs,
-      md: HEADER_CONTROL_HEIGHT,
-    },
+    width: HEADER_CONTROL_HEIGHT,
     paddingHorizontal: 0,
     justifyContent: "center",
     position: "relative",
@@ -348,10 +342,7 @@ const styles = StyleSheet.create((theme) => ({
     transform: [{ scale: 0.8 }],
   },
   splitButtonCaret: {
-    width: {
-      xs: buttonControlHeight.xs,
-      md: HEADER_CONTROL_HEIGHT,
-    },
+    width: HEADER_CONTROL_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],

@@ -1,9 +1,11 @@
 import type { Logger } from "pino";
 import type {
   AgentClient,
+  AgentClientInstallation,
   AgentSessionConfig,
   AgentLaunchContext,
   AgentCreateSessionOptions,
+  AgentResumeSessionOptions,
   AgentPersistenceHandle,
   FetchCatalogOptions,
   ProviderRefreshContext,
@@ -19,7 +21,16 @@ import {
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
+import { resolveExternalOpenCodeServer } from "./v2/external-server.js";
 import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
+import { selectOpenCodeService } from "./v2/service-selection.js";
+import { createCliInstallation } from "../cli-installation.js";
+
+const OPENCODE_INSTALL_URL = "https://opencode.ai/docs/";
+// Agents share a long-lived OpenCode server, and this client keeps the protocol it chose for the
+// version it found. Neither changes until the daemon restarts.
+const OPENCODE_UPDATED =
+  "OpenCode is updated. Restart the Paseo daemon to use the new version; agents keep the running OpenCode server until then.";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
 const MINIMUM_V2: readonly [number, number] = [0, 10];
@@ -57,6 +68,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
   private legacySelected = false;
   private readonly legacy: OpenCodeAgentClient;
+  readonly installation: AgentClientInstallation;
   constructor(
     private readonly logger: Logger,
     private readonly settings?: ProviderRuntimeSettings,
@@ -66,9 +78,40 @@ export class OpenCodeRuntimeClient implements AgentClient {
     this.capabilities = this.legacy.capabilities;
     this.resolveCreateConfig = this.legacy.resolveCreateConfig;
     this.isCreateConfigUnattended = this.legacy.isCreateConfigUnattended;
+    // OpenCode's update source depends on its channel and install method, which only the binary
+    // knows, so it has no update check here.
+    this.installation = createCliInstallation({
+      name: "OpenCode",
+      defaultBinary: "opencode",
+      runtimeSettings: settings,
+      installUrl: OPENCODE_INSTALL_URL,
+      versionLabel: (output) =>
+        output
+          .split("\n")[0]
+          ?.trim()
+          .replace(/^opencode\s+/i, "") || undefined,
+      update: { args: ["upgrade"], successMessage: OPENCODE_UPDATED },
+    });
+  }
+  private selectService() {
+    return selectOpenCodeService({
+      explicit: resolveExternalOpenCodeServer({ ...globalThis.process.env, ...this.settings?.env }),
+      env: this.settings?.env,
+    });
   }
   private client(): Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> {
     this.selected ??= (async () => {
+      const selection = await this.selectService();
+      if (selection.kind !== "owned") {
+        const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+        return new OpenCodeV2AgentClient({
+          logger: this.logger,
+          settings: this.settings,
+          managedProcesses: this.options.managedProcesses,
+          bridge: this.options.bridge,
+          selection,
+        });
+      }
       let output: string;
       try {
         const launch = await resolveProviderLaunch({
@@ -97,6 +140,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
         settings: this.settings,
         managedProcesses: this.options.managedProcesses,
         bridge: this.options.bridge,
+        selection,
       });
     })().catch((error: unknown) => {
       // A failed probe must not poison refresh after the user updates the binary.
@@ -106,9 +150,14 @@ export class OpenCodeRuntimeClient implements AgentClient {
     return this.selected;
   }
   async isAvailable() {
+    const selection = await this.selectService();
+    if (selection.kind !== "owned") return true;
     return this.legacy.isAvailable();
   }
   async getDiagnostic() {
+    const selection = await this.selectService();
+    if (selection.kind !== "owned")
+      return { diagnostic: `OpenCode server: ${selection.server.url}` };
     return this.legacy.getDiagnostic();
   }
   async createSession(
@@ -124,19 +173,30 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
     const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
+    if (options.force) await this.reprobeLegacySelection();
     return (await this.client()).fetchCatalog(options, context);
+  }
+  // Updating the binary does not change provider config, so the client survives it. A forced
+  // refresh re-probes a v1 pick so a 1.x to 2.x update takes effect without a daemon restart.
+  // A v2 pick owns live sessions and stays.
+  private async reprobeLegacySelection() {
+    const current = this.selected;
+    if (!current) return;
+    const client = await current.catch(() => null);
+    if (client === this.legacy && this.selected === current) this.selected = null;
   }
   async listCommands(config: AgentSessionConfig) {
     return (await this.client()).listCommands(config);
   }
-  async listFeatures(config: AgentSessionConfig) {
-    return (await this.client()).listFeatures(config);
+  async listControls(config: AgentSessionConfig) {
+    return (await this.client()).listControls(config);
   }
   async listImportableSessions(options?: ListImportableSessionsOptions) {
     return (await this.client()).listImportableSessions(options);

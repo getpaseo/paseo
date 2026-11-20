@@ -429,6 +429,41 @@ function giteaMergeStatus(
   };
 }
 
+describe("createGiteaService getReferenceRepository", () => {
+  it("names the repository a fork was forked from, asking about the origin repository explicitly", async () => {
+    const { service, calls } = makeService(() =>
+      ok(
+        JSON.stringify({
+          full_name: "example-user/sample-repo",
+          fork: true,
+          parent: { full_name: "upstream-org/sample-repo" },
+        }),
+      ),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBe(
+      "upstream-org/sample-repo",
+    );
+    expect(calls).toEqual([["api", "repos/example-user/sample-repo"]]);
+  });
+
+  it("rejects when tea api answers with an error body, since tea exits 0 on HTTP errors", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ message: "user does not exist [uid: 0, name: ]" })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).rejects.toThrow();
+  });
+
+  it("is null for a repository that is not a fork", async () => {
+    const { service } = makeService(() =>
+      ok(JSON.stringify({ full_name: "example-user/sample-repo", fork: false, parent: null })),
+    );
+
+    await expect(service.getReferenceRepository?.({ cwd: "/repo" })).resolves.toBeNull();
+  });
+});
+
 describe("createGiteaService", () => {
   it("maps a tea pr list item to the neutral current PR status by head branch", async () => {
     const { service, calls } = makeService((args) => {
@@ -2001,6 +2036,33 @@ describe("createGiteaService", () => {
     ]);
   });
 
+  it("hides a historical PR on the repository's default branch", async () => {
+    const historical = currentPullRequestApi({
+      number: 8,
+      state: "closed",
+      headRef: "trunk",
+      headSha: "8888888888888888888888888888888888888888",
+    });
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok("[]");
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([historical]));
+      }
+      if (args[0] === "api" && args[1] === "repos/example-user/sample-repo") {
+        return ok(
+          JSON.stringify({
+            full_name: "example-user/sample-repo",
+            default_branch: "trunk",
+          }),
+        );
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "trunk" }),
+    ).resolves.toBeNull();
+  });
+
   it("falls back to the recent all-state PR window for a recently closed current branch PR", async () => {
     const headSha = "8888888888888888888888888888888888888888";
     const closedPr = currentPullRequestApi({
@@ -2064,7 +2126,7 @@ describe("createGiteaService", () => {
     ]);
   });
 
-  it("does not attach a stale Gitea-family PR after a same-name branch advances", async () => {
+  it("keeps a merged PR when its remote head advances beyond the checkout", async () => {
     const stale = currentPullRequestApi({
       number: 8,
       state: "closed",
@@ -2086,7 +2148,7 @@ describe("createGiteaService", () => {
         headRef: "dev",
         headSha: "2222222222222222222222222222222222222222",
       }),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ number: 8, state: "merged" });
   });
 
   it("returns null when no PR matches the current branch", async () => {
