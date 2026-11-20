@@ -253,6 +253,8 @@ export function createPerHostChangeRequestPoller(
     watch.inFlight = true;
     inFlightByHost.set(watch.host, (inFlightByHost.get(watch.host) ?? 0) + 1);
     const isObserved = () => !disposed && watches.get(watch.url) === watch;
+    const recovering = Boolean(pausesByHost.get(watch.host)?.requestsUntil);
+    let completed = false;
 
     void (async () => {
       try {
@@ -279,10 +281,7 @@ export function createPerHostChangeRequestPoller(
         const pause = pausesByHost.get(watch.host);
         if (pause && pause.requestsUntil <= nowMs) pause.requestsUntil = 0;
         watch.nextDueAt = Math.max(nowMs + pollIntervalMs, hostPauseUntil(watch.host, nowMs));
-        // A watch that delivered a snapshot yields priority to watches still
-        // waiting for a successful poll after a shared quota reset.
-        watches.delete(watch.url);
-        watches.set(watch.url, watch);
+        completed = true;
       } catch (error) {
         if (!isObserved()) return;
         options.onError?.(error, watch.host);
@@ -300,6 +299,12 @@ export function createPerHostChangeRequestPoller(
         }
         watch.callbacks.error(error);
       } finally {
+        // Rotate after a snapshot or a recovery attempt so a watch that
+        // keeps failing cannot take every turn after a quota reset.
+        if ((completed || recovering) && isObserved()) {
+          watches.delete(watch.url);
+          watches.set(watch.url, watch);
+        }
         watch.inFlight = false;
         const remaining = (inFlightByHost.get(watch.host) ?? 1) - 1;
         if (remaining > 0) inFlightByHost.set(watch.host, remaining);
