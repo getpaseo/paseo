@@ -37,6 +37,7 @@ export interface AgentCommandsClient {
   listCommands(options: ListAgentCommandsOptions): ReturnType<DaemonClient["listCommands"]>;
 }
 
+// COMPAT(dedupeListCommands): added in v0.17.0, remove after 2027-05-20 once daemon floor >= v0.17.0.
 function dedupeSlashCommands(commands: readonly AgentSlashCommand[]): AgentSlashCommand[] {
   const seen = new Set<string>();
   const unique: AgentSlashCommand[] = [];
