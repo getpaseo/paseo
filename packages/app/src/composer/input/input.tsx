@@ -1624,6 +1624,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       volume: dictationVolume,
       duration: dictationDuration,
       error: dictationError,
+      startError: dictationStartError,
+      clearStartError: clearDictationStartError,
       status: dictationStatus,
       startDictation,
       cancelDictation,
@@ -1660,17 +1662,29 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       sendAfterTranscriptRef.current = false;
     }, [dictationStatus, isDictating, isDictationProcessing]);
 
-    const startDictationIfAvailable = useCallback(
-      () =>
-        startDictationIfAvailableImpl({
-          dictationUnavailableMessage,
-          canStartDictation,
-          toast,
-          startDictation,
-          exitFullscreen,
-        }),
-      [canStartDictation, dictationUnavailableMessage, startDictation, toast, exitFullscreen],
-    );
+    useEffect(() => {
+      if (showRealtimeOverlay) {
+        clearDictationStartError();
+      }
+    }, [showRealtimeOverlay, clearDictationStartError]);
+
+    const startDictationIfAvailable = useCallback(() => {
+      clearDictationStartError();
+      return startDictationIfAvailableImpl({
+        dictationUnavailableMessage,
+        canStartDictation,
+        toast,
+        startDictation,
+        exitFullscreen,
+      });
+    }, [
+      canStartDictation,
+      clearDictationStartError,
+      dictationUnavailableMessage,
+      startDictation,
+      toast,
+      exitFullscreen,
+    ]);
 
     const handleVoicePress = useCallback(
       () =>
@@ -2224,42 +2238,54 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
     const toolbar = useMemo(
       () => (
-        <View style={buttonRowStyle}>
-          {/* Toolbar left: attachment button + agent controls */}
-          <View style={styles.leftButtonGroup}>
-            <AttachmentDropdown
-              visible={mode.showAttachments}
-              isConnected={isConnected}
-              disabled={disabled}
-              attachButtonStyle={attachButtonStyle}
-              renderAttachButtonIcon={renderAttachButtonIcon}
-              attachmentMenuItems={attachmentMenuItems}
-              addAttachmentLabel={t("composer.input.addAttachment")}
-            />
-            {leftContent}
-          </View>
+        <>
+          {!isFullscreen && !showOverlay && dictationStartError ? (
+            <Text accessibilityRole="alert" style={styles.dictationStartError}>
+              {t(`message.dictation.${dictationStartError}`)}
+            </Text>
+          ) : null}
+          <View style={isFullscreen ? styles.hiddenToolbar : buttonRowStyle}>
+            {/* Toolbar left: attachment button + agent controls */}
+            <View style={styles.leftButtonGroup}>
+              {!isFullscreen && (
+                <AttachmentDropdown
+                  visible={mode.showAttachments}
+                  isConnected={isConnected}
+                  disabled={disabled}
+                  attachButtonStyle={attachButtonStyle}
+                  renderAttachButtonIcon={renderAttachButtonIcon}
+                  attachmentMenuItems={attachmentMenuItems}
+                  addAttachmentLabel={t("composer.input.addAttachment")}
+                />
+              )}
+              {leftContent}
+            </View>
 
-          {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
-          <View style={styles.rightButtonGroup}>
-            {beforeVoiceContent}
-            <VoiceButtonTooltip
-              visible={mode.showVoice}
-              onVoicePress={handleVoicePress}
-              isDictationStartEnabled={isDictationStartEnabled}
-              voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
-              voiceButtonStyle={voiceButtonStyle}
-              renderVoiceButtonIcon={renderVoiceButtonIcon}
-              voiceTooltipText={voiceTooltipText}
-              isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
-              voiceMuteToggleKeys={voiceMuteToggleKeys}
-              dictationToggleKeys={dictationToggleKeys}
-            />
-            <View style={styles.trailingDisc}>{sendButton}</View>
+            {/* Right: dictation, then the trailing action (voice mode, send or stop) */}
+            {!isFullscreen && (
+              <View style={styles.rightButtonGroup}>
+                {beforeVoiceContent}
+                <VoiceButtonTooltip
+                  visible={mode.showVoice}
+                  onVoicePress={handleVoicePress}
+                  isDictationStartEnabled={isDictationStartEnabled}
+                  voiceButtonAccessibilityLabel={voiceButtonAccessibilityLabel}
+                  voiceButtonStyle={voiceButtonStyle}
+                  renderVoiceButtonIcon={renderVoiceButtonIcon}
+                  voiceTooltipText={voiceTooltipText}
+                  isRealtimeVoiceForCurrentAgent={isRealtimeVoiceForCurrentAgent}
+                  voiceMuteToggleKeys={voiceMuteToggleKeys}
+                  dictationToggleKeys={dictationToggleKeys}
+                />
+                <View style={styles.trailingDisc}>{sendButton}</View>
+              </View>
+            )}
           </View>
-        </View>
+        </>
       ),
       [
         buttonRowStyle,
+        isFullscreen,
         mode.showAttachments,
         isConnected,
         disabled,
@@ -2270,6 +2296,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         leftContent,
         beforeVoiceContent,
         mode.showVoice,
+        showOverlay,
+        dictationStartError,
         handleVoicePress,
         isDictationStartEnabled,
         voiceButtonAccessibilityLabel,
@@ -2463,6 +2491,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     minHeight: MIN_INPUT_HEIGHT,
     color: theme.colors.foregroundMuted,
   },
+  hiddenToolbar: { display: "none" },
   // The row keeps a full touch target's height; its disc-sized controls centre in it.
   buttonRow: {
     minHeight: TOOLBAR_CONTROL_HEIGHT,
@@ -2470,6 +2499,12 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  dictationStartError: {
+    alignSelf: "flex-end",
+    textAlign: "right",
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
   },
   leftButtonGroup: {
     minWidth: 0,

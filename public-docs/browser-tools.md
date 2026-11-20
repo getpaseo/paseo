@@ -20,12 +20,15 @@ Arguments marked `?` are optional.
 
 ## Tabs
 
-| Tool                | Arguments                  | Purpose                                                                   |
-| ------------------- | -------------------------- | ------------------------------------------------------------------------- |
-| `browser_list_tabs` | —                          | List open tabs in the agent's workspace across connected hosts.           |
-| `browser_new_tab`   | `url?`                     | Open a tab in the background and return its `browserId`.                  |
-| `browser_close_tab` | `browserId`                | Close a tab and clean up its webview.                                     |
-| `browser_resize`    | `browserId, width, height` | Resize the tab's viewport — check a layout at phone or tablet dimensions. |
+| Tool                 | Arguments                  | Purpose                                                                    |
+| -------------------- | -------------------------- | -------------------------------------------------------------------------- |
+| `browser_list_hosts` | —                          | List connected browser hosts by name and ID, including hosts with no tabs. |
+| `browser_list_tabs`  | —                          | List workspace tabs and their browser hosts.                               |
+| `browser_new_tab`    | `url?, browserHostId?`     | Open a background tab and return its `browserId` and browser host.         |
+| `browser_close_tab`  | `browserId`                | Close a tab and clean up its webview.                                      |
+| `browser_resize`     | `browserId, width, height` | Resize the tab's viewport — check a layout at phone or tablet dimensions.  |
+
+With one host that can open tabs, omit `browserHostId`. With several, pass an ID from `browser_list_hosts`. In Paseo Desktop, search for **Copy browser host name** in the Command Center. The result shows the same name the agent sees. Select it to copy the name. If the selected host is unavailable, list hosts again.
 
 ## Reading the page
 
@@ -69,10 +72,11 @@ Arguments marked `?` are optional.
 
 Tools return structured errors rather than failing silently. The ones agents see most:
 
-| Code                | Meaning                                                                         |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `browser_disabled`  | Browser tools are turned off on this host.                                      |
-| `browser_no_host`   | No browser host (desktop app) is connected. Retryable.                          |
-| `browser_stale_ref` | The ref no longer matches the page — take a new snapshot.                       |
-| `browser_timeout`   | The element never became actionable, or the wait condition never held.          |
-| `browser_denied`    | The action isn't allowed — e.g. a non-`http(s)` URL, or no history to navigate. |
+| Code                     | Meaning                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `browser_disabled`       | Browser tools are turned off on this host.                                      |
+| `browser_no_host`        | There is no connected browser host, or the selected host disconnected.          |
+| `browser_host_ambiguous` | Several hosts can open tabs. Choose one from the error and retry with its ID.   |
+| `browser_stale_ref`      | The ref no longer matches the page — take a new snapshot.                       |
+| `browser_timeout`        | The element never became actionable, or the wait condition never held.          |
+| `browser_denied`         | The action isn't allowed — e.g. a non-`http(s)` URL, or no history to navigate. |

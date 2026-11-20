@@ -12,6 +12,7 @@ import {
   type AgentClient,
   type AgentDraftControls,
   type AgentOptionControl,
+  type AgentClientInstallation,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -79,6 +80,7 @@ import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
+import { createOmpInstallation } from "./installation.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import { OmpMcpBridge, type OmpBridgedToolIdentity } from "./mcp-bridge.js";
@@ -1583,7 +1585,6 @@ export class OmpAgentSession implements AgentSession {
       this.emit({
         type: "timeline",
         provider: this.provider,
-        turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
           level:
@@ -1661,7 +1662,30 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
+  // OMP changes the level on its own, e.g. `/switch @role` or a model switch that carries a level.
+  private handleThinkingLevelChanged(event: OmpRuntimeEvent): boolean {
+    if (event.type !== "thinking_level_changed") {
+      return false;
+    }
+    const thinkingLevel = normalizeOmpThinkingOption(event.configured ?? event.thinkingLevel);
+    if (!thinkingLevel || thinkingLevel === this.lastKnownThinkingOptionId) {
+      return true;
+    }
+    this.lastKnownThinkingOptionId = thinkingLevel;
+    this.config.thinkingOptionId = thinkingLevel;
+    this.state = { ...this.state, thinkingLevel };
+    this.emit({
+      type: "thinking_option_changed",
+      provider: this.provider,
+      thinkingOptionId: thinkingLevel,
+    });
+    return true;
+  }
+
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (this.handleThinkingLevelChanged(event)) {
+      return true;
+    }
     if (event.type === "model_changed") {
       void this.refreshState()
         .then(() =>
@@ -2263,6 +2287,7 @@ export class OmpAgentSession implements AgentSession {
 export class OmpAgentClient implements AgentClient {
   readonly provider: AgentProvider = OMP_PROVIDER;
   readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
+  readonly installation: AgentClientInstallation;
 
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -2284,6 +2309,7 @@ export class OmpAgentClient implements AgentClient {
     );
     this.logger = options.logger;
     this.runtimeSettings = runtimeSettings;
+    this.installation = createOmpInstallation(runtimeSettings);
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
