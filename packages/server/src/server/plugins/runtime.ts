@@ -79,6 +79,10 @@ const worktreeRestoreResultSchema = z
   .nullable();
 
 export interface PluginWorktreeManagerRuntime {
+  hasWorktreeManager(options?: {
+    operation?: "create" | "remove" | "restore";
+    preferredPluginId?: string;
+  }): boolean;
   createWorktree(
     request: PluginWorktreeCreateInput,
     options?: { signal?: AbortSignal },
@@ -798,6 +802,26 @@ export class PluginRuntime {
       } as PluginBeforeResults[Name];
     }
     return request;
+  }
+
+  hasWorktreeManager(options?: {
+    operation?: "create" | "remove" | "restore";
+    preferredPluginId?: string;
+  }): boolean {
+    const operation = options?.operation ?? "create";
+    const supports = (manager: PluginWorktreeManagerCapabilities | null): boolean => {
+      if (!manager) return false;
+      if (operation === "remove") return manager.hasRemove;
+      if (operation === "restore") return manager.hasRestore;
+      return true;
+    };
+    if (options?.preferredPluginId) {
+      return supports(this.plugins.get(options.preferredPluginId)?.worktreeManager ?? null);
+    }
+    for (const loaded of this.plugins.values()) {
+      if (supports(loaded.worktreeManager)) return true;
+    }
+    return false;
   }
 
   async createWorktree(

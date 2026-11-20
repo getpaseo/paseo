@@ -5,18 +5,13 @@ import { resolveRepositoryDefaultBranch } from "../../../utils/checkout-git.js";
 import { createRealpathAwarePathMatcher } from "../../../utils/path.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import {
-  adoptPluginWorktree,
-  cleanupFailedPluginWorktree,
-  cleanupOrphanedPluginWorktreeOnReject,
   createWorktree,
   isPaseoOwnedWorktreeCwd,
-  listGitWorktreePaths,
-  localBranchExists,
   mapWorkspaceCwdToWorktree,
   rollbackCreatedPaseoWorktree,
+  runPluginWorktreeManagerCheckout,
   type WorktreeSource,
 } from "../../../utils/worktree.js";
-import { validateWorktreePath } from "../../../utils/worktree-path.js";
 import type { PluginWorktreeManagerRuntime } from "../../plugins/runtime.js";
 import type { PluginWorktreeRestoreTarget } from "@getpaseo/plugin/server";
 import { WorktreeRequestError, toWorktreeRequestError } from "../../worktree-errors.js";
@@ -72,7 +67,10 @@ type UnavailableRecoveryState = Extract<WorkspaceRecoveryState, { kind: "unavail
 export function createWorkspaceRecoveryService(deps: {
   paseoHome: string;
   worktreesRoot?: string;
-  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "restoreWorktree" | "removeWorktree">;
+  worktreeManagers?: Pick<
+    PluginWorktreeManagerRuntime,
+    "hasWorktreeManager" | "restoreWorktree" | "removeWorktree"
+  >;
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
@@ -278,70 +276,44 @@ export function createWorkspaceRecoveryService(deps: {
     const managerPluginId = workspace.worktreeManagerPluginId;
     const untrusted = Boolean(workspace.untrustedSource);
     if (managerPluginId && hasRecordedWorktreePath && deps.worktreeManagers) {
-      const existingWorktreePaths = await listGitWorktreePaths(sourceRepoRoot);
       const restoreBranch = source.kind === "restore-commit" ? null : source.branchName;
-      const branchExistedBefore =
-        source.kind === "restore-from-base"
-          ? await localBranchExists(sourceRepoRoot, source.branchName)
-          : true;
-      let managed: { pluginId: string; path: string } | null;
-      try {
-        managed = await deps.worktreeManagers.restoreWorktree(
-          {
-            repoRoot: sourceRepoRoot,
-            path: previousWorktreePath,
-            target: restoreTargetFromWorktreeSource(source),
-            baseRef: workspace.baseBranch,
-            untrusted,
-          },
-          { preferredPluginId: managerPluginId },
-        );
-      } catch (error) {
-        await cleanupOrphanedPluginWorktreeOnReject({
-          cwd: sourceRepoRoot,
-          existingWorktreePaths,
-          expectedPath: previousWorktreePath,
-          expectedBranch: restoreBranch,
-          branchExistedBefore,
-          paseoHome: deps.paseoHome,
-          worktreesBaseRoot: deps.worktreesRoot,
-        }).catch(() => {});
-        throw error;
-      }
-      if (managed) {
-        try {
-          const validatedPath = await validateWorktreePath({
-            candidate: managed.path,
-            repoPath: sourceRepoRoot,
-            allowExistingPath: true,
-          });
+      const adopted = await runPluginWorktreeManagerCheckout({
+        cwd: sourceRepoRoot,
+        source,
+        operation: "restore",
+        preferredPluginId: managerPluginId,
+        expectedPath: previousWorktreePath,
+        expectedBranch: restoreBranch,
+        trackNewBranch: source.kind === "restore-from-base",
+        untrusted,
+        paseoHome: deps.paseoHome,
+        worktreesBaseRoot: deps.worktreesRoot,
+        worktreeManagers: deps.worktreeManagers,
+        run: () =>
+          deps.worktreeManagers!.restoreWorktree(
+            {
+              repoRoot: sourceRepoRoot,
+              path: previousWorktreePath,
+              target: restoreTargetFromWorktreeSource(source),
+              baseRef: workspace.baseBranch,
+              untrusted,
+            },
+            { preferredPluginId: managerPluginId },
+          ),
+        verifyValidatedPath: (validatedPath, pluginId) => {
           if (!createRealpathAwarePathMatcher(previousWorktreePath)(validatedPath)) {
             throw new WorktreeRequestError({
               code: "unknown",
-              message: `Plugin ${managed.pluginId} restored worktree to ${validatedPath}, expected ${previousWorktreePath}`,
+              message: `Plugin ${pluginId} restored worktree to ${validatedPath}, expected ${previousWorktreePath}`,
             });
           }
-          const adopted = await adoptPluginWorktree({
-            cwd: sourceRepoRoot,
-            source,
-            worktreePath: validatedPath,
-            worktreeManagerPluginId: managed.pluginId,
-            existingWorktreePaths,
-          });
-          return { worktreePath: adopted.worktreePath, pluginId: managed.pluginId };
-        } catch (error) {
-          await cleanupFailedPluginWorktree({
-            cwd: sourceRepoRoot,
-            candidatePath: managed.path,
-            existingWorktreePaths,
-            worktreeManagers: deps.worktreeManagers,
-            worktreeManagerPluginId: managed.pluginId,
-            untrusted,
-            paseoHome: deps.paseoHome,
-            worktreesBaseRoot: deps.worktreesRoot,
-          }).catch(() => {});
-          throw error;
-        }
+        },
+      });
+      if (adopted) {
+        return {
+          worktreePath: adopted.worktreePath,
+          pluginId: adopted.worktreeManagerPluginId ?? managerPluginId,
+        };
       }
     }
 

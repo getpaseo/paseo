@@ -8,19 +8,14 @@ import { createNameId } from "mnemonic-id";
 
 import type { ForgeService } from "../services/forge-service.js";
 import {
-  adoptPluginWorktree,
-  cleanupFailedPluginWorktree,
-  cleanupOrphanedPluginWorktreeOnReject,
   createWorktree,
   fetchFirstAvailableRef,
-  listGitWorktreePaths,
-  localBranchExists,
   resolveDefaultWorktreePath,
+  runPluginWorktreeManagerCheckout,
   slugify,
   validateBranchSlug,
   type CreatedWorktree,
 } from "../utils/worktree.js";
-import { validateWorktreePath } from "../utils/worktree-path.js";
 import {
   resolveWorktreeCreationIntent,
   type ResolveWorktreeCreationIntentInput,
@@ -46,7 +41,10 @@ export interface CreateWorktreeCoreInput {
 
 export interface CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "before">;
-  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree" | "removeWorktree">;
+  worktreeManagers?: Pick<
+    PluginWorktreeManagerRuntime,
+    "hasWorktreeManager" | "createWorktree" | "removeWorktree"
+  >;
   github: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -203,54 +201,21 @@ async function tryCreateWithWorktreeManager(options: {
   deps: Pick<CreateWorktreeCoreDeps, "worktreeManagers">;
 }): Promise<CreatedWorktree | null> {
   const { repoRoot, transformed, intent, input, deps } = options;
-  if (!deps.worktreeManagers) return null;
-  const existingWorktreePaths = await listGitWorktreePaths(repoRoot);
   const untrusted = isUntrustedWorktreeCreationIntent(intent);
-  const branchExistedBefore =
-    intent.kind === "branch-off" ? await localBranchExists(repoRoot, transformed.branch) : true;
   const createRequest: PluginWorktreeCreateInput = { ...transformed, untrusted };
-  let managed: { pluginId: string; path: string } | null;
-  try {
-    managed = await deps.worktreeManagers.createWorktree(createRequest);
-  } catch (error) {
-    await cleanupOrphanedPluginWorktreeOnReject({
-      cwd: repoRoot,
-      existingWorktreePaths,
-      expectedPath: transformed.path,
-      expectedBranch: transformed.branch,
-      branchExistedBefore,
-      paseoHome: input.paseoHome,
-      worktreesBaseRoot: input.worktreesRoot,
-    }).catch(() => {});
-    throw error;
-  }
-  if (!managed) return null;
-  try {
-    const validatedPath = await validateWorktreePath({
-      candidate: managed.path,
-      repoPath: repoRoot,
-      allowExistingPath: true,
-    });
-    return await adoptPluginWorktree({
-      cwd: repoRoot,
-      source: intent,
-      worktreePath: validatedPath,
-      worktreeManagerPluginId: managed.pluginId,
-      existingWorktreePaths,
-    });
-  } catch (error) {
-    await cleanupFailedPluginWorktree({
-      cwd: repoRoot,
-      candidatePath: managed.path,
-      existingWorktreePaths,
-      worktreeManagers: deps.worktreeManagers,
-      worktreeManagerPluginId: managed.pluginId,
-      untrusted,
-      paseoHome: input.paseoHome,
-      worktreesBaseRoot: input.worktreesRoot,
-    }).catch(() => {});
-    throw error;
-  }
+  return runPluginWorktreeManagerCheckout({
+    cwd: repoRoot,
+    source: intent,
+    operation: "create",
+    expectedPath: transformed.path,
+    expectedBranch: transformed.branch,
+    trackNewBranch: intent.kind === "branch-off",
+    untrusted,
+    paseoHome: input.paseoHome,
+    worktreesBaseRoot: input.worktreesRoot,
+    worktreeManagers: deps.worktreeManagers,
+    run: () => deps.worktreeManagers!.createWorktree(createRequest),
+  });
 }
 
 function describeCreationRequest(

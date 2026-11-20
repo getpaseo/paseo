@@ -65,7 +65,10 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
   lifecycle?: Pick<PluginLifecycle, "wait" | "before">;
-  worktreeManagers?: Pick<PluginWorktreeManagerRuntime, "createWorktree" | "removeWorktree">;
+  worktreeManagers?: Pick<
+    PluginWorktreeManagerRuntime,
+    "hasWorktreeManager" | "createWorktree" | "removeWorktree"
+  >;
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
 }

@@ -529,6 +529,7 @@ export interface SessionOptions {
     wait: import("./plugins/lifecycle/index.js").PluginLifecycle["wait"];
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
+    hasWorktreeManager: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["hasWorktreeManager"];
     createWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["createWorktree"];
     removeWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["removeWorktree"];
     restoreWorktree: import("./plugins/runtime.js").PluginWorktreeManagerRuntime["restoreWorktree"];

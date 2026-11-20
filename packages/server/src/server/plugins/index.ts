@@ -50,6 +50,7 @@ interface PluginRuntimePort {
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   wait?: PluginLifecycle["wait"];
+  hasWorktreeManager?: PluginWorktreeManagerRuntime["hasWorktreeManager"];
   createWorktree?: PluginWorktreeManagerRuntime["createWorktree"];
   removeWorktree?: PluginWorktreeManagerRuntime["removeWorktree"];
   restoreWorktree?: PluginWorktreeManagerRuntime["restoreWorktree"];
@@ -193,6 +194,10 @@ export class PluginService {
       return this.runtime.before(name, request);
     }
     return request;
+  };
+
+  readonly hasWorktreeManager: PluginWorktreeManagerRuntime["hasWorktreeManager"] = (options) => {
+    return this.runtime.hasWorktreeManager?.(options) ?? false;
   };
 
   readonly createWorktree: PluginWorktreeManagerRuntime["createWorktree"] = async (
