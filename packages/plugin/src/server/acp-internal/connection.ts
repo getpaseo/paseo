@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
+  AGENT_METHODS,
   ClientSideConnection,
   CLIENT_METHODS,
   PROTOCOL_VERSION,
@@ -25,6 +26,7 @@ import type {
   AcpConfigChange,
   AcpConfigureContext,
   AcpRequest,
+  AcpStreamMessage,
   AcpToolCallSnapshot,
   AcpTransformer,
   AcpVendorUpdate,
@@ -534,7 +536,11 @@ class AcpRuntime {
     };
     this.connection = new ClientSideConnection(
       () => client,
-      routeVendorNotifications(stream, (method, params) => this.vendorNotification(method, params)),
+      routeAcpMessages(
+        stream,
+        (method, params) => this.vendorNotification(method, params),
+        this.outOfTurnActivity ? () => this.activePrompt?.settled : undefined,
+      ),
     );
     if (!child)
       void this.connection.closed.then(() => this.failRuntime("ACP transport closed unexpectedly"));
@@ -710,13 +716,14 @@ class AcpRuntime {
       turnId,
       state: "started",
     });
-    // The SDK dispatches notifications without awaiting them, so the prompt response can resolve
-    // while earlier session updates are still queued. Apply them before the turn ends.
+    // The SDK dispatches notifications without awaiting them. Apply updates already in
+    // the lane before settling. The stream holds post-response frames for live wakeups.
     const settled = this.call(
       this.connection.prompt({ sessionId: this.nativeSessionId, prompt }),
     ).then(
       async (response): Promise<void> => {
-        await this.drainNotifications();
+        if (this.outOfTurnActivity) await this.notificationLane;
+        else await this.drainNotifications();
         if (response.usage) {
           this.lastUsage = {
             ...this.lastUsage,
@@ -748,7 +755,8 @@ class AcpRuntime {
         return undefined;
       },
       async (error): Promise<void> => {
-        await this.drainNotifications();
+        if (this.outOfTurnActivity) await this.notificationLane;
+        else await this.drainNotifications();
         this.fallbackChunkIds.clear();
         const canceled = this.activePrompt?.cancelling === true;
         const preserveBackground = !canceled && this.outOfTurnActivity !== null;
@@ -1772,13 +1780,36 @@ class AcpRuntime {
   }
 }
 
-function routeVendorNotifications(
+function routeAcpMessages(
   stream: Stream,
-  receive: (method: string, params: unknown) => void,
+  receiveVendor: (method: string, params: unknown) => void,
+  promptSettlement?: () => Promise<void> | undefined,
 ): Stream {
   const clientMethods = new Set<string>(Object.values(CLIENT_METHODS));
+  let promptResponse: { id: string | number | null; settled: Promise<void> } | undefined;
   return {
-    writable: stream.writable,
+    writable: promptSettlement
+      ? new WritableStream<AcpStreamMessage>({
+          async write(message) {
+            if (
+              "id" in message &&
+              "method" in message &&
+              message.method === AGENT_METHODS.session_prompt
+            ) {
+              const settled = promptSettlement();
+              if (settled) promptResponse = { id: message.id, settled };
+            }
+            const writer = stream.writable.getWriter();
+            try {
+              await writer.write(message);
+            } finally {
+              writer.releaseLock();
+            }
+          },
+          close: () => stream.writable.close(),
+          abort: (reason) => stream.writable.abort(reason),
+        })
+      : stream.writable,
     readable: stream.readable.pipeThrough(
       new TransformStream({
         transform(message, controller) {
@@ -1786,11 +1817,24 @@ function routeVendorNotifications(
             // The SDK dispatches extensions asynchronously and can resolve a later response first.
             // Run synchronous vendor transforms in wire order, inside the configuration transaction.
             try {
-              receive(message.method, message.params);
+              receiveVendor(message.method, message.params);
             } catch (error) {
               console.error("Error handling ACP vendor notification", error);
             }
-          } else controller.enqueue(message);
+            return;
+          }
+          controller.enqueue(message);
+          if (
+            promptResponse &&
+            "id" in message &&
+            !("method" in message) &&
+            message.id === promptResponse.id
+          ) {
+            // The SDK can read the response now. Hold later frames until its turn settles.
+            const { settled } = promptResponse;
+            promptResponse = undefined;
+            return settled;
+          }
         },
       }),
     ),

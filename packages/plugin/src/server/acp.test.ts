@@ -2562,6 +2562,85 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
 });
 
 describe("ACP out-of-turn background activity", () => {
+  it("starts a separate wakeup for updates immediately after the prompt response", async () => {
+    const { connector } = connectorHarness({
+      handleRequest(agent, request) {
+        if (request.method !== "session/prompt") return false;
+        const sessionId = "connector-session";
+        agent.notify("session/update", { sessionId, update: textChunk("FOREGROUND. ") });
+        agent.notify("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "cmd",
+            kind: "execute",
+            title: "Run a command",
+            status: "in_progress",
+          },
+        });
+        agent.respond(request, { stopReason: "end_turn" });
+        agent.notify("session/update", {
+          sessionId,
+          update: { sessionUpdate: "tool_call_update", toolCallId: "cmd", status: "completed" },
+        });
+        agent.notify("session/update", { sessionId, update: textChunk("WAKEUP.") });
+        return true;
+      },
+    });
+    const registration = runAcpProvider({
+      id: "wakeup-after-response",
+      label: "Wakeup after response",
+      connector,
+      acpOptions: { outOfTurnActivity: true },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "start",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.turn" && event.state === "completed",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "assistant_message" &&
+          event.item.text.includes("WAKEUP."),
+      );
+      expect(
+        events.flatMap((event) => {
+          if (event.type === "session.turn") return [`${event.turnId} ${event.state}`];
+          if (event.type === "timeline.item" && event.item.type === "assistant_message")
+            return [event.item.text];
+          return [];
+        }),
+      ).toEqual([
+        "acp:start started",
+        "FOREGROUND. ",
+        "acp:start completed",
+        "acp:autonomous:1 started",
+        "WAKEUP.",
+      ]);
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("keeps a prompt sent during idle Stop separate from the stopped reply", async () => {
     const stopStarted = Promise.withResolvers<void>();
     const finishStop = Promise.withResolvers<void>();
