@@ -1575,8 +1575,10 @@ export class ReplicaCache {
       projectedTotal -= bytes;
       projectedBytes.delete(serverId);
       evicted.add(serverId);
-      this.invalidatedHosts.add(serverId);
       if (this.storedRows.has(serverId)) await this.rowStore.deleteHost(serverId);
+      // Only after the delete commits: a failed eviction leaves the rows stored, and writers that
+      // check this set must keep their checkpoint in step with those rows.
+      this.invalidatedHosts.add(serverId);
       this.removeStoredHost(serverId);
     }
 

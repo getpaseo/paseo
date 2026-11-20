@@ -1169,6 +1169,33 @@ describe("ReplicaCache", () => {
     expect(restored.checkpoint).toBeUndefined();
   });
 
+  it("repairs a malformed row's cursor when the overlapping eviction fails", async () => {
+    const { storage } = await cacheWithoutBackgroundVisibility();
+    const reader = createCache(storage, 8_192);
+    storage.onRead = () => {
+      if (!storage.reads.at(-1)?.kinds.includes("checkpoint")) return;
+      storage.onRead = null;
+      storage.beforeDeleteHost = async () => {
+        storage.beforeDeleteHost = null;
+        throw new Error("Eviction aborted");
+      };
+      reader.commitTimeline(SERVER_ID, "agent-1", timeline("x".repeat(16_384)));
+      void reader.flush();
+    };
+
+    expect(await reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+    // A newer timeline fits the budget, so no later eviction clears the checkpoint.
+    reader.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await reader.flush();
+
+    const restored = await createCache(storage).readDirectory(SERVER_ID);
+    expect(restored.workspaces.size).toBe(0);
+    expect(restored.checkpoint).toEqual({
+      agents: { generation: "g", afterSeq: 12 },
+      projects: { generation: "g", afterSeq: 4 },
+    });
+  });
+
   it("keeps an update queued behind the baseline that rebuilds an evicted host", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: 2_500 });
