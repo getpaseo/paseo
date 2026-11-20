@@ -11,7 +11,11 @@ import {
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
-import { readSelectOption, type ComposerOptionControls } from "@/agent-controls/option-controls";
+import {
+  mergeOptionValue,
+  readSelectOption,
+  type ComposerOptionControls,
+} from "@/agent-controls/option-controls";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
@@ -1162,6 +1166,19 @@ export const AgentControls = memo(function AgentControls({
       if (!client || !agentProvider) {
         return;
       }
+      // Optimistic paint first: the rendered value reads agent.options, and the
+      // daemon's delta for this apply is not guaranteed to reach this composer's
+      // subscription before the next paint. Without this, a provider toggle (Agent
+      // Teams) stays dark while the applied state is on. A daemon delta or the
+      // failure toast below corrects the record.
+      useSessionStore.getState().setAgents(serverId, (current) => {
+        const record = current.get(agentId);
+        if (!record) return current;
+        const next = { ...record, options: mergeOptionValue(record.options, key, value) };
+        const nextMap = new Map(current);
+        nextMap.set(agentId, next);
+        return nextMap;
+      });
       void updatePreferences((current) =>
         mergeProviderPreferences({
           preferences: current,
@@ -1180,7 +1197,7 @@ export const AgentControls = memo(function AgentControls({
         toast.error(toErrorMessage(error));
       });
     },
-    [agentId, agentProvider, client, toast, updatePreferences],
+    [agentId, agentProvider, client, serverId, toast, updatePreferences],
   );
 
   const agentOptionControls = useAgentOptionControls(agent, handleSetOption);
