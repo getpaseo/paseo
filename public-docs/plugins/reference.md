@@ -1433,6 +1433,56 @@ surfaces or text it accompanies.
 `sidebar` and the five overrides require Paseo 0.16.0 or later. Older apps reject a theme with an unknown color, and the
 plugin's other contributions fail to load with it, so raise `requirements.paseo` when you use any of them.
 
+### Design tokens
+
+Next to `colors`, a theme can set Paseo's design tokens. Every group is optional and partial: a key
+you leave out keeps Paseo's value, so a theme that sets only colors renders exactly like before.
+
+```ts
+client.addTheme({
+  id: "compact",
+  name: "Compact",
+  appearance: "dark",
+  colors: {
+    /* ... */
+  },
+  radius: { sm: 2, base: 3, md: 4, lg: 6, xl: 8, "2xl": 10 },
+  spacing: { 2: 6, 3: 10 },
+  fontSize: { base: 13, lg: 15 },
+  fontWeight: { medium: "500", semibold: "600" },
+  borderWidth: { 1: 1 },
+  opacity: { 50: 0.4 },
+  iconStrokeWidth: 1.25,
+});
+```
+
+| Token             | Keys and default (px unless noted)                                                                                             | Allowed values                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `radius`          | `sm` 2, `base` 4, `md` 6, `lg` 8, `xl` 12, `2xl` 16                                                                            | 0 to 64                                              |
+| `spacing`         | `0.5` 2, `1` 4, `1.5` 6, `2` 8, `3` 12, `3.5` 14, `4` 16, `6` 24, `7` 28, `8` 32, `12` 48, `16` 64, `20` 80, `24` 96, `32` 128 | 0 to 256                                             |
+| `fontSize`        | `sm` 12, `base` 14, `lg` 16, `xl` 18, `2xl` 20, `3xl` 22, `4xl` 26                                                             | 8 to 64                                              |
+| `fontWeight`      | `normal` `"normal"`, `medium` `"500"`, `semibold` `"600"`, `bold` `"bold"`                                                     | `"normal"`, `"bold"`, `"100"` to `"900"` in hundreds |
+| `borderWidth`     | `1` 1, `2` 2                                                                                                                   | 0 to 8                                               |
+| `opacity`         | `50` 0.5, the opacity of disabled controls                                                                                     | 0 to 1                                               |
+| `iconStrokeWidth` | 1.5, the default stroke of Paseo's line icons                                                                                  | 0.5 to 4                                             |
+
+A value outside its range, or a key not in the table, fails to load the theme. The zero and pill
+keys are fixed, so round avatars, pills, and dots stay round: `radius.none` and `radius.full`,
+`spacing[0]`, `borderWidth[0]`, and `opacity[0]` and `opacity[100]`.
+
+`fontSize` sets the interface ramp. The **Interface size** setting in Settings → Appearance still
+scales it: at the default setting the theme's sizes are used as given, and a larger setting scales
+every size by the same ratio it scales Paseo's own ramp. Chat content and code sizes stay the
+user's settings, and the font families stay the user's choice.
+
+`iconStrokeWidth` changes icons that use the default stroke. Icons Paseo draws with a deliberate
+heavier stroke, such as status marks, keep it.
+
+Tokens apply to Paseo's own UI. Plugin views still receive only the `theme.colors` DTO.
+
+Design tokens require Paseo 0.17.0 or later. Older apps reject a theme with an unknown key, so raise
+`requirements.paseo` when you use them.
+
 `appearance` is `"light"` or `"dark"`. Paseo uses it to select the matching surface, status,
 diff, syntax, terminal, and shadow derivation.
 

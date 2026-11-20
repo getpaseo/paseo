@@ -1191,6 +1191,48 @@ export default function contribute(client: PluginClientContext) {
 
 `sidebar` 和以上五个覆盖颜色需要 Paseo 0.16.0 或更高版本。较旧的应用会拒绝包含未知颜色的主题，该插件的其他贡献也会随之加载失败，因此使用其中任何一个时请提高 `requirements.paseo`。
 
+### 设计令牌
+
+除了 `colors`，主题还可以设置 Paseo 的设计令牌。每一组都是可选的，也可以只写部分键：省略的键保留 Paseo 的值，因此只设置颜色的主题与之前完全一致。
+
+```ts
+client.addTheme({
+  id: "compact",
+  name: "Compact",
+  appearance: "dark",
+  colors: {
+    /* ... */
+  },
+  radius: { sm: 2, base: 3, md: 4, lg: 6, xl: 8, "2xl": 10 },
+  spacing: { 2: 6, 3: 10 },
+  fontSize: { base: 13, lg: 15 },
+  fontWeight: { medium: "500", semibold: "600" },
+  borderWidth: { 1: 1 },
+  opacity: { 50: 0.4 },
+  iconStrokeWidth: 1.25,
+});
+```
+
+| 令牌              | 键与默认值（未注明时单位为 px）                                                                                                | 允许的值                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `radius`          | `sm` 2、`base` 4、`md` 6、`lg` 8、`xl` 12、`2xl` 16                                                                            | 0 到 64                                          |
+| `spacing`         | `0.5` 2、`1` 4、`1.5` 6、`2` 8、`3` 12、`3.5` 14、`4` 16、`6` 24、`7` 28、`8` 32、`12` 48、`16` 64、`20` 80、`24` 96、`32` 128 | 0 到 256                                         |
+| `fontSize`        | `sm` 12、`base` 14、`lg` 16、`xl` 18、`2xl` 20、`3xl` 22、`4xl` 26                                                             | 8 到 64                                          |
+| `fontWeight`      | `normal` `"normal"`、`medium` `"500"`、`semibold` `"600"`、`bold` `"bold"`                                                     | `"normal"`、`"bold"`、`"100"` 到 `"900"`（整百） |
+| `borderWidth`     | `1` 1、`2` 2                                                                                                                   | 0 到 8                                           |
+| `opacity`         | `50` 0.5，禁用控件的不透明度                                                                                                   | 0 到 1                                           |
+| `iconStrokeWidth` | 1.5，Paseo 线条图标的默认描边宽度                                                                                              | 0.5 到 4                                         |
+
+超出范围的值或表中没有的键会导致主题加载失败。零值和胶囊形的键是固定的，因此圆形头像、胶囊和圆点保持圆形：`radius.none` 和 `radius.full`、`spacing[0]`、`borderWidth[0]`，以及 `opacity[0]` 和 `opacity[100]`。
+
+`fontSize` 设置界面字号阶梯。**设置 → 外观** 中的 **界面字号** 仍会缩放它：在默认设置下按主题给定的字号使用；调大设置时，每个字号按与 Paseo 自身阶梯相同的比例缩放。聊天内容字号和代码字号仍由用户设置，字体也仍由用户选择。
+
+`iconStrokeWidth` 改变使用默认描边的图标。Paseo 有意使用较粗描边绘制的图标（例如状态标记）保持不变。
+
+令牌作用于 Paseo 自身的界面。插件视图仍只接收 `theme.colors` DTO。
+
+设计令牌需要 Paseo 0.17.0 或更高版本。较旧的应用会拒绝包含未知键的主题，因此使用它们时请提高 `requirements.paseo`。
+
 `appearance` 为 `"light"` 或 `"dark"`。Paseo 用它选择对应的表面、状态、diff、语法高亮、终端和阴影的推导方式。
 
 同一时间只有一个贡献的主题处于启用状态。选择一个主题会保存这项选择；如果之后插件被停用或移除，Paseo 会退回到默认主题，而不会让应用失去配色。

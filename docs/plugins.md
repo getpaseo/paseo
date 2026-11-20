@@ -975,6 +975,16 @@ contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
 provider rewrites the matching slot when the selection changes. See [unistyles.md](unistyles.md)
 for the runtime-patching rules the appearance settings share.
 
+Design tokens (radius, spacing, the UI font ramp, font weights, border widths, the disabled opacity,
+and the icon stroke width) merge over Paseo's constants in `buildPluginTheme`; the zero and pill keys
+stay out of the schemas so round elements stay round. `applyAppearance` rebuilds `fontSize` on every
+apply, so it takes the selected theme as built and uses that theme's ramp, not `FONT_SIZE`, as the
+base the user's interface size scales for the plugin slot. Reading the built theme rather than the
+live slot keeps repeated applies from compounding. The icon stroke reaches icons through the root
+`LucideProvider`, wrapped with `withUnistyles`; icons that pass `strokeWidth` keep their own. Tokens
+reach only code that reads them from the theme: static imports of `SPACING` or `FONT_SIZE` and
+literal radii do not follow a plugin theme.
+
 `addTheme` is a client registration and belongs in `index.client.tsx`. A client that predates it
 cannot evaluate that entry. Daemons advertise
 `features.pluginThemes` in `server_info`; the plugin theme catalog is the one place the app reads it, and
