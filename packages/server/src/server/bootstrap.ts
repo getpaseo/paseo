@@ -131,6 +131,7 @@ export async function fanOutReconciledWorkspaceUpdates(input: {
 
 import { VoiceAssistantWebSocketServer, isDaemonOriginAllowed } from "./websocket-server.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
+import { createOrderingRuntime } from "./ordering/runtime.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createChangeRequestRouter } from "../services/change-request-router.js";
 import { createForgeService } from "../services/forge-registry.js";
@@ -1084,6 +1085,13 @@ export async function createPaseoDaemon(
     logger,
   });
   await workspaceLabelService.initialize();
+  const orderingRuntime = await createOrderingRuntime({
+    paseoHome: config.paseoHome,
+    projects: projectRegistry,
+    workspaces: workspaceRegistry,
+    logger,
+  });
+  const orderingService = orderingRuntime.service;
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
@@ -1930,6 +1938,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              orderingService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
@@ -2022,6 +2031,7 @@ export async function createPaseoDaemon(
     unsubscribePluginSessionChanges();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
+    orderingRuntime.dispose();
     scriptHealthMonitor.stop();
     unsubscribeIdleRuntimeCleanup();
     await idleRuntimeCleanup.close();
