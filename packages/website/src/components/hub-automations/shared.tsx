@@ -86,7 +86,7 @@ export function MockupStageWindow({
       aria-label={ariaLabel}
       initial={reduceMotion ? "shown" : "hidden"}
       animate={reduceMotion || active ? "shown" : "hidden"}
-      className={`flex h-full flex-col overflow-hidden rounded-xl border shadow-[0_24px_64px_-24px_rgba(0,0,0,0.75)] ${className}`}
+      className={`flex h-full flex-col overflow-hidden rounded-xl border wrap-anywhere shadow-[0_24px_64px_-24px_rgba(0,0,0,0.75)] ${className}`}
     >
       {children}
     </motion.div>
