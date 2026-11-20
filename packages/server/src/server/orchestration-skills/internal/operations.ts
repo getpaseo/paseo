@@ -259,11 +259,21 @@ export async function uninstallSkills(
   selection: SkillSelection,
 ): Promise<SkillsStatus> {
   const available = await listBundledSkills(targets.sourceDir);
+  let hasError = false;
+  let firstError: unknown = null;
   for (const name of managedSkillNames(available)) {
-    await removeSkill(name, {
-      installDirs: targets.installDirs,
-      codexDir: targets.codexDir,
-    });
+    try {
+      await removeSkill(name, {
+        installDirs: targets.installDirs,
+        codexDir: targets.codexDir,
+      });
+    } catch (error) {
+      if (!hasError) {
+        hasError = true;
+        firstError = error;
+      }
+    }
   }
+  if (hasError) throw firstError;
   return getSkillsStatus(targets, selection);
 }

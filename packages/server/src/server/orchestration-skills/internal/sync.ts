@@ -178,13 +178,21 @@ export async function removeSkill(skillName: string, targets: RemoveSkillTargets
   const paths = [...targets.installDirs, targets.codexDir].map((root) =>
     path.join(root, skillName),
   );
+  let hasError = false;
+  let firstError: unknown = null;
   for (const p of paths) {
-    await fs.rm(p, { recursive: true, force: true }).catch((error: NodeJS.ErrnoException) => {
+    try {
+      await fs.rm(p, { recursive: true, force: true });
+    } catch (error) {
       // If an ancestor is a regular file, no skill directory can exist below it.
-      if (error.code === "ENOTDIR") return;
-      throw error;
-    });
+      if ((error as NodeJS.ErrnoException).code === "ENOTDIR") continue;
+      if (!hasError) {
+        hasError = true;
+        firstError = error;
+      }
+    }
   }
+  if (hasError) throw firstError;
 }
 
 async function isSameDirectory(a: string, b: string): Promise<boolean> {

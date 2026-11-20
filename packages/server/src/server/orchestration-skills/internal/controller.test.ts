@@ -1323,6 +1323,16 @@ describe("skills controller", () => {
       } finally {
         await chmod(geminiHome, 0o755);
       }
+
+      // With ~/.gemini unreadable (0000), uninstall still removes every skill from healthy targets.
+      await chmod(geminiHome, 0o000);
+      try {
+        await expect(harness.controller.uninstall()).rejects.toThrow();
+        expect(await installedSkills(harness.targets.agentsDir)).toEqual([]);
+        expect(await installedSkills(harness.targets.claudeDir)).toEqual([]);
+      } finally {
+        await chmod(geminiHome, 0o755);
+      }
     },
   );
 
