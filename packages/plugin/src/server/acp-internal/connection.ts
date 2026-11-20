@@ -774,7 +774,7 @@ class AcpRuntime {
       if (active) this.finishTurnPermissions(active.turnId);
       if (autonomous && this.autonomousTurn?.turnId === autonomous.turnId) {
         this.finishAutonomousTurn("canceled");
-      } else if (!active && this.backgroundToolCalls.size > 0) {
+      } else if (this.outOfTurnActivity) {
         this.terminalizeTransientItems("canceled");
         this.clearBackgroundWork();
       }
@@ -1251,10 +1251,14 @@ class AcpRuntime {
   private reduceLiveToolUpdate(
     update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
   ): void {
+    const previous = this.toolCalls.get(update.toolCallId);
     // A stopped tool can still report output and terminal echoes after the next prompt.
-    if (this.toolCalls.get(update.toolCallId)?.canceled) return;
+    if (previous?.canceled) return;
     if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
-    const outOfTurn = this.isOutOfTurnLive();
+    const previousStatus = previous?.snapshot.status;
+    // An already finished tool can receive output without waking the agent.
+    const outOfTurn =
+      this.isOutOfTurnLive() && previousStatus !== "completed" && previousStatus !== "failed";
     if (outOfTurn) this.ensureAutonomousTurn();
     this.reduceToolCall(update);
     if (outOfTurn) this.onAutonomousNonReplyActivity();

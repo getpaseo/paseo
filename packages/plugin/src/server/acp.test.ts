@@ -2457,19 +2457,26 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
 });
 
 describe("ACP out-of-turn background activity", () => {
-  it.each(["interrupt", "disconnect"] as const)(
-    "settles a background command on %s while the agent is idle",
+  it.each(["idle interrupt", "foreground interrupt", "disconnect"] as const)(
+    "settles the command on %s",
     async (action) => {
+      const toolCall = {
+        sessionUpdate: "tool_call",
+        toolCallId: "cmd",
+        kind: "execute",
+        title: "sleep 60",
+        status: "in_progress",
+      };
+      let foregroundPrompt: AcpRequestMessage | undefined;
       const { connector, instances } = connectorHarness({
-        promptUpdates: () => [
-          {
-            sessionUpdate: "tool_call",
-            toolCallId: "cmd",
-            kind: "execute",
-            title: "sleep 60",
-            status: "in_progress",
-          },
-        ],
+        promptUpdates: () => [toolCall],
+        handleRequest(instance, request) {
+          if (action !== "foreground interrupt" || request.method !== "session/prompt")
+            return false;
+          foregroundPrompt = request;
+          instance.notify("session/update", { sessionId: "connector-session", update: toolCall });
+          return true;
+        },
         async afterMessage(instance, message) {
           if (!("method" in message) || message.method !== "session/cancel") return;
           instance.notify("session/update", {
@@ -2503,14 +2510,22 @@ describe("ACP out-of-turn background activity", () => {
             input: { type: "message", content: [{ type: "text", text: "Start" }] },
           },
         });
-        await waitForEvent(
-          events,
-          (event) =>
-            event.type === "session.turn" &&
-            event.turnId === "acp:command" &&
-            event.state === "completed",
-        );
-        if (action === "interrupt") {
+        const agent = instances[1];
+        if (action === "foreground interrupt") {
+          await waitForEvent(
+            events,
+            (event) => event.type === "timeline.item" && event.item.id === "cmd",
+          );
+        } else {
+          await waitForEvent(
+            events,
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId === "acp:command" &&
+              event.state === "completed",
+          );
+        }
+        if (action !== "disconnect") {
           await connection.send({
             type: "session.interrupt",
             requestId: "interrupt",
@@ -2520,20 +2535,39 @@ describe("ACP out-of-turn background activity", () => {
             events,
             (event) => event.type === "request.completed" && event.requestId === "interrupt",
           );
+          if (foregroundPrompt) {
+            agent.respond(foregroundPrompt, { stopReason: "cancelled" });
+            await waitForEvent(
+              events,
+              (event) =>
+                event.type === "session.turn" &&
+                event.turnId === "acp:command" &&
+                event.state === "canceled",
+            );
+            agent.notify("session/update", {
+              sessionId: "connector-session",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "cmd",
+                rawOutput: "late output",
+              },
+            });
+            await nextTurn();
+          }
           expect(await queryCanStop(connection, events, "after-stop")).toBe(true);
         } else {
-          instances[1].closeFromAgent();
+          agent.closeFromAgent();
           await waitForEvent(events, (event) => event.type === "session.runtime_failed");
         }
         expect(
           events.findLast((event) => event.type === "timeline.item" && event.item.id === "cmd"),
         ).toMatchObject({
           turnId: "acp:command",
-          item: { status: action === "interrupt" ? "canceled" : "failed" },
+          item: { status: action === "disconnect" ? "failed" : "canceled" },
         });
-        expect(events.findLast((event) => event.type === "session.background_work")).toMatchObject({
-          items: action === "interrupt" ? [] : null,
-        });
+        const background = events.findLast((event) => event.type === "session.background_work");
+        if (action === "foreground interrupt") expect(background).toBeUndefined();
+        else expect(background).toMatchObject({ items: action === "idle interrupt" ? [] : null });
         expect(
           events.filter((event) => event.type === "session.turn").map((event) => event.turnId),
         ).toEqual(["acp:command", "acp:command"]);
@@ -2745,6 +2779,16 @@ describe("ACP out-of-turn background activity", () => {
         items: [],
       });
       expect(await queryCanStop(connection, events, "stop-after-all")).toBe(true);
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cmd-2",
+          rawOutput: "late output",
+        },
+      });
+      await nextTurn();
+      expect(await queryCanStop(connection, events, "stop-after-late-output")).toBe(true);
     } finally {
       await connection.close();
     }
