@@ -2841,7 +2841,7 @@ describe("ACP out-of-turn background activity", () => {
               },
               { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
             ]
-          : [],
+          : [textChunk("Follow-up accepted")],
     });
     const registration = runAcpProvider({
       id: "out-of-turn-cancel",
@@ -2919,6 +2919,12 @@ describe("ACP out-of-turn background activity", () => {
         items: [],
       });
       expect(await queryCanStop(connection, events, "stop-after-cancel")).toBe(true);
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: textChunk("Reply chunk after Stop"),
+      });
+      await nextTurn();
+      expect(await queryCanStop(connection, events, "stop-after-late-reply")).toBe(true);
 
       await connection.send({
         type: "session.prompt",
@@ -2935,6 +2941,12 @@ describe("ACP out-of-turn background activity", () => {
           event.type === "session.turn" &&
           event.turnId === "acp:msg-2" &&
           event.state === "completed",
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline.item",
+          item: expect.objectContaining({ type: "assistant_message", text: "Follow-up accepted" }),
+        }),
       );
 
       // The canceled tool's terminal echo can arrive after the next prompt finishes.
@@ -3089,6 +3101,13 @@ describe("ACP out-of-turn background activity", () => {
           title: "sleep 10",
           status: "in_progress",
         },
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-2",
+          kind: "execute",
+          title: "Long command",
+          status: "pending",
+        },
         { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
       ],
     });
@@ -3160,10 +3179,8 @@ describe("ACP out-of-turn background activity", () => {
       agent.notify("session/update", {
         sessionId: "connector-session",
         update: {
-          sessionUpdate: "tool_call",
+          sessionUpdate: "tool_call_update",
           toolCallId: "cmd-2",
-          kind: "execute",
-          title: "Long command",
           status: "in_progress",
         },
       });
