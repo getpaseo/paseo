@@ -13,7 +13,7 @@ import {
 import { getDesktopHost, type BrowserProfileEntry, type BrowserProfileGroup } from "@/desktop/host";
 import { useSessionStore } from "@/stores/session-store";
 import { selectProject } from "@/stores/session-store-hooks/selectors";
-import { sameProfile, sameProfileGroup, sharedDefault } from "../profiles";
+import { automaticProfileLabel, sameProfile, sameProfileGroup, sharedDefault } from "../profiles";
 
 function useProjectName(group: BrowserProfileGroup) {
   return useSessionStore((state) => {
@@ -69,7 +69,14 @@ export function ProfileSelector({
     { group: null, name: sharedName },
     { group: automatic.group, name: projectName },
   ];
-  const label = (selected.group ? selectedProject : sharedName) + " › " + selected.name;
+  const automaticLabel = automaticProfileLabel(
+    automatic,
+    catalog,
+    t("workspace.tabs.fallback.workspace"),
+  );
+  const displayName = (entry: BrowserProfileEntry) =>
+    sameProfile(entry, automatic) ? automaticLabel : entry.name;
+  const label = (selected.group ? selectedProject : sharedName) + " › " + displayName(selected);
   const accessible = t("workspace.browser.profiles.label", { profile: label });
   const [creating, setCreating] = useState<BrowserProfileGroup | undefined>(undefined);
   const openChanged = useCallback(
@@ -132,7 +139,7 @@ export function ProfileSelector({
                       key={entry.slug}
                       selected={sameProfile(entry, selected)}
                       value={entry}
-                      name={entry.name}
+                      name={displayName(entry)}
                       onPick={onSelect}
                     />
                   ))}

@@ -1,5 +1,10 @@
 import { expect, test } from "vitest";
-import { profilePartition, workspaceProfile, sharedDefault } from "./profiles";
+import {
+  automaticProfileLabel,
+  profilePartition,
+  workspaceProfile,
+  sharedDefault,
+} from "./profiles";
 
 test("uses stable, server-qualified scope keys and the existing shared default", async () => {
   const first = await workspaceProfile("server", "project", "one", "Main");
@@ -16,4 +21,17 @@ test("uses stable, server-qualified scope keys and the existing shared default",
     "persist:paseo-shared-work",
   );
   expect(await profilePartition(sharedDefault)).toBe("persist:paseo-browser");
+});
+
+test("distinguishes a previously saved or renamed workspace collision without changing either identity", async () => {
+  const automatic = await workspaceProfile("server", "project", "id", "Main");
+  const catalog = [
+    { ...automatic, slug: "main", name: "MAIN" },
+    { ...automatic, slug: "main-workspace", name: "Main (Workspace)" },
+  ];
+  expect(automaticProfileLabel(automatic, catalog, "Workspace")).toBe("Main (Workspace 2)");
+  expect(automaticProfileLabel(automatic, [{ ...catalog[0], group: null }], "Workspace")).toBe(
+    "Main",
+  );
+  expect(await profilePartition(automatic)).not.toBe(await profilePartition(catalog[0]));
 });

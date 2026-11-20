@@ -20,6 +20,25 @@ export function sameProfile(a: BrowserProfileEntry, b: BrowserProfileEntry): boo
   return a.slug === b.slug && sameProfileGroup(a.group, b.group);
 }
 
+// Catalogs created before automatic names were reserved, and later workspace renames,
+// can introduce an existing collision. Keep both sessions and distinguish the automatic row.
+export function automaticProfileLabel(
+  automatic: BrowserProfileEntry,
+  catalog: BrowserProfileEntry[],
+  qualifier: string,
+): string {
+  const names = new Set(
+    catalog
+      .filter((entry) => sameProfileGroup(entry.group, automatic.group))
+      .map((entry) => entry.name.trim().toLowerCase()),
+  );
+  let label = automatic.name;
+  for (let n = 1; names.has(label.trim().toLowerCase()); n++) {
+    label = `${automatic.name} (${qualifier}${n === 1 ? "" : " " + n})`;
+  }
+  return label;
+}
+
 export async function workspaceProfile(
   serverId: string,
   projectId: string,
