@@ -2,6 +2,10 @@ import { ExternalLink } from "lucide-react";
 import type * as React from "react";
 import { SiteHeader } from "~/components/site-header";
 
+/** Shared outer container width. Uses a transparent md:border-x when unframed to avoid a 1px shift. */
+export const PAGE_CONTAINER_CLASS =
+  "mx-auto w-full max-w-[1160px] md:border-x md:border-transparent";
+
 /** Shared outer rail width and vertical hairlines across marketing pages. */
 export const PAGE_RAIL_CLASS = "mx-auto w-full max-w-[1160px] md:border-x md:border-white/[0.07]";
 
@@ -9,10 +13,12 @@ export const PAGE_RAIL_CLASS = "mx-auto w-full max-w-[1160px] md:border-x md:bor
 export const PAGE_INSET_CLASS = "px-5 sm:px-8 md:px-14";
 
 /** Full-width header band locking logo and navigation to the same (x, y) across pages. */
-export function PageHeaderBand() {
+export function PageHeaderBand({ framed = false }: { framed?: boolean }) {
   return (
-    <div className="border-b border-white/[0.07]">
-      <div className={`${PAGE_RAIL_CLASS} ${PAGE_INSET_CLASS} py-4 md:py-5`}>
+    <div className={framed ? "border-b border-white/[0.07]" : ""}>
+      <div
+        className={`${framed ? PAGE_RAIL_CLASS : PAGE_CONTAINER_CLASS} ${PAGE_INSET_CLASS} py-4 md:py-5`}
+      >
         <SiteHeader />
       </div>
     </div>
@@ -36,6 +42,7 @@ export function ChapterBand({
   spacing = "chapter",
   ruled = true,
   ticks = true,
+  framed = true,
   tint = "none",
   className = "",
   id,
@@ -44,6 +51,7 @@ export function ChapterBand({
   spacing?: keyof typeof BAND_PADDING;
   ruled?: boolean;
   ticks?: boolean;
+  framed?: boolean;
   tint?: "none" | "subtle";
   className?: string;
   id?: string;
@@ -55,8 +63,10 @@ export function ChapterBand({
         tint === "subtle" ? "bg-white/[0.014]" : ""
       } ${className}`}
     >
-      <div className={`relative ${PAGE_RAIL_CLASS} ${PAGE_INSET_CLASS} ${BAND_PADDING[spacing]}`}>
-        {ruled && ticks ? <RailIntersectionTicks /> : null}
+      <div
+        className={`relative ${framed ? PAGE_RAIL_CLASS : PAGE_CONTAINER_CLASS} ${PAGE_INSET_CLASS} ${BAND_PADDING[spacing]}`}
+      >
+        {ruled && ticks && framed ? <RailIntersectionTicks /> : null}
         {children}
       </div>
     </div>

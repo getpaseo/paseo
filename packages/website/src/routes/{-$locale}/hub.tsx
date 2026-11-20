@@ -75,7 +75,7 @@ function Hub() {
     <div className="min-h-screen bg-background">
       <PageHeaderBand />
       <main>
-        <ChapterBand spacing="hero" ruled={false} ticks={false}>
+        <ChapterBand spacing="hero" ruled={false} ticks={false} framed={false}>
           <HubHero />
         </ChapterBand>
 
