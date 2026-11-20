@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as privateFiles from "../private-files.js";
 import { HOST_INSTRUCTION_TTL_MS, HostInstructionInbox, type HostInstruction } from "./inbox.js";
 
 describe("host instruction inbox", () => {
@@ -68,6 +69,47 @@ describe("host instruction inbox", () => {
     if (process.platform !== "win32") {
       expect(statSync(path.join(home, "host-instructions", "inbox.json")).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("does not acknowledge either concurrent delivery when its write fails", async () => {
+    const grant = await inbox.createGrant(grantConfig);
+    const write = Promise.withResolvers<void>();
+    const persist = vi
+      .spyOn(privateFiles, "writePrivateFileAtomic")
+      .mockReturnValueOnce(write.promise);
+    try {
+      const delivered = Promise.allSettled([
+        inbox.submit(grant, instruction),
+        inbox.submit(grant, instruction),
+      ]);
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+      write.reject(new Error("Could not persist instruction"));
+      expect((await delivered).map((result) => result.status)).toEqual(["rejected", "rejected"]);
+      expect(await (await HostInstructionInbox.open(home, () => now)).list()).toEqual([]);
+    } finally {
+      persist.mockRestore();
+    }
+  });
+
+  it("accepts bounded clock skew and returns saved receipts after a target becomes unavailable", async () => {
+    const grant = await inbox.createGrant({ ...grantConfig, policy: "unattended" });
+    const skewed = { ...instruction, expiresAt: instruction.expiresAt + 60_000 };
+    await inbox.submit(grant, skewed, async () => true);
+    await inbox.claim(grant.sourceId, skewed.id, skewed.target);
+    await inbox.finish(grant.sourceId, skewed.id, "completed");
+    const unavailable = vi.fn(async () => false);
+    expect((await inbox.submit(grant, skewed, unavailable)).state).toBe("completed");
+    expect(unavailable).not.toHaveBeenCalled();
+    await expect(
+      inbox.submit(grant, { ...skewed, prompt: "Different" }, unavailable),
+    ).rejects.toThrow("already in use");
+    await expect(
+      inbox.submit(grant, {
+        ...skewed,
+        id: randomUUID(),
+        expiresAt: instruction.expiresAt + 360_000,
+      }),
+    ).rejects.toThrow("expiry is outside");
   });
 
   it("enforces source identity, conversation exceptions, and workspace scope", async () => {

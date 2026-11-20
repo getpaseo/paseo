@@ -62,6 +62,7 @@ const InboxFile = z.object({
 
 export const HOST_INSTRUCTION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PENDING_PER_GRANT = 100;
+const HOST_INSTRUCTION_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export type HostInstructionGrant = z.infer<typeof Grant>;
 export type HostInstruction = z.infer<typeof HostInstructionSchema>;
@@ -223,8 +224,12 @@ export class HostInstructionInbox {
     });
   }
 
-  async submit(principal: Principal, input: HostInstruction): Promise<InboxRequest> {
-    return this.receive(principal, input, false);
+  async submit(
+    principal: Principal,
+    input: HostInstruction,
+    validateTarget?: (target: HostInstruction["target"]) => Promise<boolean>,
+  ): Promise<InboxRequest> {
+    return this.receive(principal, input, false, validateTarget);
   }
 
   async cancelDelivery(principal: Principal, input: HostInstruction) {
@@ -236,11 +241,17 @@ export class HostInstructionInbox {
     principal: Principal,
     input: HostInstruction,
     cancel: boolean,
+    validateTarget?: (target: HostInstruction["target"]) => Promise<boolean>,
   ): Promise<InboxRequest> {
     await this.expire();
     await this.writer.settled();
-    const grant = this.requireGrant(principal);
+    this.requireGrant(principal);
     const instruction = HostInstructionSchema.parse(input);
+    const validTarget =
+      this.find(principal.sourceId, instruction.id) || !validateTarget
+        ? true
+        : await validateTarget(instruction.target);
+    const grant = this.requireGrant(principal);
     const fingerprint = createHash("sha256").update(JSON.stringify(instruction)).digest("hex");
     const existing = this.find(principal.sourceId, instruction.id);
     if (existing) {
@@ -248,15 +259,20 @@ export class HostInstructionInbox {
         throw new Error("Instruction ID is already in use");
       }
       if (cancel && unstarted(existing.state)) return this.update(existing, { state: "cancelled" });
+      await this.writer.settled();
       return structuredClone(existing);
     }
 
+    if (!validTarget) throw new Error("Instruction target is unavailable");
     const permission = targetPermission(grant, instruction.target);
     const policy = this.effectivePolicy(grant, instruction.target);
     if (policy === "blocked") throw new Error("Instruction target is outside the grant");
 
     const remaining = instruction.expiresAt - this.now();
-    if ((!cancel && remaining <= 0) || remaining > HOST_INSTRUCTION_TTL_MS) {
+    if (
+      (!cancel && remaining <= 0) ||
+      remaining > HOST_INSTRUCTION_TTL_MS + HOST_INSTRUCTION_CLOCK_SKEW_MS
+    ) {
       throw new Error("Instruction expiry is outside the allowed window");
     }
     if (
@@ -395,7 +411,7 @@ export class HostInstructionInbox {
   async finish(
     sourceId: string,
     instructionId: string,
-    state: "completed" | "failed" | "outcome_unknown",
+    state: "completed" | "failed" | "cancelled" | "outcome_unknown",
   ) {
     const request = this.requireRequest(sourceId, instructionId);
     if (request.state !== "dispatching" && request.state !== "running") {

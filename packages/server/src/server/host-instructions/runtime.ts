@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { createHostTransportFactory, parseHostTarget } from "@getpaseo/client/node";
 import type {
   HostInstructionsCommand,
@@ -107,21 +106,21 @@ export class HostInstructionsRuntime {
     const saved = await readInstructionFile(file, z.array(Registration).parse, []);
     const registrations = new Map(saved.map((entry) => [registrationKey(entry), entry]));
     const inbox = await HostInstructionInbox.open(options.paseoHome);
+    const writer = new InstructionFileWriter(file);
+    const deliver = async (key: string, request: Exclude<Request, { action: "list" }>) => {
+      const registration = registrations.get(key);
+      const receipt = await exchange(registration, request);
+      if (receipt?.state === "revoked" && registration) {
+        await retireRegistration(registrations, writer, registration);
+      }
+      return receipt;
+    };
     const outbox = await HostInstructionOutbox.open(options.paseoHome, {
-      submit: (key, instruction) =>
-        exchange(registrations.get(key), { action: "submit", instruction }),
-      cancel: (key, instruction) =>
-        exchange(registrations.get(key), { action: "cancel", instruction }),
-      status: (key, id, expiresAt) =>
-        exchange(registrations.get(key), { action: "status", id, expiresAt }),
+      submit: (key, instruction) => deliver(key, { action: "submit", instruction }),
+      cancel: (key, instruction) => deliver(key, { action: "cancel", instruction }),
+      status: (key, id, expiresAt) => deliver(key, { action: "status", id, expiresAt }),
     });
-    return new HostInstructionsRuntime(
-      options,
-      inbox,
-      registrations,
-      new InstructionFileWriter(file),
-      outbox,
-    );
+    return new HostInstructionsRuntime(options, inbox, registrations, writer, outbox);
   }
 
   async manage(command: HostInstructionsCommand): Promise<ManagementResult> {
@@ -227,28 +226,30 @@ export class HostInstructionsRuntime {
 
   async listDestinations() {
     const registrations = [...this.registrations.values()];
-    const hostPolicies = new Set(
+    const hostTargets = await Promise.all(
       registrations
-        .filter((registration) => !registration.agentId)
-        .map((registration) => registration.destinationId),
-    );
-    const entries = await Promise.all(
-      registrations
-        .filter((entry) => !entry.agentId || !hostPolicies.has(entry.destinationId))
-        .map(async (entry) => {
-          let targets: ConversationTarget[];
-          if (entry.agentId && entry.workspaceId) {
-            targets = [{ agentId: entry.agentId, workspaceId: entry.workspaceId }];
-          } else {
-            targets = await this.discover(entry);
-          }
-          return targets.map((target) =>
+        .filter((entry) => !entry.agentId)
+        .map(async (entry) =>
+          (await this.discover(entry)).map((target) =>
             Object.assign({ destinationId: entry.destinationId }, target),
-          );
-        }),
+          ),
+        ),
+    );
+    const hostPolicies = new Set(
+      [...this.registrations.values()]
+        .filter((entry) => !entry.agentId)
+        .map((entry) => entry.destinationId),
+    );
+    const legacyTargets = registrations.flatMap(({ destinationId, agentId, workspaceId }) =>
+      agentId && workspaceId && !hostPolicies.has(destinationId)
+        ? [{ destinationId, agentId, workspaceId }]
+        : [],
     );
     const unique = new Map(
-      entries.flat().map((entry) => [JSON.stringify([entry.destinationId, entry.agentId]), entry]),
+      [...legacyTargets, ...hostTargets.flat()].map((entry) => [
+        JSON.stringify([entry.destinationId, entry.agentId]),
+        entry,
+      ]),
     );
     return [...unique.values()];
   }
@@ -256,7 +257,12 @@ export class HostInstructionsRuntime {
   private async discover(entry: Registration) {
     const key = registrationKey(entry);
     const result = await exchangeFrame(entry, { action: "list" });
-    if (result) this.discoveredTargets.set(key, result.ok ? (result.targets ?? []) : []);
+    if (result && !result.ok && result.state === "revoked") {
+      this.discoveredTargets.delete(key);
+      await retireRegistration(this.registrations, this.registrationWriter, entry);
+    } else if (result) {
+      this.discoveredTargets.set(key, result.ok ? (result.targets ?? []) : []);
+    }
     return this.discoveredTargets.get(key) ?? [];
   }
 
@@ -265,9 +271,11 @@ export class HostInstructionsRuntime {
     const entries = [...this.registrations.values()].filter(
       (registration) => registration.destinationId === destinationId,
     );
-    const entry =
-      entries.findLast((registration) => !registration.agentId) ??
-      entries.findLast((registration) => registration.agentId === agentId);
+    const host = entries.findLast((registration) => !registration.agentId);
+    const existing = entries.findLast((registration) => registration.agentId === agentId);
+    // A conversation grant remains useful even after a host grant is revoked. The receiver
+    // applies the current workspace policy to this narrower credential as well.
+    const entry = existing ?? host;
     if (!entry) throw new Error("This conversation has no instruction grant");
     const targetWorkspace =
       entry.workspaceId ??
@@ -384,12 +392,11 @@ export class HostInstructionsRuntime {
           receipt: await this.inbox.cancelDelivery(principal, request.instruction),
         };
       }
-      const target = request.instruction.target;
-      if (target.kind !== "conversation") return { ok: false, state: "failed" };
-      // A sender may provide a workspace ID, but the destination owns conversation placement.
-      const current = await this.resolveConversation(target.agentId);
-      if (current?.workspaceId !== target.workspaceId) return { ok: false, state: "failed" };
-      await this.inbox.submit(principal, request.instruction);
+      await this.inbox.submit(principal, request.instruction, async (target) => {
+        if (target.kind !== "conversation") return false;
+        // A sender may supply a workspace ID, but the receiver owns conversation placement.
+        return (await this.resolveConversation(target.agentId))?.workspaceId === target.workspaceId;
+      });
       return { ok: true, receipt: await this.inbox.status(principal, request.instruction.id) };
     } catch {
       return { ok: false, state: "failed" };
@@ -428,6 +435,9 @@ export class HostInstructionsRuntime {
   private async tick() {
     if (this.stopped || this.busy) return;
     this.busy = true;
+    void Promise.allSettled(
+      this.outbox.pendingRegistrations().map((key) => this.outbox.flush(key)),
+    );
     try {
       const relayEnabled = this.options.relay().enabled;
       if (relayEnabled && (await this.inbox.listGrants()).length > 0) await this.getRelayOffer();
@@ -447,9 +457,6 @@ export class HostInstructionsRuntime {
           )
           .finally(() => this.active.delete(agentId));
       }
-      await Promise.allSettled(
-        this.outbox.pendingRegistrations().map((key) => this.outbox.flush(key)),
-      );
     } finally {
       this.busy = false;
     }
@@ -498,14 +505,10 @@ export class HostInstructionsRuntime {
         },
         logger,
       });
-      if (result.disposition === "turn_started") {
-        await waitForAgentRunStartWithTimeout(agentManager, target.agentId, result.started);
-      }
+      if (result.disposition !== "turn_started") throw new Error("Expected an instruction turn");
+      await waitForAgentRunStartWithTimeout(agentManager, target.agentId, result.started);
       await this.inbox.markRunning(sourceId, id, target.agentId);
-      while (!this.stopped && agentManager.hasInFlightRun(target.agentId)) await sleep(1000);
-      const lifecycle = agentManager.getAgent(target.agentId)?.lifecycle;
-      const outcome = lifecycle === "error" ? "failed" : "outcome_unknown";
-      await this.inbox.finish(sourceId, id, lifecycle === "idle" ? "completed" : outcome);
+      await this.inbox.finish(sourceId, id, await result.finished);
       logger.info(
         { requestId: id, sourceId, agentId: target.agentId },
         "host_instruction_dispatched",
@@ -521,6 +524,17 @@ export class HostInstructionsRuntime {
       }
     }
   }
+}
+
+async function retireRegistration(
+  registrations: Map<string, Registration>,
+  writer: InstructionFileWriter,
+  entry: Registration,
+) {
+  const key = registrationKey(entry);
+  if (registrations.get(key) !== entry) return;
+  registrations.delete(key);
+  await writer.persist([...registrations.values()]);
 }
 
 async function exchange(

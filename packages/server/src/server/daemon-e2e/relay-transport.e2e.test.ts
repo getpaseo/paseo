@@ -585,6 +585,61 @@ async function waitForCapturedLog(
           )
           .toBe("revoked");
         expect(sent).toHaveLength(1);
+
+        const narrow = await destinationClient.manageHostInstructions({
+          action: "grant",
+          sourceId,
+          agentId: agent.id,
+          policy: "ask",
+        });
+        const replacement = await destinationClient.manageHostInstructions({
+          action: "set_policy",
+          sourceId,
+          policy: "ask",
+          workspaceOverrides: [],
+        });
+        if (!narrow.registration || !replacement.registration)
+          throw new Error("Expected both grants");
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          agentId: agent.id,
+          workspaceId: workspace.id,
+          offer: narrow.registration.offer,
+          token: narrow.registration.token,
+        });
+        await sourceClient.manageHostInstructions({
+          action: "register",
+          destinationId: serverId,
+          offer: replacement.registration.offer,
+          token: replacement.registration.token,
+        });
+        await destinationClient.manageHostInstructions({
+          action: "revoke",
+          id: replacement.registration.id,
+          keepConversationGrants: true,
+        });
+        const fallback = await mcp.callTool({ name: "list_instruction_targets", arguments: {} });
+        expect(fallback.structuredContent?.targets).toEqual([
+          { destinationId: serverId, agentId: agent.id, workspaceId: workspace.id },
+        ]);
+        const preserved = await mcp.callTool({
+          name: "send_host_instruction",
+          arguments: {
+            serverId,
+            agentId: agent.id,
+            prompt: "Use the preserved conversation grant",
+          },
+        });
+        await expect
+          .poll(
+            async () =>
+              (await destinationClient.manageHostInstructions({ action: "list" })).requests,
+            { timeout: 15000 },
+          )
+          .toEqual([
+            expect.objectContaining({ id: preserved.structuredContent?.id, agentId: agent.id }),
+          ]);
       } finally {
         for (const close of cleanup.toReversed()) await close();
         await stopRelay();

@@ -111,7 +111,10 @@ export class HostInstructionOutbox {
     return [
       ...new Set(
         this.requests
-          .filter((request) => !terminal(request.receipt?.state))
+          .filter(
+            (request) =>
+              !terminal(request.receipt?.state) && !this.flushing.has(request.registrationId),
+          )
           .map((request) => request.registrationId),
       ),
     ];
@@ -136,25 +139,37 @@ export class HostInstructionOutbox {
       const current = this.requireRequest(id);
       if (terminal(current.receipt?.state)) continue;
 
-      let receipt: InstructionReceipt | null;
-      if (current.cancellationPending) {
-        receipt = await this.transport.cancel(registrationId, current.instruction);
-      } else if (current.receipt || this.now() >= current.instruction.expiresAt) {
-        receipt = await this.transport.status(registrationId, id, current.instruction.expiresAt);
-      } else {
-        if (!current.attempted) await this.update(id, { attempted: true });
-        receipt = await this.transport.submit(registrationId, current.instruction);
-      }
-
+      const receipt = await this.exchange(current);
       if (receipt) {
-        const confirmed = HostInstructionReceiptSchema.parse(receipt);
-        if (confirmed.id !== id) throw new Error("Response belongs to a different instruction");
+        const parsed = HostInstructionReceiptSchema.safeParse(receipt);
+        if (!parsed.success || parsed.data.id !== id) continue;
+        const confirmed = parsed.data;
         const cancellationPending =
           this.requireRequest(id).cancellationPending &&
           !terminal(confirmed.state) &&
           confirmed.state !== "running";
         await this.update(id, { receipt: confirmed, cancellationPending });
       }
+    }
+  }
+
+  private async exchange(request: OutgoingInstruction) {
+    const { registrationId, instruction } = request;
+    if (!request.attempted && !request.receipt && !request.cancellationPending) {
+      await this.update(instruction.id, { attempted: true });
+    }
+
+    try {
+      if (request.cancellationPending) {
+        return await this.transport.cancel(registrationId, instruction);
+      }
+      if (request.receipt || this.now() >= instruction.expiresAt) {
+        return await this.transport.status(registrationId, instruction.id, instruction.expiresAt);
+      }
+      return await this.transport.submit(registrationId, instruction);
+    } catch {
+      // A thrown exchange leaves admission uncertain. Retry this ID without holding up later requests.
+      return null;
     }
   }
 

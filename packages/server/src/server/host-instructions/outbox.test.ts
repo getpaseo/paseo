@@ -73,6 +73,18 @@ describe("host instruction outbox", () => {
     expect((await outbox.status(id)).state).toBe("queued");
   });
 
+  it("keeps delivering later requests after a rejected exchange", async () => {
+    online = true;
+    const rejected = await outbox.submit(registration, {
+      ...request,
+      target: { ...request.target, workspaceId: "outside-the-grant" },
+    });
+    const valid = await outbox.submit(registration, request);
+    await outbox.flush(registration);
+    expect((await outbox.status(rejected.id)).state).toBe("waiting_for_host");
+    expect((await outbox.status(valid.id)).state).toBe("awaiting_approval");
+  });
+
   it("persists offline cancellation and rejects a late submission at the destination", async () => {
     const { id } = await outbox.submit(registration, request);
     let lateSubmit: (() => Promise<unknown>) | undefined;
