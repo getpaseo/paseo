@@ -52,13 +52,17 @@ test("Hub fits a viewport narrower than its page frame", async ({ page }) => {
   expect(contentWidth).toBeLessThanOrEqual(viewportWidth);
 });
 
-test("the complete Pro seat explanation is visible on keyboard focus", async ({ page }) => {
-  test.skip(Boolean(process.env.WEBSITE_TEST_URL), "Requires the Hub plans fixture");
-  await openHub(page);
-  const tooltip = await focusProSeatHelp(page);
-  await expect(tooltip).toContainText("do not count as seats");
-  await expect(tooltip).toBeInViewport({ ratio: 1 });
-});
+for (const width of [320, 768, 1024]) {
+  test(`the complete Pro seat explanation is visible on keyboard focus at ${width}px`, async ({
+    page,
+  }) => {
+    test.skip(Boolean(process.env.WEBSITE_TEST_URL), "Requires the Hub plans fixture");
+    await openHub(page, width);
+    const tooltip = await focusProSeatHelp(page);
+    await expect(tooltip).toContainText("do not count as seats");
+    await expect(tooltip).toBeInViewport({ ratio: 1 });
+  });
+}
 
 test("the Slack starter forwards the mention and declares a thread reply", async ({ page }) => {
   await openHub(page);
