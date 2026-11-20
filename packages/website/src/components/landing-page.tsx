@@ -914,7 +914,7 @@ function HubSection() {
     >
       <div className="mb-10 space-y-3 md:mb-12">
         <h2 id="hub-section-heading">
-          <PaseoHubLockup className="h-9 w-auto text-foreground md:h-11" />
+          <PaseoHubLockup size="display" className="h-9 w-auto text-foreground md:h-11" />
           <span className="sr-only">{t("hub.title")}</span>
         </h2>
         <p className="max-w-xl text-base text-pretty text-muted-foreground">
