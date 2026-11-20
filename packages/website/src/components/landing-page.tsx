@@ -213,7 +213,7 @@ function Hero({
   return (
     <div className="space-y-6 text-center">
       {showHubEyebrow ? <HubHeroEyebrow /> : null}
-      <h1 className="text-4xl font-medium tracking-[-0.03em] leading-[0.98] md:text-6xl">
+      <h1 className="font-display text-4xl font-semibold tracking-[-0.025em] leading-[1.02] md:text-6xl">
         {title}
       </h1>
       <p className="mx-auto max-w-lg text-base leading-relaxed text-white/70 md:text-lg">
