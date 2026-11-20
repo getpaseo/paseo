@@ -8,15 +8,8 @@ import {
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
 import { useSessionStore } from "@/stores/session-store";
-import {
-  createUserMessage,
-  type StreamItem,
-  type UserMessageImageAttachment,
-} from "@/types/stream";
+import { createUserMessage, type UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
-import type { PendingMessageSubmission } from "@/composer/submission/model";
-
-const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
 interface CreateAttempt {
   clientMessageId: string;
@@ -152,38 +145,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   const markPendingCreateLifecycle = useCreateFlowStore((state) => state.markLifecycle);
   const formErrorMessage = machine.tag === "draft" ? machine.errorMessage : "";
   const isSubmitting = machine.tag === "creating";
-
-  const submittedStreamItems = useMemo<StreamItem[]>(() => {
-    if (machine.tag !== "creating") {
-      return EMPTY_STREAM_ITEMS;
-    }
-
-    if (
-      !machine.attempt.text &&
-      (!machine.attempt.images || machine.attempt.images.length === 0) &&
-      (!machine.attempt.attachments || machine.attempt.attachments.length === 0)
-    ) {
-      return EMPTY_STREAM_ITEMS;
-    }
-
-    return [
-      createUserMessage({
-        clientMessageId: machine.attempt.clientMessageId,
-        text: machine.attempt.text,
-        timestamp: machine.attempt.timestamp,
-        images: machine.attempt.images,
-        attachments: machine.attempt.attachments,
-      }),
-    ];
-  }, [machine]);
-  const pendingMessageSubmissions = useMemo<readonly PendingMessageSubmission[]>(() => {
-    if (machine.tag !== "creating") return [];
-    return [
-      {
-        clientMessageId: machine.attempt.clientMessageId,
-      },
-    ];
-  }, [machine]);
 
   const draftAgent = machine.tag === "creating" ? machine.draftAgent : null;
   const startCreateAttempt = useCallback(
@@ -365,8 +326,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     machine,
     formErrorMessage,
     isSubmitting,
-    submittedStreamItems,
-    pendingMessageSubmissions,
     draftAgent,
     handleCreateFromInput,
     continueCreateFromAttempt,

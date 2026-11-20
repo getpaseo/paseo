@@ -3,8 +3,76 @@ import {
   buildForgeBlobUrl,
   buildForgeBranchTreeUrl,
   buildForgeChecksUrl,
+  buildForgeReferenceUrl,
   hasForgeWebUrls,
 } from "./forge-url";
+
+describe("buildForgeReferenceUrl", () => {
+  it.each([
+    ["github", "git@github.com:acme/repo.git", "#", null, "https://github.com/acme/repo/issues/12"],
+    ["github", "git@github.com:acme/repo.git", "!", null, null],
+    [
+      "github",
+      "https://github.com/acme/repo",
+      "#",
+      "other/tools",
+      "https://github.com/other/tools/issues/12",
+    ],
+    ["gitlab", "git@gitlab.com:g/sub/p.git", "#", null, "https://gitlab.com/g/sub/p/-/issues/12"],
+    [
+      "gitlab",
+      "git@gitlab.com:g/sub/p.git",
+      "!",
+      null,
+      "https://gitlab.com/g/sub/p/-/merge_requests/12",
+    ],
+    [
+      "gitlab",
+      "https://gitlab.corp:8443/g/p.git",
+      "!",
+      "g/q",
+      "https://gitlab.corp:8443/g/q/-/merge_requests/12",
+    ],
+    [
+      "codeberg",
+      "https://codeberg.org/acme/repo.git",
+      "!",
+      null,
+      "https://codeberg.org/acme/repo/pulls/12",
+    ],
+    [
+      "gitea",
+      "http://forge.test:3000/team/repo.git",
+      "#",
+      null,
+      "http://forge.test:3000/team/repo/issues/12",
+    ],
+    [
+      "github",
+      "http://github.com/acme/repo.git",
+      "#",
+      null,
+      "https://github.com/acme/repo/issues/12",
+    ],
+    [
+      "forgejo",
+      "git@forge.example:acme/repo.git",
+      "#",
+      null,
+      "https://forge.example/acme/repo/issues/12",
+    ],
+    ["bitbucket", "git@bitbucket.org:acme/repo.git", "#", null, null],
+    ["github", null, "#", null, null],
+    ["github", "git@github.com:acme/repo.git", "#", "../escape", null],
+  ] as const)("builds %s %s %s in %s", (forge, remoteUrl, sigil, repo, expected) => {
+    expect(buildForgeReferenceUrl(forge, { remoteUrl, repo, sigil, number: 12 })).toBe(expected);
+  });
+
+  it("rejects non-positive numbers", () => {
+    const remoteUrl = "git@github.com:acme/repo.git";
+    expect(buildForgeReferenceUrl("github", { remoteUrl, sigil: "#", number: 0 })).toBeNull();
+  });
+});
 
 describe("buildForgeChecksUrl", () => {
   it.each([
@@ -256,5 +324,83 @@ describe("hasForgeWebUrls", () => {
 
   it("is false for an unknown forge", () => {
     expect(hasForgeWebUrls("bitbucket")).toBe(false);
+  });
+});
+
+describe("links resolved by the daemon (forgeWeb)", () => {
+  const sshAliasRemote = "git@github.com-work:acme/repo.git";
+
+  it("links #N on the web host the daemon resolved for an SSH config alias", () => {
+    expect(
+      buildForgeReferenceUrl("github", {
+        remoteUrl: sshAliasRemote,
+        forgeWeb: { host: "github.com" },
+        sigil: "#",
+        number: 1,
+      }),
+    ).toBe("https://github.com/acme/repo/issues/1");
+  });
+
+  it("opens the branch and a file on the resolved web host for an SSH config alias", () => {
+    const forgeWeb = { host: "github.com" };
+    expect(
+      buildForgeBranchTreeUrl("github", { remoteUrl: sshAliasRemote, forgeWeb, branch: "main" }),
+    ).toBe("https://github.com/acme/repo/tree/main");
+    expect(
+      buildForgeBlobUrl("github", {
+        remoteUrl: sshAliasRemote,
+        forgeWeb,
+        branch: "main",
+        path: "src/index.ts",
+      }),
+    ).toBe("https://github.com/acme/repo/blob/main/src/index.ts");
+  });
+
+  it("links #N to the repository that owns the numbers, such as a fork's parent", () => {
+    expect(
+      buildForgeReferenceUrl("github", {
+        remoteUrl: "git@github.com:fork-owner/repo.git",
+        forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+        sigil: "#",
+        number: 123,
+      }),
+    ).toBe("https://github.com/main-owner/repo/issues/123");
+  });
+
+  it("keeps an explicit owner/repo#N reference on the named repository", () => {
+    expect(
+      buildForgeReferenceUrl("github", {
+        remoteUrl: "git@github.com:fork-owner/repo.git",
+        forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+        repo: "other/tools",
+        sigil: "#",
+        number: 7,
+      }),
+    ).toBe("https://github.com/other/tools/issues/7");
+  });
+
+  it("keeps the branch and file links on the origin repository for a fork", () => {
+    const input = {
+      remoteUrl: "git@github.com:fork-owner/repo.git",
+      forgeWeb: { host: "github.com", referenceRepository: "main-owner/repo" },
+      branch: "feature/only-on-fork",
+    };
+    expect(buildForgeBranchTreeUrl("github", input)).toBe(
+      "https://github.com/fork-owner/repo/tree/feature/only-on-fork",
+    );
+    expect(buildForgeBlobUrl("github", { ...input, path: "a.ts" })).toBe(
+      "https://github.com/fork-owner/repo/blob/feature/only-on-fork/a.ts",
+    );
+  });
+
+  it("keeps the scheme and port of a self-hosted http remote", () => {
+    expect(
+      buildForgeReferenceUrl("gitea", {
+        remoteUrl: "http://forge.test:3000/team/repo.git",
+        forgeWeb: { host: "forge.test", referenceRepository: "upstream/repo" },
+        sigil: "#",
+        number: 12,
+      }),
+    ).toBe("http://forge.test:3000/upstream/repo/issues/12");
   });
 });

@@ -1,5 +1,6 @@
 import { pluginOverviewUrl } from "@getpaseo/protocol/plugin-overview";
-import type { Plugin } from "./registry";
+import { useLocale } from "~/i18n";
+import { type Plugin, pluginListing } from "./registry";
 
 const SIZE_CLASS = {
   xs: "h-6 w-6 rounded-md text-xs",
@@ -9,6 +10,7 @@ const SIZE_CLASS = {
 
 /** PNG icon with a letter tile when no icon is published. */
 export function PluginTile({ plugin, size }: { plugin: Plugin; size: keyof typeof SIZE_CLASS }) {
+  const locale = useLocale();
   return (
     <div
       aria-hidden
@@ -17,7 +19,7 @@ export function PluginTile({ plugin, size }: { plugin: Plugin; size: keyof typeo
       {pluginOverviewUrl(plugin.icon) ? (
         <img src={plugin.icon} alt="" className="h-full w-full rounded-[inherit] object-cover" />
       ) : (
-        plugin.name.charAt(0).toUpperCase()
+        pluginListing(plugin, locale).name.charAt(0).toUpperCase()
       )}
     </div>
   );

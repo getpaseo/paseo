@@ -204,19 +204,26 @@ test.describe("Projects settings", () => {
   }) => {
     const repo = await createTempGitRepo("projects-settings-empty-");
     const client = await connectSeedClient();
-    let projectId: string | null = null;
+    let projectViewKey: string | null = null;
 
     try {
       await gotoAppShell(page);
 
-      projectId = await addProjectFromSidebar(page, repo.path);
-      await openProjectSettingsFromSidebar(page, projectId);
+      projectViewKey = await addProjectFromSidebar(page, repo.path);
+      await openProjectSettingsFromSidebar(page, projectViewKey);
 
       await expectProjectSettingsFormVisible(page);
       await expect(page.getByTestId("project-settings-back-button")).not.toBeVisible();
     } finally {
-      if (projectId) {
-        await client.removeProject(projectId).catch(() => undefined);
+      if (projectViewKey) {
+        const project = (await client.listProjects()).projects.find(
+          (entry) => entry.projectKey === projectViewKey,
+        );
+        expect(project).toBeDefined();
+        await client.removeProject(project!.projectId);
+        expect(
+          (await client.listProjects()).projects.map((entry) => entry.projectKey),
+        ).not.toContain(projectViewKey);
       }
       await client.close().catch(() => undefined);
       await repo.cleanup().catch(() => undefined);

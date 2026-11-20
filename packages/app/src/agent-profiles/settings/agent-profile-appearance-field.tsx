@@ -8,7 +8,7 @@ import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
   createControlGeometry,
   resolveControlInteractionStyles,
-  type FieldControlSize,
+  type ControlSize,
 } from "@/components/ui/control-geometry";
 import { Field } from "@/components/ui/form-field";
 import { identityForeground } from "@/styles/identity-colors";
@@ -153,7 +153,7 @@ export function AgentProfileAppearanceField({
   icon: string;
   color: string;
   onChange: (next: { icon: string; color: string }) => void;
-  size?: FieldControlSize;
+  size?: ControlSize;
   disabled?: boolean;
   testID?: string;
   triggerTestID?: string;

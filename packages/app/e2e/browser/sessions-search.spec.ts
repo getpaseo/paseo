@@ -60,6 +60,15 @@ async function verifyChronologicalFiltering(page: Page): Promise<void> {
   });
 }
 
+async function verifyHistorySurvivesReload(page: Page): Promise<void> {
+  await test.step("reloads History without visiting a workspace to reconnect", async () => {
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+    await page.reload();
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+    await expect(page.getByTestId("sessions-host-errors")).toBeHidden();
+  });
+}
+
 async function verifyRecencyBeforeMatchStrength(page: Page): Promise<void> {
   await test.step("keeps newer partial matches before older stronger matches", async () => {
     await search(page, `${NONCE} bill`);
@@ -150,6 +159,8 @@ test.describe("History search", () => {
       await page.setViewportSize(viewport);
 
       await verifyChronologicalFiltering(page);
+
+      await verifyHistorySurvivesReload(page);
 
       await verifyRecencyBeforeMatchStrength(page);
 

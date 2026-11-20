@@ -7,18 +7,26 @@ canonical files and are trying to add or change one.
 
 ## Canonical files
 
-| File                                     | Use case                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `components/ui/combobox.tsx`             | Anchored picker with search; mobile falls back to bottom sheet    |
-| `components/ui/tooltip.tsx`              | Non-interactive hover/long-press tooltip                          |
-| `components/ui/hover-card.tsx`           | Desktop-web hover card the pointer can move onto; Portal          |
-| `components/ui/autocomplete-popover.tsx` | Slash-command autocomplete anchored to the focused composer input |
+| File                                  | Use case                                                          |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| `components/ui/combobox.tsx`          | Anchored picker with search; mobile falls back to bottom sheet    |
+| `components/ui/tooltip.tsx`           | Non-interactive hover/long-press tooltip                          |
+| `components/ui/hover-card.tsx`        | Desktop-web hover card the pointer can move onto; Portal          |
+| `components/ui/autocomplete-popover/` | Slash-command autocomplete anchored to the focused composer input |
 
 Each handles a different mix of concerns: combobox owns input focus, tooltip is
 non-interactive, hover-card is web-only desktop, autocomplete keeps the composer
 input focused while its scrollable list lives in a Portal. There is no shared
 "floating panel" primitive yet — when a fifth use case shows up we can revisit;
 until then prefer copying the closest file and trimming.
+
+## Picker trigger tooltips
+
+Keep the picker surface outside `TooltipTrigger`. React focus events bubble
+through portals, so putting the surface inside the trigger makes focus in its
+search field look like focus on the button when a shortcut opens the picker.
+For new `ComboboxTrigger` buttons, pass the hint through the `tooltip` prop. An
+explicit `TooltipTrigger` wrapper is also safe when it wraps only the button.
 
 ## Popover width contract
 
@@ -65,6 +73,10 @@ Two escape hatches in the codebase:
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
+  Use `@/components/ui/modal`, not React Native's `Modal`. On Android, React Native lays out a
+  modal's first frames at the screen size minus the status and navigation bars, then grows it to
+  the full edge-to-edge window, so a full-screen backdrop stops short of the bottom and snaps
+  down. The wrapper sizes the content to the window from the first frame.
 - **`<Portal>` from `@gorhom/portal`** (hover-card, autocomplete-popover) —
   hoists the React subtree to a fixed mount point whose bounds cover the
   screen. Same window, same IME, hit-test works because the new parent is
@@ -115,11 +127,10 @@ quietly relying on:
   Gate `visible` on a screen-focus signal. For panes inside `agent-panel`, the
   `isPaneFocused` prop already exists and flips on pane switches; pass
   `visible={isYourOwnVisible && isPaneFocused}`.
-- **Transforms.** `KeyboardShiftProvider` owns the canonical keyboard shift
-  SharedValue, and `useKeyboardShiftStyle()` only adapts that value into
-  translate/padding styles. The composer and chat content must both read that
-  provider-owned value. A portal'd popover is outside the composer tree — it
-  does not get that transform unless you apply it yourself.
+- **Transforms.** The composer moves with the keyboard through a
+  `KeyboardTranslateView` transform. A portal'd popover is outside that view, so
+  it does not move with the composer unless it renders its own
+  `KeyboardTranslateView` with the same translation.
 - **Layering.** The default root host renders after app content, so it sits
   above compact sidebars. Content overlays that must sit below sidebars should
   use the current `FloatingPanelPortalHost`.
@@ -158,8 +169,7 @@ and the stream keeps its existing flick-to-dismiss gesture.
 The dock's private viewport and capacity model are extracted from chat. The
 app-wide `@/keyboard/shift` module owns shared motion for the dock, portals, streams,
 terminal, explorer, and dialogs. Import only its public entry point: the provider,
-shift hooks, shift style, translate view, settled stream inset, and explorer padding
-policy. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
+shift hooks, shift style, translate view, and keyboard anchor. Its contexts and reconciliation stay private. Keep `KeyboardShiftProvider`
 at its root mount point outside the portal host when changing dock hosts.
 
 `KeyboardTranslateView` owns visual keyboard motion inside `@/keyboard/shift`. Android uses the
@@ -172,15 +182,19 @@ animation. Keep this platform choice inside the keyboard module's private platfo
 `KeyboardTranslateView`. The panel root clips it at the header edge, so rows
 slide under the header on open and out from under it on close. Do not swap the
 dock to keyboard padding at rest. Changing its height creates either a blank
-band or a paused transition when the inverted list updates its viewport.
+band or a paused transition when the stream list updates its viewport.
+
+The docked composer rests at the larger of the safe-area bottom and 16pt. With
+the keyboard open it keeps 16pt above the keyboard through the translate view's
+`keyboardGap`, which rises further than the keyboard's safe-area overlap. Do not
+grow the composer's bottom padding with the keyboard instead.
 
 Do not animate a layout prop through the keyboard transition. On Android
 Fabric, each animated layout update clones the shadow tree and runs Yoga over
 the dock subtree. This measured about 10 ms per frame on the emulator and the
 mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
-layout. Preserve the translated dock's history scroll range with a far-end
-content inset on the inverted stream list. Update that inset only when keyboard
-motion settles; never drive it per frame.
+layout. The stream list gets no keyboard inset either; see
+[who owns the offset](agent-stream-disclosure.md#who-owns-the-offset).
 
 The translated dock's height is not the composer's available height. Bound the
 composer against the stationary space below the header inside
@@ -256,11 +270,43 @@ portal geometry, plus the `isMoving` worklet value. It reconciles native
 animation-end events because the controller can retain a nonzero value after
 the keyboard closes.
 
-Measure portal anchors while the dock is at rest. If a popover opens during
-motion, re-measure when `isMoving` settles. `measureInWindow` includes the
-dock's current layout and transform. Snapshot the shift at measurement time and
-apply only the subsequent shift delta to the animated `bottom`. Adding the full
-shift moves the portal twice and can place it over the composer controls.
+Anchor a portal to content inside a `KeyboardTranslateView` with
+`useKeyboardAnchor()`. Read it on the anchor's side of the Portal: the
+translation scope is React context and does not cross it (Gotcha 7). It returns:
+
+- `measureAtRest(element)`: the element's window rect with the keyboard
+  translation left out, or null once the anchor unmounts. Lay the popover out
+  from this rect. It assumes the translate view's parent does not move with the
+  keyboard, which holds for the composer dock.
+- `translation`: spread it onto a `KeyboardTranslateView` inside the Portal, so
+  the popover moves with the anchor on the same driver, including centered
+  clearance and disabled translation.
+- `reservedLift`: the anchor's lift at keyboard boundaries. Bound the popover's
+  height with it; never animate height per frame.
+
+Do not measure an anchor with `measureInWindow` and correct it by the keyboard
+shift. On iOS the translate view uses the native driver, and `measureInWindow`
+includes its transform only when the view happened to re-render since the
+keyboard moved. Both results were observed, so any correction double-lifts the
+popover or leaves it behind the keyboard. `measureAtRest` measures through
+Fabric's transform-free `measureLayout` instead. Re-measure when `isMoving`
+settles; the composer's resting position changes as the draft grows.
+
+A measured rect is an asynchronous copy, so it lands after the anchor's new
+layout has painted. The composer resizes while the autocomplete is open: a
+wrapped line, cleared text, a window resize. On web a `ResizeObserver` reads
+the anchor's rect against the layer and commits the placement with `flushSync`,
+which runs after layout and before paint. On native a Reanimated frame callback
+reads only the anchor's height on the UI thread and holds its bottom edge at
+the rest measurement. A height carries no transform. On iOS the absolute
+position does not reliably include one: the keyboard lift runs on the native
+driver and reaches the shadow tree only when the view re-renders. The
+fixed-bottom model is wrong for the centered New workspace composer on tablets,
+which grows around its middle, and for width or x changes. The popover is off
+there by half the growth, or by the old width, until the next rest measurement.
+Keep the portal's `KeyboardTranslateView` host-sized with
+`pointerEvents="box-none"` and position the popover inside it, so the popover
+moves without leaving its parent's bounds (Gotcha 1).
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an
@@ -273,7 +319,8 @@ not be required to repair the offset.
 
 The generic anchored-overlay rule is:
 
-1. Measure the anchor with `measureInWindow`.
+1. Measure the anchor with `measureInWindow`, or with `measureAtRest` when it
+   moves with the keyboard (Gotcha 3).
 2. Measure the Portal host with `measureFloatingPanelPortalHost(hostName)`.
 3. Position with anchor coordinates relative to the host:
 
@@ -282,10 +329,12 @@ left = anchorRect.x - hostRect.x;
 bottom = hostRect.height - (anchorRect.y - hostRect.y) + offset;
 ```
 
-Do this before adding any platform offset. If anchor and host are both measured
-with `measureInWindow`, Android's status-bar coordinate behavior cancels out.
-Only add a status-bar offset when the render surface is not measured in the same
-coordinate system. See `tooltip.tsx` for that separate case.
+Do this before adding any platform offset. The app draws edge-to-edge on Android, so
+`measureInWindow`, touch `pageY`, and a full-screen `Modal` all share one coordinate
+space that starts at the screen top. Do not add `StatusBar.currentHeight` to an anchor:
+React Native 0.86 stopped subtracting the status bar from window coordinates under
+edge-to-edge, and the old compensation now lands every menu, tooltip, and context menu
+one status bar below its trigger.
 
 ## Gotcha 5 — The two-measurement flash
 
@@ -345,10 +394,10 @@ track phase.
 All sheets use the app-wide Gorhom modal provider through `IsolatedBottomSheetModal`, with no
 exceptions: one stack means a sheet opened from any sheet lands on top of it and uncovers it on
 close. This includes native centered dialogs: separate React Native Modals cannot present a
-root-owned sibling dialog over an existing iOS presenter. A sheet that must draw inside a subtree
-(the [sheet tabs](explorer-sidebar.md#sheets) draw inside the compact workspace column so their
-panels read the workspace providers) presents from inside a `SheetHostScope`, which moves the
-portal host and container measurement while the sheet still joins the same stack. That export is
+root-owned sibling dialog over an existing iOS presenter. `SheetHostScope` moves the portal host
+and container measurement while forwarding the same modal queue. Compact
+[workspace sheets](explorer-sidebar.md#sheets) use the app overlay host above both sidebars;
+wide layouts keep local geometry. That export is
 what `patches/@gorhom+bottom-sheet+*.patch` adds.
 
 A sheet whose owner may veto the close (unsaved work) passes `enableDismissOnClose={false}`. Every
@@ -392,6 +441,21 @@ bridges the menu's two contexts; the rest pass `null`.
 
 Wrapping providers _around_ the modal does nothing. They land on the wrong side.
 
+## Gotcha 8 — Read safe-area insets where the overlay draws
+
+A compact sheet tab's body (`SheetBottomInset` in `adaptive-modal-sheet.tsx`) pads the bottom
+inset and gives its content a bottom inset of 0, so the composer dock sits the same in a sheet as
+in a tab. An overlay opened from that content and calling `useSafeAreaInsets()` at its call site
+gets that 0 and draws over the navigation bar.
+
+- A Gorhom sheet reads the inset inside its children, which render in the app's sheet host. See
+  `CompactSheetBody`, `MenuSheetScrollView` and `ComboboxSheetFrame`.
+- An RN `Modal` passes the call site's context straight through, so wrap its content in
+  `WindowSafeArea` from `@/window-layout` and read the inset below that. It provides the insets of
+  the whole window, published by `WindowLayoutProvider`. Do not put a `SafeAreaProvider` inside the
+  modal: on Android it measures the dialog window, whose bottom inset reads 24, then 0, then 24
+  again over the first frames, and everything padded by it jumps. See `attachment-lightbox.tsx`.
+
 ## Recipe for a new anchored panel
 
 Before you write a new one, ask:
@@ -403,8 +467,8 @@ Before you write a new one, ask:
 3. **Is the panel rendered in a Portal host?** Measure the host too. Never use
    raw window coordinates as local Portal coordinates.
 4. **Does the panel sit above something that moves with the keyboard?** If
-   yes, slave a Reanimated transform to the same SharedValue (Gotcha 3).
-   If no, you can probably skip the transform entirely.
+   yes, anchor it with `useKeyboardAnchor()` and wrap it in a
+   `KeyboardTranslateView` with the anchor's translation (Gotcha 3).
 5. **Will the panel's content height vary?** If yes, you need both
    `anchorRect` and `contentSize` for positioning → apply Gotcha 5 (return
    null until anchor, then opacity-0 until contentSize). If no — content has
@@ -412,6 +476,21 @@ Before you write a new one, ask:
    positioning (`bottom: windowHeight - anchor.y + gap`) and skip the
    `contentSize` round-trip entirely. **But only if the height is genuinely
    bounded**. Verify before you commit.
+6. **Can the content change size after the panel paints, and does the panel
+   sit above its anchor?** Hold it by its bottom edge with `holdSurfaceEdge`
+   and `surfaceFrameStyles` from `components/ui/anchor.ts`. Native delivers
+   `onLayout` after the frame that shows the new size, so a panel placed by
+   `top` paints over its anchor until the next placement lands, about 150 ms
+   on Android. Web hides this because React commits the resize and the
+   re-placement in one task.
+7. **Does the panel hold a list that reads away from its anchor?** Make the
+   anchor edge the list's resting scroll position: an inverted list, as in
+   `components/ui/autocomplete.tsx`. On Android a scroll command issued after
+   the rows commit reaches the screen one or two frames after them, so a list
+   scrolled to its anchor edge paints its far end first. Give each result set
+   its own list with a `key`, so it starts at the anchor edge with the rows
+   that fill the panel. A list that mounts every result holds the panel's
+   first frame until the last row is ready.
 
 Then copy the closest canonical file and trim.
 

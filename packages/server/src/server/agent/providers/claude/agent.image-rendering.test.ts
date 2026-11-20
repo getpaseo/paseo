@@ -13,8 +13,8 @@ const MATERIALIZED_PNG_PATH_PATTERN =
   /paseo-attachments(?:-[^\\/]+)?[\\/](?:[^\\/]+[\\/])?[0-9a-f]{64}\.png$/;
 
 interface ClaudeImageTestSession {
-  translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
-  convertHistoryEntry(entry: unknown): AgentTimelineItem[];
+  translateMessageToEvents(message: SDKMessage): Promise<AgentStreamEvent[]>;
+  convertHistoryEntry(entry: unknown): Promise<AgentTimelineItem[]>;
 }
 
 async function createSession(): Promise<ClaudeImageTestSession> {
@@ -157,7 +157,7 @@ describe("Claude tool_result image rendering", () => {
   test("emits the image as assistant markdown and keeps base64 out of the live tool output", async () => {
     const session = await createSession();
 
-    const events = session.translateMessageToEvents(imageToolResultUserMessage());
+    const events = await session.translateMessageToEvents(imageToolResultUserMessage());
 
     const timelineItems = events
       .filter((event) => event.type === "timeline")
@@ -181,7 +181,7 @@ describe("Claude tool_result image rendering", () => {
   test("replays the image as assistant markdown through history conversion", async () => {
     const session = await createSession();
 
-    const items = session.convertHistoryEntry(imageToolResultHistoryEntry());
+    const items = await session.convertHistoryEntry(imageToolResultHistoryEntry());
 
     const [imageMessage, ...extraImages] = imageMessages(items);
     expect(extraImages).toEqual([]);
@@ -202,7 +202,7 @@ describe("Claude tool_result image rendering", () => {
   test("keeps base64 out of an errored tool_result that carries an image", async () => {
     const session = await createSession();
 
-    const events = session.translateMessageToEvents(erroredImageToolResultUserMessage());
+    const events = await session.translateMessageToEvents(erroredImageToolResultUserMessage());
 
     const timelineItems = events
       .filter((event) => event.type === "timeline")
@@ -226,7 +226,7 @@ describe("Claude tool_result image rendering", () => {
   test("emits one image message per image block in a multi-image tool_result", async () => {
     const session = await createSession();
 
-    const events = session.translateMessageToEvents(multiImageToolResultUserMessage());
+    const events = await session.translateMessageToEvents(multiImageToolResultUserMessage());
 
     const timelineItems = events
       .filter((event) => event.type === "timeline")

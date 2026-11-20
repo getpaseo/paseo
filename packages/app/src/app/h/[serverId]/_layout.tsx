@@ -10,6 +10,8 @@ const HOST_STACK_SCREEN_OPTIONS = {
   animation: "none" as const,
 };
 
+const SCREEN_OWNED_APPEARANCE = ["workspace/[workspaceId]/index"] as const;
+
 const AGENT_SCREEN_OPTIONS = { gestureEnabled: false };
 
 export default function HostRouteLayout() {
@@ -34,7 +36,10 @@ function KnownHostRoute() {
   }
 
   const stack = (
-    <ThemedStack screenOptions={HOST_STACK_SCREEN_OPTIONS}>
+    <ThemedStack
+      screenOptions={HOST_STACK_SCREEN_OPTIONS}
+      screenOwnedAppearance={SCREEN_OWNED_APPEARANCE}
+    >
       <Stack.Screen name="index" />
       <Stack.Screen name="workspace/[workspaceId]/index" />
       <Stack.Screen name="agent/[agentId]" options={AGENT_SCREEN_OPTIONS} />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { render } from "../../output/index.js";
 import { buildAgentLsFetchOptions, listAgents } from "./ls.js";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
@@ -14,7 +15,8 @@ function createPagingClient() {
     cwd: "/tmp/project",
     createdAt: `2026-10-0${n}T00:00:00.000Z`,
     updatedAt: `2026-10-0${n}T00:00:00.000Z`,
-    labels: {},
+    labels: n === 3 ? { bot: "worker", issue: "42" } : {},
+    workspaceId: n === 3 ? "workspace-3" : undefined,
     model: null,
     lastUserMessageAt: null,
     currentModeId: null,
@@ -123,11 +125,46 @@ describe("buildAgentLsFetchOptions", () => {
 });
 
 describe("runLsCommand", () => {
+  it("includes labels and workspace IDs in JSON listings", async () => {
+    const result = await listAgents({ daemonTarget, global: true }, async () =>
+      createPagingClient(),
+    );
+    const rows = JSON.parse(render(result, { format: "json" }));
+
+    expect(rows).toMatchObject([
+      { name: "agent 3", labels: { bot: "worker", issue: "42" }, workspaceId: "workspace-3" },
+      { name: "agent 2", labels: {}, workspaceId: null },
+      { name: "agent 1", labels: {}, workspaceId: null },
+    ]);
+  });
+
   it("lists agents on every page, including one updated during the listing", async () => {
     const result = await listAgents({ daemonTarget, all: true, global: true }, async () =>
       createPagingClient(),
     );
 
     expect(result.data.map((item) => item.name)).toEqual(["agent 3", "agent 2", "agent 1"]);
+  });
+
+  it("marks background agents in a BACKGROUND column only for inclusive listings", async () => {
+    const client = createPagingClient();
+    const fetchAgents: typeof client.fetchAgents = async (options) => {
+      const page = await client.fetchAgents(options);
+      return {
+        ...page,
+        entries: page.entries.map(({ agent }) => ({
+          agent: agent.title === "agent 2" ? { ...agent, background: true } : agent,
+        })),
+      };
+    };
+    const connect = async () => ({ ...client, fetchAgents });
+
+    const inclusive = await listAgents({ daemonTarget, all: true, global: true }, connect);
+    const rows = render(inclusive, { noColor: true }).split("\n");
+    expect(rows[0]).toMatch(/BACKGROUND\s*$/);
+    expect(rows.slice(1).map((row) => row.trim().split(/\s+/).at(-1))).toEqual(["-", "yes", "-"]);
+
+    const ordinary = await listAgents({ daemonTarget, global: true }, connect);
+    expect(render(ordinary, { noColor: true })).not.toContain("BACKGROUND");
   });
 });

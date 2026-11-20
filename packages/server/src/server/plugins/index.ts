@@ -1,8 +1,9 @@
+import type { PluginAgentToolsRuntime } from "./agent-tools.js";
 import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
-import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { ProviderInstallation, ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -24,8 +25,12 @@ import { readPluginManifest } from "./manifest.js";
 import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
+import type { PluginRuntimeSubscription } from "./runtime-subscription.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
-import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import type {
+  PluginProviderInstallationMetadata,
+  PluginProviderMetadata,
+} from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
 import {
   type AgentUsageLookup,
@@ -37,11 +42,17 @@ import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
+  subscribeSessionOpenChanges?: PluginRuntime["subscribeSessionOpenChanges"];
+  isToolPluginAvailable?: PluginRuntime["isToolPluginAvailable"];
+  callTool?: PluginRuntime["callTool"];
+  detachTools?: PluginRuntime["detachTools"];
   emit?: PluginLifecycle["emit"];
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
+  wait?: PluginLifecycle["wait"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  startSubscription: PluginRuntime["startSubscription"];
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -51,6 +62,9 @@ interface PluginRuntimePort {
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   getProviderStatus?: PluginRuntime["getProviderStatus"];
+  inspectProviderInstallation?: PluginRuntime["inspectProviderInstallation"];
+  checkProviderUpdates?: PluginRuntime["checkProviderUpdates"];
+  updateProvider?: PluginRuntime["updateProvider"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -92,6 +106,10 @@ export class PluginService {
   private readonly providerListeners = new Set<() => void>();
   private lifecycle = Promise.resolve();
   private globalStartsBlocked = true;
+  private readonly pendingOperations = new Map<
+    string,
+    { kind: "disable" | "remove"; completion: Promise<void> }
+  >();
   private started = false;
   private readonly settingsListeners = new Set<(pluginId: string, settingsId: string) => void>();
 
@@ -129,6 +147,38 @@ export class PluginService {
 
   readonly emit: PluginLifecycle["emit"] = (name, event) => {
     this.runtime.emit?.(name, event);
+  };
+
+  subscribeSessionOpenChanges(listener: () => void): () => void {
+    return this.runtime.subscribeSessionOpenChanges?.(listener) ?? (() => {});
+  }
+
+  readonly isToolPluginAvailable: PluginAgentToolsRuntime["isToolPluginAvailable"] = (
+    pluginId,
+    pluginInstanceId,
+  ) => {
+    return this.runtime.isToolPluginAvailable?.(pluginId, pluginInstanceId) ?? false;
+  };
+
+  readonly detachTools: PluginAgentToolsRuntime["detachTools"] = (agentId) => {
+    this.runtime.detachTools?.(agentId);
+  };
+
+  readonly callTool: PluginAgentToolsRuntime["callTool"] = async (
+    pluginId,
+    pluginInstanceId,
+    agent,
+    name,
+    input,
+    signal,
+  ) => {
+    if (!this.isToolPluginAvailable(pluginId, pluginInstanceId) || !this.runtime.callTool)
+      return { isError: true, text: `Plugin is not available: ${pluginId}` };
+    return this.runtime.callTool(pluginId, pluginInstanceId, agent, name, input, signal);
+  };
+
+  readonly wait: PluginLifecycle["wait"] = async (name, payload) => {
+    await this.runtime.wait?.(name, payload);
   };
 
   async drainEvents(): Promise<void> {
@@ -188,11 +238,18 @@ export class PluginService {
       }
     });
     if (config.pluginsEnabled === true) {
-      for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
-        if (source.enabled === false) continue;
-        await this.startConfigured(pluginId);
-        this.notify(pluginId);
-      }
+      let earlierPublished: Promise<unknown> = Promise.resolve();
+      await Promise.all(
+        Object.entries(config.plugins ?? {})
+          .filter(([, source]) => source.enabled !== false)
+          .map(async ([pluginId]) => {
+            const publishTurn = earlierPublished;
+            const starting = this.startConfigured(pluginId, publishTurn);
+            earlierPublished = Promise.all([publishTurn, starting]);
+            await starting;
+            this.notify(pluginId);
+          }),
+      );
     }
     this.configStore.onFieldChange("pluginsEnabled", (value) => {
       this.handleGlobalSwitch(value === true);
@@ -265,11 +322,7 @@ export class PluginService {
           `Plugin ID "${pluginId}" is already configured; choose another ID with --id`,
         );
       }
-      const sources = {
-        ...this.configStore.get().plugins,
-        [pluginId]: { source: "directory" as const, path: directory, enabled: true },
-      };
-      this.configStore.patch({ plugins: sources });
+      await this.patchSource(pluginId, { source: "directory", path: directory, enabled: true });
       if (this.canPublish(pluginId)) await this.startConfigured(pluginId);
       this.notify(pluginId);
       const installed = await this.requireItem(pluginId);
@@ -328,15 +381,17 @@ export class PluginService {
         await managedSources.discard(candidate);
         throw error;
       }
-      this.patchSource(pluginId, { source: "directory", path: candidate.directory, enabled: true });
+      await this.patchSource(pluginId, {
+        source: "directory",
+        path: candidate.directory,
+        enabled: true,
+      });
       try {
         if (this.canPublish(pluginId)) await this.startExplicit(pluginId, candidate.directory);
         managedSources.commit(pluginId, candidate.record);
       } catch (error) {
         await this.stopPlugin(pluginId);
-        const sources = { ...this.configStore.get().plugins };
-        delete sources[pluginId];
-        this.configStore.patch({ plugins: sources });
+        await this.removeSource(pluginId);
         await managedSources.discard(candidate);
         this.errors.delete(pluginId);
         this.notify(pluginId);
@@ -345,6 +400,15 @@ export class PluginService {
       this.notify(pluginId);
       return this.requireItem(pluginId);
     });
+  }
+
+  /** Reads the default registry's directory. Not queued: it touches no local state. */
+  listRegistry() {
+    return this.requireManagedSources().listRegistry();
+  }
+
+  getRegistryPlugin(id: string) {
+    return this.requireManagedSources().getRegistryPlugin(id);
   }
 
   async statusSources(pluginId?: string): Promise<PluginSourceStatusItem[]> {
@@ -428,10 +492,11 @@ export class PluginService {
   }
 
   async enablePlugin(pluginId: string): Promise<PluginListItem> {
-    const source = this.requireSource(pluginId);
-    this.patchSource(pluginId, { ...source, enabled: true });
+    await this.patchSource(pluginId, (source) => ({ ...source, enabled: true }));
     this.errors.delete(pluginId);
     return this.enqueue(async () => {
+      // Cancellation persistence uses the store queue, so it never waits behind a blocked start.
+      await this.pendingOperations.get(pluginId)?.completion.catch(() => {});
       const current = this.requireSource(pluginId);
       if (current.enabled !== false && this.configStore.get().pluginsEnabled === true) {
         await this.startExplicit(pluginId, current.path);
@@ -442,8 +507,17 @@ export class PluginService {
   }
 
   async disablePlugin(pluginId: string): Promise<PluginListItem> {
-    const source = this.requireSource(pluginId);
-    this.patchSource(pluginId, { ...source, enabled: false });
+    const operation = {
+      kind: "disable",
+      completion: this.patchSource(pluginId, (source) => ({ ...source, enabled: false })),
+    } as const;
+    this.pendingOperations.set(pluginId, operation);
+    try {
+      await operation.completion;
+    } finally {
+      if (this.pendingOperations.get(pluginId) === operation)
+        this.pendingOperations.delete(pluginId);
+    }
     const stopping = this.stopPlugin(pluginId);
     return this.enqueue(async () => {
       await stopping;
@@ -455,10 +529,15 @@ export class PluginService {
 
   async removePlugin(pluginId: string): Promise<void> {
     this.requireSource(pluginId);
+    const operation = { kind: "remove", completion: this.removeSource(pluginId) } as const;
+    this.pendingOperations.set(pluginId, operation);
+    try {
+      await operation.completion;
+    } finally {
+      if (this.pendingOperations.get(pluginId) === operation)
+        this.pendingOperations.delete(pluginId);
+    }
     const stopping = this.stopPlugin(pluginId);
-    const sources = { ...this.configStore.get().plugins };
-    delete sources[pluginId];
-    this.configStore.patch({ plugins: sources });
     await this.enqueue(async () => {
       await stopping;
       this.runtime.clearLogs(pluginId);
@@ -475,6 +554,10 @@ export class PluginService {
 
   invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
     return this.runtime.invoke(pluginId, method, input);
+  }
+
+  subscribePluginRpc(pluginId: string, method: string, input: unknown): PluginRuntimeSubscription {
+    return this.runtime.startSubscription(pluginId, method, input);
   }
 
   async stopAllPlugins(): Promise<void> {
@@ -505,12 +588,12 @@ export class PluginService {
     }).catch((error) => this.logger.error({ err: error }, "Failed to enable plugins"));
   }
 
-  private async startConfigured(pluginId: string): Promise<void> {
+  private async startConfigured(pluginId: string, publishTurn?: Promise<unknown>): Promise<void> {
     const source = this.configStore.get().plugins?.[pluginId];
     if (!source || source.enabled === false || !this.canPublish(pluginId)) return;
     this.errors.delete(pluginId);
     try {
-      await this.startPlugin(pluginId, source.path);
+      await this.startPlugin(pluginId, source.path, publishTurn);
     } catch (error) {
       if (this.canPublish(pluginId)) this.recordFailure(pluginId, error);
     }
@@ -531,6 +614,7 @@ export class PluginService {
   private canPublish(pluginId: string): boolean {
     const config = this.configStore.get();
     return (
+      !this.pendingOperations.has(pluginId) &&
       !this.globalStartsBlocked &&
       config.pluginsEnabled === true &&
       config.plugins?.[pluginId]?.enabled !== false &&
@@ -538,8 +622,13 @@ export class PluginService {
     );
   }
 
-  private async startPlugin(pluginId: string, sourcePath: string): Promise<void> {
+  private async startPlugin(
+    pluginId: string,
+    sourcePath: string,
+    publishTurn?: Promise<unknown>,
+  ): Promise<void> {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
+    await publishTurn;
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
       this.publishUsageSources(pluginId);
@@ -580,12 +669,39 @@ export class PluginService {
     const registered: string[] = [];
     try {
       for (const source of metadata) {
+        if (
+          source.provider &&
+          !this.runtime
+            .getProviderRegistrations?.(pluginId)
+            .some((provider) => provider.id === source.provider)
+        ) {
+          throw new Error(
+            `Usage source ${source.id} references a provider outside plugin ${pluginId}`,
+          );
+        }
         this.usageSources.register({
           id: source.id,
           label: source.label,
           icon: source.icon,
           discover: async (scope) => {
-            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
+            const launch =
+              scope.kind === "global" && source.provider
+                ? await this.dependencies.usageAgents?.resolveLaunch?.(source.provider)
+                : undefined;
+            const scoped =
+              scope.kind === "session" && source.provider !== scope.provider
+                ? {
+                    kind: "session" as const,
+                    provider: scope.provider,
+                    model: scope.model,
+                    env: scope.env,
+                  }
+                : scope;
+            const result = await this.runtime.discoverUsage(
+              pluginId,
+              source.id,
+              scoped.kind === "global" && launch ? { ...scoped, launch } : scoped,
+            );
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
@@ -644,6 +760,9 @@ export class PluginService {
                 return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
               }
             : undefined,
+          installation: provider.installation
+            ? this.providerInstallation(pluginId, provider.id, provider.installation)
+            : undefined,
           icon: provider.iconPath
             ? await readPluginProviderIcon(pluginDirectory, provider.iconPath)
             : undefined,
@@ -661,6 +780,38 @@ export class PluginService {
       this.providerIdsByPlugin.set(pluginId, ids);
       this.notifyProviderRegistrations();
     }
+  }
+
+  private providerInstallation(
+    pluginId: string,
+    providerId: string,
+    metadata: PluginProviderInstallationMetadata,
+  ): ProviderInstallation {
+    return {
+      installUrl: metadata.installUrl,
+      updateUrl: metadata.updateUrl,
+      inspect: metadata.hasInspect
+        ? (context) => {
+            if (!this.runtime.inspectProviderInstallation)
+              throw new Error("Plugin runtime cannot inspect provider installations");
+            return this.runtime.inspectProviderInstallation(pluginId, providerId, context);
+          }
+        : undefined,
+      checkForUpdates: metadata.hasCheckForUpdates
+        ? (context) => {
+            if (!this.runtime.checkProviderUpdates)
+              throw new Error("Plugin runtime cannot check provider updates");
+            return this.runtime.checkProviderUpdates(pluginId, providerId, context);
+          }
+        : undefined,
+      update: metadata.hasUpdate
+        ? (context) => {
+            if (!this.runtime.updateProvider)
+              throw new Error("Plugin runtime cannot update providers");
+            return this.runtime.updateProvider(pluginId, providerId, context);
+          }
+        : undefined,
+    };
   }
 
   private removeProviderRegistrations(pluginId: string): void {
@@ -744,7 +895,10 @@ export class PluginService {
       await managedSources.discard(candidate);
       throw new Error(`Plugin is no longer configured: ${pluginId}`);
     }
-    this.patchSource(pluginId, { ...activatedSource, path: candidate.directory });
+    await this.patchSource(pluginId, (currentSource) => ({
+      ...currentSource,
+      path: candidate.directory,
+    }));
     this.errors.delete(pluginId);
     this.notify(pluginId);
     let warning: string | undefined;
@@ -786,9 +940,28 @@ export class PluginService {
     return source;
   }
 
-  private patchSource(pluginId: string, source: PluginSource): void {
-    this.configStore.patch({
-      plugins: { ...this.configStore.get().plugins, [pluginId]: source },
+  private async patchSource(
+    pluginId: string,
+    update: PluginSource | ((source: PluginSource) => PluginSource),
+  ): Promise<void> {
+    await this.configStore.patch((current) => {
+      const source = current.plugins?.[pluginId];
+      if (typeof update === "function" && !source)
+        throw new Error(`Plugin is not configured: ${pluginId}`);
+      return {
+        plugins: {
+          ...current.plugins,
+          [pluginId]: typeof update === "function" ? update(source!) : update,
+        },
+      };
+    });
+  }
+
+  private async removeSource(pluginId: string): Promise<void> {
+    await this.configStore.patch((current) => {
+      const sources = { ...current.plugins };
+      delete sources[pluginId];
+      return { plugins: sources };
     });
   }
 

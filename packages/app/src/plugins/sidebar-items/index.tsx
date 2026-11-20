@@ -205,7 +205,7 @@ function SidebarItemContent({
   const frame = useMemo<SidebarItemFrame>(
     () => ({
       section,
-      title: item.title,
+      title: plugin.i18n.resolve(item.title, plugin.locale),
       testID:
         section === "header"
           ? `plugin-sidebar-${plugin.id}-${item.id}`
@@ -214,7 +214,7 @@ function SidebarItemContent({
       offerAnchor,
       releaseAnchor,
     }),
-    [anchorTo, item.id, item.title, offerAnchor, plugin.id, releaseAnchor, section],
+    [anchorTo, item.id, item.title, offerAnchor, plugin, releaseAnchor, section],
   );
   const itemProps = useMemo<PluginSidebarItemProps>(
     () => ({ ...hostProps, currentScreen, openScreen, openPopover }),
@@ -228,7 +228,7 @@ function SidebarItemContent({
       {Popover ? (
         <SidebarPopoverSurface
           section={section}
-          title={item.title}
+          title={plugin.i18n.resolve(item.title, plugin.locale)}
           testID={`${frame.testID}-popover`}
         >
           <SurfaceErrorBoundary installation={plugin} Surface={Popover}>

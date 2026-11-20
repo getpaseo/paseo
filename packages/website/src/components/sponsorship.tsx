@@ -1,4 +1,7 @@
 import { ArrowRight, Check, ExternalLink, Heart } from "lucide-react";
+import * as React from "react";
+import { Trans, useTranslation } from "react-i18next";
+import { useLocalizePath } from "~/i18n";
 import { BuyMeACoffeeIcon, GitHubIcon, OpenCollectiveIcon } from "~/components/brand-icons";
 import {
   BUY_ME_A_COFFEE_URL,
@@ -40,43 +43,47 @@ function SectionHeading({
   );
 }
 
-const MAINTAINER_LINK = (
-  <a
-    href="https://github.com/boudra"
-    target="_blank"
-    rel="noopener noreferrer"
-    className="underline hover:text-white/80"
-  >
-    Mo
-  </a>
+const MAINTAINER_COMPONENTS = {
+  maintainer: (
+    <a
+      href="https://github.com/boudra"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="underline hover:text-white/80"
+    />
+  ),
+};
+
+const MAINTAINER_SIGNATURE = (
+  <p className="text-white/50">
+    <Trans i18nKey="sponsor.maintainer" components={MAINTAINER_COMPONENTS} />
+  </p>
 );
 
+/** Links `<hub>` in sponsorship copy to the Hub page in the reader's language. */
+function useHubLinkComponents() {
+  const localize = useLocalizePath();
+  return React.useMemo(
+    () => ({
+      hub: <a href={localize("/hub")} className="underline hover:text-white/90" />,
+    }),
+    [localize],
+  );
+}
+
 export function FounderNote() {
+  const { t } = useTranslation();
+  const hubLink = useHubLinkComponents();
   return (
     <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
-      <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
+      <p>{t("sponsor.note.independent")}</p>
+      <p>{t("sponsor.note.maintained")}</p>
+      <p>{t("sponsor.note.community")}</p>
+      <p>{t("sponsor.note.neutral")}</p>
       <p>
-        It is maintained by one person, full time, and shaped by the community. There are no
-        investors, no board and no company behind it. I have turned down funding offers to keep it
-        that way.
+        <Trans i18nKey="sponsor.note.selfFunded" components={hubLink} />
       </p>
-      <p>
-        The community helps Paseo grow through feedback, testing, bug reports, code contributions
-        and plugins. Your sponsorship helps me keep improving and maintaining it.
-      </p>
-      <p>
-        A tool that sits between you and your code, your keys and your machines has to stay neutral,
-        and that gets hard once someone else owns a return on it. Funding creates pressure to
-        monetize, and that pressure changes what gets built.
-      </p>
-      <p>
-        Paseo is self-funded: the work is paid for by sponsorship and by{" "}
-        <a href="/hub" className="underline hover:text-white/90">
-          Paseo Hub
-        </a>
-        , an optional hosted service. Your support is what lets me keep working on it.
-      </p>
-      <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
+      {MAINTAINER_SIGNATURE}
     </div>
   );
 }
@@ -88,7 +95,7 @@ interface BackingOption {
   external: boolean;
 }
 
-const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
+const DONATION_OPTIONS: ReadonlyArray<BackingOption> = [
   {
     href: GITHUB_SPONSORS_URL,
     name: "GitHub Sponsors",
@@ -107,12 +114,6 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
     icon: BuyMeACoffeeIcon,
     external: true,
   },
-  {
-    href: "/sponsor#spot",
-    name: "Sponsor as a company",
-    icon: SpotIcon,
-    external: false,
-  },
 ];
 
 function SpotIcon({ className }: { className?: string }) {
@@ -125,9 +126,23 @@ function SpotIcon({ className }: { className?: string }) {
 }
 
 export function BackingOptions() {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
+  const options = React.useMemo(
+    () => [
+      ...DONATION_OPTIONS,
+      {
+        href: localize("/sponsor#spot"),
+        name: t("sponsor.company.title"),
+        icon: SpotIcon,
+        external: false,
+      },
+    ],
+    [localize, t],
+  );
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {BACKING_OPTIONS.map((option) => (
+      {options.map((option) => (
         <a
           key={option.href}
           href={option.href}
@@ -149,32 +164,28 @@ export function BackingOptions() {
   );
 }
 
-const SPOT_FEATURES: ReadonlyArray<string> = [
-  "Your logo on the paseo.sh homepage and docs, around 70,000 visitors a month",
-  "Your logo in the GitHub README, around 30,000 visitors a month",
-  "An announcement in the Discord, around 2,000 members",
-  "An announcement from me on X",
-];
+const SPOT_FEATURES = ["homepage", "readme", "discord", "x"] as const;
 
 export function SponsorSpotSection() {
+  const { t } = useTranslation();
   const open = openSpotCount();
   return (
     <section id="spot" className="scroll-mt-8">
       <SectionHeading
         as="h2"
-        title="Sponsor as a company"
-        description="Support Paseo financially and get visibility for your company"
+        title={t("sponsor.company.title")}
+        description={t("sponsor.company.description")}
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
           <span className="text-4xl font-medium tracking-tight">{SPONSOR_SPOT_PRICE}</span>
-          <span className="mb-1 text-sm text-white/45">a month</span>
+          <span className="mb-1 text-sm text-white/45">{t("sponsor.company.perMonth")}</span>
         </div>
         <ul className="grid max-w-2xl gap-3 text-white/70">
           {SPOT_FEATURES.map((feature) => (
             <li key={feature} className="flex items-start gap-2.5">
               <Check aria-hidden="true" className="mt-1 size-4 shrink-0 text-emerald-300" />
-              <span>{feature}</span>
+              <span>{t(`sponsor.company.${feature}`)}</span>
             </li>
           ))}
         </ul>
@@ -184,14 +195,14 @@ export function SponsorSpotSection() {
               href={SPONSOR_SPOT_CHECKOUT_URL}
               className="inline-flex items-center rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
             >
-              Become a sponsor
+              {t("sponsor.becomeSponsor")}
             </a>
           ) : null}
           <a
             href={`mailto:${SPONSOR_CONTACT_EMAIL}`}
             className="text-sm text-white/60 underline transition-colors hover:text-white/90"
           >
-            {open > 0 ? "Or email me first" : "Email me to hear when a spot opens"}
+            {open > 0 ? t("sponsor.company.emailFirst") : t("sponsor.company.emailWhenOpen")}
           </a>
         </div>
       </div>
@@ -201,9 +212,10 @@ export function SponsorSpotSection() {
 
 /** The /sponsor page's first section: the note and the ways to back the work. */
 export function SponsorPaseoSection() {
+  const { t } = useTranslation();
   return (
     <section>
-      <SectionHeading as="h1" title="Sponsor Paseo" />
+      <SectionHeading as="h1" title={t("sponsor.title")} />
       <div className="space-y-10">
         <FounderNote />
         <BackingOptions />
@@ -214,26 +226,19 @@ export function SponsorPaseoSection() {
 
 /** Homepage: a short version of the note with the same links as /sponsor. */
 export function SponsorSection() {
+  const { t } = useTranslation();
+  const hubLink = useHubLinkComponents();
   return (
     <section>
-      <SectionHeading as="h2" title="Sponsor Paseo" />
+      <SectionHeading as="h2" title={t("sponsor.title")} />
       <div className="space-y-10">
         <div className="max-w-2xl space-y-5 leading-relaxed text-white/70">
-          <p>Paseo is an independent project used by tens of thousands of developers daily.</p>
+          <p>{t("sponsor.note.independent")}</p>
+          <p>{t("sponsor.shortNote.maintained")}</p>
           <p>
-            It is maintained by one person, full time, and shaped by the community. There are no
-            investors and no company behind it. I have turned down funding to keep it that way. A
-            tool that sits between you and your code, your keys and your machines has to stay
-            neutral, and funding creates pressure to monetize.
+            <Trans i18nKey="sponsor.shortNote.selfFunded" components={hubLink} />
           </p>
-          <p>
-            Paseo is self-funded through sponsorship and{" "}
-            <a href="/hub" className="underline hover:text-white/90">
-              Paseo Hub
-            </a>
-            . Your support is what lets me keep working on it.
-          </p>
-          <p className="text-white/50">{MAINTAINER_LINK}, maintainer</p>
+          {MAINTAINER_SIGNATURE}
         </div>
         <BackingOptions />
       </div>
@@ -272,6 +277,8 @@ interface SponsorsSectionProps {
  * spots are open, a quiet invitation. Every page shows it once.
  */
 export function SponsorsSection({ placement }: SponsorsSectionProps) {
+  const { t } = useTranslation();
+  const localize = useLocalizePath();
   const style = SPONSORS_PLACEMENTS[placement];
   const open = openSpotCount();
   return (
@@ -282,7 +289,7 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
           className={`fill-rose-300/80 text-rose-300/80 ${style.heart}`}
           strokeWidth={1.5}
         />
-        Sponsors
+        {t("sponsor.sponsors")}
       </h2>
       <ul className="flex flex-wrap items-center gap-x-14 gap-y-8">
         {SPONSORS.map((sponsor) => (
@@ -305,10 +312,10 @@ export function SponsorsSection({ placement }: SponsorsSectionProps) {
         {open > 0 ? (
           <li>
             <a
-              href="/sponsor#spot"
+              href={localize("/sponsor#spot")}
               className={`inline-flex items-center rounded-md border border-dashed border-white/15 text-white/45 transition-colors hover:border-white/30 hover:text-white/75 ${style.button}`}
             >
-              Become a sponsor
+              {t("sponsor.becomeSponsor")}
             </a>
           </li>
         ) : null}

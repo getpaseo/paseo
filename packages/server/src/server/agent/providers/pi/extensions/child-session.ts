@@ -21,11 +21,11 @@ export function mapPiChildSession(
   return new PiChildSessionFollower(id, file, maxBytes).readNew();
 }
 
-function mapChildLine(
+async function mapChildLine(
   mapper: PiHistoryMapper,
   id: string,
   line: string,
-): ProviderSubagentInputEvent[] {
+): Promise<ProviderSubagentInputEvent[]> {
   let entry: { message?: PiAgentMessage; timestamp?: string };
   try {
     entry = JSON.parse(line);
@@ -33,7 +33,7 @@ function mapChildLine(
     return [];
   }
   if (!entry.message || typeof entry.message !== "object" || !("role" in entry.message)) return [];
-  return mapper.mapMessages([entry.message]).flatMap((mapped) =>
+  return (await mapper.mapMessages([entry.message])).flatMap((mapped) =>
     mapped.type === "timeline"
       ? [
           {
@@ -83,7 +83,10 @@ export class PiChildSessionFollower {
         const events: ProviderSubagentInputEvent[] = [];
         for (const line of data.subarray(0, lastNewline).toString("utf8").split("\n")) {
           if (this.items >= MAX_ITEMS) break;
-          const mapped = mapChildLine(this.mapper, this.id, line).slice(0, MAX_ITEMS - this.items);
+          const mapped = (await mapChildLine(this.mapper, this.id, line)).slice(
+            0,
+            MAX_ITEMS - this.items,
+          );
           this.items += mapped.length;
           events.push(...mapped);
         }

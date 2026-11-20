@@ -27,7 +27,7 @@ export class ImportSessionFlow {
       await expectMobileAgentSidebarVisible(this.page);
     }
     await openGlobalNewWorkspaceComposer(this.page);
-    const button = this.page.getByTestId("new-workspace-import-session");
+    const button = this.page.getByTestId("new-workspace-import-session").filter({ visible: true });
     await expect(button).toHaveAccessibleName("Import session");
     await expect(button).toBeInViewport();
   }
@@ -36,7 +36,7 @@ export class ImportSessionFlow {
     await this.openFromNewWorkspace();
   }
   async openFromNewWorkspace() {
-    await this.page.getByTestId("new-workspace-import-session").click();
+    await this.page.getByTestId("new-workspace-import-session").filter({ visible: true }).click();
     await this.expectSheetReady();
   }
   async openFromWorkspaceHeader() {
@@ -86,7 +86,26 @@ export class ImportSessionFlow {
     expect((bounds?.x ?? width) + (bounds?.width ?? 1)).toBeLessThanOrEqual(width);
   }
   async revealSession(id: string) {
-    await this.page.getByTestId(rowTestId(id)).scrollIntoViewIfNeeded();
+    const target = this.page.getByTestId(rowTestId(id));
+    if ((await target.count()) === 0) {
+      await this.scrollList(false);
+      await expect(async () => {
+        if ((await target.count()) === 0) await this.scrollList(true);
+        await expect(target).toHaveCount(1, { timeout: 100 });
+      }).toPass({ timeout: 10_000 });
+    }
+    await target.scrollIntoViewIfNeeded();
+    await expect(target).toBeInViewport();
+  }
+  /**
+   * Scrolls the virtualized list, the only one that leaves rows unmounted. A row handle is no way
+   * in: the list unmounts rows as it scrolls, and a detached row has no scroller above it.
+   */
+  private async scrollList(forward: boolean) {
+    await this.page.getByTestId("import-session-list").evaluate((list, advance) => {
+      list.scrollTop = advance ? list.scrollTop + list.clientHeight * 0.8 : 0;
+      list.dispatchEvent(new Event("scroll"));
+    }, forward);
   }
   async search(query: string) {
     await this.page.getByTestId("import-session-search").fill(query);
@@ -98,10 +117,18 @@ export class ImportSessionFlow {
     await this.page.getByTestId("import-session-search").fill("");
     await expect(this.page.getByTestId("import-session-load-more")).toBeVisible();
   }
+  /** Load more keeps the reader down the list instead of sending them back to the top. */
   async loadMore() {
-    await this.page.getByTestId("import-session-load-more").click();
-    await expect(this.page.getByText("Root session 20", { exact: true })).toBeVisible();
-    await expect(this.page.getByTestId("import-session-load-more")).toHaveCount(0);
+    const loadMore = this.page.getByTestId("import-session-load-more");
+    const topRow = this.page.getByTestId((await this.rowIds())[0]!);
+    await expect(topRow).toBeInViewport();
+    await loadMore.click();
+    // The next page is the last and short, so the button leaves once it lands.
+    await expect(loadMore).toHaveCount(0);
+    await expect(this.page.getByText("Loading sessions...", { exact: true })).toHaveCount(0);
+    await expect(topRow).not.toBeInViewport();
+    await this.revealSession("fixture-root-20");
+    await expect(this.page.getByText("Root session 20", { exact: true })).toBeInViewport();
   }
   async retryProvider(provider: string, label: string) {
     await this.expectProviderError(label);
@@ -111,6 +138,7 @@ export class ImportSessionFlow {
     await expect(this.page.getByRole("progressbar")).toHaveCount(0);
   }
   async importSession(id: string) {
+    await this.revealSession(id);
     await this.page.getByTestId(rowTestId(id)).click();
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0, {
       timeout: 30_000,
@@ -138,7 +166,7 @@ export class ImportSessionFlow {
     );
   }
   async close() {
-    await this.page.keyboard.press("Escape");
+    await this.page.getByRole("button", { name: "Close", exact: true }).last().click();
     await expect(this.page.getByTestId("import-session-sheet")).toHaveCount(0);
   }
   async expectCommandCenterMatch() {

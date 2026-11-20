@@ -2,9 +2,9 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import React, { useCallback, useMemo, useState, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
@@ -37,6 +37,21 @@ function createDeferred<T>() {
   });
 
   return { promise, resolve, reject };
+}
+
+/**
+ * Resolves a pending lookup and waits until React Query has delivered the result. It delivers on a
+ * timer, which would otherwise fire after the test, when jsdom is gone.
+ */
+async function resolveLookupAndDeliver(
+  lookup: ReturnType<typeof createDeferred<DirectorySuggestionResult>>,
+  result: DirectorySuggestionResult,
+): Promise<void> {
+  await act(async () => {
+    lookup.resolve(result);
+    await lookup.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 interface OpenedFile {
@@ -99,6 +114,12 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
 }
 
 describe("useFileLink", () => {
+  // Lookups resolve after a test's last assertion; an unmounted hook cannot re-render
+  // once jsdom is torn down.
+  afterEach(() => {
+    cleanup();
+  });
+
   it("returns the same object across no-op parent rerenders", () => {
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const queryClient = createQueryClient();
@@ -316,11 +337,12 @@ describe("useFileLink", () => {
     act(() => {
       result.current.setWorkspaceRoot("/Users/test/other");
     });
-    deferred.resolve(resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]));
+    await resolveLookupAndDeliver(
+      deferred,
+      resolvedSuggestions([{ path: "docs/dumm.md", kind: "file" }]),
+    );
 
-    await waitFor(() => {
-      expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
-    });
+    expect(getDirectorySuggestions).toHaveBeenCalledTimes(1);
     expect(openedFiles).toEqual([]);
   });
 });

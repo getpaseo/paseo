@@ -1,15 +1,11 @@
-import type { SidebarIcon, SidebarRowProps } from "@getpaseo/plugin/client/ui";
-import { useCallback, useEffect, useRef } from "react";
+import type { SidebarRowProps } from "@getpaseo/plugin/client/ui";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarSeparator as AppSidebarSeparator } from "@/components/sidebar/sidebar-separator";
-import { resolvePluginIcon } from "../icons";
+import { parsePluginIcon, pluginIconComponent } from "../icons";
 import { useSidebarItemFrame } from "./frame";
-
-function resolveIcon(icon: SidebarIcon) {
-  return typeof icon === "string" ? resolvePluginIcon(icon) : icon;
-}
 
 /**
  * An item may render several rows. Any press inside a row, on the row or on its trailing content,
@@ -29,6 +25,11 @@ export function SidebarRow({ id, icon, label, onPress, active, trailing }: Sideb
     anchorTo(rowRef.current);
     return false;
   }, [anchorTo]);
+  // Rows get their icon at render, not registration, so an invalid icon throws to the item's boundary.
+  const iconComponent = useMemo(
+    () => (icon ? pluginIconComponent(parsePluginIcon("Sidebar row", icon)) : null),
+    [icon],
+  );
   // Keyboard activation skips the responder system, so the row's own press anchors as well.
   const handlePress = useCallback(() => {
     anchorTo(rowRef.current);
@@ -37,7 +38,7 @@ export function SidebarRow({ id, icon, label, onPress, active, trailing }: Sideb
   return (
     <View ref={rowRef} collapsable={false} onStartShouldSetResponderCapture={anchorHere}>
       <SidebarHeaderRow
-        icon={icon ? resolveIcon(icon) : null}
+        icon={iconComponent}
         label={label ?? frame.title}
         onPress={handlePress}
         isActive={active}

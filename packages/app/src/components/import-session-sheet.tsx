@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -9,8 +9,13 @@ import type {
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import { ChevronDown, Inbox, Layers, RotateCw } from "lucide-react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
+import {
+  AdaptiveModalSheet,
+  SheetHeaderIconButton,
+  type SheetHeader,
+} from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
+import { ImportSessionList } from "@/components/import-session-list";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useProviderIcon, useProviderIcons } from "@/components/provider-icons";
@@ -35,6 +40,7 @@ import {
   resolveDirectoryLabel,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
+  previousPageLimit,
   type ProviderErrorRow,
   resolveImportTarget,
   resolveProvidersToFetch,
@@ -95,11 +101,12 @@ interface SessionsQueryConfig {
   // Query's default retry would keep the header spinner turning and pile up
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
-  placeholderData: typeof keepPreviousData;
+  placeholderData: () => RecentSessionsResponse | undefined;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
 function buildSessionsQueriesConfig(args: {
+  queryClient: QueryClient;
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
@@ -108,14 +115,24 @@ function buildSessionsQueriesConfig(args: {
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, visible, client, cwd, query, limit, hostDisconnectedMessage } = args;
+  const { queryClient, providersToFetch, visible, client, cwd, query, limit } = args;
+  const { hostDisconnectedMessage } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
+  const previousLimit = previousPageLimit(limit);
   return providersToFetch.map((provider) => ({
     queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
     enabled,
     retry: false as const,
-    placeholderData: keepPreviousData,
+    // While Load more fetches the next page, keep showing the page it grew from. React Query's
+    // keepPreviousData cannot do this here: useQueries gives a changed key a new observer, which
+    // has no previous data, so the rows would vanish and the list would remount at the top.
+    placeholderData: () =>
+      previousLimit === null
+        ? undefined
+        : queryClient.getQueryData<RecentSessionsResponse>(
+            buildSessionsQueryKey({ cwd, query, limit: previousLimit, provider }),
+          ),
     queryFn: async () => {
       if (!client) {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -205,43 +222,13 @@ function ProviderErrorBannerRow({
       </Text>
       <Button
         variant="ghost"
-        size="xs"
+        size="sm"
         onPress={handleRetry}
         testID={`import-session-retry-${row.provider}`}
       >
         {t("common.actions.retry")}
       </Button>
     </View>
-  );
-}
-
-function RefreshAction({ isRefreshing, onPress }: { isRefreshing: boolean; onPress: () => void }) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const pressableStyle = useCallback(
-    ({ pressed }: PressableStateCallbackType) => [
-      styles.refreshButton,
-      pressed && styles.refreshButtonPressed,
-    ],
-    [],
-  );
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={isRefreshing}
-      accessibilityLabel={t("importSession.actions.refresh")}
-      accessibilityRole="button"
-      testID="import-session-refresh"
-      style={pressableStyle}
-    >
-      <View style={styles.refreshIconSlot}>
-        {isRefreshing ? (
-          <LoadingSpinner color={theme.colors.foregroundMuted} />
-        ) : (
-          <RotateCw size={16} color={theme.colors.foregroundMuted} />
-        )}
-      </View>
-    </Pressable>
   );
 }
 
@@ -265,7 +252,7 @@ function ScopeSubtitle({
       {isScoped ? (
         <Button
           variant="ghost"
-          size="xs"
+          size="sm"
           onPress={onShowAll}
           testID="import-session-show-all"
           style={styles.subtitleAction}
@@ -371,7 +358,33 @@ function ImportSessionActivityTime({ date }: { date: string }) {
   return <Text style={styles.rowMeta}>{label}</Text>;
 }
 
+function getSessionRowKey(entry: FetchRecentProviderSessionEntry): string {
+  return `${entry.providerId}:${entry.providerHandleId}`;
+}
+
+function hasListHeader(
+  input: SheetStatusMessagesProps & {
+    showFilter: boolean;
+    hasProviderErrors: boolean;
+  },
+): boolean {
+  return (
+    input.showFilter ||
+    !input.isClientReady ||
+    input.isSnapshotUnsupported ||
+    input.hasNoImportableProviders ||
+    (input.isLoadingSessions && !input.hasRows) ||
+    input.importErrored ||
+    input.hasProviderErrors
+  );
+}
+
 function SessionRows({
+  visible,
+  onClose,
+  header,
+  listHeader,
+  listFooter,
   serverId,
   entries,
   disabled,
@@ -379,6 +392,11 @@ function SessionRows({
   resolveFolder,
   onImportSession,
 }: {
+  visible: boolean;
+  onClose: () => void;
+  header: SheetHeader;
+  listHeader: ReactNode;
+  listFooter: ReactNode;
   serverId: string | null;
   entries: ReadonlyArray<FetchRecentProviderSessionEntry>;
   disabled: boolean;
@@ -386,20 +404,69 @@ function SessionRows({
   resolveFolder: (entry: FetchRecentProviderSessionEntry) => string | null;
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
+  // Keep short results content-sized; only long lists need a bounded viewport.
+  const virtualized = ImportSessionList !== null && entries.length > 8;
+  const renderSessionRow = useCallback(
+    (entry: FetchRecentProviderSessionEntry) => (
+      <ImportSessionSheetRow
+        key={getSessionRowKey(entry)}
+        serverId={serverId}
+        entry={entry}
+        disabled={disabled}
+        importing={importingSessionKey === getSessionRowKey(entry)}
+        folder={resolveFolder(entry)}
+        onImportSession={onImportSession}
+      />
+    ),
+    [serverId, disabled, importingSessionKey, resolveFolder, onImportSession],
+  );
+  const renderItem = useCallback(
+    (item: FetchRecentProviderSessionEntry) => (
+      <View style={styles.listRow}>{renderSessionRow(item)}</View>
+    ),
+    [renderSessionRow],
+  );
+  const virtualHeader = useMemo(
+    () => (listHeader ? <View style={styles.listHeader}>{listHeader}</View> : null),
+    [listHeader],
+  );
+  const virtualFooter = useMemo(
+    () => <View style={styles.listFooter}>{listFooter}</View>,
+    [listFooter],
+  );
+
   return (
-    <View style={styles.list}>
-      {entries.map((entry) => (
-        <ImportSessionSheetRow
-          key={`${entry.providerId}:${entry.providerHandleId}`}
-          serverId={serverId}
-          entry={entry}
-          disabled={disabled}
-          importing={importingSessionKey === `${entry.providerId}:${entry.providerHandleId}`}
-          folder={resolveFolder(entry)}
-          onImportSession={onImportSession}
-        />
-      ))}
-    </View>
+    <AdaptiveModalSheet
+      visible={visible}
+      onClose={onClose}
+      header={header}
+      testID="import-session-sheet"
+      desktopMaxWidth={560}
+      desktopHeight={virtualized ? "85%" : undefined}
+      snapPoints={IMPORT_SHEET_SNAP_POINTS}
+      scrollable={!virtualized}
+      contentStyle={virtualized ? styles.listBody : undefined}
+    >
+      {ImportSessionList && virtualized ? (
+        <View style={styles.list}>
+          <ImportSessionList
+            data={entries}
+            keyExtractor={getSessionRowKey}
+            renderItem={renderItem}
+            header={virtualHeader}
+            footer={virtualFooter}
+          />
+        </View>
+      ) : (
+        <>
+          {listHeader}
+          {entries.length > 0 ? (
+            <View style={styles.smallList}>{entries.map(renderSessionRow)}</View>
+          ) : null}
+          {listFooter}
+        </>
+      )}
+    </AdaptiveModalSheet>
   );
 }
 
@@ -467,6 +534,7 @@ export function ImportSessionSheet({
   const queriesConfig = useMemo(
     () =>
       buildSessionsQueriesConfig({
+        queryClient,
         providersToFetch,
         visible,
         client,
@@ -475,7 +543,7 @@ export function ImportSessionSheet({
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [queryClient, providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -694,7 +762,15 @@ export function ImportSessionSheet({
             },
           }
         : {}),
-      actions: <RefreshAction isRefreshing={isRefreshing} onPress={handleRefresh} />,
+      actions: (
+        <SheetHeaderIconButton
+          icon={RotateCw}
+          label={t("importSession.actions.refresh")}
+          onPress={handleRefresh}
+          busy={isRefreshing}
+          testID="import-session-refresh"
+        />
+      ),
     }),
     [handleRefresh, handleShowAll, hostLabel, isRefreshing, scopeCwd, supportsSearch, t, visible],
   );
@@ -726,85 +802,124 @@ export function ImportSessionSheet({
   });
   const showFilter = filterProviders.length > 1;
   const showLoadMore = hasMoreSessions(queries, pageLimit);
-
+  const showListHeader = hasListHeader({
+    showFilter,
+    isClientReady: Boolean(client),
+    isSnapshotUnsupported,
+    hasNoImportableProviders,
+    isLoadingSessions,
+    hasRows: visibleEntries.length > 0,
+    importErrored: importMutation.isError,
+    hasProviderErrors: providerErrorRows.length > 0,
+  });
+  const listHeader = useMemo(
+    () =>
+      showListHeader ? (
+        <View style={styles.listHeaderContent}>
+          {showFilter ? (
+            <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
+              <Pressable
+                onPress={handleFilterOpen}
+                style={filterTriggerStyle}
+                testID="import-session-filter-trigger"
+                accessibilityRole="button"
+                accessibilityLabel={`Filter: ${selectedProviderLabel}`}
+              >
+                {selectedProvider === ALL_FILTER_VALUE ? (
+                  <Layers size={14} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <SelectedProviderIcon size={14} color={theme.colors.foregroundMuted} />
+                )}
+                <Text style={styles.filterTriggerText} numberOfLines={1}>
+                  {selectedProviderLabel}
+                </Text>
+                <ChevronDown size={14} color={theme.colors.foregroundMuted} />
+              </Pressable>
+              <Combobox
+                options={filterComboboxOptions}
+                value={selectedProvider}
+                onSelect={handleFilterSelect}
+                renderOption={renderFilterOption}
+                searchable={false}
+                title="Filter by provider"
+                open={isFilterOpen}
+                onOpenChange={setIsFilterOpen}
+                anchorRef={filterAnchorRef}
+                desktopPlacement="bottom-start"
+                desktopPreventInitialFlash
+              />
+            </View>
+          ) : null}
+          <SheetStatusMessages
+            isClientReady={Boolean(client)}
+            isSnapshotUnsupported={isSnapshotUnsupported}
+            hasNoImportableProviders={hasNoImportableProviders}
+            isLoadingSessions={isLoadingSessions}
+            hasRows={visibleEntries.length > 0}
+            importErrored={importMutation.isError}
+          />
+          {providerErrorRows.length > 0 ? (
+            <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
+          ) : null}
+        </View>
+      ) : null,
+    [
+      showListHeader,
+      showFilter,
+      filterTriggerStyle,
+      handleFilterOpen,
+      selectedProvider,
+      theme.colors.foregroundMuted,
+      SelectedProviderIcon,
+      selectedProviderLabel,
+      filterComboboxOptions,
+      handleFilterSelect,
+      renderFilterOption,
+      isFilterOpen,
+      client,
+      isSnapshotUnsupported,
+      hasNoImportableProviders,
+      isLoadingSessions,
+      visibleEntries.length,
+      importMutation.isError,
+      providerErrorRows,
+      handleRetryProvider,
+    ],
+  );
+  const listFooter = useMemo(
+    () => (
+      <>
+        {showLoadMore ? (
+          <View style={styles.footer}>
+            <Button
+              variant="ghost"
+              onPress={handleLoadMore}
+              disabled={isRefreshing}
+              testID="import-session-load-more"
+            >
+              {t("importSession.actions.loadMore")}
+            </Button>
+          </View>
+        ) : null}
+        {showEmptyState ? <SheetEmptyState title={emptyStateTitle} /> : null}
+      </>
+    ),
+    [showLoadMore, handleLoadMore, isRefreshing, t, showEmptyState, emptyStateTitle],
+  );
   return (
-    <AdaptiveModalSheet
+    <SessionRows
       visible={visible}
       onClose={onClose}
       header={header}
-      testID="import-session-sheet"
-      desktopMaxWidth={560}
-      snapPoints={IMPORT_SHEET_SNAP_POINTS}
-    >
-      {showFilter ? (
-        <View ref={filterAnchorRef} collapsable={false} style={styles.filterTriggerWrap}>
-          <Pressable
-            onPress={handleFilterOpen}
-            style={filterTriggerStyle}
-            testID="import-session-filter-trigger"
-            accessibilityRole="button"
-            accessibilityLabel={`Filter: ${selectedProviderLabel}`}
-          >
-            {selectedProvider === ALL_FILTER_VALUE ? (
-              <Layers size={14} color={theme.colors.foregroundMuted} />
-            ) : (
-              <SelectedProviderIcon size={14} color={theme.colors.foregroundMuted} />
-            )}
-            <Text style={styles.filterTriggerText} numberOfLines={1}>
-              {selectedProviderLabel}
-            </Text>
-            <ChevronDown size={14} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Combobox
-            options={filterComboboxOptions}
-            value={selectedProvider}
-            onSelect={handleFilterSelect}
-            renderOption={renderFilterOption}
-            searchable={false}
-            title="Filter by provider"
-            open={isFilterOpen}
-            onOpenChange={setIsFilterOpen}
-            anchorRef={filterAnchorRef}
-            desktopPlacement="bottom-start"
-            desktopPreventInitialFlash
-          />
-        </View>
-      ) : null}
-      <SheetStatusMessages
-        isClientReady={Boolean(client)}
-        isSnapshotUnsupported={isSnapshotUnsupported}
-        hasNoImportableProviders={hasNoImportableProviders}
-        isLoadingSessions={isLoadingSessions}
-        hasRows={visibleEntries.length > 0}
-        importErrored={importMutation.isError}
-      />
-      {providerErrorRows.length > 0 ? (
-        <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
-      ) : null}
-      {visibleEntries.length > 0 ? (
-        <SessionRows
-          serverId={serverId}
-          entries={visibleEntries}
-          disabled={importMutation.isPending}
-          importingSessionKey={importingSessionKey}
-          resolveFolder={resolveFolder}
-          onImportSession={handleImportSession}
-        />
-      ) : null}
-      {showLoadMore ? (
-        <View style={styles.footer}>
-          <Button
-            variant="ghost"
-            onPress={handleLoadMore}
-            disabled={isRefreshing}
-            testID="import-session-load-more"
-          >
-            {t("importSession.actions.loadMore")}
-          </Button>
-        </View>
-      ) : null}
-      {showEmptyState ? <SheetEmptyState title={emptyStateTitle} /> : null}
-    </AdaptiveModalSheet>
+      listHeader={listHeader}
+      listFooter={listFooter}
+      serverId={serverId}
+      entries={visibleEntries}
+      disabled={importMutation.isPending}
+      importingSessionKey={importingSessionKey}
+      resolveFolder={resolveFolder}
+      onImportSession={handleImportSession}
+    />
   );
 }
 
@@ -853,8 +968,30 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
+  listBody: {
+    gap: 0,
+  },
   list: {
+    flex: 1,
+    minHeight: 0,
+    marginHorizontal: -theme.spacing[2],
+  },
+  listHeader: {
+    marginHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[4],
+  },
+  listHeaderContent: {
+    gap: theme.spacing[4],
+  },
+  smallList: {
     gap: theme.spacing[1],
+  },
+  listFooter: {
+    marginHorizontal: theme.spacing[2],
+  },
+  listRow: {
+    marginHorizontal: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
   },
   footer: {
     paddingTop: theme.spacing[2],
@@ -956,19 +1093,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     textAlign: "center",
-  },
-  refreshButton: {
-    padding: theme.spacing[2],
-    marginRight: theme.spacing[1],
-    borderRadius: theme.borderRadius.lg,
-  },
-  refreshButtonPressed: {
-    backgroundColor: theme.colors.surface2,
-  },
-  refreshIconSlot: {
-    width: 16,
-    height: 16,
-    alignItems: "center",
-    justifyContent: "center",
   },
 }));

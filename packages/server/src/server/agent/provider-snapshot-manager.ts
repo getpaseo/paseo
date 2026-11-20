@@ -1,4 +1,4 @@
-import { normalizeAgentModelCatalog } from "@getpaseo/protocol/agent-types";
+import { normalizeAgentModelCatalog, type ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -51,6 +51,8 @@ import {
 } from "./agent-configuration-validator.js";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import { convertLegacyClaudeUltracode, resolveAdapter } from "./option-controls.js";
+import { ProviderInstallations } from "./provider-installation/provider-installations.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -160,14 +162,14 @@ export interface ResolveProviderCreateConfigOptions {
   cwd?: string | null;
   provider: AgentProvider;
   requestedMode: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
   parent: ManagedAgent | null;
   unattended: boolean;
 }
 
 export interface ResolvedProviderCreateConfig {
   modeId: string | undefined;
-  featureValues: Record<string, unknown> | undefined;
+  providerOptions: ProviderOptions | undefined;
 }
 
 interface ResolveDefaultModelOptions {
@@ -253,6 +255,8 @@ export class ProviderSnapshotManager {
   private providerClients: Record<AgentProvider, AgentClient>;
   private readonly ownedClients = new Set<AgentClient>();
   private readonly pluginProviders: PluginAgentClientRegistry;
+  /** Installation links and versions; separate from availability and discovery. */
+  readonly installations: ProviderInstallations;
   private pluginProvidersSettled = false;
 
   constructor(options: ProviderSnapshotManagerOptions) {
@@ -281,6 +285,14 @@ export class ProviderSnapshotManager {
       ...this.extraClients,
     } as Record<AgentProvider, AgentClient>;
     for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+    this.installations = new ProviderInstallations({
+      logger: options.logger.child({ module: "provider-installations" }),
+      resolveClient: (provider) => {
+        const definition = this.generation.definitions[provider];
+        return definition ? this.ensureClient(provider, definition) : null;
+      },
+      refreshProvider: (provider) => this.refreshSettingsSnapshot({ providers: [provider] }),
+    });
   }
 
   getSnapshot(cwd?: string): ProviderSnapshot {
@@ -461,6 +473,12 @@ export class ProviderSnapshotManager {
     return client;
   }
 
+  async resolveUsageLaunch(provider: string) {
+    const definition = this.generation.definitions[provider];
+    if (!definition?.enabled) return undefined;
+    return this.ensureClient(provider, definition).resolveUsageLaunch?.();
+  }
+
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
     const target = resolveProviderSnapshotTarget(input.cwd);
     if (input.wait) {
@@ -516,7 +534,13 @@ export class ProviderSnapshotManager {
     }
 
     return validateAgentConfigurationAgainstProvider({
-      input,
+      input: convertLegacyClaudeUltracode(
+        input,
+        resolveAdapter({
+          provider: input.provider,
+          extendsOf: (id) => this.generation.definitions[id]?.derivedFromProviderId,
+        }),
+      ),
       provider,
     });
   }
@@ -563,7 +587,7 @@ export class ProviderSnapshotManager {
     return definition.resolveCreateConfig({
       provider: input.provider,
       requestedMode: input.requestedMode,
-      featureValues: input.featureValues,
+      providerOptions: input.providerOptions,
       parent,
       unattended: input.unattended || parent?.isUnattended === true,
       availableModes: entry.modes ?? [],
@@ -688,6 +712,7 @@ export class ProviderSnapshotManager {
 
   async shutdown(): Promise<void> {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
@@ -698,6 +723,7 @@ export class ProviderSnapshotManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.installations.close();
     for (const state of this.generation.providerStates.values()) state.discoveryLimit.clearQueue();
     this.catalogs.clear();
     this.targets.clear();
@@ -744,8 +770,13 @@ export class ProviderSnapshotManager {
       modeId: parent.currentModeId,
       isUnattended: definition.isCreateConfigUnattended({
         modeId: parent.currentModeId,
-        config: parent.config,
-        features: parent.features,
+        // Provider defaults from `config.json` apply to the parent too, so classify on the
+        // effective options while the stored overrides stay as they are.
+        config: {
+          ...parent.config,
+          providerOptions: parent.effectiveOptions ?? parent.config.providerOptions,
+        },
+        controls: parent.controls,
         availableModes: parent.availableModes ?? definition.modes ?? [],
       }),
     };

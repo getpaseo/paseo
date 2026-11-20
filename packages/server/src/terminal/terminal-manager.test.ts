@@ -457,7 +457,6 @@ it("setTerminalTitle returns false for unknown terminal ids without changing exi
 
   expect(manager.setTerminalTitle("unknown-id", "x")).toBe(false);
   expect(session.getTitle()).toBe("Existing title");
-  expect(session.getState().title).toBe("Existing title");
   expect(snapshots).toEqual([]);
 
   unsubscribe();

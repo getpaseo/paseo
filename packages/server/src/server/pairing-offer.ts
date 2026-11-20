@@ -18,6 +18,8 @@ export async function generateLocalPairingOffer(args: {
   relayPublicEndpoint?: string;
   relayUseTls?: boolean;
   relayPublicUseTls?: boolean;
+  /** Stamp the offer so new clients require protected endpoint security from their first handshake. */
+  relayRequireProtectedSecurity?: boolean;
   appBaseUrl?: string;
   includeQr?: boolean;
   logger?: Logger;
@@ -42,6 +44,9 @@ export async function generateLocalPairingOffer(args: {
     serverId,
     daemonPublicKeyB64: daemonKeyPair.publicKeyB64,
     relay: { endpoint: relayPublicEndpoint, useTls: relayPublicUseTls },
+    ...(args.relayRequireProtectedSecurity === true
+      ? { minimumSecurityMode: "protected" as const }
+      : {}),
   });
   const url = encodeOfferToFragmentUrl({ offer, appBaseUrl });
 

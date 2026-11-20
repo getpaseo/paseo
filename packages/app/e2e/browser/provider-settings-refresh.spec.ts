@@ -1,5 +1,7 @@
+import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
+import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
@@ -95,7 +97,7 @@ async function hasFocusWithin(locator: Locator): Promise<boolean> {
 async function expectProviderSettingsVisible(page: Page) {
   await expect(page.getByTestId("provider-settings-sheet")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole("button", { name: "Add model" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Diagnostic", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Diagnostic report" })).toBeVisible();
 }
 
 async function exerciseProviderSettingsStack(page: Page) {
@@ -107,7 +109,7 @@ async function exerciseProviderSettingsStack(page: Page) {
   await expect(page.getByPlaceholder("e.g. openai/gpt-5")).not.toBeVisible({ timeout: 10_000 });
   await expectProviderSettingsVisible(page);
 
-  await page.getByRole("button", { name: "Diagnostic", exact: true }).click();
+  await page.getByRole("button", { name: "Diagnostic report" }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: /Refresh diagnostic/ }).click();
   await expect(page.getByTestId("provider-diagnostic-sheet")).toBeVisible({ timeout: 10_000 });
@@ -116,7 +118,7 @@ async function exerciseProviderSettingsStack(page: Page) {
 
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expectProviderSettingsVisible(page);
-  await expect(page.getByText("Updated just now", { exact: true })).toBeVisible({
+  await expect(page.getByText("Checked just now", { exact: true })).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -213,4 +215,67 @@ test.describe("provider settings overlay stack", () => {
       await session.cleanup();
     }
   });
+});
+
+async function openTimedOutProvider(page: Page, workspaceId: string, width: number) {
+  await gotoWorkspace(page, workspaceId);
+  await clickNewChat(page);
+  await expectComposerVisible(page);
+  await page.setViewportSize({ width, height: 900 });
+  await page.getByRole("button", { name: /Select model/ }).click();
+  if (width < 600) {
+    await page.getByTestId("agent-controls-model").click();
+  } else {
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+  }
+  await page.getByTestId("model-provider-picker-timeout").click();
+  await expect(page.getByText(/Timed out refreshing Pi timeout/)).toBeVisible();
+}
+
+async function expectErrorHasSideGutters(page: Page) {
+  const error = page.getByText(/Timed out refreshing Pi timeout/);
+  const bounds = await error.evaluate((element) => {
+    const text = element.getBoundingClientRect();
+    const state = element.parentElement!.getBoundingClientRect();
+    return { left: text.left - state.left, right: state.right - text.right };
+  });
+  expect(bounds.left, "error text stays inside the empty state's left edge").toBeGreaterThan(0);
+  expect(bounds.right, "error text stays inside the empty state's right edge").toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+}
+
+test.use({
+  e2eDaemonConfig: {
+    version: 1,
+    agents: {
+      catalogRefreshTimeoutMs: 2000,
+      providers: {
+        "picker-timeout": {
+          extends: "pi",
+          label: "Pi timeout",
+          enabled: true,
+          command: [
+            process.execPath,
+            path.resolve("e2e/fixtures/fake-pi-rpc.mjs"),
+            "--stall-model-discovery",
+          ],
+        },
+      },
+    },
+  },
+});
+
+test.describe("model discovery timeout", () => {
+  for (const width of [1200, 390]) {
+    test(`keeps a wrapped discovery error away from both picker edges at ${width}px`, async ({
+      page,
+      withWorkspace,
+    }, testInfo) => {
+      await page.setViewportSize({ width: 1200, height: 900 });
+      const workspace = await withWorkspace({ prefix: "model-error-spacing-" });
+      await openTimedOutProvider(page, workspace.workspaceId, width);
+      await page.screenshot({ path: testInfo.outputPath("model-error.png") });
+      await expectErrorHasSideGutters(page);
+    });
+  }
 });

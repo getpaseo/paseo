@@ -47,8 +47,8 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
       logger,
     ),
     projectRegistry: new FileBackedProjectRegistry(path.join(paseoHome, "projects.json"), logger),
-    workspaceGitService: {
-      peekSnapshot: () => {
+    workspaceRuntimeStore: {
+      get: () => {
         throw new Error("Unexpected git lookup");
       },
     },
@@ -56,6 +56,7 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     getDaemonTcpHost: null,
     serviceProxyPublicBaseUrl: null,
     resolveScriptHealth: null,
+    getGlobalServicePorts: async () => undefined,
     logger,
     emit: () => {},
     publishStatusUpdate: () => {},
@@ -93,7 +94,7 @@ test("bridge preserves tool failure messages and classifies invalid requests as 
     const { tools } = await manifest.json();
     expect(
       tools.find((tool: { name: string }) => tool.name === "create_agent").inputSchema.properties,
-    ).not.toHaveProperty("background");
+    ).toHaveProperty("background");
     expect(
       tools.find((tool: { name: string }) => tool.name === "update_schedule").inputSchema
         .properties,

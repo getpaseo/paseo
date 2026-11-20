@@ -24,13 +24,27 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/component
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { settingsStyles } from "@/styles/settings";
+import { ControlSizeProvider } from "@/components/ui/control-size";
+import { useSettingsRowLayout } from "./row-density";
 export { SettingsGroup } from "./headings/settings-group";
 export { SettingsSection } from "./headings/settings-section";
 export { SettingsCollapsibleRow } from "./collapsible-row";
+export { SettingsDetailRow } from "./detail-row";
+export type { SettingsRowHintStatus } from "./row-header";
+export { SettingsAddRow } from "./add-row";
+export { SettingsBackLink, SettingsDetailHeader } from "./detail-header";
+export { SettingsInfoTip } from "./headings/settings-info-tip";
+export { MenuSettingsRows } from "./row-density";
 
-interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint"> {
-  hint?: ReactNode;
+/** What app screens can add to a plugin-facing row: an accessory beside the label, such as an info tip. */
+interface AppRowExtras {
   labelAccessory?: ReactNode;
+  /** An icon before the label, such as the thing the row is about. */
+  leading?: ReactNode;
+}
+
+interface AppSettingsRowProps extends Omit<SettingsRowProps, "hint">, AppRowExtras {
+  hint?: ReactNode;
 }
 
 export function SettingsCard({ children, testID }: { children: ReactNode; testID?: string }) {
@@ -50,6 +64,7 @@ export function SettingsCard({ children, testID }: { children: ReactNode; testID
 
 export function SettingsRow({
   label,
+  leading,
   labelAccessory,
   hint,
   error,
@@ -57,26 +72,33 @@ export function SettingsRow({
   testID,
 }: AppSettingsRowProps) {
   const compact = useIsCompactFormFactor();
-  const rowStyle = useMemo(() => [settingsStyles.row, compact && styles.compactRow], [compact]);
+  const layout = useSettingsRowLayout();
+  const rowStyle = useMemo(() => [layout.row, compact && styles.compactRow], [compact, layout]);
+  const accessoryTitleStyle = useMemo(() => [layout.title, styles.accessoryLabel], [layout]);
   return (
     <View style={rowStyle} testID={testID}>
+      {leading ? <View style={styles.leading}>{leading}</View> : null}
       <View style={styles.label}>
         {labelAccessory ? (
           <View style={styles.labelRow}>
-            <Text style={[settingsStyles.rowTitle, styles.accessoryLabel]}>{label}</Text>
+            <Text style={accessoryTitleStyle}>{label}</Text>
             {labelAccessory}
           </View>
         ) : (
-          <Text style={settingsStyles.rowTitle}>{label}</Text>
+          <Text style={layout.title}>{label}</Text>
         )}
-        {typeof hint === "string" ? <Text style={settingsStyles.rowHint}>{hint}</Text> : hint}
+        {typeof hint === "string" ? <Text style={layout.hint}>{hint}</Text> : hint}
         {error ? (
           <Text accessibilityRole="alert" style={settingsStyles.rowError}>
             {error}
           </Text>
         ) : null}
       </View>
-      {children ? <View style={styles.control}>{children}</View> : null}
+      {children ? (
+        <View style={styles.control}>
+          <ControlSizeProvider size={layout.controlSize}>{children}</ControlSizeProvider>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -117,7 +139,7 @@ export function SettingsSelect<Value extends string>({
   onValueChange,
   disabled,
   ...row
-}: SettingsSelectProps<Value>) {
+}: SettingsSelectProps<Value> & AppRowExtras) {
   const selectedLabel = options.find((option) => option.value === value)?.label ?? value;
   return (
     <SettingsRow {...row}>
@@ -152,7 +174,7 @@ export function SettingsInput({
   secureTextEntry,
   ref,
   ...row
-}: SettingsInputProps) {
+}: SettingsInputProps & AppRowExtras) {
   const compact = useIsCompactFormFactor();
   const input = useRef<EditingTextInputHandle>(null);
   useImperativeHandle(
@@ -175,7 +197,7 @@ export function SettingsInput({
         editable={!disabled}
         secureTextEntry={secureTextEntry}
         accessibilityLabel={row.label}
-        size={compact ? "md" : "sm"}
+        size={compact ? "md" : undefined}
         style={styles.input}
       />
     </SettingsRow>
@@ -185,7 +207,7 @@ export function SettingsInput({
 export function SettingsAction({ actionLabel, onPress, disabled, ...row }: SettingsActionProps) {
   return (
     <SettingsRow {...row}>
-      <Button variant="outline" size="sm" onPress={onPress} disabled={disabled}>
+      <Button variant="outline" onPress={onPress} disabled={disabled}>
         {actionLabel}
       </Button>
     </SettingsRow>
@@ -193,7 +215,11 @@ export function SettingsAction({ actionLabel, onPress, disabled, ...row }: Setti
 }
 
 const styles = StyleSheet.create((theme) => ({
-  compactRow: { flexWrap: "wrap", gap: theme.spacing[3] },
+  // A control that wraps under the label gets space above it. Across the row, the leading slot and
+  // the label already carry their own margins, so a column gap would double them.
+  compactRow: { flexWrap: "wrap", rowGap: theme.spacing[3] },
+  // The same leading slot as `SettingsRowHeader`, so icons and labels share rails across row kinds.
+  leading: { marginRight: theme.spacing[3], alignItems: "center", justifyContent: "center" },
   label: { flexGrow: 1, flexShrink: 1, flexBasis: 160, marginRight: theme.spacing[3] },
   labelRow: {
     flexDirection: "row",

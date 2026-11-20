@@ -1,7 +1,9 @@
 /**
  * @vitest-environment jsdom
  */
-import { act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
+import { createWorkspaceVisibilityPolicy } from "@/components/sidebar/sidebar-group-visibility";
+import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,6 +85,8 @@ function workspace(input: {
   scripts?: WorkspaceDescriptor["scripts"];
 }): WorkspaceDescriptor {
   return {
+    createdAt: null,
+    lastUserMessageAt: null,
     id: input.id,
     projectId: input.projectId,
     projectDisplayName: input.projectDisplayName,
@@ -171,10 +175,6 @@ function initializeSidebarState(workspaces: WorkspaceDescriptor[]): void {
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     useSidebarOrderStore.setState({
       projectOrder: ["project-a", "project-b"],
-      workspaceOrderByProject: {
-        ["project-a"]: [`${SERVER_ID}:a-main`, `${SERVER_ID}:a-one`, `${SERVER_ID}:a-two`],
-        ["project-b"]: [`${SERVER_ID}:b-main`, `${SERVER_ID}:b-one`, `${SERVER_ID}:b-two`],
-      },
     });
   });
 }
@@ -348,7 +348,6 @@ describe("sidebar workspace render isolation", () => {
       useSessionStore.getState().clearSession(SERVER_ID);
       useSidebarOrderStore.setState({
         projectOrder: [],
-        workspaceOrderByProject: {},
       });
     });
   });
@@ -437,5 +436,236 @@ describe("sidebar workspace render isolation", () => {
       "b-one": 1,
       "b-two": 1,
     });
+  });
+});
+
+describe("sidebar group visibility", () => {
+  const entries = (statuses: WorkspaceDescriptor["status"][]) =>
+    statuses.map((status, index) =>
+      createSidebarWorkspaceEntry({
+        serverId: SERVER_ID,
+        workspace: workspace({
+          id: `row-${index + 1}`,
+          projectId: "project-a",
+          projectDisplayName: "Project A",
+          name: `Row ${index + 1}`,
+          status,
+        }),
+      }),
+    );
+  const policy = {
+    kind: "workspaces" as const,
+    getStatusBucket: (entry: ReturnType<typeof createSidebarWorkspaceEntry>) => entry.statusBucket,
+  };
+  const names = (items: readonly ReturnType<typeof createSidebarWorkspaceEntry>[]) =>
+    items.map((item) => item.workspaceId);
+
+  it.each([0, 7, 8])("limits %i Done rows to seven", (count) => {
+    const items = entries(Array(count).fill("done"));
+    const { result } = renderHook(() =>
+      useLimitedSidebarGroup({ items, selection: null, expanded: false, policy }),
+    );
+    expect(result.current.visibleItems).toEqual(items.slice(0, 7));
+    expect(result.current.canToggle).toBe(count > 7);
+  });
+
+  it.each(["needs_input", "failed", "attention", "running"] as const)(
+    "keeps row twelve visible for %s without filling gaps",
+    (status) => {
+      const items = entries([...Array(11).fill("done"), status]);
+      const { result } = renderHook(() =>
+        useLimitedSidebarGroup({ items, selection: null, expanded: false, policy }),
+      );
+      expect(names(result.current.visibleItems)).toEqual([
+        "row-1",
+        "row-2",
+        "row-3",
+        "row-4",
+        "row-5",
+        "row-6",
+        "row-7",
+        "row-12",
+      ]);
+      expect(result.current.visibleItems[7]).toBe(items[11]);
+      expect(result.current.canToggle).toBe(true);
+    },
+  );
+
+  it("treats placements without a hydrated entry as Done", () => {
+    const items = entries([...Array(8).fill("done"), "running", "done"]);
+    const hydrated = new Map(items.slice(0, 9).map((item) => [item.workspaceKey, item]));
+    for (const entriesByKey of [new Map(), hydrated]) {
+      const { result } = renderHook(() =>
+        useLimitedSidebarGroup({
+          items,
+          selection: null,
+          expanded: false,
+          policy: createWorkspaceVisibilityPolicy(entriesByKey),
+        }),
+      );
+      expect(result.current.canToggle).toBe(true);
+      expect(names(result.current.visibleItems)).toEqual(
+        entriesByKey.size === 0 ? names(items.slice(0, 7)) : [...names(items.slice(0, 7)), "row-9"],
+      );
+    }
+  });
+
+  it("shows eight active rows once with no redundant toggle", () => {
+    const items = entries([
+      "running",
+      "needs_input",
+      "attention",
+      "failed",
+      "running",
+      "attention",
+      "needs_input",
+      "failed",
+    ]);
+    const { result } = renderHook(() =>
+      useLimitedSidebarGroup({ items, selection: null, expanded: false, policy }),
+    );
+    expect(result.current.visibleItems).toEqual(items);
+    expect(result.current.canToggle).toBe(false);
+  });
+
+  it("recomputes current ordered membership and retains reveal through status, order and size changes", () => {
+    const items = entries([
+      ...Array(7).fill("done"),
+      "running",
+      "done",
+      "failed",
+      "done",
+      "attention",
+    ]);
+    const { result, rerender } = renderHook(
+      ({ rows, expanded }) =>
+        useLimitedSidebarGroup({ items: rows, selection: null, expanded, policy }),
+      { initialProps: { rows: items, expanded: false } },
+    );
+    expect(names(result.current.visibleItems)).toEqual([
+      "row-1",
+      "row-2",
+      "row-3",
+      "row-4",
+      "row-5",
+      "row-6",
+      "row-7",
+      "row-8",
+      "row-10",
+      "row-12",
+    ]);
+    rerender({ rows: items, expanded: true });
+    expect(result.current.visibleItems).toEqual(items);
+    rerender({ rows: items.map((item) => ({ ...item, statusBucket: "running" })), expanded: true });
+    expect(result.current.canToggle).toBe(false);
+    rerender({ rows: items.slice(0, 3), expanded: true });
+    expect(result.current.canToggle).toBe(false);
+    rerender({ rows: items.toReversed(), expanded: true });
+    expect(result.current.visibleItems).toEqual(items.toReversed());
+    rerender({ rows: items.toReversed(), expanded: false });
+    expect(names(result.current.visibleItems)).toEqual([
+      "row-12",
+      "row-11",
+      "row-10",
+      "row-9",
+      "row-8",
+      "row-7",
+      "row-6",
+    ]);
+    const newest = { ...items[0], workspaceId: "new", workspaceKey: "srv:new" };
+    rerender({ rows: [newest, ...items], expanded: false });
+    expect(result.current.visibleItems[0]).toBe(newest);
+    expect(result.current.visibleItems).toHaveLength(10);
+  });
+
+  it("shows the reveal its owner passes in on every mount", () => {
+    // A native drop remounts every project block it moves, so the group holds no reveal of its
+    // own. Only the native list remounts rows; the browser list never does, so no test here can
+    // drive that remount.
+    const items = entries([...Array(7).fill("done"), "running", "done", "failed", "done"]);
+    const first = renderHook(() =>
+      useLimitedSidebarGroup({ items, selection: null, expanded: true, policy }),
+    );
+    expect(first.result.current.visibleItems).toEqual(items);
+    first.unmount();
+    const remounted = renderHook(() =>
+      useLimitedSidebarGroup({ items, selection: null, expanded: true, policy }),
+    );
+    expect(remounted.result.current.visibleItems).toEqual(items);
+  });
+
+  it("follows effective pending creation, recovery and agent activity without changing Created order", () => {
+    const items = entries(Array(12).fill("done"));
+    const descriptor = workspace({
+      id: "row-12",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      name: "Row 12",
+    });
+    const pending = {
+      draftId: "draft",
+      serverId: SERVER_ID,
+      workspaceId: descriptor.id,
+      agentId: null,
+      clientMessageId: "message",
+      text: "Create",
+      timestamp: 1234,
+      lifecycle: "active" as const,
+    };
+    const { result, rerender } = renderHook(
+      ({ last }) =>
+        useLimitedSidebarGroup({
+          items: [...items.slice(0, 11), last],
+          selection: null,
+          expanded: false,
+          policy,
+        }),
+      { initialProps: { last: items[11] } },
+    );
+    expect(result.current.visibleItems).toHaveLength(7);
+    const creating = createSidebarWorkspaceEntry({
+      serverId: SERVER_ID,
+      workspace: descriptor,
+      pendingCreateAttempts: { draft: pending },
+    });
+    expect(creating.statusBucket).toBe("running");
+    rerender({ last: creating });
+    expect(names(result.current.visibleItems)).toEqual([...names(items.slice(0, 7)), "row-12"]);
+    const abandoned = createSidebarWorkspaceEntry({
+      serverId: SERVER_ID,
+      workspace: descriptor,
+      pendingCreateAttempts: { draft: { ...pending, lifecycle: "abandoned" } },
+    });
+    rerender({ last: abandoned });
+    expect(result.current.visibleItems).toHaveLength(7);
+    rerender({ last: creating });
+    for (const status of ["running", "attention", "needs_input", "failed", "done"] as const) {
+      const last = createSidebarWorkspaceEntry({
+        serverId: SERVER_ID,
+        workspace: descriptor,
+        workspaceAgentActivity: new Map([
+          [descriptor.id, { agentId: "agent", status, enteredAt: null }],
+        ]),
+      });
+      expect(last.statusBucket).toBe(status);
+      rerender({ last });
+      expect(names(result.current.visibleItems)).toEqual(
+        status === "done" ? names(items.slice(0, 7)) : [...names(items.slice(0, 7)), "row-12"],
+      );
+    }
+  });
+
+  it("preserves the twenty-row pinned policy regardless of status", () => {
+    const items = entries(Array(21).fill("running"));
+    const { result, rerender } = renderHook(
+      ({ expanded }) => useLimitedSidebarGroup({ items, selection: null, expanded }),
+      { initialProps: { expanded: false } },
+    );
+    expect(result.current.visibleItems).toEqual(items.slice(0, 20));
+    expect(result.current.canToggle).toBe(true);
+    rerender({ expanded: true });
+    expect(result.current.visibleItems).toEqual(items);
+    rerender({ expanded: false });
+    expect(result.current.visibleItems).toHaveLength(20);
   });
 });

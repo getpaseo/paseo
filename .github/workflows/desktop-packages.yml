@@ -6,7 +6,6 @@ on:
   # Packaging leaves ordinary PR CI, but a PR that changes what gets packaged
   # or how it is smoked still proves the real artifacts before merge.
   pull_request:
-    branches: [main]
     paths:
       - "packages/desktop/**"
       - "plugins/**"

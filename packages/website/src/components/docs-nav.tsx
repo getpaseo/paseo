@@ -1,7 +1,9 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type DocsNavNode } from "~/docs";
+import { splitLocalePath, useLocalizePath } from "~/i18n";
 
 interface DocsNavProps {
   nodes: DocsNavNode[];
@@ -47,13 +49,14 @@ function PageLink({
   onNavigate?: () => void;
 }) {
   const location = useLocation();
-  const isActive = location.pathname === node.href;
+  const href = useLocalizePath()(node.href);
+  const isActive = location.pathname === href;
   const ref = useScrollIntoViewWhenActive(isActive);
 
   return (
     <Link
       ref={ref}
-      to={node.href}
+      to={href}
       activeOptions={ACTIVE_OPTIONS_EXACT}
       onClick={onNavigate}
       data-docs-nav-active={isActive ? "" : undefined}
@@ -80,7 +83,8 @@ function GroupNode({
   onNavigate?: () => void;
 }) {
   const location = useLocation();
-  const currentHref = location.pathname;
+  const localize = useLocalizePath();
+  const currentHref = splitLocalePath(location.pathname).path;
   const containsActive = useMemo(() => nodeContainsHref(node, currentHref), [node, currentHref]);
   const isActive = node.href === currentHref;
   const ref = useScrollIntoViewWhenActive(isActive);
@@ -129,7 +133,7 @@ function GroupNode({
       ) : (
         <Link
           ref={ref}
-          to={node.href}
+          to={localize(node.href)}
           activeOptions={ACTIVE_OPTIONS_EXACT}
           onClick={handleClick}
           aria-expanded={hasChildren ? isOpen : undefined}
@@ -158,9 +162,12 @@ function CategoryNode({
   mobile?: boolean;
   onNavigate?: () => void;
 }) {
+  const { t } = useTranslation();
+  // Categories are named in the English docs' frontmatter; the page language translates the name.
+  const label = t(`docs.categories.${node.label}`, { defaultValue: node.label });
   return (
     <div className={mobile ? "space-y-1" : "space-y-1 mt-6 first:mt-0"}>
-      <div className="px-3 py-2 text-xs font-medium text-foreground">{node.label}</div>
+      <div className="px-3 py-2 text-xs font-medium text-foreground">{label}</div>
       <NavTree nodes={node.children} mobile={mobile} onNavigate={onNavigate} />
     </div>
   );

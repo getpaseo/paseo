@@ -14,7 +14,7 @@ import { extname, resolve } from "node:path";
 /** Result type for agent send command */
 export interface AgentSendResult {
   agentId: string;
-  status: "sent" | "completed" | "timeout" | "permission" | "error";
+  status: "queued" | "sent" | "completed" | "timeout" | "permission" | "error";
   message: string;
 }
 
@@ -47,7 +47,7 @@ export function addSendOptions(cmd: Command): Command {
     .addOption(
       new Option(
         "--behavior <behavior>",
-        "Active-turn behavior (agent default: steer; otherwise: interrupt)",
+        "Active-turn behavior (agent default: steer waits for turn end; otherwise: interrupt)",
       ).choices(["interrupt", "steer"]),
     )
     .option("--no-wait", "Return immediately without waiting for completion");
@@ -201,7 +201,7 @@ export async function runSendCommand(
 
     const sourceAgentId = process.env.PASEO_AGENT_ID?.trim() || undefined;
     // Send the message
-    await client.sendAgentMessage(agentIdArg, promptInput, {
+    const receipt = await client.sendAgentMessage(agentIdArg, promptInput, {
       images,
       sourceAgentId,
       activeTurnBehavior: options.behavior ?? (sourceAgentId ? "steer" : "interrupt"),
@@ -215,8 +215,11 @@ export async function runSendCommand(
         type: "single",
         data: {
           agentId: agentIdArg,
-          status: "sent",
-          message: "Message sent, not waiting for completion",
+          status: receipt.deliveryStatus ?? "sent",
+          message:
+            receipt.deliveryStatus === "queued"
+              ? "Message queued for delivery after two quiet seconds and the current turn ends, unless interrupt was requested"
+              : "Message sent, not waiting for completion",
         },
         schema: agentSendSchema,
       };

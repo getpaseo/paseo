@@ -938,7 +938,9 @@ async function accountFor(
   lookup: Parameters<typeof discover>[0] = {},
 ) {
   const accounts = await discover({ kind: "global" }, { ...lookup, now }, fetchApi);
-  const account = accounts.find((candidate) => isDeepStrictEqual(candidate.input, input));
+  const account = accounts.find((candidate) =>
+    isDeepStrictEqual(inputSchema.parse(candidate.input).route, input.route),
+  );
   if (!account) throw new Error("Expected discovered login");
   return { key: account.key, ...(account.label ? { label: account.label } : {}) };
 }
@@ -1082,7 +1084,7 @@ it("session discovery reads only its Claude home and excludes foreign sessions",
         key: "session-account.org",
         label: "session@example.test",
         harness: "Claude",
-        input: credentialInput(home),
+        input: { ...credentialInput(home), accountKey: "session-account.org" },
       },
     ]);
     await discover(scope, lookup, api);

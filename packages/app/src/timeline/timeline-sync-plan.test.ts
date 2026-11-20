@@ -17,6 +17,7 @@ describe("timeline sync planning", () => {
       direction: "tail",
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+      wholeTurns: true,
     });
   });
 
@@ -26,6 +27,7 @@ describe("timeline sync planning", () => {
       cursor: { epoch: "epoch-1", seq: 49 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+      wholeTurns: true,
     });
   });
 
@@ -37,6 +39,7 @@ describe("timeline sync planning", () => {
       cursor: { epoch: "epoch-1", seq: 25 },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+      wholeTurns: true,
     });
   });
 
@@ -49,6 +52,7 @@ describe("timeline sync planning", () => {
       },
       limit: TIMELINE_FETCH_PAGE_SIZE,
       projection: "projected",
+      wholeTurns: true,
       mergeWindow: true,
     });
   });

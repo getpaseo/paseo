@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import {
   resolveUsageReport,
+  markUsageRefreshFailure,
   displayPercent,
-  formatUsageFreshness,
   resolveAgentUsageView,
   replaceReport,
   resolveUsageRefresh,
@@ -65,12 +66,24 @@ describe("resolveUsageView", () => {
     ).toEqual({ kind: "unavailable", message: "Connect to Laptop to see usage" });
   });
 
+  it("localizes unavailable host messages while retaining the host name", async () => {
+    await i18n.changeLanguage("ko");
+    expect(
+      resolveUsageView({
+        hostLabel: "Laptop",
+        isConnected: false,
+        supportsUsage: false,
+        query: undefined,
+      }),
+    ).toEqual({ kind: "unavailable", message: "Laptop에 연결하여 제공업체 사용량을 확인하세요" });
+  });
+
   it("moves from loading to ready to error", () => {
     const base = { hostLabel: "Laptop", isConnected: true, supportsUsage: true };
     expect(resolveUsageView({ ...base, query: undefined })).toEqual({ kind: "loading" });
     expect(
       resolveUsageView({ ...base, query: { data: [], error: null, isFetching: true } }),
-    ).toEqual({ kind: "ready", reports: [], isRefreshing: true });
+    ).toEqual({ kind: "ready", reports: [], isRefreshing: true, refreshFailed: false });
     expect(
       resolveUsageView({
         ...base,
@@ -78,6 +91,23 @@ describe("resolveUsageView", () => {
       }),
     ).toEqual({ kind: "error", message: "boom" });
   });
+
+  it("shows a failed Refresh all alongside the reports still on screen", () => {
+    const reports = [entry({})];
+    expect(
+      resolveUsageView({
+        hostLabel: "Laptop",
+        isConnected: true,
+        supportsUsage: true,
+        query: ready(reports),
+        refreshState: "failed",
+      }),
+    ).toEqual({ kind: "ready", reports, isRefreshing: false, refreshFailed: true });
+  });
+});
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
 });
 
 const hosts: UsageHost[] = [
@@ -185,25 +215,14 @@ describe("displayPercent", () => {
   });
 });
 
-describe("formatUsageFreshness", () => {
-  it("says when the report was fetched", () => {
-    expect(formatUsageFreshness("now")).toBe("Updated just now");
-    expect(formatUsageFreshness("3m")).toBe("Updated 3m ago");
-    expect(formatUsageFreshness("Jan 15")).toBe("Updated Jan 15");
-  });
-});
-
 describe("resolveUsageRefresh", () => {
   it("is pending while a refresh runs, even after an earlier failure", () => {
-    expect(resolveUsageRefresh({ isPending: true, error: new Error("boom") })).toBe("pending");
+    expect(resolveUsageRefresh({ isPending: true, isError: true })).toBe("pending");
   });
 
-  it("is failed after a refresh errors", () => {
-    expect(resolveUsageRefresh({ isPending: false, error: new Error("boom") })).toBe("failed");
-  });
-
-  it("is idle before and after a successful refresh", () => {
-    expect(resolveUsageRefresh({ isPending: false, error: null })).toBe("idle");
+  it("reports the request outcome independently of the reading", () => {
+    expect(resolveUsageRefresh({ isPending: false, isError: true })).toBe("failed");
+    expect(resolveUsageRefresh({ isPending: false, isError: false })).toBe("idle");
   });
 });
 
@@ -338,33 +357,72 @@ it("resolves retained usage and successful time without inventing old-daemon his
       report: success.report as Extract<UsageReportEntry["report"], { status: "available" }>,
     },
   };
-  expect(resolveUsageReport(failure)).toEqual({
+  expect(resolveUsageReport(failure, i18n.t)).toEqual({
     windows: success.report.status === "available" ? success.report.windows : [],
     balances: [],
     details: [],
     planLabel: null,
     successfulAt: success.fetchedAt,
+    forecastAt: null,
     retained: true,
     messages: ["Rate limited"],
   });
-  expect(resolveUsageReport({ ...failure, lastSuccessful: undefined })).toEqual({
+  expect(resolveUsageReport({ ...failure, lastSuccessful: undefined }, i18n.t)).toEqual({
     windows: [],
     balances: [],
     details: [],
     planLabel: null,
     successfulAt: null,
+    forecastAt: null,
     retained: false,
     messages: ["Rate limited"],
   });
-  expect(resolveUsageReport(success)).toEqual({
+  expect(resolveUsageReport(success, i18n.t)).toEqual({
     windows: success.report.status === "available" ? success.report.windows : [],
     balances: [],
     details: [],
     planLabel: null,
     successfulAt: success.fetchedAt,
+    forecastAt: success.fetchedAt,
     retained: false,
     messages: [],
   });
+});
+
+it("uses the quota observation time for pace and keeps the reading after a failed request", () => {
+  const success = entry({ windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] });
+  if (success.report.status !== "available") throw new Error("fixture must be available");
+  const observedAt = success.fetchedAt;
+  const successfulAt = "2026-01-01T00:15:00.000Z";
+  const report = { ...success, successfulAt, report: { ...success.report, observedAt } };
+  expect(resolveUsageReport(report, i18n.t)).toMatchObject({
+    successfulAt,
+    forecastAt: observedAt,
+  });
+  expect(resolveUsageReport({ ...report, forecastStale: true }, i18n.t)).toMatchObject({
+    windows: success.report.windows,
+    successfulAt,
+    forecastAt: null,
+  });
+});
+
+it("keeps cached quota and hides its forecast when Refresh all fails before a new report arrives", () => {
+  const before = entry({ windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] });
+  const other = entry({ sourceId: "other" });
+  const refreshedAt = "2026-01-01T00:06:00.000Z";
+  const streamed = { ...other, fetchedAt: refreshedAt };
+  const attempted = [before, other];
+  const failed = markUsageRefreshFailure([before, streamed], attempted)!;
+
+  expect(resolveUsageReport(failed[0]!, i18n.t)).toMatchObject({
+    forecastAt: null,
+    windows: before.report.status === "available" ? before.report.windows : [],
+  });
+  expect(resolveUsageReport(failed[1]!, i18n.t).forecastAt).toBe(refreshedAt);
+  expect(resolveUsageReport(upsertReport(failed, before)[0]!, i18n.t).forecastAt).toBeNull();
+
+  const retried = settleReports(failed, [{ ...before, fetchedAt: refreshedAt }, streamed]);
+  expect(resolveUsageReport(retried[0]!, i18n.t).forecastAt).toBe(refreshedAt);
 });
 
 it("orders failed polls by attempt time even when successful data is older", () => {
@@ -384,7 +442,7 @@ it("orders failed polls by attempt time even when successful data is older", () 
 it("available and retained usage show the same successful completion time", () => {
   const success: UsageReportEntry = { ...entry({}), successfulAt: "2026-01-01T00:00:15.000Z" };
   if (success.report.status !== "available") throw new Error("fixture must be available");
-  expect(resolveUsageReport(success).successfulAt).toBe("2026-01-01T00:00:15.000Z");
+  expect(resolveUsageReport(success, i18n.t).successfulAt).toBe("2026-01-01T00:00:15.000Z");
   const failure: UsageReportEntry = {
     ...success,
     successfulAt: undefined,
@@ -392,6 +450,20 @@ it("available and retained usage show the same successful completion time", () =
     report: { status: "error", error: "Rate limited" },
     lastSuccessful: { fetchedAt: success.successfulAt!, report: success.report },
   };
-  expect(resolveUsageReport(failure).successfulAt).toBe(resolveUsageReport(success).successfulAt);
+  expect(resolveUsageReport(failure, i18n.t).successfulAt).toBe(
+    resolveUsageReport(success, i18n.t).successfulAt,
+  );
   expect(upsertReport([failure], success)).toEqual([failure]);
+});
+
+it("disabled host shows off even with cached reports", () => {
+  expect(
+    resolveUsageView({
+      hostLabel: "Laptop",
+      isConnected: true,
+      supportsUsage: true,
+      enabled: false,
+      query: { data: [], error: null, isFetching: false },
+    }),
+  ).toMatchObject({ kind: "off" });
 });

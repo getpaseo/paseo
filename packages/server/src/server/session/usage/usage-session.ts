@@ -9,6 +9,7 @@ export interface UsageSessionOptions {
     listUsageReports(options: ListUsageReportsOptions): Promise<UsageReportEntry[]>;
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
+  isEnabled: () => boolean;
   logger: pino.Logger;
 }
 
@@ -19,6 +20,7 @@ export class UsageSession {
     msg: Extract<SessionInboundMessage, { type: "usage.list_reports.request" }>,
   ): Promise<void> {
     try {
+      if (!this.options.isEnabled()) throw new Error("Usage is off on this host.");
       if (!this.options.runtime) throw new Error("Plugin runtime is unavailable");
       await this.options.runtime.listUsageReports({
         forceRefresh: msg.forceRefresh,
@@ -49,6 +51,18 @@ export class UsageSession {
   async handleLegacyList(
     msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
   ): Promise<void> {
+    if (!this.options.isEnabled()) {
+      this.options.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: "Usage is off on this host.",
+          code: "provider_usage_list_failed",
+        },
+      });
+      return;
+    }
     try {
       if (!this.options.runtime) throw new Error("Plugin runtime is unavailable");
       const usage = await this.options.runtime.listLegacyUsage();

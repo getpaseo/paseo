@@ -1,10 +1,13 @@
+import { useTranslation } from "react-i18next";
 import { RotateCw } from "lucide-react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import {
+  mutedIconColorMapping,
+  useIconButtonChromeGlyphSize,
+} from "@/components/ui/icon-button-chrome";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { ToolbarButton, paneContentToolbarIconSize } from "@/components/ui/pane-content-toolbar";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { usageCopy } from "./copy";
 
 const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -14,20 +17,21 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
  * header's island, so its highlight is round.
  */
 export function UsageRefreshButton({ busy, onRefresh }: { busy: boolean; onRefresh: () => void }) {
+  const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
-  const iconSize = paneContentToolbarIconSize(compact);
+  const iconSize = useIconButtonChromeGlyphSize("small", compact);
   return (
     <ToolbarButton
-      label={usageCopy.refreshAll}
+      label={t("providerUsage.refreshAll")}
       compact={compact}
       disabled={busy}
       onPress={onRefresh}
       testID="usage-refresh-all"
     >
       {busy ? (
-        <ThemedLoadingSpinner size={iconSize} uniProps={extraMutedIconColorMapping} />
+        <ThemedLoadingSpinner size={iconSize} uniProps={mutedIconColorMapping} />
       ) : (
-        <ThemedRotateCw size={iconSize} uniProps={extraMutedIconColorMapping} />
+        <ThemedRotateCw size={iconSize} uniProps={mutedIconColorMapping} />
       )}
     </ToolbarButton>
   );

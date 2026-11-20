@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type {
   CheckoutPipelineJob,
   CheckoutPrStatusResponse,
@@ -778,6 +778,11 @@ describe("formatAge", () => {
     expect(formatAge(now - 90 * 24 * 60 * 60_000, now)).toBe("3mo ago");
     expect(formatAge(now - 365 * 24 * 60 * 60_000, now)).toBe("1y ago");
   });
+});
+
+// Fixed translators do not select a language, so request their resources first.
+beforeAll(async () => {
+  await i18n.loadLanguages("fr");
 });
 
 const english = i18n.getFixedT("en");

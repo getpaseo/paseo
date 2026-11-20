@@ -1,13 +1,74 @@
-import { copyPluginExample } from "./plugin-fixture";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { copyPluginExample, pluginRequirements } from "./plugin-fixture";
 import { expect, test as base, type Page } from "../fixtures";
 import { gotoAppShell, openSettings } from "./app";
 import { goBackInSettings, openCompactSettings, openHostSection } from "./settings";
 import { getServerId } from "./server-id";
 import { expectAppRoute } from "./route-assertions";
-import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
+import {
+  backToPlugins,
+  openPluginPage,
+  openPluginPageActions,
+  pluginPageName,
+  pluginPageRoute,
+  pluginRow,
+  pluginsRoute,
+  turnPluginOff,
+  turnPluginOn,
+} from "./plugin-gallery";
 
 type SettingsClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
+
+const TABBED_PLUGIN_ID = "settings-tabs";
+const TABBED_PLUGIN_NAME = "Tabbed settings";
+/** Two settings screens, so the settings page shows a tab per screen. */
+const TABBED_SOURCE = `import React from "react";
+import { Text, View } from "react-native";
+import { defineTranslations, useTranslation } from "@getpaseo/plugin/client";
+
+const messages = defineTranslations({ resources: { en: { icon: "advanced-tab-icon" } } });
+
+function General({ theme }) {
+  return <Text style={{ color: theme.colors.foreground }}>General settings body</Text>;
+}
+
+function Advanced({ theme }) {
+  return <Text style={{ color: theme.colors.foreground }}>Advanced settings body</Text>;
+}
+
+// Component icons run with the plugin's runtime; one that throws costs its tab only the icon.
+function TranslatedIcon({ color, size }) {
+  const { t } = useTranslation(messages);
+  return <View testID={t("icon")} aria-hidden style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />;
+}
+
+function BrokenIcon() {
+  throw new Error("Settings tab icon exploded");
+}
+
+export default function contribute(client) {
+  client.addSettingsScreen({ id: "general", title: "General", icon: BrokenIcon, Component: General });
+  client.addSettingsScreen({ id: "advanced", title: "Advanced", icon: TranslatedIcon, Component: Advanced });
+  return () => {};
+}
+`;
+
+async function writeTabbedPlugin() {
+  const directory = await mkdtemp(path.join(tmpdir(), `paseo-${TABBED_PLUGIN_ID}-`));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: TABBED_PLUGIN_ID,
+      name: TABBED_PLUGIN_NAME,
+      requirements: pluginRequirements,
+    }),
+  );
+  await writeFile(path.join(directory, "index.client.tsx"), TABBED_SOURCE);
+  return { directory, cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
 
 export const test = base.extend<{ settingsPlugin: SettingsClient }>({
   settingsPlugin: [
@@ -16,16 +77,20 @@ export const test = base.extend<{ settingsPlugin: SettingsClient }>({
       const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
       const previous = await client.getDaemonConfig();
       const example = await copyPluginExample("settings");
+      const tabbed = await writeTabbedPlugin();
       try {
         await client.patchDaemonConfig({ pluginsEnabled: true });
         await client.installDirectoryPlugin(example.directory);
+        await client.installDirectoryPlugin(tabbed.directory);
         await provide(client);
         await page.screenshot({ path: testInfo.outputPath("settings.png") });
       } finally {
         await client.removePlugin("settings-example");
+        await client.removePlugin(TABBED_PLUGIN_ID);
         await client.patchDaemonConfig({ pluginsEnabled: previous.config.pluginsEnabled });
         await client.close();
         await example.cleanup();
+        await tabbed.cleanup();
       }
     },
     { auto: true },
@@ -35,18 +100,91 @@ export const test = base.extend<{ settingsPlugin: SettingsClient }>({
 export async function openDisplaySettings(page: Page) {
   await gotoAppShell(page);
   await openSettings(page);
-  await openPluginScreen(page);
+  await openSettingsExamplePage(page);
 }
 export async function openCompactDisplaySettings(page: Page) {
   await gotoAppShell(page);
   await openCompactSettings(page, new URL(page.url()).pathname);
-  await openPluginScreen(page);
+  await openSettingsExamplePage(page);
 }
-async function openPluginScreen(page: Page) {
+async function openSettingsExamplePage(page: Page) {
   await openHostSection(page, getServerId(), "plugins");
-  await page.getByRole("button", { name: "Actions for settings-example", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Display", exact: true }).click();
+  await openPluginPage(page, "settings-example");
+  await expectSettingsExampleScreen(page);
+}
+/** A plugin's page shows its settings inline. With one screen there are no tabs. */
+async function expectSettingsExampleScreen(page: Page) {
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
+  await expect(page.getByTestId("plugin-settings-tabs")).toHaveCount(0);
+  await expectAppRoute(page, pluginPageRoute("settings-example"));
+}
+export async function openPluginsPage(page: Page) {
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openHostSection(page, getServerId(), "plugins");
+}
+/** The page's menu holds plugin actions only; its settings screens are on the page itself. */
+export async function expectActionsMenuWithoutSettings(page: Page) {
+  await openPluginPageActions(page, TABBED_PLUGIN_NAME);
+  await expect(page.getByRole("menuitem", { name: "Reload", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "General", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Advanced", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+}
+/** Turning a plugin off unloads its settings screens, so its page no longer shows them. */
+export async function expectSettingsFollowPluginSwitch(page: Page) {
+  await openPluginPage(page, "settings-example");
+  await turnPluginOff(page, "settings-example");
+  await expectSettingsHidden(page);
+  await turnPluginOn(page, "settings-example");
+  await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
+}
+export async function expectSettingsHidden(page: Page) {
+  await expect(page.getByRole("switch", { name: "Show metadata" })).toHaveCount(0);
+}
+/** A manifest `name` titles the row and its switch, and opens the plugin's page. */
+export async function expectNamedPluginRow(page: Page) {
+  const row = pluginRow(page, TABBED_PLUGIN_ID);
+  await expect(row.getByText(TABBED_PLUGIN_NAME, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: `${TABBED_PLUGIN_NAME}: Disable`, exact: true }),
+  ).toBeVisible();
+  await expect(row).toHaveAccessibleName(TABBED_PLUGIN_NAME);
+}
+/** The page names the plugin by its manifest name, with the ID beneath it. */
+export async function openTabbedSettings(page: Page) {
+  await openPluginPage(page, TABBED_PLUGIN_NAME, TABBED_PLUGIN_ID);
+  await expect(
+    page.getByText(TABBED_PLUGIN_ID, { exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expectAppRoute(page, pluginPageRoute(TABBED_PLUGIN_ID));
+  await expectSettingsTab(page, "General");
+  // The Advanced icon reads the plugin's translations; the General icon throws and is dropped.
+  await expect(page.getByTestId("advanced-tab-icon")).toBeVisible();
+}
+function settingsTab(page: Page, title: string) {
+  return page.getByTestId("plugin-settings-tabs").getByRole("button", { name: title, exact: true });
+}
+/** Tabs swap the screen in place on the plugin's page, so Back still returns to Plugins. */
+export async function selectSettingsTab(page: Page, title: "General" | "Advanced") {
+  await settingsTab(page, title).click();
+  await expectSettingsTab(page, title);
+  await expectAppRoute(
+    page,
+    `${pluginPageRoute(TABBED_PLUGIN_ID)}?screenId=${title.toLowerCase()}`,
+  );
+}
+export async function expectSettingsTab(page: Page, title: "General" | "Advanced") {
+  const other = title === "General" ? "Advanced" : "General";
+  await expect(settingsTab(page, title)).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByText(`${title} settings body`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`${other} settings body`, { exact: true })).toHaveCount(0);
+  await expect(pluginPageName(page)).toHaveText(TABBED_PLUGIN_NAME);
+}
+export async function openTabbedSettingsLink(page: Page, title: "General" | "Advanced") {
+  await gotoAppShell(page);
+  await page.goto(`${pluginPageRoute(TABBED_PLUGIN_ID)}/${title.toLowerCase()}`);
+  await expectSettingsTab(page, title);
 }
 export async function groupByWorkspace(page: Page) {
   await page.getByRole("button", { name: /^Group agents by:/ }).click();
@@ -101,18 +239,13 @@ export async function discardTitle(page: Page) {
 }
 export async function returnAndReopenSettings(page: Page) {
   await goBackInSettings(page);
-  const actions = page.getByRole("button", { name: "Actions for settings-example", exact: true });
-  await expect(actions).toBeVisible();
-  await actions.click();
-  await page.getByRole("menuitem", { name: "Display", exact: true }).click();
-  await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
+  await expectAppRoute(page, pluginsRoute());
+  await openPluginPage(page, "settings-example");
+  await expectSettingsExampleScreen(page);
 }
 export async function returnToPluginsPage(page: Page) {
-  await page.getByRole("button", { name: "Back to plugins", exact: true }).click();
-  await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "plugins"));
-  await expect(
-    page.getByRole("button", { name: "Actions for settings-example", exact: true }),
-  ).toBeVisible();
+  await backToPlugins(page, "settings-example");
+  await expectAppRoute(page, pluginsRoute());
 }
 export async function expectSettingsUnavailable(page: Page) {
   await expect(

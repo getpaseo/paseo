@@ -59,8 +59,8 @@
 <table>
   <tr>
     <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Cloud coding agents</sub></td>
-    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">成为 Paseo 赞助商</a></td>
-    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">成为 Paseo 赞助商</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/zh-CN/sponsor">成为 Paseo 赞助商</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/zh-CN/sponsor">成为 Paseo 赞助商</a></td>
   </tr>
 </table>
 
@@ -80,7 +80,7 @@ Paseo 会运行一个名为 daemon 的本地服务，用来管理你的 coding a
 
 ### 桌面 app（推荐）
 
-从 [paseo.sh/download](https://paseo.sh/download) 或 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
+从 [paseo.sh/download](https://paseo.sh/zh-CN/download) 或 [GitHub releases 页面](https://github.com/getpaseo/paseo/releases)下载。打开 app 后 daemon 会自动启动，不需要再安装其他东西。
 
 如果要从手机连接，在 Settings 中扫描显示的二维码。
 
@@ -97,8 +97,8 @@ paseo
 
 完整安装和配置见：
 
-- [文档](https://paseo.sh/docs)
-- [配置参考](https://paseo.sh/docs/configuration)
+- [文档](https://paseo.sh/zh-CN/docs)
+- [配置参考](https://paseo.sh/zh-CN/docs/configuration)
 
 ## CLI
 
@@ -116,7 +116,7 @@ paseo send abc123 "also add tests" # 发送后续任务
 paseo --host workstation.local:6767 run "run the full test suite"
 ```
 
-更多内容见[完整 CLI 参考](https://paseo.sh/docs/cli)。
+更多内容见[完整 CLI 参考](https://paseo.sh/zh-CN/docs/cli)。
 
 ## Skills
 
@@ -164,7 +164,7 @@ npm run typecheck
 
 ## 支持 Paseo
 
-Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/sponsor#spot)，logo 会展示在本 README 顶部，以及 paseo.sh 的首页和文档中。
+Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作。公司也可以按月[赞助 Paseo](https://paseo.sh/zh-CN/sponsor#spot)，logo 会展示在本 README 顶部，以及 paseo.sh 的首页和文档中。
 
 ## 相关项目
 

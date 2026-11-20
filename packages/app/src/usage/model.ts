@@ -1,7 +1,14 @@
-import { formatCompactTimeAgoAsProse } from "@/utils/time";
+import type { TFunction } from "i18next";
+import { i18n } from "@/i18n/i18next";
 import { usageCopy } from "./copy";
 import type { UsageDisplayAs } from "./preferences";
-import type { UsageReport, UsageReportEntry, UsageView, UsageWindow } from "./types";
+import type {
+  AvailableUsageReport,
+  UsageReport,
+  UsageReportEntry,
+  UsageView,
+  UsageWindow,
+} from "./types";
 
 export function usedPercent(window: UsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -31,21 +38,29 @@ export function usageWindowRowLabel(input: {
   return `${input.pinLabel}, ${summary}`;
 }
 
-/** When a report was fetched, from its compact relative time: "Updated 3m ago". */
-export function formatUsageFreshness(compactTimeAgo: string, retained = false): string {
-  return `${retained ? "Last updated" : usageCopy.updated} ${formatCompactTimeAgoAsProse(compactTimeAgo)}`;
-}
-
-/** A user-requested refresh of one report. The previous report stays on screen throughout. */
+/** The outcome of a user-requested usage refresh. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 
 export function resolveUsageRefresh(mutation: {
   isPending: boolean;
-  error: unknown;
+  isError: boolean;
 }): UsageRefresh {
   if (mutation.isPending) return "pending";
-  if (mutation.error) return "failed";
+  if (mutation.isError) return "failed";
   return "idle";
+}
+
+/** Keep quota readings after a failed refresh and attach the outcome to the readings it targeted. */
+export function markUsageRefreshFailure(
+  current: UsageReportEntry[] | undefined,
+  attempted: readonly UsageReportEntry[],
+): UsageReportEntry[] | undefined {
+  const attemptedAt = new Map(attempted.map((entry) => [entry.id, entry.fetchedAt]));
+  return current?.map((entry) =>
+    attemptedAt.get(entry.id) === entry.fetchedAt && !entry.forecastStale
+      ? { ...entry, forecastStale: true }
+      : entry,
+  );
 }
 
 /**
@@ -58,7 +73,9 @@ export function replaceReport(
   refreshed: UsageReportEntry | null,
 ): UsageReportEntry[] {
   if (!refreshed) return reports.filter((report) => report.id !== reportId);
-  return reports.map((report) => (report.id === reportId ? refreshed : report));
+  return reports.map((report) =>
+    report.id === reportId ? laterFetched(report, refreshed) : report,
+  );
 }
 
 /**
@@ -66,7 +83,9 @@ export function replaceReport(
  * started, so a Refresh that lands while it streams is newer than what the request still delivers.
  */
 function laterFetched(shown: UsageReportEntry, arriving: UsageReportEntry): UsageReportEntry {
-  return Date.parse(shown.fetchedAt) > Date.parse(arriving.fetchedAt) ? shown : arriving;
+  const shownAt = Date.parse(shown.fetchedAt);
+  const arrivingAt = Date.parse(arriving.fetchedAt);
+  return shownAt > arrivingAt || (shownAt === arrivingAt && shown.forecastStale) ? shown : arriving;
 }
 
 /**
@@ -108,19 +127,38 @@ export interface UsageQueryState {
   isFetching: boolean;
 }
 
-export function resolveUsageView(input: {
-  hostLabel: string;
-  isConnected: boolean;
-  supportsUsage: boolean;
-  query: UsageQueryState | undefined;
-}): UsageView {
-  const { hostLabel, isConnected, supportsUsage, query } = input;
-  if (!isConnected) return { kind: "unavailable", message: usageCopy.hostUnavailable(hostLabel) };
+export function resolveUsageView(
+  input: {
+    enabled?: boolean;
+    hostLabel: string;
+    isConnected: boolean;
+    supportsUsage: boolean;
+    query: UsageQueryState | undefined;
+    refreshState?: UsageRefresh;
+  },
+  t: TFunction = i18n.t,
+): UsageView {
+  const { hostLabel, isConnected, supportsUsage, query, refreshState } = input;
+  if (!isConnected)
+    return {
+      kind: "unavailable",
+      message: t("providerUsage.hostUnavailable", { host: hostLabel }),
+    };
   if (!supportsUsage) {
-    return { kind: "unavailable", message: usageCopy.hostUpgradeRequired(hostLabel) };
+    return {
+      kind: "unavailable",
+      message: t("providerUsage.hostUpgradeRequired", { host: hostLabel }),
+    };
   }
+  if (input.enabled === false)
+    return { kind: "off", message: t("providerUsage.off", { host: hostLabel }) };
   if (query?.data) {
-    return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
+    return {
+      kind: "ready",
+      reports: query.data,
+      isRefreshing: query.isFetching || refreshState === "pending",
+      refreshFailed: refreshState === "failed",
+    };
   }
   if (query?.error) {
     return {
@@ -138,17 +176,20 @@ export type AgentUsageView =
   | { kind: "error"; message: string }
   | { kind: "ready"; reports: UsageReportEntry[] };
 
-export function resolveAgentUsageView(input: {
-  canReport: boolean;
-  query: UsageQueryState;
-}): AgentUsageView {
+export function resolveAgentUsageView(
+  input: {
+    canReport: boolean;
+    query: UsageQueryState;
+  },
+  t: TFunction = i18n.t,
+): AgentUsageView {
   const { canReport, query } = input;
   if (!canReport) return { kind: "none" };
   // A failed request keeps the reports from before it, or those that streamed in before it failed;
   // shown alone they would pass for the agent's complete, current usage.
   if (query.error) {
     const reason = query.error instanceof Error ? query.error.message : String(query.error);
-    return { kind: "error", message: usageCopy.agentError(reason) };
+    return { kind: "error", message: t("providerUsage.agentError", { reason }) };
   }
   if (query.data) {
     return query.data.length === 0 ? { kind: "none" } : { kind: "ready", reports: query.data };
@@ -193,39 +234,63 @@ export function resolveUsageModalHostId(choice: UsageHostChoice): string | null 
   return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;
 }
 
-/** Current outcome owns messages; only a successful poll owns values and freshness. */
-export function resolveUsageReport(entry: UsageReportEntry) {
-  const available = entry.report.status === "available";
+export interface UsageSnapshot {
+  report: AvailableUsageReport;
+  successfulAt: string;
+  retained: boolean;
+}
+
+/** The latest successful values and their freshness, independent of the latest attempt's outcome. */
+export function resolveUsageSnapshot(entry: UsageReportEntry): UsageSnapshot | null {
+  if (entry.report.status === "available") {
+    // COMPAT(usageSuccessfulAt): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
+    // Old daemons expose only attempt time for available reports, never for failures.
+    return {
+      report: entry.report,
+      successfulAt: entry.successfulAt ?? entry.fetchedAt,
+      retained: false,
+    };
+  }
   // COMPAT(usageLastSuccessful): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
   // Older daemons cannot provide history; a failed attempt is never a successful update.
-  const snapshot = available ? null : (entry.lastSuccessful ?? null);
-  const content = entry.report.status === "available" ? entry.report : (snapshot?.report ?? null);
+  const retained = entry.lastSuccessful;
+  if (!retained) return null;
+  return { report: retained.report, successfulAt: retained.fetchedAt, retained: true };
+}
+
+/** Current outcome owns messages; only a successful poll owns values and freshness. */
+export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
+  const available = entry.report.status === "available";
+  const snapshot = resolveUsageSnapshot(entry);
   const messages: string[] = [];
   if (!available) {
     if (entry.loginErrors)
       messages.push(
-        ...entry.loginErrors.map((login) => `${login.harness}: ${usageProblemText(login.report)}`),
+        ...entry.loginErrors.map(
+          (login) => `${login.harness}: ${usageProblemText(login.report, t)}`,
+        ),
       );
     // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once daemon floor >= v0.11.0.
-    else messages.push(usageProblemText(entry.report));
+    else messages.push(usageProblemText(entry.report, t));
   }
+  const forecastAt =
+    snapshot && !snapshot.retained && !entry.forecastStale
+      ? (snapshot.report.observedAt ?? snapshot.successfulAt)
+      : null;
   return {
-    windows: content?.windows ?? [],
-    balances: content?.balances ?? [],
-    details: content?.details ?? [],
-    planLabel: content?.planLabel ?? null,
-    // COMPAT(usageSuccessfulAt): added in v0.12.0, remove after 2027-04-17 once daemon floor >= v0.12.0.
-    // Old daemons expose only attempt time for available reports, never for failures.
-    successfulAt: available
-      ? (entry.successfulAt ?? entry.fetchedAt)
-      : (snapshot?.fetchedAt ?? null),
-    retained: snapshot !== null,
+    forecastAt,
+    windows: snapshot?.report.windows ?? [],
+    balances: snapshot?.report.balances ?? [],
+    details: snapshot?.report.details ?? [],
+    planLabel: snapshot?.report.planLabel ?? null,
+    successfulAt: snapshot?.successfulAt ?? null,
+    retained: snapshot?.retained ?? false,
     messages,
   };
 }
 
-function usageProblemText(report: UsageReport): string {
+function usageProblemText(report: UsageReport, t: TFunction): string {
   if (report.status === "error") return report.error;
-  if (report.status === "unavailable") return usageCopy.problem(report.problem);
+  if (report.status === "unavailable") return usageCopy.problem(report.problem, new Date(), t);
   return "";
 }

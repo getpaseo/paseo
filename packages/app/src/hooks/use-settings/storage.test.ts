@@ -44,6 +44,33 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("persists file panel associations, including panels absent from this host", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    const filePanelAssociations = {
+      "ext:md": "builtin:markdown",
+      "name:Dockerfile": "plugin:absent/container",
+    };
+    await saveAppSettings({ queryClient, deps, updates: { filePanelAssociations } });
+    expect((await loadAppSettingsFromStorage(deps)).filePanelAssociations).toEqual(
+      filePanelAssociations,
+    );
+  });
+
+  it.each([undefined, null, [], "invalid", { "ext:md": 42 }])(
+    "defaults malformed file panel associations without discarding other settings: %j",
+    async (filePanelAssociations) => {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ filePanelAssociations, vimKeybindings: true }),
+        }),
+      });
+      const settings = await loadAppSettingsFromStorage(deps);
+      expect(settings.filePanelAssociations).toEqual({});
+      expect(settings.vimKeybindings).toBe(true);
+    },
+  );
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -158,6 +185,7 @@ describe("loadAppSettingsFromStorage", () => {
 
     expect(result).toEqual(DEFAULT_CLIENT_SETTINGS);
     expect(DEFAULT_CLIENT_SETTINGS.language).toBe("system");
+    expect(DEFAULT_CLIENT_SETTINGS.chatDisplay).toBe("collapseTurns");
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(
       DEFAULT_CLIENT_SETTINGS,
     );
@@ -197,6 +225,39 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.chatOutlineEnabled).toBe(false);
+  });
+
+  it("uses Enter to send by default", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("enter");
+    expect(DEFAULT_CLIENT_SETTINGS.sendShortcut).toBe("enter");
+  });
+
+  it("loads the modifier Enter send preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "mod-enter" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("mod-enter");
+  });
+
+  it("falls back to Enter when the stored send shortcut is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sendShortcut: "yes" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sendShortcut).toBe("enter");
   });
 
   it("defaults sidebar navigation items to an empty preference list", async () => {
@@ -269,6 +330,8 @@ describe("loadAppSettingsFromStorage", () => {
       displayAs: "used",
       pins: null,
       serverId: null,
+      cardOrder: [],
+      cardsOff: [],
     });
 
     const deps = makeDeps({
@@ -293,6 +356,8 @@ describe("loadAppSettingsFromStorage", () => {
         { sourceId: "claude", windowId: "five-hour" },
       ],
       serverId: "server",
+      cardOrder: [],
+      cardsOff: [],
     });
   });
 
@@ -308,6 +373,8 @@ describe("loadAppSettingsFromStorage", () => {
       displayAs: "remaining",
       pins: [],
       serverId: "server",
+      cardOrder: [],
+      cardsOff: [],
     });
   });
 
@@ -328,6 +395,8 @@ describe("loadAppSettingsFromStorage", () => {
       displayAs: "used",
       pins: [{ sourceId: "claude", windowId: "weekly" }],
       serverId: null,
+      cardOrder: [],
+      cardsOff: [],
     });
   });
 
@@ -360,26 +429,6 @@ describe("loadAppSettingsFromStorage", () => {
     expect(defaults.pullRequestOpenLocation).toBe("explorer");
     expect(legacySide.pullRequestOpenLocation).toBe("side");
     expect(legacySide.openInSidePane).not.toHaveProperty("pullRequests");
-  });
-
-  it("uses the native terminal renderer by default", async () => {
-    const deps = makeDeps();
-
-    const result = await loadAppSettingsFromStorage(deps);
-
-    expect(result.useLegacyTerminalRenderer).toBe(false);
-  });
-
-  it("loads the per-device legacy terminal renderer preference", async () => {
-    const deps = makeDeps({
-      storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ useLegacyTerminalRenderer: true }),
-      }),
-    });
-
-    const result = await loadAppSettingsFromStorage(deps);
-
-    expect(result.useLegacyTerminalRenderer).toBe(true);
   });
 
   it("loads configured terminal scrollback lines from app settings", async () => {
@@ -447,6 +496,7 @@ describe("loadAppSettingsFromStorage", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "dark",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "full",
     });
     expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual({
       manageBuiltInDaemon: false,
@@ -585,6 +635,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "full",
     });
   });
 
@@ -629,6 +680,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "full",
       manageBuiltInDaemon: false,
       releaseChannel: "beta",
     });
@@ -650,6 +702,7 @@ describe("loadSettingsFromStorage", () => {
       ...DEFAULT_APP_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
+      chatDisplay: "full",
     });
   });
 });
@@ -725,7 +778,7 @@ describe("saveAppSettings", () => {
       ...DEFAULT_CLIENT_SETTINGS,
       theme: "light",
       contentFontSize: DEFAULT_UI_BASE_FONT_SIZE,
-      toolCallDetailLevel: "overview",
+      chatDisplay: "collapseToolCalls",
     });
   });
 
@@ -780,27 +833,45 @@ describe("appearance settings", () => {
     expect(result.contentFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
-    expect(result.toolCallDetailLevel).toBe("detailed");
+    expect(result.chatDisplay).toBe("full");
   });
 
-  it("migrates the enabled compact tool call preference to overview", async () => {
+  it("migrates the enabled compact tool call preference to collapsed tool calls", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({ compactToolCalls: true }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe("collapseToolCalls");
   });
 
-  it("clears settings with an unrecognized tool call detail level", async () => {
+  it.each([
+    ["overview", "collapseToolCalls"],
+    ["concise", "collapseToolCalls"],
+    ["detailed", "full"],
+    ["unknown", "full"],
+  ])("reads the %s tool call detail level as the %s chat display", async (legacy, display) => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: "unknown" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: legacy }),
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("detailed");
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe(display);
+  });
+
+  it("keeps a stored chat display over the tool call detail level it replaced", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          chatDisplay: "collapseTurns",
+          toolCallDetailLevel: "detailed",
+        }),
+      }),
+    });
+
+    expect((await loadAppSettingsFromStorage(deps)).chatDisplay).toBe("collapseTurns");
   });
 
   it("migrates a switched-off checks row item to the hidden checks display", async () => {
@@ -1050,49 +1121,64 @@ describe("parseClampedFontSize", () => {
   });
 });
 
-describe("content max width", () => {
-  it("follows the current default until the user picks a width", async () => {
+describe("content width", () => {
+  it("uses the default width when no preference is saved", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
 
     await saveAppSettings({ queryClient, updates: { codeFontSize: 14 }, deps });
 
-    const stored = JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null");
-    expect(stored.contentMaxWidth).toBeNull();
-    expect(resolveContentMaxWidth(await loadAppSettingsFromStorage(deps))).toBe(
-      DEFAULT_CONTENT_MAX_WIDTH,
-    );
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.contentWidth).toBe("default");
+    expect(resolveContentMaxWidth(settings)).toBe(DEFAULT_CONTENT_MAX_WIDTH);
   });
 
-  it("keeps a picked width and returns to the default when reset", async () => {
+  it.each([
+    ["wide", 1200],
+    ["full", undefined],
+    ["default", DEFAULT_CONTENT_MAX_WIDTH],
+  ] as const)("persists the %s preset and resolves its width", async (contentWidth, expected) => {
     const deps = makeDeps();
     const queryClient = new QueryClient();
+    await saveAppSettings({ queryClient, updates: { contentWidth }, deps });
 
-    await saveAppSettings({ queryClient, updates: { contentMaxWidth: 1600 }, deps });
-    expect(resolveContentMaxWidth(await loadAppSettingsFromStorage(deps))).toBe(1600);
-
-    await saveAppSettings({ queryClient, updates: { contentMaxWidth: null }, deps });
-    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null").contentMaxWidth).toBe(
-      null,
-    );
-    expect(resolveContentMaxWidth(await loadAppSettingsFromStorage(deps))).toBe(
-      DEFAULT_CONTENT_MAX_WIDTH,
-    );
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.contentWidth).toBe(contentWidth);
+    expect(resolveContentMaxWidth(settings)).toBe(expected);
   });
 
-  it("clamps stored widths and drops malformed ones to the default", async () => {
-    const load = (contentMaxWidth: unknown) =>
-      loadAppSettingsFromStorage(
-        makeDeps({
-          storage: createInMemoryKeyValueStorage({
-            [APP_SETTINGS_KEY]: JSON.stringify({ contentMaxWidth }),
-          }),
-        }),
-      );
+  it("preserves a legacy custom width until a preset is picked", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ contentMaxWidth: 1600 }),
+      }),
+    });
+    const queryClient = new QueryClient();
+    const settings = await loadAppSettingsFromStorage(deps);
+    expect(settings.contentWidth).toBe(1600);
+    expect(resolveContentMaxWidth(settings)).toBe(1600);
 
-    expect((await load(100_000)).contentMaxWidth).toBe(4000);
-    expect((await load(10)).contentMaxWidth).toBe(600);
-    expect((await load("wide")).contentMaxWidth).toBeNull();
+    await saveAppSettings({ queryClient, updates: { codeFontSize: 14 }, deps });
+    expect((await loadAppSettingsFromStorage(deps)).contentWidth).toBe(1600);
+
+    await saveAppSettings({ queryClient, updates: { contentWidth: "default" }, deps });
+    expect((await loadAppSettingsFromStorage(deps)).contentWidth).toBe("default");
+  });
+
+  it.each([
+    [100_000, 4000],
+    [10, 600],
+    [null, "default"],
+    ["wide", "default"],
+  ])("normalizes legacy width %s on load", async (contentMaxWidth, expected) => {
+    const settings = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ contentMaxWidth }),
+        }),
+      }),
+    );
+    expect(settings.contentWidth).toBe(expected);
   });
 });
 

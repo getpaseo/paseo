@@ -1,14 +1,14 @@
 import { OpenCodeV2Session } from "./session.js";
 import { V2_CAPABILITIES } from "./capabilities.js";
 import {
-  features,
+  controls,
   permissionRules,
   applyResumeOverrides,
   requiresDedicatedV2Server,
 } from "./configuration.js";
 import { commands } from "./commands.js";
 
-import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
+import { waitForLocationReady } from "./readiness.js";
 
 import type { SessionInfo } from "@opencode/client";
 
@@ -17,7 +17,8 @@ import type {
   AgentCapabilityFlags,
   AgentClient,
   AgentCreateSessionOptions,
-  AgentFeature,
+  AgentResumeSessionOptions,
+  AgentDraftControls,
   AgentLaunchContext,
   AgentPersistenceHandle,
   AgentSession,
@@ -40,6 +41,7 @@ import { importSessionFromPersistence } from "../../../provider-session-import.j
 import type { OpenCodeBridge } from "../bridge.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
 import { V2Runtime, type V2Connection } from "./runtime.js";
+import type { OpenCodeServiceSelection } from "./service-selection.js";
 import { modelRef, modesFromV2, modelsFromV2 } from "./mapping.js";
 
 interface V2AgentOptions {
@@ -48,6 +50,7 @@ interface V2AgentOptions {
   managedProcesses?: ManagedProcessRegistry;
   bridge?: OpenCodeBridge;
   runtime?: Pick<V2Runtime, "acquire" | "shutdown">;
+  selection?: OpenCodeServiceSelection;
 }
 
 export class OpenCodeV2AgentClient implements AgentClient {
@@ -56,12 +59,12 @@ export class OpenCodeV2AgentClient implements AgentClient {
   private readonly runtime: Pick<V2Runtime, "acquire" | "shutdown">;
   private readonly connections = new Map<string, V2Connection>();
   constructor(private readonly options: V2AgentOptions) {
-    this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(options.bridge) };
+    const bridge = options.bridge;
+    this.capabilities = { ...V2_CAPABILITIES, supportsNativePaseoTools: Boolean(bridge) };
     this.runtime =
       options.runtime ??
       new V2Runtime({
         ...options,
-        decorateEnv: options.bridge ? (env) => options.bridge!.decorateV2ServerEnv(env) : undefined,
       });
   }
   async isAvailable() {
@@ -85,6 +88,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
       await activity("plugin.list", () =>
         waitForLocationReady({ client: connection.client, location, signal: request.signal }),
       );
+      if (options.force)
+        await activity("paseo.bridge.refresh", () =>
+          connection.refreshLocation(location.directory, request.signal),
+        );
       const [models, agents, providers] = await Promise.all([
         activity("model.list", () => connection.client.model.list({ location }, request)),
         activity("agent.list", () => connection.client.agent.list({ location }, request)),
@@ -125,6 +132,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const cwd = overrides?.cwd ?? handle.metadata?.cwd;
     if (typeof cwd !== "string")
@@ -145,7 +153,14 @@ export class OpenCodeV2AgentClient implements AgentClient {
         sessionID: handle.nativeHandle ?? handle.sessionId,
       });
       await applyResumeOverrides(connection.client, info, overrides);
-      return await this.attach(connection, info, config, launch, true);
+      return await this.attach(
+        connection,
+        info,
+        config,
+        launch,
+        true,
+        options?.purpose === "history",
+      );
     } catch (error) {
       await connection.release();
       throw error;
@@ -157,13 +172,15 @@ export class OpenCodeV2AgentClient implements AgentClient {
     config: AgentSessionConfig,
     launch: AgentLaunchContext | undefined,
     persist: boolean,
+    historyOnly = false,
   ) {
     const acquire = () =>
       this.runtime.acquire(
         requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
       );
     let ownedConnection = connection;
-    const unbind = this.options.bridge?.bindSession({
+    const bridge = this.options.bridge;
+    const unbind = bridge?.bindSession({
       sessionId: info.id,
       env: launch?.env ?? {},
       tools: launch?.paseoTools,
@@ -172,7 +189,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     const bindChild = (childId: string) => {
       this.connections.set(childId, ownedConnection);
       if (bound.has(childId)) return;
-      const childUnbind = this.options.bridge?.bindSession({
+      const childUnbind = bridge?.bindSession({
         sessionId: childId,
         env: launch?.env ?? {},
         tools: launch?.paseoTools,
@@ -202,12 +219,9 @@ export class OpenCodeV2AgentClient implements AgentClient {
       bindChild,
       acquire,
       moved,
+      historyOnly,
     );
     try {
-      if (this.options.bridge) {
-        const location = { directory: config.cwd };
-        await awaitPaseoPlugin({ client: connection.client, location });
-      }
       await session.initialize(
         launch?.env
           ? createProviderEnv({ runtimeSettings: this.options.settings, overlays: [launch.env] })
@@ -219,8 +233,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       throw error;
     }
   }
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return features(config);
+  async listControls(config: AgentSessionConfig): Promise<AgentDraftControls> {
+    return { controls, options: config.providerOptions ?? {} };
   }
   async listCommands(config: AgentSessionConfig) {
     const connection = await this.runtime.acquire();

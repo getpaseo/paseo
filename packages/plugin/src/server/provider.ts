@@ -9,6 +9,7 @@ export const PROVIDER_CAPABILITIES = [
   "prompt.image",
   "prompt.output_schema",
   "prompt.steer",
+  "session.can_stop_runtime",
   "session.archive",
   "session.configure",
   "session.list",
@@ -38,8 +39,95 @@ export interface ProviderRegistration {
   description?: string;
   /** Plugin-directory-relative path to a self-contained SVG file. */
   icon?: string;
+  /** How users install the provider's CLI and which version they run. Every member is optional. */
+  installation?: ProviderInstallation;
   connect(request: ProviderConnectRequest): Promise<ProviderConnection>;
 }
+
+export interface ProviderInstallation {
+  /** http(s) page that explains how to install the provider. Paseo opens it; it never installs. */
+  installUrl?: string;
+  /** http(s) page that explains how to update the provider. */
+  updateUrl?: string;
+  /** Report whether the provider is installed and which version. Runs only when a user asks. */
+  inspect?(context: ProviderInstallationContext): Promise<ProviderInspection>;
+  /**
+   * Report whether a newer version than `installedVersion` is available. The provider decides how
+   * to find out and what counts as newer; Paseo shows the result as written. Return `unknown` when
+   * it cannot tell. Runs only when a user asks, never before a session, and only after `inspect`
+   * reports the provider installed. Paseo reuses the answer while `inspect` reports the same
+   * version.
+   */
+  checkForUpdates?(context: ProviderUpdateCheckContext): Promise<ProviderUpdateCheck>;
+  /**
+   * Update the provider, usually by running its CLI's own updater. Paseo shows everything passed
+   * to `report` while it runs, then the returned message. A throw is a failure with its message.
+   * Runs only when a user asks. Paseo sets no deadline; `signal` aborts when the daemon stops.
+   */
+  update?(context: ProviderUpdateContext): Promise<ProviderUpdateResult>;
+}
+
+export interface ProviderUpdateCheckContext extends ProviderInstallationContext {
+  /**
+   * The version `inspect` reported, as written. Absent when `inspect` reported none or the
+   * provider declares no `inspect`.
+   */
+  installedVersion?: string;
+}
+
+export interface ProviderUpdateContext extends ProviderInstallationContext {
+  /** Shows output to the user as it happens, unchanged and in order. */
+  report(event: ProviderUpdateReport): void;
+}
+
+export const ProviderUpdateReportSchema = z
+  .object({ type: z.enum(["stdout", "stderr", "message"]), text: z.string() })
+  .strip();
+
+export type ProviderUpdateReport = z.infer<typeof ProviderUpdateReportSchema>;
+
+export const ProviderUpdateResultSchema = z.discriminatedUnion("status", [
+  /** `message` is shown as written, such as which version is now installed. */
+  z.object({ status: z.literal("succeeded"), message: z.string().optional() }).strip(),
+  z.object({ status: z.literal("failed"), message: z.string() }).strip(),
+]);
+
+export type ProviderUpdateResult = z.infer<typeof ProviderUpdateResultSchema>;
+
+export interface ProviderInstallationContext {
+  /** The launch a session would use. Absent when the provider declares no `command`. */
+  launch?: ProviderInstallationLaunch;
+  /** Aborted when Paseo stops waiting for the result. */
+  signal: AbortSignal;
+}
+
+export interface ProviderInstallationLaunch extends ProviderLaunch {
+  /** False when the executable was not found; `command` is then the configured command as written. */
+  resolved: boolean;
+}
+
+export const ProviderInspectionSchema = z.discriminatedUnion("status", [
+  /** `version` is shown as written and passed to `checkForUpdates`; Paseo does not parse it. */
+  z.object({ status: z.literal("installed"), version: z.string().optional() }).strip(),
+  z.object({ status: z.literal("not_installed") }).strip(),
+]);
+
+export type ProviderInspection = z.infer<typeof ProviderInspectionSchema>;
+
+export const ProviderUpdateCheckSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("current") }).strip(),
+  /** `versions` and `message` are shown as written; Paseo does not parse, sort or compare them. */
+  z
+    .object({
+      status: z.literal("available"),
+      versions: z.array(z.string()).optional(),
+      message: z.string().optional(),
+    })
+    .strip(),
+  z.object({ status: z.literal("unknown"), message: z.string().optional() }).strip(),
+]);
+
+export type ProviderUpdateCheck = z.infer<typeof ProviderUpdateCheckSchema>;
 
 export type ProviderCatalogOptions =
   | { scope: "global"; force?: boolean; launch?: ProviderLaunch }
@@ -115,7 +203,9 @@ export interface ProviderSessionConfig {
   model?: string;
   mode?: string;
   thinkingOption?: string;
+  /** @deprecated The same values as `providerOptions`. */
   settings: Readonly<Record<string, JsonValue>>;
+  /** The agent's options, the provider defaults from `config.json` included. */
   providerOptions?: Readonly<Record<string, unknown>>;
   title?: string;
   persist: boolean;
@@ -125,6 +215,13 @@ export interface ProviderConfigChanges {
   model?: string | null;
   mode?: string | null;
   thinkingOption?: string | null;
+  /**
+   * The option keys to change on the running session, with or without a control. Apply every key
+   * or fail the whole request, for a key you only read when a session opens. `null` returns the
+   * key to the provider's own default. The committed values come back in `session.config`.
+   */
+  providerOptions?: Readonly<Record<string, JsonValue>>;
+  /** @deprecated Sent next to `providerOptions` to a provider that reports `settings`. */
   settings?: Readonly<Record<string, JsonValue>>;
 }
 
@@ -203,7 +300,7 @@ interface ProviderReviewAttachment {
   type: "review";
   mimeType: "application/paseo-review";
   cwd: string;
-  mode: "uncommitted" | "base";
+  mode: "uncommitted" | "base" | "all";
   baseRef?: string | null;
   comments: Array<{
     filePath: string;
@@ -277,6 +374,7 @@ export type ProviderInput =
     }
   | { type: "session.archive"; requestId: string; persistence: ProviderPersistence }
   | { type: "session.unarchive"; requestId: string; persistence: ProviderPersistence }
+  | { type: "session.can_stop_runtime"; requestId: string; sessionId: string }
   | { type: "session.close"; requestId: string; sessionId: string };
 
 export interface ProviderThinkingOption {
@@ -309,6 +407,34 @@ export interface ProviderMode {
   isUnattended?: boolean;
 }
 
+/**
+ * Draws one top-level option key in the composer. The control holds no value: Paseo reads it
+ * from the agent's options.
+ */
+export type ProviderOptionControl =
+  | {
+      type: "toggle";
+      key: string;
+      label: string;
+      description?: string;
+      /** A Lucide icon name. */
+      icon?: string;
+      /** Shown while the key has no value. */
+      defaultValue?: boolean;
+    }
+  | {
+      type: "select";
+      key: string;
+      label: string;
+      description?: string;
+      /** A Lucide icon name. */
+      icon?: string;
+      /** The choice shown while the key has no value. */
+      defaultValue?: string;
+      choices: ReadonlyArray<{ value: string; label: string; description?: string }>;
+    };
+
+/** @deprecated Report `controls` and `providerOptions` instead. */
 export type ProviderSetting =
   | {
       type: "toggle";
@@ -333,7 +459,12 @@ export interface ProviderConfigState {
   models: readonly ProviderModel[];
   modes: readonly ProviderMode[];
   thinkingOptions: readonly ProviderThinkingOption[];
-  settings: readonly ProviderSetting[];
+  /** The option keys that get a composer control. May change at runtime, for example per model. */
+  controls?: readonly ProviderOptionControl[];
+  /** What the session runs with now, for the keys it reports. Publish the committed values. */
+  providerOptions?: Readonly<Record<string, JsonValue>>;
+  /** @deprecated Report `controls` and `providerOptions`. Each setting id is an option key. */
+  settings?: readonly ProviderSetting[];
 }
 
 export interface ProviderCatalog {
@@ -552,6 +683,7 @@ export type ProviderTimelineItem =
     });
 
 export type ProviderEvent =
+  | { type: "session.can_stop_runtime"; requestId: string; sessionId: string; canStop: boolean }
   | { type: "catalog"; requestId: string; catalog: ProviderCatalog }
   | { type: "sessions"; requestId: string; sessions: ProviderSessionSummary[] }
   | { type: "request.completed"; requestId: string }
@@ -634,6 +766,8 @@ function requiredPromptCapabilities(prompt: ProviderPrompt): readonly ProviderCa
 
 export function requiredProviderCapabilities(input: ProviderInput): readonly ProviderCapability[] {
   switch (input.type) {
+    case "session.can_stop_runtime":
+      return ["session.can_stop_runtime"];
     case "catalog":
     case "session.interrupt":
     case "session.close":
@@ -834,7 +968,7 @@ const providerContentSchema: z.ZodType<ProviderContent> = z.union([
       type: z.literal("review"),
       mimeType: z.literal("application/paseo-review"),
       cwd: z.string(),
-      mode: z.enum(["uncommitted", "base"]),
+      mode: z.enum(["uncommitted", "base", "all"]),
       baseRef: z.string().nullable().optional(),
       comments: z.array(
         z
@@ -883,6 +1017,7 @@ const configChangesSchema = z
     model: z.string().nullable().optional(),
     mode: z.string().nullable().optional(),
     thinkingOption: z.string().nullable().optional(),
+    providerOptions: jsonObjectSchema.optional(),
     settings: jsonObjectSchema.optional(),
   })
   .strict();
@@ -955,6 +1090,13 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
       persistence: persistenceSchema,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("session.can_stop_runtime"),
+      requestId: idSchema,
+      sessionId: idSchema,
+    })
+    .strict(),
   z.object({ type: z.literal("session.close"), requestId: idSchema, sessionId: idSchema }).strict(),
 ]);
 
@@ -1012,6 +1154,33 @@ const settingSchema = z.discriminatedUnion("type", [
     })
     .strip(),
 ]);
+const controlSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("toggle"),
+      key: idSchema,
+      label: z.string(),
+      description: z.string().optional(),
+      icon: z.string().optional(),
+      defaultValue: z.boolean().optional(),
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("select"),
+      key: idSchema,
+      label: z.string(),
+      description: z.string().optional(),
+      icon: z.string().optional(),
+      defaultValue: z.string().optional(),
+      choices: z.array(
+        z
+          .object({ value: z.string(), label: z.string(), description: z.string().optional() })
+          .strip(),
+      ),
+    })
+    .strip(),
+]);
 const configStateSchema = z
   .object({
     model: z.string().optional(),
@@ -1020,7 +1189,9 @@ const configStateSchema = z
     models: z.array(modelSchema),
     modes: z.array(modeSchema),
     thinkingOptions: z.array(selectOptionSchema),
-    settings: z.array(settingSchema),
+    controls: z.array(controlSchema).optional(),
+    providerOptions: jsonObjectSchema.optional(),
+    settings: z.array(settingSchema).optional(),
   })
   .strip();
 const catalogSchema = z
@@ -1324,6 +1495,14 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       type: z.literal("session.ready"),
       requestId: idSchema.optional(),
       sessionId: idSchema,
+    })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.can_stop_runtime"),
+      requestId: idSchema,
+      sessionId: idSchema,
+      canStop: z.boolean(),
     })
     .strip(),
   z
