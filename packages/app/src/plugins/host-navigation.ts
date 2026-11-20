@@ -24,6 +24,11 @@ export function usePluginHostNavigation(
             workspaces: useSessionStore.getState().sessions[targetServerId]?.workspaces,
             workspaceId,
           }),
+        resolveAgentWorkspace: ({ serverId: targetServerId, agentId }) => {
+          const session = useSessionStore.getState().sessions[targetServerId];
+          const agent = session?.agents.get(agentId) ?? session?.agentDetails.get(agentId);
+          return agent?.workspaceId ?? null;
+        },
       }),
     [serverId],
   );

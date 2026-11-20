@@ -10,6 +10,8 @@ describe("plugin host navigation", () => {
       browserAvailable: electron,
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
+      resolveAgentWorkspace: ({ serverId, agentId }) =>
+        serverId === "selected" && agentId === "parent" ? "one" : null,
       openAgent: (input) => destinations.push(input),
       openWorkspace: (input) => destinations.push(input),
       createBrowser: ({ initialUrl }) => {
@@ -86,5 +88,25 @@ describe("plugin host navigation", () => {
       "workspaceId",
     );
     expect(browsers).toEqual([]);
+  });
+
+  it("opens a provider subagent tab in its parent agent's workspace", () => {
+    const { navigation, destinations } = setup();
+    navigation.openProviderSubagent!({ parentAgentId: "parent", subagentId: "task-1" });
+    expect(destinations).toEqual([
+      {
+        serverId: "selected",
+        workspaceId: "one",
+        target: { kind: "provider_subagent", parentAgentId: "parent", subagentId: "task-1" },
+      },
+    ]);
+  });
+
+  it("refuses a provider subagent whose parent agent is unknown", () => {
+    const { navigation, destinations } = setup();
+    expect(() =>
+      navigation.openProviderSubagent!({ parentAgentId: "missing", subagentId: "task-1" }),
+    ).toThrow("Parent agent is unavailable");
+    expect(destinations).toEqual([]);
   });
 });
