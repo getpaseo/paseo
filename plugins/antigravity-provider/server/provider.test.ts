@@ -213,3 +213,111 @@ describe("installation", () => {
     ).resolves.toEqual({ status: "not_installed" });
   });
 });
+
+it("tracks backgrounded run_command work and out-of-turn wakeups", async () => {
+  const { directory, launch } = await launchAgent(`
+    const { createInterface } = require("node:readline");
+    const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const { id, method, params } = JSON.parse(line);
+      switch (method) {
+        case "initialize":
+          send({ id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+          break;
+        case "session/new":
+          send({ id, result: { sessionId: "agy-bg-session", modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Default" }] } } });
+          send({ method: "session/update", params: { sessionId: "agy-bg-session", update: { sessionUpdate: "available_commands_update", availableCommands: [] } } });
+          break;
+        case "session/prompt":
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "tool_call", toolCallId: "bg-1", name: "run_command", kind: "execute",
+            title: "npm run typecheck", status: "in_progress",
+            rawInput: { CommandLine: "npm run typecheck", toolSummary: "Typecheck" },
+          } } });
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting for typecheck." },
+          } } });
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "usage_update", used: 1000, size: 1048576,
+          } } });
+          send({ id, result: { stopReason: "end_turn" } });
+          setTimeout(() => {
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call_update", toolCallId: "bg-1", status: "completed",
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Typecheck passed." },
+            } } });
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "usage_update", used: 1100, size: 1048576,
+            } } });
+          }, 80);
+          break;
+        case "session/close":
+          send({ id, result: {} });
+          break;
+      }
+    });
+  `);
+  const provider = createAntigravityProvider();
+  const connection = await provider.connect({
+    launch,
+    versions: [1],
+    capabilities: ["prompt.message", "session.can_stop_runtime"],
+  });
+  const events: ProviderEvent[] = [];
+  connection.onEvent((event) => events.push(event));
+  try {
+    await connection.send({
+      type: "session.open",
+      requestId: "open-1",
+      sessionId: "test",
+      history: "skip",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: true },
+    });
+    await expect
+      .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+      .toBeDefined();
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "test",
+      prompt: {
+        clientMessageId: "prompt-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Check types" }] },
+      },
+    });
+    await expect
+      .poll(
+        () =>
+          events.find(
+            (event) =>
+              event.type === "session.turn" &&
+              event.turnId.startsWith("acp:autonomous:") &&
+              event.state === "completed",
+          ),
+        { timeout: 3_000 },
+      )
+      .toBeDefined();
+    expect(events).toContainEqual({
+      type: "session.background_work",
+      sessionId: "test",
+      items: [
+        {
+          id: "bg-1",
+          kind: "shell",
+          description: "Typecheck",
+          command: "npm run typecheck",
+          canStop: false,
+        },
+      ],
+    });
+    expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+      type: "session.background_work",
+      sessionId: "test",
+      items: [],
+    });
+  } finally {
+    await connection.close();
+  }
+});

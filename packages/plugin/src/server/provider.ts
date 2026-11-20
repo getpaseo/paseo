@@ -504,6 +504,15 @@ export interface ProviderNotice {
   dismissed?: boolean;
 }
 
+export interface ProviderBackgroundWorkItem {
+  id: string;
+  /** Provider-neutral kind (for example "shell", "monitor", "heartbeat", or "other"). */
+  kind: string;
+  description: string | null;
+  command?: string;
+  canStop?: boolean;
+}
+
 export interface ProviderPermissionAction {
   id: string;
   label: string;
@@ -730,6 +739,12 @@ export type ProviderEvent =
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
   | { type: "session.permission_resolved"; sessionId: string; permissionId: string }
   | { type: "session.notice"; sessionId: string; notice: ProviderNotice }
+  | {
+      type: "session.background_work";
+      sessionId: string;
+      /** Full replacement of the session's live background work, or null to clear. */
+      items: ProviderBackgroundWorkItem[] | null;
+    }
   | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
 
 export function negotiateProviderCapabilities(
@@ -1582,6 +1597,25 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
     .strip(),
   z
     .object({ type: z.literal("session.notice"), sessionId: idSchema, notice: noticeSchema })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.background_work"),
+      sessionId: idSchema,
+      items: z
+        .array(
+          z
+            .object({
+              id: idSchema,
+              kind: z.string().min(1),
+              description: z.string().nullable(),
+              command: z.string().optional(),
+              canStop: z.boolean().optional(),
+            })
+            .strip(),
+        )
+        .nullable(),
+    })
     .strip(),
   z
     .object({

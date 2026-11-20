@@ -95,6 +95,8 @@ export function createAntigravityProvider(): ProviderRegistration {
     acpOptions: {
       waitForInitialCommands: true,
       loadReplayQuietPeriodMs: 200,
+      // COMPAT(antigravityAcpV1OutOfTurn): added in v0.17.0, remove after agy acp negotiates ACP v2 state_update.
+      outOfTurnActivity: true,
       autoAcceptMode: {
         mode: {
           id: "full-access",

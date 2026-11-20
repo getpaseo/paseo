@@ -36,6 +36,7 @@ import {
   ProviderInputSchema,
   negotiateProviderCapabilities,
   requireProviderCapabilities,
+  type ProviderBackgroundWorkItem,
   type ProviderCatalog,
   type ProviderCapability,
   type ProviderConfigState,
@@ -55,9 +56,13 @@ import {
 const ADAPTER_CAPABILITIES = [
   "prompt.message",
   "prompt.command",
+  "session.can_stop_runtime",
   "session.configure",
   "permission",
 ] as const;
+
+const DEFAULT_OUT_OF_TURN_SETTLE_DELAY_MS = 500;
+const DEFAULT_OUT_OF_TURN_QUIET_LIMIT_MS = 120_000;
 
 interface AcpBoundarySession {
   runtime: AcpRuntime;
@@ -224,6 +229,16 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
         input.response,
       );
       return;
+    case "session.can_stop_runtime": {
+      const session = requireSession(state, input.sessionId);
+      state.emit({
+        type: "session.can_stop_runtime",
+        requestId: input.requestId,
+        sessionId: input.sessionId,
+        canStop: session.runtime.canStopRuntime(),
+      });
+      return;
+    }
     case "session.configure": {
       const session = requireSession(state, input.sessionId);
       await mutateSession(session, () => session.runtime.configure(input.changes));
@@ -407,6 +422,18 @@ class AcpRuntime {
   private readonly closeConnector: () => Promise<void>;
   private notificationLane: Promise<void> = Promise.resolve();
   private autoAccept = false;
+  private readonly outOfTurnActivity: { settleDelayMs: number; quietLimitMs: number } | null;
+  private readonly backgroundToolCalls = new Set<string>();
+  private readonly canceledToolCalls = new Set<string>();
+  private publishedBackgroundWork = false;
+  private autonomousTurnSequence = 0;
+  private autonomousTurn: {
+    turnId: string;
+    cancelling: boolean;
+    replyOpen: boolean;
+    sawAssistantMessage: boolean;
+    settleTimer: ReturnType<typeof setTimeout> | null;
+  } | null = null;
   private activePrompt: { turnId: string; settled: Promise<void>; cancelling: boolean } | null =
     null;
   private lastUsage: ProviderUsage = {};
@@ -473,6 +500,19 @@ class AcpRuntime {
     this.closeConnector = closeConnector;
     this.emit = options.emit;
     this.transformers = options.options.transformers ?? [];
+    const outOfTurn = options.options.acpOptions?.outOfTurnActivity;
+    this.outOfTurnActivity = outOfTurn
+      ? {
+          settleDelayMs:
+            typeof outOfTurn === "object" && outOfTurn.settleDelayMs !== undefined
+              ? outOfTurn.settleDelayMs
+              : DEFAULT_OUT_OF_TURN_SETTLE_DELAY_MS,
+          quietLimitMs:
+            typeof outOfTurn === "object" && outOfTurn.quietLimitMs !== undefined
+              ? outOfTurn.quietLimitMs
+              : DEFAULT_OUT_OF_TURN_QUIET_LIMIT_MS,
+        }
+      : null;
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
       sessionUpdate: (notification) =>
@@ -608,14 +648,28 @@ class AcpRuntime {
     };
   }
 
+  canStopRuntime(): boolean {
+    return (
+      this.activePrompt === null &&
+      this.autonomousTurn === null &&
+      this.backgroundToolCalls.size === 0 &&
+      this.permissions.size === 0
+    );
+  }
+
   async prompt(input: Extract<ProviderInput, { type: "session.prompt" }>): Promise<void> {
     const active = this.activePrompt;
     if (active) {
       await this.interrupt();
       await active.settled;
+    } else if (this.autonomousTurn) {
+      // session/cancel can kill running background commands and subagents; complete the
+      // out-of-turn wakeup without cancelling so a follow-up prompt leaves them alive.
+      this.finishAutonomousTurn("completed");
     }
     const prompt = toAcpPrompt(input.prompt);
     this.replayWindow = null;
+    this.canceledToolCalls.clear();
     const turnId = `acp:${input.prompt.clientMessageId}`;
     this.fallbackChunkIds.clear();
     this.emit({
@@ -665,9 +719,13 @@ class AcpRuntime {
           });
         }
         const state = response.stopReason === "cancelled" ? "canceled" : "completed";
+        const preserveBackground = state === "completed" && this.outOfTurnActivity !== null;
         this.fallbackChunkIds.clear();
-        this.terminalizeTransientItems(state);
+        this.terminalizeTransientItems(state, { preserveInProgressTools: preserveBackground });
+        if (preserveBackground) this.syncBackgroundWorkFromInProgressTools();
+        else this.clearBackgroundWork();
         this.finishTurnPermissions(turnId);
+        if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
         this.emit({
           type: "session.turn",
           sessionId: this.options.boundarySessionId,
@@ -680,7 +738,9 @@ class AcpRuntime {
         await this.drainNotifications();
         this.fallbackChunkIds.clear();
         this.terminalizeTransientItems("failed");
+        this.clearBackgroundWork();
         this.finishTurnPermissions(turnId);
+        if (this.activePrompt?.turnId === turnId) this.activePrompt = null;
         this.emit({
           type: "session.turn",
           sessionId: this.options.boundarySessionId,
@@ -699,12 +759,23 @@ class AcpRuntime {
 
   async interrupt(): Promise<void> {
     const active = this.activePrompt;
+    const autonomous = this.autonomousTurn;
     if (active) active.cancelling = true;
+    if (autonomous) {
+      autonomous.cancelling = true;
+      this.cancelAutonomousSettle();
+    }
     try {
       await this.call(this.connection.cancel({ sessionId: this.nativeSessionId }));
     } finally {
       // An agent may wait for its outstanding permission replies before ending the prompt.
       if (active) this.finishTurnPermissions(active.turnId);
+      if (autonomous && this.autonomousTurn?.turnId === autonomous.turnId) {
+        this.finishAutonomousTurn("canceled");
+      } else if (!active && this.backgroundToolCalls.size > 0) {
+        this.terminalizeTransientItems("canceled");
+        this.clearBackgroundWork();
+      }
     }
   }
 
@@ -725,6 +796,7 @@ class AcpRuntime {
     if (!pending) return;
     const active = this.activePrompt;
     if (active?.cancelling && pending.turnId === active.turnId) return;
+    if (this.autonomousTurn?.cancelling && pending.turnId === this.autonomousTurn.turnId) return;
     const selected = selectPermissionOption(pending.request.options, response);
     if (response.selectedActionId !== undefined && !selected) {
       throw new Error(
@@ -758,6 +830,7 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       permissionId,
     });
+    this.syncAutonomousTimer();
   }
 
   async configure(
@@ -768,7 +841,7 @@ class AcpRuntime {
       autoAcceptMode &&
       changes.mode !== undefined &&
       (changes.mode === autoAcceptMode.mode.id) !== this.autoAccept &&
-      (this.activePrompt || this.permissions.size > 0)
+      (this.activePrompt || this.autonomousTurn || this.permissions.size > 0)
     ) {
       throw new Error(
         `Finish or stop the current turn before switching to or from ${autoAcceptMode.mode.label}.`,
@@ -1046,8 +1119,17 @@ class AcpRuntime {
     request: RequestPermissionRequest,
   ): Promise<RequestPermissionResponse> {
     await this.notificationLane;
-    if (this.closing || this.processFailed || this.activePrompt?.cancelling) {
+    if (
+      this.closing ||
+      this.processFailed ||
+      this.activePrompt?.cancelling ||
+      this.autonomousTurn?.cancelling
+    ) {
       return { outcome: { outcome: "cancelled" } };
+    }
+    if (this.isOutOfTurnLive()) {
+      this.ensureAutonomousTurn();
+      this.onAutonomousNonReplyActivity();
     }
     if (
       this.autoAccept &&
@@ -1065,7 +1147,12 @@ class AcpRuntime {
     }
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     return new Promise((resolve) => {
-      this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
+      this.permissions.set(permissionId, {
+        request,
+        resolve,
+        turnId: this.activePrompt?.turnId ?? this.autonomousTurn?.turnId,
+      });
+      this.syncAutonomousTimer();
       this.emit({
         type: "session.permission",
         sessionId: this.options.boundarySessionId,
@@ -1129,6 +1216,10 @@ class AcpRuntime {
       );
       this.fallbackChunkIds.delete("user_message_chunk");
       if (update.content.type !== "text") return;
+      if (this.isOutOfTurnLive()) {
+        this.ensureAutonomousTurn();
+        this.onAutonomousChunk(update.sessionUpdate === "agent_message_chunk");
+      }
       const id = this.resolveChunkId(update.sessionUpdate, update.messageId);
       const text = `${this.messages.get(id) ?? ""}${update.content.text}`;
       this.messages.set(id, text);
@@ -1147,12 +1238,29 @@ class AcpRuntime {
       return;
     }
     if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-      if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
-      this.reduceToolCall(update);
+      this.reduceLiveToolUpdate(update);
       return;
     }
     if (update.sessionUpdate === "plan") this.fallbackChunkIds.clear();
     this.reduceStateUpdate(update);
+  }
+
+  private reduceLiveToolUpdate(
+    update: Extract<SessionUpdate, { sessionUpdate: "tool_call" | "tool_call_update" }>,
+  ): void {
+    if (
+      update.sessionUpdate === "tool_call_update" &&
+      this.canceledToolCalls.has(update.toolCallId) &&
+      (update.status === "failed" || update.status === "completed")
+    ) {
+      this.canceledToolCalls.delete(update.toolCallId);
+      return;
+    }
+    if (update.sessionUpdate === "tool_call") this.fallbackChunkIds.clear();
+    const outOfTurn = this.isOutOfTurnLive();
+    if (outOfTurn) this.ensureAutonomousTurn();
+    this.reduceToolCall(update);
+    if (outOfTurn) this.onAutonomousNonReplyActivity();
   }
 
   // Historical user messages arrive only as replayed chunks; a live prompt
@@ -1253,6 +1361,10 @@ class AcpRuntime {
         sessionId: this.options.boundarySessionId,
         usage: this.lastUsage,
       });
+      if (this.outOfTurnActivity && this.autonomousTurn) {
+        this.autonomousTurn.replyOpen = false;
+        this.syncAutonomousTimer();
+      }
       return;
     }
     if (update.sessionUpdate === "compaction_update") {
@@ -1270,14 +1382,19 @@ class AcpRuntime {
     }
   }
 
-  private terminalizeTransientItems(state: "completed" | "failed" | "canceled"): void {
+  private terminalizeTransientItems(
+    state: "completed" | "failed" | "canceled",
+    options?: { preserveInProgressTools?: boolean },
+  ): void {
     for (const [id, snapshot] of this.toolCalls) {
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
+      if (options?.preserveInProgressTools && snapshot.status === "in_progress") continue;
       const completed: AcpToolCallSnapshot = {
         ...snapshot,
         status: state === "completed" ? "completed" : "failed",
       };
       this.toolCalls.set(id, completed);
+      if (state === "canceled") this.canceledToolCalls.add(id);
       this.emit({
         type: "timeline.item",
         sessionId: this.options.boundarySessionId,
@@ -1309,10 +1426,173 @@ class AcpRuntime {
     for (const transformer of this.transformers)
       snapshot = transformer.toolCall?.(snapshot, context) ?? snapshot;
     this.toolCalls.set(snapshot.id, snapshot);
+    if (this.backgroundToolCalls.has(snapshot.id) && snapshot.status !== "in_progress") {
+      this.backgroundToolCalls.delete(snapshot.id);
+      this.publishBackgroundWork();
+    }
     this.emit({
       type: "timeline.item",
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
+    });
+  }
+
+  private isOutOfTurnLive(): boolean {
+    return (
+      this.outOfTurnActivity !== null &&
+      this.activePrompt === null &&
+      this.replayWindow === null &&
+      !this.closing &&
+      !this.processFailed
+    );
+  }
+
+  private ensureAutonomousTurn(): void {
+    if (this.autonomousTurn) return;
+    const turnId = `acp:autonomous:${++this.autonomousTurnSequence}`;
+    this.fallbackChunkIds.clear();
+    this.autonomousTurn = {
+      turnId,
+      cancelling: false,
+      replyOpen: false,
+      sawAssistantMessage: false,
+      settleTimer: null,
+    };
+    this.emit({
+      type: "session.turn",
+      sessionId: this.options.boundarySessionId,
+      turnId,
+      state: "started",
+    });
+  }
+
+  private onAutonomousChunk(isAssistantMessage: boolean): void {
+    if (!this.autonomousTurn) return;
+    this.autonomousTurn.replyOpen = true;
+    this.autonomousTurn.sawAssistantMessage = isAssistantMessage;
+    this.syncAutonomousTimer();
+  }
+
+  private onAutonomousNonReplyActivity(): void {
+    if (!this.autonomousTurn) return;
+    this.autonomousTurn.replyOpen = false;
+    this.autonomousTurn.sawAssistantMessage = false;
+    this.syncAutonomousTimer();
+  }
+
+  private hasForegroundInProgressTool(): boolean {
+    for (const [id, snapshot] of this.toolCalls) {
+      if (snapshot.status === "in_progress" && !this.backgroundToolCalls.has(id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private syncAutonomousTimer(): void {
+    const turn = this.autonomousTurn;
+    if (!turn || !this.outOfTurnActivity) return;
+    if (this.hasPendingPermissionsForTurn(turn.turnId)) {
+      this.cancelAutonomousSettle();
+      return;
+    }
+    if (!turn.replyOpen && turn.sawAssistantMessage) {
+      this.scheduleAutonomousSettle(this.outOfTurnActivity.settleDelayMs);
+      return;
+    }
+    if (!turn.replyOpen && this.hasForegroundInProgressTool()) {
+      this.cancelAutonomousSettle();
+      return;
+    }
+    this.scheduleAutonomousSettle(this.outOfTurnActivity.quietLimitMs);
+  }
+
+  private cancelAutonomousSettle(): void {
+    if (!this.autonomousTurn?.settleTimer) return;
+    clearTimeout(this.autonomousTurn.settleTimer);
+    this.autonomousTurn.settleTimer = null;
+  }
+
+  private scheduleAutonomousSettle(delayMs: number): void {
+    if (!this.autonomousTurn) return;
+    this.cancelAutonomousSettle();
+    const turnId = this.autonomousTurn.turnId;
+    this.autonomousTurn.settleTimer = setTimeout(() => {
+      if (this.autonomousTurn?.turnId !== turnId) return;
+      this.finishAutonomousTurn("completed");
+    }, delayMs);
+    this.autonomousTurn.settleTimer.unref?.();
+  }
+
+  private finishAutonomousTurn(state: "completed" | "canceled" | "failed"): void {
+    const turn = this.autonomousTurn;
+    if (!turn) return;
+    this.cancelAutonomousSettle();
+    this.autonomousTurn = null;
+    const preserveBackground = state === "completed" && this.outOfTurnActivity !== null;
+    this.fallbackChunkIds.clear();
+    this.terminalizeTransientItems(state, { preserveInProgressTools: preserveBackground });
+    if (preserveBackground) this.syncBackgroundWorkFromInProgressTools();
+    else this.clearBackgroundWork();
+    this.finishTurnPermissions(turn.turnId);
+    this.emit({
+      type: "session.turn",
+      sessionId: this.options.boundarySessionId,
+      turnId: turn.turnId,
+      state,
+    });
+  }
+
+  private hasPendingPermissionsForTurn(turnId: string): boolean {
+    for (const pending of this.permissions.values()) {
+      if (pending.turnId === turnId) return true;
+    }
+    return false;
+  }
+
+  private syncBackgroundWorkFromInProgressTools(): void {
+    const next = new Set<string>();
+    for (const [id, snapshot] of this.toolCalls) {
+      if (snapshot.status === "in_progress") next.add(id);
+    }
+    if (
+      next.size === this.backgroundToolCalls.size &&
+      [...next].every((id) => this.backgroundToolCalls.has(id))
+    ) {
+      return;
+    }
+    this.backgroundToolCalls.clear();
+    for (const id of next) this.backgroundToolCalls.add(id);
+    this.publishBackgroundWork();
+  }
+
+  private clearBackgroundWork(emitClear = true): void {
+    const hadAny = this.backgroundToolCalls.size > 0 || this.publishedBackgroundWork;
+    this.backgroundToolCalls.clear();
+    if (!hadAny) return;
+    this.publishedBackgroundWork = false;
+    if (!emitClear || this.closing) return;
+    this.emit({
+      type: "session.background_work",
+      sessionId: this.options.boundarySessionId,
+      items: [],
+    });
+  }
+
+  private publishBackgroundWork(): void {
+    const items: ProviderBackgroundWorkItem[] = [];
+    for (const id of this.backgroundToolCalls) {
+      const snapshot = this.toolCalls.get(id);
+      if (snapshot && snapshot.status === "in_progress") {
+        items.push(toBackgroundWorkItem(snapshot));
+      }
+    }
+    if (items.length === 0 && !this.publishedBackgroundWork) return;
+    this.publishedBackgroundWork = items.length > 0;
+    this.emit({
+      type: "session.background_work",
+      sessionId: this.options.boundarySessionId,
+      items,
     });
   }
 
@@ -1387,6 +1667,20 @@ class AcpRuntime {
   }
 
   private settlePendingWork(): void {
+    this.cancelAutonomousSettle();
+    this.autonomousTurn = null;
+    this.canceledToolCalls.clear();
+    if (this.backgroundToolCalls.size > 0 || this.publishedBackgroundWork) {
+      this.backgroundToolCalls.clear();
+      this.publishedBackgroundWork = false;
+      if (!this.closing) {
+        this.emit({
+          type: "session.background_work",
+          sessionId: this.options.boundarySessionId,
+          items: null,
+        });
+      }
+    }
     for (const permission of this.permissions.values()) {
       permission.resolve({ outcome: { outcome: "cancelled" } });
     }
@@ -1692,6 +1986,35 @@ function configValues(
 }
 
 type ToolCallTimelineItem = Extract<ProviderTimelineItem, { type: "tool_call" }>;
+
+function toBackgroundWorkItem(snapshot: AcpToolCallSnapshot): ProviderBackgroundWorkItem {
+  const input = jsonRecord(snapshot.input);
+  let command: string | undefined;
+  if (snapshot.detail?.type === "shell") {
+    command = snapshot.detail.command;
+  } else if (typeof input.CommandLine === "string") {
+    command = input.CommandLine;
+  } else if (typeof input.command === "string") {
+    command = input.command;
+  }
+  const kind =
+    snapshot.detail?.type === "shell" ||
+    snapshot.kind === "execute" ||
+    snapshot.name === "run_command"
+      ? "shell"
+      : "other";
+  const summary =
+    typeof input.toolSummary === "string" && input.toolSummary.trim().length > 0
+      ? input.toolSummary.trim()
+      : null;
+  return {
+    id: snapshot.id,
+    kind,
+    description: summary ?? snapshot.title ?? snapshot.name ?? null,
+    ...(command ? { command } : {}),
+    canStop: false,
+  };
+}
 
 function toolTimelineItem(snapshot: AcpToolCallSnapshot): ToolCallTimelineItem {
   const input = jsonRecord(snapshot.input);

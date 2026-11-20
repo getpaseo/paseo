@@ -53,6 +53,11 @@ export interface AcpOptions {
   initialCommandsTimeoutMs?: number;
   /** Allow delayed session/load updates before publishing the session as ready. */
   loadReplayQuietPeriodMs?: number;
+  /**
+   * Support ACP v1 agents whose background tools stay `in_progress` across `end_turn` and
+   * later stream follow-up `session/update` notifications outside `session/prompt`.
+   */
+  outOfTurnActivity?: boolean | { settleDelayMs?: number; quietLimitMs?: number };
   /** An unattended mode that approves ACP allow-once requests in the specified native mode. */
   autoAcceptMode?: {
     mode: Omit<ProviderMode, "isUnattended">;

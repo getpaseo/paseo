@@ -2452,3 +2452,766 @@ it("rewrites the session-ready, notification and configure-commit config snapsho
     await connection.close();
   }
 });
+
+describe("ACP out-of-turn background activity", () => {
+  async function queryCanStop(
+    connection: ProviderConnection,
+    events: ProviderEvent[],
+    requestId: string,
+  ): Promise<boolean> {
+    await connection.send({
+      type: "session.can_stop_runtime",
+      requestId,
+      sessionId: "session-1",
+    });
+    const reply = await waitForEvent(
+      events,
+      (event) => event.type === "session.can_stop_runtime" && event.requestId === requestId,
+    );
+    return reply.type === "session.can_stop_runtime" ? reply.canStop : false;
+  }
+
+  it("tracks background tools across end_turn and opens autonomous turns for out-of-turn wakeups", async () => {
+    const { connector, instances } = connectorHarness({
+      promptUpdates: () => [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-1",
+          name: "run_command",
+          kind: "execute",
+          title: "npm run typecheck",
+          status: "in_progress",
+          rawInput: { CommandLine: "npm run typecheck", toolSummary: "Typecheck workspace" },
+        },
+        {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Waiting for typecheck." },
+        },
+        { sessionUpdate: "usage_update", used: 1000, size: 100000 },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-acp",
+      label: "Out-of-turn ACP",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 40 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.can_stop_runtime"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      expect(await queryCanStop(connection, events, "stop-before")).toBe(true);
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Run typecheck" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      // The background tool stayed running across end_turn and is reported as background work.
+      const toolEventsAfterPrompt = events.filter(
+        (event) => event.type === "timeline.item" && event.item.id === "cmd-1",
+      );
+      expect(toolEventsAfterPrompt.at(-1)).toMatchObject({
+        item: { type: "tool_call", id: "cmd-1", status: "running" },
+      });
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [
+          {
+            id: "cmd-1",
+            kind: "shell",
+            description: "Typecheck workspace",
+            command: "npm run typecheck",
+            canStop: false,
+          },
+        ],
+      });
+      expect(await queryCanStop(connection, events, "stop-while-bg")).toBe(false);
+
+      // Background command finishes out of turn and wakes the agent, which runs a chained command.
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "cmd-1",
+          status: "completed",
+          rawOutput: { output: "ok" },
+        },
+      });
+      const autoStart = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+      expect(await queryCanStop(connection, events, "stop-during-wakeup")).toBe(false);
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [],
+      });
+
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "Now running lint." },
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-2",
+          name: "run_command",
+          kind: "execute",
+          title: "npm run lint",
+          status: "in_progress",
+          rawInput: { CommandLine: "npm run lint" },
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Waiting for lint." },
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 1200, size: 100000 },
+      });
+
+      // The autonomous turn settles cleanly and hands off cmd-2 to backgroundWork.
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === autoTurnId &&
+          event.state === "completed",
+      );
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [
+          {
+            id: "cmd-2",
+            kind: "shell",
+            description: "npm run lint",
+            command: "npm run lint",
+            canStop: false,
+          },
+        ],
+      });
+      expect(await queryCanStop(connection, events, "stop-while-cmd2")).toBe(false);
+
+      // cmd-2 completes and the agent delivers its final reply with no remaining background work.
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", status: "completed" },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "All checks passed." },
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 1300, size: 100000 },
+      });
+
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.turnId !== autoTurnId &&
+          event.state === "completed",
+      );
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [],
+      });
+      expect(await queryCanStop(connection, events, "stop-after-all")).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("cancels an active out-of-turn wakeup and clears background work on interrupt", async () => {
+    const { connector, instances } = connectorHarness({
+      promptUpdates: () => [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-1",
+          name: "run_command",
+          kind: "execute",
+          title: "sleep 30",
+          status: "in_progress",
+        },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-cancel",
+      label: "Out-of-turn Cancel",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 500 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.can_stop_runtime"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      // Start an autonomous wakeup with a new running command, then interrupt it.
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-1", status: "completed" },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-2",
+          name: "run_command",
+          kind: "execute",
+          title: "sleep 60",
+          status: "in_progress",
+        },
+      });
+      const autoStart = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "interrupt-1",
+        sessionId: "session-1",
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === autoTurnId &&
+          event.state === "canceled",
+      );
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [],
+      });
+      expect(await queryCanStop(connection, events, "stop-after-cancel")).toBe(true);
+
+      // A late tool_call_update echoing the canceled tool's failure must not open a phantom turn.
+      const turnCountAfterCancel = events.filter((event) => event.type === "session.turn").length;
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-2", status: "failed" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(events.filter((event) => event.type === "session.turn")).toHaveLength(
+        turnCountAfterCancel,
+      );
+      expect(await queryCanStop(connection, events, "stop-after-cancel-echo")).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("finishes a settling autonomous turn cleanly without sending cancel when a new prompt arrives", async () => {
+    let cancelCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleMessage: (_instance, message) => {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+        }
+        return false;
+      },
+      promptUpdates: (text) =>
+        text === "First"
+          ? [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd-1",
+                name: "run_command",
+                kind: "execute",
+                title: "sleep 10",
+                status: "in_progress",
+              },
+              {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Waiting." },
+              },
+            ]
+          : [
+              {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Second ok" },
+              },
+            ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-prompt",
+      label: "Out-of-turn Prompt",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 5_000 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "First" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-1", status: "completed" },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 1100, size: 100000 },
+      });
+      const autoStart = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+      await waitForEvent(
+        events,
+        (event) => event.type === "session.usage" && event.usage.contextWindowUsedTokens === 1100,
+      );
+
+      // Send a follow-up prompt while the autonomous turn is in its settle window.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Second" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-2" &&
+          event.state === "completed",
+      );
+      expect(events).toContainEqual({
+        type: "session.turn",
+        sessionId: "session-1",
+        turnId: autoTurnId,
+        state: "completed",
+      });
+      expect(cancelCount).toBe(0);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("settles silent tool-only and thought-only wakeups via quietLimitMs", async () => {
+    const { connector, instances } = connectorHarness({
+      promptUpdates: () => [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-1",
+          name: "run_command",
+          kind: "execute",
+          title: "sleep 10",
+          status: "in_progress",
+        },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-quiet-limit",
+      label: "Out-of-turn Quiet Limit",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 40, quietLimitMs: 120 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.can_stop_runtime"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      // Tool completes with no assistant reply; quietLimitMs settles the wakeup cleanly.
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-1", status: "completed" },
+      });
+      const firstAuto = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "completed",
+      );
+      expect(await queryCanStop(connection, events, "stop-after-tool-only")).toBe(true);
+
+      // Thought-only wakeup also settles via quietLimitMs instead of hanging.
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "Nothing else needed." },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.turnId !== (firstAuto.type === "session.turn" ? firstAuto.turnId : "") &&
+          event.state === "completed",
+      );
+      expect(await queryCanStop(connection, events, "stop-after-thought-only")).toBe(true);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps an open reply in one autonomous turn until usage_update closes it", async () => {
+    const { connector, instances } = connectorHarness({
+      promptUpdates: () => [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "cmd-1",
+          name: "run_command",
+          kind: "execute",
+          title: "sleep 10",
+          status: "in_progress",
+        },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Waiting." } },
+      ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-open-reply",
+      label: "Out-of-turn Open Reply",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 30, quietLimitMs: 2_000 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Start" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-1", status: "completed" },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Part 1. " },
+        },
+      });
+      const autoStart = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+
+      // Wait longer than settleDelayMs without usage_update: replyOpen keeps the turn open.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "session.turn" &&
+            event.turnId === autoTurnId &&
+            event.state === "completed",
+        ),
+      ).toBe(false);
+
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Part 2." },
+        },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "usage_update", used: 1200, size: 100000 },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === autoTurnId &&
+          event.state === "completed",
+      );
+      const startedAutonomousTurns = events.filter(
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      expect(startedAutonomousTurns).toHaveLength(1);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("preserves other background work without sending cancel when a follow-up prompt arrives mid-wakeup", async () => {
+    let cancelCount = 0;
+    const { connector, instances } = connectorHarness({
+      handleMessage: (_instance, message) => {
+        if ("method" in message && message.method === "session/cancel") {
+          cancelCount += 1;
+        }
+        return false;
+      },
+      promptUpdates: (text) =>
+        text === "First"
+          ? [
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd-1",
+                name: "run_command",
+                kind: "execute",
+                title: "cmd-1",
+                status: "in_progress",
+              },
+              {
+                sessionUpdate: "tool_call",
+                toolCallId: "cmd-2",
+                name: "run_command",
+                kind: "execute",
+                title: "cmd-2",
+                status: "in_progress",
+              },
+              {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Waiting on both." },
+              },
+            ]
+          : [
+              {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Handled follow-up." },
+              },
+            ],
+    });
+    const registration = runAcpProvider({
+      id: "out-of-turn-followup",
+      label: "Out-of-turn Followup",
+      connector,
+      acpOptions: { outOfTurnActivity: { settleDelayMs: 50, quietLimitMs: 5_000 } },
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "session.can_stop_runtime"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "First" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-1" &&
+          event.state === "completed",
+      );
+
+      // cmd-1 finishes and the agent is mid-thought (no assistant message or usage_update yet).
+      const agent = instances[1];
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "cmd-1", status: "completed" },
+      });
+      agent.notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "Analyzing cmd-1 output..." },
+        },
+      });
+      const autoStart = await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId.startsWith("acp:autonomous:") &&
+          event.state === "started",
+      );
+      const autoTurnId = autoStart.type === "session.turn" ? autoStart.turnId : "";
+
+      // Follow-up prompt completes the wakeup without sending session/cancel and keeps cmd-2 alive.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "msg-2",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Second" }] },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.turn" &&
+          event.turnId === "acp:msg-2" &&
+          event.state === "completed",
+      );
+      expect(events).toContainEqual({
+        type: "session.turn",
+        sessionId: "session-1",
+        turnId: autoTurnId,
+        state: "completed",
+      });
+      expect(cancelCount).toBe(0);
+      expect(events.findLast((event) => event.type === "session.background_work")).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [
+          {
+            id: "cmd-2",
+            kind: "shell",
+            description: "cmd-2",
+            canStop: false,
+          },
+        ],
+      });
+      expect(await queryCanStop(connection, events, "stop-with-cmd2")).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+});

@@ -1645,6 +1645,14 @@ class PluginAgentSession implements AgentSession {
         return this.translateConfig(event);
       case "session.notice":
         return this.translateNotice(event);
+      case "session.background_work":
+        return [
+          {
+            type: "background_work",
+            provider: this.provider,
+            items: event.items ? event.items.map((item) => ({ ...item })) : null,
+          },
+        ];
       case "session.runtime_failed":
         return [this.translateFailure(event.error)];
       case "session.closed":

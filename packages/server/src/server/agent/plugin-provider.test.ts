@@ -2814,3 +2814,84 @@ test("resumes a goose session saved by the generic ACP provider", async () => {
     await plugins.shutdown();
   }
 });
+
+test("plugin background work and autonomous turns update AgentManager state", async () => {
+  const home = await mkdtemp(join(tmpdir(), "plugin-bg-work-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(join(home, "agents"), logger);
+  let emitEvent: ((event: ProviderEvent) => void) | null = null;
+  let openSessionId = "";
+  const harness = createProviderHarness({
+    capabilities: [...CAPABILITIES, "session.can_stop_runtime"],
+    handleInput: async (input, emit) => {
+      emitEvent = emit;
+      if (input.type === "session.open") openSessionId = input.sessionId;
+      return false;
+    },
+  });
+  const registry = new PluginAgentClientRegistry(logger);
+  registry.replace([harness.registration]);
+  const manager = new AgentManager({ clients: registry.clients(), registry: storage, logger });
+  const agent = await manager.createAgent(
+    { provider: harness.registration.id, cwd: home },
+    undefined,
+    { workspaceId: undefined },
+  );
+  try {
+    expect(openSessionId).not.toBe("");
+    emitEvent!({
+      type: "session.background_work",
+      sessionId: openSessionId,
+      items: [
+        {
+          id: "cmd-1",
+          kind: "shell",
+          description: "Typecheck workspace",
+          command: "npm run typecheck",
+          canStop: false,
+        },
+      ],
+    });
+    await expect.poll(() => manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 1 });
+    expect(manager.listAgentBackgroundWork(agent.id)).toMatchObject([
+      {
+        id: "cmd-1",
+        kind: "shell",
+        description: "Typecheck workspace",
+        command: "npm run typecheck",
+      },
+    ]);
+
+    emitEvent!({
+      type: "session.background_work",
+      sessionId: openSessionId,
+      items: [],
+    });
+    emitEvent!({
+      type: "session.turn",
+      sessionId: openSessionId,
+      turnId: "acp:autonomous:1",
+      state: "started",
+    });
+    emitEvent!({
+      type: "timeline.item",
+      sessionId: openSessionId,
+      item: { type: "assistant_message", id: "auto-msg-1", text: "All checks passed." },
+    });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    expect(manager.getAgentBackgroundWorkSummary(agent.id)).toEqual({ count: 0 });
+
+    emitEvent!({
+      type: "session.turn",
+      sessionId: openSessionId,
+      turnId: "acp:autonomous:1",
+      state: "completed",
+    });
+    await expect.poll(() => manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+  } finally {
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await registry.shutdown();
+    await storage.flush();
+    await rm(home, { recursive: true, force: true });
+  }
+});
