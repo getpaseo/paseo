@@ -202,16 +202,39 @@ describe("displayPercent", () => {
 });
 
 describe("resolveUsageRefresh", () => {
+  const fetchedAt = entry({}).fetchedAt;
+
   it("is pending while a refresh runs, even after an earlier failure", () => {
-    expect(resolveUsageRefresh({ isPending: true, error: new Error("boom") })).toBe("pending");
+    expect(
+      resolveUsageRefresh(
+        { isPending: true, error: new Error("boom"), context: fetchedAt },
+        fetchedAt,
+      ),
+    ).toBe("pending");
   });
 
-  it("is failed after a refresh errors", () => {
-    expect(resolveUsageRefresh({ isPending: false, error: new Error("boom") })).toBe("failed");
+  it("is failed for the report that was showing when the refresh started", () => {
+    expect(
+      resolveUsageRefresh(
+        { isPending: false, error: new Error("boom"), context: fetchedAt },
+        fetchedAt,
+      ),
+    ).toBe("failed");
+  });
+
+  it("clears the failure when another surface refreshes the report successfully", () => {
+    expect(
+      resolveUsageRefresh(
+        { isPending: false, error: new Error("boom"), context: fetchedAt },
+        "2026-01-01T00:06:00.000Z",
+      ),
+    ).toBe("idle");
   });
 
   it("is idle before and after a successful refresh", () => {
-    expect(resolveUsageRefresh({ isPending: false, error: null })).toBe("idle");
+    expect(
+      resolveUsageRefresh({ isPending: false, error: null, context: undefined }, fetchedAt),
+    ).toBe("idle");
   });
 });
 
@@ -352,6 +375,7 @@ it("resolves retained usage and successful time without inventing old-daemon his
     details: [],
     planLabel: null,
     successfulAt: success.fetchedAt,
+    forecastAt: null,
     retained: true,
     messages: ["Rate limited"],
   });
@@ -361,6 +385,7 @@ it("resolves retained usage and successful time without inventing old-daemon his
     details: [],
     planLabel: null,
     successfulAt: null,
+    forecastAt: null,
     retained: false,
     messages: ["Rate limited"],
   });
@@ -370,8 +395,26 @@ it("resolves retained usage and successful time without inventing old-daemon his
     details: [],
     planLabel: null,
     successfulAt: success.fetchedAt,
+    forecastAt: success.fetchedAt,
     retained: false,
     messages: [],
+  });
+});
+
+it("uses the quota observation time for pace and keeps the reading after a failed request", () => {
+  const success = entry({ windows: [{ id: "weekly", label: "Weekly", usedPct: 42 }] });
+  if (success.report.status !== "available") throw new Error("fixture must be available");
+  const observedAt = success.fetchedAt;
+  const successfulAt = "2026-01-01T00:15:00.000Z";
+  const report = { ...success, successfulAt, report: { ...success.report, observedAt } };
+  expect(resolveUsageReport(report, i18n.t)).toMatchObject({
+    successfulAt,
+    forecastAt: observedAt,
+  });
+  expect(resolveUsageReport(report, i18n.t, "failed")).toMatchObject({
+    windows: success.report.windows,
+    successfulAt,
+    forecastAt: null,
   });
 });
 

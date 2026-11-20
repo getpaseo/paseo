@@ -50,6 +50,8 @@ export type UsageReport =
   | {
       status: "available";
       planLabel?: string;
+      /** When the provider measured the quota, if the report returns a previous reading. */
+      observedAt?: string;
       windows: UsageWindow[];
       balances?: UsageBalance[];
       details?: UsageDetail[];

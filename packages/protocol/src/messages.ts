@@ -7055,6 +7055,7 @@ export const UsageProblemSchema = z.discriminatedUnion("kind", [
 const AvailableUsageReportSchema = z.object({
   status: z.literal("available"),
   planLabel: z.string().optional(),
+  observedAt: z.string().optional(),
   windows: z.array(ProviderUsageWindowSchema),
   balances: z.array(ProviderUsageBalanceSchema).optional(),
   details: z.array(ProviderUsageDetailSchema).optional(),

@@ -30,10 +30,10 @@ export function UsageWindowBar({
   pinLabel,
   pinTestID,
   retained = false,
-  successfulAt,
+  forecastAt,
 }: {
   retained?: boolean;
-  successfulAt: string | null;
+  forecastAt: string | null;
   window: UsageWindow;
   displayAs: UsageDisplayAs;
   /** Whether the row pins the window to the sidebar. When false the row is a plain bar. */
@@ -47,7 +47,7 @@ export function UsageWindowBar({
   const { t, i18n } = useTranslation();
   const shownPct = displayPercent(window, displayAs);
   const now = useRelativeTimeTick({ enabled: window.runsOutAt != null || window.resetsAt != null });
-  const pace = usagePace(window, retained ? null : successfulAt, now);
+  const pace = usagePace(window, forecastAt, now);
   const forecast = formatPace(pace, now, t);
   const countdown = formatResetLabel(window.resetsAt, retained, now, t);
   const exactTime = formatResetTime(window.resetsAt, now, t);

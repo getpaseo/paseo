@@ -265,12 +265,15 @@ export function useUsageHosts(): UsageHost[] {
  */
 export function useReportRefresh(
   serverId: string,
-  reportId: string,
+  entry: UsageReportEntry,
   agentId?: string,
 ): { refresh: () => void; refreshState: UsageRefresh } {
   const queryClient = useQueryClient();
   const usageScopeKey = useAgentUsageScopeKey(serverId, agentId);
+  const { id: reportId, fetchedAt } = entry;
   const mutation = useMutation({
+    // A failed request belongs to the reading it tried to replace.
+    onMutate: () => fetchedAt,
     mutationFn: () => getReport(serverId, reportId, true, agentId),
     onSuccess: (report) => {
       queryClient.setQueryData<UsageReportEntry[]>(
@@ -283,5 +286,5 @@ export function useReportRefresh(
   });
   const { mutate } = mutation;
   const refresh = useCallback(() => mutate(), [mutate]);
-  return { refresh, refreshState: resolveUsageRefresh(mutation) };
+  return { refresh, refreshState: resolveUsageRefresh(mutation, fetchedAt) };
 }

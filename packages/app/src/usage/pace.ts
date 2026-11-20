@@ -8,12 +8,8 @@ type UsagePace =
   | { kind: "remaining"; remainingAtResetPct: number };
 
 /** Estimate from the window's average pace as of the reading. The clock only expires the estimate. */
-export function usagePace(
-  window: UsageWindow,
-  successfulAt: string | null,
-  now: number,
-): UsagePace {
-  if (successfulAt === null) return { kind: "unknown" };
+export function usagePace(window: UsageWindow, observedAt: string | null, now: number): UsagePace {
+  if (observedAt === null) return { kind: "unknown" };
   const reset = Date.parse(window.resetsAt ?? "");
   if (reset <= now) return { kind: "unknown" };
 
@@ -27,7 +23,7 @@ export function usagePace(
   }
 
   const duration = (window.durationSeconds ?? 0) * 1_000;
-  const sampled = Date.parse(successfulAt);
+  const sampled = Date.parse(observedAt);
   const elapsed = sampled - (reset - duration);
   if (
     used == null ||

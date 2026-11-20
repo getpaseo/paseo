@@ -41,12 +41,12 @@ export function usageWindowRowLabel(input: {
 /** A user-requested refresh of one report. The previous report stays on screen throughout. */
 export type UsageRefresh = "idle" | "pending" | "failed";
 
-export function resolveUsageRefresh(mutation: {
-  isPending: boolean;
-  error: unknown;
-}): UsageRefresh {
+export function resolveUsageRefresh(
+  mutation: { isPending: boolean; error: unknown; context: string | undefined },
+  fetchedAt: string,
+): UsageRefresh {
   if (mutation.isPending) return "pending";
-  if (mutation.error) return "failed";
+  if (mutation.error && mutation.context === fetchedAt) return "failed";
   return "idle";
 }
 
@@ -236,7 +236,11 @@ export function resolveUsageSnapshot(entry: UsageReportEntry): UsageSnapshot | n
 }
 
 /** Current outcome owns messages; only a successful poll owns values and freshness. */
-export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
+export function resolveUsageReport(
+  entry: UsageReportEntry,
+  t: TFunction,
+  refreshState: UsageRefresh = "idle",
+) {
   const available = entry.report.status === "available";
   const snapshot = resolveUsageSnapshot(entry);
   const messages: string[] = [];
@@ -250,7 +254,12 @@ export function resolveUsageReport(entry: UsageReportEntry, t: TFunction) {
     // COMPAT(usageLoginErrors): added in v0.11.0, remove after 2027-04-05 once daemon floor >= v0.11.0.
     else messages.push(usageProblemText(entry.report, t));
   }
+  const forecastAt =
+    snapshot && !snapshot.retained && refreshState !== "failed"
+      ? (snapshot.report.observedAt ?? snapshot.successfulAt)
+      : null;
   return {
+    forecastAt,
     windows: snapshot?.report.windows ?? [],
     balances: snapshot?.report.balances ?? [],
     details: snapshot?.report.details ?? [],
