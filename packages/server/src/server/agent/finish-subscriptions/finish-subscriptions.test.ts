@@ -1,6 +1,6 @@
 import { createIdleRuntimeCleanup } from "../idle-runtime-cleanup/index.js";
 import { HostObservationError } from "../host-operations/index.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -520,4 +520,70 @@ test("an undispatched follow-up does not block the running child's permission no
   expect(state.delivery.prompts[0]).toContain("needs permission");
   expect(state.delivery.prompts[0]).toContain("approval");
   expect(await state.store.list()).toHaveLength(2);
+});
+
+function permissionCheckpoint(): WaitForFinishResult {
+  const result = outcome("running");
+  result.status = "permission";
+  result.final!.pendingPermissions = [
+    {
+      id: "approval",
+      provider: "codex",
+      name: "Bash",
+      kind: "tool",
+      input: { command: "run tests" },
+    } as NonNullable<typeof result.final>["pendingPermissions"][number],
+  ];
+  return result;
+}
+
+test("an unselected permission event keeps the subscription armed and reports the finish once", async () => {
+  const state = await scenario();
+  await state.service.register({ ...intent, notifyOn: ["finished", "errored", "closed"] });
+  await until(() => state.observation.waits.length === 1);
+  state.observation.waits[0]!.result.resolve(permissionCheckpoint());
+  await until(() => state.observation.waits.length === 2);
+  expect(state.delivery.prompts).toHaveLength(0);
+  expect(await state.store.list()).toHaveLength(1);
+  state.observation.waits[1]!.result.resolve(outcome("idle"));
+  await until(() => state.delivery.prompts.length === 1);
+  expect(state.delivery.prompts[0]).toContain("finished");
+  state.delivery.acknowledgments[0]!.resolve("steered");
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  expect(state.delivery.prompts).toHaveLength(1);
+});
+
+test("an unselected terminal event ends the subscription without notifying", async () => {
+  const state = await scenario();
+  await state.service.register({ ...intent, notifyOn: ["permission-required"] });
+  await until(() => state.observation.waits.length === 1);
+  state.observation.waits[0]!.result.resolve(outcome("error"));
+  await expect.poll(async () => (await state.store.list()).length).toBe(0);
+  expect(state.delivery.prompts).toHaveLength(0);
+});
+
+test("event selection survives restart and legacy records receive every event", async () => {
+  const first = await scenario();
+  await first.service.register({ ...intent, notifyOn: ["finished"] });
+  await first.service.close();
+  const restarted = await scenario(first.home);
+  await until(() => restarted.observation.waits.length === 1);
+  restarted.observation.waits[0]!.result.resolve(permissionCheckpoint());
+  await until(() => restarted.observation.waits.length === 2);
+  expect(restarted.delivery.prompts).toHaveLength(0);
+  restarted.observation.waits[1]!.result.resolve(outcome("idle"));
+  await until(() => restarted.delivery.prompts.length === 1);
+  expect(restarted.delivery.prompts[0]).toContain("finished");
+
+  const legacyHome = await mkdtemp(join(tmpdir(), "finish-legacy-"));
+  homes.push(legacyHome);
+  await writeFile(
+    join(legacyHome, "finish-subscriptions.json"),
+    JSON.stringify([{ id: "legacy", ...intent }]),
+  );
+  const legacy = await scenario(legacyHome);
+  await until(() => legacy.observation.waits.length === 1);
+  legacy.observation.waits[0]!.result.resolve(permissionCheckpoint());
+  await until(() => legacy.delivery.prompts.length === 1);
+  expect(legacy.delivery.prompts[0]).toContain("needs permission");
 });

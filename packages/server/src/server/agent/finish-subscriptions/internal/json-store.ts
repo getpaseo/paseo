@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../../../atomic-file.js";
 import type { FinishSubscription, FinishSubscriptionStore } from "../index.js";
+import { FinishNotificationEventSchema } from "./notification.js";
 
 const recordsSchema = z.array(
   z.object({
@@ -11,6 +12,7 @@ const recordsSchema = z.array(
     childAgentId: z.string().min(1),
     serverId: z.string().min(1).optional(),
     requireParentOwnership: z.boolean().optional(),
+    notifyOn: z.array(FinishNotificationEventSchema).min(1).optional(),
   }),
 );
 

@@ -1,4 +1,7 @@
-import type { FinishSubscriptions } from "../finish-subscriptions/index.js";
+import type {
+  FinishNotificationEvent,
+  FinishSubscriptions,
+} from "../finish-subscriptions/index.js";
 import type { AgentPromptSource } from "../agent-messages/index.js";
 import type { Logger } from "pino";
 
@@ -91,6 +94,7 @@ export interface CreateAgentFromMcpInput {
   unattended?: boolean;
   promptFailure?: CreateAgentPromptFailureMode;
   notifyOnFinish: boolean;
+  notifyOn?: FinishNotificationEvent[];
   internal?: boolean;
   /** Omitted with a caller, the caller agent's own background applies. */
   background?: boolean;
@@ -203,6 +207,7 @@ export async function createAgentCommand(
             childAgentId: snapshot.id,
             callerAgentId: input.callerAgentId,
             requireParentOwnership: !(input.detached ?? false),
+            notifyOn: input.notifyOn,
           },
           true,
         )

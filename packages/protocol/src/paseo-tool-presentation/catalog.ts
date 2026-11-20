@@ -48,6 +48,7 @@ const AGENT_FIELDS = [
   "modeId",
   "background",
   "notifyOnFinish",
+  "notifyOn",
   "internal",
   "settings",
   "labels",

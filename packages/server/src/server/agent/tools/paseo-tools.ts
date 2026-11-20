@@ -1,7 +1,12 @@
 import type { ChangeRequestWatches } from "../change-request-watches/index.js";
 import { changeRequestStatusSchema } from "../../../services/change-request-source.js";
 import { registerPluginTools } from "./plugin-tools.js";
-import type { FinishSubscriptions, FinishRegistration } from "../finish-subscriptions/index.js";
+import {
+  FinishNotificationEventSchema,
+  type FinishNotificationEvent,
+  type FinishSubscriptions,
+  type FinishRegistration,
+} from "../finish-subscriptions/index.js";
 import type { AgentMessageDelivery } from "../agent-messages/index.js";
 import {
   createHostResolver,
@@ -684,7 +689,12 @@ function createToolCatalog(
     )
       return undefined;
     return finishSubscriptions().register(
-      { childAgentId: input.agentId as string, callerAgentId, serverId: destination },
+      {
+        childAgentId: input.agentId as string,
+        callerAgentId,
+        serverId: destination,
+        notifyOn: input.notifyOn as FinishNotificationEvent[] | undefined,
+      },
       true,
     );
   }
@@ -708,6 +718,7 @@ function createToolCatalog(
       callerAgentId,
       serverId: destination,
       requireParentOwnership: true,
+      notifyOn: input.notifyOn as FinishNotificationEvent[] | undefined,
     });
   }
   const localHostOperations = new Map<string, HostOperation>();
@@ -1229,6 +1240,13 @@ function createToolCatalog(
         "Existing workspace id. Agent-scoped calls default to the caller workspace; top-level calls create a new local workspace when omitted.",
       ),
   };
+  const notifyOnSchema = z
+    .array(FinishNotificationEventSchema)
+    .min(1)
+    .optional()
+    .describe(
+      "Notification events to receive; defaults to all. Omit permission-required to keep finish and error notifications without permission requests. Ignored when notifyOnFinish is false.",
+    );
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
     notifyOnFinish: z
@@ -1236,8 +1254,9 @@ function createToolCatalog(
       .optional()
       .default(true)
       .describe(
-        "Get notified when the created agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback.",
+        "Get notified when the created agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback. Use notifyOn to choose events.",
       ),
+    notifyOn: notifyOnSchema,
   };
   const canonicalTopLevelInputSchema = {
     ...canonicalCreateAgentFields,
@@ -1248,17 +1267,20 @@ function createToolCatalog(
       .describe(
         "Agent-scoped only: get notified when the created agent finishes, errors, or needs permission.",
       ),
+    notifyOn: notifyOnSchema,
   };
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
+    notifyOn: agentToAgentInputSchema.notifyOn,
   };
   const legacyTopLevelCreateAgentInputSchema = {
     ...commonCreateAgentFields,
     relationship: legacyCreateAgentPlacementFields.relationship.optional(),
     workspace: legacyCreateAgentPlacementFields.workspace.optional(),
     notifyOnFinish: canonicalTopLevelInputSchema.notifyOnFinish,
+    notifyOn: canonicalTopLevelInputSchema.notifyOn,
     cwd: z
       .string()
       .optional()
@@ -1297,8 +1319,9 @@ function createToolCatalog(
       .optional()
       .default(true)
       .describe(
-        "Get notified when the prompted agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback.",
+        "Get notified when the prompted agent finishes, errors, or needs permission. Set false for explicit reporting or no completion callback. Use notifyOn to choose events.",
       ),
+    notifyOn: notifyOnSchema,
   };
   const topLevelSendAgentPromptInputSchema = {
     ...commonSendAgentPromptInputSchema,
@@ -1309,6 +1332,7 @@ function createToolCatalog(
       .describe(
         "Agent-scoped only: get notified when the prompted agent finishes, errors, or needs permission.",
       ),
+    notifyOn: notifyOnSchema,
   };
   const sendAgentPromptInputSchema =
     scope === "agent" ? agentToAgentSendAgentPromptInputSchema : topLevelSendAgentPromptInputSchema;
@@ -1668,6 +1692,7 @@ function createToolCatalog(
           mode: parsedArgs.settings?.modeId,
           promptFailure: "throw",
           notifyOnFinish,
+          notifyOn: parsedArgs.notifyOn,
           background: parsedArgs.background,
           detached: resolvedArgs.detached,
           callerAgentId,
@@ -1679,7 +1704,7 @@ function createToolCatalog(
       const currentSnapshot = agentManager.getAgent(snapshot.id) ?? snapshot;
       const guidance =
         callerAgentId && notifyOnFinish && initialPromptStarted
-          ? "You will get notified when the created agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives."
+          ? notificationGuidance("created", parsedArgs.notifyOn)
           : "Creation acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.";
       const response = {
         content: [],
@@ -1963,8 +1988,15 @@ function createToolCatalog(
     );
   }
 
-  const PROMPTED_AGENT_NOTIFICATION_GUIDANCE =
-    "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
+  function notificationGuidance(
+    subject: "created" | "prompted",
+    notifyOn: FinishNotificationEvent[] | undefined,
+  ): string {
+    const when = notifyOn
+      ? `of these events from the ${subject} agent: ${notifyOn.join(", ")}`
+      : `when the ${subject} agent finishes, errors, or needs permission`;
+    return `You will get notified ${when}. Do not poll for status; continue with other work until the notification arrives.`;
+  }
 
   registerTool(
     "send_agent_prompt",
@@ -1987,6 +2019,7 @@ function createToolCatalog(
       prompt,
       sessionMode,
       notifyOnFinish = Boolean(callerAgentId),
+      notifyOn,
       activeTurnBehavior = callerAgentId ? "steer" : "interrupt",
     }) => {
       if (callerAgentId && !agentManager.getAgent(agentId) && !(await agentStorage.get(agentId))) {
@@ -2000,7 +2033,7 @@ function createToolCatalog(
                 throw new Error("Finish subscriptions are not configured");
               return options
                 .finishSubscriptions()
-                .register({ childAgentId: agentId, callerAgentId }, true);
+                .register({ childAgentId: agentId, callerAgentId, notifyOn }, true);
             })()
           : undefined;
       function confirmDispatch(_disposition: PromptDispatchDisposition): void {
@@ -2048,7 +2081,7 @@ function createToolCatalog(
             messageId: receipt.messageId,
             status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
             guidance: notifying
-              ? `Queued for delivery after two quiet seconds and the current turn ends. ${PROMPTED_AGENT_NOTIFICATION_GUIDANCE}`
+              ? `Queued for delivery after two quiet seconds and the current turn ends. ${notificationGuidance("prompted", notifyOn)}`
               : "Queued for delivery after two quiet seconds and the current turn ends; provider dispatch has not occurred.",
           },
         };
@@ -2089,7 +2122,7 @@ function createToolCatalog(
         disposition,
         status: currentSnapshot?.lifecycle ?? "idle",
         guidance: notifying
-          ? PROMPTED_AGENT_NOTIFICATION_GUIDANCE
+          ? notificationGuidance("prompted", notifyOn)
           : "Dispatch acknowledged. Observe completion using get_agent_status/get_agent_activity or SDK/RPC subscriptions and wait APIs.",
       };
       const validJson = ensureValidJson(responseData);

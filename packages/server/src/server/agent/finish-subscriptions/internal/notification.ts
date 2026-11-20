@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { AgentPermissionRequest } from "../../agent-sdk-types.js";
 export type FinishNotificationReason =
   | "host unreachable"
@@ -9,6 +10,15 @@ export type FinishNotificationReason =
   | "was closed"
   | "was canceled";
 
+/** The `event` values callers see on notifications; `notifyOn` selects from these. */
+export const FinishNotificationEventSchema = z.enum([
+  "finished",
+  "errored",
+  "permission-required",
+  "closed",
+]);
+export type FinishNotificationEvent = z.infer<typeof FinishNotificationEventSchema>;
+
 export const finishNotificationEvents = {
   "host unreachable": "errored",
   "host removed": "errored",
@@ -19,7 +29,7 @@ export const finishNotificationEvents = {
   "is unavailable": "closed",
   // Use the existing failure event so older clients still parse agent-message metadata.
   "was canceled": "errored",
-} as const;
+} as const satisfies Record<FinishNotificationReason, FinishNotificationEvent>;
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 

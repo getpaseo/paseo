@@ -6972,6 +6972,90 @@ describe("local durable finish subscription MCP wiring", () => {
     },
   );
 
+  it("delivers the finish but not permission requests when notifyOn omits permission-required", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-notify-on-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const manager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+    let mcp: Client | undefined;
+    try {
+      const parent = await manager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await manager.createAgent({ provider: "codex", cwd: existingCwd }, undefined, {
+        workspaceId: "wks_parent",
+      });
+      const server = await createAgentMcpServer({
+        agentManager: manager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      mcp = await connectInMemoryMcpClient(server);
+      const response = await sendMcpAndAwaitDispatch(mcp, server, {
+        agentId: child.id,
+        prompt: "Permission work",
+        notifyOn: ["finished", "errored", "closed"],
+      });
+      expect(response.structuredContent).toMatchObject({
+        guidance: expect.stringContaining("finished, errored, closed"),
+      });
+      const messages = () =>
+        parentClient.sessions[0]!.prompts.flatMap((prompt) => parseAgentMessages(prompt) ?? []);
+      childClient.sessions[0]!.requestPermission("first");
+      await vi.waitFor(() =>
+        expect(manager.getAgent(child.id)!.pendingPermissions.has("first")).toBe(true),
+      );
+      // A person answers in the app; the lead is never asked.
+      await manager.respondToPermission(child.id, "first", { behavior: "allow" });
+      expect(serverSubscriptionRecords.get(server)!.size).toBe(1);
+      childClient.sessions[0]!.finishTurn("Permission work complete");
+      const events = () => messages().map((message) => message.source?.event);
+      await vi.waitFor(() => expect(events()).toContain("finished"));
+      expect(events()).toEqual(["finished"]);
+      expect(messages()[0]!.text).toContain("Permission work complete");
+      await vi.waitFor(() => expect(serverSubscriptionRecords.get(server)!.size).toBe(0));
+    } finally {
+      await mcp?.close();
+      await removeAgentStateDir(manager, storage, workdir);
+    }
+  });
+
+  it.each(["send_agent_prompt", "create_agent"])(
+    "%s rejects an empty or unknown notifyOn selection",
+    async (name) => {
+      const { agentManager, agentStorage } = createTestDeps();
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        callerAgentId: "parent-agent",
+        logger,
+      });
+      const tool = registeredTool(server, name);
+      const input = {
+        agentId: "child",
+        prompt: "Work",
+        title: "Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Work",
+      };
+      for (const notifyOn of [[], ["needs-permission"]])
+        expect((await tool.inputSchema.safeParseAsync({ ...input, notifyOn })).success).toBe(false);
+      expect(
+        (await tool.inputSchema.safeParseAsync({ ...input, notifyOn: ["finished"] })).success,
+      ).toBe(true);
+    },
+  );
+
   it("returns a tool error before sending a prompt when subscription storage cannot commit", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-registration-failure-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);

@@ -49,3 +49,27 @@ test("invalid persisted records fail visibly", async () => {
   );
   await expect(createJsonFinishSubscriptionStore(directory).list()).rejects.toThrow();
 });
+
+test("notification event selection round-trips beside legacy records without it", async () => {
+  const directory = await temporaryHome();
+  const selective = { ...subscription, notifyOn: ["finished" as const, "errored" as const] };
+  // Records written before notifyOn existed have no such field.
+  await writeFile(
+    join(directory, "finish-subscriptions.json"),
+    JSON.stringify([{ ...subscription, id: "legacy" }]),
+  );
+  await createJsonFinishSubscriptionStore(directory).put(selective);
+  expect(await createJsonFinishSubscriptionStore(directory).list()).toEqual([
+    { ...subscription, id: "legacy" },
+    selective,
+  ]);
+});
+
+test("an empty notification event selection fails visibly", async () => {
+  const directory = await temporaryHome();
+  await writeFile(
+    join(directory, "finish-subscriptions.json"),
+    JSON.stringify([{ ...subscription, notifyOn: [] }]),
+  );
+  await expect(createJsonFinishSubscriptionStore(directory).list()).rejects.toThrow();
+});

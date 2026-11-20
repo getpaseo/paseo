@@ -74,7 +74,7 @@ paseo script stop <name> [--cwd <path> | --workspace <workspace-id>]
 
 ## Agents
 
-**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Optional: `workspaceId`, `notifyOnFinish`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
+**`create_agent`** — required: `title`, `provider` (`claude/opus`, `codex/gpt-5.4`, …), `initialPrompt`. Optional: `workspaceId`, `notifyOnFinish`, `notifyOn`, `settings`, `labels`. Returns `{ agentId, workspaceId, … }`.
 
 Initial runtime settings live under `settings`: `modeId`, `thinkingOptionId`, and provider-specific `features`. Agent profiles are the preferred source for these values. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }` when creating the agent.
 
@@ -128,6 +128,7 @@ Schedules have the full list/inspect/update/pause/resume/run-once/log/delete sur
 ## Waiting
 
 When you create or prompt a subagent, `notifyOnFinish` defaults to `true` and reports completion, errors, or permission requests, including across hosts.
+Pass `notifyOn: ["finished", "errored", "closed"]` when a person answers the subagent's permission requests and you only need its outcome.
 Finish your turn and wait for that notification instead of polling.
 If you want an explicit reply with `send_agent_prompt`, have the sender check `list_hosts` for the recipient’s server before setting `notifyOnFinish: false`.
 

@@ -92,7 +92,7 @@ MCP 不提供解除 Agent 父子关系的工具。解除关系是用户在应用
 | `get_agent_activity` | 以整理后的摘要返回 Agent 最近的时间线条目。                                                                                                                                                                                      |
 | `set_agent_mode`     | 切换 Agent 的会话模式。                                                                                                                                                                                                          |
 
-Paseo Agent 默认会收到完成、错误和权限通知；设置 `notifyOnFinish: false` 可以关闭它们。外部 MCP 客户端使用 `get_agent_status` 和 `get_agent_activity` 查看结果。
+Paseo Agent 默认会收到完成、错误和权限通知；传入 `notifyOn`（例如 `["finished", "errored", "closed"]`）可以选择事件，设置 `notifyOnFinish: false` 可以全部关闭。外部 MCP 客户端使用 `get_agent_status` 和 `get_agent_activity` 查看结果。
 
 ### 工作区 {#workspaces}
 

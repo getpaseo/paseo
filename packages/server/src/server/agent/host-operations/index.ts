@@ -182,6 +182,8 @@ const remoteCreate = z
     workspaceId: z.string().min(1),
     labels: z.record(z.string(), z.string()).optional(),
     notifyOnFinish: z.boolean().optional(),
+    // Validated by the tool schema; the caller's daemon applies it to its own subscription.
+    notifyOn: z.array(z.string()).optional(),
     background: z.boolean().optional(),
     idempotencyKey: z.string().optional(),
     settings: z

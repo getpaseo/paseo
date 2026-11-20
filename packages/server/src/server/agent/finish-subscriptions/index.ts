@@ -9,9 +9,14 @@ import { getParentAddressFromLabels } from "@getpaseo/protocol/agent-labels";
 import {
   formatFinishNotificationBody,
   finishNotificationEvents,
+  type FinishNotificationEvent,
   type FinishNotificationReason,
 } from "./internal/notification.js";
 export { createJsonFinishSubscriptionStore } from "./internal/json-store.js";
+export {
+  FinishNotificationEventSchema,
+  type FinishNotificationEvent,
+} from "./internal/notification.js";
 
 export interface FinishSubscription {
   id: string;
@@ -20,6 +25,8 @@ export interface FinishSubscription {
   serverId?: string;
   /** Creation subscriptions stop reporting after the child is detached. */
   requireParentOwnership?: boolean;
+  /** Events to deliver; omitted means all. */
+  notifyOn?: FinishNotificationEvent[];
 }
 export interface FinishSubscriptionStore {
   list(): Promise<FinishSubscription[]>;
@@ -175,6 +182,9 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
   ): Promise<boolean> {
     const requests = result.final?.pendingPermissions ?? [];
     const reason = reasonFor(result);
+    // An unselected permission keeps the subscription armed; an unselected terminal event ends it.
+    if (record.notifyOn && !record.notifyOn.includes(finishNotificationEvents[reason]))
+      return reason !== "needs permission";
     for (const id of permissions)
       if (!requests.some((request) => request.id === id)) permissions.delete(id);
     const acknowledgments: Promise<unknown>[] = [];
@@ -222,6 +232,10 @@ export function createFinishSubscriptions(deps: Dependencies): FinishSubscriptio
       requireParentOwnership: watch.records.every(
         (intent) => intent.requireParentOwnership === true,
       ),
+      // Recovery can coalesce several intents for one pair; deliver what any of them selected.
+      notifyOn: watch.records.every((intent) => intent.notifyOn)
+        ? [...new Set(watch.records.flatMap((intent) => intent.notifyOn!))]
+        : undefined,
     };
     const permissions = new Set<string>();
     let observation: FinishObservationSession | undefined;
