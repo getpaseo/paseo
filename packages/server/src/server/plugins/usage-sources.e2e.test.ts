@@ -452,6 +452,12 @@ export default function contribute(server) {
         }),
       }),
     );
+    await client.patchDaemonConfig({
+      providers: {
+        "usage-launch-fixture": { command: [path.join(root, "missing-cli")] },
+      },
+    });
+    expect((await client.listUsageReports()).reports).toEqual([]);
   } finally {
     await client.close();
     await daemon.close();

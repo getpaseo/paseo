@@ -186,10 +186,16 @@ class ProviderRuntime {
     };
   }
 
-  async resolveLaunch(): Promise<ProviderLaunch | undefined> {
+  private async resolveLaunch(): Promise<ProviderLaunch | undefined> {
     const launch = await this.resolveEffectiveLaunch();
     if (!launch) return undefined;
     if (!launch.resolved) throw new Error(`${launch.command} not found on PATH`);
+    return { command: launch.command, args: launch.args, env: launch.env };
+  }
+
+  async resolveUsageLaunch(): Promise<ProviderLaunch | undefined> {
+    const launch = await this.resolveEffectiveLaunch();
+    if (!launch?.resolved) return undefined;
     return { command: launch.command, args: launch.args, env: launch.env };
   }
 
@@ -1036,7 +1042,7 @@ class PluginAgentClient implements AgentClient {
   }
 
   resolveUsageLaunch() {
-    return this.runtime.resolveLaunch();
+    return this.runtime.resolveUsageLaunch();
   }
 
   get capabilities(): AgentCapabilityFlags {
