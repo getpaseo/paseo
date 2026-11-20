@@ -1,66 +1,61 @@
 ---
-title: Hub 工作原理
-description: Provider 事件如何到达 workflow 和 Paseo daemon。
+title: Hub 的工作原理
+description: 事件、定时任务和 webhook 如何匹配触发器，并在你的 Paseo daemon 上启动 Agent。
 nav: 工作原理
 ---
 
-# Hub 工作原理 {#how-hub-works}
+# Hub 的工作原理 {#how-hub-works}
 
-Hub 把请求到达的地方与运行 Agent 的机器连接起来。
+Hub 将外部事件、定时任务和 webhook 连接到在你 Paseo daemon 上运行的编程 Agent。
 
 ```text
-GitHub / Slack / Discord / manual request
-                    ↓
-                  Hub
-        matches a project trigger
-                    ↓
-                workflow
-          runs ordered agent steps
-                    ↓
-             Paseo daemon
-             starts the agent
+GitHub / Linear / Slack / Discord / Schedule / Webhook
+                          │
+                          ▼
+                         Hub
+         verifies input and matches triggers
+                          │
+                          ▼
+                     Paseo daemon
+             starts or continues an agent
 ```
 
-## 组成部分 {#the-pieces}
+## 核心概念 {#core-concepts}
 
-- **连接**让 Hub 接收来自 GitHub、Slack 或 Discord 的事件。
-- **daemon** 是一台运行 Paseo daemon 的已注册机器。
-- **项目**把一份配置与它使用的连接和 daemon 组织在一起。
-- **环境**指定 workflow step 在哪里运行：一个 daemon、它的工作目录，以及可选的 worktree。
-- **触发器**说明哪个 Provider 事件可以启动 workflow，以及允许哪些事件通过。
-- **workflow** 是触发器匹配后运行的一组有序 step。
-- **step** 启动一次 Agent 执行，有自己的提示词、Agent 选择、凭据、回复能力和限制。
-
-当项目使用 GitHub 来源时，配置位于 `.paseo/hub.yml` 以及按约定发现的 `.paseo/workflows/*.yml` 文件中。一个项目同一时间只有一个生效的配置版本。
+- **App** 是在自托管 Hub 的 **Apps** 下配置的 Provider 应用（GitHub App、Linear OAuth 应用、Slack 应用或 Discord 应用）。托管 Hub 运行自己的应用。
+- **Integration** 是在 **Integrations** 下连接到你 Hub 组织的工作区、账号或服务器。每个已连接的账号都有唯一的连接 slug（例如 `acme-github` 或 `acme-slack`），供触发器引用。
+- **Daemon** 是运行 Paseo daemon 并注册到你 Hub 组织 **Daemons** 下的机器。只有在机器上授予 `hub.execute` 后，daemon 才会接受 Agent 启动请求。
+- **Trigger** 是一条自包含规则，将事件、定时任务或 webhook 映射到目标 daemon、工作目录、Agent 配置、提示词，以及可选的工具或输出。
+- **Activity** 记录组织内每一次已接受的投递、路由决策、执行状态、回复和错误。
 
 ## 从事件到 Agent {#from-event-to-agent}
 
-1. Provider 向 Hub 发送事件。GitHub 和 Slack 使用 webhook；Discord 使用它的 gateway 连接；手动运行使用 Hub API。
-2. Hub 验证 Provider 事件，并识别它对应的项目资源，例如仓库、工作区或服务器。
-3. Hub 评估触发器及其过滤器，包括必填的 `from_users` 允许列表。
-4. 匹配的触发器根据当前生效的配置版本创建一次 workflow 运行。
-5. workflow 评估下一个 step。`if` 条件为假时跳过该 step；为真时在配置的 daemon 上启动它。
-6. daemon 启动 Agent，Hub 记录它的回复、结构化输出、状态和完成情况。
-7. 下一个 step 可以看到已完成 step 的输出。没有剩余 step 时，workflow 运行完成。
+1. 事件到达。GitHub、Linear、Slack（Webhooks 传输方式）和入站 webhook 向 Hub 发送带签名或已认证的 HTTPS 请求。Slack Socket Mode 和 Discord 由 Hub 主动向外连接。定时任务按 Hub 自身的时钟触发。
+2. Hub 验证发送者或签名，并查找匹配的已启用触发器。
+3. 对于外部 Provider 事件，Hub 会评估触发器的连接、资源过滤条件和发送者白名单（`from_users`）。
+4. 对每个匹配的触发器，Hub 创建一次运行，并通过 Paseo 应用和 CLI 使用的同一套 RPC 协议向目标 daemon 发送启动意图。
+5. 默认情况下，同一个 Slack 讨论串、Discord 讨论串、GitHub issue 或 Pull Request，以及同一个 Linear issue 上的事件会继续现有 Agent 会话，而不是启动新的 Agent。
+6. Agent 在你的机器上运行并挂载 Hub MCP 服务器。它调用 `reply` 回复对话，调用已授予的集成工具，并在完成后调用 `finish_execution`。
 
-完整的配置示例见 [Workflow](/docs/hub/workflows)。
+## 编写与校验 {#authoring-and-validation}
 
-## 激活 {#activation}
+你可以通过两种方式创建和编辑触发器：
 
-Hub 同步配置包时，会校验每个源文件并解析其中的引用：
+- 在 Hub 控制台的 **Triggers** 页面使用可视化表单或 YAML 编辑器。
+- 在仓库中保存 `.paseo/triggers/*.yml` 文件，并通过 `paseo hub deploy` 部署。
 
-- `filters.repo`、`filters.workspace` 和 `filters.guild` 必须指向通过组织的连接可以访问的资源。
-- `environment.daemon` 必须匹配一个已注册 daemon 的友好 slug。
-- step id、表达式、输入过滤器、输出 schema 和时长必须有效。
-- 每个有限的环境或命名 Agent 结果都必须存在并通过校验。
-- 提示词片段必须能在该提交中 `.paseo/workflows/partials/` 下解析到。
+两种方式使用相同的 YAML 结构和校验逻辑。保存或部署触发器时，Hub 会校验 YAML 结构，解析引用的连接和 daemon slug，并请已连接的 daemon 校验所选的 Provider、模型、模式、思考选项和 Provider 选项。无效配置会在保存时立即被拒绝，而不是等到第一次运行时失败。
 
-如果激活失败，Hub 会保留之前生效的版本。Configuration 标签页会显示失败的同步及其校验错误；Activity 继续反映上一个生效的版本。
+## Open in Paseo 链接 {#open-in-paseo-links}
+
+当 Hub 配置了公开 HTTPS 地址且运行记录了 daemon Agent 时，Hub 会在 GitHub、Linear、Slack 和 Discord 的对话回复中附带 **Open in Paseo** 链接。
+
+点击链接时，Hub 会先验证访问者是否为该 Hub 组织的已登录成员，然后提供在 Paseo 中打开对应 Agent、在 Hub 中查看运行记录或安装 Paseo 的入口。未登录的访客和非组织成员不会看到任何运行数据。
+
+拥有受控发送工具（`run.tools.slack` 或 `run.tools.discord`）的 Agent 也会在请求上下文中收到同一个 URL，方便摘要和报告主动链接回此次运行。
 
 ## 安全边界 {#security-boundaries}
 
-对于来自外部的事件，触发器要求 `from_users` 允许列表不能为空。请保护好配置仓库，因为任何能够修改生效配置的人，都可以决定项目使用哪些连接、daemon 和 Agent 能力。
+Hub 负责验证入站请求、执行发送者白名单、签发受控 GitHub 令牌，并在服务端对每次 Hub MCP 工具调用做鉴权。它不会在你机器上为编程 Agent 进程提供沙箱隔离。
 
-这些控制措施不会把 Agent 放进沙箱，也不会让输入变得安全。主机边界、Provider 原生策略和纵深防御方面的指导见 [Hub 安全](/docs/hub/security)。
-
-触发器从不隐含 GitHub 凭据。无论运行由什么启动，只有当 step 声明了 [`github` 块](/docs/hub/github)时，它才拥有 GitHub 权限。
+请保护你的 Hub 组织访问权限，以及任何用于部署 `.paseo/triggers/*.yml` 的仓库。在扩大白名单或授予仓库写入权限之前，请先阅读 [Hub 安全](/docs/hub/security)。

@@ -652,7 +652,8 @@
         "tablistLabel": "自动化来源预览",
         "openInPaseo": "在 Paseo 中打开",
         "testsPassed": "测试通过",
-        "appBadge": "APP"
+        "appBadge": "APP",
+        "docsLink": "阅读 {{source}} 文档"
       },
       "slack": {
         "alt": "#engineering 中的 Slack 讨论串，展示 mo 提及 @paseo-bot 查看 P0 issue 并创建 PR",

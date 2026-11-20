@@ -1,4 +1,5 @@
 import { useInView, useReducedMotion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -6,6 +7,7 @@ import {
   type HubTriggerSource,
   type HubTriggerSourceId,
 } from "~/components/hub-flow";
+import { useLocalizePath } from "~/i18n";
 import { DiscordSourceMockup } from "./discord-mockup";
 import { GitHubSourceMockup } from "./github-mockup";
 import { LinearSourceMockup } from "./linear-mockup";
@@ -22,6 +24,15 @@ const SHOWCASE_ORDER: readonly HubTriggerSourceId[] = [
   "schedules",
   "webhooks",
 ];
+
+const SOURCE_DOC_PATHS: Record<HubTriggerSourceId, string> = {
+  slack: "/docs/hub/triggers/slack",
+  github: "/docs/hub/triggers/github",
+  linear: "/docs/hub/triggers/linear",
+  discord: "/docs/hub/triggers/discord",
+  schedules: "/docs/hub/triggers/schedules",
+  webhooks: "/docs/hub/triggers/webhooks",
+};
 
 const SHOWCASE_SOURCES: readonly HubTriggerSource[] = SHOWCASE_ORDER.map((id) => {
   const source = HUB_TRIGGER_SOURCES.find((item) => item.id === id);
@@ -50,6 +61,7 @@ const PANEL_ID = "hub-source-panel";
  */
 export function HubAutomationsShowcase() {
   const { t } = useTranslation();
+  const localize = useLocalizePath();
   const reduceMotion = useReducedMotion() === true;
   const [selected, setSelected] = React.useState<HubTriggerSourceId>("slack");
   const stageRef = React.useRef<HTMLDivElement | null>(null);
@@ -120,8 +132,15 @@ export function HubAutomationsShowcase() {
           <ActiveMockup active={isInView} reduceMotion={reduceMotion} />
         </div>
 
-        <figcaption className="min-h-[1.25rem] text-sm text-muted-foreground">
-          {t(`hub.demo.${selected}.caption`)}
+        <figcaption className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1.5 min-h-[1.25rem] text-sm text-muted-foreground">
+          <span>{t(`hub.demo.${selected}.caption`)}</span>
+          <a
+            href={localize(SOURCE_DOC_PATHS[selected])}
+            className="inline-flex shrink-0 items-center gap-1.5 text-sm text-white/75 transition-colors hover:text-accent-text"
+          >
+            {t("hub.demo.shared.docsLink", { source: t(`hub.sources.${selected}.name`) })}
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
         </figcaption>
       </figure>
     </div>

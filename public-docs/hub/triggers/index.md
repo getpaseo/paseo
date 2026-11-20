@@ -1,71 +1,78 @@
 ---
 title: Hub triggers
-description: How Hub matches an inbound event to a trigger: events, filters, and the allowlist that gates every execution.
+description: Connect events, schedules, and webhooks to agents running on your Paseo daemons.
 nav: Triggers
-order: 66
+order: 64
 category: Hub
 ---
 
 # Triggers
 
-A trigger says which provider event can start a workflow. The [Hub workflows](/docs/hub/workflows) page covers the steps, inputs, routing, prompts, and deadlines that run after a match.
+A trigger defines what starts an agent on your daemon, who is allowed to invoke it, which agent runs, and what tools or replies it can use.
 
-`.paseo/workflows/github-issue.yml`:
+You can author triggers in the Hub dashboard under **Triggers** (in Form or YAML view), or store them in `.paseo/triggers/*.yml` and deploy with `paseo hub deploy`.
+
+`.paseo/triggers/github-issue.yml`:
 
 ```yaml
 name: triage-issue
-on: github.issue_created
-filters:
-  repo: acme/api
-  from_users: [alice]
-max_runtime: 2h
-steps:
-  - id: work
-    environment: dev
-    max_runtime: 90m
-    idle_timeout: 10m
-    agent: codex
-    prompt:
-      - text: Call hub.finish_execution when the step is complete.
-      - text: ${{ paseo.prompt }}
+on:
+  github.issue_created:
+    connection: acme-github
+    filters:
+      repo: acme/api
+      from_users: [alice]
+run:
+  target:
+    daemon: devbox
+    cwd: /workspace/api
+  agent:
+    provider: codex
+    mode: full-access
+  max_runtime: 90m
+  idle_timeout: 10m
+  prompt: |
+    Triage this issue, reply with your summary using reply, then call finish_execution.
+    ${{ paseo.context }}
 ```
 
-Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
+See the [Trigger YAML reference](/docs/hub/configuration/reference) for every supported field.
 
 ## Choose the agent in Hub
 
-When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub does not prefill the directory: it is a path on that machine, it has to exist, and only you know which repository the agent should work in. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
+When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub asks that daemon for its available providers, models, execution modes, and thinking options.
 
-Only daemons that were granted `hub.execute` are offered as targets, and only Claude, Codex, and OpenCode are offered as providers. Hub preapproves its own tools on every run because nobody is at the keyboard to approve them, and those are the providers whose daemon contract accepts that.
+Only daemons granted `hub.execute` appear as targets. Hub supports any provider configured on your Paseo daemon, including Claude Code, Codex, OpenCode, Pi, and custom or plugin providers. Hub automatically preapproves its own MCP tools when the provider supports preapproval.
 
-Changing the daemon or working directory reloads the choices. If an existing trigger names a model, mode, or thinking option that the daemon no longer reports, Hub marks that value unavailable without replacing it. You can keep the authored value, choose a current value, or switch to YAML editing.
+Changing the daemon or working directory reloads the available choices. If an existing trigger names a model, mode, or thinking option that the daemon no longer reports, Hub marks that value unavailable without overwriting it. You can keep the authored value, pick a current value, or edit the YAML directly.
 
-If the daemon is offline or needs a newer Paseo version, the agent selectors show an error and a retry action. The rest of the trigger and its YAML remain editable.
+If the daemon is offline or needs a newer Paseo version, the agent selectors show an error with a retry action while the rest of the trigger remains editable.
 
 ## Saving checks the agent against the daemon
 
-Saving a trigger asks the target daemon to validate the agent it would launch: the provider, model, mode, thinking option, and provider-native options, and every named agent a choice can select. A value the daemon does not offer is refused at save, naming the field, instead of failing on the first run.
+When you save or deploy a trigger, Hub asks the target daemon to validate the provider, model, mode, thinking option, provider-native `options`, and any named `choices`. A value the daemon does not offer is rejected immediately with the field name:
 
 ```text
 run.agent.mode: Mode 'default' is not available for provider 'opencode'
 ```
 
-The check needs the daemon connected. A new trigger, or a change of daemon, working directory, or agent, cannot be saved while its daemon is offline; the refusal names the daemon. Editing the prompt, filters, or limits of an existing trigger saves either way.
+The target daemon must be connected when you create a trigger or change its daemon, working directory, or agent settings. Editing only the prompt, filters, or limits of an existing trigger saves even while the daemon is offline.
 
-The same checks run wherever a trigger is authored: the dashboard form, its YAML mode, `POST /api/v1/triggers/install`, `paseo hub init`, and `paseo hub deploy`.
+The same checks run in the dashboard form, the YAML editor, `POST /api/v1/triggers/install`, `paseo hub init`, and `paseo hub deploy`.
 
 ## Continue the same agent
 
-Dashboard triggers default to **Same conversation**. Messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent in that project. An event without a conversation starts a new agent.
+Triggers default to **Same conversation** (`continuation: { mode: conversation }`). Follow-up messages in the same Slack or Discord thread, events on the same GitHub issue or pull request, and events on the same Linear issue continue the existing agent session instead of starting a new one. Events without a conversation start a new agent.
 
-If the agent is busy, the new prompt steers its current work. Each arrival keeps its own output limits and completion status. If a reusable workspace is archived, Hub asks Paseo to restore it before sending the prompt.
+If the agent is still busy, the new prompt steers its current work. Each arrival keeps its own reply destination, output limits, and completion contract. If the reusable workspace was archived, Hub restores it before delivering the follow-up prompt.
 
-Choose **Custom key** to group arrivals by an input, or **New agent** to keep them separate. A self-contained trigger document can express the same choice:
+Choose **Custom key** (`{ mode: key, key: "..." }`) to group arrivals by an input expression, or **New agent** (`{ mode: new }`) to start a fresh agent every time.
 
 ```yaml
 name: support
 on:
   slack.mention:
+    connection: acme-slack
     filters:
       from_users: [U01234567]
 run:
@@ -74,88 +81,107 @@ run:
     cwd: /Users/you/code/support
   agent:
     provider: codex
+    mode: full-access
   continuation:
     mode: conversation
   max_runtime: 30m
   idle_timeout: 5m
-  prompt: Handle this request and call finish_execution when complete.
+  prompt: Handle this request, answer with reply, and call finish_execution when complete.
 ```
 
-The [continuation reference](/docs/hub/configuration/hub-yml#agent-continuation) covers keys and agent reuse. The run detail shows whether each arrival created, continued, or restored an agent.
-
-Hub includes an `executionId` in each prompt. When using a continuing agent, pass that ID to `reply` and `finish_execution`. These tools act on that arrival's destination and contract; an old or unrelated execution ID is rejected.
+Hub includes an `executionId` in each prompt. On a continuing agent, pass that `executionId` when calling `reply` and `finish_execution` so Hub routes the output to the right arrival. See [Agent continuation](/docs/hub/configuration/reference#agent-continuation).
 
 ## Events
 
-| `on`                                   | Fires when                                           |
-| -------------------------------------- | ---------------------------------------------------- |
-| `github.issue_created`                 | An issue is opened.                                  |
-| `github.pull_request_created`          | A pull request is opened.                            |
-| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.     |
-| `github.issue_comment_created`         | A comment is created on an issue.                    |
-| `github.pull_request_comment_created`  | A conversation comment is created on a pull request. |
-| `github.issue_label_added`             | A label is added to an issue.                        |
-| `github.pull_request_label_added`      | A label is added to a pull request.                  |
-| `slack.mention`                        | The bot is mentioned in a channel.                   |
-| `discord.mention`                      | The bot is mentioned in a guild.                     |
-| `manual.run`                           | A run started from the API.                          |
+| `on`                                   | Fires when                                                              |
+| -------------------------------------- | ----------------------------------------------------------------------- |
+| `github.issue_created`                 | A GitHub issue is opened.                                               |
+| `github.pull_request_created`          | A GitHub pull request is opened.                                        |
+| `github.pull_request_ready_for_review` | A draft pull request is marked ready for review.                        |
+| `github.pull_request_synchronized`     | New commits are pushed to an open pull request.                         |
+| `github.issue_comment_created`         | A comment is posted on a GitHub issue.                                  |
+| `github.pull_request_comment_created`  | A conversation comment is posted on a pull request.                     |
+| `github.issue_label_added`             | A label is added to a GitHub issue.                                     |
+| `github.pull_request_label_added`      | A label is added to a pull request.                                     |
+| `linear.comment_created`               | A comment is posted on a Linear issue.                                  |
+| `linear.issue_assigned`                | A Linear issue is assigned or reassigned.                               |
+| `linear.issue_entered_scope`           | A Linear issue is created in scope or transitions into scope.           |
+| `slack.mention`                        | The bot is mentioned in a Slack channel or thread.                      |
+| `discord.mention`                      | The bot is mentioned in a Discord channel or thread.                    |
+| `schedule.tick`                        | A recurring calendar schedule fires in your timezone.                   |
+| `webhook.received`                     | An authenticated HTTP `POST` arrives at the trigger's webhook endpoint. |
+| `manual.run`                           | A run is dispatched through the Hub API.                                |
 
-New GitHub workflows should use a semantic event. The five legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. See [GitHub triggers](/docs/hub/triggers/github) for complete workflows and when to use each event.
-
-Each provider page documents its events and the data they expose:
+Read the guide for each trigger source:
 
 - [GitHub triggers](/docs/hub/triggers/github)
+- [Linear triggers](/docs/hub/triggers/linear)
 - [Slack triggers](/docs/hub/triggers/slack)
 - [Discord triggers](/docs/hub/triggers/discord)
+- [Scheduled triggers](/docs/hub/triggers/schedules)
+- [Inbound webhooks](/docs/hub/triggers/webhooks)
 
 ## Filters
 
-`filters` is required, and `from_users` must be present and non-empty. A trigger without it is rejected at validation.
+External provider triggers require a non-empty `from_users` allowlist. There are three exceptions:
 
-The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
+- `linear.issue_entered_scope` requires `filters.project` and can omit `from_users`.
+- `schedule.tick` uses `recurrence` and accepts no `connection` or `filters`.
+- `webhook.received` authenticates callers with a Bearer secret and accepts no `connection` or `filters`.
 
-An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
+The `from_users` allowlist stops a stranger's comment on a public issue from starting an agent on your machine. Allowlists do not sandbox the agent or sanitize untrusted text, so read [Hub security](/docs/hub/security) before widening them.
 
-| Filter       | Applies to                | Matches                                                              |
-| ------------ | ------------------------- | -------------------------------------------------------------------- |
-| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name      |
-| `repo`       | GitHub                    | `owner/name`                                                         |
-| `workspace`  | Slack                     | Team id, `T01234567`                                                 |
-| `guild`      | Discord                   | Guild id                                                             |
-| `channels`   | Slack, Discord            | Channel ids                                                          |
-| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                |
-| `pattern`    | all                       | Invocation prefix                                                    |
-| `connection` | all                       | A connection slug, when the organization has several                 |
-| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                 |
-| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively |
+| Filter             | Applies to                     | Matches                                                                            |
+| ------------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
+| `from_users`       | GitHub, Linear, Slack, Discord | GitHub login, or Linear, Slack, and Discord user ID                                |
+| `repo`             | GitHub                         | Repository in `owner/name` form                                                    |
+| `workspace`        | Slack                          | Workspace team ID (`T01234567`)                                                    |
+| `guild`            | Discord                        | Server guild ID (quoted string)                                                    |
+| `channels`         | Slack, Discord                 | Channel IDs                                                                        |
+| `project`          | Linear                         | Linear project UUID                                                                |
+| `states`           | Linear                         | Linear workflow state UUIDs                                                        |
+| `assignees`        | Linear                         | Linear assignee user UUIDs                                                         |
+| `contains`         | GitHub, Linear, Slack, Discord | Substring on GitHub and Linear comments, or invocation prefix on Slack and Discord |
+| `exclude_contains` | GitHub                         | Substring that disqualifies the event                                              |
+| `pattern`          | GitHub, Linear, Slack, Discord | Prefix at the start of the text or after the mention                               |
+| `label`            | GitHub label-added events      | Exact label added by this event, case-insensitively                                |
+| `labels`           | GitHub, Linear                 | Every listed label must be present (names on GitHub, UUIDs on Linear)              |
+| `exclude_labels`   | Linear                         | Any listed label UUID disqualifies the issue                                       |
 
-All conditions must pass. There is no `any` mode.
+All conditions compose with AND. There is no `any` mode.
 
-## Which connection an event comes from
+## Pinning a connection
 
-`repo`, `workspace`, and `guild` are resolved to immutable ids when the configuration activates, along with the connection that owns them. Naming a resource the organization has no connection for fails activation, so you find out on push rather than when someone comments.
-
-Omit the resource filter and the trigger listens to every connection of that provider in the organization. To pin it to one:
+Set `connection` on the event object to pin a trigger to one organization integration slug. Without `connection` or a resource filter (`repo`, `workspace`, `guild`), the trigger listens across every integration of that provider in the organization.
 
 ```yaml
-filters:
-  connection: acme-github
-  from_users: [alice]
+on:
+  github.issue_comment_created:
+    connection: acme-github
+    filters:
+      from_users: [alice]
 ```
-
-See [How Hub works](/docs/hub/concepts) for what activation compiles.
 
 ## When two triggers match
 
-Both run. Triggers are not ordered and do not shadow each other, in one configuration or across projects.
+Both run. Triggers are independent, unordered, and do not shadow each other.
 
-## Replying
+## Replying and Open in Paseo links
 
-Put `allow_outputs` on the step that should reply. The reply capabilities are `slack.reply` and `discord.reply`.
+Conversational triggers (`github.*`, `linear.*`, `slack.*`, `discord.*`) automatically grant an event-native `reply` tool on the Hub MCP server so the agent can post progress updates and final answers back to the originating issue, pull request, or thread.
 
-- Set `max` when a step needs more than one update.
-- Set `required: true` when the step must emit at least one reply before it can finish. A required type must be registered and available for the execution context.
+To cap how many replies an agent can send or require at least one reply before `finish_execution` succeeds, declare `run.outputs`:
 
-GitHub has no reply capability; a step with a [`github` block](/docs/hub/github) comments through `gh` instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
+```yaml
+run:
+  outputs:
+    slack.reply:
+      max: 1
+      required: true
+```
 
-The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).
+Use `github.reply`, `linear.reply`, `slack.reply`, or `discord.reply` to match the trigger source. The prompt must tell the agent to call `reply` and `finish_execution` because Hub does not rewrite your prompt to add tool instructions. See [Output capabilities](/docs/hub/configuration/reference#output-capabilities).
+
+When Hub has a configured HTTPS origin and the run has a recorded daemon agent, Hub appends an **Open in Paseo** link to conversation replies so signed-in organization members can open the live session in Paseo or inspect the run in Hub.
+
+To read or post to Slack or Discord channels from any trigger (including schedules, webhooks, GitHub, and Linear), grant [Integration tools](/docs/hub/tools).

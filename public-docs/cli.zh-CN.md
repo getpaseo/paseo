@@ -434,7 +434,7 @@ paseo hub logout               # Remove the active stored CLI login
 
 `init` 需要 TTY。它会根据需要登录并连接 daemon，然后列出组织中可以支撑入门触发器的应用连接。只有一个可用连接时会自动选中；有多个时，由你选择一个 **Trigger connection**。如果没有任何连接就绪，设置会引导你前往 **Hub → Apps**，并在选择 Agent 或写入文件之前停止。
 
-设置会询问要运行哪个 Agent Provider、模型和模式。Provider 必须已启用，并且同时提供可选择的模型和执行模式。建议的模型和模式条目是 daemon 的默认值；没有默认值时仍需显式选择模式。Hub 在部署前会对照 daemon 校验这项选择，并且其无人值守的运行只接受 Claude、Codex 和 OpenCode。`deploy` 会执行相同的检查，因此需要指定的 daemon 已连接。随后设置会询问允许触发机器人的身份：GitHub 用户名、Slack 成员 ID 或 Discord 用户 ID。它会校验触发器，写入 `.paseo/triggers/<provider>-help.yml`，并询问是否部署。替换该文件需要确认；已有的旧版文件包和其他触发器文件会被保留。见[生成的入门触发器](/docs/hub/configuration#generated-starter-trigger)。
+设置会询问要运行哪个 Agent Provider、模型和模式。Provider 必须已启用，并提供可选择的模型（当 Provider 提供模式时还需要选择执行模式）。建议的模型和模式条目是 daemon 的默认值；没有默认值时仍需显式选择模式。Hub 在部署前会对照 daemon 校验这项选择。`deploy` 会执行相同的检查，因此需要指定的 daemon 已连接。随后设置会询问允许触发机器人的身份：GitHub 用户名、Slack 成员 ID 或 Discord 用户 ID。它会校验触发器，写入 `.paseo/triggers/<provider>-help.yml`，并询问是否部署。替换该文件需要确认；其他触发器文件会被保留。见[生成的入门触发器](/docs/hub/configuration#generated-starter-trigger)。
 
 交互式退出会检查同一地址的 daemon 关系，并在删除登录之前询问是否断开。选择否时只删除登录。JSON 和非交互式的退出从不提示，也不会隐式断开；`--disconnect-daemon` 是供自动化使用的显式方式，`--force` 作用于该 daemon 断开操作。如果请求的断开失败，登录会被保留。
 

@@ -652,7 +652,8 @@
         "tablistLabel": "Automation source previews",
         "openInPaseo": "Open in Paseo",
         "testsPassed": "tests passed",
-        "appBadge": "APP"
+        "appBadge": "APP",
+        "docsLink": "Read {{source}} docs"
       },
       "slack": {
         "alt": "Slack thread in #engineering showing mo mentioning @paseo-bot to list P0 issues and open a pull request",

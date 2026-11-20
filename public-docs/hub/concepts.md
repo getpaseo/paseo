@@ -1,6 +1,6 @@
 ---
 title: How Hub works
-description: How a provider event reaches a workflow and a Paseo daemon.
+description: How events, schedules, and webhooks match a trigger and start an agent on your Paseo daemon.
 nav: How it works
 order: 62
 category: Hub
@@ -8,61 +8,56 @@ category: Hub
 
 # How Hub works
 
-Hub connects the places where requests arrive to the machines where your agents run.
+Hub connects external events, schedules, and webhooks to coding agents running on your Paseo daemons.
 
 ```text
-GitHub / Slack / Discord / manual request
-                    ↓
-                  Hub
-        matches a project trigger
-                    ↓
-                workflow
-          runs ordered agent steps
-                    ↓
-             Paseo daemon
-             starts the agent
+GitHub / Linear / Slack / Discord / Schedule / Webhook
+                          │
+                          ▼
+                         Hub
+         verifies input and matches triggers
+                          │
+                          ▼
+                     Paseo daemon
+             starts or continues an agent
 ```
 
-## The pieces
+## Core concepts
 
-- A **connection** lets Hub receive events from GitHub, Slack, or Discord.
-- A **daemon** is a registered machine running the Paseo daemon.
-- A **project** groups one configuration with the connections and daemons it uses.
-- An **environment** names where a workflow step runs: a daemon, its working directory, and an optional worktree.
-- A **trigger** says which provider event can start a workflow and which events are allowed through.
-- A **workflow** is the ordered set of steps that runs after a trigger matches.
-- A **step** starts one agent execution, with its own prompt, agent selection, credentials, reply capabilities, and limits.
-
-The configuration lives in `.paseo/hub.yml` plus convention-discovered `.paseo/workflows/*.yml` files when the project uses a GitHub source. A project has one active configuration revision at a time.
+- An **app** is the provider application configured for a self-hosted Hub under **Apps** (GitHub App, Linear OAuth app, Slack app, or Discord app). Hosted Hub operates its own apps.
+- An **integration** is a workspace, account, or server connected to your Hub organization under **Integrations**. Each connected account has a unique connection slug, such as `acme-github` or `acme-slack`, that triggers reference.
+- A **daemon** is a machine running the Paseo daemon and enrolled in your Hub organization under **Daemons**. Daemons accept agent launches only after you grant `hub.execute` from that machine.
+- A **trigger** is one self-contained rule that maps an event, schedule, or webhook to a target daemon, working directory, agent configuration, prompt, and optional tools or outputs.
+- **Activity** records every accepted delivery, routing decision, execution status, reply, and error across the organization.
 
 ## From event to agent
 
-1. A provider sends an event to Hub. GitHub and Slack use webhooks; Discord uses its gateway connection; manual runs use the Hub API.
-2. Hub verifies the provider event and identifies its project resource, such as a repository, workspace, or guild.
-3. Hub evaluates triggers and their filters, including the required `from_users` allowlist.
-4. A matching trigger creates a workflow run from the active configuration revision.
-5. The workflow evaluates its next step. A false `if` condition skips that step; a true condition starts it on the configured daemon.
-6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
-7. The next step sees the completed step's output. When no steps remain, the workflow run is complete.
+1. An event arrives. GitHub, Linear, Slack (Webhooks transport), and inbound webhooks send signed or authenticated HTTPS requests to Hub. Slack Socket Mode and Discord connect out from Hub. Schedules fire on Hub's own clock.
+2. Hub verifies the sender or signature and looks up matching enabled triggers.
+3. For external provider events, Hub evaluates the trigger's connection, resource filters, and sender allowlist (`from_users`).
+4. For each matching trigger, Hub creates a run and sends the launch intent to the target daemon over the same RPC protocol used by the Paseo app and CLI.
+5. By default, events on the same Slack thread, Discord thread, GitHub issue or pull request, or Linear issue continue the existing agent session rather than starting a new one.
+6. The agent runs on your machine with the Hub MCP server attached. It calls `reply` to answer the conversation, calls any granted integration tools, and calls `finish_execution` when complete.
 
-Complete configurations are in [Workflows](/docs/hub/workflows).
+## Authoring and validation
 
-## Activation
+You can create and edit triggers in two ways:
 
-When Hub syncs the bundle, it validates every source file and resolves its references:
+- In the Hub dashboard under **Triggers**, using the visual form or the YAML editor.
+- As `.paseo/triggers/*.yml` files in your repository, deployed with `paseo hub deploy`.
 
-- `filters.repo`, `filters.workspace`, and `filters.guild` must name resources available through the organization's connections.
-- `environment.daemon` must match a registered daemon's friendly slug.
-- Step ids, expressions, input filters, output schemas, and durations must be valid.
-- Every finite environment or named-agent result must exist and validate.
-- Prompt partials must resolve below `.paseo/workflows/partials/` at the exact commit.
+Both paths use the same YAML schema and validation. When you save or deploy a trigger, Hub verifies the YAML structure, resolves referenced connections and daemon slugs, and asks the connected daemon to validate the selected provider, model, mode, thinking option, and provider options. Invalid settings fail at save time instead of on the first run.
 
-If activation fails, Hub keeps the previous active revision. The Configuration tab shows the failed sync and its validation error; Activity continues to reflect the last active revision.
+## Open in Paseo links
+
+When Hub has a public HTTPS origin and a run has a recorded daemon agent, Hub appends an **Open in Paseo** link to conversation replies on GitHub, Linear, Slack, and Discord.
+
+Clicking the link checks that the visitor is a signed-in member of that Hub organization before offering to open the exact agent in Paseo, view the execution in Hub, or install Paseo. Signed-out visitors and users outside the organization receive no run details.
+
+Agents with scoped posting tools (`run.tools.slack` or `run.tools.discord`) also receive the same URL in their request context so digests and reports can link back to the run.
 
 ## Security boundaries
 
-Triggers require a non-empty `from_users` allowlist for externally sourced events. Protect the configuration repository because anyone who can change the active configuration can choose which connections, daemons, and agent capabilities a project uses.
+Hub verifies inbound requests, enforces sender allowlists, mints scoped GitHub tokens, and authorizes every Hub MCP tool call on the server. It does not sandbox the coding agent process on your machine.
 
-These controls do not sandbox the agent or make input safe. See [Hub security](/docs/hub/security) for the host boundary, provider-native policy, and defense-in-depth guidance.
-
-GitHub credentials are never implied by the trigger. A step holds GitHub authority only when it declares a [`github` block](/docs/hub/github), whatever started the run.
+Protect access to your Hub organization and any repository that deploys `.paseo/triggers/*.yml`. Read [Hub security](/docs/hub/security) before widening allowlists or granting repository write permissions.

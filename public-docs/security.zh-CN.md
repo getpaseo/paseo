@@ -154,4 +154,4 @@ Hub CLI 凭据是 bearer 密钥。远程 Hub 地址必须使用 HTTPS；只有�
 - **不要在没有密码的情况下绑定到 0.0.0.0**，否则你网络中的任何设备都可以连接
 - **严格限定 Docker 挂载范围**，Agent 可以访问挂载的工作区和 Provider 凭据
 - **保持 daemon 为最新版本**，安全改进会定期发布
-- **保护 Hub 配置分支**，对 `.paseo` 文件包的推送权限决定了该项目能访问什么，见 [Hub 的工作原理](/docs/hub/concepts)
+- **保护 Hub 触发器文件和组织访问权限**，对 `.paseo/triggers/*.yml` 的推送权限决定了 Hub 可以在你的 daemon 上运行什么，见 [Hub 的工作原理](/docs/hub/concepts)

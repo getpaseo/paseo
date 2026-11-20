@@ -9,6 +9,12 @@ async function chooseLanguage(page: Page, language: string) {
   await page.getByRole("menuitemradio", { name: language }).click();
 }
 
+async function selectHubSourceTab(page: Page, name: string | RegExp) {
+  const tab = page.getByRole("tab", { name });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
 async function withPageScriptsHeld(page: Page, run: (release: () => void) => Promise<void>) {
   let releaseScripts!: () => void;
   const scriptsReleased = new Promise<void>((resolve) => {
@@ -108,6 +114,74 @@ test("switches language on the same page, keeping the query and then every link"
   await expect(page).toHaveURL(/\/docs$/);
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
 });
+
+for (const {
+  locale,
+  prefix,
+  linearTab,
+  linearDocsLink,
+  linearTriggerHeading,
+  linearAppLink,
+  linearAppHeading,
+  webhooksTab,
+  webhooksDocsLink,
+  webhooksHeading,
+} of [
+  {
+    locale: "English",
+    prefix: "",
+    linearTab: /^Linear\b/,
+    linearDocsLink: "Read Linear docs",
+    linearTriggerHeading: "Linear triggers",
+    linearAppLink: "Linear app",
+    linearAppHeading: "Linear for Hub",
+    webhooksTab: /^Webhooks\b/,
+    webhooksDocsLink: "Read Webhooks docs",
+    webhooksHeading: "Inbound webhooks",
+  },
+  {
+    locale: "Chinese",
+    prefix: "/zh-CN",
+    linearTab: /^Linear\b/,
+    linearDocsLink: "阅读 Linear 文档",
+    linearTriggerHeading: "Linear 触发器",
+    linearAppLink: "Linear 应用",
+    linearAppHeading: "为 Hub 配置 Linear",
+    webhooksTab: /^Webhook\b/,
+    webhooksDocsLink: "阅读 Webhook 文档",
+    webhooksHeading: "入站 webhook",
+  },
+]) {
+  test(`navigates from the ${locale} Hub showcase to Linear and Webhook docs`, async ({ page }) => {
+    await page.goto(`${prefix}/hub`);
+
+    await test.step("opens Linear trigger docs and Linear app setup", async () => {
+      await selectHubSourceTab(page, linearTab);
+      const triggerLink = page.getByRole("link", { name: linearDocsLink, exact: true });
+      await expect(triggerLink).toHaveAttribute("href", `${prefix}/docs/hub/triggers/linear`);
+      await triggerLink.click();
+      await expect(
+        page.getByRole("heading", { name: linearTriggerHeading, level: 1 }),
+      ).toBeVisible();
+      await expect(page.getByText("linear.comment_created", { exact: true }).first()).toBeVisible();
+
+      const appLink = page.locator("main").getByRole("link", { name: linearAppLink, exact: true });
+      await expect(appLink).toHaveAttribute("href", `${prefix}/docs/hub/self-hosting/linear-app`);
+      await appLink.click();
+      await expect(page.getByRole("heading", { name: linearAppHeading, level: 1 })).toBeVisible();
+    });
+
+    await test.step("opens Webhooks trigger docs from the Hub showcase", async () => {
+      await page.goto(`${prefix}/hub`);
+      await selectHubSourceTab(page, webhooksTab);
+      const webhookLink = page.getByRole("link", { name: webhooksDocsLink, exact: true });
+      await expect(webhookLink).toHaveAttribute("href", `${prefix}/docs/hub/triggers/webhooks`);
+      await webhookLink.click();
+      await expect(page.getByRole("heading", { name: webhooksHeading, level: 1 })).toBeVisible();
+      await expect(page.getByText("webhook.received", { exact: true }).first()).toBeVisible();
+    });
+  });
+}
 
 test("shows the language as an abbreviation and lists every language by name", async ({ page }) => {
   await page.goto("/docs/cli#running-agents");
