@@ -233,8 +233,8 @@ test.describe("usage modal", () => {
       ],
     });
     await gotoAppShell(page);
-    // Three windows leave no room for labels in the summary, so it reads percents.
-    await expectPinnedUsage(page, ["31%", "20%", "12%"]);
+    // Three Weekly labels overflow the summary, so it falls back to compact shorthands.
+    await expectPinnedUsage(page, ["31% wk", "20% wk", "12% wk"]);
     await openUsageFromItem(page);
     await expectUsageCardOrder(page, ["alpha:a", "beta:home", "beta:work"]);
 
